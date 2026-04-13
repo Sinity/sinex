@@ -12,7 +12,7 @@
 }:
 
 {
-  imports = [ ./modules ];
+  imports = [ ../modules ];
 
   services.sinex = {
     enable = true;
@@ -34,9 +34,6 @@
         servers = [ "tls://core.example.net:4222" ];
         tls = {
           requireTls = true;
-          caCertFile = config.environment.etc."sinex/remote-nats-ca.pem".source;
-          clientCertFile = config.environment.etc."sinex/remote-nats-cert.pem".source;
-          clientKeyFile = config.environment.etc."sinex/remote-nats-key.pem".source;
         };
       };
       defaults = {

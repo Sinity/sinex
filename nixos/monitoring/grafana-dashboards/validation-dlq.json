@@ -1,0 +1,326 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT ts_coided AS observed_at, (payload->>'batch_size')::bigint AS batch_size, (payload->>'fetch_to_ack_ms')::double precision AS fetch_to_ack_ms, (payload->>'events_deferred')::bigint AS events_deferred, (payload->>'events_failed')::bigint AS events_failed, (payload->>'had_synthesis')::boolean AS had_synthesis, payload->>'insert_path' AS insert_path, (payload->>'validation_valid')::bigint AS validation_valid, (payload->>'validation_skipped')::bigint AS validation_skipped, (payload->>'validation_no_schema')::bigint AS validation_no_schema, (payload->>'validation_schema_not_found')::bigint AS validation_schema_not_found, (payload->>'validation_invalid')::bigint AS validation_invalid, ROUND(COALESCE((payload->>'validation_coverage_pct')::numeric, 0), 2) AS validation_coverage_pct FROM core.events WHERE source = 'sinex.ingestd' AND event_type = 'batch.stats' ORDER BY id DESC LIMIT 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Latest Ingest Validation Snapshot",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 8
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT bucket AS time, avg_validation_coverage_pct AS \"Validation coverage %\" FROM sinex_telemetry.ingestd_batch_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
+          "refId": "A"
+        }
+      ],
+      "title": "Validation Coverage Trend",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 8
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT bucket AS time, total_deferred AS deferred, total_failed AS failed FROM sinex_telemetry.ingestd_batch_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
+          "refId": "A"
+        }
+      ],
+      "title": "Deferred vs Failed Events",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 8
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT time_bucket('15 minutes', ts_coided) AS time, percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (ts_coided - ts_orig)) * 1000) AS p50_latency_ms, percentile_cont(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (ts_coided - ts_orig)) * 1000) AS p95_latency_ms FROM core.events WHERE $__timeFilter(ts_coided) AND ts_orig IS NOT NULL AND ts_coided > ts_orig GROUP BY time ORDER BY time ASC",
+          "refId": "A"
+        }
+      ],
+      "title": "End-to-End Latency (p50 / p95)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT time_bucket('1 hour', ts_coided) AS time, source, COUNT(*)::bigint AS events FROM core.events WHERE $__timeFilter(ts_coided) GROUP BY time, source ORDER BY time ASC",
+          "refId": "A"
+        }
+      ],
+      "title": "Events by Source",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT time_bucket('1 hour', created_at) AS time, COUNT(*)::bigint AS dlq_events FROM sinex_schemas.dlq_events WHERE $__timeFilter(created_at) GROUP BY time ORDER BY time ASC",
+          "refId": "A"
+        }
+      ],
+      "title": "DLQ Backlog",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "id": 7,
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT id, automaton_name, created_at, resolved_at, error_category, CASE WHEN error_message IS NOT NULL AND length(error_message) > 160 THEN substring(error_message from 1 for 160) || '…' ELSE error_message END AS error_message FROM sinex_schemas.dlq_events WHERE created_at >= NOW() - INTERVAL '7 days' ORDER BY created_at DESC LIMIT 100",
+          "refId": "A"
+        }
+      ],
+      "title": "Recent DLQ Entries",
+      "type": "table"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": [
+    "sinex",
+    "validation",
+    "dlq"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timezone": "",
+  "title": "Sinex Validation & DLQ",
+  "uid": "sinex-validation-dlq",
+  "version": 1,
+  "weekStart": ""
+}

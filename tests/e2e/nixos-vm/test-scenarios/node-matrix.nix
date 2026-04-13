@@ -1,4 +1,4 @@
-# Satellite constellation coverage test for Sinex
+# Node constellation coverage test for Sinex
 { pkgs
 , sinex-ingestd
 , sinex-gateway
@@ -12,7 +12,7 @@ let
   inherit (pkgs) lib;
 in
 pkgs.testers.nixosTest {
-  name = "sinex-satellite-matrix";
+  name = "sinex-node-matrix";
 
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [
@@ -22,7 +22,7 @@ pkgs.testers.nixosTest {
     ];
 
     services.sinex = {
-      satellites = {
+      nodes = {
         coordination.enable = lib.mkForce true;
 
         filesystem = {
@@ -61,21 +61,21 @@ pkgs.testers.nixosTest {
         machine.wait_for_unit(unit)
         machine.succeed(f"systemctl is-active {unit}")
 
-    # Event source satellites
-    satellites = [
-        "sinex-fs-watcher-1.service",
-        "sinex-fs-watcher-2.service",
-        "sinex-terminal-node-1.service",
-        "sinex-desktop-node-1.service",
-        "sinex-system-node-1.service"
+    # Event source nodes
+    nodes = [
+        "sinex-filesystem-1.service",
+        "sinex-filesystem-2.service",
+        "sinex-terminal-1.service",
+        "sinex-desktop-1.service",
+        "sinex-system-1.service"
     ]
-    for unit in satellites:
+    for unit in nodes:
         machine.wait_for_unit(unit)
         machine.succeed(f"systemctl is-active {unit}")
 
     # Automata
     automata = [
-        "sinex-terminal-command-canonicalizer.service",
+        "sinex-canonicalizer.service",
         "sinex-health-aggregator.service"
     ]
     for unit in automata:
@@ -83,8 +83,8 @@ pkgs.testers.nixosTest {
         machine.succeed(f"systemctl is-active {unit}")
 
     # Verify generated units metadata exposed via option
-    generated = machine.succeed("nixos-option services.sinex.satellite.generatedUnits")
-    assert "sinex-fs-watcher-1" in generated
-    assert "sinex-terminal-node-1" in generated
+    generated = machine.succeed("nixos-option sinex._generatedUnits")
+    assert "sinex-filesystem-1" in generated
+    assert "sinex-terminal-1" in generated
   '';
 }

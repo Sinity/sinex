@@ -1,8 +1,7 @@
 # Basic E2E flow test for Sinex — Rust-driven smoke suite.
 #
-# Replaces Python testScript assertions with the typed Rust `sinex-vm-test-suite`
-# binary so assertions use sinex-db typed queries instead of raw psql string parsing.
-# The test script is intentionally minimal: start services, run the Rust suite.
+# Keep the test script minimal: start services, then run the typed Rust
+# `sinex-vm-test-suite` against the VM.
 { pkgs
 , sinex-ingestd
 , sinex-gateway

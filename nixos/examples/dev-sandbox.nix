@@ -11,21 +11,18 @@
 # coordination) on a single host so engineers can explore behaviour locally. It
 # also provisions helper tooling and a sample data generator.
 {
-  imports = [ ./modules ];
+  imports = [ ../modules ];
 
   networking.hostName = "sinex-devbox";
 
   services.sinex = {
     enable = true;
     users.target = "developer";
-    secrets.gatewayAdminTokenFile = "/etc/sinex/gateway-admin-token";
-
     database = {
       autoSetup = true;
       host = "127.0.0.1";
       name = "sinex_dev";
       user = "sinex";
-      passwordFile = config.environment.etc."sinex/db-password".source;
     };
 
     nats.environment = "dev";
@@ -122,13 +119,11 @@
       kitty = {
         enable = true;
         autoConfigure = true;
-        configFile = "~/.config/kitty/kitty.conf";
       };
     };
   };
 
-  environment.etc."sinex/gateway-admin-token".text = "example-dev-sandbox-admin:admin";
-  environment.etc."sinex/db-password".text = "example-db-password";
+  environment.etc."sinex/gateway-admin-token".text = "dev-sandbox-admin:admin";
 
   users.users.developer = {
     isNormalUser = true;
