@@ -24,7 +24,7 @@ pub use super::assertions::EventAssert;
 pub use super::context::{Sandbox, SandboxFailureSnapshot};
 pub use super::db::cleanup_config::{CleanupConfig, CleanupMethod, TableCleanupStrategy};
 pub use super::db::{reset_database, verify_clean_state};
-pub use super::fs::EnvGuard;
+pub use super::fs::{EnvGuard, TestTempEnv, prepare_test_temp_env};
 pub use super::nats::{EphemeralNats, EphemeralNatsBuilder, TlsConfig};
 pub use super::orchestrator::{
     TestIngestdConfig, TestIngestdHandle, start_test_ingestd_with_config,

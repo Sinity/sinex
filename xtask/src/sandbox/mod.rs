@@ -49,7 +49,7 @@ pub use nats::EphemeralNats;
 pub use chaos::ChaosInjector;
 pub use coordination::PipelineNamespace;
 pub use events::EventPublisher;
-pub use fs::EnvGuard;
+pub use fs::{EnvGuard, TestTempEnv, prepare_test_temp_env};
 pub use hooks::TestHooks;
 pub use nats::EventOverrides;
 pub use node_runtime::{TestRuntime, TestRuntimeBuilder};

@@ -3482,7 +3482,9 @@ mod tests {
 
     #[sinex_test]
     async fn test_probe_git_state_reports_non_repo_failures() -> ::xtask::sandbox::TestResult<()> {
-        let dir = tempdir()?;
+        let dir = tempfile::Builder::new()
+            .prefix("xtask-nongit-")
+            .tempdir_in("/tmp")?;
 
         let git = probe_git_state(dir.path());
 

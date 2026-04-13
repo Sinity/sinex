@@ -47,7 +47,14 @@ fn load_failing_test_details(
     ctx: &CommandContext,
     limit: usize,
 ) -> (Vec<crate::history::FailingTest>, Option<String>) {
-    match ctx.try_with_history_db(|db| db.get_failing_tests_with_output(limit)) {
+    let Some(invocation_id) = ctx.invocation_id() else {
+        return (
+            Vec::new(),
+            Some("Current test invocation ID unavailable".to_string()),
+        );
+    };
+
+    match ctx.try_with_history_db(|db| db.get_failing_tests_with_output(invocation_id, limit)) {
         Some(Ok(failures)) => (failures, None),
         Some(Err(error)) => (
             Vec::new(),
@@ -796,12 +803,17 @@ impl XtaskCommand for TestCommand {
                 ),
             })
             .with_data(serde_json::json!({
+                "invocation_id": ctx.invocation_id(),
                 "passed": stats.passed,
                 "failed": stats.failed,
                 "ignored": stats.ignored,
                 "failures": failures,
                 "failure_details_issue": failure_details_issue.clone(),
             }))
+            .with_detail(format!(
+                "Inspect with: xtask history tests analyze --invocation {}",
+                ctx.invocation_id().unwrap_or_default()
+            ))
             .with_duration(ctx.elapsed());
             if matches!(disk_space_status, DiskSpaceStatus::Low { .. }) {
                 result = result.with_warning(low_disk_space_warning);
@@ -847,6 +859,10 @@ impl XtaskCommand for TestCommand {
                     "Passed: {}, Ignored: {}",
                     stats.passed, stats.ignored
                 ))
+                .with_detail(format!(
+                    "Inspect with: xtask history tests analyze --invocation {}",
+                    ctx.invocation_id().unwrap_or_default()
+                ))
                 .with_duration(ctx.elapsed());
             if matches!(disk_space_status, DiskSpaceStatus::Low { .. }) {
                 result = result.with_warning(low_disk_space_warning);
@@ -877,10 +893,17 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     fn test_context(db_path: std::path::PathBuf) -> CommandContext {
+        test_context_with_invocation(db_path, None)
+    }
+
+    fn test_context_with_invocation(
+        db_path: std::path::PathBuf,
+        invocation_id: Option<i64>,
+    ) -> CommandContext {
         CommandContext::new_with_db_override(
             OutputWriter::new(OutputFormat::Silent),
             false,
-            None,
+            invocation_id,
             "test",
             db_path,
         )
@@ -895,7 +918,8 @@ mod tests {
         let conn = rusqlite::Connection::open(&db_path)?;
         conn.execute("DROP TABLE test_results", [])?;
 
-        let (_failures, issue) = load_failing_test_details(&test_context(db_path.clone()), 50);
+        let (_failures, issue) =
+            load_failing_test_details(&test_context_with_invocation(db_path.clone(), Some(1)), 50);
         let issue = issue.expect("query failure should surface");
         assert!(issue.contains("Failed to read failing-test details"));
         assert!(issue.contains(&db_path.display().to_string()));

@@ -1,39 +1,10 @@
+mod support;
+
 use serde_json::Value;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use xtask::sandbox::sinex_test;
+use support::xtask_command;
 
-fn xtask_bin() -> color_eyre::eyre::Result<PathBuf> {
-    if let Some(bin) = std::env::var_os("CARGO_BIN_EXE_xtask") {
-        return Ok(PathBuf::from(bin));
-    }
-
-    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .ok_or_else(|| color_eyre::eyre::eyre!("failed to resolve workspace root"))?;
-    let exe_name = if cfg!(windows) { "xtask.exe" } else { "xtask" };
-    let fallback = workspace_root.join(".sinex/target/debug").join(exe_name);
-    if fallback.is_file() {
-        Ok(fallback)
-    } else {
-        Err(color_eyre::eyre::eyre!(
-            "CARGO_BIN_EXE_xtask is not set and fallback binary was not found at {}",
-            fallback.display()
-        ))
-    }
-}
-
-fn xtask_command() -> color_eyre::eyre::Result<Command> {
-    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .ok_or_else(|| color_eyre::eyre::eyre!("failed to resolve workspace root"))?;
-    let mut command = Command::new(xtask_bin()?);
-    command.current_dir(workspace_root);
-    Ok(command)
-}
-
-#[sinex_test]
-async fn test_command_structure_snapshot() -> ::xtask::sandbox::TestResult<()> {
+#[test]
+fn test_command_structure_snapshot() -> ::xtask::sandbox::TestResult<()> {
     let output = xtask_command()?
         .arg("--list-commands")
         .arg("--json")
@@ -58,8 +29,8 @@ async fn test_command_structure_snapshot() -> ::xtask::sandbox::TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_all_commands_help() -> ::xtask::sandbox::TestResult<()> {
+#[test]
+fn test_all_commands_help() -> ::xtask::sandbox::TestResult<()> {
     let output = xtask_command()?
         .arg("--list-commands")
         .arg("--json")
@@ -84,8 +55,8 @@ async fn test_all_commands_help() -> ::xtask::sandbox::TestResult<()> {
 
 /// JSON contract for `xtask doctor --json`.
 /// Asserts the health-report envelope and per-component field presence.
-#[sinex_test]
-async fn test_doctor_json_contract() -> ::xtask::sandbox::TestResult<()> {
+#[test]
+fn test_doctor_json_contract() -> ::xtask::sandbox::TestResult<()> {
     let output = xtask_command()?.args(["doctor", "--json"]).output()?;
 
     assert!(output.status.success(), "doctor --json should exit 0");
@@ -153,8 +124,8 @@ async fn test_doctor_json_contract() -> ::xtask::sandbox::TestResult<()> {
 
 /// JSON contract for `xtask jobs list --json`.
 /// Asserts the jobs array and per-job required fields.
-#[sinex_test]
-async fn test_jobs_list_json_contract() -> ::xtask::sandbox::TestResult<()> {
+#[test]
+fn test_jobs_list_json_contract() -> ::xtask::sandbox::TestResult<()> {
     let output = xtask_command()?
         .args(["jobs", "list", "--json"])
         .output()?;
@@ -186,8 +157,8 @@ async fn test_jobs_list_json_contract() -> ::xtask::sandbox::TestResult<()> {
 
 /// JSON contract for `xtask deps list --json`.
 /// Asserts the packages array and per-package required fields.
-#[sinex_test]
-async fn test_deps_list_json_contract() -> ::xtask::sandbox::TestResult<()> {
+#[test]
+fn test_deps_list_json_contract() -> ::xtask::sandbox::TestResult<()> {
     let output = xtask_command()?
         .args(["deps", "list", "--json"])
         .output()?;

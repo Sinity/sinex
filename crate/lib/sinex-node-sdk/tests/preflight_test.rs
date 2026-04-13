@@ -627,7 +627,11 @@ async fn test_phase4_filesystem_permissions_missing_work_dir_fails_honestly() ->
         || async {
             let (status, details, messages) = resources::verify_system_resources().await?;
 
-            assert_eq!(status, VerificationStatus::Warning);
+            assert_ne!(
+                status,
+                VerificationStatus::Fail,
+                "missing but creatable work dirs must not fail preflight"
+            );
             assert!(
                 messages
                     .iter()

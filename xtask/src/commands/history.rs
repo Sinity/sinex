@@ -302,15 +302,25 @@ pub enum HistoryTestsSubcommand {
         /// Show captured failure output (can be verbose)
         #[arg(long)]
         output: bool,
+        /// Invocation ID or `latest`
+        #[arg(long, default_value = "latest")]
+        invocation: String,
     },
     /// Comprehensive analysis of the most recent test run
     ///
     /// Shows duration distribution, probable timeouts, and per-package failure summaries.
-    Analyze,
+    Analyze {
+        /// Invocation ID or `latest`
+        #[arg(long, default_value = "latest")]
+        invocation: String,
+    },
     /// Show captured output for a test (pass or fail)
     Output {
         /// Test name pattern to search for
         pattern: String,
+        /// Invocation ID or `latest`
+        #[arg(long, default_value = "latest")]
+        invocation: String,
     },
     Eta,
     /// Full-text search across stored test output (G7)
@@ -319,9 +329,16 @@ pub enum HistoryTestsSubcommand {
         text: String,
         #[arg(long, default_value = "20")]
         limit: usize,
+        /// Invocation ID or `latest`
+        #[arg(long, default_value = "latest")]
+        invocation: String,
     },
     /// Per-package pass rate, test count, avg duration, and flaky count (G7)
-    ByPackage,
+    ByPackage {
+        /// Invocation ID or `latest`
+        #[arg(long, default_value = "latest")]
+        invocation: String,
+    },
     /// P95 duration per test over recent runs (G7)
     DurationP95 {
         #[arg(long, default_value = "20")]
@@ -942,19 +959,39 @@ fn execute_tests(
             package,
             runs,
         } => execute_tests_trends(db, pattern.as_deref(), package.as_deref(), *runs, ctx),
-        HistoryTestsSubcommand::Failures { limit, output } => {
-            execute_tests_failures(db, *limit, *output, ctx)
+        HistoryTestsSubcommand::Failures {
+            limit,
+            output,
+            invocation,
+        } => execute_tests_failures(db, invocation, *limit, *output, ctx),
+        HistoryTestsSubcommand::Analyze { invocation } => {
+            execute_tests_analyze(db, invocation, ctx)
         }
-        HistoryTestsSubcommand::Analyze => execute_tests_analyze(db, ctx),
-        HistoryTestsSubcommand::Output { pattern } => execute_tests_output(db, pattern, ctx),
+        HistoryTestsSubcommand::Output {
+            pattern,
+            invocation,
+        } => execute_tests_output(db, invocation, pattern, ctx),
         HistoryTestsSubcommand::Eta => execute_tests_eta(db, ctx),
-        HistoryTestsSubcommand::Grep { text, limit } => execute_tests_grep(db, text, *limit, ctx),
-        HistoryTestsSubcommand::ByPackage => execute_tests_by_package(db, ctx),
+        HistoryTestsSubcommand::Grep {
+            text,
+            limit,
+            invocation,
+        } => execute_tests_grep(db, invocation, text, *limit, ctx),
+        HistoryTestsSubcommand::ByPackage { invocation } => {
+            execute_tests_by_package(db, invocation, ctx)
+        }
         HistoryTestsSubcommand::DurationP95 { limit } => {
             execute_tests_duration_p95(db, *limit, ctx)
         }
         HistoryTestsSubcommand::Regression { runs } => execute_tests_regression(db, *runs, ctx),
     }
+}
+
+fn resolve_selected_test_run(
+    db: &HistoryDb,
+    invocation: &str,
+) -> Result<Option<crate::history::ResolvedTestRun>> {
+    db.resolve_test_run(Some(invocation))
 }
 
 fn execute_tests_slowest(
@@ -1623,16 +1660,29 @@ fn compute_trend_direction(
 
 fn execute_tests_failures(
     db: &HistoryDb,
+    invocation: &str,
     limit: usize,
     show_output: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let tests = db.get_failing_tests_with_output(limit)?;
+    let Some(test_run) = resolve_selected_test_run(db, invocation)? else {
+        if ctx.is_human() {
+            println!("No test run data found.");
+        }
+        return Ok(CommandResult::success()
+            .with_message("No test run data")
+            .with_duration(ctx.elapsed()));
+    };
+    let tests = db.get_failing_tests_with_output(test_run.invocation_id, limit)?;
 
     if ctx.is_human() {
         if tests.is_empty() {
-            println!("No failing tests in the most recent run.");
+            println!(
+                "No failing tests in invocation #{}.",
+                test_run.invocation_id
+            );
         } else {
+            println!("Invocation #{}", test_run.invocation_id);
             let mut builder = Builder::new();
             let has_failure_msgs = tests.iter().any(|t| t.failure_message.is_some());
             if has_failure_msgs {
@@ -1700,24 +1750,47 @@ fn execute_tests_failures(
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Found {} failing tests", tests.len()))
+        .with_message(format!(
+            "Found {} failing tests in invocation #{}",
+            tests.len(),
+            test_run.invocation_id
+        ))
         .with_duration(ctx.elapsed()))
 }
 
-fn execute_tests_analyze(db: &HistoryDb, ctx: &CommandContext) -> Result<CommandResult> {
-    let analysis = db.analyze_last_run()?;
+fn execute_tests_analyze(
+    db: &HistoryDb,
+    invocation: &str,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let Some(test_run) = resolve_selected_test_run(db, invocation)? else {
+        if ctx.is_human() {
+            println!("No test run data found.");
+        }
+        return Ok(CommandResult::success()
+            .with_message("No test run data")
+            .with_duration(ctx.elapsed()));
+    };
+    let analysis = db.analyze_test_run(test_run.invocation_id)?;
 
     match analysis {
         None => {
             if ctx.is_human() {
-                println!("No test run data found.");
+                println!(
+                    "No test result rows found for invocation #{}.",
+                    test_run.invocation_id
+                );
             }
             Ok(CommandResult::success()
-                .with_message("No test run data")
+                .with_message(format!(
+                    "No test result rows for invocation #{}",
+                    test_run.invocation_id
+                ))
                 .with_duration(ctx.elapsed()))
         }
         Some(analysis) => {
-            let infra_probe = infra_timing_probe_from_result(db.get_infra_timing_summary());
+            let infra_probe =
+                infra_timing_probe_from_result(db.get_infra_timing_summary(test_run.invocation_id));
             if ctx.is_human() {
                 println!("{}", style("━━━ Test Suite Analysis ━━━").bold());
                 println!(
@@ -1822,8 +1895,8 @@ fn execute_tests_analyze(db: &HistoryDb, ctx: &CommandContext) -> Result<Command
 
             let mut result = CommandResult::success()
                 .with_message(format!(
-                    "Analysis: {} passed, {} failed",
-                    analysis.total_passed, analysis.total_failed
+                    "Analysis for invocation #{}: {} passed, {} failed",
+                    analysis.invocation_id, analysis.total_passed, analysis.total_failed
                 ))
                 .with_data(serde_json::to_value(&analysis)?)
                 .with_duration(ctx.elapsed());
@@ -1837,15 +1910,28 @@ fn execute_tests_analyze(db: &HistoryDb, ctx: &CommandContext) -> Result<Command
 
 fn execute_tests_output(
     db: &HistoryDb,
+    invocation: &str,
     pattern: &str,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let entries = db.get_test_output(pattern)?;
+    let Some(test_run) = resolve_selected_test_run(db, invocation)? else {
+        if ctx.is_human() {
+            println!("No test run data found.");
+        }
+        return Ok(CommandResult::success()
+            .with_message("No test run data")
+            .with_duration(ctx.elapsed()));
+    };
+    let entries = db.get_test_output(test_run.invocation_id, pattern)?;
 
     if ctx.is_human() {
         if entries.is_empty() {
-            println!("No tests matching '{pattern}' found in the most recent run.");
+            println!(
+                "No tests matching '{pattern}' found in invocation #{}.",
+                test_run.invocation_id
+            );
         } else {
+            println!("Invocation #{}", test_run.invocation_id);
             for entry in &entries {
                 println!(
                     "── {} ({}, {}, {:.3}s) ──",
@@ -1865,7 +1951,11 @@ fn execute_tests_output(
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Found {} matching tests", entries.len()))
+        .with_message(format!(
+            "Found {} matching tests in invocation #{}",
+            entries.len(),
+            test_run.invocation_id
+        ))
         .with_duration(ctx.elapsed()))
 }
 
@@ -1905,16 +1995,29 @@ fn execute_tests_eta(db: &HistoryDb, ctx: &CommandContext) -> Result<CommandResu
 /// Search stored test output for text (G7 --grep).
 fn execute_tests_grep(
     db: &HistoryDb,
+    invocation: &str,
     text: &str,
     limit: usize,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let results = db.search_test_output(text, limit)?;
+    let Some(test_run) = resolve_selected_test_run(db, invocation)? else {
+        if ctx.is_human() {
+            println!("No test run data found.");
+        }
+        return Ok(CommandResult::success()
+            .with_message("No test run data")
+            .with_duration(ctx.elapsed()));
+    };
+    let results = db.search_test_output(test_run.invocation_id, text, limit)?;
 
     if ctx.is_human() {
         if results.is_empty() {
-            println!("No test output matching '{text}' found in the most recent run.");
+            println!(
+                "No test output matching '{text}' found in invocation #{}.",
+                test_run.invocation_id
+            );
         } else {
+            println!("Invocation #{}", test_run.invocation_id);
             let mut builder = Builder::new();
             builder.push_record(["TEST", "PACKAGE", "STATUS", "DURATION"]);
             for entry in &results {
@@ -1955,18 +2058,38 @@ fn execute_tests_grep(
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Found {} matching tests", results.len()))
+        .with_message(format!(
+            "Found {} matching tests in invocation #{}",
+            results.len(),
+            test_run.invocation_id
+        ))
         .with_duration(ctx.elapsed()))
 }
 
 /// Per-package test stats (G7 --by-package).
-fn execute_tests_by_package(db: &HistoryDb, ctx: &CommandContext) -> Result<CommandResult> {
-    let stats = db.get_tests_by_package()?;
+fn execute_tests_by_package(
+    db: &HistoryDb,
+    invocation: &str,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let Some(test_run) = resolve_selected_test_run(db, invocation)? else {
+        if ctx.is_human() {
+            println!("No test run data found.");
+        }
+        return Ok(CommandResult::success()
+            .with_message("No test run data")
+            .with_duration(ctx.elapsed()));
+    };
+    let stats = db.get_tests_by_package(test_run.invocation_id)?;
 
     if ctx.is_human() {
         if stats.is_empty() {
-            println!("No test run data found.");
+            println!(
+                "No per-package test data found in invocation #{}.",
+                test_run.invocation_id
+            );
         } else {
+            println!("Invocation #{}", test_run.invocation_id);
             let mut builder = Builder::new();
             builder.push_record(["PACKAGE", "TOTAL", "PASSED", "FAILED", "AVG (s)", "FLAKY"]);
             for s in &stats {
@@ -1994,7 +2117,11 @@ fn execute_tests_by_package(db: &HistoryDb, ctx: &CommandContext) -> Result<Comm
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Stats for {} packages", stats.len()))
+        .with_message(format!(
+            "Stats for {} packages in invocation #{}",
+            stats.len(),
+            test_run.invocation_id
+        ))
         .with_duration(ctx.elapsed()))
 }
 
@@ -3632,7 +3759,7 @@ fn exercise_results_probe_from_result(
 mod tests {
     use super::*;
     use crate::cargo_diagnostics::CompilerDiagnostic;
-    use crate::history::HistoryDb;
+    use crate::history::{HistoryDb, TestResult as StoredTestResult, TestStatus};
     use crate::output::{OutputFormat, OutputWriter};
     use crate::sandbox::sinex_test;
     use color_eyre::eyre::eyre;
@@ -3770,6 +3897,27 @@ mod tests {
         let dir = tempdir()?;
         let db_path = dir.path().join(name);
         HistoryDb::open(&db_path)
+    }
+
+    fn store_test_result(
+        db: &HistoryDb,
+        invocation_id: i64,
+        test_name: &str,
+        package: &str,
+        status: TestStatus,
+    ) -> Result<()> {
+        db.store_test_results(
+            invocation_id,
+            &[StoredTestResult {
+                test_name: test_name.to_string(),
+                package: package.to_string(),
+                status,
+                duration_secs: Some(0.1),
+                attempt: 1,
+                output: None,
+            }],
+        )
+        .map(|_| ())
     }
 
     #[sinex_test]
@@ -3927,6 +4075,41 @@ mod tests {
             result.message.as_deref(),
             Some("Found 1 diagnostics from invocation")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_execute_tests_analyze_honors_explicit_invocation()
+    -> ::xtask::sandbox::TestResult<()> {
+        let db = seeded_history_db("tests-analyze-explicit.db")?;
+        let ctx = silent_ctx();
+
+        let older = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(older, InvocationStatus::Success, Some(0), 1.0)?;
+        store_test_result(&db, older, "older_pass", "pkg-a", TestStatus::Pass)?;
+
+        let newer = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(newer, InvocationStatus::Success, Some(0), 2.0)?;
+        store_test_result(&db, newer, "newer_fail", "pkg-b", TestStatus::Fail)?;
+
+        let result = execute_tests_analyze(&db, &older.to_string(), &ctx)?;
+        let data = result.data.expect("analysis data should be present");
+        let invocation_id = data
+            .get("invocation_id")
+            .and_then(serde_json::Value::as_i64)
+            .expect("analysis invocation id should be present");
+        let passed = data
+            .get("total_passed")
+            .and_then(serde_json::Value::as_u64)
+            .expect("analysis passed count should be present");
+        let failed = data
+            .get("total_failed")
+            .and_then(serde_json::Value::as_u64)
+            .expect("analysis failed count should be present");
+
+        assert_eq!(invocation_id, older);
+        assert_eq!(passed, 1);
+        assert_eq!(failed, 0);
         Ok(())
     }
 
