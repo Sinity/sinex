@@ -1,9 +1,15 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "properties": {
-    "activation_time": {
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
       "format": "date-time",
       "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "activation_time": {
+      "$ref": "#/$defs/DateTime"
     },
     "node": {
       "type": "string"
@@ -13,10 +19,13 @@
     }
   },
   "required": [
-    "activation_time",
+    "sensor",
     "node",
-    "sensor"
+    "activation_time"
   ],
   "title": "SensorActivatedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "sensor.activated",
+  "x-sinex-source": "sinex",
+  "x-sinex-version": "1.0.0"
 }

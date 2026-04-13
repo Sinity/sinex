@@ -19,28 +19,28 @@ This is the operational complement to the Rust-driven schema sync described in
 
 Schemas can be discovered by either:
 
-1. Path convention: `{source}/{event_type}/{version}.json`
-2. Embedded metadata fields:
+1. Embedded metadata fields:
    - `x-sinex-source`
    - `x-sinex-event-type`
    - `x-sinex-version`
+2. Path convention fallback: `{source}/{event_type}/{version}.json`
 
 ## Managing Sources
 
-The canonical interface is `sinexctl git-ops`:
+The canonical interface is `sinexctl gitops`:
 
 ```bash
 # List configured sources
-sinexctl git-ops list
+sinexctl gitops list
 
 # Create a source
-sinexctl git-ops create https://github.com/org/my-schemas.git \
+sinexctl gitops create https://github.com/org/my-schemas.git \
   --branch main \
   --pattern "schemas/**/*.json" \
   --interval 60
 
 # Trigger an immediate sync
-sinexctl git-ops sync <SOURCE_UUID>
+sinexctl gitops sync <SOURCE_UUID>
 ```
 
 ## Operational Notes

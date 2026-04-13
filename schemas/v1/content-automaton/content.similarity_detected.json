@@ -1,5 +1,12 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Content similarity detection",
   "properties": {
     "analysis_type": {
@@ -10,12 +17,11 @@
     },
     "event_group_size": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "generated_at": {
-      "format": "date-time",
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "similar_event_ids": {
       "items": {
@@ -29,12 +35,15 @@
   },
   "required": [
     "analysis_type",
-    "content_fingerprint",
+    "similarity_type",
     "event_group_size",
-    "generated_at",
+    "content_fingerprint",
     "similar_event_ids",
-    "similarity_type"
+    "generated_at"
   ],
   "title": "ContentSimilarityDetectedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "content.similarity_detected",
+  "x-sinex-source": "content-automaton",
+  "x-sinex-version": "1.0.0"
 }

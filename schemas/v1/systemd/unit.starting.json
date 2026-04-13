@@ -1,5 +1,12 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "status": {
       "type": "string"
@@ -8,7 +15,7 @@
       "type": "string"
     },
     "timestamp": {
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     }
   },
   "required": [
@@ -17,5 +24,8 @@
     "timestamp"
   ],
   "title": "SystemdUnitStartingPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "unit.starting",
+  "x-sinex-source": "systemd",
+  "x-sinex-version": "1.0.0"
 }

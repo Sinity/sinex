@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "app": {
+      "type": "string"
+    },
+    "bucket_id": {
+      "type": "string"
+    },
+    "duration_ms": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "title": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "app",
+    "title",
+    "duration_ms",
+    "bucket_id"
+  ],
+  "title": "ActivityWatchWindowActivePayload",
+  "type": "object",
+  "x-sinex-event-type": "window.active",
+  "x-sinex-source": "activitywatch",
+  "x-sinex-version": "1.0.0"
+}

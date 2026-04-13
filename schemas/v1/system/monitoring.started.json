@@ -1,5 +1,12 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "dbus_enabled": {
       "type": "boolean"
@@ -8,8 +15,7 @@
       "type": "boolean"
     },
     "start_time": {
-      "format": "date-time",
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "systemd_enabled": {
       "type": "boolean"
@@ -21,10 +27,13 @@
   "required": [
     "dbus_enabled",
     "journal_enabled",
-    "start_time",
+    "udev_enabled",
     "systemd_enabled",
-    "udev_enabled"
+    "start_time"
   ],
   "title": "SystemMonitoringStartedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "monitoring.started",
+  "x-sinex-source": "system",
+  "x-sinex-version": "1.0.0"
 }
