@@ -31,10 +31,12 @@ pub enum HistorySubcommand {
         /// Skip N entries (pagination)
         #[arg(long, default_value = "0")]
         offset: usize,
-        /// Only show invocations with IDs greater than this invocation (`latest` allowed)
+        /// Only show invocations with IDs greater than this selector
+        /// (`latest`, `previous`, `current`, numeric, `inv:<id>`, `job:<id>`)
         #[arg(long)]
         after_invocation: Option<String>,
-        /// Only show invocations with IDs less than this invocation (`latest` allowed)
+        /// Only show invocations with IDs less than this selector
+        /// (`latest`, `previous`, `current`, numeric, `inv:<id>`, `job:<id>`)
         #[arg(long)]
         before_invocation: Option<String>,
         /// Sort field: started (default), duration, status
@@ -220,12 +222,14 @@ pub enum HistorySubcommand {
     },
     /// Show complete details for a single invocation (I7)
     Invocation {
-        /// Invocation ID or 'latest'
+        /// Invocation selector: `latest`, `previous`, `current`, invocation ID,
+        /// `inv:<id>`, or `job:<id>`. Bare numeric IDs resolve as invocation IDs
+        /// first; use `job:<id>` for unambiguous background-job lookup.
         id: String,
         /// Include full stage timing and diagnostic details
         #[arg(long)]
         full: bool,
-        /// Filter 'latest' resolution to a specific command
+        /// Filter selector resolution to a specific command
         #[arg(long)]
         command: Option<String>,
     },
@@ -248,9 +252,11 @@ pub enum HistorySubcommand {
     },
     /// Show live or final progress for an invocation
     Progress {
-        /// Invocation ID to show progress for. Defaults to the most recent invocation.
+        /// Invocation selector: `current` (default), `latest`, `previous`,
+        /// invocation ID, `inv:<id>`, or `job:<id>`. Bare numeric IDs resolve as
+        /// invocation IDs first; use `job:<id>` for unambiguous background-job lookup.
         #[arg(long)]
-        invocation_id: Option<i64>,
+        invocation: Option<String>,
     },
     /// Show ETA estimates for a command based on recorded phase timings
     Eta {
@@ -580,8 +586,8 @@ impl XtaskCommand for HistoryCommand {
                 HistorySubcommand::Seed { days, invocations } => {
                     execute_seed(&db, *days, *invocations, ctx)
                 }
-                HistorySubcommand::Progress { invocation_id } => {
-                    execute_progress(&db, *invocation_id, ctx)
+                HistorySubcommand::Progress { invocation } => {
+                    execute_progress(&db, invocation.as_deref(), ctx)
                 }
                 HistorySubcommand::Eta {
                     command,
@@ -3519,17 +3525,13 @@ fn execute_seed(
 /// Show live/final progress for an invocation.
 fn execute_progress(
     db: &HistoryDb,
-    invocation_id: Option<i64>,
+    invocation: Option<&str>,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    // Resolve invocation ID: use provided, or fall back to most recent
-    let inv_id = if let Some(id) = invocation_id {
-        id
-    } else {
-        db.get_last("")?
-            .map(|i| i.id)
-            .ok_or_else(|| color_eyre::eyre::eyre!("No invocation history found"))?
-    };
+    let selector = invocation.unwrap_or("current");
+    let inv_id = db
+        .resolve_invocation_id(selector, None)?
+        .ok_or_else(|| color_eyre::eyre::eyre!("No invocation found for selector '{selector}'"))?;
 
     let progress = db.get_progress(inv_id)?;
 
@@ -4282,6 +4284,38 @@ mod tests {
 
         assert_eq!(resolved_invocation_id, invocation_id);
         assert_eq!(result.message.as_deref(), Some(expected_message.as_str()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_execute_progress_defaults_to_current_selector()
+    -> ::xtask::sandbox::TestResult<()> {
+        let db = seeded_history_db("progress-current-selector.db")?;
+        let ctx = silent_ctx();
+
+        let older = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(older, InvocationStatus::Success, Some(0), 1.0)?;
+
+        let stdout = std::path::Path::new("");
+        let stderr = std::path::Path::new("");
+        let (running_invocation, _job_id) =
+            db.start_background_job("test", &[], None, stdout, stderr)?;
+        db.write_progress(
+            running_invocation,
+            Some("tests"),
+            Some("compiling targeted crates"),
+            Some(12.5),
+            Some(5),
+            Some(40),
+        )?;
+
+        let result = execute_progress(&db, None, &ctx)?;
+        let expected_message = format!("Progress for invocation #{running_invocation}");
+
+        assert_eq!(
+            result.message.as_deref(),
+            Some(expected_message.as_str())
+        );
         Ok(())
     }
 
