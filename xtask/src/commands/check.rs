@@ -598,8 +598,11 @@ impl XtaskCommand for CheckCommand {
         // R3: Predictive prefetch — if check→test transition probability > 70%,
         // spawn `cargo test --no-run` in the background so the test binary is already
         // compiled when the developer types `xtask test`.
-        // Only in foreground mode: background checks run in CI where prefetch is wasteful.
-        if result.is_success() && !ctx.is_background() {
+        //
+        // Only interactive human runs may trigger this. JSON/compact/silent
+        // executions should remain observational and deterministic instead of
+        // consulting ambient workstation history to start helper subprocesses.
+        if result.is_success() && ctx.allows_ambient_optimizations() {
             trigger_compilation_prefetch(ctx);
         }
 
@@ -1015,6 +1018,44 @@ mod tests {
             assert!(result.is_success());
             Ok(())
         })
+    }
+
+    #[test]
+    fn test_ambient_optimizations_only_enabled_for_human_foreground()
+    -> ::xtask::sandbox::TestResult<()> {
+        let human = CommandContext::new(
+            OutputWriter::new(OutputFormat::Human),
+            false,
+            None,
+            "check",
+        );
+        assert!(human.allows_ambient_optimizations());
+
+        let json = CommandContext::new(
+            OutputWriter::new(OutputFormat::Json),
+            false,
+            None,
+            "check",
+        );
+        assert!(!json.allows_ambient_optimizations());
+
+        let silent = CommandContext::new(
+            OutputWriter::new(OutputFormat::Silent),
+            false,
+            None,
+            "check",
+        );
+        assert!(!silent.allows_ambient_optimizations());
+
+        let background = CommandContext::new(
+            OutputWriter::new(OutputFormat::Human),
+            true,
+            None,
+            "check",
+        );
+        assert!(!background.allows_ambient_optimizations());
+
+        Ok(())
     }
 
     #[sinex_test]

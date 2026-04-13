@@ -9,8 +9,8 @@ use color_eyre::eyre::WrapErr;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::history::query::HistoryAnalysis;
 use crate::history::{
-    DiagnosticQuery, ExerciseResultRow, HistoryDb, InvocationStatus, InvocationTimelineEntry,
-    LifecycleStatus,
+    DiagnosticQuery, ExerciseResultRow, HistoryDb, InvocationQuery, InvocationStatus,
+    InvocationTimelineEntry, LifecycleStatus,
 };
 
 /// History command variants
@@ -31,6 +31,12 @@ pub enum HistorySubcommand {
         /// Skip N entries (pagination)
         #[arg(long, default_value = "0")]
         offset: usize,
+        /// Only show invocations with IDs greater than this invocation (`latest` allowed)
+        #[arg(long)]
+        after_invocation: Option<String>,
+        /// Only show invocations with IDs less than this invocation (`latest` allowed)
+        #[arg(long)]
+        before_invocation: Option<String>,
         /// Sort field: started (default), duration, status
         #[arg(long, default_value = "started")]
         sort_by: String,
@@ -375,6 +381,8 @@ impl XtaskCommand for HistoryCommand {
                     first,
                     no_limit,
                     offset,
+                    after_invocation,
+                    before_invocation,
                     sort_by,
                     since,
                     with_diagnostics,
@@ -391,6 +399,8 @@ impl XtaskCommand for HistoryCommand {
                             *limit,
                             *offset,
                             command.as_deref(),
+                            after_invocation.as_deref(),
+                            before_invocation.as_deref(),
                             since.as_deref(),
                             sort_by.as_str(),
                             *with_diagnostics,
@@ -614,6 +624,8 @@ fn execute_list(
     limit: usize,
     offset: usize,
     command: Option<&str>,
+    after_invocation: Option<&str>,
+    before_invocation: Option<&str>,
     since: Option<&str>,
     sort_by: &str,
     with_diagnostics: bool,
@@ -634,8 +646,35 @@ fn execute_list(
         })
         .transpose()?;
 
-    let invocations =
-        db.get_recent_filtered(limit, offset, command, since_ts.as_deref(), sort_by)?;
+    let after_id = after_invocation
+        .map(|value| db.resolve_invocation_id(value, command))
+        .transpose()?
+        .flatten();
+    let before_id = before_invocation
+        .map(|value| db.resolve_invocation_id(value, command))
+        .transpose()?
+        .flatten();
+
+    let mut query = InvocationQuery::new().limit(limit).offset(offset);
+    if let Some(command) = command {
+        query = query.command(command);
+    }
+    if let Some(after_id) = after_id {
+        query = query.after_invocation(after_id);
+    }
+    if let Some(before_id) = before_id {
+        query = query.before_invocation(before_id);
+    }
+    if let Some(since_ts) = since_ts {
+        query = query.since_rfc3339(since_ts);
+    }
+    query = match sort_by {
+        "duration" => query.sort_duration(),
+        "status" => query.sort_status(),
+        _ => query.sort_started(),
+    };
+
+    let invocations = query.run(db)?;
 
     if ctx.is_human() {
         if invocations.is_empty() {
@@ -3929,6 +3968,8 @@ mod tests {
                 first: false,
                 no_limit: false,
                 offset: 0,
+                after_invocation: None,
+                before_invocation: None,
                 sort_by: "started".to_string(),
                 since: None,
                 with_diagnostics: false,

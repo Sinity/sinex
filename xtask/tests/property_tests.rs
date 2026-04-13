@@ -9,19 +9,9 @@
 use proptest::prelude::*;
 use sinex_primitives::temporal;
 use xtask::command::CommandResult;
-use xtask::history::{HistoryDb, InvocationStatus};
+use xtask::history::{HistoryDb, InvocationQuery, InvocationStatus};
 use xtask::output::{OutputFormat, Status, StructuredError};
 use xtask::sandbox::sinex_proptest;
-
-// ============================================================================
-// HistoryDb Test Utilities
-// ============================================================================
-
-fn prop_temp_db_path() -> (tempfile::TempDir, std::path::PathBuf) {
-    let dir = tempfile::tempdir().expect("tempdir creation must succeed");
-    let path = dir.path().join("history.db");
-    (dir, path)
-}
 
 // ============================================================================
 // Strategy Generators
@@ -464,8 +454,7 @@ sinex_proptest! {
         exit_code in 0i32..=1i32,
         duration_secs in 0.1f64..=60.0f64
     ) -> TestResult<()> {
-        let (_dir, path) = prop_temp_db_path();
-        let db = HistoryDb::open(&path).expect("temp DB open must succeed");
+        let db = HistoryDb::open_in_memory().expect("in-memory DB open must succeed");
 
         let inv_id = db.start_invocation(command, None, None, None)
             .expect("start_invocation must succeed");
@@ -477,17 +466,19 @@ sinex_proptest! {
         db.finish_invocation(inv_id, status, Some(exit_code), duration_secs)
             .expect("finish_invocation must succeed");
 
-        let recent = db.get_recent_filtered(10, 0, None, None, "started")
-            .expect("get_recent_filtered must succeed");
+        let exact = db
+            .get_invocation(inv_id)
+            .expect("get_invocation must succeed")
+            .expect("written invocation must exist");
+        let recent = InvocationQuery::new()
+            .for_invocation(inv_id)
+            .run(&db)
+            .expect("InvocationQuery::for_invocation must succeed");
 
-        prop_assert!(!recent.is_empty(), "recent list must not be empty after writing");
-        let found = recent.iter().find(|i| i.id == inv_id);
-        prop_assert!(found.is_some(), "written invocation (id={}) must be retrievable", inv_id);
-
-        // The retrieved record must round-trip command and exit_code correctly
-        let record = found.unwrap();
-        prop_assert_eq!(&record.command, &command, "command must round-trip");
-        prop_assert_eq!(record.exit_code, Some(exit_code), "exit_code must round-trip");
+        prop_assert_eq!(exact.id, inv_id, "exact lookup must preserve invocation id");
+        prop_assert_eq!(recent.len(), 1, "exact query must only return the requested invocation");
+        prop_assert_eq!(&recent[0].command, &command, "command must round-trip");
+        prop_assert_eq!(recent[0].exit_code, Some(exit_code), "exit_code must round-trip");
 
         Ok(())
     }
@@ -503,8 +494,7 @@ sinex_proptest! {
         query_limit in 1usize..=4usize
     ) -> TestResult<()> {
         // write_count (5–15) > query_limit (1–4) guarantees the cap is always exercised
-        let (_dir, path) = prop_temp_db_path();
-        let db = HistoryDb::open(&path).expect("temp DB open must succeed");
+        let db = HistoryDb::open_in_memory().expect("in-memory DB open must succeed");
 
         for _ in 0..write_count {
             let id = db.start_invocation("check", None, None, None)
@@ -513,8 +503,10 @@ sinex_proptest! {
                 .expect("finish_invocation must succeed");
         }
 
-        let results = db.get_recent_filtered(query_limit, 0, None, None, "started")
-            .expect("get_recent_filtered must succeed");
+        let results = InvocationQuery::new()
+            .limit(query_limit)
+            .run(&db)
+            .expect("InvocationQuery::limit must succeed");
 
         prop_assert!(
             results.len() <= query_limit,
@@ -535,8 +527,7 @@ sinex_proptest! {
         total in 6usize..=12usize,
         page_size in 2usize..=3usize
     ) -> TestResult<()> {
-        let (_dir, path) = prop_temp_db_path();
-        let db = HistoryDb::open(&path).expect("temp DB open must succeed");
+        let db = HistoryDb::open_in_memory().expect("in-memory DB open must succeed");
 
         for _ in 0..total {
             let id = db.start_invocation("check", None, None, None)
@@ -545,9 +536,15 @@ sinex_proptest! {
                 .expect("finish_invocation must succeed");
         }
 
-        let page0 = db.get_recent_filtered(page_size, 0,         None, None, "started")
+        let page0 = InvocationQuery::new()
+            .limit(page_size)
+            .offset(0)
+            .run(&db)
             .expect("page0 query must succeed");
-        let page1 = db.get_recent_filtered(page_size, page_size, None, None, "started")
+        let page1 = InvocationQuery::new()
+            .limit(page_size)
+            .offset(page_size)
+            .run(&db)
             .expect("page1 query must succeed");
 
         let ids0: std::collections::HashSet<i64> = page0.iter().map(|i| i.id).collect();
