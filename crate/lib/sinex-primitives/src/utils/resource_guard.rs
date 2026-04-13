@@ -13,6 +13,7 @@ where
 {
     resource: Arc<Mutex<Option<T>>>,
     cleanup_sender: Option<tokio::sync::oneshot::Sender<T>>,
+    cleanup_complete: Option<tokio::sync::oneshot::Receiver<()>>,
 }
 
 impl<T> ResourceGuard<T>
@@ -26,6 +27,7 @@ where
         Fut: std::future::Future<Output = ()> + Send + 'static,
     {
         let (cleanup_sender, cleanup_receiver) = tokio::sync::oneshot::channel();
+        let (cleanup_complete_sender, cleanup_complete_receiver) = tokio::sync::oneshot::channel();
         let resource_arc = Arc::new(Mutex::new(Some(resource)));
 
         // Spawn cleanup task
@@ -33,11 +35,13 @@ where
             if let Ok(resource) = cleanup_receiver.await {
                 cleanup(resource).await;
             }
+            let _ = cleanup_complete_sender.send(());
         });
 
         Self {
             resource: resource_arc,
             cleanup_sender: Some(cleanup_sender),
+            cleanup_complete: Some(cleanup_complete_receiver),
         }
     }
 
@@ -57,12 +61,26 @@ where
     /// Take the resource, consuming the guard and skipping cleanup.
     pub async fn take(mut self) -> Option<T> {
         self.cleanup_sender.take();
+        self.cleanup_complete.take();
         self.resource.lock().await.take()
     }
 
     /// Release resource early without cleanup (for error cases).
     pub async fn release_without_cleanup(self) -> Option<T> {
         self.take().await
+    }
+
+    /// Trigger cleanup immediately and wait until the cleanup future completes.
+    pub async fn cleanup_now(mut self) {
+        if let Some(sender) = self.cleanup_sender.take()
+            && let Some(resource) = self.resource.lock().await.take()
+        {
+            let _ = sender.send(resource);
+        }
+
+        if let Some(cleanup_complete) = self.cleanup_complete.take() {
+            let _ = cleanup_complete.await;
+        }
     }
 }
 

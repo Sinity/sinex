@@ -13,13 +13,11 @@ use sinex_primitives::environment::environment;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
-use tokio::time::sleep;
 use xtask::sandbox::nats::ensure_coordination_buckets;
 
 use sinex_db::advisory_lock::AdvisoryLock;
 use sinex_primitives::utils::ResourceGuard;
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::WaitHelpers;
 
 // =============================================================================
 // Advisory Lock Tests
@@ -40,19 +38,7 @@ async fn test_advisory_lock_acquire_release(ctx: TestContext) -> Result<()> {
     assert!(is_locked, "Lock should be held after acquisition");
 
     // Release lock
-    drop(lock_guard);
-
-    WaitHelpers::wait_for_condition(
-        || {
-            let pool = ctx.pool().clone();
-            let key = lock_key.clone();
-            async move {
-                Ok::<bool, xtask::sandbox::SinexError>(!AdvisoryLock::is_locked(&pool, &key).await?)
-            }
-        },
-        5,
-    )
-    .await?;
+    lock_guard.cleanup_now().await;
 
     // Verify lock is released (should be able to acquire again)
     let lock_guard2: Option<ResourceGuard<AdvisoryLock>> =
@@ -61,6 +47,9 @@ async fn test_advisory_lock_acquire_release(ctx: TestContext) -> Result<()> {
         lock_guard2.is_some(),
         "Should be able to acquire lock after release"
     );
+    if let Some(lock_guard2) = lock_guard2 {
+        lock_guard2.cleanup_now().await;
+    }
 
     Ok(())
 }
