@@ -59,6 +59,7 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
 
     // Client that accepts self-signed certificates
     let client = Client::builder()
+        .pool_max_idle_per_host(0)
         .danger_accept_invalid_certs(true)
         .build()?;
 
@@ -66,6 +67,7 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
     let resp = client
         .post(&base_url)
         .header("content-type", "application/json")
+        .header("connection", "close")
         .body(r#"{"jsonrpc":"2.0", "method":"system.ping", "id":1}"#)
         .send()
         .await?;
@@ -79,6 +81,7 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
     let resp = client
         .post(&base_url)
         .header("content-type", "application/json")
+        .header("connection", "close")
         .header("Authorization", "Bearer invalid-token")
         .body(r#"{"jsonrpc":"2.0", "method":"system.ping", "id":1}"#)
         .send()
@@ -93,6 +96,7 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
     let resp = client
         .post(&base_url)
         .header("content-type", "application/json")
+        .header("connection", "close")
         .header("Authorization", format!("Bearer {token}"))
         .body(r#"{"jsonrpc":"2.0", "method":"system.ping", "id":1}"#)
         .send()
@@ -106,6 +110,7 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
     assert_eq!(body["result"], "pong");
 
     // Cleanup
+    drop(client);
     let _ = shutdown_tx.send(true);
     let _ = handle.await;
     unsafe {

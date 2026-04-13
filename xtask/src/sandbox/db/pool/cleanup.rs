@@ -299,7 +299,7 @@ mod tests {
         advisory_lock_key, connect_admin_with_retry, drop_database_if_exists_admin,
         recreate_pool_database, url_with_db_name, wait_for_database_absence_admin,
     };
-    use crate::sandbox::sinex_serial_test;
+    use crate::sandbox::sinex_test;
     use parking_lot::Mutex;
     use sqlx::postgres::PgPoolOptions;
     use std::sync::atomic::AtomicBool;
@@ -319,7 +319,7 @@ mod tests {
         })
     }
 
-    #[sinex_serial_test]
+    #[sinex_test]
     async fn process_cleanup_task_restores_recreated_pool() -> TestResult<()> {
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_cleanup_recreated_pool_{}", std::process::id());

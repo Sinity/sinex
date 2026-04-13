@@ -990,8 +990,8 @@ printf '%s\n' '{"packages":[{"id":"path+file:///tmp/outside#0.1.0","name":"sinex
         Ok(())
     }
 
-    #[test]
-    fn test_read_snapshot_output_reports_missing_file() -> ::xtask::sandbox::TestResult<()> {
+    #[sinex_test]
+    async fn test_read_snapshot_output_reports_missing_file() -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
         let missing = temp.path().join("missing.xml");
         let error = read_snapshot_output(&missing).expect_err("missing snapshot should error");
@@ -1000,8 +1000,8 @@ printf '%s\n' '{"packages":[{"id":"path+file:///tmp/outside#0.1.0","name":"sinex
         Ok(())
     }
 
-    #[test]
-    fn test_probe_repomix_reports_probe_failures() -> ::xtask::sandbox::TestResult<()> {
+    #[sinex_test]
+    async fn test_probe_repomix_reports_probe_failures() -> ::xtask::sandbox::TestResult<()> {
         #[cfg(unix)]
         {
             let probe = probe_repomix(Ok(Output {
@@ -1017,8 +1017,8 @@ printf '%s\n' '{"packages":[{"id":"path+file:///tmp/outside#0.1.0","name":"sinex
         Ok(())
     }
 
-    #[test]
-    fn test_probe_repomix_reports_missing_binary() -> ::xtask::sandbox::TestResult<()> {
+    #[sinex_test]
+    async fn test_probe_repomix_reports_missing_binary() -> ::xtask::sandbox::TestResult<()> {
         #[cfg(unix)]
         {
             let probe = probe_repomix(Ok(Output {
@@ -1031,8 +1031,8 @@ printf '%s\n' '{"packages":[{"id":"path+file:///tmp/outside#0.1.0","name":"sinex
         Ok(())
     }
 
-    #[test]
-    fn test_push_context_field_includes_issue_line() -> ::xtask::sandbox::TestResult<()> {
+    #[sinex_test]
+    async fn test_push_context_field_includes_issue_line() -> ::xtask::sandbox::TestResult<()> {
         let mut lines = vec!["[xtask-context]".to_string()];
         push_context_field(
             &mut lines,
@@ -1048,8 +1048,8 @@ printf '%s\n' '{"packages":[{"id":"path+file:///tmp/outside#0.1.0","name":"sinex
         Ok(())
     }
 
-    #[test]
-    fn test_build_context_block_reports_unavailable_history_db()
+    #[sinex_test]
+    async fn test_build_context_block_reports_unavailable_history_db()
     -> ::xtask::sandbox::TestResult<()> {
         let temp = tempfile::tempdir()?;
         let blocked_parent = temp.path().join("not-a-dir");

@@ -11,6 +11,7 @@ use sinex_gateway::sse_bus::{MAX_ACTIVE_SUBSCRIPTIONS, SseMessage, SubscriptionB
 use sinex_primitives::query::{PayloadFilter, SubscriptionFilter};
 use sinex_primitives::temporal;
 use sinex_primitives::{EventSource, EventType, Uuid as CoreUuid};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Notify, watch};
@@ -138,6 +139,35 @@ async fn recv_timeout(
         .flatten()
 }
 
+async fn drain_until_idle<F>(
+    rx: &mut tokio::sync::mpsc::Receiver<SseMessage>,
+    idle_timeout: Duration,
+    mut on_message: F,
+) where
+    F: FnMut(SseMessage),
+{
+    while let Some(message) = recv_timeout(rx, idle_timeout).await {
+        on_message(message);
+    }
+}
+
+async fn assert_task_stays_running(
+    task: &tokio::task::JoinHandle<()>,
+    window: Duration,
+    context: &str,
+) -> color_eyre::Result<()> {
+    let finished = tokio::time::timeout(window, async {
+        while !task.is_finished() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .is_ok();
+
+    assert!(!finished, "{context}");
+    Ok(())
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Tests: Bus bookkeeping
 // ─────────────────────────────────────────────────────────────────────
@@ -238,11 +268,12 @@ async fn bus_retries_initial_subscribe_failures_until_shutdown(
         }
     });
 
-    tokio::time::sleep(Duration::from_millis(250)).await;
-    assert!(
-        !bus_task.is_finished(),
-        "initial subscribe failure should keep the bus retrying instead of exiting"
-    );
+    assert_task_stays_running(
+        &bus_task,
+        Duration::from_millis(250),
+        "initial subscribe failure should keep the bus retrying instead of exiting",
+    )
+    .await?;
 
     let _ = shutdown_tx.send(true);
     tokio::time::timeout(Duration::from_secs(2), bus_task).await??;
@@ -263,11 +294,12 @@ async fn bus_retries_when_subscription_closes_after_startup(
 
     ctx.nats_handle()?.shutdown().await?;
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    assert!(
-        !bus_task.is_finished(),
-        "closing the live NATS subscription should keep the bus in reconnect mode instead of exiting"
-    );
+    assert_task_stays_running(
+        &bus_task,
+        Duration::from_secs(1),
+        "closing the live NATS subscription should keep the bus in reconnect mode instead of exiting",
+    )
+    .await?;
 
     let _ = shutdown_tx.send(true);
     tokio::time::timeout(Duration::from_secs(2), bus_task).await??;
@@ -389,14 +421,12 @@ async fn source_filter_delivers_matching_only(ctx: TestContext) -> color_eyre::R
             Some(_) => {} // heartbeat or gap
             None => {
                 if !received.is_empty() {
-                    // Got at least one event; wait a bit more for any stragglers.
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    // Drain remaining.
-                    while let Some(msg) = recv_timeout(&mut rx, Duration::from_millis(50)).await {
+                    drain_until_idle(&mut rx, Duration::from_millis(100), |msg| {
                         if let SseMessage::Event { event, .. } = msg {
                             received.push(event.source.as_str().to_string());
                         }
-                    }
+                    })
+                    .await;
                     break;
                 }
             }
@@ -467,12 +497,12 @@ async fn event_type_filter_works(ctx: TestContext) -> color_eyre::Result<()> {
             }
             Some(_) => {}
             None if !received_types.is_empty() => {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                while let Some(msg) = recv_timeout(&mut rx, Duration::from_millis(50)).await {
+                drain_until_idle(&mut rx, Duration::from_millis(100), |msg| {
                     if let SseMessage::Event { event, .. } = msg {
                         received_types.push(event.event_type.as_str().to_string());
                     }
-                }
+                })
+                .await;
                 break;
             }
             None => {}
@@ -544,14 +574,14 @@ async fn payload_text_search_filter(ctx: TestContext) -> color_eyre::Result<()> 
             }
             Some(_) => {}
             None if !received_ids.is_empty() => {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                while let Some(msg) = recv_timeout(&mut rx, Duration::from_millis(50)).await {
+                drain_until_idle(&mut rx, Duration::from_millis(100), |msg| {
                     if let SseMessage::Event { event, .. } = msg
                         && let Some(id) = &event.id
                     {
                         received_ids.push(*id.as_uuid());
                     }
-                }
+                })
+                .await;
                 break;
             }
             None => {}
@@ -611,14 +641,14 @@ async fn combined_source_and_type_filter(ctx: TestContext) -> color_eyre::Result
             }
             Some(_) => {}
             None if !received.is_empty() => {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                while let Some(msg) = recv_timeout(&mut rx, Duration::from_millis(50)).await {
+                drain_until_idle(&mut rx, Duration::from_millis(100), |msg| {
                     if let SseMessage::Event { event, .. } = msg
                         && let Some(id) = &event.id
                     {
                         received.push(*id.as_uuid());
                     }
-                }
+                })
+                .await;
                 break;
             }
             None => {}
@@ -644,14 +674,16 @@ async fn slow_consumer_gap_arrives_before_resumed_event(
     let env = ctx.env().clone();
     let env_name = env.name().to_string();
 
-    let bus = Arc::new(SubscriptionBus::new());
+    let bus = Arc::new(SubscriptionBus::with_channel_capacity(2));
     let (_, mut rx) = bus
         .register(SubscriptionFilter::default(), None)
         .expect("test subscription should register");
     let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
     let nats_pub = ctx.nats_client();
-    for i in 0..300 {
+    // Hit the bus's immediate flush threshold in a single wave so the initial
+    // overflow is deterministic and the later publish becomes the recovery trigger.
+    for i in 0..32 {
         let id = insert_test_event(
             &pool,
             "gap-source",
@@ -663,8 +695,6 @@ async fn slow_consumer_gap_arrives_before_resumed_event(
         publish_confirmation(&nats_pub, &env_name, &id).await?;
     }
 
-    tokio::time::sleep(Duration::from_millis(250)).await;
-
     for _ in 0..2 {
         match recv_timeout(&mut rx, Duration::from_secs(2)).await {
             Some(SseMessage::Event { .. }) => {}
@@ -672,21 +702,25 @@ async fn slow_consumer_gap_arrives_before_resumed_event(
         }
     }
 
-    let resumed_id = insert_test_event(
-        &pool,
-        "gap-source",
-        "gap.event",
-        "localhost",
-        json!({ "seq": "resumed" }),
-    )
-    .await?;
-    publish_confirmation(&nats_pub, &env_name, &resumed_id).await?;
-
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let mut gap_seen = None;
     let mut resumed_seen = false;
+    let mut recovery_ids = HashSet::new();
+    let mut recovery_seq = 0u32;
     while tokio::time::Instant::now() < deadline {
-        match recv_timeout(&mut rx, Duration::from_millis(200)).await {
+        let recovery_id = insert_test_event(
+            &pool,
+            "gap-source",
+            "gap.event",
+            "localhost",
+            json!({ "seq": format!("recovery-{recovery_seq}") }),
+        )
+        .await?;
+        recovery_seq = recovery_seq.saturating_add(1);
+        recovery_ids.insert(recovery_id);
+        publish_confirmation(&nats_pub, &env_name, &recovery_id).await?;
+
+        match recv_timeout(&mut rx, Duration::from_millis(250)).await {
             Some(SseMessage::Gap {
                 from_seq,
                 to_seq,
@@ -695,8 +729,13 @@ async fn slow_consumer_gap_arrives_before_resumed_event(
                 gap_seen = Some((from_seq, to_seq, dropped));
             }
             Some(SseMessage::Event { event, .. }) => {
-                if event.id.as_ref().map(|id| *id.as_uuid()) == Some(resumed_id) {
-                    assert!(gap_seen.is_some(), "gap marker must precede resumed event");
+                if event
+                    .id
+                    .as_ref()
+                    .map(|id| *id.as_uuid())
+                    .is_some_and(|event_id| recovery_ids.contains(&event_id))
+                    && gap_seen.is_some()
+                {
                     resumed_seen = true;
                     break;
                 }

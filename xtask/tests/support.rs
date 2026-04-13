@@ -1,5 +1,9 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static SUBPROCESS_STATE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub fn xtask_bin() -> color_eyre::eyre::Result<PathBuf> {
     if let Some(bin) = std::env::var_os("CARGO_BIN_EXE_xtask") {
@@ -31,5 +35,21 @@ pub fn xtask_command() -> color_eyre::eyre::Result<Command> {
     // Clear any suite-level XTASK_HISTORY_DB override so children use the state
     // directory unless the caller opts into a specific history DB explicitly.
     command.env_remove("XTASK_HISTORY_DB");
+    command.env("SINEX_STATE_DIR", fresh_state_dir()?);
+    command.env("NO_COLOR", "1");
+    command.env("FORCE_COLOR", "0");
     Ok(command)
+}
+
+fn fresh_state_dir() -> color_eyre::eyre::Result<PathBuf> {
+    let base = std::env::temp_dir().join("sinex-xtask-test-state");
+    fs::create_dir_all(&base)?;
+
+    let state_dir = base.join(format!(
+        "{}-{}",
+        std::process::id(),
+        SUBPROCESS_STATE_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir_all(&state_dir)?;
+    Ok(state_dir)
 }

@@ -693,16 +693,7 @@ mod tests {
     use crate::command::CommandContext;
     use crate::output::{OutputFormat, OutputWriter};
     use crate::sandbox::sinex_test;
-    use std::{future::Future, sync::Arc};
-
-    fn run_async_test(
-        fut: impl Future<Output = ::xtask::sandbox::TestResult<()>>,
-    ) -> ::xtask::sandbox::TestResult<()> {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?
-            .block_on(fut)
-    }
+    use std::sync::Arc;
 
     fn make_cmd(lint: bool, fmt: bool, forbidden: bool, full: bool) -> CheckCommand {
         CheckCommand {
@@ -721,8 +712,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_check_command_metadata() -> ::xtask::sandbox::TestResult<()> {
+    #[sinex_test]
+    async fn test_check_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = make_cmd(false, false, false, false);
         let metadata = cmd.metadata();
         assert_eq!(metadata.category, Some("check"));
@@ -730,15 +721,15 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_check_command_name() -> ::xtask::sandbox::TestResult<()> {
+    #[sinex_test]
+    async fn test_check_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = make_cmd(false, false, false, false);
         assert_eq!(cmd.name(), "check");
         Ok(())
     }
 
-    #[test]
-    fn test_full_flag_resolves() -> ::xtask::sandbox::TestResult<()> {
+    #[sinex_test]
+    async fn test_full_flag_resolves() -> ::xtask::sandbox::TestResult<()> {
         let mut cmd = make_cmd(false, false, false, true);
         cmd.resolve_flags();
         assert!(cmd.lint);
@@ -748,8 +739,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_fix_flag_implies_full() -> ::xtask::sandbox::TestResult<()> {
+    #[sinex_test]
+    async fn test_fix_flag_implies_full() -> ::xtask::sandbox::TestResult<()> {
         let mut cmd = CheckCommand {
             fix: true,
             ..make_cmd(false, false, false, false)
@@ -761,8 +752,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_defaults_are_compile_only() -> ::xtask::sandbox::TestResult<()> {
+    #[sinex_test]
+    async fn test_defaults_are_compile_only() -> ::xtask::sandbox::TestResult<()> {
         let cmd = make_cmd(false, false, false, false);
         assert!(!cmd.lint);
         assert!(!cmd.fmt);
@@ -830,198 +821,178 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_execute_clean_compile_succeeds() -> ::xtask::sandbox::TestResult<()> {
-        run_async_test(async {
-            let runner = Arc::new(MockCargoRunner::clean());
-            let ctx = mock_ctx(runner);
-            let cmd = make_cmd(false, false, false, false);
-            let result = cmd.execute(&ctx).await?;
-            assert!(
-                result.is_success(),
-                "clean check should succeed: {result:?}"
-            );
-            Ok(())
-        })
+    #[sinex_test]
+    async fn test_execute_clean_compile_succeeds() -> ::xtask::sandbox::TestResult<()> {
+        let runner = Arc::new(MockCargoRunner::clean());
+        let ctx = mock_ctx(runner);
+        let cmd = make_cmd(false, false, false, false);
+        let result = cmd.execute(&ctx).await?;
+        assert!(
+            result.is_success(),
+            "clean check should succeed: {result:?}"
+        );
+        Ok(())
     }
 
-    #[test]
-    fn test_execute_check_warns_when_fixable_count_is_unavailable()
+    #[sinex_test]
+    async fn test_execute_check_warns_when_fixable_count_is_unavailable()
     -> ::xtask::sandbox::TestResult<()> {
-        run_async_test(async {
-            let runner = Arc::new(MockCargoRunner::clean());
-            let temp = tempfile::tempdir()?;
-            let ctx = mock_ctx_with_history(runner, Some(42), temp.path().to_path_buf());
-            let cmd = make_cmd(false, false, false, false);
-            let result = cmd.execute(&ctx).await?;
-            let data = result
-                .data
-                .as_ref()
-                .unwrap_or_else(|| panic!("expected structured data"));
-            assert!(
-                result.is_success(),
-                "clean check should still succeed: {result:?}"
-            );
-            assert!(
-                result
-                    .warnings
-                    .iter()
-                    .any(|warning| warning.contains("auto-fixable diagnostic count"))
-            );
-            assert!(data.get("fixable").is_none());
-            Ok(())
-        })
+        let runner = Arc::new(MockCargoRunner::clean());
+        let temp = tempfile::tempdir()?;
+        let ctx = mock_ctx_with_history(runner, Some(42), temp.path().to_path_buf());
+        let cmd = make_cmd(false, false, false, false);
+        let result = cmd.execute(&ctx).await?;
+        let data = result
+            .data
+            .as_ref()
+            .unwrap_or_else(|| panic!("expected structured data"));
+        assert!(
+            result.is_success(),
+            "clean check should still succeed: {result:?}"
+        );
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("auto-fixable diagnostic count"))
+        );
+        assert!(data.get("fixable").is_none());
+        Ok(())
     }
 
-    #[test]
-    fn test_execute_check_without_history_invocation_skips_fixable_probe_warning()
+    #[sinex_test]
+    async fn test_execute_check_without_history_invocation_skips_fixable_probe_warning()
     -> ::xtask::sandbox::TestResult<()> {
-        run_async_test(async {
-            let runner = Arc::new(MockCargoRunner::clean());
-            let ctx = mock_ctx(runner);
-            let cmd = make_cmd(false, false, false, false);
-            let result = cmd.execute(&ctx).await?;
-            assert!(
-                result.is_success(),
-                "clean check should succeed: {result:?}"
-            );
-            assert!(
-                result
-                    .warnings
-                    .iter()
-                    .all(|warning| !warning.contains("auto-fixable diagnostic count")),
-                "unexpected auto-fixable warning: {:?}",
-                result.warnings
-            );
-            Ok(())
-        })
+        let runner = Arc::new(MockCargoRunner::clean());
+        let ctx = mock_ctx(runner);
+        let cmd = make_cmd(false, false, false, false);
+        let result = cmd.execute(&ctx).await?;
+        assert!(
+            result.is_success(),
+            "clean check should succeed: {result:?}"
+        );
+        assert!(
+            result
+                .warnings
+                .iter()
+                .all(|warning| !warning.contains("auto-fixable diagnostic count")),
+            "unexpected auto-fixable warning: {:?}",
+            result.warnings
+        );
+        Ok(())
     }
 
-    #[test]
-    fn test_execute_check_errors_yield_failure() -> ::xtask::sandbox::TestResult<()> {
-        run_async_test(async {
-            let runner = Arc::new(MockCargoRunner::clean().with_check(error_summary()));
-            let ctx = mock_ctx(runner);
-            let cmd = make_cmd(false, false, false, false);
-            let result = cmd.execute(&ctx).await?;
-            assert!(!result.is_success(), "check with errors should fail");
-            assert!(
-                result.errors.iter().any(|e| e.code == "CHECK_FAILED"),
-                "expected CHECK_FAILED in errors: {:?}",
-                result.errors,
-            );
-            Ok(())
-        })
+    #[sinex_test]
+    async fn test_execute_check_errors_yield_failure() -> ::xtask::sandbox::TestResult<()> {
+        let runner = Arc::new(MockCargoRunner::clean().with_check(error_summary()));
+        let ctx = mock_ctx(runner);
+        let cmd = make_cmd(false, false, false, false);
+        let result = cmd.execute(&ctx).await?;
+        assert!(!result.is_success(), "check with errors should fail");
+        assert!(
+            result.errors.iter().any(|e| e.code == "CHECK_FAILED"),
+            "expected CHECK_FAILED in errors: {:?}",
+            result.errors,
+        );
+        Ok(())
     }
 
-    #[test]
-    fn test_execute_lint_routes_to_clippy_not_check() -> ::xtask::sandbox::TestResult<()> {
-        run_async_test(async {
-            let runner = Arc::new(MockCargoRunner::clean());
-            let ctx = mock_ctx(runner.clone());
-            let cmd = make_cmd(true, false, false, false); // --lint
-            cmd.execute(&ctx).await?;
-            let calls = runner.calls();
-            assert_eq!(calls.clippy, 1, "clippy should have been called once");
-            assert_eq!(
-                calls.check, 0,
-                "cargo check must NOT run when --lint active"
-            );
-            Ok(())
-        })
+    #[sinex_test]
+    async fn test_execute_lint_routes_to_clippy_not_check() -> ::xtask::sandbox::TestResult<()> {
+        let runner = Arc::new(MockCargoRunner::clean());
+        let ctx = mock_ctx(runner.clone());
+        let cmd = make_cmd(true, false, false, false); // --lint
+        cmd.execute(&ctx).await?;
+        let calls = runner.calls();
+        assert_eq!(calls.clippy, 1, "clippy should have been called once");
+        assert_eq!(
+            calls.check, 0,
+            "cargo check must NOT run when --lint active"
+        );
+        Ok(())
     }
 
-    #[test]
-    fn test_execute_compile_only_routes_to_check_not_clippy()
+    #[sinex_test]
+    async fn test_execute_compile_only_routes_to_check_not_clippy()
     -> ::xtask::sandbox::TestResult<()> {
-        run_async_test(async {
-            let runner = Arc::new(MockCargoRunner::clean());
-            let ctx = mock_ctx(runner.clone());
-            let cmd = make_cmd(false, false, false, false); // default: compile-only
-            cmd.execute(&ctx).await?;
-            let calls = runner.calls();
-            assert_eq!(calls.check, 1, "cargo check should have been called once");
-            assert_eq!(calls.clippy, 0, "clippy must NOT run in compile-only mode");
-            Ok(())
-        })
+        let runner = Arc::new(MockCargoRunner::clean());
+        let ctx = mock_ctx(runner.clone());
+        let cmd = make_cmd(false, false, false, false); // default: compile-only
+        cmd.execute(&ctx).await?;
+        let calls = runner.calls();
+        assert_eq!(calls.check, 1, "cargo check should have been called once");
+        assert_eq!(calls.clippy, 0, "clippy must NOT run in compile-only mode");
+        Ok(())
     }
 
-    #[test]
-    fn test_execute_clippy_errors_yield_failure() -> ::xtask::sandbox::TestResult<()> {
-        run_async_test(async {
-            let runner = Arc::new(MockCargoRunner::clean().with_clippy(error_summary()));
-            let ctx = mock_ctx(runner);
-            let cmd = make_cmd(true, false, false, false); // --lint
-            let result = cmd.execute(&ctx).await?;
-            assert!(
-                !result.is_success(),
-                "clippy errors should propagate to failure"
-            );
-            assert!(
-                result.errors.iter().any(|e| e.code == "CLIPPY_FAILED"),
-                "expected CLIPPY_FAILED in errors: {:?}",
-                result.errors,
-            );
-            Ok(())
-        })
+    #[sinex_test]
+    async fn test_execute_clippy_errors_yield_failure() -> ::xtask::sandbox::TestResult<()> {
+        let runner = Arc::new(MockCargoRunner::clean().with_clippy(error_summary()));
+        let ctx = mock_ctx(runner);
+        let cmd = make_cmd(true, false, false, false); // --lint
+        let result = cmd.execute(&ctx).await?;
+        assert!(
+            !result.is_success(),
+            "clippy errors should propagate to failure"
+        );
+        assert!(
+            result.errors.iter().any(|e| e.code == "CLIPPY_FAILED"),
+            "expected CLIPPY_FAILED in errors: {:?}",
+            result.errors,
+        );
+        Ok(())
     }
 
-    #[test]
-    fn test_execute_fmt_fail_short_circuits_before_compile()
+    #[sinex_test]
+    async fn test_execute_fmt_fail_short_circuits_before_compile()
     -> ::xtask::sandbox::TestResult<()> {
-        run_async_test(async {
-            // --fmt with a formatting violation should bail before running cargo check.
-            let runner = Arc::new(MockCargoRunner::clean().with_fmt_fail());
-            let ctx = mock_ctx(runner.clone());
-            let cmd = make_cmd(false, true, false, false); // --fmt
-            let result = cmd.execute(&ctx).await;
-            // fmt failure surfaces as Err (propagated via `?` in execute)
-            assert!(result.is_err(), "fmt failure should propagate as Err");
-            let calls = runner.calls();
-            assert_eq!(calls.fmt, 1, "fmt must have been called");
-            assert_eq!(calls.check, 0, "cargo check must NOT run after fmt failure");
-            Ok(())
-        })
+        // --fmt with a formatting violation should bail before running cargo check.
+        let runner = Arc::new(MockCargoRunner::clean().with_fmt_fail());
+        let ctx = mock_ctx(runner.clone());
+        let cmd = make_cmd(false, true, false, false); // --fmt
+        let result = cmd.execute(&ctx).await;
+        // fmt failure surfaces as Err (propagated via `?` in execute)
+        assert!(result.is_err(), "fmt failure should propagate as Err");
+        let calls = runner.calls();
+        assert_eq!(calls.fmt, 1, "fmt must have been called");
+        assert_eq!(calls.check, 0, "cargo check must NOT run after fmt failure");
+        Ok(())
     }
 
-    #[test]
-    fn test_execute_warnings_recorded_in_result() -> ::xtask::sandbox::TestResult<()> {
-        run_async_test(async {
-            // Warnings don't fail the check, but they appear in result.warnings.
-            let runner = Arc::new(MockCargoRunner::clean().with_check(warning_summary(3)));
-            let ctx = mock_ctx(runner);
-            let cmd = make_cmd(false, false, false, false);
-            let result = cmd.execute(&ctx).await?;
-            assert!(
-                result.is_success(),
-                "warnings alone should not fail the check"
-            );
-            assert!(
-                result.warnings.iter().any(|w| w.contains("3 warning")),
-                "3 warnings should appear in result.warnings: {:?}",
-                result.warnings
-            );
-            Ok(())
-        })
+    #[sinex_test]
+    async fn test_execute_warnings_recorded_in_result() -> ::xtask::sandbox::TestResult<()> {
+        // Warnings don't fail the check, but they appear in result.warnings.
+        let runner = Arc::new(MockCargoRunner::clean().with_check(warning_summary(3)));
+        let ctx = mock_ctx(runner);
+        let cmd = make_cmd(false, false, false, false);
+        let result = cmd.execute(&ctx).await?;
+        assert!(
+            result.is_success(),
+            "warnings alone should not fail the check"
+        );
+        assert!(
+            result.warnings.iter().any(|w| w.contains("3 warning")),
+            "3 warnings should appear in result.warnings: {:?}",
+            result.warnings
+        );
+        Ok(())
     }
 
-    #[test]
-    fn test_execute_progress_callback_fired_per_package() -> ::xtask::sandbox::TestResult<()> {
-        run_async_test(async {
-            // Verify that the progress callback is fired once per compiled package.
-            // MockCargoRunner fires on_package_done N times for N compiled_packages.
-            let runner = Arc::new(MockCargoRunner::clean().with_check(warning_summary(5)));
-            let ctx = mock_ctx(runner);
-            let cmd = make_cmd(false, false, false, false);
-            // If the callback fires correctly, execute completes without panic.
-            let result = cmd.execute(&ctx).await?;
-            assert!(result.is_success());
-            Ok(())
-        })
+    #[sinex_test]
+    async fn test_execute_progress_callback_fired_per_package() -> ::xtask::sandbox::TestResult<()> {
+        // Verify that the progress callback is fired once per compiled package.
+        // MockCargoRunner fires on_package_done N times for N compiled_packages.
+        let runner = Arc::new(MockCargoRunner::clean().with_check(warning_summary(5)));
+        let ctx = mock_ctx(runner);
+        let cmd = make_cmd(false, false, false, false);
+        // If the callback fires correctly, execute completes without panic.
+        let result = cmd.execute(&ctx).await?;
+        assert!(result.is_success());
+        Ok(())
     }
 
-    #[test]
-    fn test_ambient_optimizations_only_enabled_for_human_foreground()
+    #[sinex_test]
+    async fn test_ambient_optimizations_only_enabled_for_human_foreground()
     -> ::xtask::sandbox::TestResult<()> {
         let human = CommandContext::new(
             OutputWriter::new(OutputFormat::Human),
