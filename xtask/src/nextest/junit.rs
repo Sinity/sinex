@@ -12,10 +12,6 @@ use quick_xml::reader::Reader;
 use std::collections::HashMap;
 use std::path::Path;
 
-/// Relative path within `target/nextest/{profile}/` to the JUnit XML report.
-/// Configured in `.config/nextest.toml` under `[profile.default.junit]`.
-const JUNIT_XML_RELATIVE: &str = ".sinex/nextest/junit.xml";
-
 /// A parsed test entry from JUnit XML with its captured output.
 #[derive(Debug)]
 pub struct JunitTestOutput {
@@ -364,12 +360,14 @@ pub fn parse_junit_outputs(path: &Path) -> Result<HashMap<String, String>> {
 
 /// Get the JUnit XML path for a given nextest profile.
 ///
-/// nextest writes JUnit XML to `target/nextest/{profile}/{junit.path}` where
-/// `junit.path` comes from `[profile.{name}.junit]` in nextest.toml (inherited
-/// from `[profile.default.junit]` if not overridden).
+/// JUnit reports live under `.sinex/nextest/{profile}/junit.xml` because the
+/// repo config sets nextest's store dir to `.sinex/nextest`.
 #[must_use]
 pub fn junit_path_for_profile(profile: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(format!("target/nextest/{profile}/{JUNIT_XML_RELATIVE}"))
+    crate::config::workspace_state_root()
+        .join("nextest")
+        .join(profile)
+        .join("junit.xml")
 }
 
 #[cfg(test)]

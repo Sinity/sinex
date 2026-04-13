@@ -9,6 +9,7 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 use crate::preflight;
 use color_eyre::eyre::Result;
 
+/// Build workspace packages while capturing compiler diagnostics.
 #[derive(Debug, Clone, Default, clap::Args)]
 pub struct BuildCommand {
     /// Packages to build (default: all)

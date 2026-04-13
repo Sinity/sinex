@@ -25,8 +25,10 @@
 | ingestd pipeline | `crate/core/sinex-ingestd/docs/architecture.md` |
 | Gateway API | `crate/core/sinex-gateway/docs/architecture.md` |
 | CLI | `crate/cli/README.md`, `crate/cli/DESIGN.md` |
-| Testing | `xtask/docs/sandbox/README.md` |
-| Perf contracts | `config/verify/perf-contracts.toml` |
+| Contributing | `CONTRIBUTING.md` |
+| Issue / PR workflow | `CONTRIBUTING.md`, `.github/ISSUE_TEMPLATE/*`, `.github/pull_request_template.md` |
+| Testing | `TESTING.md`, `xtask/docs/sandbox/README.md` |
+| Perf contracts | `xtask/config/perf-contracts.toml` |
 | NixOS/TLS/env vars | `nixos/modules/README.md` |
-| xtask guide | `xtask/docs/README.md` |
+| xtask guide | `xtask/docs/README.md`, `xtask/docs/command-guide.md`, `xtask/docs/command-reference.md` |
 | Vision/roadmap | `/realm/project/sinex-target-vision/AGENTS.md` |

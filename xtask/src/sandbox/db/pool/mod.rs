@@ -87,12 +87,13 @@ fn is_timescaledb_missing_library_schema_apply(err: &SinexError) -> bool {
 // Issue 69 (LOW): No Stamp File Cleanup - ADDRESSED
 //
 // Template metadata is stored in PostgreSQL database comments (not filesystem).
-// The `template_stamp.json` file that appears in target/ directory is managed
+// The historical `template_stamp.json` file that used to appear in Cargo target
+// output is managed
 // by Cargo's build system and cleaned automatically via `cargo clean`.
 //
 // Rationale:
 // 1. Metadata persistence moved from filesystem to database for reliability
-// 2. Files in target/ are ephemeral and cleaned by standard build tooling
+// 2. Cargo-owned build artifacts are ephemeral and cleaned by standard tooling
 // 3. Database-stored metadata survives across builds and is transactional
 // 4. No manual cleanup needed - Cargo handles target/ lifecycle
 //

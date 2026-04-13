@@ -1,17 +1,12 @@
-//! Integration tests for deps commands - Phase 2
+//! Extended integration tests for deps commands.
 //!
-//! Tests for the unused and timings subcommands added in Phase 2.
-//! This module comprehensively tests:
-//! - deps unused command with format options and CI mode
-//! - deps timings command with parametrization
-//! - Enhanced list/tree/duplicates commands from Phase 1
+//! Covers:
+//! - `deps unused` format options and CI mode
+//! - `deps timings` parametrization
+//! - broader `deps list/tree/duplicates` behavior
 
 use std::process::Command;
 use xtask::sandbox::sinex_test;
-
-// ============================================================================
-// Phase 2: Unused Dependencies & Build Timings Tests
-// ============================================================================
 
 // --- Help & Discovery Tests ---
 
@@ -136,7 +131,7 @@ async fn test_deps_unused_ci_mode_flag() -> TestResult<()> {
     Ok(())
 }
 
-// --- Enhanced List/Tree/Duplicates Tests (Phase 1) ---
+// --- Additional List/Tree/Duplicates Tests ---
 
 #[sinex_test]
 async fn test_deps_list_basic() -> TestResult<()> {
