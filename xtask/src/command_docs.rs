@@ -222,6 +222,18 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 ],
             },
             GuideEntry {
+                path: "git-stack publish",
+                fallback_summary: "Push a materialized stack and open or reuse chained PRs",
+                when: "you already generated stack branches locally and want to publish them to a remote with generated PR bodies",
+                examples: &[
+                    "xtask git-stack publish --plan .sinex/git-stack/master-split/plan.yaml",
+                    "xtask git-stack publish --plan .sinex/git-stack/master-split/plan.yaml --push-only",
+                ],
+                notes: &[
+                    "PR creation reuses existing pull requests when possible and uses the generated per-slice `pr-body.md` files.",
+                ],
+            },
+            GuideEntry {
                 path: "test vm",
                 fallback_summary: "Run NixOS VM checks",
                 when: "a change touches deployment or runtime behavior and you need VM coverage beyond the normal Rust/package loop",

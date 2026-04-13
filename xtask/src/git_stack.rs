@@ -43,6 +43,17 @@ pub struct SplitOptions {
     pub allow_blockers: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct PublishOptions {
+    pub plan_path: PathBuf,
+    pub remote: String,
+    pub draft: bool,
+    pub create_prs: bool,
+    pub force_with_lease: bool,
+    pub repo: Option<String>,
+    pub allow_blockers: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitStackPlan {
     pub version: u32,
@@ -110,6 +121,25 @@ pub struct MaterializedBranch {
     pub pr_base: String,
     pub commit: String,
     pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublishedBranch {
+    pub branch: String,
+    pub remote: String,
+    pub pr_base: String,
+    pub remote_branch: String,
+    pub pushed: bool,
+    pub title: String,
+    pub pr_url: Option<String>,
+    pub pr_number: Option<u64>,
+    pub reused_existing_pr: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ExistingPullRequest {
+    number: u64,
+    url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -375,6 +405,52 @@ pub fn execute_split(opts: SplitOptions) -> Result<CommandResult> {
         .with_duration(started_at.elapsed()))
 }
 
+pub fn execute_publish(opts: PublishOptions) -> Result<CommandResult> {
+    let started_at = Instant::now();
+    let plan_path = opts.plan_path.canonicalize().with_context(|| {
+        format!(
+            "failed to resolve stack plan path {}",
+            opts.plan_path.display()
+        )
+    })?;
+    let (plan, plan_dir) = load_plan_bundle(&plan_path)?;
+    validate_publish_preconditions(&plan, opts.allow_blockers)?;
+    if opts.create_prs {
+        ensure_tool_available(
+            "gh",
+            "GitHub CLI (`gh`) is required for `xtask git-stack publish` when PR creation is enabled",
+        )?;
+    }
+
+    let repo_root = PathBuf::from(&plan.repo_root);
+    let published = publish_plan(&repo_root, &plan, &plan_dir, &opts)?;
+    let pushed = published.iter().filter(|branch| branch.pushed).count();
+    let created_prs = published.iter().filter(|branch| branch.pr_url.is_some()).count();
+    let reused_prs = published
+        .iter()
+        .filter(|branch| branch.reused_existing_pr)
+        .count();
+
+    Ok(CommandResult::success()
+        .with_message(format!(
+            "Published {} branch(es) from {}",
+            published.len(),
+            plan_path.display()
+        ))
+        .with_detail(format!("pushed {pushed} branch(es) to `{}`", opts.remote))
+        .with_detail(format!(
+            "created or reused {created_prs} PR(s) ({reused_prs} reused existing)"
+        ))
+        .with_data(json!({
+            "plan_path": plan_path,
+            "remote": opts.remote,
+            "draft": opts.draft,
+            "create_prs": opts.create_prs,
+            "branches": published,
+        }))
+        .with_duration(started_at.elapsed()))
+}
+
 fn build_plan(
     repo_root: &Path,
     base_ref: &str,
@@ -551,6 +627,212 @@ fn materialize_plan(
     }
 
     Ok(materialized)
+}
+
+fn publish_plan(
+    repo_root: &Path,
+    plan: &GitStackPlan,
+    plan_dir: &Path,
+    opts: &PublishOptions,
+) -> Result<Vec<PublishedBranch>> {
+    let mut published = Vec::with_capacity(plan.slices.len());
+
+    for slice in &plan.slices {
+        if !branch_exists(repo_root, &slice.branch)? {
+            bail!(
+                "branch {} does not exist locally; materialize the plan before publishing",
+                slice.branch
+            );
+        }
+
+        let remote_branch = slice.branch.clone();
+        push_branch(repo_root, &opts.remote, &slice.branch, &remote_branch, opts.force_with_lease)?;
+
+        let mut published_branch = PublishedBranch {
+            branch: slice.branch.clone(),
+            remote: opts.remote.clone(),
+            pr_base: normalize_pr_base(&slice.pr_base, &opts.remote),
+            remote_branch,
+            pushed: true,
+            title: slice.title.clone(),
+            pr_url: None,
+            pr_number: None,
+            reused_existing_pr: false,
+        };
+
+        if opts.create_prs {
+            if let Some(existing) = find_existing_pr(
+                repo_root,
+                opts.repo.as_deref(),
+                &slice.branch,
+            )? {
+                published_branch.pr_url = Some(existing.url);
+                published_branch.pr_number = Some(existing.number);
+                published_branch.reused_existing_pr = true;
+            } else {
+                let pr_body_path = pr_body_path(plan_dir, slice);
+                let created = create_pull_request(
+                    repo_root,
+                    opts.repo.as_deref(),
+                    &slice.title,
+                    &pr_body_path,
+                    &published_branch.pr_base,
+                    &slice.branch,
+                    opts.draft,
+                )?;
+                published_branch.pr_url = Some(created.url);
+                published_branch.pr_number = Some(created.number);
+            }
+        }
+
+        published.push(published_branch);
+    }
+
+    Ok(published)
+}
+
+fn load_plan_bundle(plan_path: &Path) -> Result<(GitStackPlan, PathBuf)> {
+    let plan_dir = plan_path
+        .parent()
+        .context("stack plan path has no parent directory")?
+        .to_path_buf();
+    let plan: GitStackPlan =
+        serde_yaml::from_str(&fs::read_to_string(plan_path).with_context(|| {
+            format!("failed to read {}", plan_path.display())
+        })?)
+        .with_context(|| format!("failed to parse {}", plan_path.display()))?;
+    Ok((plan, plan_dir))
+}
+
+fn validate_publish_preconditions(plan: &GitStackPlan, allow_blockers: bool) -> Result<()> {
+    if !allow_blockers && !plan.loose_ends.blockers.is_empty() {
+        bail!(
+            "stack plan recorded blockers; resolve them or rerun with --allow-blockers:\n{}",
+            plan.loose_ends.blockers.join("\n")
+        );
+    }
+    if plan.slices.is_empty() {
+        bail!("stack plan contains no slices");
+    }
+    Ok(())
+}
+
+fn ensure_tool_available(tool: &str, message: &str) -> Result<()> {
+    which::which(tool).with_context(|| message.to_string())?;
+    Ok(())
+}
+
+fn push_branch(
+    repo_root: &Path,
+    remote: &str,
+    local_branch: &str,
+    remote_branch: &str,
+    force_with_lease: bool,
+) -> Result<()> {
+    let refspec = format!("refs/heads/{local_branch}:refs/heads/{remote_branch}");
+    let mut args = vec!["push"];
+    if force_with_lease {
+        args.push("--force-with-lease");
+    }
+    args.push(remote);
+    args.push(&refspec);
+    run_git_dynamic(repo_root, "git", &args)
+        .with_context(|| format!("failed to push {local_branch} to {remote}/{remote_branch}"))
+}
+
+fn normalize_pr_base(pr_base: &str, remote: &str) -> String {
+    if let Some(stripped) = pr_base.strip_prefix(&format!("{remote}/")) {
+        return stripped.to_string();
+    }
+    if let Some(stripped) = pr_base.strip_prefix(&format!("refs/remotes/{remote}/")) {
+        return stripped.to_string();
+    }
+    if let Some(stripped) = pr_base.strip_prefix("refs/heads/") {
+        return stripped.to_string();
+    }
+    pr_base.to_string()
+}
+
+fn pr_body_path(plan_dir: &Path, slice: &GitStackSlice) -> PathBuf {
+    plan_dir
+        .join(format!("slice-{:02}-{}", slice.index + 1, slice.slug))
+        .join("pr-body.md")
+}
+
+fn find_existing_pr(
+    repo_root: &Path,
+    repo: Option<&str>,
+    branch: &str,
+) -> Result<Option<ExistingPullRequest>> {
+    let mut args = vec![
+        "pr",
+        "view",
+        branch,
+        "--json",
+        "number,url",
+    ];
+    if let Some(repo) = repo {
+        args.push("--repo");
+        args.push(repo);
+    }
+
+    match command_stdout(repo_root, "gh", &args) {
+        Ok(stdout) => Ok(Some(
+            serde_json::from_str(&stdout)
+                .with_context(|| format!("failed to parse gh pr view output for {branch}"))?,
+        )),
+        Err(error) => {
+            let rendered = format!("{error:#}");
+            if rendered.contains("no pull requests found")
+                || rendered.contains("could not find pull request")
+                || rendered.contains("not found")
+            {
+                Ok(None)
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
+fn create_pull_request(
+    repo_root: &Path,
+    repo: Option<&str>,
+    title: &str,
+    body_file: &Path,
+    base: &str,
+    head: &str,
+    draft: bool,
+) -> Result<ExistingPullRequest> {
+    let body_arg = body_file.to_string_lossy().into_owned();
+    let mut args = vec![
+        "pr",
+        "create",
+        "--title",
+        title,
+        "--body-file",
+        &body_arg,
+        "--base",
+        base,
+        "--head",
+        head,
+    ];
+    if draft {
+        args.push("--draft");
+    }
+    if let Some(repo) = repo {
+        args.push("--repo");
+        args.push(repo);
+    }
+
+    let url = command_stdout(repo_root, "gh", &args)
+        .with_context(|| format!("failed to create PR for branch {head}"))?;
+    let existing = find_existing_pr(repo_root, repo, head)?
+        .with_context(|| format!("created PR for {head} but could not resolve it via gh pr view"))?;
+    if existing.url != url && !url.is_empty() {
+        return Ok(ExistingPullRequest { url, ..existing });
+    }
+    Ok(existing)
 }
 
 fn read_loose_ends(repo_root: &Path) -> Result<GitLooseEnds> {
@@ -1575,6 +1857,22 @@ fn git_stdout<const N: usize>(repo_root: &Path, args: [&str; N]) -> Result<Strin
         .map(|output| output.stdout.trim_end().to_string())
 }
 
+fn command_stdout(repo_root: &Path, program: &str, args: &[&str]) -> Result<String> {
+    let output = Command::new(program)
+        .args(args)
+        .current_dir(repo_root)
+        .output()
+        .with_context(|| format!("failed to spawn {program}"))?;
+    if !output.status.success() {
+        bail!(
+            "{program} command failed with status {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim_end().to_string())
+}
+
 fn git_stdout_bytes<const N: usize>(repo_root: &Path, args: [&str; N]) -> Result<Vec<u8>> {
     let output = Command::new("git")
         .args(args)
@@ -1592,7 +1890,15 @@ fn git_stdout_bytes<const N: usize>(repo_root: &Path, args: [&str; N]) -> Result
 }
 
 fn run_git<const N: usize>(repo_root: &Path, args: [&str; N], stdin: Option<&[u8]>) -> Result<()> {
-    let mut command = Command::new("git");
+    run_command(repo_root, "git", &args, stdin)
+}
+
+fn run_git_dynamic(repo_root: &Path, program: &str, args: &[&str]) -> Result<()> {
+    run_command(repo_root, program, args, None)
+}
+
+fn run_command(repo_root: &Path, program: &str, args: &[&str], stdin: Option<&[u8]>) -> Result<()> {
+    let mut command = Command::new(program);
     command
         .args(args)
         .current_dir(repo_root)
@@ -1603,7 +1909,9 @@ fn run_git<const N: usize>(repo_root: &Path, args: [&str; N], stdin: Option<&[u8
         })
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
-    let mut child = command.spawn().context("failed to spawn git")?;
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("failed to spawn {program}"))?;
     if let Some(stdin_bytes) = stdin
         && let Some(mut child_stdin) = child.stdin.take()
     {
@@ -1612,10 +1920,12 @@ fn run_git<const N: usize>(repo_root: &Path, args: [&str; N], stdin: Option<&[u8
             .write_all(stdin_bytes)
             .context("failed to write git stdin")?;
     }
-    let output = child.wait_with_output().context("failed to wait for git")?;
+    let output = child
+        .wait_with_output()
+        .with_context(|| format!("failed to wait for {program}"))?;
     if !output.status.success() {
         bail!(
-            "git command failed with status {}: {}",
+            "{program} command failed with status {}: {}",
             output.status,
             String::from_utf8_lossy(&output.stderr).trim()
         );
@@ -1626,7 +1936,8 @@ fn run_git<const N: usize>(repo_root: &Path, args: [&str; N], stdin: Option<&[u8
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sandbox::sinex_test;
+    use crate::sandbox::{EnvGuard, sinex_test};
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
 
     struct TestGitRepo {
@@ -1688,6 +1999,11 @@ mod tests {
 
         fn merge_no_ff(&self, branch: &str, subject: &str) -> Result<()> {
             self.git_raw(["merge", "--no-ff", branch, "-m", subject])
+        }
+
+        fn add_remote(&self, name: &str, url: &Path) -> Result<()> {
+            let url = url.to_string_lossy().into_owned();
+            self.git_raw(["remote", "add", name, &url])
         }
     }
 
@@ -1915,6 +2231,153 @@ mod tests {
         assert_eq!(first_branch_head, second_merge_base);
         let subject = repo.git(["log", "-1", "--format=%s", &plan.slices[0].branch])?;
         assert_eq!(subject, plan.slices[0].squash_title);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn publish_pushes_branches_and_creates_prs() -> crate::sandbox::TestResult<()> {
+        let repo = TestGitRepo::new()?;
+        repo.checkout_new_branch("feature/publish")?;
+        repo.commit_file(
+            "xtask/src/history/db.rs",
+            "history\n",
+            "feat(xtask): add history selector surface",
+        )?;
+        repo.commit_file(
+            "xtask/src/sandbox/db/pool/template.rs",
+            "template one\n",
+            "perf(xtask): split shared template families",
+        )?;
+
+        let plan = build_plan(
+            repo.path(),
+            "master",
+            "HEAD",
+            "stack".to_string(),
+            1,
+        )?;
+        let plan_dir = repo.path().join(".sinex/git-stack/publish");
+        let bundle = write_plan_bundle(&plan_dir, &plan)?;
+        materialize_plan(repo.path(), &plan, true)?;
+
+        let remote_dir = tempfile::tempdir()?;
+        let remote_path = remote_dir.path().join("origin.git");
+        Command::new("git")
+            .args(["init", "--bare", remote_path.to_string_lossy().as_ref()])
+            .output()?;
+        repo.add_remote("origin", &remote_path)?;
+
+        let fake_bin = tempfile::tempdir()?;
+        let gh_path = fake_bin.path().join("gh");
+        fs::write(
+            &gh_path,
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+state_dir="${GH_FAKE_STATE_DIR:?}"
+cmd="${1:-}"
+sub="${2:-}"
+sanitize() {
+  printf '%s' "$1" | tr '/:' '__'
+}
+if [[ "$cmd" == "pr" && "$sub" == "view" ]]; then
+  branch="${3:?}"
+  file="$state_dir/pr-$(sanitize "$branch").json"
+  if [[ -f "$file" ]]; then
+    cat "$file"
+    exit 0
+  fi
+  echo "no pull requests found for branch \"$branch\"" >&2
+  exit 1
+fi
+if [[ "$cmd" == "pr" && "$sub" == "create" ]]; then
+  shift 2
+  draft=false
+  title=""
+  body_file=""
+  base=""
+  head=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --draft) draft=true; shift ;;
+      --title) title="$2"; shift 2 ;;
+      --body-file) body_file="$2"; shift 2 ;;
+      --base) base="$2"; shift 2 ;;
+      --head) head="$2"; shift 2 ;;
+      --repo) shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  next_file="$state_dir/next-number"
+  if [[ ! -f "$next_file" ]]; then
+    echo 100 > "$next_file"
+  fi
+  number="$(cat "$next_file")"
+  echo $((number + 1)) > "$next_file"
+  url="https://example.test/pr/$number"
+  file="$state_dir/pr-$(sanitize "$head").json"
+  printf '{"number":%s,"url":"%s"}\n' "$number" "$url" > "$file"
+  first_line="$(head -n 1 "$body_file")"
+  printf 'create|%s|%s|%s|%s|%s\n' "$head" "$base" "$draft" "$title" "$first_line" >> "$state_dir/actions.log"
+  printf '%s\n' "$url"
+  exit 0
+fi
+echo "unsupported gh invocation: $*" >&2
+exit 2
+"#,
+        )?;
+        fs::set_permissions(&gh_path, fs::Permissions::from_mode(0o755))?;
+
+        let original_path = std::env::var("PATH").unwrap_or_default();
+        let mut env = EnvGuard::with_keys(&["PATH", "GH_FAKE_STATE_DIR"]);
+        env.set(
+            "PATH",
+            format!("{}:{}", fake_bin.path().display(), original_path),
+        );
+        env.set("GH_FAKE_STATE_DIR", fake_bin.path().display().to_string());
+
+        let published = publish_plan(
+            repo.path(),
+            &plan,
+            bundle
+                .plan_path
+                .parent()
+                .context("plan bundle missing parent")?,
+            &PublishOptions {
+                plan_path: bundle.plan_path.clone(),
+                remote: "origin".to_string(),
+                draft: true,
+                create_prs: true,
+                force_with_lease: false,
+                repo: None,
+                allow_blockers: false,
+            },
+        )?;
+
+        assert_eq!(published.len(), 2);
+        let first_remote = repo.git(["ls-remote", "--heads", "origin", "stack/01-add-history-selector-surface"])?;
+        let second_remote =
+            repo.git(["ls-remote", "--heads", "origin", "stack/02-split-shared-template-families"])?;
+        assert!(!first_remote.is_empty());
+        assert!(!second_remote.is_empty());
+
+        let actions = fs::read_to_string(fake_bin.path().join("actions.log"))?;
+        assert!(actions.contains("create|stack/01-add-history-selector-surface|master|true|feat(xtask): add history selector surface|# feat(xtask): add history selector surface"));
+        assert!(actions.contains("create|stack/02-split-shared-template-families|stack/01-add-history-selector-surface|true|perf(xtask): split shared template families|# perf(xtask): split shared template families"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn normalize_pr_base_strips_remote_prefixes() -> crate::sandbox::TestResult<()> {
+        assert_eq!(normalize_pr_base("origin/master", "origin"), "master");
+        assert_eq!(
+            normalize_pr_base("refs/remotes/origin/master", "origin"),
+            "master"
+        );
+        assert_eq!(normalize_pr_base("refs/heads/main", "origin"), "main");
+        assert_eq!(
+            normalize_pr_base("stack/03-something", "origin"),
+            "stack/03-something"
+        );
         Ok(())
     }
 }

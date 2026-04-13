@@ -6,7 +6,8 @@ use color_eyre::eyre::Result;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::git_stack::{
-    MaterializeOptions, PlanOptions, SplitOptions, execute_materialize, execute_plan, execute_split,
+    MaterializeOptions, PlanOptions, PublishOptions, SplitOptions, execute_materialize,
+    execute_plan, execute_publish, execute_split,
 };
 
 /// Plan and materialize PR-sized git branch stacks from the current commit graph.
@@ -91,6 +92,37 @@ pub enum GitStackSubcommand {
         #[arg(long)]
         allow_blockers: bool,
     },
+
+    /// Push materialized branches and open/reuse PRs from a generated stack plan.
+    Publish {
+        /// Path to a generated `plan.yaml`.
+        #[arg(long)]
+        plan: std::path::PathBuf,
+
+        /// Git remote to push branch refs to.
+        #[arg(long, default_value = "origin")]
+        remote: String,
+
+        /// Create PRs as ready-for-review instead of drafts.
+        #[arg(long)]
+        ready: bool,
+
+        /// Push branches only; skip GitHub PR creation.
+        #[arg(long)]
+        push_only: bool,
+
+        /// Force-update the remote branches with `--force-with-lease`.
+        #[arg(long)]
+        force_with_lease: bool,
+
+        /// Optional GitHub repo override for `gh`, e.g. `owner/name`.
+        #[arg(long)]
+        repo: Option<String>,
+
+        /// Continue even when the plan recorded blockers.
+        #[arg(long)]
+        allow_blockers: bool,
+    },
 }
 
 impl XtaskCommand for GitStackCommand {
@@ -144,6 +176,23 @@ impl XtaskCommand for GitStackCommand {
                     force: *force,
                 },
                 materialize_force: *force,
+                allow_blockers: *allow_blockers,
+            }),
+            GitStackSubcommand::Publish {
+                plan,
+                remote,
+                ready,
+                push_only,
+                force_with_lease,
+                repo,
+                allow_blockers,
+            } => execute_publish(PublishOptions {
+                plan_path: plan.clone(),
+                remote: remote.clone(),
+                draft: !ready,
+                create_prs: !push_only,
+                force_with_lease: *force_with_lease,
+                repo: repo.clone(),
                 allow_blockers: *allow_blockers,
             }),
         }
