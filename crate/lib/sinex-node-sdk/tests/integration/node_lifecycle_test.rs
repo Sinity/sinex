@@ -22,11 +22,14 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU32, Ordering},
 };
-use tokio::time::{Duration, Instant, sleep, timeout};
+use tokio::task::yield_now;
+use tokio::time::{Duration, timeout};
 use tracing::{debug, info, warn};
 use xtask::sandbox::{TestContext, sinex_test, timing::Timeouts};
 
 use crate::support::runtime::TestRuntimeBuilder;
+
+const COORDINATION_TIMEOUT: Duration = Duration::from_secs(Timeouts::QUICK);
 
 /// Test complete node lifecycle from birth to death
 #[sinex_test]
@@ -58,28 +61,23 @@ async fn test_node_complete_lifecycle(ctx: TestContext) -> color_eyre::Result<()
     let leader_flag = became_leader.clone();
     let process_count = processing_count.clone();
 
-    // Timeout bounds the coordination window; a clean loop exit after leader work
-    // is also valid now.
-    let _lifecycle_result = timeout(
-        Duration::from_secs(Timeouts::SHORT),
+    timeout(
+        COORDINATION_TIMEOUT,
         coordination.run_coordination_loop(move || {
             let flag = leader_flag.clone();
             let count = process_count.clone();
             async move {
-                // First time becoming leader
+                // A single leader callback is enough to prove acquisition and work.
                 if !flag.load(Ordering::SeqCst) {
                     info!("Node became leader!");
                     flag.store(true, Ordering::SeqCst);
                 }
-
-                // Simulate processing work
                 count.fetch_add(1, Ordering::SeqCst);
-                sleep(Duration::from_millis(50)).await;
                 Ok::<(), SinexError>(())
             }
         }),
     )
-    .await;
+    .await??;
 
     // Phase 3: Verify steady state operations
     info!("Phase 3: Verifying operations");
@@ -132,10 +130,7 @@ async fn test_node_health_monitoring(ctx: TestContext) -> color_eyre::Result<()>
     checkpoint.revision = checkpoint_manager.save_checkpoint(&checkpoint).await?;
     debug!("  Initial health checkpoint saved");
 
-    // Simulate health updates over time
     for i in 1..=5 {
-        sleep(Duration::from_millis(50)).await;
-
         checkpoint.processed_count += 1;
         checkpoint.last_activity = Timestamp::now();
         checkpoint.data = Some(serde_json::json!({
@@ -187,45 +182,41 @@ async fn test_node_error_recovery(ctx: TestContext) -> color_eyre::Result<()> {
     let rec_count = recovery_count.clone();
     let success_count = successful_ops.clone();
 
-    // Timeout bounds the test; a clean coordination exit is also valid.
-    let _recovery_result = timeout(
-        Duration::from_secs(Timeouts::SHORT),
+    timeout(
+        COORDINATION_TIMEOUT,
         coordination.run_coordination_loop(move || {
             let errors = err_count.clone();
             let recoveries = rec_count.clone();
             let successes = success_count.clone();
 
             async move {
-                let current_errors = errors.load(Ordering::SeqCst);
+                for operation in 0..10 {
+                    let current_errors = errors.load(Ordering::SeqCst);
 
-                // Simulate failure every 3rd operation
-                if current_errors < 3 && successes.load(Ordering::SeqCst) % 3 == 2 {
-                    errors.fetch_add(1, Ordering::SeqCst);
-                    warn!("Simulated node error #{}", current_errors + 1);
+                    if current_errors < 3 && operation % 3 == 2 {
+                        errors.fetch_add(1, Ordering::SeqCst);
+                        warn!("Simulated node error #{}", current_errors + 1);
+                        recoveries.fetch_add(1, Ordering::SeqCst);
+                        debug!("Recovery attempt #{}", recoveries.load(Ordering::SeqCst));
+                    }
 
-                    // Simulate recovery attempt
-                    sleep(Duration::from_millis(50)).await;
-                    recoveries.fetch_add(1, Ordering::SeqCst);
-                    debug!("Recovery attempt #{}", recoveries.load(Ordering::SeqCst));
-
-                    // Recover successfully after brief delay
-                    sleep(Duration::from_millis(25)).await;
+                    successes.fetch_add(1, Ordering::SeqCst);
+                    yield_now().await;
                 }
-
-                successes.fetch_add(1, Ordering::SeqCst);
-                sleep(Duration::from_millis(75)).await;
                 Ok::<(), SinexError>(())
             }
         }),
     )
-    .await;
+    .await??;
 
     // Verify the callback ran at least once
     let final_successes = successful_ops.load(Ordering::SeqCst);
-    assert!(
-        final_successes > 0,
-        "Should have processed at least one event"
+    assert_eq!(
+        final_successes, 10,
+        "Should process the planned recovery loop"
     );
+    assert_eq!(error_count.load(Ordering::SeqCst), 3);
+    assert_eq!(recovery_count.load(Ordering::SeqCst), 3);
 
     info!(
         "  Error recovery: {} successful operations",
@@ -262,8 +253,8 @@ async fn test_node_state_transitions(ctx: TestContext) -> color_eyre::Result<()>
     let state_counter = state_changes.clone();
     let leader_flag = became_leader.clone();
 
-    let _transition_result = timeout(
-        Duration::from_secs(Timeouts::SHORT),
+    timeout(
+        COORDINATION_TIMEOUT,
         coordination.run_coordination_loop(move || {
             let counter = state_counter.clone();
             let flag = leader_flag.clone();
@@ -276,12 +267,11 @@ async fn test_node_state_transitions(ctx: TestContext) -> color_eyre::Result<()>
                     debug!("State transition: Standby -> Leader");
                 }
 
-                sleep(Duration::from_millis(50)).await;
                 Ok::<(), SinexError>(())
             }
         }),
     )
-    .await;
+    .await??;
 
     // Verify transitions occurred; timeout only bounds the test window.
     assert!(
@@ -385,42 +375,33 @@ async fn test_node_graceful_shutdown(ctx: TestContext) -> color_eyre::Result<()>
     let shutdown_flag = shutdown_initiated.clone();
     let cleanup_flag = cleanup_completed.clone();
 
-    // Start node operations with timeout
-    let start_time = Instant::now();
-    let _shutdown_result = timeout(
-        Duration::from_secs(Timeouts::SHORT),
+    timeout(
+        COORDINATION_TIMEOUT,
         coordination.run_coordination_loop(move || {
             let ops = ops_count.clone();
             let shutdown = shutdown_flag.clone();
             let cleanup = cleanup_flag.clone();
-            let elapsed = start_time.elapsed();
 
             async move {
-                ops.fetch_add(1, Ordering::SeqCst);
-
-                // Simulate shutdown after some operations
-                if elapsed > Duration::from_millis(200) && !shutdown.load(Ordering::SeqCst) {
-                    shutdown.store(true, Ordering::SeqCst);
-                    debug!("Initiating graceful shutdown");
-
-                    // Simulate cleanup operations
-                    sleep(Duration::from_millis(50)).await;
-                    cleanup.store(true, Ordering::SeqCst);
-                    debug!("Cleanup completed");
+                for operation in 0..4 {
+                    ops.fetch_add(1, Ordering::SeqCst);
+                    if operation == 2 && !shutdown.load(Ordering::SeqCst) {
+                        shutdown.store(true, Ordering::SeqCst);
+                        debug!("Initiating graceful shutdown");
+                        cleanup.store(true, Ordering::SeqCst);
+                        debug!("Cleanup completed");
+                    }
+                    yield_now().await;
                 }
-
-                sleep(Duration::from_millis(50)).await;
                 Ok::<(), SinexError>(())
             }
         }),
     )
-    .await;
+    .await??;
 
-    // Verify operations ran; timeout only bounds the coordination window.
-    assert!(
-        operations_completed.load(Ordering::SeqCst) > 0,
-        "Should have completed some operations"
-    );
+    assert_eq!(operations_completed.load(Ordering::SeqCst), 4);
+    assert!(shutdown_initiated.load(Ordering::SeqCst));
+    assert!(cleanup_completed.load(Ordering::SeqCst));
 
     // Save final checkpoint
     let final_checkpoint = CheckpointState {
@@ -481,20 +462,18 @@ async fn test_node_concurrent_lifecycle(_ctx: TestContext) -> color_eyre::Result
             )
             .await?;
 
-            let _result = timeout(
-                Duration::from_secs(Timeouts::SHORT),
+            timeout(
+                COORDINATION_TIMEOUT,
                 coordination.run_coordination_loop(move || {
                     let counter = counter.clone();
                     async move {
                         counter.fetch_add(1, Ordering::SeqCst);
-                        sleep(Duration::from_millis(50)).await;
                         Ok::<(), SinexError>(())
                     }
                 }),
             )
-            .await;
+            .await??;
 
-            // Timeout only bounds the test; clean loop exit is also acceptable.
             Ok::<bool, color_eyre::Report>(true)
         });
 

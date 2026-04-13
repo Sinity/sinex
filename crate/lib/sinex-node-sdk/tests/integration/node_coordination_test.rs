@@ -6,10 +6,11 @@ use sinex_node_sdk::Uuid;
 use sinex_node_sdk::{InstanceMode, NodeCoordination};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use tokio::sync::Notify;
 use tokio::time::{Duration, timeout};
 use xtask::sandbox::{TestContext, sinex_test, timing::Timeouts};
 
-const COORDINATION_TIMEOUT: Duration = Duration::from_secs(Timeouts::SHORT);
+const COORDINATION_TIMEOUT: Duration = Duration::from_secs(Timeouts::QUICK);
 
 #[sinex_test]
 async fn test_node_coordination_initialization() -> TestResult<()> {
@@ -45,7 +46,7 @@ async fn test_single_instance_becomes_leader() -> TestResult<()> {
     let processed = Arc::new(AtomicBool::new(false));
     let processed_flag = processed.clone();
 
-    let _result = timeout(
+    timeout(
         COORDINATION_TIMEOUT,
         coordination.run_coordination_loop(move || {
             let processed_flag = processed_flag.clone();
@@ -55,7 +56,7 @@ async fn test_single_instance_becomes_leader() -> TestResult<()> {
             }
         }),
     )
-    .await;
+    .await??;
 
     // Timeout bounds the test; clean loop exit is also acceptable.
     assert!(processed.load(Ordering::SeqCst));
@@ -87,62 +88,85 @@ async fn test_multi_instance_leader_election() -> TestResult<()> {
     .await?;
 
     let processing_count = Arc::new(AtomicU32::new(0));
+    let leader_entered = Arc::new(Notify::new());
+    let hold_leader = Arc::new(Notify::new());
 
     let count1 = processing_count.clone();
+    let entered1 = leader_entered.clone();
+    let hold1 = hold_leader.clone();
     let handle1 = tokio::spawn(async move {
-        let _ = timeout(
-            COORDINATION_TIMEOUT,
-            coord1.run_coordination_loop(move || {
+        coord1
+            .run_coordination_loop(move || {
                 let count = count1.clone();
+                let entered = entered1.clone();
+                let hold = hold1.clone();
                 async move {
                     count.fetch_add(1, Ordering::SeqCst);
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    entered.notify_waiters();
+                    hold.notified().await;
                     Ok::<(), SinexError>(())
                 }
-            }),
-        )
-        .await;
+            })
+            .await?;
+        Ok::<(), color_eyre::Report>(())
     });
 
     let count2 = processing_count.clone();
+    let entered2 = leader_entered.clone();
+    let hold2 = hold_leader.clone();
     let handle2 = tokio::spawn(async move {
-        let _ = timeout(
-            COORDINATION_TIMEOUT,
-            coord2.run_coordination_loop(move || {
+        coord2
+            .run_coordination_loop(move || {
                 let count = count2.clone();
+                let entered = entered2.clone();
+                let hold = hold2.clone();
                 async move {
                     count.fetch_add(1, Ordering::SeqCst);
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    entered.notify_waiters();
+                    hold.notified().await;
                     Ok::<(), SinexError>(())
                 }
-            }),
-        )
-        .await;
+            })
+            .await?;
+        Ok::<(), color_eyre::Report>(())
     });
 
     let count3 = processing_count.clone();
+    let entered3 = leader_entered.clone();
+    let hold3 = hold_leader.clone();
     let handle3 = tokio::spawn(async move {
-        let _ = timeout(
-            COORDINATION_TIMEOUT,
-            coord3.run_coordination_loop(move || {
+        coord3
+            .run_coordination_loop(move || {
                 let count = count3.clone();
+                let entered = entered3.clone();
+                let hold = hold3.clone();
                 async move {
                     count.fetch_add(1, Ordering::SeqCst);
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    entered.notify_waiters();
+                    hold.notified().await;
                     Ok::<(), SinexError>(())
                 }
-            }),
-        )
-        .await;
+            })
+            .await?;
+        Ok::<(), color_eyre::Report>(())
     });
 
-    let (result1, result2, result3) = tokio::join!(handle1, handle2, handle3);
+    timeout(COORDINATION_TIMEOUT, leader_entered.notified()).await?;
+    assert_eq!(
+        processing_count.load(Ordering::SeqCst),
+        1,
+        "exactly one contender should enter the leader callback"
+    );
 
-    // All tasks should complete; timeout only bounds the coordination window.
-    result1.unwrap();
-    result2.unwrap();
-    result3.unwrap();
-    assert!(processing_count.load(Ordering::SeqCst) > 0);
+    handle1.abort();
+    handle2.abort();
+    handle3.abort();
+
+    for handle in [handle1, handle2, handle3] {
+        let join_result = handle.await;
+        let join_error = join_result.expect_err("coordination tasks should be cancelled");
+        assert!(join_error.is_cancelled(), "unexpected join error: {join_error}");
+    }
 
     Ok(())
 }
