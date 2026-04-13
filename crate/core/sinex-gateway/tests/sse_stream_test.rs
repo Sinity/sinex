@@ -309,10 +309,14 @@ async fn bus_retries_when_subscription_closes_after_startup(
 // ─────────────────────────────────────────────────────────────────────
 // Tests: Bus data flow (NATS + DB)
 // ─────────────────────────────────────────────────────────────────────
+//
+// These tests run SubscriptionBus against the real confirmation subject, which
+// is environment-scoped but not per-test namespaced. Use dedicated NATS here so
+// concurrent shared-NATS tests cannot inject unrelated confirmations.
 
 #[sinex_test]
 async fn empty_filter_receives_all_events(ctx: TestContext) -> color_eyre::Result<()> {
-    let ctx = ctx.with_nats().shared().await?;
+    let ctx = ctx.with_nats().dedicated().await?;
     let pool = ctx.pool().clone();
     let nats = ctx.nats_client();
     let env = ctx.env().clone();
@@ -368,7 +372,7 @@ async fn empty_filter_receives_all_events(ctx: TestContext) -> color_eyre::Resul
 
 #[sinex_test]
 async fn source_filter_delivers_matching_only(ctx: TestContext) -> color_eyre::Result<()> {
-    let ctx = ctx.with_nats().shared().await?;
+    let ctx = ctx.with_nats().dedicated().await?;
     let pool = ctx.pool().clone();
     let nats = ctx.nats_client();
     let env = ctx.env().clone();
@@ -450,7 +454,7 @@ async fn source_filter_delivers_matching_only(ctx: TestContext) -> color_eyre::R
 
 #[sinex_test]
 async fn event_type_filter_works(ctx: TestContext) -> color_eyre::Result<()> {
-    let ctx = ctx.with_nats().shared().await?;
+    let ctx = ctx.with_nats().dedicated().await?;
     let pool = ctx.pool().clone();
     let nats = ctx.nats_client();
     let env = ctx.env().clone();
@@ -523,7 +527,7 @@ async fn event_type_filter_works(ctx: TestContext) -> color_eyre::Result<()> {
 
 #[sinex_test]
 async fn payload_text_search_filter(ctx: TestContext) -> color_eyre::Result<()> {
-    let ctx = ctx.with_nats().shared().await?;
+    let ctx = ctx.with_nats().dedicated().await?;
     let pool = ctx.pool().clone();
     let nats = ctx.nats_client();
     let env = ctx.env().clone();
@@ -602,7 +606,7 @@ async fn payload_text_search_filter(ctx: TestContext) -> color_eyre::Result<()> 
 
 #[sinex_test]
 async fn combined_source_and_type_filter(ctx: TestContext) -> color_eyre::Result<()> {
-    let ctx = ctx.with_nats().shared().await?;
+    let ctx = ctx.with_nats().dedicated().await?;
     let pool = ctx.pool().clone();
     let nats = ctx.nats_client();
     let env = ctx.env().clone();
@@ -668,7 +672,7 @@ async fn combined_source_and_type_filter(ctx: TestContext) -> color_eyre::Result
 async fn slow_consumer_gap_arrives_before_resumed_event(
     ctx: TestContext,
 ) -> color_eyre::Result<()> {
-    let ctx = ctx.with_nats().shared().await?;
+    let ctx = ctx.with_nats().dedicated().await?;
     let pool = ctx.pool().clone();
     let nats = ctx.nats_client();
     let env = ctx.env().clone();
@@ -760,8 +764,10 @@ async fn slow_consumer_gap_arrives_before_resumed_event(
 }
 
 #[sinex_test]
-async fn multiple_subscribers_get_independent_delivery(ctx: TestContext) -> color_eyre::Result<()> {
-    let ctx = ctx.with_nats().shared().await?;
+async fn multiple_subscribers_get_independent_delivery(
+    ctx: TestContext,
+) -> color_eyre::Result<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
     let pool = ctx.pool().clone();
     let nats = ctx.nats_client();
     let env = ctx.env().clone();
@@ -839,7 +845,7 @@ async fn multiple_subscribers_get_independent_delivery(ctx: TestContext) -> colo
 async fn multiple_subscribers_keep_independent_sequence_numbers(
     ctx: TestContext,
 ) -> color_eyre::Result<()> {
-    let ctx = ctx.with_nats().shared().await?;
+    let ctx = ctx.with_nats().dedicated().await?;
     let pool = ctx.pool().clone();
     let nats = ctx.nats_client();
     let env = ctx.env().clone();
