@@ -4,12 +4,9 @@
 //! scenario set still lives in the exported NixOS checks rather than this in-VM
 //! binary.
 
-use color_eyre::eyre::Result;
-
 use crate::runner::TestRunner;
 
-pub async fn run(runner: &mut TestRunner, _database_url: &str) -> Result<()> {
+pub fn run(runner: &mut TestRunner, _database_url: &str) {
     println!("\n── Integration tests ──────────────────────────");
     runner.pass("no Rust-side integration assertions wired");
-    Ok(())
 }
