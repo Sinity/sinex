@@ -19,7 +19,10 @@ use xtask::sandbox::EphemeralWorkspace;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-fn run_xtask_in(ws: &EphemeralWorkspace, args: &[&str]) -> std::process::Output {
+fn run_xtask_in(
+    ws: &EphemeralWorkspace,
+    args: &[&str],
+) -> Result<std::process::Output> {
     Command::new("xtask")
         .args(args)
         .current_dir(ws.dir())
@@ -27,7 +30,7 @@ fn run_xtask_in(ws: &EphemeralWorkspace, args: &[&str]) -> std::process::Output 
         .env("NO_COLOR", "1")
         .env("FORCE_COLOR", "0")
         .output()
-        .expect("failed to execute xtask in ephemeral workspace")
+        .map_err(Into::into)
 }
 
 fn check_succeeded(output: &std::process::Output) -> bool {
@@ -64,7 +67,15 @@ fn workspace_property_historydb_consistency() {
         prop_assert!(!db_path.exists(), "DB should not exist before first xtask run");
 
         // Run xtask check
-        run_xtask_in(&ws, &["check", "--json"]);
+        let output = run_xtask_in(&ws, &["check", "--json"]);
+        prop_assert!(
+            output.is_ok(),
+            "failed to execute xtask in ephemeral workspace: {:#}",
+            output
+                .as_ref()
+                .err()
+                .unwrap_or_else(|| unreachable!())
+        );
 
         // Postcondition: DB exists and has exactly one check invocation
         prop_assert!(
@@ -117,10 +128,10 @@ fn workspace_property_fix_idempotency() -> Result<()> {
     ws.inject_format_error("ws-lib")?;
 
     // First fix: should reformat the file
-    let first_fix = run_xtask_in(&ws, &["fix", "--json"]);
+    let first_fix = run_xtask_in(&ws, &["fix", "--json"])?;
 
     // Second fix: source is already well-formatted — nothing to change
-    let second_fix = run_xtask_in(&ws, &["fix", "--json"]);
+    let second_fix = run_xtask_in(&ws, &["fix", "--json"])?;
 
     assert!(
         check_succeeded(&second_fix),
@@ -129,7 +140,7 @@ fn workspace_property_fix_idempotency() -> Result<()> {
     );
 
     // After two fix passes, `check --full` should pass (fmt + clippy clean)
-    let check_after = run_xtask_in(&ws, &["check", "--full", "--json"]);
+    let check_after = run_xtask_in(&ws, &["check", "--full", "--json"])?;
     assert_eq!(
         check_after.status.code(),
         Some(0),
@@ -182,6 +193,15 @@ fn workspace_property_status_matches_exit_code() {
         }
 
         let output = run_xtask_in(&ws, &["check", "--json"]);
+        prop_assert!(
+            output.is_ok(),
+            "failed to execute xtask in ephemeral workspace: {:#}",
+            output
+                .as_ref()
+                .err()
+                .unwrap_or_else(|| unreachable!())
+        );
+        let output = output.unwrap_or_else(|_| unreachable!());
         let exit_ok = output.status.code() == Some(0);
 
         let db = HistoryDb::open(&ws.history_db_path())
@@ -223,7 +243,7 @@ fn workspace_property_history_accumulates_monotonically() -> Result<()> {
 
     const RUNS: usize = 3;
     for _ in 0..RUNS {
-        run_xtask_in(&ws, &["check", "--json"]);
+        run_xtask_in(&ws, &["check", "--json"])?;
     }
 
     let db = HistoryDb::open(&ws.history_db_path())?;

@@ -17,7 +17,10 @@ use xtask::sandbox::EphemeralWorkspace;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-fn run_xtask_in(ws: &EphemeralWorkspace, args: &[&str]) -> std::process::Output {
+fn run_xtask_in(
+    ws: &EphemeralWorkspace,
+    args: &[&str],
+) -> Result<std::process::Output> {
     Command::new("xtask")
         .args(args)
         .current_dir(ws.dir())
@@ -26,7 +29,7 @@ fn run_xtask_in(ws: &EphemeralWorkspace, args: &[&str]) -> std::process::Output 
         .env("NO_COLOR", "1")
         .env("FORCE_COLOR", "0")
         .output()
-        .expect("failed to execute xtask in ephemeral workspace")
+        .map_err(Into::into)
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -39,7 +42,7 @@ fn test_check_fails_on_compile_error_and_records_history() -> Result<()> {
     let ws = EphemeralWorkspace::new()?;
     ws.inject_compile_error("ws-lib")?;
 
-    let output = run_xtask_in(&ws, &["check", "--json"]);
+    let output = run_xtask_in(&ws, &["check", "--json"])?;
 
     // xtask check should exit non-zero
     assert_ne!(
@@ -77,7 +80,7 @@ fn test_check_lint_records_clippy_warning_in_history() -> Result<()> {
     let ws = EphemeralWorkspace::new()?;
     ws.inject_clippy_warning("ws-lib")?;
 
-    let _output = run_xtask_in(&ws, &["check", "--lint", "--json"]);
+    let _output = run_xtask_in(&ws, &["check", "--lint", "--json"])?;
 
     // May succeed (warnings don't fail check by default), but diagnostics should be stored
     let db = HistoryDb::open(&ws.history_db_path())?;
@@ -111,7 +114,7 @@ fn test_check_lint_records_clippy_warning_in_history() -> Result<()> {
 fn test_check_succeeds_on_clean_workspace() -> Result<()> {
     let ws = EphemeralWorkspace::new()?;
 
-    let output = run_xtask_in(&ws, &["check", "--json"]);
+    let output = run_xtask_in(&ws, &["check", "--json"])?;
 
     assert_eq!(
         output.status.code(),
@@ -142,7 +145,7 @@ fn test_check_full_fails_on_format_error() -> Result<()> {
     let ws = EphemeralWorkspace::new()?;
     ws.inject_format_error("ws-lib")?;
 
-    let output = run_xtask_in(&ws, &["check", "--full", "--json"]);
+    let output = run_xtask_in(&ws, &["check", "--full", "--json"])?;
 
     assert_ne!(
         output.status.code(),
