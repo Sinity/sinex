@@ -1,20 +1,14 @@
 changelog:
   categories:
-    - title: Features
+    - title: Features and Changes
       labels:
-        - type:feat
+        - enhancement
     - title: Bug Fixes
       labels:
-        - type:fix
-    - title: Performance
+        - bug
+    - title: Research and Decisions
       labels:
-        - type:perf
-    - title: Architecture
-      labels:
-        - type:refactor
-    - title: Testing
-      labels:
-        - type:test
+        - question
     - title: Other
       labels:
         - "*"
