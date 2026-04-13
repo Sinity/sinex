@@ -11,6 +11,7 @@
 
 use async_nats::jetstream;
 use camino::Utf8PathBuf;
+use futures::future::join_all;
 use serde_json::json;
 use sinex_ingestd::{JetStreamTopology, config::IngestdConfig, service::IngestService};
 use sinex_primitives::nats::NatsConnectionConfig;
@@ -303,15 +304,33 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
         }
     });
 
-    // Let it run for a bit
-    tokio::time::sleep(Duration::from_secs(Timeouts::MEDIUM)).await;
+    // Wait until the publisher is actively generating load and ingestd has
+    // persisted at least one event before requesting shutdown.
+    let pool = ctx.pool.clone();
+    WaitHelpers::wait_for_condition(
+        {
+            let published_count = published_count.clone();
+            move || {
+                let pool = pool.clone();
+                let published_count = published_count.clone();
+                async move {
+                    let persisted = pool.events().count_all().await?;
+                    Ok::<bool, color_eyre::eyre::Error>(
+                        published_count.load(Ordering::SeqCst) >= 32 && persisted > 0,
+                    )
+                }
+            }
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
 
     // Signal shutdown
     shutdown_flag.store(true, Ordering::SeqCst);
     service.shutdown().await?;
 
     // Wait for publisher to stop
-    let _ = timeout(Duration::from_secs(Timeouts::MEDIUM), publisher_handle).await;
+    let _ = timeout(Duration::from_secs(Timeouts::SHORT), publisher_handle).await;
 
     // Wait for service to stop
     let join_result = timeout(Duration::from_secs(Timeouts::SHORT), handle)
@@ -382,14 +401,17 @@ async fn test_concurrent_service_shutdown(ctx: TestContext) -> TestResult<()> {
 
     // Start consumer tasks
     let active_count = Arc::new(AtomicU32::new(consumers.len() as u32));
+    let started_count = Arc::new(AtomicU32::new(0));
     let shutdown_flag = Arc::new(AtomicBool::new(false));
     let mut handles = vec![];
 
     for consumer in consumers {
         let active = active_count.clone();
+        let started = started_count.clone();
         let shutdown = shutdown_flag.clone();
 
         let handle = tokio::spawn(async move {
+            started.fetch_add(1, Ordering::SeqCst);
             while !shutdown.load(Ordering::SeqCst) {
                 let fetch_result = consumer
                     .fetch()
@@ -411,22 +433,43 @@ async fn test_concurrent_service_shutdown(ctx: TestContext) -> TestResult<()> {
         handles.push(handle);
     }
 
-    // Let consumers run
-    tokio::time::sleep(Duration::from_secs(Timeouts::QUICK)).await;
+    // Wait until all consumer tasks are in their fetch loop before signalling shutdown.
+    WaitHelpers::wait_for_condition(
+        {
+            let active_count = active_count.clone();
+            let started_count = started_count.clone();
+            move || {
+                let active_count = active_count.clone();
+                let started_count = started_count.clone();
+                async move {
+                    Ok::<bool, color_eyre::eyre::Error>(
+                        started_count.load(Ordering::SeqCst) == active_count.load(Ordering::SeqCst),
+                    )
+                }
+            }
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
 
     // Signal shutdown to all consumers
     shutdown_flag.store(true, Ordering::SeqCst);
 
     // Wait for all to complete
     let shutdown_start = std::time::Instant::now();
-    for handle in handles {
-        let _ = timeout(Duration::from_secs(Timeouts::QUICK), handle).await;
-    }
+    let join_result = timeout(Duration::from_secs(Timeouts::QUICK), async {
+        join_all(handles).await
+    })
+    .await;
     let shutdown_duration = shutdown_start.elapsed();
 
     tracing::info!("Concurrent shutdown took {:?}", shutdown_duration);
 
     // All should have shutdown within timeout
+    assert!(
+        join_result.is_ok(),
+        "all consumer tasks should complete within the shared shutdown timeout"
+    );
     assert_eq!(
         active_count.load(Ordering::SeqCst),
         0,

@@ -46,7 +46,7 @@ pub mod tls;
 mod tools;
 pub mod watcher;
 
-use command::{CommandContext, XtaskCommand};
+use command::{CommandContext, HistoryAccessMode, XtaskCommand};
 use commands::{
     AnalyticsCommand, BuildCommand, CheckCommand, DoctorCommand, FixCommand, JobsCommand,
     PrivacyCommand, ResetCommand, StatusCommand, TestCommand, WorkCommand, ci::CiCommand,
@@ -383,55 +383,58 @@ pub async fn run_cli() -> Result<()> {
         }
     };
 
-    // Dispatch — extract metadata (including timeout) before consuming the command
-    let (command_name, subcommand, profile, command_timeout) = match &command {
-        Commands::Fix(cmd) => ("fix", None, None, cmd.metadata().timeout),
-        Commands::Check(cmd) => ("check", None, None, cmd.metadata().timeout),
-        Commands::Test(cmd) => (
-            "test",
-            test_subcommand_name(cmd),
-            None,
-            cmd.metadata().timeout,
-        ),
-        Commands::Build(cmd) => ("build", None, None, cmd.metadata().timeout),
-        Commands::Run(cmd) => ("run", None, None, cmd.metadata().timeout),
-        Commands::Infra { .. } => ("infra", None, None, None),
-        Commands::Jobs(cmd) => ("jobs", None, None, cmd.metadata().timeout),
-        Commands::Status(cmd) => ("status", None, None, cmd.metadata().timeout),
-        Commands::Deps(cmd) => ("deps", None, None, cmd.metadata().timeout),
-        Commands::History(cmd) => ("history", None, None, cmd.metadata().timeout),
-        Commands::Analytics(cmd) => ("analytics", None, None, cmd.metadata().timeout),
-        Commands::Docs(cmd) => ("docs", None, None, cmd.metadata().timeout),
-        Commands::Doctor(cmd) => ("doctor", None, None, cmd.metadata().timeout),
-        Commands::Privacy(cmd) => ("privacy", None, None, cmd.metadata().timeout),
-        Commands::Exercise(cmd) => ("exercise", None, None, cmd.metadata().timeout),
-        Commands::Reset(cmd) => ("reset", None, None, cmd.metadata().timeout),
-        Commands::Work(cmd) => ("work", None, None, cmd.metadata().timeout),
-        Commands::Ci(cmd) => ("ci", None, None, cmd.metadata().timeout),
-        Commands::Completions(cmd) => ("completions", None, None, cmd.metadata().timeout),
+    // Dispatch — extract metadata (including timeout/history behavior) before consuming the command
+    let (command_name, subcommand, profile, command_metadata) = match &command {
+        Commands::Fix(cmd) => ("fix", None, None, cmd.metadata()),
+        Commands::Check(cmd) => ("check", None, None, cmd.metadata()),
+        Commands::Test(cmd) => ("test", test_subcommand_name(cmd), None, cmd.metadata()),
+        Commands::Build(cmd) => ("build", None, None, cmd.metadata()),
+        Commands::Run(cmd) => ("run", None, None, cmd.metadata()),
+        Commands::Infra { .. } => ("infra", None, None, command::CommandMetadata::default()),
+        Commands::Jobs(cmd) => ("jobs", None, None, cmd.metadata()),
+        Commands::Status(cmd) => ("status", None, None, cmd.metadata()),
+        Commands::Deps(cmd) => ("deps", None, None, cmd.metadata()),
+        Commands::History(cmd) => ("history", None, None, cmd.metadata()),
+        Commands::Analytics(cmd) => ("analytics", None, None, cmd.metadata()),
+        Commands::Docs(cmd) => ("docs", None, None, cmd.metadata()),
+        Commands::Doctor(cmd) => ("doctor", None, None, cmd.metadata()),
+        Commands::Privacy(cmd) => ("privacy", None, None, cmd.metadata()),
+        Commands::Exercise(cmd) => ("exercise", None, None, cmd.metadata()),
+        Commands::Reset(cmd) => ("reset", None, None, cmd.metadata()),
+        Commands::Work(cmd) => ("work", None, None, cmd.metadata()),
+        Commands::Ci(cmd) => ("ci", None, None, cmd.metadata()),
+        Commands::Completions(cmd) => ("completions", None, None, cmd.metadata()),
     };
 
-    let tracks_invocation = command_tracks_invocation(command_name);
-    let preopens_history_db = command_preopens_history_db(command_name) || tracks_invocation;
-    let (mut history_db, history_db_open_error) = if preopens_history_db {
-        match open_history_db(command_name, tracks_invocation) {
-            Ok(db) => {
-                // Emit synthetic warning before start_invocation() clears the marker (T3).
-                // This must happen here — start_invocation() removes the metadata row, so any
-                // subsequent HistoryDb::open() would see is_synthetic=false.
-                db.warn_if_synthetic(&config().history_db_path());
-                (Some(db), None)
+    let command_timeout = command_metadata.timeout;
+    let tracks_invocation = command_metadata.track_in_history;
+    let history_access = command_metadata.history_access;
+    let (mut history_db_write, mut history_db_query, history_db_open_error) =
+        if history_access.needs_history_db() {
+            match open_history_db(history_access) {
+                Ok(db) => {
+                    if history_access.uses_writer() {
+                        // Emit synthetic warning before start_invocation() clears the marker (T3).
+                        // This must happen here — start_invocation() removes the metadata row, so any
+                        // subsequent HistoryDb::open() would see is_synthetic=false.
+                        db.warn_if_synthetic(&config().history_db_path());
+                    }
+                    match history_access {
+                        HistoryAccessMode::None => (None, None, None),
+                        HistoryAccessMode::Query => (None, Some(db), None),
+                        HistoryAccessMode::ReadWrite => (Some(db), None, None),
+                    }
+                }
+                Err(error) => (None, None, Some(error.to_string())),
             }
-            Err(error) => (None, Some(error.to_string())),
-        }
-    } else {
-        (None, None)
-    };
+        } else {
+            (None, None, None)
+        };
     let claimed_bg_invocation =
         parse_one_shot_i64_env("XTASK_BG_INVOCATION_ID", "background invocation claim");
     let invocation_id = if tracks_invocation {
         if let Some(bg_id) = claimed_bg_invocation {
-            match history_db.as_ref() {
+            match history_db_write.as_ref() {
                 Some(db) => {
                     if let Err(error) = db.claim_background_invocation(
                         bg_id,
@@ -454,7 +457,7 @@ pub async fn run_cli() -> Result<()> {
             }
             Some(bg_id)
         } else {
-            match history_db.as_ref() {
+            match history_db_write.as_ref() {
                 Some(db) => match db.start_invocation(command_name, subcommand, profile, None) {
                     Ok(id) => Some(id),
                     Err(error) => {
@@ -481,10 +484,9 @@ pub async fn run_cli() -> Result<()> {
     }
 
     // Initialize tracing only after the primary history DB connection and
-    // invocation row exist. This prevents the background trace writer from
-    // racing `open_history_db()` on startup and spuriously reporting
-    // `database is locked` against the same SQLite file.
-    init_tracing(cli.global.verbosity);
+    // invocation row exist. Observational commands skip history tracing entirely
+    // so they do not open a competing writer connection through the trace layer.
+    init_tracing(cli.global.verbosity, tracks_invocation);
 
     // Create context with invocation ID
     let ctx = CommandContext::new(
@@ -493,7 +495,8 @@ pub async fn run_cli() -> Result<()> {
         invocation_id,
         command_name,
     )
-    .with_preopened_history_db(history_db.take());
+    .with_preopened_history_db_write(history_db_write.take())
+    .with_preopened_history_db_query(history_db_query.take());
 
     // Fingerprint+scope recording moved to each command's execute() method
     // where it has access to the actual command args. See record_coordination_fingerprint().
@@ -707,29 +710,20 @@ pub async fn run_cli() -> Result<()> {
     }
 }
 
-fn open_history_db(command_name: &str, tracks_invocation: bool) -> Result<HistoryDb> {
+fn open_history_db(history_access: HistoryAccessMode) -> Result<HistoryDb> {
     let cfg = config();
     cfg.ensure_state_dir()
         .map_err(|e| eyre!("Failed to create state directory: {e}"))?;
-    if tracks_invocation {
-        HistoryDb::open(&cfg.history_db_path())
-    } else {
-        match command_name {
-            "status" | "history" | "analytics" => HistoryDb::open_query(&cfg.history_db_path()),
-            _ => HistoryDb::open(&cfg.history_db_path()),
+    match history_access {
+        HistoryAccessMode::None => {
+            bail!("history DB requested for command that declared no history access")
         }
+        HistoryAccessMode::Query => HistoryDb::open_query(&cfg.history_db_path()),
+        HistoryAccessMode::ReadWrite => HistoryDb::open(&cfg.history_db_path()),
     }
 }
 
-fn command_tracks_invocation(command_name: &str) -> bool {
-    !matches!(command_name, "completions" | "status" | "history" | "analytics")
-}
-
-fn command_preopens_history_db(command_name: &str) -> bool {
-    matches!(command_name, "status" | "history" | "analytics")
-}
-
-fn init_tracing(verbosity: u8) {
+fn init_tracing(verbosity: u8, enable_history_layer: bool) {
     use tracing_subscriber::prelude::*;
 
     let level_filter = match verbosity {
@@ -738,17 +732,26 @@ fn init_tracing(verbosity: u8) {
         2 => tracing_subscriber::filter::LevelFilter::DEBUG,
         _ => tracing_subscriber::filter::LevelFilter::TRACE,
     };
-    let history_layer = history::HistoryTracingLayer::new(config::config().history_db_path());
-    let _ = tracing_subscriber::registry()
+    let registry = tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .with(
             tracing_subscriber::EnvFilter::builder()
                 .with_default_directive(level_filter.into())
                 .with_env_var("SINEX_LOG")
                 .from_env_lossy(),
-        )
-        .with(history_layer)
-        .try_init();
+        );
+
+    let init_result = if enable_history_layer {
+        registry
+            .with(history::HistoryTracingLayer::new(
+                config::config().history_db_path(),
+            ))
+            .try_init()
+    } else {
+        registry.try_init()
+    };
+
+    let _ = init_result;
 }
 
 /// List all available commands using clap introspection.
@@ -864,22 +867,59 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn command_tracks_invocation_skips_observational_commands() -> TestResult<()> {
-        assert!(!command_tracks_invocation("status"));
-        assert!(!command_tracks_invocation("completions"));
-        assert!(!command_tracks_invocation("history"));
-        assert!(!command_tracks_invocation("analytics"));
-        assert!(command_tracks_invocation("test"));
+    async fn open_history_db_uses_declared_access_mode() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let history_db = temp.path().join("xtask-history-test.db");
+        let mut env = EnvGuard::with_keys(&["XTASK_HISTORY_DB"]);
+        env.set("XTASK_HISTORY_DB", &history_db);
+
+        let _query = open_history_db(HistoryAccessMode::Query)?;
+        let _write = open_history_db(HistoryAccessMode::ReadWrite)?;
+        let error = match open_history_db(HistoryAccessMode::None) {
+            Ok(_) => bail!("commands with no declared history access must not open the DB"),
+            Err(error) => error,
+        };
+        assert!(format!("{error:#}").contains("declared no history access"));
         Ok(())
     }
 
     #[sinex_test]
-    async fn command_preopens_history_db_for_observational_commands() -> TestResult<()> {
-        assert!(command_preopens_history_db("status"));
-        assert!(command_preopens_history_db("history"));
-        assert!(command_preopens_history_db("analytics"));
-        assert!(!command_preopens_history_db("completions"));
-        assert!(!command_preopens_history_db("test"));
+    async fn observational_metadata_uses_query_history_without_tracking() -> TestResult<()> {
+        let status = commands::StatusCommand {
+            watch: false,
+            summary: true,
+            schemas: false,
+        }
+        .metadata();
+        assert!(!status.track_in_history);
+        assert_eq!(status.history_access, HistoryAccessMode::Query);
+
+        let history = commands::history::HistoryCommand {
+            subcommand: commands::history::HistorySubcommand::List {
+                limit: 10,
+                command: None,
+                first: false,
+                no_limit: false,
+                offset: 0,
+                after_invocation: None,
+                before_invocation: None,
+                sort_by: "newest".to_string(),
+                since: None,
+                with_diagnostics: false,
+                with_stages: false,
+                with_tests: false,
+            },
+        }
+        .metadata();
+        assert!(!history.track_in_history);
+        assert_eq!(history.history_access, HistoryAccessMode::Query);
+
+        let analytics = commands::AnalyticsCommand {
+            subcommand: commands::analytics::AnalyticsSubcommand::Velocity,
+        }
+        .metadata();
+        assert!(!analytics.track_in_history);
+        assert_eq!(analytics.history_access, HistoryAccessMode::Query);
         Ok(())
     }
 

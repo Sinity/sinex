@@ -415,6 +415,56 @@ impl TestCommand {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NextestExecutionPlan {
+    runner_packages: Vec<String>,
+    workload_scope: WorkloadScope,
+}
+
+fn normalize_packages(packages: &[String]) -> Vec<String> {
+    let mut packages = packages.to_vec();
+    packages.sort();
+    packages.dedup();
+    packages
+}
+
+fn resolve_nextest_execution_plan(
+    explicit_packages: &[String],
+    inferred_packages: Vec<String>,
+    affected_packages: Option<Vec<String>>,
+) -> NextestExecutionPlan {
+    let explicit_packages = normalize_packages(explicit_packages);
+    if !explicit_packages.is_empty() {
+        return NextestExecutionPlan {
+            runner_packages: explicit_packages.clone(),
+            workload_scope: WorkloadScope::Packages(explicit_packages),
+        };
+    }
+
+    let inferred_packages = normalize_packages(&inferred_packages);
+    if !inferred_packages.is_empty() {
+        return NextestExecutionPlan {
+            runner_packages: inferred_packages.clone(),
+            workload_scope: WorkloadScope::Packages(inferred_packages),
+        };
+    }
+
+    if let Some(affected_packages) = affected_packages {
+        let affected_packages = normalize_packages(&affected_packages);
+        if !affected_packages.is_empty() {
+            return NextestExecutionPlan {
+                runner_packages: affected_packages.clone(),
+                workload_scope: WorkloadScope::Affected(affected_packages),
+            };
+        }
+    }
+
+    NextestExecutionPlan {
+        runner_packages: Vec::new(),
+        workload_scope: WorkloadScope::Workspace,
+    }
+}
+
 impl XtaskCommand for TestCommand {
     fn name(&self) -> &'static str {
         "test"
@@ -683,8 +733,29 @@ impl XtaskCommand for TestCommand {
         let use_fail_fast = self.fail_fast;
 
         // Affected mode is default ON, --all disables it
-        let use_affected = !self.all && self.packages.is_empty();
-        let (affected_filter, workload_scope) = if use_affected {
+        let explicit_packages = normalize_packages(&self.packages);
+        let inferred_packages = if explicit_packages.is_empty() && !self.all {
+            if let Some(filter) = &self.filter {
+                let stage = ctx.start_stage("scope-inference");
+                let inferred = affected::infer_packages_for_test_filter(filter);
+                ctx.finish_stage(stage, inferred.is_ok());
+                let inferred = inferred?;
+                if ctx.is_human() && !inferred.is_empty() {
+                    println!(
+                        "Inferred package scope from filter: {}",
+                        inferred.join(", ")
+                    );
+                }
+                inferred
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
+        let use_affected = !self.all && explicit_packages.is_empty() && inferred_packages.is_empty();
+        let affected_packages = if use_affected {
             let stage = ctx.start_stage("affected");
             let packages = affected::affected_packages();
             ctx.finish_stage(stage, packages.is_ok());
@@ -695,37 +766,36 @@ impl XtaskCommand for TestCommand {
                 if ctx.is_human() {
                     println!("No changes detected. Running ALL tests.");
                 }
-                (None, WorkloadScope::Workspace)
+                None
             } else {
                 packages.sort();
                 packages.dedup();
-                let filter = affected::build_nextest_filter(&packages);
                 if ctx.is_human() {
                     println!("{}", affected::affected_summary(&packages));
                 }
-                (Some(filter), WorkloadScope::Affected(packages))
+                Some(packages)
             }
         } else {
-            let scope = if self.packages.is_empty() {
-                WorkloadScope::Workspace
-            } else {
-                let mut packages = self.packages.clone();
-                packages.sort();
-                packages.dedup();
-                WorkloadScope::Packages(packages)
-            };
-            (None, scope)
+            None
         };
+
+        let execution_plan =
+            resolve_nextest_execution_plan(&explicit_packages, inferred_packages, affected_packages);
+        let workload_scope = execution_plan.workload_scope.clone();
         ctx.record_invocation_args(&self.semantic_invocation_args(&workload_scope));
 
         // List: show tests only
         if self.list {
-            // For brevity, skipping full list impl here for now,
-            // but could delegate to `nextest list` via ProcessBuilder
-            // simplified:
-            let mut cmd = ProcessBuilder::cargo().args(["nextest", "list", "--workspace"]);
-            if let Some(f) = &affected_filter {
-                cmd = cmd.args(["-E", f]);
+            let mut cmd = ProcessBuilder::cargo().args(["nextest", "list"]);
+            if execution_plan.runner_packages.is_empty() {
+                cmd = cmd.arg("--workspace");
+            } else {
+                for package in &execution_plan.runner_packages {
+                    cmd = cmd.args(["-p", package]);
+                }
+            }
+            if let Some(filter) = &self.filter {
+                cmd = cmd.args(["-E", filter]);
             }
             cmd.run_ok()?;
             return Ok(CommandResult::success().with_detail("tests listed"));
@@ -763,35 +833,13 @@ impl XtaskCommand for TestCommand {
             runner.add_arg(format!("--timeout={timeout}"));
         }
 
-        // Filters
-        // When -p is specified, skip the affected filter — -p already constrains
-        // the package scope and the affected filter is redundant.
-        // When both affected and user filters exist, AND them into a single -E
-        // expression, because nextest ORs multiple -E args (which would make
-        // the narrower filter a no-op).
-        if self.packages.is_empty() {
-            match (affected_filter.as_ref(), self.filter.as_ref()) {
-                (Some(affected), Some(user)) => {
-                    // AND them: run only tests matching BOTH filters.
-                    runner.add_arg("-E");
-                    runner.add_arg(format!("({affected}) & ({user})"));
-                }
-                (Some(filter), None) | (None, Some(filter)) => {
-                    runner.add_arg("-E");
-                    runner.add_arg(filter);
-                }
-                (None, None) => {}
-            }
-        } else {
-            for pkg in &self.packages {
-                runner.add_arg("-p");
-                runner.add_arg(pkg);
-            }
-            // Only the user filter applies when -p is specified.
-            if let Some(ref filter) = self.filter {
-                runner.add_arg("-E");
-                runner.add_arg(filter);
-            }
+        for package in &execution_plan.runner_packages {
+            runner.add_arg("-p");
+            runner.add_arg(package);
+        }
+        if let Some(ref filter) = self.filter {
+            runner.add_arg("-E");
+            runner.add_arg(filter);
         }
 
         if self.include_ignored || self.heavy {
@@ -1035,6 +1083,82 @@ mod tests {
         let (_db, invocation_id) =
             super::nextest_history(&ctx, &db).expect("history should keep the real invocation id");
         assert_eq!(invocation_id, 42);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_nextest_execution_plan_prefers_explicit_packages()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = resolve_nextest_execution_plan(
+            &["sinex-db".into(), "xtask".into()],
+            vec!["sinex-services".into()],
+            Some(vec!["sinex-e2e-tests".into()]),
+        );
+
+        assert_eq!(
+            plan,
+            NextestExecutionPlan {
+                runner_packages: vec!["sinex-db".into(), "xtask".into()],
+                workload_scope: WorkloadScope::Packages(vec!["sinex-db".into(), "xtask".into()]),
+            }
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_nextest_execution_plan_prefers_inferred_packages_over_affected_scope()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = resolve_nextest_execution_plan(
+            &[],
+            vec!["sinex-services".into()],
+            Some(vec!["xtask".into(), "sinex-db".into(), "xtask".into()]),
+        );
+
+        assert_eq!(
+            plan,
+            NextestExecutionPlan {
+                runner_packages: vec!["sinex-services".into()],
+                workload_scope: WorkloadScope::Packages(vec!["sinex-services".into()]),
+            }
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_nextest_execution_plan_falls_back_to_affected_when_no_inference()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = resolve_nextest_execution_plan(
+            &[],
+            Vec::new(),
+            Some(vec!["xtask".into(), "sinex-db".into(), "xtask".into()]),
+        );
+
+        assert_eq!(
+            plan,
+            NextestExecutionPlan {
+                runner_packages: vec!["sinex-db".into(), "xtask".into()],
+                workload_scope: WorkloadScope::Affected(vec!["sinex-db".into(), "xtask".into()]),
+            }
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_nextest_execution_plan_falls_back_to_inferred_packages()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = resolve_nextest_execution_plan(
+            &[],
+            vec!["sinex-e2e-tests".into(), "sinex-e2e-tests".into()],
+            None,
+        );
+
+        assert_eq!(
+            plan,
+            NextestExecutionPlan {
+                runner_packages: vec!["sinex-e2e-tests".into()],
+                workload_scope: WorkloadScope::Packages(vec!["sinex-e2e-tests".into()]),
+            }
+        );
         Ok(())
     }
 

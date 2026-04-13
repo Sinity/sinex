@@ -567,6 +567,8 @@ impl XtaskCommand for StatusCommand {
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::diagnostics()
+            .with_history_tracking(false)
+            .with_history_access(crate::command::HistoryAccessMode::Query)
     }
 }
 
@@ -2683,7 +2685,11 @@ mod tests {
         };
         let metadata = cmd.metadata();
         assert!(!metadata.modifies_state);
-        assert!(metadata.track_in_history);
+        assert!(!metadata.track_in_history);
+        assert_eq!(
+            metadata.history_access,
+            crate::command::HistoryAccessMode::Query
+        );
         Ok(())
     }
 
