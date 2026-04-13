@@ -115,7 +115,7 @@ max_payload_size = 5242880  # Deserialized as Bytes(5242880)
 
 ### For EXISTING Code
 - Current usage with raw `u64` is acceptable
-- No mass migration required (deferred to Phase 5)
+- No mass migration is required
 - Convert opportunistically when touching config code
 - When adding new fields to existing structs, consider using newtypes
 
@@ -214,7 +214,7 @@ accept_size(Seconds::from_secs(1024));  // Compile error!
 ```
 
 ## Validation
-As of Phase 1.4, newtypes include optional validation methods:
+Newtypes include optional validation methods:
 - `Seconds::validate()` - Range 0..=86400 (24 hours max)
 - `Bytes::validate()` - Range 0..=1 GiB (configurable per use case)
 
@@ -223,7 +223,7 @@ Invalid values return clear error messages.
 ```rust
 use sinex_core::types::Seconds;
 
-// Validation example (Phase 1.4+)
+// Validation example
 let timeout = Seconds::from_secs(30);
 timeout.validate()?;  // Ok
 
@@ -231,9 +231,9 @@ let too_long = Seconds::from_secs(100000);
 too_long.validate()?;  // Error: exceeds 24 hours
 ```
 
-## Future Enhancements (Phase 5)
+## Future Enhancements
 
-Planned improvements deferred to Phase 5:
+Potential improvements:
 - **Human-readable string parsing**: `"30s"`, `"5MiB"`, `"2h"` syntax
 - **Serde deserialize_with**: Support both integer and string formats
 - **Additional units**: `from_hours()`, `from_kibibytes()`, etc.
@@ -242,11 +242,11 @@ Planned improvements deferred to Phase 5:
 
 For now, use integer values in configuration files and calculate conversions manually:
 ```rust
-// Current (Phase 1.4)
+// Current
 let five_minutes = Seconds::from_secs(5 * 60);
 let five_mib = Bytes::from_mebibytes(5);
 
-// Future (Phase 5)
+// Possible future surface
 let five_minutes = Seconds::from_str("5m")?;
 let five_mib = Bytes::from_str("5MiB")?;
 ```
@@ -254,4 +254,4 @@ let five_mib = Bytes::from_str("5MiB")?;
 ## Related Documentation
 - [NixOS Module Surface](../../../../nixos/modules/README.md) - deployment configuration surface
 - [Validation Ranges](../../exploration/validation-ranges.md) - Details on validation implementation
-- API docs: `cargo doc --package sinex-core --open` (see `types` module)
+- API docs: `cargo doc --package sinex-primitives --open`

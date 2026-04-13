@@ -417,7 +417,7 @@ impl IngestService {
                 }
             }
 
-            // Heartbeat emitter — replaces the manual 60s loop with health-aware heartbeat.
+            // Emit health-aware heartbeats on a fixed cadence.
             // Tracks error window for Healthy/Degraded/Failed status determination.
             // Counter handle is passed to JetStreamConsumer so batch counts feed health status.
             let emitter = HeartbeatEmitter::new(

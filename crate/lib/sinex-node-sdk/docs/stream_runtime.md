@@ -1,6 +1,9 @@
-# Stream Processing Runtime (Gen2)
+# Stream Processing Runtime
 
-The Sinex SDK provides high-level abstractions—**Derived Node Traits** (`TransducerNode`, `WindowedNode`, `ScopeReconcilerNode`) and `IngestorNode`—that reduce boilerplate and enable LLM-friendly development. These "Gen2" patterns automate state management, checkpointing, and lifecycle transitions.
+The Sinex SDK provides high-level abstractions—**Derived Node Traits**
+(`TransducerNode`, `WindowedNode`, `ScopeReconcilerNode`) and `IngestorNode`—
+plus adapters that automate state management, checkpointing, and lifecycle
+transitions.
 
 ## 🧱 The Abstractions
 
@@ -24,7 +27,7 @@ Designed for processing event streams and synthesizing new events. The unified `
 - **Runtime-Integrated**: Composes with `NodeRunner` and node-specific processing bridges.
 - **Health**: Integrates with `HealthReporter` for automatic error rate monitoring.
 
-### 2. `IngestorNode` (Sensors)
+### 2. `IngestorNode`
 Tailored for capturing data from external sources (Files, APIs, Sockets).
 - **Control**: Manages its own continuous loop (sensor mode).
 - **Symmetry**: Implements `scan_snapshot`, `scan_historical`, and `run_continuous`.
@@ -53,12 +56,12 @@ State is stored using a dual-destination strategy:
 
 ## 🛑 Cooperative Shutdown
 
-Unlike "Gen1" nodes that used forceful task aborts, Gen2 nodes use **Cooperative Cancellation**:
+Nodes use **Cooperative Cancellation**:
 
 1.  **Signal**: Node receives SIGTERM.
 2.  **Broadcast**: `watch::channel` notifies all background watchers.
 3.  **Finalize**: Watchers finish their current slice and finalize `SourceMaterial`.
-4.  **Checkpoint**: Final state is written to disk and NATS.
+4.  **Checkpoint**: Final state is written to disk and NATS KV.
 5.  **Exit**: Process terminates cleanly.
 
 ## 🛡️ Path Validation

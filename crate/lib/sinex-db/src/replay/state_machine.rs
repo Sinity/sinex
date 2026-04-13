@@ -793,7 +793,7 @@ impl ReplayStateMachine {
                 .await
                 .map_err(|e| SinexError::database(format!("cascade preview begin: {e}")))?;
 
-            // Phase 1: cascade expansion via repo_tx (borrows &mut tx)
+            // Expand the cascade via repo_tx (borrows &mut tx).
             let (all_cascade_ids, derived_ids) = {
                 let mut repo_tx = EventRepositoryTx::new(&mut tx);
                 let session_id = format!("preview_{}", Uuid::now_v7().simple());
@@ -832,7 +832,7 @@ impl ReplayStateMachine {
             };
             // repo_tx dropped — tx is free to use directly
 
-            // Phase 2: query metadata for derived events
+            // Query metadata for derived events.
             let affected_nodes = Self::load_cascade_affected_nodes(&mut tx, &derived_ids).await?;
             let affected_scopes = Self::load_cascade_affected_scopes(&mut tx, &derived_ids).await?;
 
