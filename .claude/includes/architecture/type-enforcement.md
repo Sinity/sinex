@@ -14,17 +14,15 @@ The type system makes the wrong thing unrepresentable.
 | Empty synthesis parent arrays | `NonEmptyVec<EventId>` in `Provenance::Synthesis` |
 | Invalid source strings in constants | `EventSource::from_static()` validated at compile time |
 
-### Level 2: Lint/AST-Grep Enforced
+### Level 2: Lint Enforced / AST-Grep Catalog
 
 Static analysis catches violations before code compiles or merges.
 
 | Rule | Enforcement |
 |------|-------------|
 | No `unwrap`/`expect` in library code | `deny(unwrap_used, expect_used)` + `allow-unwrap-in-tests` |
-| No `anyhow` in libraries | AST-grep `anyhow-in-lib.yml` |
-| No bare `sqlx::query()` | AST-grep `raw-sqlx-query.yml` (must use `sqlx::query!()` macro) |
-| No discarded error context | AST-grep `context-erasure.yml` |
-| No raw `OffsetDateTime` | AST-grep `bare-offset-datetime.yml` (use `Timestamp`) |
+| Blocking forbidden patterns | `xtask check --forbidden` (public entrypoint; uses ripgrep-based checks plus ast-grep error-severity rules) |
+| Additional structural/style rules | AST-grep catalog in `.config/ast-grep/rules/` (currently advisory warnings/hints unless marked `error`) |
 
 ### Level 3: DB Constraint Enforced
 

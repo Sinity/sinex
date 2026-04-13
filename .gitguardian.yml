@@ -2,24 +2,16 @@ version: 2
 
 secret:
   ignored_matches:
-    - name: troubleshooting admin demo credentials
+    - name: nixos admin token examples
       match: "admin:admin"
       paths:
-        - docs/operations/troubleshooting.md
-        - spec/docs/operations/TIM-TroubleshootingGuide.md
-    - name: claude poc jwt header demo
+        - nixos/README.md
+        - nixos/examples/coordination.nix
+        - nixos/examples/dev-sandbox.nix
+        - nixos/examples/headless.nix
+        - nixos/examples/monitoring.nix
+        - nixos/examples/workstation.nix
+    - name: privacy engine jwt fixture
       match: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
       paths:
-        - spec/docs/claude/security-exploits-poc.md
-    - name: claude poc stripe key demo
-      match: "sk_live_abcd1234"
-      paths:
-        - spec/docs/claude/security-exploits-poc.md
-    - name: snapshot stripe demo key
-      match: "sk_live_1234567890"
-      paths:
-        - examples/snapshot_test.rs
-    - name: snapshot demo api key
-      match: "secret-key-12345"
-      paths:
-        - test/examples/snapshot_demo.rs
+        - crate/lib/sinex-primitives/src/privacy/engine.rs
