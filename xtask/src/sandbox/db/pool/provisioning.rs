@@ -33,6 +33,12 @@ pub(super) enum EnsurePoolDatabaseOutcome {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PoolCleanVerification {
+    TrustedTemplateClone,
+    RequireSchemaVerification,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SlotLifecycleLockMode {
     Wait,
     SkipIfLocked,
@@ -337,14 +343,23 @@ async fn recreate_pool_database_locked(
     wait_for_database_absence_admin(admin_conn, db_name).await?;
 
     let db_url = url_with_db_name(base_url, db_name)?;
-    match create_database_from_template_admin(admin_conn, db_name, template_name).await? {
-        CreateDatabaseOutcome::Created => {}
-        CreateDatabaseOutcome::AlreadyExists => {
-            grant_pool_database_permissions_checked(db_name).await?;
-            converge_pool_database_schema(db_name, &db_url).await?;
-        }
-    }
-    mark_pool_database_clean(admin_conn, db_name, &db_url, template_extensions).await?;
+    let verification =
+        match create_database_from_template_admin(admin_conn, db_name, template_name).await? {
+            CreateDatabaseOutcome::Created => PoolCleanVerification::TrustedTemplateClone,
+            CreateDatabaseOutcome::AlreadyExists => {
+                grant_pool_database_permissions_checked(db_name).await?;
+                converge_pool_database_schema(db_name, &db_url).await?;
+                PoolCleanVerification::RequireSchemaVerification
+            }
+        };
+    mark_pool_database_clean(
+        admin_conn,
+        db_name,
+        &db_url,
+        template_extensions,
+        verification,
+    )
+    .await?;
     Ok(())
 }
 
@@ -496,16 +511,20 @@ async fn ensure_pool_database_exists_inner(
                 CreateDatabaseOutcome::AlreadyExists => {}
             }
         }
-        if !created_from_fresh_template_clone {
+        let verification = if created_from_fresh_template_clone {
+            PoolCleanVerification::TrustedTemplateClone
+        } else {
             // Existing or raced slot databases may still need grants and convergence.
             grant_pool_database_permissions_checked(db_name).await?;
             converge_pool_database_schema(db_name, &db_url).await?;
-        }
+            PoolCleanVerification::RequireSchemaVerification
+        };
         mark_pool_database_clean(
             &mut lifecycle_admin_conn,
             db_name,
             &db_url,
             &template_extensions,
+            verification,
         )
         .await?;
         Ok(EnsurePoolDatabaseOutcome::Ensured)
@@ -642,7 +661,14 @@ pub(super) async fn reconcile_existing_pool_database(
     converge_pool_database_schema(db_name, db_url).await?;
 
     let mut admin_conn = connect_admin_with_retry(admin_url).await?;
-    mark_pool_database_clean(&mut admin_conn, db_name, db_url, extensions).await
+    mark_pool_database_clean(
+        &mut admin_conn,
+        db_name,
+        db_url,
+        extensions,
+        PoolCleanVerification::RequireSchemaVerification,
+    )
+    .await
 }
 
 // ── Meta load / store ───────────────────────────────────────────────────────
@@ -808,9 +834,12 @@ pub(super) async fn mark_pool_database_clean(
     db_name: &str,
     db_url: &str,
     extensions: &HashMap<String, String>,
+    verification: PoolCleanVerification,
 ) -> TestResult<()> {
     super::reset::ensure_pool_db_invariants(db_url).await?;
-    verify_pool_database_schema_clean(db_name, db_url).await?;
+    if verification == PoolCleanVerification::RequireSchemaVerification {
+        verify_pool_database_schema_clean(db_name, db_url).await?;
+    }
     let meta = PoolMeta {
         fingerprint: Some(schema_fingerprint()?),
         extensions: extensions.clone(),
@@ -1232,10 +1261,15 @@ mod tests {
         );
         slot_pool.close().await;
 
-        let error =
-            mark_pool_database_clean(&mut admin_conn, &db_name, &slot_url, &expected_extensions)
-                .await
-                .expect_err("residual schema drift must prevent clean pool metadata");
+        let error = mark_pool_database_clean(
+            &mut admin_conn,
+            &db_name,
+            &slot_url,
+            &expected_extensions,
+            PoolCleanVerification::RequireSchemaVerification,
+        )
+        .await
+        .expect_err("residual schema drift must prevent clean pool metadata");
         let rendered = format!("{error:#}");
         assert!(
             rendered.contains("still has schema drift after convergence"),

@@ -52,8 +52,8 @@ use config::{PoolConfig, is_nextest_run};
 use metrics::POOL_METRICS;
 use nextest_run::prepare_nextest_lazy_pool;
 use provisioning::{
-    CreateDatabaseOutcome, EnsurePoolDatabaseOutcome, advisory_lock_key, connect_admin_with_retry,
-    converge_pool_database_schema, create_database_from_template, database_exists,
+    CreateDatabaseOutcome, EnsurePoolDatabaseOutcome, PoolCleanVerification, advisory_lock_key,
+    connect_admin_with_retry, create_database_from_template, database_exists,
     detect_connection_budget, drop_database_if_exists, drop_database_if_exists_admin,
     grant_pool_database_permissions_checked, is_missing_database_error,
     is_retryable_connection_error, is_retryable_connection_report,
@@ -1135,13 +1135,12 @@ impl DatabasePool {
                                     eprintln!(
                                         "  Recreated pool database from template: {name}"
                                     );
-                                    grant_pool_database_permissions_checked(&name).await?;
-                                    converge_pool_database_schema(&name, &db_url).await?;
                                     mark_pool_database_clean(
                                         conn.as_mut(),
                                         &name,
                                         &db_url,
                                         &template_ext_versions,
+                                        PoolCleanVerification::TrustedTemplateClone,
                                     )
                                     .await?;
                                 }
@@ -1164,6 +1163,7 @@ impl DatabasePool {
                                 &name,
                                 &db_url,
                                 &template_ext_versions,
+                                PoolCleanVerification::RequireSchemaVerification,
                             )
                             .await?;
                         }
@@ -1178,13 +1178,12 @@ impl DatabasePool {
                         {
                             CreateDatabaseOutcome::Created => {
                                 eprintln!("  Created new pool database: {name}");
-                                grant_pool_database_permissions_checked(&name).await?;
-                                converge_pool_database_schema(&name, &db_url).await?;
                                 mark_pool_database_clean(
                                     conn.as_mut(),
                                     &name,
                                     &db_url,
                                     &template_ext_versions,
+                                    PoolCleanVerification::TrustedTemplateClone,
                                 )
                                 .await?;
                             }
@@ -1207,9 +1206,6 @@ impl DatabasePool {
 
                     // Store URL for later pool creation
                     let url = url_with_db_name(&base_url, &name)
-                        .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?;
-                    reset::ensure_pool_db_invariants(&url)
-                        .await
                         .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?;
 
                     Ok::<_, color_eyre::eyre::Error>((name, url))
