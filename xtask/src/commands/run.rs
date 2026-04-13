@@ -21,6 +21,7 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 use crate::config::config;
 use crate::jobs::JobManager;
 use crate::orchestrator::{DevOrchestrator, RunArgs};
+use crate::process::cargo_tokio_command;
 use crate::preflight;
 
 fn unix_timestamp_secs(now: std::time::SystemTime, context: &str) -> Result<u64> {
@@ -690,7 +691,7 @@ impl RunCommand {
     }
 
     async fn build_packages(&self, packages: &[&str], ctx: &CommandContext) -> Result<()> {
-        let mut build_cmd = Command::new("cargo");
+        let mut build_cmd = cargo_tokio_command();
         build_cmd.arg("build");
         for package in packages {
             build_cmd.arg("-p").arg(package);
@@ -989,7 +990,7 @@ impl RunCommand {
         self.maybe_spawn_metrics_overlay(ctx);
         let runtime_env = self.local_run_env_vars();
 
-        let status = Command::new("cargo")
+        let status = cargo_tokio_command()
             .args(&args)
             .envs(runtime_env)
             .status()
@@ -1037,7 +1038,7 @@ impl RunCommand {
         if self.release {
             build_args.push("--release".to_string());
         }
-        let build_status = Command::new("cargo")
+        let build_status = cargo_tokio_command()
             .args(&build_args)
             .status()
             .await

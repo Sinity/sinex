@@ -4,6 +4,12 @@ severity: warning
 language: rust
 rule:
   pattern: panic!($$$ARGS)
+ignores:
+  - "xtask/**"
+  - "**/main.rs"
+  - "**/tests/**"
+  - "**/*_test.rs"
+  - "**/build.rs"
 note: |
   Library code should not panic. Return a Result<T, E> instead
   to let the caller decide how to handle the error.

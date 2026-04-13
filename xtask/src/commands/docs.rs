@@ -1,7 +1,14 @@
 //! Documentation generation command
 
+use crate::command_catalog::collect_command_catalog;
+use crate::command_docs::{render_command_guide, render_command_reference};
+use crate::config::{ast_grep_catalog_path, ast_grep_rules_dir};
 use crate::process::ProcessBuilder;
-use color_eyre::eyre::{Context, Result};
+use color_eyre::eyre::{Context, ContextCompat, Result};
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
+use sinex_primitives::events::schema_registry::get_all_payloads;
+use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
@@ -55,13 +62,79 @@ pub enum DocsSubcommand {
         /// Print to stdout instead of writing a file
         #[arg(long)]
         stdout: bool,
+
+        /// Exit non-zero if the generated output would change
+        #[arg(long, conflicts_with = "stdout")]
+        check: bool,
     },
+
+    /// Generate the concise xtask command guide used for agent memory and humans.
+    CommandGuide {
+        /// Output file (default: xtask/docs/command-guide.md)
+        #[arg(long)]
+        output: Option<std::path::PathBuf>,
+
+        /// Print to stdout instead of writing a file
+        #[arg(long)]
+        stdout: bool,
+
+        /// Exit non-zero if the generated output would change
+        #[arg(long, conflicts_with = "stdout")]
+        check: bool,
+    },
+
+    /// Generate the exhaustive xtask public command reference from the live clap tree.
+    CommandReference {
+        /// Output file (default: xtask/docs/command-reference.md)
+        #[arg(long)]
+        output: Option<std::path::PathBuf>,
+
+        /// Print to stdout instead of writing a file
+        #[arg(long)]
+        stdout: bool,
+
+        /// Exit non-zero if the generated output would change
+        #[arg(long, conflicts_with = "stdout")]
+        check: bool,
+    },
+
+    /// Generate the checked-in JSON schema bundle from the Rust EventPayload registry.
+    SchemaBundle {
+        /// Output directory root (default: schemas/ in workspace root)
+        #[arg(long)]
+        output_dir: Option<std::path::PathBuf>,
+
+        /// Exit non-zero if the generated bundle would change
+        #[arg(long)]
+        check: bool,
+    },
+
+    /// Generate the live ast-grep rule catalog from `.config/ast-grep/rules/`.
+    AstGrepCatalog {
+        /// Output file (default: .config/ast-grep/README.md)
+        #[arg(long)]
+        output: Option<std::path::PathBuf>,
+
+        /// Print to stdout instead of writing a file
+        #[arg(long)]
+        stdout: bool,
+
+        /// Exit non-zero if the generated output would change
+        #[arg(long, conflicts_with = "stdout")]
+        check: bool,
+    },
+
+    /// Refresh all generated repo surfaces tracked in the repo.
+    Sync,
+
+    /// Verify that all generated repo surfaces are up to date.
+    Check,
 
     /// Generate a codebase snapshot for AI context (via repomix)
     Snapshot(SnapshotCommand),
 }
 
-/// Documentation generation command
+/// Generate and verify repo documentation surfaces.
 #[derive(Debug, Clone, clap::Args)]
 pub struct DocsCommand {
     #[command(subcommand)]
@@ -82,9 +155,31 @@ impl XtaskCommand for DocsCommand {
                 all_features,
             } => execute_build(package, *open, *private, *all_features, ctx),
             DocsSubcommand::Serve { port, build } => execute_serve(*port, *build, ctx),
-            DocsSubcommand::Agents { output, stdout } => {
-                execute_agents(output.as_deref(), *stdout, ctx)
+            DocsSubcommand::Agents {
+                output,
+                stdout,
+                check,
+            } => execute_agents(output.as_deref(), *stdout, *check, ctx),
+            DocsSubcommand::CommandGuide {
+                output,
+                stdout,
+                check,
+            } => execute_command_guide(output.as_deref(), *stdout, *check, ctx),
+            DocsSubcommand::CommandReference {
+                output,
+                stdout,
+                check,
+            } => execute_command_reference(output.as_deref(), *stdout, *check, ctx),
+            DocsSubcommand::SchemaBundle { output_dir, check } => {
+                execute_schema_bundle(output_dir.as_deref(), *check, ctx)
             }
+            DocsSubcommand::AstGrepCatalog {
+                output,
+                stdout,
+                check,
+            } => execute_ast_grep_catalog(output.as_deref(), *stdout, *check, ctx),
+            DocsSubcommand::Sync => execute_sync(ctx),
+            DocsSubcommand::Check => execute_check(ctx),
             DocsSubcommand::Snapshot(cmd) => cmd.execute(ctx).await,
         }
     }
@@ -162,17 +257,17 @@ fn execute_build(
         }));
     }
 
+    let doc_root = crate::config::workspace_target_dir().join("doc");
     let doc_path = if let Some(pkg) = packages.first() {
-        // Convert package name: sinex-core -> sinex_core
         let crate_name = pkg.replace('-', "_");
-        format!("target/doc/{crate_name}/index.html")
+        doc_root.join(crate_name).join("index.html")
     } else {
-        "target/doc/index.html".to_string()
+        doc_root.join("index.html")
     };
 
     if ctx.is_human() {
         println!("\nDocumentation built successfully!");
-        println!("  Location: {doc_path}");
+        println!("  Location: {}", doc_path.display());
         if !open {
             println!("  Use --open to view in browser");
         }
@@ -182,7 +277,7 @@ fn execute_build(
         .with_message("Documentation built")
         .with_data(serde_json::json!({
             "packages": packages,
-            "path": doc_path,
+            "path": doc_path.display().to_string(),
             "private": private,
             "all_features": all_features,
         }))
@@ -194,10 +289,10 @@ fn execute_serve(port: u16, build_first: bool, ctx: &CommandContext) -> Result<C
         execute_build(&[], false, false, false, ctx)?;
     }
 
-    let doc_dir = "target/doc";
+    let doc_dir = crate::config::workspace_target_dir().join("doc");
 
     // Check if docs exist
-    if !std::path::Path::new(doc_dir).exists() {
+    if !doc_dir.exists() {
         return Ok(CommandResult::failure(crate::output::StructuredError {
             code: "DOCS_NOT_FOUND".to_string(),
             message: "Documentation not built yet".to_string(),
@@ -211,9 +306,11 @@ fn execute_serve(port: u16, build_first: bool, ctx: &CommandContext) -> Result<C
         println!("Press Ctrl+C to stop.\n");
     }
 
+    let doc_dir_str = doc_dir.to_string_lossy().into_owned();
+
     // Try simple-http-server first
     let http_server_result = Command::new("simple-http-server")
-        .args(["-p", &port.to_string(), "-i", doc_dir])
+        .args(["-p", &port.to_string(), "-i", &doc_dir_str])
         .status();
 
     if http_server_result.is_ok_and(|s| s.success()) {
@@ -225,7 +322,7 @@ fn execute_serve(port: u16, build_first: bool, ctx: &CommandContext) -> Result<C
     // Fall back to Python
     let python_result = Command::new("python3")
         .args(["-m", "http.server", &port.to_string()])
-        .current_dir(doc_dir)
+        .current_dir(&doc_dir)
         .status();
 
     if python_result.is_ok_and(|s| s.success()) {
@@ -339,10 +436,184 @@ fn resolve_transclusions(
 fn execute_agents(
     output: Option<&std::path::Path>,
     to_stdout: bool,
+    check_only: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
+    let surface = generated_agents_surface(&workspace)?;
+    let dest = output.map(|path| path.to_path_buf()).unwrap_or(surface.path);
+    write_generated_output(
+        &dest,
+        &surface.content,
+        to_stdout,
+        check_only,
+        surface.label,
+        surface.regenerate_command,
+        ctx,
+    )
+}
 
+fn execute_command_guide(
+    output: Option<&std::path::Path>,
+    to_stdout: bool,
+    check_only: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let workspace = find_workspace_root(std::env::current_dir()?)?;
+    let surface = generated_command_guide_surface(&workspace);
+    let dest = output.map(|path| path.to_path_buf()).unwrap_or(surface.path);
+
+    write_generated_output(
+        &dest,
+        &surface.content,
+        to_stdout,
+        check_only,
+        surface.label,
+        surface.regenerate_command,
+        ctx,
+    )
+}
+
+fn execute_command_reference(
+    output: Option<&std::path::Path>,
+    to_stdout: bool,
+    check_only: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let workspace = find_workspace_root(std::env::current_dir()?)?;
+    let surface = generated_command_reference_surface(&workspace);
+    let dest = output.map(|path| path.to_path_buf()).unwrap_or(surface.path);
+
+    write_generated_output(
+        &dest,
+        &surface.content,
+        to_stdout,
+        check_only,
+        surface.label,
+        surface.regenerate_command,
+        ctx,
+    )
+}
+
+fn execute_sync(ctx: &CommandContext) -> Result<CommandResult> {
+    let workspace = find_workspace_root(std::env::current_dir()?)?;
+    let surfaces = generated_surfaces(&workspace)?;
+    let outcomes = sync_generated_surfaces(&surfaces, false, ctx)?;
+    let schema_bundle = sync_schema_bundle(
+        generated_schema_bundle(&workspace, &workspace.join("schemas"))?,
+        false,
+        ctx,
+    )?;
+
+    Ok(CommandResult::success()
+        .with_message("Generated repo surfaces synchronized")
+        .with_data(serde_json::json!({
+            "surfaces": outcomes,
+            "schema_bundle": schema_bundle,
+        }))
+        .with_duration(ctx.elapsed()))
+}
+
+fn execute_check(ctx: &CommandContext) -> Result<CommandResult> {
+    let workspace = find_workspace_root(std::env::current_dir()?)?;
+    let surfaces = generated_surfaces(&workspace)?;
+    let outcomes = sync_generated_surfaces(&surfaces, true, ctx)?;
+    let schema_bundle = sync_schema_bundle(
+        generated_schema_bundle(&workspace, &workspace.join("schemas"))?,
+        true,
+        ctx,
+    )?;
+    let changed = outcomes.iter().any(|outcome| outcome.changed) || schema_bundle.changed;
+
+    let result = if changed {
+        CommandResult::failure(crate::output::StructuredError {
+            code: "GENERATED_SURFACES_STALE".to_string(),
+            message: "One or more generated repo surfaces are stale".to_string(),
+            location: Some("xtask/docs".to_string()),
+            suggestion: Some(
+                "Run `xtask docs sync` to regenerate generated repo surfaces".to_string(),
+            ),
+        })
+        .with_message("Generated repo surfaces are stale")
+    } else {
+        CommandResult::success().with_message("Generated repo surfaces already up to date")
+    };
+
+    Ok(result
+        .with_data(serde_json::json!({
+            "surfaces": outcomes,
+            "schema_bundle": schema_bundle,
+        }))
+        .with_duration(ctx.elapsed()))
+}
+
+struct GeneratedSurface {
+    label: &'static str,
+    path: std::path::PathBuf,
+    content: String,
+    regenerate_command: &'static str,
+}
+
+#[derive(serde::Serialize)]
+struct GeneratedSurfaceOutcome {
+    label: String,
+    path: String,
+    lines: usize,
+    bytes: usize,
+    changed: bool,
+}
+
+#[derive(serde::Serialize)]
+struct SchemaBundleOutcome {
+    root: String,
+    files: usize,
+    stale_or_changed_files: usize,
+    removed_files: usize,
+    changed: bool,
+    stale_paths: Vec<String>,
+}
+
+struct SchemaBundle {
+    root: std::path::PathBuf,
+    files: BTreeMap<std::path::PathBuf, String>,
+}
+
+#[derive(serde::Serialize)]
+struct SchemaBundleRegistry {
+    version: String,
+    entries: Vec<SchemaBundleRegistryEntry>,
+}
+
+#[derive(serde::Serialize)]
+struct SchemaBundleRegistryEntry {
+    source: String,
+    event_type: String,
+    version: String,
+    path: String,
+    content_hash: String,
+}
+
+fn generated_surfaces(workspace: &std::path::Path) -> Result<Vec<GeneratedSurface>> {
+    Ok(vec![
+        generated_ast_grep_catalog_surface(workspace)?,
+        generated_command_guide_surface(workspace),
+        generated_command_reference_surface(workspace),
+        generated_agents_surface(workspace)?,
+    ])
+}
+
+fn generated_ast_grep_catalog_surface(_workspace: &std::path::Path) -> Result<GeneratedSurface> {
+    let rules_dir = ast_grep_rules_dir();
+    let rules = load_ast_grep_rules(&rules_dir)?;
+    Ok(GeneratedSurface {
+        label: "ast-grep rule catalog",
+        path: ast_grep_catalog_path(),
+        content: render_ast_grep_catalog(&rules),
+        regenerate_command: "xtask docs ast-grep-catalog",
+    })
+}
+
+fn generated_agents_surface(workspace: &std::path::Path) -> Result<GeneratedSurface> {
     let claude_md = workspace.join("CLAUDE.md");
     if !claude_md.exists() {
         color_eyre::eyre::bail!("CLAUDE.md not found at {}", claude_md.display());
@@ -350,7 +621,6 @@ fn execute_agents(
 
     let source = std::fs::read_to_string(&claude_md).wrap_err("Failed to read CLAUDE.md")?;
 
-    let base_dir = workspace.clone();
     let mut visited = std::collections::HashSet::new();
     visited.insert(
         claude_md
@@ -358,48 +628,636 @@ fn execute_agents(
             .unwrap_or_else(|_| claude_md.clone()),
     );
 
-    let resolved = resolve_transclusions(&source, &base_dir, &mut visited, 0);
+    let resolved = resolve_transclusions(&source, workspace, &mut visited, 0);
+    let header = "<!-- This file is auto-generated by `xtask docs agents`.\nGenerated from CLAUDE.md transclusion tree.\nDo not edit manually — run `xtask docs agents` to regenerate. -->\n\n";
 
-    // Prepend a generation header
-    let header = format!(
-        "<!-- This file is auto-generated by `xtask docs agents`.\n\
-         Generated from CLAUDE.md transclusion tree.\n\
-         Do not edit manually — run `xtask docs agents` to regenerate. -->\n\n"
+    Ok(GeneratedSurface {
+        label: "AGENTS.md",
+        path: workspace.join("AGENTS.md"),
+        content: format!("{header}{resolved}"),
+        regenerate_command: "xtask docs agents",
+    })
+}
+
+fn generated_command_guide_surface(workspace: &std::path::Path) -> GeneratedSurface {
+    let commands = collect_command_catalog();
+    GeneratedSurface {
+        label: "xtask command guide",
+        path: workspace.join("xtask/docs/command-guide.md"),
+        content: render_command_guide(&commands),
+        regenerate_command: "xtask docs command-guide",
+    }
+}
+
+fn generated_command_reference_surface(workspace: &std::path::Path) -> GeneratedSurface {
+    let commands = collect_command_catalog();
+    GeneratedSurface {
+        label: "xtask command reference",
+        path: workspace.join("xtask/docs/command-reference.md"),
+        content: render_command_reference(&commands),
+        regenerate_command: "xtask docs command-reference",
+    }
+}
+
+fn execute_ast_grep_catalog(
+    output: Option<&std::path::Path>,
+    to_stdout: bool,
+    check_only: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let workspace = find_workspace_root(std::env::current_dir()?)?;
+    let surface = generated_ast_grep_catalog_surface(&workspace)?;
+    let dest = output.map(|path| path.to_path_buf()).unwrap_or(surface.path);
+
+    write_generated_output(
+        &dest,
+        &surface.content,
+        to_stdout,
+        check_only,
+        surface.label,
+        surface.regenerate_command,
+        ctx,
+    )
+}
+
+fn execute_schema_bundle(
+    output_dir: Option<&std::path::Path>,
+    check_only: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let workspace = find_workspace_root(std::env::current_dir()?)?;
+    let root = output_dir
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| workspace.join("schemas"));
+    let outcome = sync_schema_bundle(generated_schema_bundle(&workspace, &root)?, check_only, ctx)?;
+
+    let result = if check_only && outcome.changed {
+        CommandResult::failure(crate::output::StructuredError {
+            code: "SCHEMA_BUNDLE_STALE".to_string(),
+            message: "Schema bundle is stale or missing".to_string(),
+            location: Some(root.display().to_string()),
+            suggestion: Some("Run `xtask docs schema-bundle` to regenerate the bundle".to_string()),
+        })
+    } else {
+        CommandResult::success()
+    };
+
+    let message = if check_only {
+        if outcome.changed {
+            "Schema bundle is stale".to_string()
+        } else {
+            "Schema bundle already up to date".to_string()
+        }
+    } else if outcome.changed {
+        "Schema bundle synchronized".to_string()
+    } else {
+        "Schema bundle already up to date".to_string()
+    };
+
+    Ok(result
+        .with_message(message)
+        .with_data(serde_json::json!(outcome))
+        .with_duration(ctx.elapsed()))
+}
+
+fn generated_schema_bundle(
+    _workspace: &std::path::Path,
+    root: &std::path::Path,
+) -> Result<SchemaBundle> {
+    let mut files = BTreeMap::new();
+    let mut seen_paths = BTreeMap::<(u64, String, String), String>::new();
+    let mut registries = BTreeMap::<u64, Vec<SchemaBundleRegistryEntry>>::new();
+
+    let mut payloads: Vec<_> = get_all_payloads().collect();
+    payloads.sort_by(|left, right| {
+        (left.source, left.event_type, left.version, left.type_name).cmp(&(
+            right.source,
+            right.event_type,
+            right.version,
+            right.type_name,
+        ))
+    });
+
+    for payload in payloads {
+        let major = schema_bundle_major_version(payload.version).with_context(|| {
+            format!(
+                "invalid schema version for payload {} ({}/{})",
+                payload.type_name, payload.source, payload.event_type
+            )
+        })?;
+        let path_key = (
+            major,
+            payload.source.to_string(),
+            payload.event_type.to_string(),
+        );
+        if let Some(existing_version) = seen_paths.insert(path_key.clone(), payload.version.to_string())
+            && existing_version != payload.version
+        {
+            color_eyre::eyre::bail!(
+                "schema bundle path collision for {}/{} in v{}: {} and {}",
+                payload.source,
+                payload.event_type,
+                major,
+                existing_version,
+                payload.version
+            );
+        }
+
+        let schema = annotate_schema_bundle_json(
+            (payload.schema_fn)().map_err(|error| {
+                error
+                    .with_context("payload_type", payload.type_name)
+                    .with_context("source", payload.source)
+                    .with_context("event_type", payload.event_type)
+                    .with_context("version", payload.version)
+            })?,
+            payload.source,
+            payload.event_type,
+            payload.version,
+        )?;
+        let schema_content =
+            serde_json::to_string_pretty(&schema).context("failed to render schema bundle JSON")?
+                + "\n";
+        let schema_rel_path = std::path::PathBuf::from(format!(
+            "v{major}/{}/{}.json",
+            payload.source, payload.event_type
+        ));
+        let registry_path = format!("{}/{}.json", payload.source, payload.event_type);
+        let content_hash = schema_bundle_content_hash(&schema)
+            .context("failed to compute schema bundle content hash")?;
+
+        files.insert(root.join(&schema_rel_path), schema_content);
+        registries
+            .entry(major)
+            .or_default()
+            .push(SchemaBundleRegistryEntry {
+                source: payload.source.to_string(),
+                event_type: payload.event_type.to_string(),
+                version: payload.version.to_string(),
+                path: registry_path,
+                content_hash,
+            });
+    }
+
+    for (major, entries) in registries {
+        let registry = SchemaBundleRegistry {
+            version: format!("v{major}"),
+            entries,
+        };
+        let registry_content = serde_json::to_string_pretty(&registry)
+            .context("failed to render schema bundle registry")?
+            + "\n";
+        files.insert(root.join(format!("v{major}/registry.json")), registry_content);
+    }
+
+    Ok(SchemaBundle {
+        root: root.to_path_buf(),
+        files,
+    })
+}
+
+fn annotate_schema_bundle_json(
+    schema: serde_json::Value,
+    source: &str,
+    event_type: &str,
+    version: &str,
+) -> Result<serde_json::Value> {
+    let serde_json::Value::Object(mut object) = schema else {
+        color_eyre::eyre::bail!("event payload schema root must be a JSON object");
+    };
+    object.insert(
+        "x-sinex-source".to_string(),
+        serde_json::Value::String(source.to_string()),
     );
-    let output_content = format!("{header}{resolved}");
+    object.insert(
+        "x-sinex-event-type".to_string(),
+        serde_json::Value::String(event_type.to_string()),
+    );
+    object.insert(
+        "x-sinex-version".to_string(),
+        serde_json::Value::String(version.to_string()),
+    );
+    Ok(serde_json::Value::Object(object))
+}
 
+#[derive(Debug, Clone, Deserialize)]
+struct AstGrepRuleCatalogEntry {
+    id: String,
+    message: String,
+    severity: String,
+    language: Option<String>,
+    note: Option<String>,
+    ignores: Option<Vec<String>>,
+}
+
+fn load_ast_grep_rules(rules_dir: &std::path::Path) -> Result<Vec<AstGrepRuleCatalogEntry>> {
+    let mut paths = Vec::new();
+    for entry in std::fs::read_dir(rules_dir)
+        .wrap_err_with(|| format!("Failed to read {}", rules_dir.display()))?
+    {
+        let entry =
+            entry.wrap_err_with(|| format!("Failed to enumerate {}", rules_dir.display()))?;
+        let path = entry.path();
+        let is_yaml = matches!(
+            path.extension().and_then(|ext| ext.to_str()),
+            Some("yml" | "yaml")
+        );
+        if is_yaml && path.is_file() {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+
+    let mut rules = Vec::with_capacity(paths.len());
+    for path in paths {
+        let content = std::fs::read_to_string(&path)
+            .wrap_err_with(|| format!("Failed to read {}", path.display()))?;
+        let mut rule: AstGrepRuleCatalogEntry = serde_yaml::from_str(&content)
+            .wrap_err_with(|| format!("Failed to parse {}", path.display()))?;
+        rule.ignores
+            .get_or_insert_with(Vec::new)
+            .sort_by(|left, right| left.cmp(right));
+        rules.push(rule);
+    }
+
+    rules.sort_by(|left, right| {
+        severity_rank(&left.severity)
+            .cmp(&severity_rank(&right.severity))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    Ok(rules)
+}
+
+fn severity_rank(severity: &str) -> u8 {
+    match severity {
+        "error" => 0,
+        "warning" => 1,
+        "hint" => 2,
+        _ => 3,
+    }
+}
+
+fn render_ast_grep_catalog(rules: &[AstGrepRuleCatalogEntry]) -> String {
+    let mut output = String::new();
+    output.push_str("# ast-grep Rule Catalog\n\n");
+    output.push_str("Generated from `.config/ast-grep/rules/*.yml`.\n\n");
+    output.push_str("Config file: `.config/ast-grep/sgconfig.yml`\n");
+    output.push_str("Manual scan: `ast-grep scan --config .config/ast-grep/sgconfig.yml .`\n\n");
+    output.push_str("Use `xtask check --forbidden` for the public local enforcement surface.\n");
+    output.push_str(
+        "Within xtask automation, `error` severity is blocking; `warning` and `hint` remain advisory.\n\n",
+    );
+    output.push_str("## Rules\n\n");
+    output.push_str("| ID | Severity | Language | Message |\n");
+    output.push_str("| --- | --- | --- | --- |\n");
+    for rule in rules {
+        output.push_str(&format!(
+            "| `{}` | `{}` | `{}` | {} |\n",
+            rule.id,
+            rule.severity,
+            rule.language.as_deref().unwrap_or(""),
+            rule.message
+        ));
+    }
+    output.push('\n');
+
+    for rule in rules {
+        output.push_str(&format!("## `{}`\n\n", rule.id));
+        output.push_str(&format!("- Severity: `{}`\n", rule.severity));
+        if let Some(language) = &rule.language {
+            output.push_str(&format!("- Language: `{language}`\n"));
+        }
+        output.push_str(&format!("- Message: {}\n", rule.message));
+        let ignores = rule.ignores.as_deref().unwrap_or(&[]);
+        if !ignores.is_empty() {
+            output.push_str("- Ignore globs:\n");
+            for ignore in ignores {
+                output.push_str(&format!("  - `{ignore}`\n"));
+            }
+        }
+        if let Some(note) = &rule.note {
+            output.push_str("- Intent:\n");
+            for line in note.trim().lines() {
+                output.push_str(&format!("  {}\n", line.trim_end()));
+            }
+        }
+        output.push('\n');
+    }
+
+    output
+}
+
+fn sync_generated_surfaces(
+    surfaces: &[GeneratedSurface],
+    check_only: bool,
+    ctx: &CommandContext,
+) -> Result<Vec<GeneratedSurfaceOutcome>> {
+    let mut outcomes = Vec::with_capacity(surfaces.len());
+    for surface in surfaces {
+        let status = sync_generated_surface(
+            &surface.path,
+            &surface.content,
+            check_only,
+            surface.label,
+            ctx,
+        )?;
+        outcomes.push(status);
+    }
+    Ok(outcomes)
+}
+
+fn sync_schema_bundle(
+    bundle: SchemaBundle,
+    check_only: bool,
+    ctx: &CommandContext,
+) -> Result<SchemaBundleOutcome> {
+    let existing = discover_existing_schema_bundle_files(&bundle.root)?;
+    let desired: BTreeSet<_> = bundle.files.keys().cloned().collect();
+    let stale_paths: Vec<_> = existing
+        .difference(&desired)
+        .cloned()
+        .collect();
+
+    let mut stale_or_changed = stale_paths.len();
+    let mut changed = !stale_paths.is_empty();
+
+    for (path, content) in &bundle.files {
+        let current = std::fs::read_to_string(path).ok();
+        if current.as_deref() != Some(content.as_str()) {
+            stale_or_changed += 1;
+            changed = true;
+            if !check_only {
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)
+                        .wrap_err_with(|| format!("Failed to create {}", parent.display()))?;
+                }
+                std::fs::write(path, content)
+                    .wrap_err_with(|| format!("Failed to write {}", path.display()))?;
+            }
+        }
+    }
+
+    if !check_only {
+        for path in &stale_paths {
+            if path.exists() {
+                std::fs::remove_file(path)
+                    .wrap_err_with(|| format!("Failed to remove stale {}", path.display()))?;
+                prune_empty_schema_dirs(&bundle.root, path.parent());
+            }
+        }
+    }
+
+    if ctx.is_human() {
+        if check_only {
+            if changed {
+                eprintln!(
+                    "Schema bundle under {} is stale or missing ({} affected files)",
+                    bundle.root.display(),
+                    stale_or_changed
+                );
+            } else {
+                println!(
+                    "Schema bundle under {} already up to date ({} files)",
+                    bundle.root.display(),
+                    bundle.files.len()
+                );
+            }
+        } else if changed {
+            println!(
+                "Synchronized schema bundle under {} ({} files, {} stale/changed, {} removed)",
+                bundle.root.display(),
+                bundle.files.len(),
+                stale_or_changed,
+                stale_paths.len()
+            );
+        } else {
+            println!(
+                "Schema bundle under {} already up to date ({} files)",
+                bundle.root.display(),
+                bundle.files.len()
+            );
+        }
+    }
+
+    Ok(SchemaBundleOutcome {
+        root: bundle.root.display().to_string(),
+        files: bundle.files.len(),
+        stale_or_changed_files: stale_or_changed,
+        removed_files: stale_paths.len(),
+        changed,
+        stale_paths: stale_paths
+            .into_iter()
+            .map(|path| path.display().to_string())
+            .collect(),
+    })
+}
+
+fn discover_existing_schema_bundle_files(root: &std::path::Path) -> Result<BTreeSet<std::path::PathBuf>> {
+    let mut files = BTreeSet::new();
+    if !root.exists() {
+        return Ok(files);
+    }
+
+    for entry in walkdir::WalkDir::new(root) {
+        let entry = entry?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.into_path();
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        if name == "README.md" {
+            continue;
+        }
+        let Ok(relative) = path.strip_prefix(root) else {
+            continue;
+        };
+        let mut components = relative.components();
+        let Some(first) = components.next() else {
+            continue;
+        };
+        if first.as_os_str().to_string_lossy().starts_with('v') {
+            files.insert(path);
+        }
+    }
+
+    Ok(files)
+}
+
+fn prune_empty_schema_dirs(root: &std::path::Path, start: Option<&std::path::Path>) {
+    let mut current = start.map(std::path::Path::to_path_buf);
+    while let Some(dir) = current {
+        if dir == root {
+            break;
+        }
+        let is_empty = std::fs::read_dir(&dir)
+            .ok()
+            .and_then(|mut entries| entries.next().transpose().ok())
+            .flatten()
+            .is_none();
+        if !is_empty {
+            break;
+        }
+        let parent = dir.parent().map(std::path::Path::to_path_buf);
+        let _ = std::fs::remove_dir(&dir);
+        current = parent;
+    }
+}
+
+fn schema_bundle_major_version(version: &str) -> Result<u64> {
+    let mut parts = version.split('.');
+    let major = parts
+        .next()
+        .context("schema version must be in format X.Y.Z")?
+        .parse::<u64>()
+        .context("schema version major component must be numeric")?;
+    let minor = parts.next().context("schema version must be in format X.Y.Z")?;
+    let patch = parts.next().context("schema version must be in format X.Y.Z")?;
+    if parts.next().is_some() {
+        color_eyre::eyre::bail!("schema version must be in format X.Y.Z");
+    }
+    minor
+        .parse::<u64>()
+        .context("schema version minor component must be numeric")?;
+    patch
+        .parse::<u64>()
+        .context("schema version patch component must be numeric")?;
+    Ok(major)
+}
+
+fn schema_bundle_content_hash(schema: &serde_json::Value) -> Result<String> {
+    let bytes = serde_json::to_vec(schema).context("failed to serialize schema for hashing")?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn write_generated_output(
+    dest: &std::path::Path,
+    content: &str,
+    to_stdout: bool,
+    check_only: bool,
+    label: &str,
+    regenerate_command: &str,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
     if to_stdout {
-        print!("{output_content}");
+        print!("{content}");
         return Ok(CommandResult::success()
-            .with_message("AGENTS.md printed to stdout")
+            .with_message(format!("{label} printed to stdout"))
             .with_duration(ctx.elapsed()));
     }
 
-    let dest = output
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| workspace.join("AGENTS.md"));
+    let outcome = sync_generated_surface(
+        dest,
+        content,
+        check_only,
+        label,
+        ctx,
+    )?;
 
-    std::fs::write(&dest, &output_content)
-        .wrap_err_with(|| format!("Failed to write {}", dest.display()))?;
+    let message = if check_only {
+        if outcome.changed {
+            format!("{label} is stale")
+        } else {
+            format!("{label} already up to date")
+        }
+    } else if outcome.changed {
+        format!("{label} generated")
+    } else {
+        format!("{label} already up to date")
+    };
 
-    let byte_count = output_content.len();
-    let line_count = output_content.lines().count();
+    let result = if check_only && outcome.changed {
+        CommandResult::failure(crate::output::StructuredError {
+            code: "GENERATED_DOCS_STALE".to_string(),
+            message: format!("{label} is stale or missing"),
+            location: Some(dest.display().to_string()),
+            suggestion: Some(format!("Run `{regenerate_command}` to regenerate")),
+        })
+    } else {
+        CommandResult::success()
+    };
 
-    if ctx.is_human() {
-        println!(
-            "Generated {} ({line_count} lines, {byte_count} bytes)",
-            dest.display()
-        );
-    }
-
-    Ok(CommandResult::success()
-        .with_message("AGENTS.md generated")
+    Ok(result
+        .with_message(message)
         .with_data(serde_json::json!({
-            "path": dest.to_string_lossy(),
-            "lines": line_count,
-            "bytes": byte_count,
+            "path": outcome.path,
+            "lines": outcome.lines,
+            "bytes": outcome.bytes,
+            "changed": outcome.changed,
         }))
         .with_duration(ctx.elapsed()))
+}
+
+fn sync_generated_surface(
+    dest: &std::path::Path,
+    content: &str,
+    check_only: bool,
+    label: &str,
+    ctx: &CommandContext,
+) -> Result<GeneratedSurfaceOutcome> {
+    let existing = std::fs::read_to_string(dest).ok();
+    let changed = existing.as_deref() != Some(content);
+    let byte_count = content.len();
+    let line_count = content.lines().count();
+
+    if check_only {
+        if ctx.is_human() {
+            if changed {
+                eprintln!(
+                    "{} is stale or missing ({line_count} lines, {byte_count} bytes expected)",
+                    dest.display()
+                );
+            } else {
+                println!(
+                    "{} already up to date ({line_count} lines, {byte_count} bytes)",
+                    dest.display()
+                );
+            }
+        }
+
+        return Ok(GeneratedSurfaceOutcome {
+            label: label.to_string(),
+            path: dest.to_string_lossy().into_owned(),
+            lines: line_count,
+            bytes: byte_count,
+            changed,
+        });
+    }
+
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .wrap_err_with(|| format!("Failed to create {}", parent.display()))?;
+    }
+    if changed {
+        std::fs::write(dest, content)
+            .wrap_err_with(|| format!("Failed to write {}", dest.display()))?;
+    }
+
+    if ctx.is_human() {
+        if changed {
+            println!(
+                "Generated {} ({line_count} lines, {byte_count} bytes)",
+                dest.display()
+            );
+        } else {
+            println!(
+                "{} already up to date ({line_count} lines, {byte_count} bytes)",
+                dest.display()
+            );
+        }
+    }
+
+    Ok(GeneratedSurfaceOutcome {
+        label: label.to_string(),
+        path: dest.to_string_lossy().into_owned(),
+        lines: line_count,
+        bytes: byte_count,
+        changed,
+    })
 }
 
 fn find_workspace_root(mut current: std::path::PathBuf) -> Result<std::path::PathBuf> {
@@ -422,6 +1280,8 @@ fn find_workspace_root(mut current: std::path::PathBuf) -> Result<std::path::Pat
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command_catalog::{ArgInfo, CommandInfo};
+    use crate::command_docs::{render_command_guide, render_command_reference};
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
@@ -479,5 +1339,127 @@ mod tests {
         let workspace = find_workspace_root(nested)?;
         assert_eq!(workspace, temp.path());
         Ok(())
+    }
+
+    #[test]
+    fn test_render_command_reference_renders_nested_sections() {
+        let rendered = render_command_reference(&[CommandInfo {
+            name: "check".to_string(),
+            about: Some("Compile verification".to_string()),
+            args: vec![ArgInfo {
+                name: "package".to_string(),
+                short: Some('p'),
+                long: Some("package".to_string()),
+                help: Some("Check specific package(s) only".to_string()),
+                required: false,
+                global: false,
+                possible_values: vec![],
+                takes_value: true,
+            }],
+            subcommands: vec![CommandInfo {
+                name: "deep".to_string(),
+                about: Some("Nested sample".to_string()),
+                args: vec![],
+                subcommands: vec![],
+            }],
+        }]);
+
+        assert!(rendered.contains("# xtask Command Reference"));
+        assert!(rendered.contains("## `xtask check`"));
+        assert!(rendered.contains("| `-p, --package` | yes | no | Check specific package(s) only |"));
+        assert!(rendered.contains("### `xtask check deep`"));
+    }
+
+    #[test]
+    fn test_render_command_guide_renders_curated_sections() {
+        let rendered = render_command_guide(&crate::command_catalog::collect_command_catalog());
+
+        assert!(rendered.contains("# xtask Command Guide"));
+        assert!(rendered.contains("## Agent Defaults"));
+        assert!(rendered.contains("`xtask check`"));
+    }
+
+    #[test]
+    fn test_schema_bundle_major_version_parses_semver() {
+        assert_eq!(schema_bundle_major_version("1.0.0").unwrap(), 1);
+        assert!(schema_bundle_major_version("1").is_err());
+        assert!(schema_bundle_major_version("x.0.0").is_err());
+    }
+
+    #[test]
+    fn test_schema_bundle_content_hash_matches_existing_registry_contract() {
+        let schema = serde_json::json!({
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "properties": {
+                "created_at": {
+                    "format": "date-time",
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "permissions": {
+                    "format": "uint32",
+                    "minimum": 0.0,
+                    "type": ["integer", "null"]
+                },
+                "size": {
+                    "format": "uint64",
+                    "minimum": 0.0,
+                    "type": "integer"
+                }
+            },
+            "required": ["created_at", "path", "size"],
+            "title": "FileCreatedPayload",
+            "type": "object"
+        });
+        let schema =
+            annotate_schema_bundle_json(schema, "fs-watcher", "file.created", "1.0.0").unwrap();
+
+        assert_eq!(
+            schema_bundle_content_hash(&schema).unwrap(),
+            "7c058ada9e3bdc2c8fbb85d182c7fb913baf5495992d61d5b2c0391785c4e504"
+        );
+    }
+
+    #[test]
+    fn test_annotate_schema_bundle_json_adds_sinex_metadata() {
+        let schema = serde_json::json!({
+            "title": "ExamplePayload",
+            "type": "object"
+        });
+        let annotated =
+            annotate_schema_bundle_json(schema, "example", "example.event", "2.1.0").unwrap();
+
+        assert_eq!(annotated["x-sinex-source"], "example");
+        assert_eq!(annotated["x-sinex-event-type"], "example.event");
+        assert_eq!(annotated["x-sinex-version"], "2.1.0");
+    }
+
+    #[test]
+    fn test_render_ast_grep_catalog_renders_rule_details() {
+        let rendered = render_ast_grep_catalog(&[
+            AstGrepRuleCatalogEntry {
+                id: "cargo-command-outside-process".to_string(),
+                message: "Keep cargo spawning centralized".to_string(),
+                severity: "error".to_string(),
+                language: Some("rust".to_string()),
+                note: Some("Use xtask::process helpers.".to_string()),
+                ignores: Some(vec!["xtask/src/process.rs".to_string()]),
+            },
+            AstGrepRuleCatalogEntry {
+                id: "string-from-literal".to_string(),
+                message: "Prefer .to_string() or .into()".to_string(),
+                severity: "hint".to_string(),
+                language: Some("rust".to_string()),
+                note: None,
+                ignores: None,
+            },
+        ]);
+
+        assert!(rendered.contains("# ast-grep Rule Catalog"));
+        assert!(rendered.contains("`cargo-command-outside-process`"));
+        assert!(rendered.contains("Within xtask automation, `error` severity is blocking"));
+        assert!(rendered.contains("`xtask/src/process.rs`"));
     }
 }

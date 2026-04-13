@@ -25,6 +25,7 @@ use std::time::Duration;
 const DEPLOYMENT_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const RECOMMENDED_INOTIFY_MAX_USER_WATCHES: u64 = 524_288;
 
+/// Probe developer-environment health and deployment readiness.
 #[derive(clap::Args)]
 pub struct DoctorCommand {
     /// Run pipeline smoke tests in addition to health checks
@@ -350,7 +351,7 @@ impl XtaskCommand for DoctorCommand {
     }
 }
 
-/// Run diagnostics (replaces 'stack doctor')
+/// Run diagnostics.
 fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult> {
     let mut all_ok = true;
 
@@ -453,7 +454,7 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         "gateway_url": cfg.gateway_url,
         "test_results_dir": cfg.test_results_dir.as_ref().map(|p| p.display().to_string()),
         "toolchain": cfg.toolchain,
-        "in_devenv": cfg.in_devenv,
+        "in_dev_shell": cfg.in_dev_shell,
     }));
 
     let report = DoctorReport {
@@ -520,14 +521,14 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
             print_env_field(env_data, "gateway_url", "Gateway URL:");
             print_env_field(env_data, "test_results_dir", "Test results:");
             print_env_field(env_data, "toolchain", "Toolchain:");
-            if let Some(in_devenv) = env_data
-                .get("in_devenv")
+            if let Some(in_dev_shell) = env_data
+                .get("in_dev_shell")
                 .and_then(serde_json::Value::as_bool)
             {
                 println!(
                     "  {:<20} {}",
-                    "In devenv:",
-                    if in_devenv { "yes" } else { "no" }
+                    "In devShell:",
+                    if in_dev_shell { "yes" } else { "no" }
                 );
             }
         }
@@ -2810,7 +2811,7 @@ mod tests {
             ],
             environment: Some(serde_json::json!({
                 "hostname": "testhost",
-                "in_devenv": true,
+                "in_dev_shell": true,
             })),
             tls: Some(TlsCheck {
                 ca_exists: true,

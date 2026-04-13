@@ -3,18 +3,14 @@
 //! This module provides commands for managing NixOS VMs used in
 //! end-to-end testing of the sinex infrastructure.
 //!
-//! ## NixOS Compatibility Gate (Q4)
+//! ## NixOS Compatibility Gate
 //!
 //! VM tests ARE the NixOS compatibility enforcement mechanism.
 //! They import real NixOS modules and exercise actual deployment paths.
 //!
 //! Current exported flake checks:
-//!   `xtask test vm --category smoke`       # basic
-//!   `xtask test vm --category integration` # preflight
-//!
-//! Additional VM scenario files exist under `tests/e2e/nixos-vm/test-scenarios`,
-//! but they are not runnable through `xtask test vm` until they are exported via
-//! flake `checks` for the active system.
+//!   `xtask test vm --category smoke`       # basic-flow coverage
+//!   `xtask test vm --category integration` # module/runtime compatibility coverage
 
 use color_eyre::eyre::{Result, WrapErr, bail};
 use console::style;
@@ -32,7 +28,7 @@ use crate::history::TestStatus;
 // Test Catalogue
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SMOKE_TESTS: &[&str] = &["basic", "basic-flow-unified", "replay-smoke"];
+const SMOKE_TESTS: &[&str] = &["basic", "replay-smoke"];
 const INTEGRATION_TESTS: &[&str] = &[
     "preflight",
     "maintenance",
@@ -42,7 +38,7 @@ const INTEGRATION_TESTS: &[&str] = &[
     "kitty-eventsource",
     "mtls-enforcement",
     "sinexctl-e2e",
-    // Environmental hostility tests (Phase 10b/10c)
+    // Environmental hostility tests
     "hostile-host",
     "migration-stress",
 ];
@@ -89,7 +85,7 @@ fn all_tests() -> Vec<&'static str> {
 /// VM management command variants
 #[derive(Debug, Clone, clap::Subcommand)]
 pub enum VmSubcommand {
-    /// Run exported NixOS VM flake checks natively (replaces run-vm-tests.sh) (Q2)
+    /// Run exported NixOS VM flake checks
     Test {
         /// Test category: smoke, integration, performance, chaos, all
         #[arg(long, short)]
@@ -114,7 +110,7 @@ pub enum VmSubcommand {
     },
     /// Start an interactive VM
     Start {
-        /// VM preset placeholder. Interactive preset wiring is currently unfinished.
+        /// VM preset name. Interactive preset wiring is not implemented yet.
         preset: String,
         /// Keep state between runs
         #[arg(long)]
@@ -206,7 +202,7 @@ impl XtaskCommand for VmCommand {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VM Test Execution (Q2: native Rust, no bash script)
+// VM Test Execution
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Result of running a single VM test.
@@ -317,7 +313,7 @@ fn available_vm_tests(workspace_root: &Path, system: &str) -> Result<Vec<String>
 /// Run a single NixOS VM test via `nix build`.
 ///
 /// Builds the canonical flake check output `.#checks.<system>.sinex-vm-{name}`.
-/// Captures all output for history DB recording (Q3).
+/// Captures all output for history DB recording.
 async fn run_single_vm_test(
     name: &str,
     timeout_secs: u64,
@@ -402,7 +398,7 @@ async fn run_single_vm_test(
     }
 }
 
-/// Execute `xtask infra vm test` — the native Rust test runner (Q2).
+/// Execute `xtask test vm`.
 #[allow(clippy::too_many_arguments)]
 async fn execute_test(
     category: Option<&str>,
@@ -445,12 +441,8 @@ async fn execute_test(
             }
         }
         println!();
-        println!(
-            "  Scenario files that are not exported through flake checks stay out of `xtask test vm`."
-        );
-        println!(
-            "  Finish that wiring by adding the scenario's dependencies to tests/e2e/nixos-vm/default.nix and exporting it from flake checks."
-        );
+        println!("  Exported checks come from tests/e2e/nixos-vm/default.nix via flake `checks`.");
+        println!("  Add or remove scenarios there to keep the runner surface coherent.");
         println!();
         return Ok(CommandResult::success().with_message("listed exported VM checks"));
     }
@@ -465,7 +457,9 @@ async fn execute_test(
         let available: Vec<&str> = available_tests.iter().map(String::as_str).collect();
         for t in explicit_tests {
             if !available.contains(&t.as_str()) {
-                bail!("VM test '{t}' is not exported by this flake's checks for system {system}.");
+                bail!(
+                    "VM test '{t}' is not exported by this flake's checks for system {system}."
+                );
             }
         }
         explicit_tests.iter().map(String::as_str).collect()
@@ -500,7 +494,7 @@ async fn execute_test(
         println!();
     }
 
-    // Open history DB for recording (Q3)
+    // Open history DB for recording.
     let invocation_id = ctx.with_history_db(|db| {
         let args = serde_json::json!({
             "category": category,
@@ -557,7 +551,7 @@ async fn execute_test(
     );
     println!();
 
-    // Record results to history DB (Q3)
+    // Record results to history DB.
     if let Some(inv_id) = invocation_id {
         for r in &results {
             let status = if r.timed_out {
@@ -690,7 +684,7 @@ fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
             continue;
         }
 
-        let status = Command::new("nix-instantiate")
+        let output = Command::new("nix-instantiate")
             .arg(file)
             .args([
                 "--arg",
@@ -717,14 +711,17 @@ fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
                 "--arg",
                 "xtask",
                 dummy_pkg,
+                "--arg",
+                "sinexVmTestSuite",
+                dummy_pkg,
             ])
             .current_dir(&workspace_root)
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+            .stderr(Stdio::piped())
+            .output();
 
-        match status {
-            Ok(s) if s.success() => {
+        match output {
+            Ok(output) if output.status.success() => {
                 if ctx.is_human() {
                     println!(
                         "  {} OK: {}",
@@ -734,9 +731,19 @@ fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
                 }
                 valid += 1;
             }
-            Ok(_) => {
+            Ok(output) => {
                 if ctx.is_human() {
-                    println!("  {} Syntax error: {}", style("✗").red(), file.display());
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let detail = stderr
+                        .lines()
+                        .map(str::trim)
+                        .find(|line| !line.is_empty())
+                        .unwrap_or("nix-instantiate failed");
+                    println!(
+                        "  {} Syntax error: {} ({detail})",
+                        style("✗").red(),
+                        file.display()
+                    );
                 }
                 failed += 1;
             }
@@ -843,7 +850,7 @@ fn execute_start(
     let _ = snapshot;
 
     bail!(
-        "Interactive VM presets are not exported from the flake yet. Finish this by wiring runnable `config.system.build.vm` outputs for presets {} and mapping them here; current flake VM support only exposes exported test checks through `xtask test vm`.",
+        "Interactive VM presets are not exported from the flake yet. Finish this by wiring runnable `config.system.build.vm` outputs for presets {} and mapping them here; today the public VM surface is still the exported flake-check suite behind `xtask test vm`.",
         valid_presets.join(", ")
     )
 }

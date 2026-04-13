@@ -13,9 +13,6 @@ flake.lock linguist-generated -diff
 # JSON schemas (generated from Rust types)
 schemas/**/*.json linguist-generated
 
-# Agent context (auto-generated from .claude/includes/ transclusions)
-AGENTS.md linguist-generated
-
 # ── Better diffs ─────────────────────────────────────────────────────
 *.json diff=json
 *.toml diff=toml

@@ -3,10 +3,6 @@
 use std::process::Command;
 use xtask::sandbox::sinex_test;
 
-// ============================================================================
-// Phase 1: Foundation & Tools Infrastructure Tests
-// ============================================================================
-
 #[sinex_test]
 async fn test_deps_list_non_tty() -> ::xtask::sandbox::TestResult<()> {
     // Tests run in non-TTY → JSON is the natural output. Verify JSON structure.

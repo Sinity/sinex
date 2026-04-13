@@ -1,13 +1,18 @@
 //! Forbidden pattern scanning command - enforces project coding standards
 
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
+use serde::Deserialize;
 use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
+use crate::config::{ast_grep_config_path, workspace_root};
 
 /// Lint forbidden patterns command - scans for anti-patterns and policy violations.
 ///
-/// Checks for:
+/// Checks for blocking policy violations via ripgrep-based scans, and also runs
+/// the repo's ast-grep rule catalog in severity-aware mode.
+///
+/// Blocking checks include:
 /// - Use of `#[tokio::test]` instead of `#[sinex_test]`
 /// - Use of `#[test]` instead of `#[sinex_test]` (outside test dirs)
 /// - Use of `anyhow::` in library code (use `SinexError` / `color_eyre`)
@@ -18,6 +23,7 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 /// Also reports (informational, non-blocking):
 /// - `SQLx` query usage statistics (runtime vs compile-time)
 /// - `sinex_test_utils` usage in production code
+/// - ast-grep warning/hint findings from `.config/ast-grep/rules/`
 #[derive(Debug, Clone, clap::Args)]
 pub struct LintForbiddenCommand;
 
@@ -35,13 +41,14 @@ impl XtaskCommand for LintForbiddenCommand {
         // ALLOWLISTS — KEEP MINIMAL
         // ═══════════════════════════════════════════════════════════════════════
         //
-        // `#[sinex_test]` / `sinex_proptest!` is universal. The only remaining
-        // `#[test]` / `#[tokio::test]` are in:
-        //   - xtask/macros/src/lib.rs — proc macro generates them in expansion
-        //   - compile_fail_test.rs — trybuild requires vanilla #[test]
+        // `#[sinex_test]` / `sinex_proptest!` is the preferred harness surface.
+        // The raw-attribute scan intentionally auto-skips:
+        //   - dedicated test directories/files
+        //   - inline `#[cfg(test)] mod tests` modules
+        //   - proc-macro generated/doc-string references via allowlists below
         //
-        // Both are auto-skipped by is_tests_path(). The allowlists below are
-        // for the strict checks that DON'T auto-skip.
+        // The allowlists below are only for strict scans that do not already
+        // auto-skip those categories.
         // ═══════════════════════════════════════════════════════════════════════
 
         // #[tokio::test] allowlist — only for code that GENERATES or REFERENCES
@@ -52,9 +59,9 @@ impl XtaskCommand for LintForbiddenCommand {
             // This file: contains pattern strings and doc comments referencing it
             "xtask/src/commands/lint_forbidden.rs",
         ];
-        // #[test] allowlist — empty. All tests use #[sinex_test] or sinex_proptest!.
-        // Remaining #[test]: compile_fail_test.rs (trybuild) and xtask/macros/src/lib.rs
-        // (proc macro generated code) — both auto-skipped by is_tests_path().
+        // #[test] allowlist — empty. Dedicated test files and inline cfg(test)
+        // modules are auto-skipped; proc-macro/trybuild cases are covered by
+        // path-based skipping.
         let rust_test_allow: [&str; 0] = [];
         // Runtime sqlx::query() is allowed for:
         // - Session control (SET, ROLLBACK, RESET)
@@ -100,12 +107,12 @@ impl XtaskCommand for LintForbiddenCommand {
         ];
 
         let mut violations: Vec<String> = Vec::new();
-        violations.extend(check_pattern_strict(
+        violations.extend(check_rust_test_attr_patterns(
             "#[tokio::test]",
             r"#\[tokio::test",
             &tokio_test_allow,
         )?);
-        violations.extend(check_pattern_allow_tests(
+        violations.extend(check_rust_test_attr_patterns(
             "#[test]",
             r"#\[test\]",
             &rust_test_allow,
@@ -150,17 +157,44 @@ impl XtaskCommand for LintForbiddenCommand {
         // Check for test-utils usage in production code (layering violation)
         check_test_utils_layering(&mut violations)?;
 
-        // Note: Error handling and type system anti-patterns are now checked
-        // by ast-grep rules in .config/ast-grep/rules/
-        // Run: ast-grep scan crate
+        let ast_grep = run_ast_grep_scan()?;
+        if ast_grep.has_findings() && ctx.is_human() {
+            eprintln!(
+                "ℹ ast-grep: {} error(s), {} warning(s), {} hint(s)",
+                ast_grep.error_count(),
+                ast_grep.warning_count(),
+                ast_grep.hint_count()
+            );
+        }
+        for finding in ast_grep.error_findings() {
+            violations.push(format!(
+                "{}:{}:{} [{}] {}",
+                finding.file,
+                finding.line,
+                finding.column,
+                finding.rule_id,
+                finding.message
+            ));
+        }
 
         if violations.is_empty() {
             if ctx.is_human() {
                 eprintln!("✅ No forbidden patterns found");
             }
-            return Ok(CommandResult::success()
+            let mut result = CommandResult::success()
                 .with_message("No forbidden patterns found")
-                .with_duration(ctx.elapsed()));
+                .with_duration(ctx.elapsed())
+                .with_data(serde_json::json!({
+                    "ast_grep": ast_grep,
+                }));
+            if ast_grep.warning_count() > 0 || ast_grep.hint_count() > 0 {
+                result = result.with_detail(format!(
+                    "ast-grep advisory findings: {} warning(s), {} hint(s)",
+                    ast_grep.warning_count(),
+                    ast_grep.hint_count()
+                ));
+            }
+            return Ok(result);
         }
 
         eprintln!("Forbidden pattern detected:");
@@ -175,13 +209,6 @@ impl XtaskCommand for LintForbiddenCommand {
     }
 }
 
-/// Check for a pattern strictly (no test directory exceptions)
-fn check_pattern_strict(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
-    run_rg(pattern)
-        .and_then(|matches| filter_allowlist(matches, allow, |_| false))
-        .with_context(|| format!("failed to scan for {label}"))
-}
-
 /// Check for a pattern allowing test directories
 fn check_pattern_allow_tests(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
     run_rg(pattern)
@@ -189,9 +216,21 @@ fn check_pattern_allow_tests(label: &str, pattern: &str, allow: &[&str]) -> Resu
         .with_context(|| format!("failed to scan for {label}"))
 }
 
+/// Check test attributes while allowing dedicated test dirs and inline cfg(test) modules.
+fn check_rust_test_attr_patterns(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
+    run_rg(pattern)
+        .and_then(|matches| {
+            filter_allowlist(matches, allow, |path| {
+                is_tests_path(path) || file_has_inline_cfg_test_module(path)
+            })
+        })
+        .with_context(|| format!("failed to scan for {label}"))
+}
+
 /// Run ripgrep to find pattern matches
 fn run_rg(pattern: &str) -> Result<Vec<String>> {
     let output = Command::new("rg")
+        .current_dir(workspace_root())
         .args([
             "--color=never",
             "--no-heading",
@@ -253,6 +292,14 @@ where
 /// generates `#[test]` and `#[tokio::test]` in its expansion output.
 fn is_tests_path(path: &str) -> bool {
     path.contains("/tests/") || path.starts_with("tests/") || path.starts_with("xtask/")
+}
+
+fn file_has_inline_cfg_test_module(path: &str) -> bool {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(_) => return false,
+    };
+    contents.contains("#[cfg(test)]") && contents.contains("mod tests")
 }
 
 /// Check for anyhow usage in library code (not xtask, not tests, not binaries)
@@ -345,12 +392,13 @@ fn report_sqlx_query_stats() -> Result<()> {
 }
 
 // Error handling and type system anti-patterns are now checked by ast-grep.
-// See .config/ast-grep/rules/ for the rules.
-// Run: ast-grep scan crate
+// `xtask lint-forbidden` executes the catalog and treats only error-severity
+// findings as blocking today. The remaining warning/hint findings are advisory.
 
 /// Count occurrences of a pattern outside test directories
 fn count_pattern_outside_tests(pattern: &str) -> Result<usize> {
     let output = Command::new("rg")
+        .current_dir(workspace_root())
         .args([
             "--color=never",
             "--no-heading",
@@ -384,6 +432,135 @@ fn count_pattern_outside_tests(pattern: &str) -> Result<usize> {
     Ok(total)
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize)]
+struct AstGrepSummary {
+    errors: Vec<AstGrepFinding>,
+    warnings: usize,
+    hints: usize,
+}
+
+impl AstGrepSummary {
+    fn has_findings(&self) -> bool {
+        !self.errors.is_empty() || self.warnings > 0 || self.hints > 0
+    }
+
+    fn error_count(&self) -> usize {
+        self.errors.len()
+    }
+
+    fn warning_count(&self) -> usize {
+        self.warnings
+    }
+
+    fn hint_count(&self) -> usize {
+        self.hints
+    }
+
+    fn error_findings(&self) -> &[AstGrepFinding] {
+        &self.errors
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+struct AstGrepFinding {
+    file: String,
+    line: usize,
+    column: usize,
+    rule_id: String,
+    severity: String,
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AstGrepFindingJson {
+    file: String,
+    #[serde(rename = "ruleId")]
+    rule_id: String,
+    severity: String,
+    message: String,
+    range: AstGrepRange,
+}
+
+#[derive(Debug, Deserialize)]
+struct AstGrepRange {
+    start: AstGrepPosition,
+}
+
+#[derive(Debug, Deserialize)]
+struct AstGrepPosition {
+    line: usize,
+    column: usize,
+}
+
+fn run_ast_grep_scan() -> Result<AstGrepSummary> {
+    let workspace = workspace_root();
+    let config_path = ast_grep_config_path();
+    let output = Command::new("ast-grep")
+        .current_dir(&workspace)
+        .arg("scan")
+        .arg("--config")
+        .arg(&config_path)
+        .arg("--json=stream")
+        .arg("--include-metadata")
+        .arg("--globs")
+        .arg("!**/tests/**")
+        .arg("--globs")
+        .arg("!**/tests.rs")
+        .arg("--globs")
+        .arg("!**/*_test.rs")
+        .arg("--globs")
+        .arg("!**/test_*.rs")
+        .arg("--globs")
+        .arg("!**/build.rs")
+        .arg(".")
+        .output()
+        .with_context(|| format!("failed to invoke ast-grep with {}", config_path.display()))?;
+
+    ensure_ast_grep_completed(&output)?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_ast_grep_summary(&stdout)
+}
+
+fn ensure_ast_grep_completed(output: &std::process::Output) -> Result<()> {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    match output.status.code() {
+        Some(0 | 1) => Ok(()),
+        Some(code) if stderr.is_empty() => bail!("ast-grep failed with exit code {code}"),
+        Some(code) => bail!("ast-grep failed with exit code {code}: {stderr}"),
+        None if stderr.is_empty() => bail!("ast-grep terminated by signal"),
+        None => bail!("ast-grep terminated by signal: {stderr}"),
+    }
+}
+
+fn parse_ast_grep_summary(stdout: &str) -> Result<AstGrepSummary> {
+    let mut summary = AstGrepSummary::default();
+
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let finding: AstGrepFindingJson =
+            serde_json::from_str(line).with_context(|| "failed to parse ast-grep JSON output")?;
+        match finding.severity.as_str() {
+            "error" => summary.errors.push(AstGrepFinding {
+                file: finding.file,
+                line: finding.range.start.line,
+                column: finding.range.start.column,
+                rule_id: finding.rule_id,
+                severity: finding.severity,
+                message: finding.message,
+            }),
+            "warning" => summary.warnings += 1,
+            "hint" => summary.hints += 1,
+            _ => {}
+        }
+    }
+
+    Ok(summary)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -412,6 +589,21 @@ mod tests {
         assert!(is_tests_path("tests/foo.rs"));
         assert!(is_tests_path("crate/lib/foo/tests/bar.rs"));
         assert!(!is_tests_path("crate/lib/foo/src/test_utils.rs"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_file_has_inline_cfg_test_module() -> ::xtask::sandbox::TestResult<()> {
+        let dir = std::env::temp_dir().join(format!("sinex-inline-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        let file = dir.join("inline.rs");
+        std::fs::write(
+            &file,
+            "fn helper() {}\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn works() {}\n}\n",
+        )?;
+        assert!(file_has_inline_cfg_test_module(&file.display().to_string()));
+        std::fs::remove_file(&file)?;
+        std::fs::remove_dir(&dir)?;
         Ok(())
     }
 
@@ -472,6 +664,32 @@ mod tests {
         };
 
         ensure_rg_completed(&output, "ripgrep")?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_ast_grep_summary_tracks_blocking_and_advisory_findings()
+    -> ::xtask::sandbox::TestResult<()> {
+        let summary = parse_ast_grep_summary(
+            r#"{"file":"crate/lib/foo.rs","ruleId":"dbg-macro","severity":"error","message":"dbg!()","range":{"start":{"line":7,"column":13}}}
+{"file":"crate/lib/bar.rs","ruleId":"context-erasure","severity":"warning","message":"map_err(|_| ...)","range":{"start":{"line":11,"column":5}}}
+{"file":"crate/lib/baz.rs","ruleId":"string-from-literal","severity":"hint","message":"String::from","range":{"start":{"line":3,"column":9}}}"#,
+        )?;
+
+        assert_eq!(summary.error_count(), 1);
+        assert_eq!(summary.warning_count(), 1);
+        assert_eq!(summary.hint_count(), 1);
+        assert_eq!(summary.error_findings()[0].file, "crate/lib/foo.rs");
+        assert_eq!(summary.error_findings()[0].rule_id, "dbg-macro");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_ast_grep_summary_rejects_invalid_json() -> ::xtask::sandbox::TestResult<()>
+    {
+        let error = parse_ast_grep_summary("not-json")
+            .expect_err("invalid ast-grep output should fail");
+        assert!(format!("{error:#}").contains("failed to parse ast-grep JSON output"));
         Ok(())
     }
 }

@@ -6,6 +6,11 @@
 #   debug    - Single-threaded with full output for debugging
 # =============================================================================
 
+[store]
+# Keep all nextest-owned state under the checkout-local `.sinex/` tree instead
+# of leaking a separate top-level `target/nextest` directory.
+dir = ".sinex/nextest"
+
 # Use for: general xtask test runs; retries are intentionally disabled.
 [profile.default]
 # -----------------------------------------------------------------------------
@@ -21,7 +26,7 @@ status-level       = "pass"
 final-status-level = "fail"
 
 [profile.default.junit]
-path                 = ".sinex/nextest/junit.xml"
+path                 = "junit.xml"
 store-success-output = true
 store-failure-output = true
 
@@ -69,3 +74,8 @@ retries        = 0
 slow-timeout   = { period = "300s", terminate-after = 1 }
 failure-output = "immediate"
 success-output = "immediate"
+
+[profile.debug.junit]
+path                 = "junit.xml"
+store-success-output = true
+store-failure-output = true

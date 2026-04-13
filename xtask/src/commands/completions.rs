@@ -4,6 +4,7 @@ use clap_complete::{generate, shells};
 use color_eyre::eyre::Result;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
+use crate::process::cargo_command;
 
 /// Completions subcommand variants
 #[derive(Debug, Clone, clap::Subcommand)]
@@ -33,9 +34,7 @@ pub struct CompletionsCommand {
 
 /// Workspace packages from cargo metadata (fast, no graph traversal needed)
 fn list_workspace_packages() -> Result<Vec<String>> {
-    use std::process::Command;
-
-    let out = Command::new("cargo")
+    let out = cargo_command()
         .args(["metadata", "--format-version=1", "--no-deps", "--quiet"])
         .output();
 
@@ -136,7 +135,7 @@ fn postprocess_zsh(script: &str) -> String {
 }
 
 impl CompletionsCommand {
-    /// Generate completions for the given CLI command (legacy helper, kept for tests).
+    /// Generate completions for the given CLI command.
     pub fn generate_for(subcommand: &CompletionsSubcommand) -> Result<()> {
         use clap::CommandFactory;
         let mut cmd = crate::Cli::command();

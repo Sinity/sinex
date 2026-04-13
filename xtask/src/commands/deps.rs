@@ -4,7 +4,7 @@ use color_eyre::eyre::Result;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 
-/// Dependency analysis command (promoted from analyze deps)
+/// Analyze workspace dependency structure and impact.
 #[derive(Debug, Clone, clap::Args)]
 pub struct DepsCommand {
     #[command(subcommand)]
