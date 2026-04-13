@@ -61,6 +61,8 @@ use template::{ensure_template_database, template_db_name};
 static DATABASE_POOL_TEST_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
+const SLOT_POOL_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// Acquire a global guard to run database pool tests exclusively.
 pub async fn acquire_pool_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
     DATABASE_POOL_TEST_LOCK.lock().await
@@ -237,9 +239,9 @@ async fn try_connect_to_slot(
     slot_max_connections: u32,
 ) -> Option<sinex_db::DbPool> {
     let connect =
-        || slot_pool_options(slot_max_connections, Duration::from_secs(5)).connect(&slot.url);
+        || slot_pool_options(slot_max_connections, SLOT_POOL_ACQUIRE_TIMEOUT).connect(&slot.url);
 
-    match tokio::time::timeout(Duration::from_secs(5), connect()).await {
+    match tokio::time::timeout(SLOT_POOL_ACQUIRE_TIMEOUT, connect()).await {
         Err(_) => {
             slog!(Level::Warn, "connect_timeout", slot = slot.name);
             None
@@ -260,9 +262,10 @@ async fn try_recover_slot_connection(
             slog!(Level::Warn, "provision_failed", slot = slot.name, error = e);
             return None;
         }
-        let connect =
-            || slot_pool_options(slot_max_connections, Duration::from_secs(5)).connect(&slot.url);
-        match tokio::time::timeout(Duration::from_secs(5), connect()).await {
+        let connect = || {
+            slot_pool_options(slot_max_connections, SLOT_POOL_ACQUIRE_TIMEOUT).connect(&slot.url)
+        };
+        match tokio::time::timeout(SLOT_POOL_ACQUIRE_TIMEOUT, connect()).await {
             Ok(Ok(pool)) => return Some(pool),
             Ok(Err(_)) => return None,
             Err(_) => {

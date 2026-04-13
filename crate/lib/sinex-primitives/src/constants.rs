@@ -19,8 +19,8 @@ pub mod timeouts {
     /// Default poll interval for terminal event sources
     pub const DEFAULT_TERMINAL_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-    /// Timeout for database operations in tests
-    pub const TEST_DATABASE_TIMEOUT: Duration = Duration::from_secs(30);
+    /// Timeout for preflight database connectivity probes
+    pub const PREFLIGHT_DATABASE_TIMEOUT: Duration = Duration::from_secs(10);
 
     /// Timeout for external commands during preflight checks (which, systemctl, psql)
     pub const PREFLIGHT_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
