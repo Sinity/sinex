@@ -12,6 +12,7 @@ use crate::{NodeResult, SinexError};
 use serde_json::{Value, json};
 use sinex_primitives::DeploymentReadinessDescriptor;
 use std::collections::HashMap;
+use std::ffi::CString;
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
@@ -651,9 +652,9 @@ fn probe_hyprland_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> 
         };
     }
 
-    let Some(runtime_dir) = descriptor.desktop.runtime_dir.clone() else {
+    let Some(runtime_dir) = resolve_descriptor_runtime_dir(descriptor) else {
         return EventSourceProbe::blocking_unavailable(
-            "Desktop capture is enabled but no runtime_dir is declared",
+            "Desktop capture is enabled but no runtime_dir is declared or derivable from the deployment target",
             Vec::new(),
         );
     };
@@ -705,6 +706,31 @@ fn probe_hyprland_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> 
             sockets,
         ),
     }
+}
+
+fn resolve_descriptor_runtime_dir(descriptor: &DeploymentReadinessDescriptor) -> Option<PathBuf> {
+    if let Some(runtime_dir) = descriptor.desktop.runtime_dir.clone() {
+        return Some(runtime_dir);
+    }
+
+    let target = descriptor.target.as_ref()?;
+    let uid = target
+        .uid
+        .or_else(|| resolve_uid_from_target_user(&target.user))?;
+    Some(PathBuf::from(format!("/run/user/{uid}")))
+}
+
+fn resolve_uid_from_target_user(user: &str) -> Option<u32> {
+    let user = CString::new(user).ok()?;
+    // SAFETY: `user` is a valid NUL-terminated C string for the duration of
+    // the call, and `getpwnam` only reads process NSS state.
+    let passwd = unsafe { libc::getpwnam(user.as_ptr()) };
+    if passwd.is_null() {
+        return None;
+    }
+
+    // SAFETY: `passwd` was returned by `getpwnam` and checked for null above.
+    Some(unsafe { (*passwd).pw_uid })
 }
 
 fn collect_hyprland_runtime_sockets<I, E>(

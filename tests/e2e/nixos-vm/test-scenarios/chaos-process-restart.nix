@@ -48,7 +48,6 @@ pkgs.testers.nixosTest {
 
     with subtest("Rust-driven chaos-process-restart suite"):
       machine.succeed(
-        "DATABASE_URL=postgresql:///sinex "
         "${sinexVmTestSuite}/bin/run-suite --category chaos-process-restart"
       )
   '';

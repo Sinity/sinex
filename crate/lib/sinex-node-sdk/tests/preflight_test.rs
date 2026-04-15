@@ -1178,6 +1178,93 @@ async fn test_phase5_configuration_event_sources_report_missing_configured_paths
     Ok(())
 }
 
+/// Test Phase 5: Hyprland runtime falls back to the deployment target uid when runtime_dir is absent
+#[sinex_test]
+async fn test_phase5_configuration_event_sources_derive_hyprland_runtime_from_target_uid(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let db_url = ctx.database_url().to_string();
+    let temp = tempfile::tempdir()?;
+    let activitywatch_db = temp
+        .path()
+        .join("configured-home/.local/share/activitywatch/aw-server-rust/sqlite.db");
+    if let Some(parent) = activitywatch_db.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    write_valid_activitywatch_db(&activitywatch_db)?;
+    let descriptor_path = temp.path().join("deployment-readiness.json");
+    fs::write(
+        &descriptor_path,
+        serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "source": "test",
+            "target": {
+                "user": "test-user",
+                "uid": 4242
+            },
+            "desktop": {
+                "enabled": true,
+                "instances": 1,
+                "clipboard_enabled": false,
+                "activitywatch_db_path": activitywatch_db
+            }
+        }))?,
+    )?;
+
+    with_env_vars(
+        &[
+            ("DATABASE_URL", db_url),
+            (
+                "SINEX_DEPLOYMENT_READINESS_CONFIG",
+                descriptor_path.display().to_string(),
+            ),
+        ],
+        || async {
+            let (status, details, _messages) =
+                configuration::verify_configuration_generation().await?;
+
+            assert_eq!(status, VerificationStatus::Warning);
+            assert_eq!(
+                details
+                    .get("event_sources")
+                    .and_then(|value| value.get("configured_unavailable_blocking_count"))
+                    .and_then(Value::as_u64),
+                Some(0)
+            );
+
+            let hyprland = details
+                .get("event_sources")
+                .and_then(|value| value.get("sources"))
+                .and_then(|value| value.get("hyprland"))
+                .expect("hyprland source details should be present");
+
+            assert_eq!(
+                hyprland.get("configured").and_then(Value::as_bool),
+                Some(true)
+            );
+            assert_eq!(
+                hyprland.get("available").and_then(Value::as_bool),
+                Some(false)
+            );
+            assert_eq!(
+                hyprland.get("blocking").and_then(Value::as_bool),
+                Some(false)
+            );
+            assert!(
+                hyprland
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .is_some_and(|reason| reason.contains("not currently visible"))
+            );
+
+            Ok(())
+        },
+    )
+    .await?;
+
+    Ok(())
+}
+
 /// Test Phase 5: Deployment descriptor overrides shell-home probing for configured sources
 #[sinex_test]
 async fn test_phase5_configuration_event_sources_follow_deployment_descriptor(
