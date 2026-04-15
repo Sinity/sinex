@@ -927,8 +927,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn systemd_service_details_treat_infinity_watchdog_as_inactive_placeholder(
-    ) -> TestResult<()> {
+    async fn systemd_service_details_treat_infinity_watchdog_as_inactive_placeholder()
+    -> TestResult<()> {
         let details = SystemdServiceDetails::from_show_output(
             "ActiveState=inactive\nSubState=dead\nLoadState=loaded\nType=notify\nNotifyAccess=main\nWatchdogUSec=infinity\n",
         )?;

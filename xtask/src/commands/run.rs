@@ -21,8 +21,8 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 use crate::config::config;
 use crate::jobs::JobManager;
 use crate::orchestrator::{DevOrchestrator, RunArgs};
-use crate::process::cargo_tokio_command;
 use crate::preflight;
+use crate::process::cargo_tokio_command;
 
 fn unix_timestamp_secs(now: std::time::SystemTime, context: &str) -> Result<u64> {
     now.duration_since(std::time::UNIX_EPOCH)

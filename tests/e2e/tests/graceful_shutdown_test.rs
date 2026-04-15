@@ -151,16 +151,18 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
 
     // Publish events before shutdown directly to JetStream
     // Use the events_subject (e.g., "events.raw.>") not the stream name
-    let subject =
-        env.nats_raw_event_subject_with_namespace(config.nats_namespace.as_deref(), "graceful-source", "graceful.event");
+    let subject = env.nats_raw_event_subject_with_namespace(
+        config.nats_namespace.as_deref(),
+        "graceful-source",
+        "graceful.event",
+    );
     for idx in 0..5 {
         let payload = build_test_event_bytes(
             material_id,
             "graceful-source",
             "graceful.event",
             json!({"seq": idx}),
-        )
-        ?;
+        )?;
         nats_client.publish(subject.clone(), payload.into()).await?;
     }
     nats_client.flush().await?;
@@ -564,8 +566,7 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
                 "checksum": format!("check-{}", idx),
                 "data": format!("data-{}", idx)
             }),
-        )
-        ?;
+        )?;
         nats_client.publish(subject.clone(), payload.into()).await?;
     }
     nats_client.flush().await?;

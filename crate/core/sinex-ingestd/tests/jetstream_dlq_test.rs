@@ -21,9 +21,9 @@ use support::{
 };
 use tokio::sync::RwLock;
 use tokio_stream::StreamExt;
-use xtask::sandbox::{TestHooks, hooks::TestCounters};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
+use xtask::sandbox::{TestHooks, hooks::TestCounters};
 
 async fn wait_for_consumer(js: &jetstream::Context, base_stream: &str) -> TestResult<()> {
     WaitHelpers::wait_for_condition(
@@ -425,10 +425,7 @@ async fn start_consumer_with_hooks_and_batch_config(
     })
 }
 
-async fn wait_for_retry_delivery(
-    setup: &ConsumerSetup,
-    counters: &TestCounters,
-) -> TestResult<()> {
+async fn wait_for_retry_delivery(setup: &ConsumerSetup, counters: &TestCounters) -> TestResult<()> {
     WaitHelpers::wait_for_condition(
         || async {
             Ok::<bool, SinexError>(counters.delivery_count() >= 2 || setup.handle.is_finished())

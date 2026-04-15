@@ -4,9 +4,9 @@ use sinex_primitives::strict_env_filter_source;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
     AuditCommand, BlobCommands, CompletionsCommand, ConfigCommands, ContextCommand, CoreCommands,
-    DemoCommand, DlqCommands, ErrorsCommand, GatewayCommands, GitOpsCommands,
-    LifecycleCommands, NodeCommands, OpsCommands, QueryCommand, RecentCommand, ReplayCommands,
-    ReportCommands, StatusCommand, TelemetryCommands, TraceCommand, TuiCommand, WatchCommand,
+    DemoCommand, DlqCommands, ErrorsCommand, GatewayCommands, GitOpsCommands, LifecycleCommands,
+    NodeCommands, OpsCommands, QueryCommand, RecentCommand, ReplayCommands, ReportCommands,
+    StatusCommand, TelemetryCommands, TraceCommand, TuiCommand, WatchCommand,
 };
 use sinexctl::model::OutputFormat;
 use sinexctl::{Config, default_rpc_url};

@@ -376,8 +376,7 @@ impl GatewayClient {
         let req = GitOpsCreateSourceRequest {
             repository_url,
             branch: branch.unwrap_or_else(|| DEFAULT_GITOPS_BRANCH.to_string()),
-            path_pattern: path_pattern
-                .unwrap_or_else(|| DEFAULT_GITOPS_PATH_PATTERN.to_string()),
+            path_pattern: path_pattern.unwrap_or_else(|| DEFAULT_GITOPS_PATH_PATTERN.to_string()),
             sync_frequency_minutes: sync_frequency_minutes
                 .unwrap_or(DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES),
         };

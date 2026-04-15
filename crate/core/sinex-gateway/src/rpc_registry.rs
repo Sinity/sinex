@@ -368,9 +368,9 @@ pub(crate) fn build_registry() -> RpcRegistry {
         handle_system_health, handle_system_ping, handle_system_version,
         handle_telemetry_command_frequency, handle_telemetry_file_activity,
         handle_telemetry_ingestd_validation, handle_telemetry_recent_activity,
-        handle_telemetry_system_state, handle_telemetry_window_focus,
-        handle_tombstone_approve, handle_tombstone_cancel, handle_tombstone_create,
-        handle_tombstone_list, handle_tombstone_preview, handle_tombstone_status,
+        handle_telemetry_system_state, handle_telemetry_window_focus, handle_tombstone_approve,
+        handle_tombstone_cancel, handle_tombstone_create, handle_tombstone_list,
+        handle_tombstone_preview, handle_tombstone_status,
     };
 
     RpcRegistry::new()

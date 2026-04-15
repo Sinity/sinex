@@ -4288,8 +4288,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_execute_progress_defaults_to_current_selector()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_execute_progress_defaults_to_current_selector() -> ::xtask::sandbox::TestResult<()>
+    {
         let db = seeded_history_db("progress-current-selector.db")?;
         let ctx = silent_ctx();
 
@@ -4312,10 +4312,7 @@ mod tests {
         let result = execute_progress(&db, None, &ctx)?;
         let expected_message = format!("Progress for invocation #{running_invocation}");
 
-        assert_eq!(
-            result.message.as_deref(),
-            Some(expected_message.as_str())
-        );
+        assert_eq!(result.message.as_deref(), Some(expected_message.as_str()));
         Ok(())
     }
 

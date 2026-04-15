@@ -687,10 +687,7 @@ impl MaterialAssembler {
     }
 
     /// Run the assembler service with a shared shutdown flag.
-    pub async fn run_with_shutdown(
-        self,
-        shutdown_flag: Arc<AtomicBool>,
-    ) -> IngestdResult<()> {
+    pub async fn run_with_shutdown(self, shutdown_flag: Arc<AtomicBool>) -> IngestdResult<()> {
         self.run_with_shutdown_signal_and_ready(shutdown_flag, Arc::new(Notify::new()), None)
             .await
     }

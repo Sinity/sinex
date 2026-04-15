@@ -94,7 +94,8 @@ async fn test_nak_triggers_redelivery(ctx: TestContext) -> TestResult<()> {
                                 while let Some(item) = messages.next().await {
                                     match item {
                                         Ok(msg) => {
-                                            let count = delivery_count.fetch_add(1, Ordering::SeqCst);
+                                            let count =
+                                                delivery_count.fetch_add(1, Ordering::SeqCst);
                                             if count == 0 {
                                                 msg.ack_with(async_nats::jetstream::AckKind::Nak(
                                                     Some(FAST_REDELIVERY_DELAY),
@@ -351,7 +352,8 @@ async fn test_redelivery_count_tracking(ctx: TestContext) -> TestResult<()> {
                                             let delivery_count =
                                                 msg.info().map_err(|e| eyre!(e))?.delivered;
                                             let observed_len = {
-                                                let mut observed_counts = observed_counts.lock().await;
+                                                let mut observed_counts =
+                                                    observed_counts.lock().await;
                                                 observed_counts.push(delivery_count);
                                                 observed_counts.len()
                                             };
@@ -484,8 +486,8 @@ async fn test_dlq_routing_after_max_retries(ctx: TestContext) -> TestResult<()> 
                                             msg.ack_with(async_nats::jetstream::AckKind::Nak(
                                                 Some(FAST_REDELIVERY_DELAY),
                                             ))
-                                                .await
-                                                .map_err(|e| eyre!(e))?;
+                                            .await
+                                            .map_err(|e| eyre!(e))?;
                                         }
                                         Err(e) => {
                                             let msg = e.to_string();

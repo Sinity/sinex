@@ -30,7 +30,11 @@ pub fn prepare_test_temp_env(test_name: &str) -> TestResult<TestTempEnv> {
     let dir = tempfile::Builder::new()
         .prefix(&short_test_temp_prefix(test_name))
         .tempdir_in(temp_root.as_std_path())
-        .map_err(|e| eyre!(format!("Failed to create workspace-backed temp directory: {e}")))?;
+        .map_err(|e| {
+            eyre!(format!(
+                "Failed to create workspace-backed temp directory: {e}"
+            ))
+        })?;
 
     // Nextest executes each test case in its own process, so we can redirect the
     // temp-directory variables for the full test lifetime without holding the
@@ -240,7 +244,9 @@ mod tests {
             "notify_preserves_socket_for_followup_messages",
             "watchdog_task_emits_ping_when_enabled",
         ] {
-            let socket_path = root.join(short_test_temp_prefix(test_name)).join("notify.sock");
+            let socket_path = root
+                .join(short_test_temp_prefix(test_name))
+                .join("notify.sock");
             assert!(
                 socket_path.as_str().len() < 108,
                 "socket path must stay below sockaddr_un::sun_path limit: {} ({socket_path})",

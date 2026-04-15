@@ -181,7 +181,9 @@ fn main() {
     println!();
     println!("For local experimentation, run:");
     println!("  cargo run -p sinex-node-sdk --example git_activity_detector");
-    println!("For workspace-managed binaries, use xtask run ... after wrapping with TransducerNodeAdapter.");
+    println!(
+        "For workspace-managed binaries, use xtask run ... after wrapping with TransducerNodeAdapter."
+    );
 }
 
 // ============================================================================
