@@ -211,6 +211,18 @@
             # NixOS VM test suite (Rust binary replacing Python testScript assertions)
             sinex-vm-test-suite = mkPackage "sinex-vm-test-suite";
 
+            # Minimal runtime bundle for VM scenarios that only exercise the
+            # core services and the filesystem ingestor.
+            "sinex-vm-fs-runtime" = pkgs.symlinkJoin {
+              name = "sinex-vm-fs-runtime";
+              paths = [
+                sinexPackages.sinex-ingestd
+                sinexPackages.sinex-gateway
+                sinexPackages.sinex-fs-ingestor
+                sinexPackages.xtask
+              ];
+            };
+
             # Aggregated suite with all binaries
             sinex = pkgs.symlinkJoin {
               name = "sinex";
@@ -244,6 +256,7 @@
             sinex-ingestd = sinexPackages.sinex-ingestd;
             sinex-gateway = sinexPackages.sinex-gateway;
             sinex = sinexPackages.sinex;
+            sinexVmFsRuntime = sinexPackages."sinex-vm-fs-runtime";
             sinexCli = sinexPackages.sinexctl;
             xtask = sinexPackages.xtask;
             sinexVmTestSuite = sinexPackages.sinex-vm-test-suite;

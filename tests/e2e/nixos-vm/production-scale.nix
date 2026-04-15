@@ -25,7 +25,7 @@ pkgs.testers.nixosTest {
       nodes = {
         filesystem = {
           enable = lib.mkForce true;
-          instances = lib.mkDefault 2;
+          instances = lib.mkForce 2;
           watchPaths = lib.mkDefault [ "/watched" ];
         };
         terminal = {
@@ -58,8 +58,8 @@ pkgs.testers.nixosTest {
 
     # Increase system limits
     systemd.services.sinex-ingestd.serviceConfig = {
-      LimitNOFILE = 65536;
-      LimitNPROC = 4096;
+      LimitNOFILE = lib.mkForce "65536:65536";
+      LimitNPROC = lib.mkForce 4096;
     };
   };
 
