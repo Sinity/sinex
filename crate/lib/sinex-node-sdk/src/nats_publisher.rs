@@ -43,14 +43,17 @@ fn destructure_provenance(provenance: &Provenance) -> ProvenanceFields {
             offset_start,
             offset_end,
             offset_kind,
-        } => ProvenanceFields {
-            source_material_id: Some(id.to_string()),
-            anchor_byte: Some(*anchor_byte),
-            offset_start: *offset_start,
-            offset_end: *offset_end,
-            offset_kind: Some(offset_kind_label(*offset_kind).to_string()),
-            source_event_ids: None,
-        },
+        } => {
+            let include_offsets = offset_start.is_some() && offset_end.is_some();
+            ProvenanceFields {
+                source_material_id: Some(id.to_string()),
+                anchor_byte: Some(*anchor_byte),
+                offset_start: *offset_start,
+                offset_end: *offset_end,
+                offset_kind: include_offsets.then(|| offset_kind_label(*offset_kind).to_string()),
+                source_event_ids: None,
+            }
+        }
         Provenance::Synthesis {
             source_event_ids, ..
         } => ProvenanceFields {
@@ -86,6 +89,12 @@ struct PublishEvent<'a> {
     offset_end: Option<i64>,
     offset_kind: Option<String>,
     source_event_ids: Option<Vec<String>>,
+    temporal_policy: Option<String>,
+    semantics_version: Option<&'a str>,
+    scope_key: Option<&'a str>,
+    equivalence_key: Option<&'a str>,
+    created_by_operation_id: Option<String>,
+    node_model: Option<String>,
 }
 
 impl NatsPublisher {
@@ -288,6 +297,12 @@ fn build_publish_payload(
         offset_end,
         offset_kind,
         source_event_ids,
+        temporal_policy: event.temporal_policy.map(|policy| policy.to_string()),
+        semantics_version: event.semantics_version.as_deref(),
+        scope_key: event.scope_key.as_deref(),
+        equivalence_key: event.equivalence_key.as_deref(),
+        created_by_operation_id: event.created_by_operation_id.map(|id| id.to_string()),
+        node_model: event.node_model.map(|model| model.to_string()),
     };
 
     let encoded = serde_json::to_vec(&payload).map_err(sinex_primitives::SinexError::from)?;
@@ -322,9 +337,14 @@ fn offset_kind_label(kind: OffsetKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_PUBLISH_CONCURRENCY, NatsPublisher, build_publish_payload, wait_for_publish_ack,
+        DEFAULT_PUBLISH_CONCURRENCY, NatsPublisher, build_publish_payload,
+        destructure_provenance, wait_for_publish_ack,
     };
-    use sinex_primitives::{DynamicPayload, Id, Uuid, events::Provenance};
+    use sinex_primitives::{
+        DynamicPayload, Id, Uuid,
+        domain::{DerivedNodeModel, SyntheticTemporalPolicy},
+        events::{Event, Provenance},
+    };
     use std::{future, io, time::Duration};
     use xtask::sandbox::sinex_test;
 
@@ -359,6 +379,47 @@ mod tests {
         assert_eq!(value["id"], event_id);
         assert!(value["payload"].is_object());
         assert_eq!(value["payload"]["nested"]["a"], 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn publish_payload_preserves_replay_and_synthetic_metadata() -> TestResult<()> {
+        let source_material_id = Id::from_uuid(Uuid::now_v7());
+        let mut event = DynamicPayload::new(
+            "publisher.test",
+            "payload.replay",
+            serde_json::json!({"path": "/tmp/replay.txt"}),
+        )
+        .from_material(source_material_id)
+        .build()
+        .expect("infallible: test provenance set");
+        let operation_id = Uuid::now_v7();
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
+        event.temporal_policy = Some(SyntheticTemporalPolicy::LatestInput);
+        event.semantics_version = Some("2026-04-13".to_string());
+        event.scope_key = Some("scope:publisher".to_string());
+        event.equivalence_key = Some("publisher-slot".to_string());
+        event.created_by_operation_id = Some(operation_id);
+        event.node_model = Some(DerivedNodeModel::Windowed);
+
+        let prov = destructure_provenance(event.provenance());
+        let (_, payload) = build_publish_payload(
+            &event,
+            prov.source_material_id,
+            prov.anchor_byte,
+            prov.offset_start,
+            prov.offset_end,
+            prov.offset_kind,
+            prov.source_event_ids,
+        )?;
+        let decoded: Event<serde_json::Value> = serde_json::from_slice(&payload)?;
+
+        assert_eq!(decoded.temporal_policy, Some(SyntheticTemporalPolicy::LatestInput));
+        assert_eq!(decoded.semantics_version.as_deref(), Some("2026-04-13"));
+        assert_eq!(decoded.scope_key.as_deref(), Some("scope:publisher"));
+        assert_eq!(decoded.equivalence_key.as_deref(), Some("publisher-slot"));
+        assert_eq!(decoded.created_by_operation_id, Some(operation_id));
+        assert_eq!(decoded.node_model, Some(DerivedNodeModel::Windowed));
         Ok(())
     }
 

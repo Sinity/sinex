@@ -314,6 +314,7 @@ let
             local dest_path="$2"
             local tmp_path
             local raw_token
+            local staged_token
 
             if [ -z "$source_path" ]; then
               return 0
@@ -331,9 +332,22 @@ let
               exit 1
             fi
 
+            case "$raw_token" in
+              *:admin)
+                staged_token="$raw_token"
+                ;;
+              *:readonly|*:write)
+                echo "[sinex] gateway admin token $source_path must be raw or already end with :admin" >&2
+                exit 1
+                ;;
+              *)
+                staged_token="$raw_token:admin"
+                ;;
+            esac
+
             tmp_path="$(mktemp "$runtime_dir/gateway-admin-token.XXXXXX")"
             ${pkgs.coreutils}/bin/chmod 0600 "$tmp_path"
-            ${pkgs.coreutils}/bin/printf '%s:admin\n' "$raw_token" > "$tmp_path"
+            ${pkgs.coreutils}/bin/printf '%s\n' "$staged_token" > "$tmp_path"
             ${pkgs.coreutils}/bin/chown ${serviceUser}:${serviceUser} "$tmp_path"
             ${pkgs.coreutils}/bin/chmod 0400 "$tmp_path"
             ${pkgs.coreutils}/bin/mv "$tmp_path" "$dest_path"
