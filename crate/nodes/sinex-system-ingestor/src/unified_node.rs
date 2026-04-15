@@ -597,13 +597,14 @@ impl SystemNode {
         mut handle: WatcherHandle<WatcherMaterialContext>,
     ) -> NodeResult<()> {
         let mut shutdown_errors = Vec::new();
-        if let Some(material) = handle.take_material()
+        let material = handle.take_material();
+        if let Err(error) = handle.shutdown().await {
+            shutdown_errors.push(("watcher task".to_string(), error));
+        }
+        if let Some(material) = material
             && let Err(error) = material.finalize("system-watcher shutdown").await
         {
             shutdown_errors.push(("watcher material".to_string(), error));
-        }
-        if let Err(error) = handle.shutdown().await {
-            shutdown_errors.push(("watcher task".to_string(), error));
         }
         Self::collapse_shutdown_errors(shutdown_errors)
     }
@@ -1283,9 +1284,9 @@ impl SystemNode {
                     match h.shutdown().await {
                         Ok(()) => {}
                         Err(error)
-                            if error
-                                .to_string()
-                                .contains("Watcher task exceeded shutdown grace period and was aborted") => {}
+                            if error.to_string().contains(
+                                "Watcher task exceeded shutdown grace period and was aborted",
+                            ) => {}
                         Err(error) => {
                             panic!("dbus watcher shutdown should stay explicit in tests: {error}");
                         }
@@ -1297,9 +1298,9 @@ impl SystemNode {
                     match h.shutdown().await {
                         Ok(()) => {}
                         Err(error)
-                            if error
-                                .to_string()
-                                .contains("Watcher task exceeded shutdown grace period and was aborted") => {}
+                            if error.to_string().contains(
+                                "Watcher task exceeded shutdown grace period and was aborted",
+                            ) => {}
                         Err(error) => {
                             panic!(
                                 "journal watcher shutdown should stay explicit in tests: {error}"
@@ -1313,9 +1314,9 @@ impl SystemNode {
                     match h.shutdown().await {
                         Ok(()) => {}
                         Err(error)
-                            if error
-                                .to_string()
-                                .contains("Watcher task exceeded shutdown grace period and was aborted") => {}
+                            if error.to_string().contains(
+                                "Watcher task exceeded shutdown grace period and was aborted",
+                            ) => {}
                         Err(error) => {
                             panic!("udev watcher shutdown should stay explicit in tests: {error}");
                         }
@@ -1396,6 +1397,47 @@ mod tests {
 
         fn event_count(&self) -> u64 {
             0
+        }
+    }
+
+    #[derive(Debug)]
+    struct OrderedFinalizeMaterialContext {
+        order: Arc<parking_lot::Mutex<Vec<&'static str>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl MaterialContext for OrderedFinalizeMaterialContext {
+        fn initial_provenance(&self) -> Provenance {
+            Provenance::Material {
+                id: sinex_primitives::Id::new(),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: OffsetKind::Byte,
+            }
+        }
+
+        async fn decorate_event(&self, _event: &mut Event<JsonValue>) -> NodeResult<()> {
+            Ok(())
+        }
+
+        async fn finalize(&self, _reason: &str) -> NodeResult<()> {
+            self.order.lock().push("material_finalize");
+            Ok(())
+        }
+
+        fn event_count(&self) -> u64 {
+            0
+        }
+    }
+
+    struct DropRecorder {
+        order: Arc<parking_lot::Mutex<Vec<&'static str>>>,
+    }
+
+    impl Drop for DropRecorder {
+        fn drop(&mut self) {
+            self.order.lock().push("task_drop");
         }
     }
 
@@ -1877,6 +1919,39 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn finalize_watcher_handle_stops_task_before_material_finalize() -> TestResult<()> {
+        let node = SystemNode::new();
+        let order = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let material: WatcherMaterialContext = Arc::new(OrderedFinalizeMaterialContext {
+            order: Arc::clone(&order),
+        });
+        let task_order = Arc::clone(&order);
+        let task = tokio::spawn(async move {
+            let _drop_recorder = DropRecorder { order: task_order };
+            std::future::pending::<()>().await;
+        });
+        let handle = WatcherHandle::running("dbus", task, None, Some(material));
+
+        let error = node
+            .finalize_watcher_handle(handle)
+            .await
+            .expect_err("pending watcher task should surface forced-abort shutdown");
+        assert!(
+            error
+                .to_string()
+                .contains("Watcher task exceeded shutdown grace period"),
+            "unexpected shutdown error: {error}"
+        );
+
+        assert_eq!(
+            *order.lock(),
+            vec!["task_drop", "material_finalize"],
+            "watcher material must not finalize until the watcher task is gone"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn forwarder_join_result_accepts_clean_exit() -> TestResult<()> {
         let handle = tokio::spawn(async { Ok::<(), SinexError>(()) });
         forwarder_join_result("journal", handle.await)?;
@@ -1995,7 +2070,12 @@ mod tests {
             "system.test",
             "system.test.forwarded",
             serde_json::json!({ "ok": true }),
-            sinex_primitives::events::Provenance::from_material(Id::<SourceMaterial>::new(), 0, None, None),
+            sinex_primitives::events::Provenance::from_material(
+                Id::<SourceMaterial>::new(),
+                0,
+                None,
+                None,
+            ),
         );
         assert!(event.id.is_none());
 

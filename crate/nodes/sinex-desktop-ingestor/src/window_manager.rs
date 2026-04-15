@@ -14,7 +14,7 @@ use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
     HyprlandMonitorFocusedPayload, HyprlandStateCapturedPayload, HyprlandWindowClosedPayload,
     HyprlandWindowFocusedPayload, HyprlandWindowMovedPayload, HyprlandWindowOpenedPayload,
-    HyprlandWorkspaceSwitchedPayload, WindowGeometry,
+    HyprlandWindowTitleChangedPayload, HyprlandWorkspaceSwitchedPayload, WindowGeometry,
 };
 use sinex_primitives::{DynamicPayload, Id, OffsetKind, Provenance, Uuid};
 use std::{
@@ -586,6 +586,21 @@ impl WindowManagerWatcher {
         backoff.next().unwrap_or(HYPRLAND_MAX_BACKOFF)
     }
 
+    fn sanitize_window_title(raw_title: &str) -> NodeResult<String> {
+        let privacy_engine = privacy::engine().map_err(|error| {
+            sinex_node_sdk::SinexError::configuration(
+                "failed to initialize privacy engine".to_string(),
+            )
+            .with_context("component", "desktop_window_title")
+            .with_std_error(error)
+        })?;
+
+        Ok(privacy_engine
+            .process(raw_title, ProcessingContext::WindowTitle)
+            .text
+            .into_owned())
+    }
+
     /// Process Hyprland event line
     async fn process_hyprland_event(&mut self, line: &str) -> NodeResult<()> {
         if line.is_empty() {
@@ -599,6 +614,13 @@ impl WindowManagerWatcher {
             match event_type {
                 "activewindow" | "activewindowv2" => {
                     self.handle_window_focused(event_type, event_data).await?;
+                }
+                "windowtitle" => {
+                    self.handle_window_title_hint(event_data)?;
+                }
+                "windowtitlev2" => {
+                    self.handle_window_title_changed(event_type, event_data)
+                        .await?;
                 }
                 "openwindow" => {
                     self.handle_window_opened(event_data).await?;
@@ -662,22 +684,151 @@ impl WindowManagerWatcher {
         Ok(())
     }
 
+    fn handle_window_title_hint(&mut self, data: &str) -> NodeResult<()> {
+        let window_address = data.trim();
+        if window_address.is_empty() {
+            return Err(sinex_node_sdk::SinexError::processing(
+                "windowtitle event did not include a window address".to_string(),
+            ));
+        }
+
+        if let Some(window) = self.windows.get_mut(window_address) {
+            window.last_seen = SystemTime::now();
+        }
+
+        Ok(())
+    }
+
+    async fn handle_window_title_changed(
+        &mut self,
+        event_type: &str,
+        data: &str,
+    ) -> NodeResult<()> {
+        let (window_address, raw_title) = data.split_once(',').ok_or_else(|| {
+            sinex_node_sdk::SinexError::processing(
+                "windowtitlev2 event did not include window address and title".to_string(),
+            )
+            .with_context("event_data", data.to_string())
+        })?;
+        let window_address = window_address.trim();
+        if window_address.is_empty() {
+            return Err(sinex_node_sdk::SinexError::processing(
+                "windowtitlev2 event did not include a window address".to_string(),
+            ));
+        }
+
+        let window_title = Self::sanitize_window_title(raw_title)?;
+        let tracked = self.windows.get(window_address).cloned();
+        let previous_window_title = tracked
+            .as_ref()
+            .map(|window| window.title.clone())
+            .filter(|title| title != &window_title);
+
+        if previous_window_title.is_none() {
+            if let Some(window) = self.windows.get_mut(window_address) {
+                window.last_seen = SystemTime::now();
+            }
+            return Ok(());
+        }
+
+        let window_class = tracked
+            .as_ref()
+            .map(|window| window.class.clone())
+            .filter(|class| !class.is_empty());
+        let workspace_id = tracked
+            .as_ref()
+            .map(|window| parse_hyprland_numeric_id(&window.workspace_id, "workspace_id"))
+            .transpose()?
+            .or_else(|| {
+                self.current_workspace
+                    .as_deref()
+                    .map(|workspace| parse_hyprland_numeric_id(workspace, "workspace_id"))
+                    .transpose()
+                    .ok()
+                    .flatten()
+            });
+
+        let metadata = serde_json::json!({
+            "window_id": window_address,
+            "window_title": window_title,
+            "previous_window_title": previous_window_title,
+            "window_class": window_class,
+            "workspace_id": workspace_id,
+        });
+        let material_id = self.register_material(event_type, metadata.clone()).await?;
+        let material_payload = self.build_material_payload(event_type, data, metadata);
+        let payload_bytes = serde_json::to_vec(&material_payload).map_err(|e| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Failed to serialize window material payload: {e}"
+            ))
+        })?;
+        let payload = HyprlandWindowTitleChangedPayload {
+            window_id: window_address.to_string(),
+            window_title: window_title.clone(),
+            previous_window_title: previous_window_title.clone(),
+            window_class: window_class.clone(),
+            workspace_id,
+        };
+        let event = payload
+            .from_material(material_id)
+            .with_offset_start(0)
+            .map_err(|e| {
+                sinex_node_sdk::SinexError::processing(format!(
+                    "Failed to set offset_start: {e}"
+                ))
+            })?
+            .with_offset_end(payload_bytes.len() as i64)
+            .map_err(|e| {
+                sinex_node_sdk::SinexError::processing(format!("Failed to set offset_end: {e}"))
+            })?
+            .build()
+            .map_err(|e| {
+                sinex_node_sdk::SinexError::processing(format!("Failed to build event: {e}"))
+            })?
+            .to_json_event()
+            .map_err(|e| {
+                sinex_node_sdk::SinexError::processing(format!(
+                    "Failed to serialize window title payload: {e}"
+                ))
+            })?;
+        self.emit_material_event(material_id, payload_bytes, event)
+            .await?;
+
+        let now = SystemTime::now();
+        let stored_workspace = workspace_id.map_or_else(String::new, |id| id.to_string());
+        let stored_class = window_class.clone().unwrap_or_default();
+        self.windows
+            .entry(window_address.to_string())
+            .and_modify(|window| {
+                window.title = window_title.clone();
+                window.last_seen = now;
+                if !stored_class.is_empty() {
+                    window.class = stored_class.clone();
+                }
+                if !stored_workspace.is_empty() {
+                    window.workspace_id = stored_workspace.clone();
+                }
+            })
+            .or_insert_with(|| WindowInfo {
+                address: window_address.to_string(),
+                class: stored_class,
+                title: window_title,
+                workspace_id: stored_workspace,
+                last_seen: now,
+                floating: false,
+                fullscreen: false,
+            });
+
+        Ok(())
+    }
+
     /// Handle window focused event
     async fn handle_window_focused(&mut self, event_type: &str, data: &str) -> NodeResult<()> {
         // Format:
         // - activewindow>>WINDOWCLASS,WINDOWTITLE
         // - activewindowv2>>WINDOWADDRESS
         if let Some((class, raw_title)) = data.split_once(',') {
-            let privacy_engine = privacy::engine().map_err(|error| {
-                sinex_node_sdk::SinexError::configuration(
-                    "failed to initialize privacy engine".to_string(),
-                )
-                .with_context("component", "desktop_window_focus")
-                .with_std_error(error)
-            })?;
-            let title = privacy_engine
-                .process(raw_title, ProcessingContext::WindowTitle)
-                .text;
+            let title = Self::sanitize_window_title(raw_title)?;
             // Try to find existing window by class and title, otherwise use deterministic hash
             let window_address = self
                 .windows
@@ -716,7 +867,7 @@ impl WindowManagerWatcher {
             let payload = HyprlandWindowFocusedPayload {
                 window_id: window_address.clone(),
                 window_class: class.to_string(),
-                window_title: title.to_string(),
+                window_title: title.clone(),
                 workspace_id,
                 previous_window_id: self.current_focused_window.clone(),
             };
@@ -1437,17 +1588,46 @@ impl WindowManagerWatcher {
             source_identifier: "desktop_window_manager_stub".to_string(),
         }
     }
+
+    async fn test_watcher(stage_context: StageAsYouGoContext) -> NodeResult<Self> {
+        let mut watcher = Self::stub(WindowManagerType::Hyprland);
+        watcher.stage_context = Some(stage_context);
+        Ok(watcher)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_node_sdk::acquisition_manager::AcquisitionManager;
+    use sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
+    use sinex_primitives::Event;
     use sinex_primitives::Uuid;
     #[cfg(unix)]
     use std::ffi::OsString;
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+    use tokio::time::timeout;
     use xtask::sandbox::prelude::*;
+
+    async fn build_stage_context(
+        ctx: TestContext,
+    ) -> TestResult<(
+        StageAsYouGoContext,
+        TestContext,
+        mpsc::Receiver<Event<JsonValue>>,
+    )> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let nats_client = ctx.nats_client();
+        AcquisitionManager::bootstrap_streams(&nats_client).await?;
+
+        let acquisition = Arc::new(AcquisitionManager::with_defaults(nats_client, "desktop"));
+        let (event_tx, event_rx) = mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);
+        let context = StageAsYouGoContext::from_sender(acquisition, event_tx, false);
+        Ok((context, ctx, event_rx))
+    }
 
     #[sinex_test]
     async fn hyprland_backoff_grows_until_cap() -> TestResult<()> {
@@ -1671,6 +1851,83 @@ mod tests {
             .expect_err("invalid snapshot ids must fail before emitting");
 
         assert!(error.to_string().contains("current_workspace_id"));
+        Ok(())
+    }
+
+    #[sinex_test(timeout = 60)]
+    async fn windowtitlev2_emits_title_changed_event_and_updates_cache(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let (stage_context, _ctx, mut event_rx) = build_stage_context(ctx).await?;
+        let mut watcher = WindowManagerWatcher::test_watcher(stage_context).await?;
+        watcher.current_workspace = Some("7".to_string());
+        watcher.windows.insert(
+            "0xabc".to_string(),
+            WindowInfo {
+                address: "0xabc".to_string(),
+                class: "kitty".to_string(),
+                title: "old title".to_string(),
+                workspace_id: "7".to_string(),
+                last_seen: SystemTime::now(),
+                floating: false,
+                fullscreen: false,
+            },
+        );
+
+        watcher
+            .process_hyprland_event("windowtitlev2>>0xabc,new title")
+            .await?;
+
+        let event = timeout(Duration::from_secs(1), event_rx.recv())
+            .await?
+            .ok_or_else(|| eyre!("missing emitted event"))?;
+        assert_eq!(event.source.as_ref(), "wm.hyprland");
+        assert_eq!(event.event_type.as_ref(), "window.title_changed");
+        assert_eq!(event.payload["window_id"], serde_json::json!("0xabc"));
+        assert_eq!(event.payload["window_title"], serde_json::json!("new title"));
+        assert_eq!(
+            event.payload["previous_window_title"],
+            serde_json::json!("old title")
+        );
+        assert_eq!(event.payload["window_class"], serde_json::json!("kitty"));
+        assert_eq!(event.payload["workspace_id"], serde_json::json!(7));
+
+        let tracked = watcher.windows.get("0xabc").expect("tracked window updated");
+        assert_eq!(tracked.title, "new title");
+        Ok(())
+    }
+
+    #[sinex_test(timeout = 60)]
+    async fn windowtitle_address_only_signal_is_treated_as_redundant_hint(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let (stage_context, _ctx, mut event_rx) = build_stage_context(ctx).await?;
+        let mut watcher = WindowManagerWatcher::test_watcher(stage_context).await?;
+        watcher.windows.insert(
+            "0xabc".to_string(),
+            WindowInfo {
+                address: "0xabc".to_string(),
+                class: "kitty".to_string(),
+                title: "stable title".to_string(),
+                workspace_id: "2".to_string(),
+                last_seen: SystemTime::UNIX_EPOCH,
+                floating: false,
+                fullscreen: false,
+            },
+        );
+
+        watcher.process_hyprland_event("windowtitle>>0xabc").await?;
+
+        assert!(
+            timeout(Duration::from_millis(250), event_rx.recv())
+                .await
+                .is_err(),
+            "address-only title hints should not emit duplicate semantic events"
+        );
+
+        let tracked = watcher.windows.get("0xabc").expect("tracked window retained");
+        assert_eq!(tracked.title, "stable title");
+        assert!(tracked.last_seen > SystemTime::UNIX_EPOCH);
         Ok(())
     }
 }

@@ -41,6 +41,16 @@ pub struct HyprlandWindowFocusedPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "wm.hyprland", event_type = "window.title_changed")]
+pub struct HyprlandWindowTitleChangedPayload {
+    pub window_id: String,
+    pub window_title: String,
+    pub previous_window_title: Option<String>,
+    pub window_class: Option<String>,
+    pub workspace_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "wm.hyprland", event_type = "workspace.switched")]
 pub struct HyprlandWorkspaceSwitchedPayload {
     pub from_workspace_id: i32,
