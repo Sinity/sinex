@@ -23,8 +23,8 @@ use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     ingestor_node::IngestorNode,
     runtime::stream::{
-        Checkpoint, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport, ServiceInfo,
-        TimeHorizon,
+        Checkpoint, MaterialReplayContext, NodeCapabilities, NodeRuntimeState,
+        ResolvedReplayMaterial, ScanArgs, ScanReport, ServiceInfo, TimeHorizon,
     },
     stage_as_you_go::StageAsYouGoContext,
     wait_for_shutdown_signal,
@@ -32,7 +32,11 @@ use sinex_node_sdk::{
 use sinex_primitives::{
     Seconds, Uuid,
     domain::{HostName, RecordedPath, SanitizedPath},
-    events::{EventPayload, enums::FileModificationType, payloads::filesystem::FileCreatedPayload},
+    events::{
+        EventPayload,
+        enums::FileModificationType,
+        payloads::filesystem::{FileCreatedPayload, FileModifiedPayload},
+    },
     temporal::Timestamp,
     units::Bytes,
     validation::{
@@ -41,9 +45,9 @@ use sinex_primitives::{
     },
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::Metadata as StdMetadata,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex as StdMutex,
         atomic::{AtomicU64, Ordering},
@@ -524,6 +528,56 @@ impl Default for FilesystemNode {
     }
 }
 
+fn checkpoint_timestamp(checkpoint: &Checkpoint) -> Option<Timestamp> {
+    match checkpoint {
+        Checkpoint::Timestamp { timestamp, .. } => Some(*timestamp),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HistoricalEmissionKind {
+    Created,
+    Modified,
+}
+
+impl HistoricalEmissionKind {
+    fn from_scan_args(args: &ScanArgs) -> Option<Self> {
+        let Some(event_types) = args
+            .replay
+            .as_ref()
+            .and_then(|replay| replay.replay_scope.event_types.as_ref())
+        else {
+            return Some(Self::Created);
+        };
+
+        if event_types
+            .iter()
+            .any(|event_type| event_type == FileCreatedPayload::EVENT_TYPE.as_static_str())
+        {
+            return Some(Self::Created);
+        }
+
+        if event_types
+            .iter()
+            .any(|event_type| event_type == FileModifiedPayload::EVENT_TYPE.as_static_str())
+        {
+            return Some(Self::Modified);
+        }
+
+        None
+    }
+
+    async fn emit(self, ctx: &WatchContext, root: &str, path: &Path) -> NodeResult<()> {
+        match self {
+            Self::Created => handle_file_created(ctx, root, path).await,
+            Self::Modified => {
+                handle_file_modified(ctx, root, path, FileModificationType::Content).await
+            }
+        }
+    }
+}
+
 impl IngestorNode for FilesystemNode {
     type Config = FilesystemConfig;
     type State = FilesystemCheckpoint;
@@ -601,30 +655,102 @@ impl IngestorNode for FilesystemNode {
         _until: TimeHorizon,
         args: ScanArgs,
     ) -> NodeResult<ScanReport> {
-        // Historical scan for filesystem: re-crawl watch paths from checkpoint.
-        // This captures the current filesystem state, using the checkpoint to
-        // determine what has changed since the last scan.
         info!(
             checkpoint = ?from,
             replay = args.replay.is_some(),
             "Starting filesystem historical scan"
         );
         let start = std::time::Instant::now();
-        let state = self.snapshot_state();
+        let contexts = self.build_watch_contexts()?;
+        let Some(emission_kind) = HistoricalEmissionKind::from_scan_args(&args) else {
+            return Ok(ScanReport {
+                events_processed: 0,
+                duration: start.elapsed(),
+                final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
+                time_range: checkpoint_timestamp(&from).map(|started_at| (started_at, Timestamp::now())),
+                node_stats: HashMap::new(),
+                successful_targets: Vec::new(),
+                failed_targets: Vec::new(),
+                warnings: vec![
+                    "filesystem historical replay only re-emits current file state for file.created or file.modified scopes".to_string(),
+                ],
+            });
+        };
+
+        let targets = historical_scan_targets(&self.config, &args.replay);
+        let mut events_processed = 0u64;
+        let mut successful_targets = Vec::new();
+        let mut failed_targets = Vec::new();
+        let mut warnings = Vec::new();
+
+        for target in targets {
+            let target_path = PathBuf::from(&target);
+            let Some((root, ctx)) = watch_context_for_target(&contexts, &target_path) else {
+                failed_targets.push((
+                    target.clone(),
+                    "filesystem historical scan could not map replay target to a configured watch root"
+                        .to_string(),
+                ));
+                continue;
+            };
+
+            let files = collect_historical_files(
+                &target_path,
+                0,
+                ctx.max_depth,
+                self.config.follow_symlinks,
+                &mut warnings,
+            )?;
+
+            if files.is_empty() {
+                warnings.push(format!(
+                    "filesystem historical scan found no replayable files under {}",
+                    target_path.display()
+                ));
+                continue;
+            }
+
+            let mut processed_for_target = 0u64;
+            for file in files {
+                if args.max_events > 0 && events_processed >= args.max_events {
+                    warnings.push(format!(
+                        "filesystem historical scan reached max_events={} before finishing {}",
+                        args.max_events, target
+                    ));
+                    break;
+                }
+
+                emission_kind.emit(ctx, root, &file).await?;
+                processed_for_target = processed_for_target.saturating_add(1);
+                events_processed = events_processed.saturating_add(1);
+            }
+
+            if processed_for_target > 0 {
+                successful_targets.push(target);
+            } else {
+                failed_targets.push((
+                    target,
+                    "filesystem historical scan emitted no events for target".to_string(),
+                ));
+            }
+        }
 
         info!(
-            "Filesystem historical scan captured at {}",
-            state.captured_at
+            events_processed,
+            successful_targets = successful_targets.len(),
+            failed_targets = failed_targets.len(),
+            "Filesystem historical scan finished"
         );
         Ok(ScanReport {
-            events_processed: 0,
+            events_processed,
             duration: start.elapsed(),
-            final_checkpoint: from,
-            time_range: None,
+            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
+            time_range: checkpoint_timestamp(&from)
+                .map(|started_at| (started_at, Timestamp::now())),
             node_stats: HashMap::new(),
-            successful_targets: vec!["historical".to_string()],
-            failed_targets: Vec::new(),
-            warnings: Vec::new(),
+            successful_targets,
+            failed_targets,
+            warnings,
         })
     }
 
@@ -789,13 +915,11 @@ fn inspect_watch_tree(path: &Path, max_depth: Option<usize>) -> NodeResult<Watch
                 });
             }
             Err(error) => {
-                return Err(
-                    SinexError::io(
-                        "Failed to enumerate watch directory while estimating watch budget",
-                    )
-                    .with_std_error(&error)
-                    .with_path(dir.display()),
-                );
+                return Err(SinexError::io(
+                    "Failed to enumerate watch directory while estimating watch budget",
+                )
+                .with_std_error(&error)
+                .with_path(dir.display()));
             }
         };
 
@@ -811,13 +935,11 @@ fn inspect_watch_tree(path: &Path, max_depth: Option<usize>) -> NodeResult<Watch
                     continue;
                 }
                 Err(error) => {
-                    return Err(
-                        SinexError::io(
-                            "Failed to read watch directory entry while estimating watch budget",
-                        )
-                        .with_std_error(&error)
-                        .with_path(dir.display()),
-                    );
+                    return Err(SinexError::io(
+                        "Failed to read watch directory entry while estimating watch budget",
+                    )
+                    .with_std_error(&error)
+                    .with_path(dir.display()));
                 }
             };
             let entry_path = entry.path();
@@ -831,13 +953,11 @@ fn inspect_watch_tree(path: &Path, max_depth: Option<usize>) -> NodeResult<Watch
                     continue;
                 }
                 Err(error) => {
-                    return Err(
-                        SinexError::io(
-                            "Failed to inspect watch directory entry while estimating watch budget",
-                        )
-                        .with_std_error(&error)
-                        .with_path(entry_path.display()),
-                    );
+                    return Err(SinexError::io(
+                        "Failed to inspect watch directory entry while estimating watch budget",
+                    )
+                    .with_std_error(&error)
+                    .with_path(entry_path.display()));
                 }
             };
             if file_type.is_dir() {
@@ -868,8 +988,7 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
     // RESOURCE-001: Estimate watch count before committing kernel resources
     let tree_estimate = inspect_watch_tree(&canonical, ctx.max_depth)?;
     let estimated = tree_estimate.watch_count;
-    let use_poll_watcher =
-        estimated > ctx.max_watches || tree_estimate.unreadable_directories > 0;
+    let use_poll_watcher = estimated > ctx.max_watches || tree_estimate.unreadable_directories > 0;
     let watcher_mode = if use_poll_watcher { "poll" } else { "native" };
     if estimated > ctx.max_watches {
         warn!(
@@ -1450,6 +1569,193 @@ fn file_modified_at(
     path: &Path,
 ) -> NodeResult<sinex_primitives::temporal::Timestamp> {
     filesystem_timestamp(metadata.modified(), "modified_at", path)
+}
+
+fn replay_material_identifier(material: &ResolvedReplayMaterial) -> &str {
+    material
+        .material_metadata
+        .get("logical_source_identifier")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| {
+            material
+                .source_identifier
+                .split("#material=")
+                .next()
+                .unwrap_or(material.source_identifier.as_str())
+        })
+}
+
+fn historical_scan_targets(
+    config: &FilesystemConfig,
+    replay: &Option<MaterialReplayContext>,
+) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut targets = Vec::new();
+
+    if let Some(replay) = replay {
+        for material in &replay.materials {
+            let identifier = replay_material_identifier(material);
+            if seen.insert(identifier.to_string()) {
+                targets.push(identifier.to_string());
+            }
+        }
+    }
+
+    if targets.is_empty() {
+        for path in &config.watch_paths {
+            if seen.insert(path.clone()) {
+                targets.push(path.clone());
+            }
+        }
+    }
+
+    targets
+}
+
+fn watch_context_for_target<'a>(
+    contexts: &'a HashMap<String, WatchContext>,
+    target: &Path,
+) -> Option<(&'a str, &'a WatchContext)> {
+    contexts
+        .iter()
+        .filter(|(root, _)| {
+            target.starts_with(Path::new(root.as_str())) || Path::new(root).starts_with(target)
+        })
+        .max_by_key(|(root, _)| root.len())
+        .map(|(root, ctx)| (root.as_str(), ctx))
+        .or_else(|| {
+            contexts
+                .iter()
+                .next()
+                .map(|(root, ctx)| (root.as_str(), ctx))
+        })
+}
+
+fn collect_historical_files(
+    path: &Path,
+    depth: usize,
+    max_depth: Option<usize>,
+    follow_symlinks: bool,
+    warnings: &mut Vec<String>,
+) -> NodeResult<Vec<PathBuf>> {
+    if let Some(path_str) = path.to_str() {
+        let utf8 = camino::Utf8Path::new(path_str);
+        if let Some(reason) = check_sensitive_path(utf8) {
+            warnings.push(format!(
+                "skipping sensitive filesystem historical target {}: {}",
+                path.display(),
+                reason
+            ));
+            return Ok(Vec::new());
+        }
+    }
+
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            warnings.push(format!(
+                "filesystem historical target no longer exists: {}",
+                path.display()
+            ));
+            return Ok(Vec::new());
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            warnings.push(format!(
+                "filesystem historical target is unreadable: {}",
+                path.display()
+            ));
+            return Ok(Vec::new());
+        }
+        Err(error) => {
+            return Err(
+                SinexError::io("Failed to inspect filesystem historical target")
+                    .with_std_error(&error)
+                    .with_path(path.display()),
+            );
+        }
+    };
+
+    let mut is_file = metadata.is_file();
+    let mut is_dir = metadata.is_dir();
+
+    if metadata.file_type().is_symlink() {
+        if !follow_symlinks {
+            warnings.push(format!(
+                "skipping symlink during filesystem historical scan: {}",
+                path.display()
+            ));
+            return Ok(Vec::new());
+        }
+
+        let resolved = std::fs::metadata(path).map_err(|error| {
+            SinexError::io("Failed to follow filesystem historical symlink")
+                .with_std_error(&error)
+                .with_path(path.display())
+        })?;
+        is_file = resolved.is_file();
+        is_dir = resolved.is_dir();
+    }
+
+    if is_file {
+        return Ok(vec![path.to_path_buf()]);
+    }
+
+    if !is_dir {
+        return Ok(Vec::new());
+    }
+
+    if max_depth.is_some_and(|limit| depth >= limit) {
+        return Ok(Vec::new());
+    }
+
+    let entries = match std::fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            warnings.push(format!(
+                "skipping unreadable directory during filesystem historical scan: {}",
+                path.display()
+            ));
+            return Ok(Vec::new());
+        }
+        Err(error) => {
+            return Err(
+                SinexError::io("Failed to enumerate filesystem historical target")
+                    .with_std_error(&error)
+                    .with_path(path.display()),
+            );
+        }
+    };
+
+    let mut files = Vec::new();
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                warnings.push(format!(
+                    "skipping unreadable directory entry during filesystem historical scan: {}",
+                    path.display()
+                ));
+                continue;
+            }
+            Err(error) => {
+                return Err(SinexError::io(
+                    "Failed to inspect filesystem historical directory entry",
+                )
+                .with_std_error(&error)
+                .with_path(path.display()));
+            }
+        };
+
+        files.extend(collect_historical_files(
+            &entry.path(),
+            depth + 1,
+            max_depth,
+            follow_symlinks,
+            warnings,
+        )?);
+    }
+
+    Ok(files)
 }
 
 #[cfg(test)]
@@ -2035,7 +2341,9 @@ mod tests {
 
         let event = timeout(Duration::from_secs(10), event_rx.recv())
             .await?
-            .ok_or_else(|| color_eyre::eyre::eyre!("filesystem continuous watcher emitted no event"))?;
+            .ok_or_else(|| {
+                color_eyre::eyre::eyre!("filesystem continuous watcher emitted no event")
+            })?;
 
         assert_eq!(
             event.event_type.as_str(),
@@ -2054,6 +2362,124 @@ mod tests {
 
         cancel_token.cancel();
         watcher_task.await??;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_historical_replay_emits_events_for_resolved_material_paths(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let mut runtime = TestRuntimeBuilder::new(&ctx, "filesystem-historical-replay")
+            .build()
+            .await?;
+
+        let temp_root = tempdir()?;
+        let root_str = temp_root
+            .path()
+            .to_str()
+            .ok_or_else(|| color_eyre::eyre::eyre!("temp root path not utf8"))?
+            .to_string();
+        let file_a = temp_root.path().join("replay-a.txt");
+        let file_b = temp_root.path().join("nested/replay-b.txt");
+        std::fs::create_dir_all(
+            file_b
+                .parent()
+                .ok_or_else(|| color_eyre::eyre::eyre!("nested replay file missing parent"))?,
+        )?;
+        tokio::fs::write(&file_a, b"replay-a").await?;
+        tokio::fs::write(&file_b, b"replay-b").await?;
+
+        let mut node = FilesystemNode::new();
+        let mut state = FilesystemCheckpoint::default();
+        node.initialize(
+            FilesystemConfig {
+                watch_paths: vec![root_str.clone()],
+                ..FilesystemConfig::default()
+            },
+            &runtime.runtime,
+            &mut state,
+        )
+        .await?;
+
+        let report = node
+            .scan_historical(
+                &mut state,
+                Checkpoint::None,
+                TimeHorizon::Historical {
+                    end_time: Timestamp::now(),
+                },
+                ScanArgs {
+                    replay: Some(MaterialReplayContext {
+                        operation_id: Uuid::now_v7(),
+                        materials: vec![
+                            ResolvedReplayMaterial {
+                                source_material_id: Uuid::now_v7(),
+                                material_kind: "annex".to_string(),
+                                source_identifier: format!(
+                                    "{}#material={}",
+                                    file_a.display(),
+                                    Uuid::now_v7()
+                                ),
+                                material_metadata: serde_json::json!({
+                                    "logical_source_identifier": file_a.display().to_string()
+                                }),
+                                material_start_time: None,
+                                material_end_time: None,
+                            },
+                            ResolvedReplayMaterial {
+                                source_material_id: Uuid::now_v7(),
+                                material_kind: "annex".to_string(),
+                                source_identifier: format!(
+                                    "{}#material={}",
+                                    file_b.display(),
+                                    Uuid::now_v7()
+                                ),
+                                material_metadata: serde_json::json!({
+                                    "logical_source_identifier": file_b.display().to_string()
+                                }),
+                                material_start_time: None,
+                                material_end_time: None,
+                            },
+                        ],
+                        replay_scope: sinex_node_sdk::runtime::stream::ReplayScopeFilters::default(
+                        ),
+                    }),
+                    ..ScanArgs::default()
+                },
+            )
+            .await?;
+
+        assert_eq!(report.events_processed, 2);
+
+        let mut emitted_paths = Vec::new();
+        for _ in 0..2 {
+            let event = timeout(Duration::from_secs(10), runtime.event_rx.recv())
+                .await?
+                .ok_or_else(|| color_eyre::eyre::eyre!("filesystem replay emitted no event"))?;
+            emitted_paths.push(
+                event
+                    .payload
+                    .get("path")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        color_eyre::eyre::eyre!("filesystem replay event missing path payload")
+                    })?
+                    .to_string(),
+            );
+        }
+
+        assert!(
+            emitted_paths
+                .iter()
+                .any(|path| path.ends_with("replay-a.txt"))
+        );
+        assert!(
+            emitted_paths
+                .iter()
+                .any(|path| path.ends_with("replay-b.txt"))
+        );
+
+        node.shutdown(&state).await?;
         Ok(())
     }
 }

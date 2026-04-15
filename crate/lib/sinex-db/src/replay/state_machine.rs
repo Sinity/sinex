@@ -170,6 +170,54 @@ impl ReplayScope {
             event_types,
         }
     }
+
+    /// Event sources that should be considered replay roots for this node scope.
+    ///
+    /// Some ingestor node ids are control-plane names (`filesystem-watcher`) while
+    /// the events they emit use a different source namespace (`fs-watcher`). Replay
+    /// preview and execution must agree on the emitted event sources while still
+    /// keeping `node_id` intact for control-subject dispatch.
+    #[must_use]
+    pub fn replay_event_sources(&self) -> Vec<String> {
+        let mut sources = Vec::new();
+        let mut push = |candidate: &str| {
+            if !sources.iter().any(|existing| existing == candidate) {
+                sources.push(candidate.to_string());
+            }
+        };
+
+        push(&self.node_id);
+
+        match self.node_id.as_str() {
+            "filesystem-watcher" => {
+                push("fs-watcher");
+            }
+            "terminal-watcher" => {
+                push("terminal");
+                push("shell.kitty");
+                push("shell.scrollback");
+                push("shell.asciinema");
+            }
+            "desktop-watcher" => {
+                push("desktop");
+                push("activitywatch");
+                push("webhistory");
+                push("clipboard");
+                push("wm.hyprland");
+            }
+            "system-watcher" => {
+                push("system");
+                push("journald");
+                push("dbus");
+                push("systemd");
+                push("udev");
+                push("log_processor");
+            }
+            _ => {}
+        }
+
+        sources
+    }
 }
 
 /// Checkpoint for resumable execution
@@ -287,9 +335,11 @@ impl ReplayStateMachine {
         base: &'static str,
     ) -> QueryBuilder<'a, Postgres> {
         let normalized = scope.normalized_filters();
+        let replay_sources = scope.replay_event_sources();
         let mut builder = QueryBuilder::<Postgres>::new(base);
-        builder.push(" WHERE source = ");
-        builder.push_bind(scope.node_id.as_str());
+        builder.push(" WHERE source = ANY(");
+        builder.push_bind(replay_sources);
+        builder.push(")");
         builder.push(" AND ts_coided >= ");
         builder.push_bind(window.0);
         builder.push(" AND ts_coided <= ");
