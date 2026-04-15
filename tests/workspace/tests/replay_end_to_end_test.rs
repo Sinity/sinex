@@ -14,8 +14,9 @@
 use futures::StreamExt;
 use serde_json::json;
 use sinex_node_sdk::{Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ScanReport};
-use sinex_primitives::temporal::Duration as TemporalDuration;
+use sinex_primitives::{DynamicPayload, Id, Uuid};
 use sinex_primitives::rpc::methods;
+use sinex_primitives::temporal::Duration as TemporalDuration;
 use sinex_primitives::temporal::Timestamp;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -26,6 +27,7 @@ use xtask::sandbox::prelude::*;
 // ─────────────────────────────────────────────────────────────────────────────
 
 async fn spawn_fake_scan_node(
+    pool: DbPool,
     nats: async_nats::Client,
     env: sinex_primitives::environment::SinexEnvironment,
     node_name: &str,
@@ -54,6 +56,8 @@ async fn spawn_fake_scan_node(
 
         let _ = command_tx.send(command.clone());
 
+        let replay_context = command.args.replay.clone();
+
         if let Some(reply) = msg.reply {
             let ack = NodeScanAck {
                 operation_id,
@@ -63,6 +67,72 @@ async fn spawn_fake_scan_node(
             };
             if let Ok(bytes) = serde_json::to_vec(&ack) {
                 let _ = nats.publish(reply, bytes.into()).await;
+            }
+        }
+
+        if let Some(replay_context) = replay_context.as_ref() {
+            let logical_source_identifier = replay_context
+                .materials
+                .first()
+                .and_then(|material| {
+                    material
+                        .material_metadata
+                        .get("logical_source_identifier")
+                        .and_then(serde_json::Value::as_str)
+                        .or_else(|| material.source_identifier.split("#material=").next())
+                })
+                .unwrap_or("/tmp/replay-end-to-end.txt");
+            let event_type = replay_context
+                .replay_scope
+                .event_types
+                .as_ref()
+                .and_then(|types| types.first())
+                .map(String::as_str)
+                .unwrap_or("file.created");
+            let material_id = Uuid::now_v7();
+            let source_identifier = format!("{logical_source_identifier}#material={material_id}");
+            if let Err(error) = sqlx::query(
+                r#"
+                INSERT INTO raw.source_material_registry (
+                    id,
+                    material_kind,
+                    source_identifier,
+                    status,
+                    timing_info_type,
+                    metadata
+                )
+                VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime', $3::jsonb)
+                "#,
+            )
+            .bind(material_id)
+            .bind(&source_identifier)
+            .bind(json!({ "logical_source_identifier": logical_source_identifier }))
+            .execute(&pool)
+            .await
+            {
+                eprintln!("fake scan node: failed to create replay source material: {error}");
+                return;
+            }
+            for index in 0..events_processed {
+                let mut event = match DynamicPayload::new(
+                    node_name.as_str(),
+                    event_type,
+                    json!({ "path": logical_source_identifier, "replay_index": index }),
+                )
+                .from_material(Id::from_uuid(material_id))
+                .build()
+                {
+                    Ok(event) => event,
+                    Err(error) => {
+                        eprintln!("fake scan node: failed to build replay output event: {error}");
+                        return;
+                    }
+                };
+                event.created_by_operation_id = Some(operation_id);
+                if let Err(error) = pool.events().insert(event).await {
+                    eprintln!("fake scan node: failed to insert replay output event: {error}");
+                    return;
+                }
             }
         }
 
@@ -159,7 +229,8 @@ async fn replay_end_to_end_seeds_executes_archives(ctx: TestContext) -> TestResu
     let nats = stack.nats_client();
     // SinexEnvironment::default() picks up the same environment as the stack
     let env = sinex_primitives::environment::SinexEnvironment::default();
-    let (scan_command_rx, scan_handle) = spawn_fake_scan_node(nats, env, "test-node", 3).await?;
+    let (scan_command_rx, scan_handle) =
+        spawn_fake_scan_node(stack.pool().clone(), nats, env, "test-node", 3).await?;
 
     // ── Step 4: Build HTTPS client (accepts self-signed test cert) ────────
     let http_client = reqwest::Client::builder()
