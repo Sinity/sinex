@@ -12,7 +12,7 @@
 //!   `xtask test vm --category smoke`       # basic-flow coverage
 //!   `xtask test vm --category integration` # module/runtime compatibility coverage
 
-use color_eyre::eyre::{Result, WrapErr, bail};
+use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use console::style;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -311,6 +311,87 @@ fn available_vm_tests(workspace_root: &Path, system: &str) -> Result<Vec<String>
         .collect())
 }
 
+#[cfg(unix)]
+fn configure_process_group_leader(command: &mut tokio::process::Command) {
+    // SAFETY: `setpgid(0, 0)` is async-signal-safe per POSIX and runs in the child
+    // between fork and exec so the spawned process becomes the leader of its own group.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn configure_process_group_leader(_command: &mut tokio::process::Command) {}
+
+async fn terminate_vm_test_process_tree(child: &mut tokio::process::Child) -> Result<()> {
+    #[cfg(unix)]
+    {
+        let pid = nix::unistd::Pid::from_raw(
+            child
+                .id()
+                .ok_or_else(|| eyre!("failed to terminate timed-out VM build: child PID missing"))?
+                as i32,
+        );
+
+        match nix::sys::signal::killpg(pid, nix::sys::signal::Signal::SIGTERM) {
+            Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
+            Err(error) => {
+                return Err(eyre!(
+                    "failed to send SIGTERM to timed-out VM test process group: {error}"
+                ));
+            }
+        }
+
+        let grace_deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(2);
+        loop {
+            if child
+                .try_wait()
+                .wrap_err("failed to poll timed-out VM test after SIGTERM")?
+                .is_some()
+            {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= grace_deadline {
+                break;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+
+        match nix::sys::signal::killpg(pid, nix::sys::signal::Signal::SIGKILL) {
+            Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
+            Err(error) => {
+                return Err(eyre!(
+                    "failed to send SIGKILL to timed-out VM test process group: {error}"
+                ));
+            }
+        }
+
+        child
+            .wait()
+            .await
+            .wrap_err("failed to reap timed-out VM test process")?;
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    {
+        child
+            .kill()
+            .await
+            .wrap_err("failed to kill timed-out VM test process")?;
+        child
+            .wait()
+            .await
+            .wrap_err("failed to reap timed-out VM test process")?;
+        Ok(())
+    }
+}
+
 /// Run a single NixOS VM test via `nix build`.
 ///
 /// Builds the canonical flake check output `.#checks.<system>.sinex-vm-{name}`.
@@ -344,6 +425,8 @@ async fn run_single_vm_test(
     cmd.current_dir(workspace_root);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    cmd.kill_on_drop(true);
+    configure_process_group_leader(&mut cmd);
 
     let child_result = cmd.spawn();
     let mut child = match child_result {
@@ -369,10 +452,6 @@ async fn run_single_vm_test(
     let timeout_duration = std::time::Duration::from_secs(effective_timeout);
     let wait_result = tokio::time::timeout(timeout_duration, child.wait()).await;
 
-    let (stdout_out, stderr_out) = tokio::join!(stdout_task, stderr_task);
-    append_stream_task_output(&mut combined_output, "stdout", stdout_out);
-    append_stream_task_output(&mut combined_output, "stderr", stderr_out);
-
     match wait_result {
         Ok(Ok(status)) => {
             if status.success() {
@@ -384,11 +463,18 @@ async fn run_single_vm_test(
         }
         Err(_elapsed) => {
             timed_out = true;
+            if let Err(error) = terminate_vm_test_process_tree(&mut child).await {
+                combined_output.push_str(&format!("Timed-out VM test cleanup failed: {error:#}\n"));
+            }
             combined_output.push_str(&format!(
                 "Test {name} timed out after {effective_timeout}s\n"
             ));
         }
     }
+
+    let (stdout_out, stderr_out) = tokio::join!(stdout_task, stderr_task);
+    append_stream_task_output(&mut combined_output, "stdout", stdout_out);
+    append_stream_task_output(&mut combined_output, "stderr", stderr_out);
 
     VmTestResult {
         name: name.to_string(),
@@ -458,9 +544,7 @@ async fn execute_test(
         let available: Vec<&str> = available_tests.iter().map(String::as_str).collect();
         for t in explicit_tests {
             if !available.contains(&t.as_str()) {
-                bail!(
-                    "VM test '{t}' is not exported by this flake's checks for system {system}."
-                );
+                bail!("VM test '{t}' is not exported by this flake's checks for system {system}.");
             }
         }
         explicit_tests.iter().map(String::as_str).collect()
@@ -1079,6 +1163,46 @@ mod tests {
         );
 
         assert!(combined_output.contains("stream exploded"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_terminate_vm_test_process_tree_kills_child_process_group()
+    -> ::xtask::sandbox::TestResult<()> {
+        use std::os::unix::process::ExitStatusExt;
+
+        let mut command = tokio::process::Command::new("sh");
+        command.args(["-c", "sleep 30 & echo $!; wait"]);
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::null());
+        configure_process_group_leader(&mut command);
+
+        let mut child = command.spawn()?;
+        let stdout = child.stdout.take().expect("stdout should be piped");
+        let mut lines = BufReader::new(stdout).lines();
+        let sleep_pid = lines
+            .next_line()
+            .await?
+            .expect("shell should print background child pid")
+            .parse::<i32>()?;
+
+        terminate_vm_test_process_tree(&mut child).await?;
+
+        assert!(
+            child.try_wait()?.is_some(),
+            "terminated VM helper child should be reaped"
+        );
+        assert_ne!(
+            unsafe { libc::kill(sleep_pid, 0) },
+            0,
+            "background process in the VM helper group should be gone"
+        );
+
+        let status = child.wait().await?;
+        assert!(
+            status.signal().is_some() || !status.success(),
+            "terminated child should not report clean success"
+        );
         Ok(())
     }
 }

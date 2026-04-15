@@ -66,7 +66,7 @@ pkgs.testers.nixosTest {
     with subtest("System initialization"):
         machine.wait_for_unit("multi-user.target")
         machine.wait_for_unit("postgresql.service", timeout=60)
-        machine.wait_for_unit("sinex-migrations.service", timeout=60)
+        machine.wait_for_unit("sinex-schema-apply.service", timeout=60)
         machine.wait_for_unit("sinex-ingestd.service", timeout=60)
         machine.wait_for_unit("sinex-gateway.service", timeout=60)
         machine.wait_for_open_port(9999, timeout=30)
@@ -129,7 +129,7 @@ pkgs.testers.nixosTest {
             "--key /etc/sinex-test/client-key.pem "
             "--cacert /etc/sinex-test/ca-cert.pem "
             "-H 'Content-Type: application/json' "
-            "-H 'Authorization: Bearer test-admin-token' "
+            "-H 'Authorization: Bearer test-admin-token:admin' "
             "-d @/tmp/rpc_request.json "
             "https://localhost:9999/rpc"
         )

@@ -71,28 +71,17 @@ in
     };
 
   # Provide dummy secrets expected by the gateway.
-  environment.etc."sinex/gateway-admin-token".text = "test-admin-token";
-  environment.variables.SINEX_TEST_DB_NAME = databaseName;
-
-  # Run migrations before starting Sinex services.
-  systemd.services.sinex-migrations = {
-    description = "Apply Sinex database migrations";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "postgresql.service" "postgresql-setup.service" ];
-    requires = [ "postgresql.service" "postgresql-setup.service" ];
-    serviceConfig =
-      let
-        dbCfg = config.services.sinex.database;
-        dbUrl = "postgresql://${dbCfg.user}@${dbCfg.host}:${toString dbCfg.port}/${dbCfg.name}";
-      in {
-        Type = "oneshot";
-        ExecStart = "${sinexPackage}/bin/xtask infra schema-apply --database-url ${lib.escapeShellArg dbUrl}";
-      };
+  environment.etc."sinex/gateway-admin-token".text = "test-admin-token:admin";
+  environment.variables = {
+    SINEX_TEST_DB_NAME = databaseName;
+    SINEX_RPC_TOKEN_FILE = "/etc/sinex/gateway-admin-token";
   };
 
-  # Ensure core services wait for migrations.
-  systemd.services.sinex-gateway.after = [ "sinex-migrations.service" "sinex-blob-init.service" ];
-  systemd.services.sinex-gateway.requires = [ "sinex-migrations.service" "sinex-blob-init.service" ];
+  # Use the real NixOS schema-apply unit rather than shadowing it with a second
+  # VM-local migration service. Double-applying the declarative schema races on
+  # type creation and breaks boot.
+  systemd.services.sinex-gateway.after = [ "sinex-schema-apply.service" "sinex-blob-init.service" ];
+  systemd.services.sinex-gateway.requires = [ "sinex-schema-apply.service" "sinex-blob-init.service" ];
   systemd.services.sinex-ingestd.path = [ pkgs.git pkgs.git-annex ];
   systemd.services.sinex-gateway.path = [ pkgs.git pkgs.git-annex ];
   systemd.services.sinex-blob-init.path = [ pkgs.git pkgs.git-annex ];
@@ -229,8 +218,8 @@ host    all             all             ::1/128                 trust
     ExecStartPre = lib.mkForce [
       "${pkgs.coreutils}/bin/install -d -o sinex -g sinex ${workDir}/annex"
       "${pkgs.coreutils}/bin/install -d -o sinex -g sinex ${workDir}/assembler_state"
-      "${pkgs.git}/bin/git -C ${workDir}/annex init || true"
-      "${pkgs.git-annex}/bin/git-annex -C ${workDir}/annex init ingestd || true"
+      "-${pkgs.git}/bin/git -C ${workDir}/annex init"
+      "-${pkgs.git-annex}/bin/git-annex -C ${workDir}/annex init ingestd"
     ];
     Environment = [
       "XDG_CACHE_HOME=${stateDir}/.cache"
@@ -239,12 +228,12 @@ host    all             all             ::1/128                 trust
   };
 
   systemd.services.sinex-ingestd.after = lib.mkAfter [
-    "sinex-migrations.service"
+    "sinex-schema-apply.service"
     "sinex-blob-init.service"
     "sinex-ingestd-annex-setup.service"
   ];
   systemd.services.sinex-ingestd.requires = lib.mkAfter [
-    "sinex-migrations.service"
+    "sinex-schema-apply.service"
     "sinex-blob-init.service"
     "sinex-ingestd-annex-setup.service"
   ];
