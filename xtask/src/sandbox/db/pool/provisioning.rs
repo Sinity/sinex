@@ -137,6 +137,13 @@ fn is_retryable_io_kind(kind: ErrorKind) -> bool {
 }
 
 pub(super) fn is_retryable_connection_error(err: &sqlx::Error) -> bool {
+    if err
+        .to_string()
+        .contains("A Tokio 1.x context was found, but it is being shutdown")
+    {
+        return true;
+    }
+
     if err.as_database_error().is_some_and(|db_err| {
         db_err
             .message()
@@ -164,6 +171,13 @@ pub(super) fn is_retryable_connection_error(err: &sqlx::Error) -> bool {
 }
 
 pub(super) fn is_retryable_connection_report(report: &color_eyre::Report) -> bool {
+    if report
+        .to_string()
+        .contains("A Tokio 1.x context was found, but it is being shutdown")
+    {
+        return true;
+    }
+
     for cause in report.chain() {
         if let Some(sqlx_err) = cause.downcast_ref::<sqlx::Error>()
             && is_retryable_connection_error(sqlx_err)
@@ -1282,6 +1296,21 @@ mod tests {
 
         drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
         wait_for_database_absence_admin(&mut admin_conn, &db_name).await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_retryable_connection_report_treats_runtime_shutdown_as_transient(
+    ) -> TestResult<()> {
+        let report = eyre!(
+            "error communicating with database: A Tokio 1.x context was found, but it is being shutdown."
+        );
+
+        assert!(
+            is_retryable_connection_report(&report),
+            "runtime shutdown communication errors should be retried via fresh cleanup pools"
+        );
+
         Ok(())
     }
 }

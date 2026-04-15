@@ -17,6 +17,8 @@ use crate::process::ProcessBuilder;
 // UI & System monitoring
 use console::style;
 
+const HEAVY_TEST_THREAD_CAP: usize = 4;
+
 fn failing_test_details_issue(ctx: &CommandContext, error: Option<&color_eyre::Report>) -> String {
     match error {
         Some(error) => format!(
@@ -138,7 +140,7 @@ pub struct TestCommand {
     #[arg(long)]
     pub fail_fast: bool,
 
-    /// Number of threads (default: 24, debug: 1)
+    /// Number of threads (default: profile default; heavy defaults to <=4, debug: 1)
     #[arg(short, long)]
     pub threads: Option<usize>,
 
@@ -377,6 +379,19 @@ pub struct VmArgs {
 }
 
 impl TestCommand {
+    fn effective_threads(&self) -> Option<usize> {
+        self.threads.or_else(|| {
+            if self.heavy && !self.debug {
+                let cpu_count = std::thread::available_parallelism()
+                    .map(|parallelism| parallelism.get())
+                    .unwrap_or(HEAVY_TEST_THREAD_CAP);
+                Some(default_heavy_test_threads(cpu_count))
+            } else {
+                None
+            }
+        })
+    }
+
     fn semantic_invocation_args(&self, scope: &WorkloadScope) -> Vec<String> {
         let mut args = Vec::new();
 
@@ -398,7 +413,7 @@ impl TestCommand {
         if let Some(ref filter) = self.filter {
             args.push(format!("--filter={filter}"));
         }
-        if let Some(threads) = self.threads {
+        if let Some(threads) = self.effective_threads() {
             args.push(format!("--threads={threads}"));
         }
         if let Some(retries) = self.retries {
@@ -491,6 +506,10 @@ fn normalize_packages(packages: &[String]) -> Vec<String> {
     packages.sort();
     packages.dedup();
     packages
+}
+
+fn default_heavy_test_threads(cpu_count: usize) -> usize {
+    cpu_count.clamp(1, HEAVY_TEST_THREAD_CAP)
 }
 
 fn resolve_nextest_execution_plan(
@@ -830,7 +849,7 @@ impl XtaskCommand for TestCommand {
             runner.add_arg("--no-fail-fast");
         }
 
-        if let Some(threads) = self.threads {
+        if let Some(threads) = self.effective_threads() {
             runner.add_arg(format!("--test-threads={threads}"));
         }
         if let Some(retries) = self.retries {
@@ -997,7 +1016,11 @@ impl XtaskCommand for TestCommand {
     }
 
     fn metadata(&self) -> CommandMetadata {
-        CommandMetadata::test()
+        let mut metadata = CommandMetadata::test();
+        if matches!(self.subcommand, Some(TestSubcommand::Vm(_))) {
+            metadata.timeout = None;
+        }
+        metadata
     }
 }
 
@@ -1094,6 +1117,28 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_vm_subcommand_disables_outer_command_timeout() -> ::xtask::sandbox::TestResult<()>
+    {
+        let command = TestCommand {
+            subcommand: Some(TestSubcommand::Vm(VmArgs {
+                category: Some("smoke".to_string()),
+                parallel: false,
+                timeout: crate::commands::vm::DEFAULT_TIMEOUT_SECS,
+                keep_failed: false,
+                list: false,
+                validate: false,
+                args: Vec::new(),
+            })),
+            ..Default::default()
+        };
+
+        let metadata = command.metadata();
+        assert_eq!(metadata.category, Some("test"));
+        assert!(metadata.timeout.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_resolve_nextest_execution_plan_prefers_explicit_packages()
     -> ::xtask::sandbox::TestResult<()> {
         let plan = resolve_nextest_execution_plan(
@@ -1166,6 +1211,43 @@ mod tests {
                 workload_scope: WorkloadScope::Packages(vec!["sinex-e2e-tests".into()]),
             }
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_default_heavy_test_threads_caps_parallelism() -> ::xtask::sandbox::TestResult<()>
+    {
+        assert_eq!(default_heavy_test_threads(1), 1);
+        assert_eq!(default_heavy_test_threads(2), 2);
+        assert_eq!(default_heavy_test_threads(4), 4);
+        assert_eq!(default_heavy_test_threads(24), 4);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_effective_threads_prefers_explicit_override() -> ::xtask::sandbox::TestResult<()>
+    {
+        let command = TestCommand {
+            heavy: true,
+            threads: Some(9),
+            ..Default::default()
+        };
+
+        assert_eq!(command.effective_threads(), Some(9));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_semantic_invocation_args_include_heavy_thread_cap()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = TestCommand {
+            heavy: true,
+            ..Default::default()
+        };
+
+        let args = command.semantic_invocation_args(&WorkloadScope::Workspace);
+        assert!(args.contains(&"--heavy".to_string()));
+        assert!(args.contains(&"--threads=4".to_string()));
         Ok(())
     }
 

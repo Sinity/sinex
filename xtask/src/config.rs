@@ -29,7 +29,10 @@
 //! '';
 //! ```
 
-use std::{env, path::PathBuf};
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
 
 /// User-managed preferences loaded from `~/.config/xtask/preferences.toml`.
 ///
@@ -234,22 +237,16 @@ pub fn is_nextest_run() -> bool {
 
 /// Determine the workspace root directory.
 ///
-/// Uses `CARGO_MANIFEST_DIR` (set when running via xtask) and navigates
-/// to the parent directory (since xtask is a workspace member in `xtask/`).
-/// Falls back to the current directory if the env var is not set.
+/// Resolved at compile time from `xtask`'s own `CARGO_MANIFEST_DIR` via the
+/// `env!` macro, so the result is stable regardless of which downstream crate
+/// links this function. A runtime `env::var("CARGO_MANIFEST_DIR")` lookup
+/// would instead return the *test crate's* manifest dir under nextest, which
+/// previously scattered `.sinex/` state into crate subdirectories.
 pub fn workspace_root() -> PathBuf {
-    env::var("CARGO_MANIFEST_DIR")
-        .map(PathBuf::from)
-        .map_or_else(
-            |_| {
-                // Fallback: use current directory
-                env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-            },
-            |p| {
-                // CARGO_MANIFEST_DIR points to xtask/, go up one level for workspace root
-                p.parent().map(std::path::Path::to_path_buf).unwrap_or(p)
-            },
-        )
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(Path::to_path_buf)
+        .expect("xtask crate must have a parent directory (the workspace root)")
 }
 
 /// Path to the repo-local ast-grep config root.

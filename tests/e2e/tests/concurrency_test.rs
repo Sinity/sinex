@@ -117,14 +117,16 @@ async fn test_concurrent_checkpoint_updates(ctx: TestContext) -> TestResult<()> 
         handles.push(tokio::spawn(async move {
             let manager =
                 CheckpointManager::new(kv, node_name, "test_group".to_string(), worker_str);
+            let mut revision = 0;
 
             for checkpoint_num in 1..=checkpoints_per_worker {
                 let mut state = CheckpointState::default();
                 state.checkpoint = Checkpoint::internal(Uuid::now_v7(), checkpoint_num as u64);
                 state.processed_count = checkpoint_num as u64;
                 state.last_activity = Timestamp::now();
+                state.revision = revision;
 
-                manager.save_checkpoint(&state).await?;
+                revision = manager.save_checkpoint(&state).await?;
             }
 
             TestResult::Ok(())
