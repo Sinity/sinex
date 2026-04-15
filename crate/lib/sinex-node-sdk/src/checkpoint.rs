@@ -84,6 +84,14 @@ pub struct CheckpointState {
     pub revision: u64,
 }
 
+fn checkpoint_states_match(lhs: &CheckpointState, rhs: &CheckpointState) -> bool {
+    lhs.checkpoint == rhs.checkpoint
+        && lhs.processed_count == rhs.processed_count
+        && lhs.last_activity == rhs.last_activity
+        && lhs.data == rhs.data
+        && lhs.version == rhs.version
+}
+
 impl CheckpointState {
     #[must_use]
     pub fn last_processed_id(&self) -> Option<String> {
@@ -348,13 +356,7 @@ impl CheckpointManager {
         consumer_group: String,
         consumer_name: String,
     ) -> Self {
-        Self::with_missing_checkpoint_warning(
-            kv,
-            node_name,
-            consumer_group,
-            consumer_name,
-            false,
-        )
+        Self::with_missing_checkpoint_warning(kv, node_name, consumer_group, consumer_name, false)
     }
 
     /// Create a checkpoint manager with an explicit missing-checkpoint log policy.
@@ -512,10 +514,8 @@ impl CheckpointManager {
                 Ok(revision) => revision,
                 Err(update_error) => {
                     let existing_entry = self.kv.entry(&key).await.map_err(|error| {
-                        SinexError::checkpoint(
-                            "Failed to check checkpoint KV after update failure",
-                        )
-                        .with_source(error)
+                        SinexError::checkpoint("Failed to check checkpoint KV after update failure")
+                            .with_source(error)
                     })?;
 
                     if existing_entry.is_none() {
@@ -536,25 +536,50 @@ impl CheckpointManager {
                                 .with_source(error)
                             })?
                     } else {
-                        return Err(
-                            SinexError::checkpoint(
-                                "Failed to update checkpoint in KV (CAS failure?)",
-                            )
-                            .with_source(update_error),
-                        );
+                        return Err(SinexError::checkpoint(
+                            "Failed to update checkpoint in KV (CAS failure?)",
+                        )
+                        .with_source(update_error));
                     }
                 }
             }
         } else {
-            self.kv
-                .create(&key, encoded.into())
-                .await
-                .map_err(|e| {
-                    SinexError::checkpoint(
-                        "Failed to create checkpoint in KV (already exists or create failed)",
-                    )
-                    .with_source(e)
-                })?
+            match self.kv.create(&key, encoded.clone().into()).await {
+                Ok(revision) => revision,
+                Err(create_error) => {
+                    let existing_entry = self.kv.entry(&key).await.map_err(|error| {
+                        SinexError::checkpoint("Failed to check checkpoint KV after create failure")
+                            .with_source(error)
+                    })?;
+
+                    if let Some(existing_entry) = existing_entry {
+                        let mut existing_state =
+                            self.decode_checkpoint_state(&key, &existing_entry.value)?;
+                        existing_state.revision = existing_entry.revision;
+
+                        if checkpoint_states_match(&existing_state, state) {
+                            warn!(
+                                node = %self.node_name,
+                                consumer_group = %self.consumer_group,
+                                consumer_name = %self.consumer_name,
+                                revision = existing_entry.revision,
+                                "Checkpoint create reported an error but the matching entry already exists; treating as an idempotent save"
+                            );
+                            existing_entry.revision
+                        } else {
+                            return Err(SinexError::checkpoint(
+                                "Failed to create checkpoint in KV (already exists or create failed)",
+                            )
+                            .with_source(create_error));
+                        }
+                    } else {
+                        return Err(SinexError::checkpoint(
+                            "Failed to create checkpoint in KV (already exists or create failed)",
+                        )
+                        .with_source(create_error));
+                    }
+                }
+            }
         };
 
         debug!(

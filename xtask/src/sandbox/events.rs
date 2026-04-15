@@ -87,10 +87,7 @@ pub trait EventPublisher {
     ///
     /// This is the batch fast path for helpers that already prepared concrete
     /// envelopes and only need one flush at the end of the burst.
-    async fn publish_prebuilt_events(
-        &self,
-        events: &[Event<JsonValue>],
-    ) -> TestResult<Vec<Uuid>>;
+    async fn publish_prebuilt_events(&self, events: &[Event<JsonValue>]) -> TestResult<Vec<Uuid>>;
 }
 
 impl EventPublisher for Sandbox {
@@ -178,7 +175,9 @@ impl EventPublisher for Sandbox {
 
     async fn publish_prebuilt_event(&self, event: &Event<JsonValue>) -> TestResult<Uuid> {
         // Just publish to NATS - caller (PipelineScope) is responsible for ingestd
-        let mut event_ids = self.publish_prebuilt_events(std::slice::from_ref(event)).await?;
+        let mut event_ids = self
+            .publish_prebuilt_events(std::slice::from_ref(event))
+            .await?;
         Ok(event_ids
             .pop()
             .expect("single-event batch publish must return one event id"))
@@ -288,10 +287,9 @@ impl Sandbox {
         let _client = self.ensure_nats().await?;
 
         let mut events = Vec::new();
-        let mut cleanup_records: Vec<(Uuid, Uuid)> = Vec::new();
+        let mut material_uuids: Vec<Uuid> = Vec::new();
 
-        // Phase 1: Publish all events to NATS without waiting for DB persistence.
-        // Each NATS publish takes ~1ms, so 100 events ≈ 100ms.
+        // Phase 1: Build all events and register their source materials up front.
         for payload in payloads {
             let source = payload.source();
             let event_type = payload.event_type();
@@ -328,8 +326,7 @@ impl Sandbox {
                 node_model: None,
             };
 
-            let event_uuid = self.publish_prebuilt_event(&event).await?;
-            cleanup_records.push((event_uuid, material_uuid));
+            material_uuids.push(material_uuid);
             events.push(event);
         }
 
@@ -337,19 +334,29 @@ impl Sandbox {
             return Ok(vec![]);
         }
 
-        // Phase 2: Wait for the last event to be persisted.
+        // Phase 2: Publish the entire batch with a single NATS flush.
+        let published_ids = self.publish_prebuilt_events(&events).await?;
+        if published_ids.len() != material_uuids.len() {
+            return Err(eyre!(
+                "publish_many returned {} event ids for {} prepared events",
+                published_ids.len(),
+                material_uuids.len()
+            ));
+        }
+
+        // Phase 3: Wait for the last event to be persisted.
         // Since ingestd processes events in JetStream order (single consumer),
         // once the last event is in DB, all preceding events are guaranteed to be there.
-        // Safety: `cleanup_records` is non-empty because we checked `events.is_empty()` above.
-        let last_event_uuid = cleanup_records
+        // Safety: `published_ids` is non-empty because we checked `events.is_empty()` above.
+        let last_event_uuid = published_ids
             .last()
             .expect("non-empty after is_empty check")
-            .0;
+            .to_owned();
         let last_event_id = Id::<Event<JsonValue>>::from_uuid(last_event_uuid);
         WaitHelpers::wait_for_event_id(self.pool(), last_event_id, DEFAULT_WAIT_SECS).await?;
 
-        // Phase 3: Record all events for cleanup
-        for (event_uuid, material_uuid) in &cleanup_records {
+        // Phase 4: Record all events for cleanup
+        for (event_uuid, material_uuid) in published_ids.iter().zip(material_uuids.iter()) {
             self.record_created_event(*event_uuid, Some(*material_uuid));
         }
 

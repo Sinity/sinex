@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sinex_db::repositories::schema_management::{SchemaManagementRepository, SchemaSyncResult};
 use sinex_primitives::events::schema_registry::generate_all_schemas;
+use sinex_schema::apply::SHARED_ACCESS_ROLES;
 use sqlx::postgres::PgPoolOptions;
 use std::fs;
 use std::future::Future;
@@ -430,6 +431,9 @@ pub fn pg_setup_database(config: &StackConfig, verbose: bool) -> Result<()> {
 
     mgr.ensure_user(&config.postgres.superuser, true, &initial_user)?;
     mgr.ensure_user(&config.postgres.user, true, &config.postgres.superuser)?;
+    for role in SHARED_ACCESS_ROLES {
+        mgr.ensure_role(role, false, false, &config.postgres.superuser)?;
+    }
     mgr.ensure_db(
         &config.postgres.database,
         &config.postgres.user,
