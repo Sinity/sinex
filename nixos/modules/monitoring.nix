@@ -105,10 +105,11 @@ in
           Type = "simple";
           ExecStart = "${natsExporterPkg}/bin/prometheus-nats-exporter"
             + " -port ${toString natsExporterPort}"
-            + " -varz ${natsMonitoringUrl}"
+            + " -varz"
             + " -jsz all"
             + " -connz"
-            + " -routez";
+            + " -routez"
+            + " ${natsMonitoringUrl}";
           Restart = "on-failure";
           RestartSec = 5;
           DynamicUser = true;

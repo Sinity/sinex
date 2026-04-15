@@ -38,11 +38,11 @@ pkgs.testers.nixosTest {
     machine.wait_for_unit("multi-user.target")
     machine.wait_for_unit("postgresql.service", timeout=60)
     machine.wait_for_unit("sinex-ingestd.service", timeout=60)
+    machine.wait_for_unit("sinex-filesystem-1.service", timeout=60)
 
     with subtest("Rust-driven smoke suite"):
       machine.succeed(
-        "su - postgres -c 'DATABASE_URL=postgresql:///sinex "
-        "${sinexVmTestSuite}/bin/run-suite --category smoke'"
+        "${sinexVmTestSuite}/bin/run-suite --category smoke"
       )
   '';
 }
