@@ -9,6 +9,7 @@
 
 use clap::Args;
 use color_eyre::eyre::{Result, WrapErr, eyre};
+use sinex_schema::apply::SHARED_ACCESS_ROLES;
 use std::path::Path;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
@@ -234,6 +235,9 @@ fn reset_db(config: &StackConfig, verbose: bool) -> Result<()> {
     }
     mgr.ensure_user(superuser, true, superuser)?;
     mgr.ensure_user(owner, true, superuser)?;
+    for role in SHARED_ACCESS_ROLES {
+        mgr.ensure_role(role, false, false, superuser)?;
+    }
     mgr.ensure_db(db, owner, superuser)?;
     mgr.install_extensions(db, superuser)?;
 
