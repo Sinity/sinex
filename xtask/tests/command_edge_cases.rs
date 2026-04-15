@@ -633,7 +633,10 @@ async fn test_cli_redundant_json_options() -> TestResult<()> {
         if stderr.trim().is_empty() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let parsed: serde_json::Value = serde_json::from_str(&stdout)?;
-            assert_eq!(parsed.get("command").and_then(|v| v.as_str()), Some("xtask"));
+            assert_eq!(
+                parsed.get("command").and_then(|v| v.as_str()),
+                Some("xtask")
+            );
             assert!(
                 matches!(parsed.get("status").and_then(|v| v.as_str()), Some("error")),
                 "redundant JSON flags should still produce a structured failure envelope: {stdout}"
@@ -850,10 +853,7 @@ async fn test_db_reset_without_confirmation() -> TestResult<()> {
 #[sinex_test]
 async fn test_status_schemas_succeeds() -> TestResult<()> {
     // `contracts info` was folded into `xtask status --schemas`.
-    let output = xtask_command()?
-        .arg("status")
-        .arg("--schemas")
-        .output()?;
+    let output = xtask_command()?.arg("status").arg("--schemas").output()?;
 
     assert!(
         output.status.success(),
@@ -896,10 +896,7 @@ async fn test_check_skip_options() -> TestResult<()> {
 #[sinex_test]
 async fn test_completions_all_shells() -> TestResult<()> {
     for shell in ["bash", "zsh", "fish"] {
-        let output = xtask_command()?
-            .arg("completions")
-            .arg(shell)
-            .output()?;
+        let output = xtask_command()?.arg("completions").arg(shell).output()?;
 
         assert!(
             output.status.success(),

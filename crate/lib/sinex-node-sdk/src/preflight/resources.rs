@@ -310,8 +310,8 @@ fn get_disk_space(path: &str) -> NodeResult<(f64, f64)> {
     use nix::sys::statvfs::statvfs;
 
     let probe_path = nearest_existing_ancestor(Utf8Path::new(path))?;
-    let stat =
-        statvfs(probe_path.as_std_path()).map_err(|e| SinexError::processing(format!("Error: {e}")))?;
+    let stat = statvfs(probe_path.as_std_path())
+        .map_err(|e| SinexError::processing(format!("Error: {e}")))?;
 
     let block_size = stat.block_size();
     let total_blocks = stat.blocks();
@@ -495,7 +495,8 @@ async fn check_directory_permissions(dir_path: &str) -> NodeResult<Value> {
                     .with_context("path", dir_path.to_string()));
             }
 
-            let (readable, writable) = directory_access_from_metadata(&metadata, euid, egid, &groups);
+            let (readable, writable) =
+                directory_access_from_metadata(&metadata, euid, egid, &groups);
             Ok(json!({
                 "exists": true,
                 "is_directory": true,
@@ -515,11 +516,14 @@ async fn check_directory_permissions(dir_path: &str) -> NodeResult<Value> {
                 })?;
 
             if !metadata.is_dir() {
-                return Err(SinexError::processing("Nearest existing ancestor is not a directory")
-                    .with_context("path", parent.to_string()));
+                return Err(
+                    SinexError::processing("Nearest existing ancestor is not a directory")
+                        .with_context("path", parent.to_string()),
+                );
             }
 
-            let (readable, writable) = directory_access_from_metadata(&metadata, euid, egid, &groups);
+            let (readable, writable) =
+                directory_access_from_metadata(&metadata, euid, egid, &groups);
             Ok(json!({
                 "exists": false,
                 "is_directory": true,

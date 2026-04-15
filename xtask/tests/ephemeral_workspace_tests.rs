@@ -17,10 +17,7 @@ use xtask::sandbox::EphemeralWorkspace;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-fn run_xtask_in(
-    ws: &EphemeralWorkspace,
-    args: &[&str],
-) -> Result<std::process::Output> {
+fn run_xtask_in(ws: &EphemeralWorkspace, args: &[&str]) -> Result<std::process::Output> {
     Command::new("xtask")
         .args(args)
         .current_dir(ws.dir())

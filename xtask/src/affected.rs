@@ -625,7 +625,10 @@ mod tests {
             &graceful,
             "#[sinex_test]\nasync fn test_concurrent_service_shutdown() {}\n",
         )?;
-        fs::write(&xtask_test, "#[sinex_test]\nasync fn test_compile_scope() {}\n")?;
+        fs::write(
+            &xtask_test,
+            "#[sinex_test]\nasync fn test_compile_scope() {}\n",
+        )?;
         fs::write(
             &workspace_test,
             "#[sinex_test]\nasync fn workspace_smoke_test() {}\n",

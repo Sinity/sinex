@@ -14,11 +14,11 @@ use color_eyre::eyre::{Result, WrapErr};
 use serde_json::Value;
 use std::process::Output;
 
+use support::xtask_command;
 use xtask::command::{CommandContext, XtaskCommand};
 use xtask::commands::privacy::{PrivacyCommand, PrivacySubcommand};
 use xtask::output::{OutputFormat, OutputWriter};
 use xtask::sandbox::sinex_test;
-use support::xtask_command;
 
 fn parse_json_stdout(output: &Output) -> color_eyre::eyre::Result<Value> {
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -552,10 +552,7 @@ async fn test_decrypt_invalid_token_reports_error() -> Result<()> {
 
 #[tokio::test(flavor = "current_thread")]
 async fn test_cli_privacy_help() -> Result<()> {
-    let output = xtask_command()?
-        .arg("privacy")
-        .arg("--help")
-        .output()?;
+    let output = xtask_command()?.arg("privacy").arg("--help").output()?;
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);

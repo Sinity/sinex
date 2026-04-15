@@ -52,12 +52,7 @@ async fn create_test_reporter(
 
     Ok((
         ctx,
-        create_reporter_with_clock(
-            "test-component",
-            observer,
-            thresholds,
-            Arc::clone(&clock),
-        ),
+        create_reporter_with_clock("test-component", observer, thresholds, Arc::clone(&clock)),
         clock,
     ))
 }

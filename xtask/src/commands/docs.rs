@@ -441,7 +441,9 @@ fn execute_agents(
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surface = generated_agents_surface(&workspace)?;
-    let dest = output.map(|path| path.to_path_buf()).unwrap_or(surface.path);
+    let dest = output
+        .map(|path| path.to_path_buf())
+        .unwrap_or(surface.path);
     write_generated_output(
         &dest,
         &surface.content,
@@ -461,7 +463,9 @@ fn execute_command_guide(
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surface = generated_command_guide_surface(&workspace);
-    let dest = output.map(|path| path.to_path_buf()).unwrap_or(surface.path);
+    let dest = output
+        .map(|path| path.to_path_buf())
+        .unwrap_or(surface.path);
 
     write_generated_output(
         &dest,
@@ -482,7 +486,9 @@ fn execute_command_reference(
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surface = generated_command_reference_surface(&workspace);
-    let dest = output.map(|path| path.to_path_buf()).unwrap_or(surface.path);
+    let dest = output
+        .map(|path| path.to_path_buf())
+        .unwrap_or(surface.path);
 
     write_generated_output(
         &dest,
@@ -667,7 +673,9 @@ fn execute_ast_grep_catalog(
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surface = generated_ast_grep_catalog_surface(&workspace)?;
-    let dest = output.map(|path| path.to_path_buf()).unwrap_or(surface.path);
+    let dest = output
+        .map(|path| path.to_path_buf())
+        .unwrap_or(surface.path);
 
     write_generated_output(
         &dest,
@@ -750,7 +758,8 @@ fn generated_schema_bundle(
             payload.source.to_string(),
             payload.event_type.to_string(),
         );
-        if let Some(existing_version) = seen_paths.insert(path_key.clone(), payload.version.to_string())
+        if let Some(existing_version) =
+            seen_paths.insert(path_key.clone(), payload.version.to_string())
             && existing_version != payload.version
         {
             color_eyre::eyre::bail!(
@@ -775,9 +784,9 @@ fn generated_schema_bundle(
             payload.event_type,
             payload.version,
         )?;
-        let schema_content =
-            serde_json::to_string_pretty(&schema).context("failed to render schema bundle JSON")?
-                + "\n";
+        let schema_content = serde_json::to_string_pretty(&schema)
+            .context("failed to render schema bundle JSON")?
+            + "\n";
         let schema_rel_path = std::path::PathBuf::from(format!(
             "v{major}/{}/{}.json",
             payload.source, payload.event_type
@@ -807,7 +816,10 @@ fn generated_schema_bundle(
         let registry_content = serde_json::to_string_pretty(&registry)
             .context("failed to render schema bundle registry")?
             + "\n";
-        files.insert(root.join(format!("v{major}/registry.json")), registry_content);
+        files.insert(
+            root.join(format!("v{major}/registry.json")),
+            registry_content,
+        );
     }
 
     Ok(SchemaBundle {
@@ -973,10 +985,7 @@ fn sync_schema_bundle(
 ) -> Result<SchemaBundleOutcome> {
     let existing = discover_existing_schema_bundle_files(&bundle.root)?;
     let desired: BTreeSet<_> = bundle.files.keys().cloned().collect();
-    let stale_paths: Vec<_> = existing
-        .difference(&desired)
-        .cloned()
-        .collect();
+    let stale_paths: Vec<_> = existing.difference(&desired).cloned().collect();
 
     let mut stale_or_changed = stale_paths.len();
     let mut changed = !stale_paths.is_empty();
@@ -1052,7 +1061,9 @@ fn sync_schema_bundle(
     })
 }
 
-fn discover_existing_schema_bundle_files(root: &std::path::Path) -> Result<BTreeSet<std::path::PathBuf>> {
+fn discover_existing_schema_bundle_files(
+    root: &std::path::Path,
+) -> Result<BTreeSet<std::path::PathBuf>> {
     let mut files = BTreeSet::new();
     if !root.exists() {
         return Ok(files);
@@ -1115,8 +1126,12 @@ fn schema_bundle_major_version(version: &str) -> Result<u64> {
         .context("schema version must be in format X.Y.Z")?
         .parse::<u64>()
         .context("schema version major component must be numeric")?;
-    let minor = parts.next().context("schema version must be in format X.Y.Z")?;
-    let patch = parts.next().context("schema version must be in format X.Y.Z")?;
+    let minor = parts
+        .next()
+        .context("schema version must be in format X.Y.Z")?;
+    let patch = parts
+        .next()
+        .context("schema version must be in format X.Y.Z")?;
     if parts.next().is_some() {
         color_eyre::eyre::bail!("schema version must be in format X.Y.Z");
     }
@@ -1150,13 +1165,7 @@ fn write_generated_output(
             .with_duration(ctx.elapsed()));
     }
 
-    let outcome = sync_generated_surface(
-        dest,
-        content,
-        check_only,
-        label,
-        ctx,
-    )?;
+    let outcome = sync_generated_surface(dest, content, check_only, label, ctx)?;
 
     let message = if check_only {
         if outcome.changed {
@@ -1366,7 +1375,9 @@ mod tests {
 
         assert!(rendered.contains("# xtask Command Reference"));
         assert!(rendered.contains("## `xtask check`"));
-        assert!(rendered.contains("| `-p, --package` | yes | no | Check specific package(s) only |"));
+        assert!(
+            rendered.contains("| `-p, --package` | yes | no | Check specific package(s) only |")
+        );
         assert!(rendered.contains("### `xtask check deep`"));
     }
 

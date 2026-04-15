@@ -24,9 +24,12 @@ async fn test_data_persistence_safety(ctx: TestContext) -> TestResult<()> {
     // Phase 1: Seed initial data
     let initial_count = 10usize;
     scope
-        .publish_batch(initial_count, "pipeline-safety", "pipeline.initial", |i| {
-            json!({"seq": i, "batch": "initial", "checksum": format!("init-{i}")})
-        })
+        .publish_batch(
+            initial_count,
+            "pipeline-safety",
+            "pipeline.initial",
+            |i| json!({"seq": i, "batch": "initial", "checksum": format!("init-{i}")}),
+        )
         .await?;
 
     // Capture initial data fingerprint
@@ -53,9 +56,12 @@ async fn test_data_persistence_safety(ctx: TestContext) -> TestResult<()> {
     // Phase 2: Add more data
     let additional_count = 5usize;
     scope
-        .publish_batch(additional_count, "pipeline-safety", "pipeline.additional", |i| {
-            json!({"seq": i, "batch": "additional", "checksum": format!("add-{i}")})
-        })
+        .publish_batch(
+            additional_count,
+            "pipeline-safety",
+            "pipeline.additional",
+            |i| json!({"seq": i, "batch": "additional", "checksum": format!("add-{i}")}),
+        )
         .await?;
 
     // Verify initial data is still intact
@@ -100,9 +106,12 @@ async fn test_pipeline_idempotency(ctx: TestContext) -> TestResult<()> {
 
     // First execution of the batch
     scope
-        .publish_batch(batch_size, "idempotency-pipeline", "pipeline.batch", |i| {
-            json!({"seq": i, "run": 1})
-        })
+        .publish_batch(
+            batch_size,
+            "idempotency-pipeline",
+            "pipeline.batch",
+            |i| json!({"seq": i, "run": 1}),
+        )
         .await?;
 
     let source = sinex_primitives::EventSource::from("idempotency-pipeline");
@@ -110,9 +119,12 @@ async fn test_pipeline_idempotency(ctx: TestContext) -> TestResult<()> {
 
     // Second execution of the same batch
     scope
-        .publish_batch(batch_size, "idempotency-pipeline", "pipeline.batch", |i| {
-            json!({"seq": i, "run": 2})
-        })
+        .publish_batch(
+            batch_size,
+            "idempotency-pipeline",
+            "pipeline.batch",
+            |i| json!({"seq": i, "run": 2}),
+        )
         .await?;
 
     let after_second = scope.ctx().pool.events().count_by_source(&source).await?;

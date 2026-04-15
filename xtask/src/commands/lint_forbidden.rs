@@ -169,11 +169,7 @@ impl XtaskCommand for LintForbiddenCommand {
         for finding in ast_grep.error_findings() {
             violations.push(format!(
                 "{}:{}:{} [{}] {}",
-                finding.file,
-                finding.line,
-                finding.column,
-                finding.rule_id,
-                finding.message
+                finding.file, finding.line, finding.column, finding.rule_id, finding.message
             ));
         }
 
@@ -217,7 +213,11 @@ fn check_pattern_allow_tests(label: &str, pattern: &str, allow: &[&str]) -> Resu
 }
 
 /// Check test attributes while allowing dedicated test dirs and inline cfg(test) modules.
-fn check_rust_test_attr_patterns(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
+fn check_rust_test_attr_patterns(
+    label: &str,
+    pattern: &str,
+    allow: &[&str],
+) -> Result<Vec<String>> {
     run_rg(pattern)
         .and_then(|matches| {
             filter_allowlist(matches, allow, |path| {
@@ -687,8 +687,8 @@ mod tests {
     #[sinex_test]
     async fn test_parse_ast_grep_summary_rejects_invalid_json() -> ::xtask::sandbox::TestResult<()>
     {
-        let error = parse_ast_grep_summary("not-json")
-            .expect_err("invalid ast-grep output should fail");
+        let error =
+            parse_ast_grep_summary("not-json").expect_err("invalid ast-grep output should fail");
         assert!(format!("{error:#}").contains("failed to parse ast-grep JSON output"));
         Ok(())
     }

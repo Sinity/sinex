@@ -112,7 +112,11 @@ async fn wait_for_material_row(
     .map_err(Into::into)
 }
 
-async fn ledger_count(ctx: &TestContext, material_id: Uuid, source_type: Option<&str>) -> Result<i64> {
+async fn ledger_count(
+    ctx: &TestContext,
+    material_id: Uuid,
+    source_type: Option<&str>,
+) -> Result<i64> {
     let count = match source_type {
         Some(source_type) => {
             sqlx::query_scalar!(
@@ -224,7 +228,10 @@ async fn test_crash_during_early_material_acquisition(ctx: TestContext) -> Resul
     wait_for_material_ledger_counts(&ctx, material_id, 1, 0).await?;
     assert_eq!(ledger_count(&ctx, material_id, None).await?, 1);
     assert_eq!(ledger_count(&ctx, material_id, Some("staged_at")).await?, 1);
-    assert_eq!(ledger_count(&ctx, material_id, Some("realtime_capture")).await?, 0);
+    assert_eq!(
+        ledger_count(&ctx, material_id, Some("realtime_capture")).await?,
+        0
+    );
 
     ingest_handle.stop().await?;
     Ok(())
@@ -271,7 +278,10 @@ async fn test_crash_during_mid_material_acquisition(ctx: TestContext) -> Result<
     wait_for_material_ledger_counts(&ctx, material_id, 1, 0).await?;
     assert_eq!(ledger_count(&ctx, material_id, None).await?, 1);
     assert_eq!(ledger_count(&ctx, material_id, Some("staged_at")).await?, 1);
-    assert_eq!(ledger_count(&ctx, material_id, Some("realtime_capture")).await?, 0);
+    assert_eq!(
+        ledger_count(&ctx, material_id, Some("realtime_capture")).await?,
+        0
+    );
 
     ingest_handle.stop().await?;
     Ok(())
@@ -601,7 +611,10 @@ async fn test_crash_during_finalization(ctx: TestContext) -> Result<()> {
     wait_for_material_ledger_counts(&ctx, material_id, 1, 0).await?;
     assert_eq!(ledger_count(&ctx, material_id, None).await?, 1);
     assert_eq!(ledger_count(&ctx, material_id, Some("staged_at")).await?, 1);
-    assert_eq!(ledger_count(&ctx, material_id, Some("realtime_capture")).await?, 0);
+    assert_eq!(
+        ledger_count(&ctx, material_id, Some("realtime_capture")).await?,
+        0
+    );
 
     ingest_handle.stop().await?;
     Ok(())
