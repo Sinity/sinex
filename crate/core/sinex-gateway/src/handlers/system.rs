@@ -12,10 +12,7 @@ pub async fn handle_system_ping(_services: &ServiceContainer, _params: Value) ->
     Ok(system_ping_response())
 }
 
-pub async fn handle_system_version(
-    _services: &ServiceContainer,
-    _params: Value,
-) -> Result<Value> {
+pub async fn handle_system_version(_services: &ServiceContainer, _params: Value) -> Result<Value> {
     Ok(system_version_response())
 }
 
@@ -121,7 +118,10 @@ mod tests {
     #[sinex_test]
     async fn system_version_returns_gateway_package_version() -> TestResult<()> {
         let response = system_version_response();
-        assert_eq!(response, Value::String(env!("CARGO_PKG_VERSION").to_string()));
+        assert_eq!(
+            response,
+            Value::String(env!("CARGO_PKG_VERSION").to_string())
+        );
         Ok(())
     }
 

@@ -137,11 +137,7 @@ async fn list_schemas_for_source_returns_all(ctx: TestContext) -> TestResult<()>
         "Expected at least 3 schemas, saw {}",
         schemas.len()
     );
-    assert!(
-        schemas
-            .iter()
-            .all(|s| s.source == source && s.is_active)
-    );
+    assert!(schemas.iter().all(|s| s.source == source && s.is_active));
     Ok(())
 }
 
@@ -160,7 +156,9 @@ async fn deprecating_schema_disables_active_version(ctx: TestContext) -> TestRes
         .await?;
 
     repo.deprecate_schema(schema.id.as_uuid()).await?;
-    let active = repo.get_active_schema(source.as_str(), event_type.as_str()).await;
+    let active = repo
+        .get_active_schema(source.as_str(), event_type.as_str())
+        .await;
     assert!(active.is_err());
     Ok(())
 }
@@ -305,9 +303,11 @@ async fn corrupt_validation_cache_rows_fail_honestly(ctx: TestContext) -> TestRe
     let inserted = ctx
         .pool
         .events()
-        .insert(DynamicPayload::new(source, event_type, json!({ "name": "alice" }))
-            .from_material(material_id)
-            .build()?)
+        .insert(
+            DynamicPayload::new(source, event_type, json!({ "name": "alice" }))
+                .from_material(material_id)
+                .build()?,
+        )
         .await?;
     let event_id = *inserted
         .id

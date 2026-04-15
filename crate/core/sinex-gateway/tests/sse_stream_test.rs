@@ -764,9 +764,7 @@ async fn slow_consumer_gap_arrives_before_resumed_event(
 }
 
 #[sinex_test]
-async fn multiple_subscribers_get_independent_delivery(
-    ctx: TestContext,
-) -> color_eyre::Result<()> {
+async fn multiple_subscribers_get_independent_delivery(ctx: TestContext) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().dedicated().await?;
     let pool = ctx.pool().clone();
     let nats = ctx.nats_client();

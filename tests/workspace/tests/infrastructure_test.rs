@@ -115,10 +115,9 @@ async fn declarative_schema_core_objects_accessible(
 ) -> xtask::sandbox::TestResult<()> {
     let pool = ctx.pool();
 
-    let events_exists: bool =
-        sqlx::query_scalar("SELECT to_regclass('core.events') IS NOT NULL")
-            .fetch_one(pool)
-            .await?;
+    let events_exists: bool = sqlx::query_scalar("SELECT to_regclass('core.events') IS NOT NULL")
+        .fetch_one(pool)
+        .await?;
     let has_ts_persisted: bool = sqlx::query_scalar(
         "SELECT EXISTS (
             SELECT 1
@@ -166,7 +165,10 @@ async fn can_set_session_replication_role(
         .fetch_one(&mut *conn)
         .await?;
 
-    assert_eq!(role, "replica", "session_replication_role should be 'replica'");
+    assert_eq!(
+        role, "replica",
+        "session_replication_role should be 'replica'"
+    );
 
     // Reset to origin
     sqlx::query("SET session_replication_role = 'origin'")
@@ -177,7 +179,10 @@ async fn can_set_session_replication_role(
         .fetch_one(&mut *conn)
         .await?;
 
-    assert_eq!(role, "origin", "session_replication_role should be reset to 'origin'");
+    assert_eq!(
+        role, "origin",
+        "session_replication_role should be reset to 'origin'"
+    );
 
     Ok(())
 }
@@ -289,9 +294,12 @@ async fn can_delete_from_all_cleanup_tables(
 
         // For tables that support TRUNCATE, verify that too
         if table.method == CleanupMethod::Truncate {
-            let truncate_result = sqlx::query(&format!("TRUNCATE TABLE {} RESTART IDENTITY CASCADE", table.table_name))
-                .execute(pool)
-                .await;
+            let truncate_result = sqlx::query(&format!(
+                "TRUNCATE TABLE {} RESTART IDENTITY CASCADE",
+                table.table_name
+            ))
+            .execute(pool)
+            .await;
 
             assert!(
                 truncate_result.is_ok(),
@@ -322,15 +330,11 @@ async fn session_guards_restore_state(
 
     // Use guards (simulating cleanup operation)
     {
-        let replication_guard =
-            ReplicationRoleGuard::disable_for_cleanup(&mut conn).await?;
-        let row_security_guard =
-            RowSecurityGuard::disable_for_cleanup(&mut conn).await?;
-        let triggers_guard = TriggersGuard::disable_for_cleanup(
-            &mut conn,
-            ["core.events", "raw.temporal_ledger"],
-        )
-        .await?;
+        let replication_guard = ReplicationRoleGuard::disable_for_cleanup(&mut conn).await?;
+        let row_security_guard = RowSecurityGuard::disable_for_cleanup(&mut conn).await?;
+        let triggers_guard =
+            TriggersGuard::disable_for_cleanup(&mut conn, ["core.events", "raw.temporal_ledger"])
+                .await?;
 
         // Verify altered state
         let altered_role: String = sqlx::query_scalar("SHOW session_replication_role")
@@ -388,10 +392,7 @@ async fn cleanup_config_is_authoritative() -> xtask::sandbox::TestResult<()> {
     );
 
     // Current cleanup contract is truncate-first rather than trigger-disable-first.
-    let truncatable_tables: Vec<_> = config
-        .truncatable_tables()
-        .map(|t| t.table_name)
-        .collect();
+    let truncatable_tables: Vec<_> = config.truncatable_tables().map(|t| t.table_name).collect();
 
     assert!(
         truncatable_tables.contains(&"core.events"),

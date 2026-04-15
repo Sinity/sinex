@@ -621,10 +621,7 @@ async fn replay_execute_dry_run_rejects_while_preserving_preview(
         bail!("status failed: {status_resp:?}");
     }
 
-    assert_eq!(
-        status_resp["operation"]["state"].as_str(),
-        Some("Approved")
-    );
+    assert_eq!(status_resp["operation"]["state"].as_str(), Some("Approved"));
     assert_eq!(
         status_resp["operation"]["preview_summary"]["replay_semantics"].as_str(),
         Some("reexecute_material_roots_via_node_scan")

@@ -1995,7 +1995,10 @@ mod tests {
         )
         .fetch_one(&ctx.pool)
         .await?;
-        assert_eq!(ledger_entries, 2, "staged_at + realtime_capture should both persist");
+        assert_eq!(
+            ledger_entries, 2,
+            "staged_at + realtime_capture should both persist"
+        );
 
         Ok(())
     }

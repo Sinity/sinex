@@ -11,11 +11,11 @@ mod support;
 use support::xtask_command;
 use xtask::command::{CommandContext, XtaskCommand};
 use xtask::commands::jobs::{JobsCommand, JobsSubcommand};
-use xtask::output::{OutputFormat, OutputWriter};
 use xtask::history::{
     HistoryDb,
     seed::{SeedOptions, seed_history},
 };
+use xtask::output::{OutputFormat, OutputWriter};
 use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
 /// Invariant: `jobs list` on empty state returns an empty jobs array, not an error.
@@ -130,10 +130,7 @@ async fn test_command_context_formats() -> ::xtask::sandbox::TestResult<()> {
 
 #[sinex_test]
 async fn test_analytics_help() -> ::xtask::sandbox::TestResult<()> {
-    let output = xtask_command()?
-        .arg("analytics")
-        .arg("--help")
-        .output()?;
+    let output = xtask_command()?.arg("analytics").arg("--help").output()?;
 
     assert!(output.status.success(), "analytics --help should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
