@@ -67,3 +67,50 @@ async fn replay_preview_nulls_cascade_impact_when_metadata_queries_fail(
     );
     Ok(())
 }
+
+#[sinex_test]
+async fn replay_preview_maps_watcher_node_ids_to_emitted_event_sources(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("replay-preview-source-alias"))
+        .await?;
+    let root = ctx
+        .pool()
+        .events()
+        .insert(
+            FileCreatedPayload::test_default(
+                RecordedPath::from_observed("/tmp/replay-preview-source-alias.txt")
+                    .map_err(|e| color_eyre::eyre::eyre!(e))?,
+            )
+            .from_material(material_id)
+            .build()?,
+        )
+        .await?;
+    let root_id = root.id.expect("inserted root event should have an id");
+
+    let machine = ReplayStateMachine::new(ctx.pool().clone());
+    let preview = machine
+        .generate_preview_summary(&ReplayScope {
+            node_id: "filesystem-watcher".to_string(),
+            time_window: Some((
+                root_id.timestamp() - time::Duration::minutes(1),
+                root_id.timestamp() + time::Duration::minutes(1),
+            )),
+            material_filter: None,
+            filters: HashMap::new(),
+        })
+        .await?;
+
+    assert_eq!(
+        preview["total_events"],
+        serde_json::json!(1),
+        "watcher node ids should match the emitted fs-watcher event source during replay preview"
+    );
+    assert_eq!(
+        preview["root_event_ids"],
+        serde_json::json!([root_id.to_uuid()]),
+        "preview summaries must keep the matched replay roots after source alias expansion"
+    );
+    Ok(())
+}

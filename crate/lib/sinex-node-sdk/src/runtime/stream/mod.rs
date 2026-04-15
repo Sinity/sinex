@@ -50,8 +50,8 @@ use sinex_primitives::{
 };
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::sync::{RwLock, oneshot, watch};
@@ -2081,7 +2081,10 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         let (replay_sender, mut replay_receiver) =
             mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);
-        let replay_emitter = base_handles.emitter().clone_with_sender(replay_sender);
+        let replay_emitter = base_handles
+            .emitter()
+            .clone_with_sender(replay_sender)
+            .with_default_created_by_operation_id(operation_id);
         let target_sender = base_handles.emitter().sender();
         let emitted_counter = Arc::new(AtomicU64::new(0));
         let counter = emitted_counter.clone();
@@ -3505,8 +3508,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn ingestor_startup_skips_gap_fill_when_only_snapshot_created_checkpoint(
-    ) -> TestResult<()> {
+    async fn ingestor_startup_skips_gap_fill_when_only_snapshot_created_checkpoint()
+    -> TestResult<()> {
         let snapshot_checkpoint = Checkpoint::timestamp(Timestamp::now(), None);
         let node = StartupSequenceTestNode::new(Checkpoint::None, snapshot_checkpoint);
         let scans = node.scans.clone();

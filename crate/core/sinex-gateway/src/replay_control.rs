@@ -21,7 +21,7 @@ use sinex_node_sdk::runtime::stream::{
 use sinex_primitives::domain::{EventSource, EventType, NodeName};
 use sinex_primitives::environment::{SinexEnvironment, environment};
 use sinex_primitives::events::{Event as StoredEvent, Provenance};
-use sinex_primitives::{Id, Pagination, SinexError, Timestamp, Uuid};
+use sinex_primitives::{Id, SinexError, Timestamp, Uuid};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 #[cfg(test)]
@@ -34,6 +34,7 @@ const REPLAY_CONTROL_SUBSCRIBE_ATTEMPTS: usize = 5;
 const REPLAY_CONTROL_SUBSCRIBE_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
 const REPLAY_CONTROL_SUBSCRIBE_BACKOFF_BASE: Duration = Duration::from_millis(200);
 const REPLAY_CONTROL_SUBSCRIBE_BACKOFF_MAX: Duration = Duration::from_secs(2);
+const REPLAY_OUTPUT_VISIBILITY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Valid actor roles for replay operations.
 const VALID_ACTOR_ROLES: &[&str] = &[
@@ -1489,62 +1490,26 @@ impl ReplayExecutionEngine {
         Ok(())
     }
 
-    /// Pagination batch size for collecting scope events from the database.
-    const SCOPE_QUERY_BATCH_SIZE: i64 = 500;
-
     async fn collect_scope_events(
         &self,
         scope: &ReplayScope,
-        time_window: (Timestamp, Timestamp),
+        _time_window: (Timestamp, Timestamp),
         pool: &sqlx::PgPool,
     ) -> Result<Vec<StoredEvent>> {
-        let event_source = EventSource::new(&scope.node_id).map_err(|e| {
-            eyre!(SinexError::validation("Invalid replay scope node_id").with_std_error(&e))
-        })?;
-        let normalized = scope.normalized_filters();
-        let material_filter = normalized.material_ids;
-        let event_type_filter = normalized.event_types;
+        let root_ids = self
+            .replay
+            .collect_scope_root_ids(scope)
+            .await
+            .map_err(|e| eyre!("Failed to collect replay scope root ids: {e}"))?;
+        let event_ids = root_ids
+            .into_iter()
+            .map(Id::<StoredEvent>::from_uuid)
+            .collect::<Vec<_>>();
 
-        let mut offset: i64 = 0;
-        let mut events = Vec::new();
-
-        loop {
-            let page = Pagination::new(Some(Self::SCOPE_QUERY_BATCH_SIZE), Some(offset));
-            let batch = pool
-                .events()
-                .get_material_root_events_in_range(
-                    &event_source,
-                    time_window.0,
-                    time_window.1,
-                    page,
-                )
-                .await
-                .map_err(|e| eyre!("Failed to query replay scope events: {e}"))?;
-
-            if batch.is_empty() {
-                break;
-            }
-
-            let filtered = batch.into_iter().filter(|event| {
-                let material_id = match &event.provenance {
-                    Provenance::Material { id, .. } => id.as_uuid(),
-                    Provenance::Synthesis { .. } => unreachable!(
-                        "material-root replay scope query returned synthesis-provenance event"
-                    ),
-                };
-                let material_ok = material_filter
-                    .as_ref()
-                    .is_none_or(|materials| materials.contains(&material_id));
-                let event_type_ok = event_type_filter
-                    .as_ref()
-                    .is_none_or(|types| types.iter().any(|kind| kind == event.event_type.as_str()));
-                material_ok && event_type_ok
-            });
-            events.extend(filtered);
-            offset += Self::SCOPE_QUERY_BATCH_SIZE;
-        }
-
-        Ok(events)
+        pool.events()
+            .get_by_ids(&event_ids)
+            .await
+            .map_err(|e| eyre!("Failed to hydrate replay scope events: {e}"))
     }
 
     async fn collect_operation_output_events(
@@ -1574,6 +1539,161 @@ impl ReplayExecutionEngine {
                 equivalence_key: row.equivalence_key,
             })
             .collect())
+    }
+
+    fn expected_replay_outputs(material_roots: &[StoredEvent]) -> Result<ExpectedReplayOutputs> {
+        if material_roots.is_empty() {
+            return Err(eyre!(
+                "Replay output expectations require at least one material root"
+            ));
+        }
+
+        let mut sources = HashSet::new();
+        let mut event_types = HashSet::new();
+
+        for event in material_roots {
+            sources.insert(event.source.as_ref().to_string());
+            event_types.insert(event.event_type.as_ref().to_string());
+            match &event.provenance {
+                Provenance::Material { .. } => {}
+                Provenance::Synthesis { .. } => {
+                    return Err(eyre!(
+                        "Replay scope included non-material root '{}' / '{}'",
+                        event.source,
+                        event.event_type
+                    ));
+                }
+            }
+        }
+
+        let mut sources: Vec<_> = sources.into_iter().collect();
+        sources.sort_unstable();
+        let mut event_types: Vec<_> = event_types.into_iter().collect();
+        event_types.sort_unstable();
+
+        Ok(ExpectedReplayOutputs {
+            minimum_visible_count: 0,
+            sources,
+            event_types,
+            logical_source_identifiers: Vec::new(),
+        })
+    }
+
+    fn logical_source_identifier(material: &ResolvedReplayMaterial) -> &str {
+        material
+            .material_metadata
+            .get("logical_source_identifier")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_else(|| {
+                material
+                    .source_identifier
+                    .split("#material=")
+                    .next()
+                    .unwrap_or(material.source_identifier.as_str())
+            })
+    }
+
+    fn with_logical_source_identifiers(
+        mut expected: ExpectedReplayOutputs,
+        replay_materials: &[ResolvedReplayMaterial],
+    ) -> Result<ExpectedReplayOutputs> {
+        let mut logical_source_identifiers = replay_materials
+            .iter()
+            .map(Self::logical_source_identifier)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        logical_source_identifiers.sort_unstable();
+        logical_source_identifiers.dedup();
+
+        if logical_source_identifiers.is_empty() {
+            return Err(eyre!(
+                "Replay output expectations require at least one logical source identifier"
+            ));
+        }
+
+        expected.minimum_visible_count = logical_source_identifiers.len() as u64;
+        expected.logical_source_identifiers = logical_source_identifiers;
+        Ok(expected)
+    }
+
+    async fn count_visible_replay_outputs(
+        &self,
+        pool: &sqlx::PgPool,
+        operation_id: Uuid,
+        expected: &ExpectedReplayOutputs,
+    ) -> Result<i64> {
+        sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT COUNT(*)::bigint
+            FROM core.events
+            INNER JOIN raw.source_material_registry smr
+                ON smr.id = core.events.source_material_id
+            WHERE created_by_operation_id = $1::uuid
+              AND source = ANY($2::text[])
+              AND event_type = ANY($3::text[])
+              AND COALESCE(
+                    smr.metadata->>'logical_source_identifier',
+                    split_part(smr.source_identifier, '#material=', 1)
+                  ) = ANY($4::text[])
+            "#,
+        )
+        .bind(operation_id)
+        .bind(&expected.sources)
+        .bind(&expected.event_types)
+        .bind(&expected.logical_source_identifiers)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| eyre!("Failed to count visible replay outputs: {e}"))
+    }
+
+    async fn wait_for_replay_outputs_visible(
+        &self,
+        pool: &sqlx::PgPool,
+        operation_id: Uuid,
+        expected: &ExpectedReplayOutputs,
+    ) -> Result<()> {
+        let timeout = self
+            .scan_completion_timeout
+            .min(REPLAY_OUTPUT_VISIBILITY_TIMEOUT);
+
+        let wait_result = tokio::time::timeout(timeout, async {
+            loop {
+                let visible_count = self
+                    .count_visible_replay_outputs(pool, operation_id, expected)
+                    .await?;
+                if visible_count >= expected.minimum_visible_count as i64 {
+                    debug!(
+                        operation_id = %operation_id,
+                        visible_count,
+                        minimum_visible_count = expected.minimum_visible_count,
+                        "Replay outputs are query-visible"
+                    );
+                    return Ok::<(), color_eyre::eyre::Report>(());
+                }
+
+                tokio::time::sleep(Self::EXECUTION_STATE_POLL_INTERVAL).await;
+            }
+        })
+        .await;
+
+        match wait_result {
+            Ok(result) => result,
+            Err(_timeout) => {
+                let visible_count = self
+                    .count_visible_replay_outputs(pool, operation_id, expected)
+                    .await
+                    .unwrap_or(-1);
+                Err(eyre!(
+                    "Replay outputs were not query-visible after successful scan within {:?} (visible={}, minimum_visible={}, sources={}, event_types={}, logical_sources={})",
+                    timeout,
+                    visible_count,
+                    expected.minimum_visible_count,
+                    expected.sources.join(","),
+                    expected.event_types.join(","),
+                    expected.logical_source_identifiers.join(","),
+                ))
+            }
+        }
     }
 
     async fn resolve_replay_materials(
@@ -2055,6 +2175,10 @@ impl ReplayExecutionEngine {
             .into_iter()
             .collect();
         let replay_materials = self.resolve_replay_materials(pool, &material_ids).await?;
+        let expected_replay_outputs = Self::with_logical_source_identifiers(
+            Self::expected_replay_outputs(&material_roots)?,
+            &replay_materials,
+        )?;
 
         // Step 1: Archive the affected cascade
         let cascade_ids = self
@@ -2372,6 +2496,9 @@ impl ReplayExecutionEngine {
                 checkpoint.processed_events = count;
                 checkpoint.updated_at = sinex_primitives::temporal::now();
 
+                self.wait_for_replay_outputs_visible(pool, operation_id, &expected_replay_outputs)
+                    .await?;
+
                 // Record replacement relations between archived and newly-created events
                 self.record_event_replacements(pool, operation_id, &cascade_ids)
                     .await?;
@@ -2515,6 +2642,14 @@ impl ReplayTelemetry {
 
         Ok(())
     }
+}
+
+#[derive(Debug, Clone)]
+struct ExpectedReplayOutputs {
+    minimum_visible_count: u64,
+    sources: Vec<String>,
+    event_types: Vec<String>,
+    logical_source_identifiers: Vec<String>,
 }
 
 #[cfg(test)]
@@ -2774,6 +2909,97 @@ mod tests {
         });
 
         Ok((command_rx, handle))
+    }
+
+    fn spawn_replay_output_inserter(
+        pool: DbPool,
+        command_rx: tokio::sync::oneshot::Receiver<NodeScanCommand>,
+        source: &'static str,
+        event_type: &'static str,
+        path: &'static str,
+        equivalence_key: Option<&'static str>,
+    ) -> tokio::task::JoinHandle<Result<NodeScanCommand>> {
+        tokio::spawn(async move {
+            let command = command_rx
+                .await
+                .map_err(|_| eyre!("fake replay output inserter did not receive scan command"))?;
+            let logical_source_identifier = command
+                .args
+                .replay
+                .as_ref()
+                .and_then(|replay| replay.materials.first())
+                .map(ReplayExecutionEngine::logical_source_identifier)
+                .unwrap_or(path)
+                .to_string();
+            let material_id = Uuid::now_v7();
+            let source_identifier = format!("{logical_source_identifier}#material={material_id}");
+            sqlx::query(
+                r#"
+                INSERT INTO raw.source_material_registry (
+                    id,
+                    material_kind,
+                    source_identifier,
+                    status,
+                    timing_info_type,
+                    metadata
+                )
+                VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime', $3::jsonb)
+                "#,
+            )
+            .bind(material_id)
+            .bind(&source_identifier)
+            .bind(json!({ "logical_source_identifier": logical_source_identifier }))
+            .execute(&pool)
+            .await?;
+            let mut event = DynamicPayload::new(source, event_type, json!({ "path": path }))
+                .from_material(Id::from_uuid(material_id))
+                .build()?;
+            event.created_by_operation_id = Some(command.operation_id);
+            if let Some(equivalence_key) = equivalence_key {
+                event.equivalence_key = Some(equivalence_key.to_string());
+            }
+            pool.events().insert(event).await?;
+            Ok(command)
+        })
+    }
+
+    #[test]
+    fn replay_output_expectations_deduplicate_logical_sources() {
+        let logical_source = "/tmp/replay-dedup.txt";
+        let expected = ExpectedReplayOutputs {
+            minimum_visible_count: 0,
+            sources: vec!["fs-test".to_string()],
+            event_types: vec![FileCreatedPayload::EVENT_TYPE.as_static_str().to_string()],
+            logical_source_identifiers: Vec::new(),
+        };
+        let replay_materials = vec![
+            ResolvedReplayMaterial {
+                source_material_id: Uuid::now_v7(),
+                material_kind: "annex".to_string(),
+                source_identifier: format!("{logical_source}#material={}", Uuid::now_v7()),
+                material_metadata: json!({ "logical_source_identifier": logical_source }),
+                material_start_time: None,
+                material_end_time: None,
+            },
+            ResolvedReplayMaterial {
+                source_material_id: Uuid::now_v7(),
+                material_kind: "annex".to_string(),
+                source_identifier: format!("{logical_source}#material={}", Uuid::now_v7()),
+                material_metadata: json!({ "logical_source_identifier": logical_source }),
+                material_start_time: None,
+                material_end_time: None,
+            },
+        ];
+
+        let expected =
+            ReplayExecutionEngine::with_logical_source_identifiers(expected, &replay_materials)
+                .expect("logical source expectation should succeed");
+
+        assert_eq!(expected.minimum_visible_count, 1);
+        assert_eq!(
+            expected.logical_source_identifiers,
+            vec![logical_source.to_string()]
+        );
     }
 
     #[sinex_test]
@@ -3059,6 +3285,14 @@ mod tests {
         .await?;
         let (scan_command_rx, scan_handle) =
             spawn_fake_scan_node(nats_client.clone(), env.clone(), "fs-test", 1).await?;
+        let replay_output_handle = spawn_replay_output_inserter(
+            ctx.pool.clone(),
+            scan_command_rx,
+            "fs-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            "/tmp/replay-output.txt",
+            None,
+        );
 
         let client = spawn_replay_control(replay, nats_client, Duration::from_secs(30)).await?;
 
@@ -3115,9 +3349,9 @@ mod tests {
             "Replay execution should record a concrete outcome for automation consumers"
         );
 
-        let dispatched_command = scan_command_rx
+        let dispatched_command = replay_output_handle
             .await
-            .map_err(|_| eyre!("fake fs-test node did not receive a scan command"))?;
+            .map_err(|e| eyre!("fake replay output task failed: {e}"))??;
         let replay_context = dispatched_command
             .args
             .replay
@@ -3272,6 +3506,14 @@ mod tests {
             .await?;
         let (reexecution_command_rx, reexecution_handle) =
             spawn_fake_scan_node(ctx.nats_client(), env.clone(), "reexecution-test", 1).await?;
+        let reexecution_output_handle = spawn_replay_output_inserter(
+            ctx.pool.clone(),
+            reexecution_command_rx,
+            "reexecution-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            "/tmp/reexecution-root.txt",
+            None,
+        );
         let reexecution_executed = client
             .execute(
                 planned_reexecution.operation_id,
@@ -3282,9 +3524,9 @@ mod tests {
         assert_eq!(reexecution_executed.state, ReplayState::Completed);
         assert_eq!(reexecution_executed.checkpoint.total_events, 1);
         assert_eq!(reexecution_executed.checkpoint.processed_events, 1);
-        let reexecution_command = reexecution_command_rx
+        let reexecution_command = reexecution_output_handle
             .await
-            .map_err(|_| eyre!("fake reexecution-test node did not receive a scan command"))?;
+            .map_err(|e| eyre!("fake reexecution replay output task failed: {e}"))??;
         let reexecution_context = reexecution_command
             .args
             .replay
@@ -3473,6 +3715,105 @@ mod tests {
             replacements.is_empty(),
             "unmatched replay rows must not fabricate replacement lineage"
         );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_execution_fails_when_outputs_never_become_query_visible(
+        ctx: TestContext,
+    ) -> Result<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+
+        let material_id = ctx
+            .create_source_material(Some("replay-output-visibility-timeout"))
+            .await?;
+        let event = DynamicPayload::new(
+            "visibility-timeout-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": "/tmp/replay-output-visibility-timeout.txt" }),
+        )
+        .from_material(material_id)
+        .build()?;
+        let inserted = ctx.pool.events().insert(event).await?;
+        let target_id = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .to_uuid();
+        let target_ts = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .timestamp();
+
+        let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+        let nats_client = ctx.nats_client();
+        let env = environment();
+        let (scan_command_rx, scan_handle) = spawn_fake_scan_node_with_progress(
+            nats_client.clone(),
+            env,
+            "visibility-timeout-test",
+            1,
+            1,
+        )
+        .await?;
+
+        let mut scope = sample_scope();
+        scope.node_id = "visibility-timeout-test".to_string();
+        scope.time_window = Some((
+            target_ts - time::Duration::milliseconds(1),
+            target_ts + time::Duration::milliseconds(1),
+        ));
+
+        let planned = replay
+            .create_operation(scope.clone(), "test:output-visibility-timeout".into())
+            .await?;
+        let preview = replay.generate_preview_summary(&scope).await?;
+        replay.update_preview(planned.operation_id, preview).await?;
+        replay
+            .approve(planned.operation_id, "admin:approver".into())
+            .await?;
+
+        let executor = ReplayExecutionEngine::new(replay.clone(), nats_client)
+            .with_scan_completion_timeout(Duration::from_millis(100));
+        let err = executor
+            .execute(planned.operation_id, "service:executor-node".into())
+            .await
+            .expect_err("missing replay outputs must fail before completion");
+        assert!(
+            err.to_string()
+                .contains("Replay outputs were not query-visible after successful scan"),
+            "unexpected error: {err}"
+        );
+
+        let failed = replay.load_operation(planned.operation_id).await?;
+        assert_eq!(failed.state, ReplayState::Failed);
+        assert_eq!(
+            failed.outcome,
+            Some(sinex_primitives::domain::ReplayOutcome::Failed)
+        );
+
+        let live_target_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+                .bind(target_id)
+                .fetch_one(&ctx.pool)
+                .await?;
+        let archived_target_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+        )
+        .bind(target_id)
+        .fetch_one(&ctx.pool)
+        .await?;
+        assert_eq!(live_target_count, 0);
+        assert_eq!(archived_target_count, 1);
+
+        let dispatched_command = scan_command_rx
+            .await
+            .map_err(|_| eyre!("fake visibility-timeout-test node did not receive a scan command"))?;
+        assert_eq!(dispatched_command.operation_id, planned.operation_id);
+
+        scan_handle
+            .await
+            .map_err(|e| eyre!("fake visibility-timeout-test node task failed: {e}"))?;
 
         Ok(())
     }
@@ -3721,12 +4062,12 @@ mod tests {
         let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
         let nats_client = ctx.nats_client();
         let env = environment();
-        let (_scan_command_rx, scan_handle) = spawn_fake_scan_node_with_progress(
+        let (scan_command_rx, scan_handle) = spawn_fake_scan_node_with_progress(
             nats_client.clone(),
             env,
             "replacement-record-fail-test",
             1,
-            0,
+            1,
         )
         .await?;
 
@@ -3746,23 +4087,14 @@ mod tests {
             .approve(planned.operation_id, "admin:approver".into())
             .await?;
 
-        let replacement_material = ctx
-            .create_source_material(Some("replay-replacement-record-fail-output"))
-            .await?;
-        let mut replacement_event = DynamicPayload::new(
-            "replacement-output-test",
+        let replay_output_handle = spawn_replay_output_inserter(
+            ctx.pool.clone(),
+            scan_command_rx,
+            "replacement-record-fail-test",
             FileCreatedPayload::EVENT_TYPE.as_static_str(),
-            json!({ "path": "/tmp/replay-replacement-record-fail-output.txt" }),
-        )
-        .from_material(replacement_material)
-        .build()?;
-        replacement_event.equivalence_key = Some("replacement-record-eq".to_string());
-        replacement_event.created_by_operation_id = Some(planned.operation_id);
-        let replacement_inserted = ctx.pool.events().insert(replacement_event).await?;
-        let replacement_id = replacement_inserted
-            .id
-            .expect("replacement replay event must have an id")
-            .to_uuid();
+            "/tmp/replay-replacement-record-fail-output.txt",
+            Some("replacement-record-eq"),
+        );
 
         let executor = ReplayExecutionEngine::new(replay.clone(), nats_client)
             .with_replacement_record_failures(Arc::new(AtomicUsize::new(1)))
@@ -3794,6 +4126,10 @@ mod tests {
             failed.error_details
         );
 
+        let replay_command = replay_output_handle
+            .await
+            .map_err(|e| eyre!("fake replacement-record replay output task failed: {e}"))??;
+
         let live_target_count: i64 =
             sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
                 .bind(target_id)
@@ -3806,8 +4142,10 @@ mod tests {
         .fetch_one(&ctx.pool)
         .await?;
         let live_replacement_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
-                .bind(replacement_id)
+            sqlx::query_scalar(
+                "SELECT COUNT(*)::bigint FROM core.events WHERE created_by_operation_id = $1::uuid",
+            )
+                .bind(replay_command.operation_id)
                 .fetch_one(&ctx.pool)
                 .await?;
         assert_eq!(
