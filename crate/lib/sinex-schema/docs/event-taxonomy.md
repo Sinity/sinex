@@ -12,7 +12,8 @@ Families (canonical event_type and minimal payload)
   - `input.mouse`: kind (move|click|scroll), button?, delta?, position?, device?, ts_client?
 
 - Focus/Window
-  - `focus.window`: window_class, window_title, pid?, workspace?, app_id?, ts_client?
+  - `window.focused`: window_id, window_class, window_title, workspace_id?, previous_window_id?, ts_client?
+  - `window.title_changed`: window_id, window_title, previous_window_title?, window_class?, workspace_id?, ts_client?
 
 - Browser
   - `browser.page_visit`: url, transition_type?, referrer?, tab_id?, window_id?, title?, ts_client?

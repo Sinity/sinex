@@ -1376,16 +1376,16 @@ const ACTIVITY_READ_MODELS_SQL: &str = r"
 CREATE OR REPLACE VIEW sinex_telemetry.current_window_focus AS
 SELECT
     time_bucket('5 minutes', ts_orig) AS bucket,
-    payload->>'workspace' AS workspace,
+    payload->>'workspace_id' AS workspace,
     last(payload->>'window_class', ts_orig) AS window_class,
     last(payload->>'window_title', ts_orig) AS window_title,
     last(payload->>'window_id', ts_orig) AS window_id,
     MAX(ts_orig) AS last_focus_time,
     COUNT(*) AS focus_event_count
 FROM core.events
-WHERE event_type = 'focus.window'
-  AND source LIKE 'desktop.%'
-GROUP BY bucket, payload->>'workspace';
+WHERE event_type = 'window.focused'
+  AND source LIKE 'wm.%'
+GROUP BY bucket, payload->>'workspace_id';
 
 CREATE OR REPLACE VIEW sinex_telemetry.command_frequency_hourly AS
 SELECT
