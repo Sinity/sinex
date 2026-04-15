@@ -1,4 +1,5 @@
 use color_eyre::eyre::{Result, WrapErr, eyre};
+use sinex_schema::apply::SHARED_ACCESS_ROLES;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -99,6 +100,9 @@ pub fn setup_ephemeral(config: &PostgresConfig) -> Result<(PgInstance, PgEnv)> {
 
     mgr.ensure_user(&config.superuser, true, &initial_user)?;
     mgr.ensure_user(&config.app_user, true, &config.superuser)?;
+    for role in SHARED_ACCESS_ROLES {
+        mgr.ensure_role(role, false, false, &config.superuser)?;
+    }
 
     // Set operation ID default for the role
     let stmt = format!(
