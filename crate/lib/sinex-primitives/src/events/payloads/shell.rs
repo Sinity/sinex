@@ -310,12 +310,11 @@ impl AtuinCommandExecutedPayload {
         timestamp_ns: i64,
         hostname: impl Into<String>,
     ) -> crate::Result<Self> {
-        if duration_ns < 0 {
-            return Err(crate::SinexError::validation(
-                "Atuin history duration must not be negative",
-            )
-            .with_context("duration_ns", duration_ns.to_string()));
-        }
+        // Atuin history rows can carry a `-1` duration sentinel and a
+        // `hostname:user` identity string. Preserve the command event by
+        // normalizing those raw fields into the payload shape we store.
+        let duration_ns = duration_ns.max(0);
+        let hostname = normalize_atuin_hostname(hostname.into());
 
         let ts_start_orig = Timestamp::from_unix_timestamp_nanos(i128::from(timestamp_ns))
             .ok_or_else(|| {
@@ -349,11 +348,18 @@ impl AtuinCommandExecutedPayload {
             timestamp: timestamp_ns,
             ts_start_orig,
             ts_end_orig,
-            hostname: HostName::new(hostname.into()).map_err(|error| {
+            hostname: HostName::new(hostname).map_err(|error| {
                 crate::SinexError::validation("Atuin hostname is invalid").with_source(error)
             })?,
             terminal_session_uuid: None,
         })
+    }
+}
+
+fn normalize_atuin_hostname(hostname: String) -> String {
+    match hostname.split_once(':') {
+        Some((host, _)) => host.to_owned(),
+        None => hostname,
     }
 }
 
