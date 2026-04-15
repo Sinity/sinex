@@ -190,7 +190,8 @@ impl SliceAccumulator {
         if let Some(scope) = &commit.subject_parts.scope {
             self.scopes.insert(scope.clone());
         }
-        self.file_prefixes.extend(commit.files.iter().map(|file| major_file_prefix(file)));
+        self.file_prefixes
+            .extend(commit.files.iter().map(|file| major_file_prefix(file)));
         self.file_count += commit.files.len();
         self.commits.push(commit);
     }
@@ -315,11 +316,11 @@ pub fn execute_materialize(opts: MaterializeOptions) -> Result<CommandResult> {
     let plan_dir = plan_path
         .parent()
         .context("stack plan path has no parent directory")?;
-    let plan: GitStackPlan =
-        serde_yaml::from_str(&fs::read_to_string(&plan_path).with_context(|| {
-            format!("failed to read {}", plan_path.display())
-        })?)
-        .with_context(|| format!("failed to parse {}", plan_path.display()))?;
+    let plan: GitStackPlan = serde_yaml::from_str(
+        &fs::read_to_string(&plan_path)
+            .with_context(|| format!("failed to read {}", plan_path.display()))?,
+    )
+    .with_context(|| format!("failed to parse {}", plan_path.display()))?;
 
     if !opts.allow_blockers && !plan.loose_ends.blockers.is_empty() {
         bail!(
@@ -425,7 +426,10 @@ pub fn execute_publish(opts: PublishOptions) -> Result<CommandResult> {
     let repo_root = PathBuf::from(&plan.repo_root);
     let published = publish_plan(&repo_root, &plan, &plan_dir, &opts)?;
     let pushed = published.iter().filter(|branch| branch.pushed).count();
-    let created_prs = published.iter().filter(|branch| branch.pr_url.is_some()).count();
+    let created_prs = published
+        .iter()
+        .filter(|branch| branch.pr_url.is_some())
+        .count();
     let reused_prs = published
         .iter()
         .filter(|branch| branch.reused_existing_pr)
@@ -461,7 +465,10 @@ fn build_plan(
     let merge_base = git_stdout(repo_root, ["merge-base", base_ref, head_ref])?;
     let range = format!("{merge_base}..{head_ref}");
     let full_graph = read_full_graph(repo_root, &range)?;
-    let first_parent_commits = read_rev_list(repo_root, &["rev-list", "--reverse", "--first-parent", &range])?;
+    let first_parent_commits = read_rev_list(
+        repo_root,
+        &["rev-list", "--reverse", "--first-parent", &range],
+    )?;
     if first_parent_commits.is_empty() {
         bail!("no commits found between {base_ref} and {head_ref}");
     }
@@ -579,7 +586,9 @@ fn materialize_plan(
         }
 
         let temp_root = tempfile::tempdir().context("failed to create temporary worktree root")?;
-        let worktree_path = temp_root.path().join(format!("slice-{:02}-{}", slice.index, slice.slug));
+        let worktree_path = temp_root
+            .path()
+            .join(format!("slice-{:02}-{}", slice.index, slice.slug));
         let worktree = WorktreeHandle::create(repo_root, &worktree_path, &slice.pr_base)?;
         let patch = git_stdout_bytes(
             repo_root,
@@ -613,9 +622,12 @@ fn materialize_plan(
         run_git(&worktree.path, ["commit", "-F", &message_arg], None)
             .with_context(|| format!("failed to create squashed commit for {}", slice.branch))?;
         let commit = git_stdout(&worktree.path, ["rev-parse", "HEAD"])?;
-        run_git(&worktree.path, ["branch", "-f", &slice.branch, &commit], None).with_context(
-            || format!("failed to update branch {} to {}", slice.branch, commit),
-        )?;
+        run_git(
+            &worktree.path,
+            ["branch", "-f", &slice.branch, &commit],
+            None,
+        )
+        .with_context(|| format!("failed to update branch {} to {}", slice.branch, commit))?;
         worktree.close()?;
 
         materialized.push(MaterializedBranch {
@@ -646,7 +658,13 @@ fn publish_plan(
         }
 
         let remote_branch = slice.branch.clone();
-        push_branch(repo_root, &opts.remote, &slice.branch, &remote_branch, opts.force_with_lease)?;
+        push_branch(
+            repo_root,
+            &opts.remote,
+            &slice.branch,
+            &remote_branch,
+            opts.force_with_lease,
+        )?;
 
         let mut published_branch = PublishedBranch {
             branch: slice.branch.clone(),
@@ -661,11 +679,9 @@ fn publish_plan(
         };
 
         if opts.create_prs {
-            if let Some(existing) = find_existing_pr(
-                repo_root,
-                opts.repo.as_deref(),
-                &slice.branch,
-            )? {
+            if let Some(existing) =
+                find_existing_pr(repo_root, opts.repo.as_deref(), &slice.branch)?
+            {
                 published_branch.pr_url = Some(existing.url);
                 published_branch.pr_number = Some(existing.number);
                 published_branch.reused_existing_pr = true;
@@ -696,11 +712,11 @@ fn load_plan_bundle(plan_path: &Path) -> Result<(GitStackPlan, PathBuf)> {
         .parent()
         .context("stack plan path has no parent directory")?
         .to_path_buf();
-    let plan: GitStackPlan =
-        serde_yaml::from_str(&fs::read_to_string(plan_path).with_context(|| {
-            format!("failed to read {}", plan_path.display())
-        })?)
-        .with_context(|| format!("failed to parse {}", plan_path.display()))?;
+    let plan: GitStackPlan = serde_yaml::from_str(
+        &fs::read_to_string(plan_path)
+            .with_context(|| format!("failed to read {}", plan_path.display()))?,
+    )
+    .with_context(|| format!("failed to parse {}", plan_path.display()))?;
     Ok((plan, plan_dir))
 }
 
@@ -764,23 +780,16 @@ fn find_existing_pr(
     repo: Option<&str>,
     branch: &str,
 ) -> Result<Option<ExistingPullRequest>> {
-    let mut args = vec![
-        "pr",
-        "view",
-        branch,
-        "--json",
-        "number,url",
-    ];
+    let mut args = vec!["pr", "view", branch, "--json", "number,url"];
     if let Some(repo) = repo {
         args.push("--repo");
         args.push(repo);
     }
 
     match command_stdout(repo_root, "gh", &args) {
-        Ok(stdout) => Ok(Some(
-            serde_json::from_str(&stdout)
-                .with_context(|| format!("failed to parse gh pr view output for {branch}"))?,
-        )),
+        Ok(stdout) => Ok(Some(serde_json::from_str(&stdout).with_context(|| {
+            format!("failed to parse gh pr view output for {branch}")
+        })?)),
         Err(error) => {
             let rendered = format!("{error:#}");
             if rendered.contains("no pull requests found")
@@ -827,8 +836,9 @@ fn create_pull_request(
 
     let url = command_stdout(repo_root, "gh", &args)
         .with_context(|| format!("failed to create PR for branch {head}"))?;
-    let existing = find_existing_pr(repo_root, repo, head)?
-        .with_context(|| format!("created PR for {head} but could not resolve it via gh pr view"))?;
+    let existing = find_existing_pr(repo_root, repo, head)?.with_context(|| {
+        format!("created PR for {head} but could not resolve it via gh pr view")
+    })?;
     if existing.url != url && !url.is_empty() {
         return Ok(ExistingPullRequest { url, ..existing });
     }
@@ -836,7 +846,10 @@ fn create_pull_request(
 }
 
 fn read_loose_ends(repo_root: &Path) -> Result<GitLooseEnds> {
-    let output = git_stdout(repo_root, ["status", "--porcelain=v1", "--untracked-files=all"])?;
+    let output = git_stdout(
+        repo_root,
+        ["status", "--porcelain=v1", "--untracked-files=all"],
+    )?;
     let mut loose_ends = GitLooseEnds::default();
     for line in output.lines().filter(|line| !line.trim().is_empty()) {
         if let Some(path) = line.strip_prefix("?? ") {
@@ -900,15 +913,7 @@ fn read_rev_list<const N: usize>(repo_root: &Path, args: &[&str; N]) -> Result<V
 }
 
 fn load_commit_info(repo_root: &Path, sha: &str) -> Result<CommitInfo> {
-    let header = git_stdout(
-        repo_root,
-        [
-            "show",
-            "-s",
-            "--format=%H%x1f%s%x1f%b",
-            sha,
-        ],
-    )?;
+    let header = git_stdout(repo_root, ["show", "-s", "--format=%H%x1f%s%x1f%b", sha])?;
     let mut parts = header.splitn(3, '\u{1f}');
     let full_sha = parts
         .next()
@@ -921,11 +926,14 @@ fn load_commit_info(repo_root: &Path, sha: &str) -> Result<CommitInfo> {
         .trim()
         .to_string();
     let body = parts.next().unwrap_or("").trim().to_string();
-    let files = git_stdout(repo_root, ["diff-tree", "--no-commit-id", "--name-only", "-r", sha])?
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(str::to_string)
-        .collect::<Vec<_>>();
+    let files = git_stdout(
+        repo_root,
+        ["diff-tree", "--no-commit-id", "--name-only", "-r", sha],
+    )?
+    .lines()
+    .filter(|line| !line.trim().is_empty())
+    .map(str::to_string)
+    .collect::<Vec<_>>();
     let packages = files
         .iter()
         .filter_map(|file| package_for_path(file))
@@ -974,7 +982,8 @@ fn group_commits(commits: Vec<CommitInfo>, max_commits_per_slice: usize) -> Vec<
         slices.push(SliceAccumulator::new(commit));
     }
 
-    let target_slice_count = target_slice_count(slices.iter().map(|slice| slice.commits.len()).sum());
+    let target_slice_count =
+        target_slice_count(slices.iter().map(|slice| slice.commits.len()).sum());
     coalesce_slices(slices, max_commits_per_slice, target_slice_count)
 }
 
@@ -1001,8 +1010,8 @@ fn should_extend_slice(
         "test" | "fix" | "lint" | "docs"
     );
     let weak_overlap = topic_overlap == 0 && package_overlap == 0 && !scope_match;
-    let large_footprint =
-        current.file_count >= LARGE_SLICE_FILE_COUNT || commit.files.len() >= LARGE_COMMIT_FILE_COUNT;
+    let large_footprint = current.file_count >= LARGE_SLICE_FILE_COUNT
+        || commit.files.len() >= LARGE_COMMIT_FILE_COUNT;
 
     if current.commits.len() >= max_commits_per_slice && topic_overlap == 0 {
         return false;
@@ -1077,7 +1086,8 @@ fn adjacent_merge_score(left: &SliceAccumulator, right: &SliceAccumulator) -> us
     let scope_overlap = intersection_count(&left.scopes, &right.scopes);
     let weak_overlap = topic_overlap == 0 && package_overlap == 0 && scope_overlap == 0;
     if weak_overlap
-        && (left.file_count >= LARGE_SLICE_FILE_COUNT || right.file_count >= LARGE_COMMIT_FILE_COUNT)
+        && (left.file_count >= LARGE_SLICE_FILE_COUNT
+            || right.file_count >= LARGE_COMMIT_FILE_COUNT)
     {
         return 0;
     }
@@ -1090,8 +1100,8 @@ fn adjacent_merge_score(left: &SliceAccumulator, right: &SliceAccumulator) -> us
         right_head.subject_parts.kind.as_str(),
         "fix" | "test" | "perf" | "docs" | "lint"
     );
-    let singleton_bonus =
-        usize::from(left.commits.len() == 1 || right.commits.len() == 1) * usize::from(package_overlap > 0);
+    let singleton_bonus = usize::from(left.commits.len() == 1 || right.commits.len() == 1)
+        * usize::from(package_overlap > 0);
 
     topic_overlap * 4
         + package_overlap * 2
@@ -1117,7 +1127,12 @@ fn finalize_slice(
 ) -> Result<GitStackSlice> {
     let anchor = select_anchor_commit(&group.commits);
     let title = anchor.subject.clone();
-    let slug = slugify(title.split_once(':').map(|(_, summary)| summary).unwrap_or(&title));
+    let slug = slugify(
+        title
+            .split_once(':')
+            .map(|(_, summary)| summary)
+            .unwrap_or(&title),
+    );
     let branch = if branch_prefix.is_empty() {
         format!("{:02}-{slug}", index + 1)
     } else {
@@ -1133,7 +1148,12 @@ fn finalize_slice(
         .clone();
     let files = git_stdout(
         repo_root,
-        ["diff", "--name-only", original_base_commit, &original_tip_commit],
+        [
+            "diff",
+            "--name-only",
+            original_base_commit,
+            &original_tip_commit,
+        ],
     )?
     .lines()
     .filter(|line| !line.trim().is_empty())
@@ -1142,7 +1162,12 @@ fn finalize_slice(
     let diffstat = {
         let raw = git_stdout(
             repo_root,
-            ["diff", "--shortstat", original_base_commit, &original_tip_commit],
+            [
+                "diff",
+                "--shortstat",
+                original_base_commit,
+                &original_tip_commit,
+            ],
         )?;
         let trimmed = raw.trim().to_string();
         (!trimmed.is_empty()).then_some(trimmed)
@@ -1161,7 +1186,13 @@ fn finalize_slice(
         .collect::<Vec<_>>();
     let verification = suggested_verification(&packages);
     let body_highlights = collect_commit_highlights(&group.commits, 4);
-    let rationale = render_rationale(&title, &topics, &packages, group.commits.len(), depends_on.as_deref());
+    let rationale = render_rationale(
+        &title,
+        &topics,
+        &packages,
+        group.commits.len(),
+        depends_on.as_deref(),
+    );
     let pr_body = render_pr_body(
         &title,
         &rationale,
@@ -1218,7 +1249,11 @@ fn select_anchor_commit(commits: &[CommitInfo]) -> &CommitInfo {
         .iter()
         .rev()
         .find(|commit| !matches!(commit.subject_parts.kind.as_str(), "test" | "lint" | "docs"))
-        .unwrap_or_else(|| commits.last().expect("slice should have at least one commit"))
+        .unwrap_or_else(|| {
+            commits
+                .last()
+                .expect("slice should have at least one commit")
+        })
 }
 
 fn top_topics(commits: &[CommitInfo], limit: usize) -> Vec<String> {
@@ -1450,7 +1485,10 @@ fn first_meaningful_body_line(body: &str) -> Option<String> {
             return None;
         }
         let lowercase = line.to_ascii_lowercase();
-        if META_PREFIXES.iter().any(|prefix| lowercase.starts_with(prefix)) {
+        if META_PREFIXES
+            .iter()
+            .any(|prefix| lowercase.starts_with(prefix))
+        {
             return None;
         }
         Some(line.to_string())
@@ -1501,12 +1539,10 @@ fn write_plan_bundle(output_dir: &Path, plan: &GitStackPlan) -> Result<WrittenPl
         let slice_dir = output_dir.join(format!("slice-{:02}-{}", slice.index + 1, slice.slug));
         fs::create_dir_all(&slice_dir)
             .with_context(|| format!("failed to create {}", slice_dir.display()))?;
-        fs::write(slice_dir.join("pr-body.md"), &slice.pr_body).with_context(|| {
-            format!("failed to write PR body for {}", slice.branch)
-        })?;
-        fs::write(slice_dir.join("squash-body.txt"), &slice.squash_body).with_context(|| {
-            format!("failed to write squash body for {}", slice.branch)
-        })?;
+        fs::write(slice_dir.join("pr-body.md"), &slice.pr_body)
+            .with_context(|| format!("failed to write PR body for {}", slice.branch))?;
+        fs::write(slice_dir.join("squash-body.txt"), &slice.squash_body)
+            .with_context(|| format!("failed to write squash body for {}", slice.branch))?;
     }
 
     Ok(WrittenPlanBundle {
@@ -1536,19 +1572,13 @@ fn render_summary_markdown(plan: &GitStackPlan) -> String {
     if !plan.graph.merge_commits.is_empty() {
         out.push_str("\n## Merge commits in range\n\n");
         for commit in &plan.graph.merge_commits {
-            out.push_str(&format!(
-                "- `{}` {}\n",
-                commit.short_sha, commit.subject
-            ));
+            out.push_str(&format!("- `{}` {}\n", commit.short_sha, commit.subject));
         }
     }
     if !plan.graph.non_first_parent_commits.is_empty() {
         out.push_str("\n## Non-first-parent commits in range\n\n");
         for commit in &plan.graph.non_first_parent_commits {
-            out.push_str(&format!(
-                "- `{}` {}\n",
-                commit.short_sha, commit.subject
-            ));
+            out.push_str(&format!("- `{}` {}\n", commit.short_sha, commit.subject));
         }
     }
     if !plan.loose_ends.dirty_paths.is_empty() || !plan.loose_ends.untracked_paths.is_empty() {
@@ -1610,7 +1640,10 @@ fn render_plan_details(plan: &GitStackPlan, bundle: &WrittenPlanBundle) -> Vec<S
 fn render_loose_end_lines(loose_ends: &GitLooseEnds) -> Vec<String> {
     let mut lines = Vec::new();
     lines.extend(summarize_loose_end_paths("dirty", &loose_ends.dirty_paths));
-    lines.extend(summarize_loose_end_paths("untracked", &loose_ends.untracked_paths));
+    lines.extend(summarize_loose_end_paths(
+        "untracked",
+        &loose_ends.untracked_paths,
+    ));
     for note in &loose_ends.notes {
         lines.push(format!("- note: {note}"));
     }
@@ -1688,14 +1721,14 @@ fn resolve_output_dir(
     } else {
         let stamp = OffsetDateTime::now_utc()
             .format(
-                &time::format_description::parse(
-                    "[year][month][day]T[hour][minute][second]Z",
-                )
-                .expect("static timestamp format is valid"),
+                &time::format_description::parse("[year][month][day]T[hour][minute][second]Z")
+                    .expect("static timestamp format is valid"),
             )
             .expect("timestamp formatting should succeed");
         let branch = slugify(head_branch.unwrap_or("detached"));
-        repo_root.join(".sinex/git-stack").join(format!("{stamp}-{branch}"))
+        repo_root
+            .join(".sinex/git-stack")
+            .join(format!("{stamp}-{branch}"))
     };
 
     if output_dir.exists() {
@@ -1791,10 +1824,7 @@ fn topic_key_for_path(path: &str) -> Option<String> {
 }
 
 fn major_file_prefix(path: &str) -> String {
-    path.split('/')
-        .take(4)
-        .collect::<Vec<_>>()
-        .join("/")
+    path.split('/').take(4).collect::<Vec<_>>().join("/")
 }
 
 fn intersection_count(left: &BTreeSet<String>, right: &BTreeSet<String>) -> usize {
@@ -1870,7 +1900,9 @@ fn command_stdout(repo_root: &Path, program: &str, args: &[&str]) -> Result<Stri
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim_end().to_string())
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .trim_end()
+        .to_string())
 }
 
 fn git_stdout_bytes<const N: usize>(repo_root: &Path, args: [&str; N]) -> Result<Vec<u8>> {
@@ -2037,26 +2069,22 @@ mod tests {
             "test(gateway): isolate sse stream bus tests",
         )?;
 
-        let plan = build_plan(
-            repo.path(),
-            "master",
-            "HEAD",
-            "stack".to_string(),
-            12,
-        )?;
+        let plan = build_plan(repo.path(), "master", "HEAD", "stack".to_string(), 12)?;
 
         assert_eq!(plan.slices.len(), 2);
         assert_eq!(plan.slices[0].packages, vec!["xtask".to_string()]);
-        assert!(plan.slices[0]
-            .files
-            .iter()
-            .any(|file| file.contains("xtask/src/sandbox/db/pool")));
-        assert_eq!(
-            plan.slices[1].packages,
-            vec!["sinex-gateway".to_string()]
+        assert!(
+            plan.slices[0]
+                .files
+                .iter()
+                .any(|file| file.contains("xtask/src/sandbox/db/pool"))
         );
+        assert_eq!(plan.slices[1].packages, vec!["sinex-gateway".to_string()]);
         assert_eq!(plan.slices[0].pr_base, "master");
-        assert_eq!(plan.slices[1].depends_on.as_deref(), Some(plan.slices[0].branch.as_str()));
+        assert_eq!(
+            plan.slices[1].depends_on.as_deref(),
+            Some(plan.slices[0].branch.as_str())
+        );
         Ok(())
     }
 
@@ -2072,24 +2100,20 @@ mod tests {
         fs::write(repo.path().join("xtask/src/history/db.rs"), "dirty\n")?;
         fs::write(repo.path().join("UNTRACKED.md"), "extra\n")?;
 
-        let plan = build_plan(
-            repo.path(),
-            "master",
-            "HEAD",
-            "stack".to_string(),
-            12,
-        )?;
+        let plan = build_plan(repo.path(), "master", "HEAD", "stack".to_string(), 12)?;
 
-        assert!(plan
-            .loose_ends
-            .dirty_paths
-            .iter()
-            .any(|path| path == "xtask/src/history/db.rs"));
-        assert!(plan
-            .loose_ends
-            .untracked_paths
-            .iter()
-            .any(|path| path == "UNTRACKED.md"));
+        assert!(
+            plan.loose_ends
+                .dirty_paths
+                .iter()
+                .any(|path| path == "xtask/src/history/db.rs")
+        );
+        assert!(
+            plan.loose_ends
+                .untracked_paths
+                .iter()
+                .any(|path| path == "UNTRACKED.md")
+        );
         Ok(())
     }
 
@@ -2111,13 +2135,7 @@ mod tests {
         repo.git_raw(["checkout", "feature/nonlinear"])?;
         repo.merge_no_ff("feature/side", "merge: side topic")?;
 
-        let plan = build_plan(
-            repo.path(),
-            "master",
-            "HEAD",
-            "stack".to_string(),
-            12,
-        )?;
+        let plan = build_plan(repo.path(), "master", "HEAD", "stack".to_string(), 12)?;
 
         assert!(!plan.graph.first_parent_linear);
         assert!(!plan.loose_ends.blockers.is_empty());
@@ -2125,8 +2143,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn planner_keeps_large_low_overlap_commits_separate(
-    ) -> crate::sandbox::TestResult<()> {
+    async fn planner_keeps_large_low_overlap_commits_separate() -> crate::sandbox::TestResult<()> {
         let repo = TestGitRepo::new()?;
         repo.checkout_new_branch("feature/large-commits")?;
 
@@ -2142,7 +2159,10 @@ mod tests {
             .iter()
             .map(|(path, contents)| (path.as_str(), contents.as_str()))
             .collect::<Vec<_>>();
-        repo.commit_files(&xtask_refs, "feat(xtask): refresh generated command surfaces")?;
+        repo.commit_files(
+            &xtask_refs,
+            "feat(xtask): refresh generated command surfaces",
+        )?;
 
         let schema_files = (0..45)
             .map(|index| {
@@ -2172,17 +2192,17 @@ mod tests {
             "chore(nixos): relocate sample secret fixtures under nixos/secret",
         )?;
 
-        let plan = build_plan(
-            repo.path(),
-            "master",
-            "HEAD",
-            "stack".to_string(),
-            12,
-        )?;
+        let plan = build_plan(repo.path(), "master", "HEAD", "stack".to_string(), 12)?;
 
         assert_eq!(plan.slices.len(), 3);
-        assert_eq!(plan.slices[0].title, "feat(xtask): refresh generated command surfaces");
-        assert_eq!(plan.slices[1].title, "feat(schema): normalize generated schema bundle");
+        assert_eq!(
+            plan.slices[0].title,
+            "feat(xtask): refresh generated command surfaces"
+        );
+        assert_eq!(
+            plan.slices[1].title,
+            "feat(schema): normalize generated schema bundle"
+        );
         assert_eq!(
             plan.slices[2].title,
             "chore(nixos): relocate sample secret fixtures under nixos/secret"
@@ -2192,8 +2212,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn materialize_creates_stacked_branches_with_squashed_commits(
-    ) -> crate::sandbox::TestResult<()> {
+    async fn materialize_creates_stacked_branches_with_squashed_commits()
+    -> crate::sandbox::TestResult<()> {
         let repo = TestGitRepo::new()?;
         repo.checkout_new_branch("feature/materialize")?;
         repo.commit_file(
@@ -2212,22 +2232,13 @@ mod tests {
             "test(gateway): isolate sse stream bus tests",
         )?;
 
-        let plan = build_plan(
-            repo.path(),
-            "master",
-            "HEAD",
-            "stack".to_string(),
-            12,
-        )?;
+        let plan = build_plan(repo.path(), "master", "HEAD", "stack".to_string(), 12)?;
         let materialized = materialize_plan(repo.path(), &plan, true)?;
 
         assert_eq!(materialized.len(), plan.slices.len());
         let first_branch_head = repo.git(["rev-parse", &plan.slices[0].branch])?;
-        let second_merge_base = repo.git([
-            "merge-base",
-            &plan.slices[1].branch,
-            &plan.slices[0].branch,
-        ])?;
+        let second_merge_base =
+            repo.git(["merge-base", &plan.slices[1].branch, &plan.slices[0].branch])?;
         assert_eq!(first_branch_head, second_merge_base);
         let subject = repo.git(["log", "-1", "--format=%s", &plan.slices[0].branch])?;
         assert_eq!(subject, plan.slices[0].squash_title);
@@ -2249,13 +2260,7 @@ mod tests {
             "perf(xtask): split shared template families",
         )?;
 
-        let plan = build_plan(
-            repo.path(),
-            "master",
-            "HEAD",
-            "stack".to_string(),
-            1,
-        )?;
+        let plan = build_plan(repo.path(), "master", "HEAD", "stack".to_string(), 1)?;
         let plan_dir = repo.path().join(".sinex/git-stack/publish");
         let bundle = write_plan_bundle(&plan_dir, &plan)?;
         materialize_plan(repo.path(), &plan, true)?;
@@ -2354,9 +2359,18 @@ exit 2
         )?;
 
         assert_eq!(published.len(), 2);
-        let first_remote = repo.git(["ls-remote", "--heads", "origin", "stack/01-add-history-selector-surface"])?;
-        let second_remote =
-            repo.git(["ls-remote", "--heads", "origin", "stack/02-split-shared-template-families"])?;
+        let first_remote = repo.git([
+            "ls-remote",
+            "--heads",
+            "origin",
+            "stack/01-add-history-selector-surface",
+        ])?;
+        let second_remote = repo.git([
+            "ls-remote",
+            "--heads",
+            "origin",
+            "stack/02-split-shared-template-families",
+        ])?;
         assert!(!first_remote.is_empty());
         assert!(!second_remote.is_empty());
 

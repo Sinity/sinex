@@ -127,9 +127,7 @@ async fn test_doctor_json_contract() -> ::xtask::sandbox::TestResult<()> {
 /// Asserts the jobs array and per-job required fields.
 #[sinex_test]
 async fn test_jobs_list_json_contract() -> ::xtask::sandbox::TestResult<()> {
-    let output = xtask_command()?
-        .args(["jobs", "list", "--json"])
-        .output()?;
+    let output = xtask_command()?.args(["jobs", "list", "--json"]).output()?;
 
     assert!(output.status.success(), "jobs list --json should exit 0");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -160,9 +158,7 @@ async fn test_jobs_list_json_contract() -> ::xtask::sandbox::TestResult<()> {
 /// Asserts the packages array and per-package required fields.
 #[sinex_test]
 async fn test_deps_list_json_contract() -> ::xtask::sandbox::TestResult<()> {
-    let output = xtask_command()?
-        .args(["deps", "list", "--json"])
-        .output()?;
+    let output = xtask_command()?.args(["deps", "list", "--json"]).output()?;
 
     assert!(output.status.success(), "deps list --json should exit 0");
     let stdout = String::from_utf8_lossy(&output.stdout);

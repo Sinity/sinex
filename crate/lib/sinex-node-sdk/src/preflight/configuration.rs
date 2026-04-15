@@ -580,9 +580,7 @@ fn terminal_history_source_error_is_blocking(
 ) -> bool {
     match source.shell.as_str() {
         "elvish" => true,
-        "fish" => {
-            error.to_string().contains("unsupported") && source.path.is_file()
-        }
+        "fish" => error.to_string().contains("unsupported") && source.path.is_file(),
         _ => false,
     }
 }

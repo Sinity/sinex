@@ -165,7 +165,10 @@ async fn test_multi_instance_leader_election() -> TestResult<()> {
     for handle in [handle1, handle2, handle3] {
         let join_result = handle.await;
         let join_error = join_result.expect_err("coordination tasks should be cancelled");
-        assert!(join_error.is_cancelled(), "unexpected join error: {join_error}");
+        assert!(
+            join_error.is_cancelled(),
+            "unexpected join error: {join_error}"
+        );
     }
 
     Ok(())

@@ -621,11 +621,7 @@ impl CommandContext {
     where
         F: FnOnce(&crate::history::HistoryDb) -> Result<R>,
     {
-        self.try_with_history_db_using(
-            &self.history_db_write,
-            crate::history::HistoryDb::open,
-            f,
-        )
+        self.try_with_history_db_using(&self.history_db_write, crate::history::HistoryDb::open, f)
     }
 
     /// Execute a closure with the cached history DB opened in query mode.
@@ -1057,7 +1053,10 @@ impl CommandContext {
         let result = CommandResult::success()
             .with_message(match job.invocation_id {
                 Some(invocation_id) => {
-                    format!("Started background job {} (invocation {invocation_id})", job.id)
+                    format!(
+                        "Started background job {} (invocation {invocation_id})",
+                        job.id
+                    )
                 }
                 None => format!("Started background job {}", job.id),
             })

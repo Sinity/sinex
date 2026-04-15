@@ -213,11 +213,7 @@ async fn test_unicode_normalization_attacks(ctx: TestContext) -> TestResult<()> 
     );
 
     // Event payloads may still carry these strings as ordinary data.
-    let payload1 = DynamicPayload::new(
-        "unicode.test",
-        "test.unicode",
-        json!({"file": decomposed}),
-    );
+    let payload1 = DynamicPayload::new("unicode.test", "test.unicode", json!({"file": decomposed}));
     let payload_json1 = payload1.to_json_value()?;
     assert!(
         !payload_json1.is_null(),

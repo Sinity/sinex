@@ -2907,7 +2907,9 @@ mod tests {
             .expect_err("third consecutive checkpoint serialization failure must halt the batch");
 
         assert!(
-            error.to_string().contains("Checkpoint save failed 3 consecutive times"),
+            error
+                .to_string()
+                .contains("Checkpoint save failed 3 consecutive times"),
             "batch halt should report the consecutive failure threshold: {error:#}"
         );
         Ok(())

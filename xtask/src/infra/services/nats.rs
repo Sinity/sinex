@@ -715,11 +715,13 @@ LISTEN 0      4096   malformed-listener   0.0.0.0:*    users:(("nats-server",pid
                 stderr: Vec::new(),
             }),
             |candidate| candidate != 111,
-            |candidate| Ok(match candidate {
-                111 => Some(4308),
-                222 => Some(4308),
-                _ => None,
-            }),
+            |candidate| {
+                Ok(match candidate {
+                    111 => Some(4308),
+                    222 => Some(4308),
+                    _ => None,
+                })
+            },
         )?;
         assert_eq!(pid, Some(222));
         Ok(())

@@ -18,8 +18,8 @@ const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1000;
 use sinex_primitives::{JsonValue, error::SinexError};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use xtask::sandbox::{EnvGuard, sinex_serial_test};
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
+use xtask::sandbox::{EnvGuard, sinex_serial_test};
 
 /// Minimal test node that doesn't require database access
 #[derive(Default)]

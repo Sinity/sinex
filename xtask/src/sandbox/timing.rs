@@ -1200,10 +1200,8 @@ mod tests {
 
     #[sinex_test]
     async fn test_timing_utils_progress_tracker() -> TestResult<()> {
-        let tracker = CoordinationPrimitive::progress_tracker(
-            3,
-            "timing_utils_progress_tracker".to_string(),
-        );
+        let tracker =
+            CoordinationPrimitive::progress_tracker(3, "timing_utils_progress_tracker".to_string());
 
         assert_eq!(tracker.get(), 0);
         assert!(!tracker.is_ready());

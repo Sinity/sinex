@@ -26,7 +26,6 @@ pub fn run(runner: &mut TestRunner) {
     test_zombie_reaping(runner);
     test_pid_reuse_safety(runner);
     test_history_db_consistency(runner);
-
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -254,7 +253,10 @@ fn test_pid_reuse_safety(runner: &mut TestRunner) {
     let cancel_out = match xtask(&["jobs", "cancel", &jid.to_string(), "--json"]) {
         Ok(output) => output,
         Err(error) => {
-            runner.fail(name, &format!("failed to invoke xtask jobs cancel: {error}"));
+            runner.fail(
+                name,
+                &format!("failed to invoke xtask jobs cancel: {error}"),
+            );
             return;
         }
     };
