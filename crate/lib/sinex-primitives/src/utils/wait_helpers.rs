@@ -420,7 +420,7 @@ where
     let timeout_duration = Duration::from_secs(timeout_secs);
     let mut last_error = None;
 
-    while start.elapsed() < timeout_duration {
+    loop {
         match condition_fn().await {
             Ok(true) => return Ok(()),
             Ok(false) => {
@@ -433,15 +433,30 @@ where
             }
         }
 
+        let elapsed = start.elapsed();
+        if elapsed >= timeout_duration {
+            break;
+        }
+
         // Adaptive backoff: reduces polling frequency as time passes
         // Formula: max(50ms, elapsed_time / 10)
         // Early: starts with 50ms minimum for reasonable delays
         // Later: backs off proportionally to elapsed time
-        let elapsed = start.elapsed();
         let adaptive_delay = Duration::from_millis(
             50.max(elapsed.as_millis().min(u128::from(u64::MAX)) as u64 / 10),
-        );
-        tokio::time::sleep(adaptive_delay).await;
+        )
+        .min(Duration::from_secs(1));
+        let remaining = timeout_duration.saturating_sub(elapsed);
+        tokio::time::sleep(adaptive_delay.min(remaining)).await;
+    }
+
+    match condition_fn().await {
+        Ok(true) => return Ok(()),
+        Ok(false) => {}
+        Err(e) => {
+            tracing::debug!("Condition check failed on final adaptive poll: {}", e);
+            last_error = Some(e);
+        }
     }
 
     let timeout = SinexError::timeout(format!(
@@ -482,9 +497,7 @@ where
     let timeout_duration = Duration::from_secs(timeout_secs);
 
     let mut pending: Vec<(&str, F)> = conditions;
-    let mut backoff = Duration::from_millis(50);
-
-    while !pending.is_empty() && start.elapsed() < timeout_duration {
+    while !pending.is_empty() {
         let mut still_pending = Vec::new();
 
         for (name, condition_fn) in pending {
@@ -504,25 +517,39 @@ where
 
         pending = still_pending;
 
-        if !pending.is_empty() {
-            tokio::time::sleep(backoff).await;
-            // Use adaptive backoff for multiple condition waiting too
-            let elapsed = start.elapsed();
-            backoff = Duration::from_millis(
-                50.max(elapsed.as_millis().min(u128::from(u64::MAX)) as u64 / 10),
-            )
-            .min(Duration::from_secs(1));
+        if pending.is_empty() {
+            return Ok(());
+        }
+
+        let elapsed = start.elapsed();
+        if elapsed >= timeout_duration {
+            break;
+        }
+
+        let backoff = Duration::from_millis(
+            50.max(elapsed.as_millis().min(u128::from(u64::MAX)) as u64 / 10),
+        )
+        .min(Duration::from_secs(1));
+        let remaining = timeout_duration.saturating_sub(elapsed);
+        tokio::time::sleep(backoff.min(remaining)).await;
+    }
+
+    let mut final_pending = Vec::new();
+    for (name, condition_fn) in pending {
+        match condition_fn().await {
+            Ok(true) => {}
+            Ok(false) | Err(_) => final_pending.push((name, condition_fn)),
         }
     }
 
-    if pending.is_empty() {
-        Ok(())
-    } else {
-        let pending_names: Vec<&str> = pending.into_iter().map(|(name, _)| name).collect();
-        Err(SinexError::timeout(format!(
-            "Conditions not met after {timeout_secs} seconds: {pending_names:?}"
-        )))
+    if final_pending.is_empty() {
+        return Ok(());
     }
+
+    let pending_names: Vec<&str> = final_pending.into_iter().map(|(name, _)| name).collect();
+    Err(SinexError::timeout(format!(
+        "Conditions not met after {timeout_secs} seconds: {pending_names:?}"
+    )))
 }
 
 /// Typed wrapper for `wait_for_multiple_conditions` using `Seconds`.

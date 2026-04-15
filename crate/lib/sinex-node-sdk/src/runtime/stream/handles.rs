@@ -100,6 +100,7 @@ pub struct EventEmitter {
     sender: Arc<EventSender>,
     dry_run: bool,
     default_node_run_id: Option<Uuid>,
+    default_created_by_operation_id: Option<Uuid>,
     #[cfg(feature = "messaging")]
     validator: Option<Arc<crate::schema_validator::NodeSchemaValidator>>,
 }
@@ -111,6 +112,7 @@ impl EventEmitter {
             sender: Arc::new(sender),
             dry_run,
             default_node_run_id: None,
+            default_created_by_operation_id: None,
             #[cfg(feature = "messaging")]
             validator: None,
         }
@@ -128,6 +130,7 @@ impl EventEmitter {
             sender: Arc::new(sender),
             dry_run,
             default_node_run_id: None,
+            default_created_by_operation_id: None,
             validator: Some(validator),
         }
     }
@@ -148,6 +151,12 @@ impl EventEmitter {
         self
     }
 
+    #[must_use]
+    pub fn with_default_created_by_operation_id(mut self, operation_id: Uuid) -> Self {
+        self.default_created_by_operation_id = Some(operation_id);
+        self
+    }
+
     /// Rebuild this emitter around a different sender while preserving validation and dry-run policy.
     #[must_use]
     pub fn clone_with_sender(&self, sender: EventSender) -> Self {
@@ -155,6 +164,7 @@ impl EventEmitter {
             sender: Arc::new(sender),
             dry_run: self.dry_run,
             default_node_run_id: self.default_node_run_id,
+            default_created_by_operation_id: self.default_created_by_operation_id,
             #[cfg(feature = "messaging")]
             validator: self.validator.clone(),
         }
@@ -167,6 +177,10 @@ impl EventEmitter {
 
         if event.node_run_id.is_none() {
             event.node_run_id = self.default_node_run_id;
+        }
+
+        if event.created_by_operation_id.is_none() {
+            event.created_by_operation_id = self.default_created_by_operation_id;
         }
 
         // Validate before emitting (if validator present)
@@ -356,6 +370,47 @@ mod tests {
             .await
             .ok_or_else(|| color_eyre::eyre::eyre!("missing emitted event"))?;
         assert!(emitted.id.is_some());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn emit_stamps_default_created_by_operation_id() -> TestResult<()> {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        let operation_id = Uuid::now_v7();
+        let emitter =
+            EventEmitter::new(sender, false).with_default_created_by_operation_id(operation_id);
+
+        let event = Event {
+            id: Some(Id::new()),
+            source: EventSource::new("runtime-test-source")?,
+            event_type: EventType::new("runtime.test")?,
+            payload: JsonValue::from(serde_json::json!({"ok": true})),
+            ts_orig: Some(Timestamp::now()),
+            host: HostName::from_static("runtime-test-host"),
+            node_run_id: None,
+            payload_schema_id: None,
+            provenance: Provenance::Material {
+                id: Id::from_uuid(Uuid::now_v7()),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: OffsetKind::Byte,
+            },
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
+        };
+
+        emitter.emit(event).await?;
+        let emitted = receiver
+            .recv()
+            .await
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing emitted event"))?;
+        assert_eq!(emitted.created_by_operation_id, Some(operation_id));
         Ok(())
     }
 }
