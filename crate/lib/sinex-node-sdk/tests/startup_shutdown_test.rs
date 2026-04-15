@@ -12,8 +12,8 @@
 
 use sinex_db::{DbPoolExt, apply_schema};
 use sinex_primitives::DynamicPayload;
-use tokio::sync::oneshot;
 use std::time::Instant;
+use tokio::sync::oneshot;
 use tokio::time::timeout;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};

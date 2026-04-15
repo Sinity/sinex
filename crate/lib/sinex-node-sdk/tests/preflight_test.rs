@@ -785,18 +785,22 @@ async fn test_phase5_configuration_fails_on_malformed_deployment_descriptor(
 /// Test Phase 5: Configuration with missing environment variables
 #[sinex_test]
 async fn test_phase5_configuration_missing_env() -> TestResult<()> {
-    with_database_url_absent_and_env_vars(&[("SINEX_DEPLOYMENT_READINESS_CONFIG", String::new())], || async {
-        let (status, _details, messages) = configuration::verify_configuration_generation().await?;
+    with_database_url_absent_and_env_vars(
+        &[("SINEX_DEPLOYMENT_READINESS_CONFIG", String::new())],
+        || async {
+            let (status, _details, messages) =
+                configuration::verify_configuration_generation().await?;
 
-        assert_eq!(status, VerificationStatus::Fail);
-        assert!(
-            messages
-                .iter()
-                .any(|m| m.contains("DATABASE_URL") && m.contains("missing"))
-        );
+            assert_eq!(status, VerificationStatus::Fail);
+            assert!(
+                messages
+                    .iter()
+                    .any(|m| m.contains("DATABASE_URL") && m.contains("missing"))
+            );
 
-        Ok(())
-    })
+            Ok(())
+        },
+    )
     .await?;
 
     Ok(())
@@ -1503,26 +1507,29 @@ async fn test_phase5_configuration_event_sources_reject_native_fish_history(
 /// Test Phase 6: Service dependencies verification
 #[sinex_test]
 async fn test_phase6_service_dependencies() -> TestResult<()> {
-    with_env_vars(&[("SINEX_DEPLOYMENT_READINESS_CONFIG", String::new())], || async {
-        let (_status, details, messages) = services::verify_service_dependencies().await?;
+    with_env_vars(
+        &[("SINEX_DEPLOYMENT_READINESS_CONFIG", String::new())],
+        || async {
+            let (_status, details, messages) = services::verify_service_dependencies().await?;
 
-        assert!(!messages.is_empty());
-        assert!(
-            messages
-                .iter()
-                .any(|message| message.contains("Deployment descriptor is missing"))
-        );
+            assert!(!messages.is_empty());
+            assert!(
+                messages
+                    .iter()
+                    .any(|message| message.contains("Deployment descriptor is missing"))
+            );
 
-        let details = details.as_object().expect("details should be an object");
-        if let Some(binaries) = details.get("binaries") {
-            assert!(binaries.is_object());
-        }
-        if let Some(systemd) = details.get("systemd_services") {
-            assert!(systemd.is_object());
-        }
+            let details = details.as_object().expect("details should be an object");
+            if let Some(binaries) = details.get("binaries") {
+                assert!(binaries.is_object());
+            }
+            if let Some(systemd) = details.get("systemd_services") {
+                assert!(systemd.is_object());
+            }
 
-        Ok(())
-    })
+            Ok(())
+        },
+    )
     .await?;
 
     Ok(())
@@ -1683,8 +1690,8 @@ exit 1
 }
 
 #[sinex_test]
-async fn test_phase6_service_dependencies_accept_inactive_declared_unit_watchdog_placeholder(
-) -> TestResult<()> {
+async fn test_phase6_service_dependencies_accept_inactive_declared_unit_watchdog_placeholder()
+-> TestResult<()> {
     let temp = tempfile::tempdir()?;
     let descriptor_path = temp.path().join("deployment-readiness.json");
     fs::write(
@@ -1738,9 +1745,11 @@ exit 1
         || async {
             let (status, _details, messages) = services::verify_service_dependencies().await?;
             assert_ne!(status, VerificationStatus::Fail);
-            assert!(messages.iter().any(|message| {
-                message.contains("watchdog will arm on start")
-            }));
+            assert!(
+                messages
+                    .iter()
+                    .any(|message| { message.contains("watchdog will arm on start") })
+            );
             Ok(())
         },
     )
@@ -1959,20 +1968,24 @@ async fn test_phase7_integration_success(ctx: TestContext) -> TestResult<()> {
 async fn test_phase7_integration_db_failure() -> TestResult<()> {
     with_env_vars(
         &[
-            ("DATABASE_URL", "postgresql://invalid:5432/nonexistent".to_string()),
+            (
+                "DATABASE_URL",
+                "postgresql://invalid:5432/nonexistent".to_string(),
+            ),
             ("SINEX_DEPLOYMENT_READINESS_CONFIG", String::new()),
         ],
         || async {
-        let (status, _details, messages) = verification::verify_end_to_end_integration().await?;
+            let (status, _details, messages) =
+                verification::verify_end_to_end_integration().await?;
 
-        assert_eq!(status, VerificationStatus::Fail);
-        assert!(
-            messages
-                .iter()
-                .any(|m| m.contains("Database integration test failed"))
-        );
+            assert_eq!(status, VerificationStatus::Fail);
+            assert!(
+                messages
+                    .iter()
+                    .any(|m| m.contains("Database integration test failed"))
+            );
 
-        Ok(())
+            Ok(())
         },
     )
     .await?;

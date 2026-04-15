@@ -168,8 +168,7 @@ fn smoke_problematic_strings() -> impl Strategy<Value = String> {
         Just(String::new()),
         Just(" ".to_string()),
         Just("\t\n\r".to_string()),
-        prop::collection::vec(any::<char>(), 0..512)
-            .prop_map(|chars| chars.into_iter().collect()),
+        prop::collection::vec(any::<char>(), 0..512).prop_map(|chars| chars.into_iter().collect()),
         Just("🦀🔥💀".to_string()),
         Just("тест测试テスト".to_string()),
         Just("\u{200B}\u{FEFF}\u{00A0}".to_string()),

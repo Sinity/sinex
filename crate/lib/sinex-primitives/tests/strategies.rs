@@ -265,8 +265,8 @@ mod tests {
                 .map_err(|e| color_eyre::eyre::eyre!("{e}"))?
                 .current();
             assert_eq!(uuid.get_version_num(), 7);
-            let parsed = Uuid::parse_str(&uuid.to_string())
-                .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+            let parsed =
+                Uuid::parse_str(&uuid.to_string()).map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
             assert_eq!(parsed, uuid);
         }
         Ok(())

@@ -11,8 +11,8 @@ use sinex_gateway::handlers::gitops::{
     handle_gitops_trigger_sync,
 };
 use sinex_primitives::rpc::gitops::{
-    DEFAULT_GITOPS_PATH_PATTERN,
-    GitOpsCreateSourceResponse, GitOpsListSourcesResponse, GitOpsTriggerSyncResponse,
+    DEFAULT_GITOPS_PATH_PATTERN, GitOpsCreateSourceResponse, GitOpsListSourcesResponse,
+    GitOpsTriggerSyncResponse,
 };
 use xtask::sandbox::prelude::*;
 
@@ -312,8 +312,7 @@ async fn gitops_create_source_uses_defaults(ctx: TestContext) -> TestResult<()> 
 
     assert_eq!(created.branch, "main", "Default branch should be 'main'");
     assert_eq!(
-        created.path_pattern,
-        DEFAULT_GITOPS_PATH_PATTERN,
+        created.path_pattern, DEFAULT_GITOPS_PATH_PATTERN,
         "Default path pattern should be '{}'",
         DEFAULT_GITOPS_PATH_PATTERN
     );

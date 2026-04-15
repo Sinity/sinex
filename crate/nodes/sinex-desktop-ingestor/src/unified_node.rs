@@ -1278,13 +1278,14 @@ mod tests {
         };
         let checkpoint = Checkpoint::timestamp(Timestamp::now(), None);
 
-        let error = DesktopNode::historical_activitywatch_start_row_for_scan(
-            &state,
-            &checkpoint,
-            true,
-        )
-        .expect_err("replay scans must still require an external ActivityWatch checkpoint");
-        assert!(error.to_string().contains("requires an external checkpoint"));
+        let error =
+            DesktopNode::historical_activitywatch_start_row_for_scan(&state, &checkpoint, true)
+                .expect_err("replay scans must still require an external ActivityWatch checkpoint");
+        assert!(
+            error
+                .to_string()
+                .contains("requires an external checkpoint")
+        );
         Ok(())
     }
 

@@ -345,7 +345,9 @@ async fn get_material_root_events_in_range_excludes_synthesis_rows(
     .from_material(material_id)
     .build()?;
     let inserted_material = ctx.pool.events().insert(material_event).await?;
-    let material_event_id = inserted_material.id.expect("material event must have an id");
+    let material_event_id = inserted_material
+        .id
+        .expect("material event must have an id");
 
     let derived_event = DynamicPayload::new(
         source.as_str(),
@@ -363,7 +365,11 @@ async fn get_material_root_events_in_range_excludes_synthesis_rows(
         .get_material_root_events_in_range(&source, start, end, Pagination::new(Some(10), None))
         .await?;
 
-    assert_eq!(stored.len(), 1, "only material-provenance rows should be returned");
+    assert_eq!(
+        stored.len(),
+        1,
+        "only material-provenance rows should be returned"
+    );
     assert_eq!(stored[0].event_type.as_str(), "test.repo.range.material");
     assert!(
         matches!(stored[0].provenance(), Provenance::Material { .. }),

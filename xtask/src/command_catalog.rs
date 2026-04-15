@@ -57,13 +57,11 @@ pub fn find_command<'a>(commands: &'a [CommandInfo], path: &str) -> Option<&'a C
 fn extract_commands(cmd: &clap::Command) -> Vec<CommandInfo> {
     cmd.get_subcommands()
         .filter(|sub| !HIDDEN_COMMANDS.contains(&sub.get_name()))
-        .map(|sub| {
-            CommandInfo {
-                name: sub.get_name().to_string(),
-                about: sub.get_about().map(ToString::to_string),
-                subcommands: extract_commands(sub),
-                args: sub.get_arguments().map(extract_arg).collect(),
-            }
+        .map(|sub| CommandInfo {
+            name: sub.get_name().to_string(),
+            about: sub.get_about().map(ToString::to_string),
+            subcommands: extract_commands(sub),
+            args: sub.get_arguments().map(extract_arg).collect(),
         })
         .collect()
 }
@@ -81,6 +79,9 @@ fn extract_arg(arg: &clap::Arg) -> ArgInfo {
             .iter()
             .map(|value| value.get_name().to_string())
             .collect(),
-        takes_value: matches!(arg.get_action(), clap::ArgAction::Set | clap::ArgAction::Append),
+        takes_value: matches!(
+            arg.get_action(),
+            clap::ArgAction::Set | clap::ArgAction::Append
+        ),
     }
 }

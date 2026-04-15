@@ -313,7 +313,12 @@ impl<'ctx> PipelineScope<'ctx> {
         F: Fn(usize) -> serde_json::Value,
     {
         let event_source = sinex_primitives::EventSource::new(source)?;
-        let expected_total = self.ctx.pool.events().count_by_source(&event_source).await? as usize
+        let expected_total = self
+            .ctx
+            .pool
+            .events()
+            .count_by_source(&event_source)
+            .await? as usize
             + count;
         let mut events = Vec::with_capacity(count);
         for i in 0..count {
@@ -380,7 +385,12 @@ impl<'ctx> PipelineScope<'ctx> {
         };
 
         let event_source = sinex_primitives::EventSource::new(source)?;
-        let expected_total = self.ctx.pool.events().count_by_source(&event_source).await? as usize
+        let expected_total = self
+            .ctx
+            .pool
+            .events()
+            .count_by_source(&event_source)
+            .await? as usize
             + count;
         let mut events = Vec::with_capacity(count);
         for i in 0..count {
