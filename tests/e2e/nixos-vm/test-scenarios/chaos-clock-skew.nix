@@ -49,7 +49,6 @@ pkgs.testers.nixosTest {
 
     with subtest("Rust-driven chaos-clock-skew suite"):
       machine.succeed(
-        "DATABASE_URL=postgresql:///sinex "
         "${sinexVmTestSuite}/bin/run-suite --category chaos-clock-skew"
       )
   '';
