@@ -1,5 +1,6 @@
 use sinex_primitives::error::SinexError;
 use sinex_primitives::utils::wait_helpers::{wait_for_condition, wait_for_condition_adaptive};
+use std::time::{Duration, Instant};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -43,5 +44,20 @@ async fn wait_for_condition_adaptive_preserves_last_error_context() -> TestResul
             .contains("adaptive wait helper test timeout")
     );
     assert!(format!("{error:?}").contains("synthetic adaptive wait failure"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn wait_for_condition_adaptive_rechecks_at_timeout_boundary() -> TestResult<()> {
+    let start = Instant::now();
+
+    wait_for_condition_adaptive(
+        || async move { Ok::<bool, SinexError>(start.elapsed() >= Duration::from_millis(950)) },
+        1,
+        "adaptive wait boundary check",
+    )
+    .await
+    .expect("adaptive wait should perform a final check at the timeout boundary");
+
     Ok(())
 }
