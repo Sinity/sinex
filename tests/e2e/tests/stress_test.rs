@@ -37,19 +37,23 @@ async fn test_checkpoint_kv_stress_load(ctx: TestContext) -> TestResult<()> {
         );
         let successes = successes.clone();
         handles.push(tokio::spawn(async move {
+            let mut revision = 0;
             for update in 0..updates_per_consumer {
                 let mut state = CheckpointState::default();
                 state.checkpoint = Checkpoint::internal(Uuid::now_v7(), update + 1);
                 state.processed_count = update + 1;
                 state.last_activity = Timestamp::now();
-                if manager.save_checkpoint(&state).await.is_ok() {
-                    successes.fetch_add(1, Ordering::Relaxed);
-                }
+                state.revision = revision;
+                revision = manager.save_checkpoint(&state).await?;
+                successes.fetch_add(1, Ordering::Relaxed);
             }
+            TestResult::Ok(())
         }));
     }
 
-    futures::future::join_all(handles).await;
+    for handle in handles {
+        handle.await??;
+    }
 
     let duration = start.elapsed();
     let successful = successes.load(Ordering::Relaxed);

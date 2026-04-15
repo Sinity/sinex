@@ -1024,9 +1024,7 @@ fn apply_descriptor_nats_overrides(
         return config;
     };
 
-    if config.url == "nats://localhost:4222"
-        && let Some(url) = descriptor.nats.servers.first()
-    {
+    if let Some(url) = descriptor.nats.servers.first() {
         config.url = url.clone();
     }
 
@@ -1051,6 +1049,27 @@ fn apply_descriptor_nats_overrides(
 
     config
 }
+
+fn resolve_deployment_nats_config(
+    base_config: NatsConnectionConfig,
+    nats_url: Option<&str>,
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> NatsConnectionConfig {
+    let descriptor_declares_server = descriptor
+        .map(|value| !value.nats.servers.is_empty())
+        .unwrap_or(false);
+
+    let mut config = apply_descriptor_nats_overrides(base_config, descriptor);
+    if !descriptor_declares_server
+        && config.url == "nats://localhost:4222"
+        && let Some(url) = nats_url
+    {
+        config.url = url.to_string();
+    }
+
+    config
+}
+
 fn descriptor_gateway_base_url(descriptor: Option<&DeploymentReadinessDescriptor>) -> Option<&str> {
     descriptor.and_then(|value| value.gateway.base_url.as_deref())
 }
@@ -2056,13 +2075,8 @@ async fn check_nats_streams(
 
     use futures::StreamExt;
 
-    let mut nats_config =
-        apply_descriptor_nats_overrides(NatsConnectionConfig::from_env(), descriptor);
-    if nats_config.url == "nats://localhost:4222"
-        && let Some(url) = nats_url
-    {
-        nats_config.url = url.to_string();
-    }
+    let nats_config =
+        resolve_deployment_nats_config(NatsConnectionConfig::from_env(), nats_url, descriptor);
 
     let client = match nats_config.connect().await {
         Ok(c) => c,
@@ -4312,6 +4326,46 @@ mod tests {
             config.token_file,
             Some(PathBuf::from("/run/agenix/sinex-nats-token"))
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_descriptor_nats_server_overrides_non_default_base_config()
+    -> ::xtask::sandbox::TestResult<()> {
+        let descriptor = DeploymentReadinessDescriptor {
+            nats: sinex_primitives::DeploymentNatsRuntime {
+                servers: vec!["nats://127.0.0.1:4222".to_string()],
+            },
+            ..Default::default()
+        };
+
+        let base = NatsConnectionConfig {
+            url: "nats://localhost:4308".to_string(),
+            ..Default::default()
+        };
+
+        let config = apply_descriptor_nats_overrides(base, Some(&descriptor));
+        assert_eq!(config.url, "nats://127.0.0.1:4222");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_deployment_nats_config_prefers_descriptor_server_over_ambient_override()
+    -> ::xtask::sandbox::TestResult<()> {
+        let descriptor = DeploymentReadinessDescriptor {
+            nats: sinex_primitives::DeploymentNatsRuntime {
+                servers: vec!["nats://127.0.0.1:4222".to_string()],
+            },
+            ..Default::default()
+        };
+
+        let config = resolve_deployment_nats_config(
+            NatsConnectionConfig::default(),
+            Some("nats://localhost:4308"),
+            Some(&descriptor),
+        );
+
+        assert_eq!(config.url, "nats://127.0.0.1:4222");
         Ok(())
     }
 

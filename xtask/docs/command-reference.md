@@ -87,7 +87,7 @@ Run the repo's primary nextest-backed test workflows
 |---|---|---|---|
 | `--debug` | no | no | Use debug profile (single-threaded, extended timeout) |
 | `--fail-fast` | no | no | Stop on first failure (default: false, run all tests) |
-| `-t, --threads` | yes | no | Number of threads (default: 24, debug: 1) |
+| `-t, --threads` | yes | no | Number of threads (default: profile default; heavy defaults to <=4, debug: 1) |
 | `-r, --retries` | yes | no | Test retries (nextest) |
 | `--timeout` | yes | no | Test timeout (nextest) |
 | `--prime` | no | no | Prime database before testing |

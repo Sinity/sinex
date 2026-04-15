@@ -1,5 +1,6 @@
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 use super::junit;
 use super::monitor::TestMonitor;
@@ -10,6 +11,12 @@ use crate::process::ProcessBuilder;
 
 /// Nextest config file path
 const NEXTEST_CONFIG: &str = ".config/nextest.toml";
+
+#[derive(Debug)]
+struct InvocationScopedNextestConfig {
+    config_path: PathBuf,
+    junit_path: PathBuf,
+}
 
 /// Validate that a nextest profile exists in the config file.
 fn validate_profile(profile: &str) -> Result<()> {
@@ -58,6 +65,69 @@ pub struct TestRunner<'a> {
     extra_env: Vec<(String, String)>,
 }
 
+fn render_invocation_scoped_nextest_config(
+    base_config: &str,
+    profile: &str,
+    junit_path: &Path,
+) -> Result<String> {
+    let mut config: toml::Value = toml::from_str(base_config)
+        .with_context(|| format!("failed to parse nextest config at {NEXTEST_CONFIG}"))?;
+    let root = config
+        .as_table_mut()
+        .ok_or_else(|| eyre!("nextest config root must be a table"))?;
+    let profiles = root
+        .get_mut("profile")
+        .and_then(toml::Value::as_table_mut)
+        .ok_or_else(|| eyre!("nextest config is missing [profile] table"))?;
+    let profile_table = profiles
+        .get_mut(profile)
+        .and_then(toml::Value::as_table_mut)
+        .ok_or_else(|| eyre!("nextest profile `{profile}` is missing"))?;
+    let junit_table = profile_table
+        .entry("junit")
+        .or_insert_with(|| toml::Value::Table(Default::default()))
+        .as_table_mut()
+        .ok_or_else(|| eyre!("nextest profile `{profile}` junit config must be a table"))?;
+    junit_table.insert(
+        "path".into(),
+        toml::Value::String(junit_path.display().to_string()),
+    );
+
+    toml::to_string(&config).context("failed to render invocation-scoped nextest config")
+}
+
+fn prepare_invocation_scoped_nextest_config(
+    profile: &str,
+    history_invocation_id: Option<i64>,
+) -> Result<InvocationScopedNextestConfig> {
+    let scope = history_invocation_id
+        .map(|id| format!("invocation-{id}"))
+        .unwrap_or_else(|| format!("pid-{}-{:016x}", std::process::id(), rand::random::<u64>()));
+    let run_dir = crate::config::workspace_state_root()
+        .join("nextest")
+        .join(profile)
+        .join("runs")
+        .join(scope);
+    fs::create_dir_all(&run_dir)
+        .with_context(|| format!("failed to create nextest run directory {}", run_dir.display()))?;
+
+    let junit_path = run_dir.join("junit.xml");
+    let config_path = run_dir.join("nextest.toml");
+    let rendered = render_invocation_scoped_nextest_config(
+        &fs::read_to_string(NEXTEST_CONFIG)
+            .with_context(|| format!("failed to read nextest config at {NEXTEST_CONFIG}"))?,
+        profile,
+        &junit_path,
+    )?;
+    fs::write(&config_path, rendered)
+        .with_context(|| format!("failed to write nextest config {}", config_path.display()))?;
+
+    Ok(InvocationScopedNextestConfig {
+        config_path,
+        junit_path,
+    })
+}
+
 impl<'a> TestRunner<'a> {
     #[must_use]
     pub fn new(ctx: &'a CommandContext, profile: &'a str) -> Self {
@@ -80,13 +150,15 @@ impl<'a> TestRunner<'a> {
     pub fn execute(&self, history: Option<(&HistoryDb, i64)>) -> Result<TestStats> {
         // Validate profile exists before running to avoid silent failures
         validate_profile(self.profile)?;
+        let nextest_config =
+            prepare_invocation_scoped_nextest_config(self.profile, history.map(|(_, id)| id))?;
 
         // Build base arguments
         let mut cmd_args = vec![
             "nextest".to_string(),
             "run".to_string(),
             "--config-file".to_string(),
-            ".config/nextest.toml".to_string(),
+            nextest_config.config_path.display().to_string(),
         ];
 
         // Only use --workspace when no explicit -p package is specified.
@@ -166,9 +238,9 @@ impl<'a> TestRunner<'a> {
             // but JUnit XML (with store-success-output=true) captures ALL output.
             // We also extract: classname (reliable package), failure message/type,
             // and sandbox slog events (slot name, acquisition/cleanup timing).
-            let junit_path = junit::junit_path_for_profile(self.profile);
+            let junit_path = &nextest_config.junit_path;
             if junit_path.exists() {
-                match junit::parse_junit_summary(&junit_path) {
+                match junit::parse_junit_summary(junit_path) {
                     Ok(summary)
                         if summary.total > 0
                             && (summary.passed != stats.passed
@@ -193,7 +265,7 @@ impl<'a> TestRunner<'a> {
                     Err(e) => eprintln!("⚠️  Failed to parse JUnit summary: {e}"),
                 }
 
-                match junit::parse_junit_metadata(&junit_path) {
+                match junit::parse_junit_metadata(junit_path) {
                     Ok(metadata) if !metadata.is_empty() => {
                         match db.backfill_test_metadata(invocation_id, &metadata) {
                             Ok(n) if n > 0 => {
@@ -217,5 +289,40 @@ impl<'a> TestRunner<'a> {
         }
 
         Ok(stats)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_invocation_scoped_nextest_config;
+    use crate::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn test_render_invocation_scoped_nextest_config_overrides_only_junit_path()
+    -> ::xtask::sandbox::TestResult<()> {
+        let rendered = render_invocation_scoped_nextest_config(
+            r#"
+[profile.default]
+retries = 2
+
+[profile.default.junit]
+path = "junit.xml"
+store-success-output = true
+"#,
+            "default",
+            std::path::Path::new("/tmp/custom-junit.xml"),
+        )?;
+        let parsed: toml::Value = toml::from_str(&rendered)?;
+
+        assert_eq!(
+            parsed["profile"]["default"]["junit"]["path"].as_str(),
+            Some("/tmp/custom-junit.xml")
+        );
+        assert_eq!(parsed["profile"]["default"]["retries"].as_integer(), Some(2));
+        assert_eq!(
+            parsed["profile"]["default"]["junit"]["store-success-output"].as_bool(),
+            Some(true)
+        );
+        Ok(())
     }
 }

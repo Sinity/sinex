@@ -98,6 +98,13 @@ struct HistoryIntegrityStamp {
     checked_at_unix: i64,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct StaleInvocationCandidate {
+    invocation_id: i64,
+    background_job_id: Option<i64>,
+    pid: Option<i64>,
+}
+
 impl HistoryIntegrityStamp {
     fn new(now: OffsetDateTime) -> Self {
         Self {
@@ -114,6 +121,21 @@ impl HistoryIntegrityStamp {
         let age_secs = now.unix_timestamp().saturating_sub(self.checked_at_unix);
         age_secs <= interval.as_secs().min(i64::MAX as u64) as i64
     }
+}
+
+fn history_process_is_alive(pid: i64) -> bool {
+    if !(1..=i32::MAX as i64).contains(&pid) {
+        return false;
+    }
+
+    let pid = nix::unistd::Pid::from_raw(pid as i32);
+    matches!(
+        nix::sys::signal::killpg(pid, None),
+        Ok(()) | Err(nix::errno::Errno::EPERM)
+    ) || matches!(
+        nix::sys::signal::kill(pid, None),
+        Ok(()) | Err(nix::errno::Errno::EPERM)
+    )
 }
 
 fn remove_history_artifact(path: &Path, reason: &str) -> Result<()> {
@@ -151,8 +173,7 @@ fn should_run_history_integrity_check(path: &Path, now: OffsetDateTime) -> bool 
     }
 
     let stamp_path = history_integrity_stamp_path(path);
-    !load_history_integrity_stamp(&stamp_path)
-        .is_some_and(|stamp| stamp.is_fresh(now, interval))
+    !load_history_integrity_stamp(&stamp_path).is_some_and(|stamp| stamp.is_fresh(now, interval))
 }
 
 fn persist_history_integrity_stamp(path: &Path, now: OffsetDateTime) -> Result<()> {
@@ -1472,76 +1493,41 @@ impl HistoryDb {
     /// Called on `open()` to prevent orphaned invocations from accumulating
     /// when a process crashes before calling `finish_invocation()`.
     ///
-    /// The 10-minute threshold is aggressive enough to catch zombies quickly
-    /// (preventing poisoned stats) while generous enough to avoid cancelling
-    /// legitimate long-running operations. The `CommandContext` Drop guard
-    /// handles most cases immediately; this is the safety net for SIGKILL.
+    /// Only rows whose owning process is gone are cancelled here. Legitimate
+    /// long-running background jobs may exceed the stale threshold, so open-time
+    /// cleanup must not fail them just because they are old. The
+    /// `CommandContext` drop guard handles normal completion; this path is the
+    /// crash/orphan safety net.
     fn cleanup_stale_invocations(&self) -> Result<()> {
         if !self.has_stale_invocations()? {
             return Ok(());
         }
 
-        // First collect PIDs of stale background jobs before updating them
-        let stale_pids = self.stale_background_invocation_pids()?;
+        let stale_candidates = self.stale_invocation_candidates()?;
+        let mut cancelled_invocation_ids = Vec::new();
+        let mut orphaned_background_job_ids = HashSet::new();
 
-        let cleaned = self
-            .conn
-            .execute(
-                r"
-            UPDATE invocations
-            SET status = 'cancelled',
-                finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-                duration_secs = (julianday('now') - julianday(started_at)) * 86400
-            WHERE status = 'running'
-              AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')
-            ",
-                [],
-            )
-            .context("failed to mark stale invocations as cancelled")?;
+        for candidate in stale_candidates {
+            if candidate.pid.is_some_and(history_process_is_alive) {
+                continue;
+            }
+
+            cancelled_invocation_ids.push(candidate.invocation_id);
+            if let Some(background_job_id) = candidate.background_job_id {
+                orphaned_background_job_ids.insert(background_job_id);
+            }
+        }
+
+        let cleaned = self.mark_stale_invocations_cancelled(&cancelled_invocation_ids)?;
         if cleaned > 0 {
             eprintln!(
                 "ℹ️  Cleaned up {cleaned} stale 'running' invocation(s) older than 10 minutes"
             );
         }
 
-        // Kill stale background processes to reclaim CPU/memory.
-        // Send SIGTERM to all immediately, then spawn a thread for SIGKILL after grace period.
-        let live_pids: Vec<i64> = stale_pids
-            .into_iter()
-            .filter(|&pid| {
-                let nix_pid = nix::unistd::Pid::from_raw(pid as i32);
-                if nix::sys::signal::kill(nix_pid, None).is_ok() {
-                    let _ = nix::sys::signal::killpg(nix_pid, nix::sys::signal::Signal::SIGTERM);
-                    true
-                } else {
-                    false
-                }
-            })
-            .collect();
-
-        if !live_pids.is_empty() {
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(2));
-                for pid in live_pids {
-                    let nix_pid = nix::unistd::Pid::from_raw(pid as i32);
-                    if nix::sys::signal::kill(nix_pid, None).is_ok() {
-                        let _ =
-                            nix::sys::signal::killpg(nix_pid, nix::sys::signal::Signal::SIGKILL);
-                    }
-                }
-            });
-        }
-
-        // Also mark orphaned background_jobs rows in the dedicated job table.
-        self.conn
-            .execute(
-                r"UPDATE background_jobs
-              SET job_status = 'orphaned', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-              WHERE job_status = 'running'
-                AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')",
-                [],
-            )
-            .context("failed to mark stale background jobs as orphaned")?;
+        self.mark_background_jobs_orphaned(
+            &orphaned_background_job_ids.into_iter().collect::<Vec<_>>(),
+        )?;
         Ok(())
     }
 
@@ -1565,25 +1551,79 @@ impl HistoryDb {
         Ok(has_stale != 0)
     }
 
-    fn stale_background_invocation_pids(&self) -> Result<Vec<i64>> {
+    fn stale_invocation_candidates(&self) -> Result<Vec<StaleInvocationCandidate>> {
         let mut stmt = self
             .conn
             .prepare(
                 r"
-                SELECT pid FROM invocations
-                WHERE status = 'running'
-                  AND is_background = 1
-                  AND pid IS NOT NULL
-                  AND pid > 0
-                  AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')
+                SELECT
+                    i.id,
+                    bg.id,
+                    COALESCE(i.pid, bg.pid)
+                FROM invocations i
+                LEFT JOIN background_jobs bg
+                    ON bg.invocation_id = i.id
+                   AND bg.job_status = 'running'
+                WHERE i.status = 'running'
+                  AND i.started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')
                 ",
             )
-            .context("failed to prepare stale background invocation pid query")?;
+            .context("failed to prepare stale invocation candidate query")?;
         let rows = stmt
-            .query_map([], |row| row.get::<_, i64>(0))
-            .context("failed to execute stale background invocation pid query")?;
+            .query_map([], |row| {
+                Ok(StaleInvocationCandidate {
+                    invocation_id: row.get(0)?,
+                    background_job_id: row.get(1)?,
+                    pid: row.get(2)?,
+                })
+            })
+            .context("failed to execute stale invocation candidate query")?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
-            .context("failed to collect stale background invocation pids")
+            .context("failed to collect stale invocation candidates")
+    }
+
+    fn mark_stale_invocations_cancelled(&self, invocation_ids: &[i64]) -> Result<usize> {
+        if invocation_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let placeholders: Vec<&str> = invocation_ids.iter().map(|_| "?").collect();
+        let sql = format!(
+            r"
+            UPDATE invocations
+            SET status = 'cancelled',
+                finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+                duration_secs = (julianday('now') - julianday(started_at)) * 86400
+            WHERE id IN ({})
+            ",
+            placeholders.join(",")
+        );
+
+        self.conn
+            .execute(&sql, rusqlite::params_from_iter(invocation_ids.iter()))
+            .context("failed to mark stale invocations as cancelled")
+    }
+
+    fn mark_background_jobs_orphaned(&self, background_job_ids: &[i64]) -> Result<()> {
+        if background_job_ids.is_empty() {
+            return Ok(());
+        }
+
+        let placeholders: Vec<&str> = background_job_ids.iter().map(|_| "?").collect();
+        let sql = format!(
+            r"
+            UPDATE background_jobs
+            SET job_status = 'orphaned',
+                finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+            WHERE id IN ({})
+            ",
+            placeholders.join(",")
+        );
+
+        self.conn
+            .execute(&sql, rusqlite::params_from_iter(background_job_ids.iter()))
+            .context("failed to mark stale background jobs as orphaned")?;
+        Ok(())
     }
 
     /// Finish a background job and archive its log content in `background_job_logs`.
@@ -4402,8 +4442,8 @@ mod tests {
         };
         let message = format!("{error:#}");
         assert!(message.contains("failed to clean up stale invocations"));
-        assert!(message.contains("failed to prepare stale background invocation pid query"));
-        assert!(message.contains("no such column: pid"));
+        assert!(message.contains("failed to prepare stale invocation candidate query"));
+        assert!(message.contains("pid"));
         Ok(())
     }
 
@@ -4464,6 +4504,107 @@ mod tests {
         assert!(message.contains("failed to clean up stale invocations"));
         assert!(message.contains("failed to mark stale invocations as cancelled"));
         assert!(message.contains("no such column: finished_at"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_db_open_preserves_live_background_job_rows() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-open-live-background-job.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        db.conn.execute(
+            r"
+            INSERT INTO invocations (
+                command, started_at, status, host, cwd, is_background
+            ) VALUES (?1, ?2, 'running', ?3, ?4, 1)
+            ",
+            params!["check", "2000-01-01T00:00:00Z", "localhost", "/tmp"],
+        )?;
+        let invocation_id = db.conn.last_insert_rowid();
+        db.conn.execute(
+            r"
+            INSERT INTO background_jobs (
+                invocation_id, command, pid, job_status, started_at
+            ) VALUES (?1, ?2, ?3, 'running', ?4)
+            ",
+            params![
+                invocation_id,
+                "check",
+                std::process::id() as i64,
+                "2000-01-01T00:00:00Z"
+            ],
+        )?;
+        drop(db);
+
+        let reopened = HistoryDb::open(&db_path)?;
+        let invocation_status: String = reopened.conn.query_row(
+            "SELECT status FROM invocations WHERE id = ?1",
+            params![invocation_id],
+            |row| row.get(0),
+        )?;
+        let background_status: String = reopened.conn.query_row(
+            "SELECT job_status FROM background_jobs WHERE invocation_id = ?1",
+            params![invocation_id],
+            |row| row.get(0),
+        )?;
+
+        assert_eq!(
+            invocation_status, "running",
+            "live background jobs must remain running even when older than the stale threshold"
+        );
+        assert_eq!(
+            background_status, "running",
+            "live background job handles must not be orphaned during open-time cleanup"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_db_open_cancels_dead_background_job_rows() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-open-dead-background-job.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        db.conn.execute(
+            r"
+            INSERT INTO invocations (
+                command, started_at, status, host, cwd, is_background
+            ) VALUES (?1, ?2, 'running', ?3, ?4, 1)
+            ",
+            params!["check", "2000-01-01T00:00:00Z", "localhost", "/tmp"],
+        )?;
+        let invocation_id = db.conn.last_insert_rowid();
+        db.conn.execute(
+            r"
+            INSERT INTO background_jobs (
+                invocation_id, command, pid, job_status, started_at
+            ) VALUES (?1, ?2, ?3, 'running', ?4)
+            ",
+            params![invocation_id, "check", 999_999_999_i64, "2000-01-01T00:00:00Z"],
+        )?;
+        drop(db);
+
+        let reopened = HistoryDb::open(&db_path)?;
+        let invocation_status: String = reopened.conn.query_row(
+            "SELECT status FROM invocations WHERE id = ?1",
+            params![invocation_id],
+            |row| row.get(0),
+        )?;
+        let background_status: String = reopened.conn.query_row(
+            "SELECT job_status FROM background_jobs WHERE invocation_id = ?1",
+            params![invocation_id],
+            |row| row.get(0),
+        )?;
+
+        assert_eq!(
+            invocation_status, "cancelled",
+            "dead background invocations should be cleaned up on open"
+        );
+        assert_eq!(
+            background_status, "orphaned",
+            "dead background job handles should be marked orphaned on open"
+        );
         Ok(())
     }
 
@@ -4578,9 +4719,12 @@ mod tests {
         drop(db);
 
         let queried = HistoryDb::open_query(&db_path)?;
-        let status: String = queried
-            .conn
-            .query_row("SELECT status FROM invocations LIMIT 1", [], |row| row.get(0))?;
+        let status: String =
+            queried
+                .conn
+                .query_row("SELECT status FROM invocations LIMIT 1", [], |row| {
+                    row.get(0)
+                })?;
         assert_eq!(
             status, "running",
             "query opens should not perform stale cleanup mutations"
@@ -4591,16 +4735,16 @@ mod tests {
     #[sinex_test]
     async fn test_history_db_open_writes_integrity_stamp_for_new_database() -> TestResult<()> {
         let dir = tempdir()?;
-        let db_path = dir.path().join("test-history-open-writes-integrity-stamp.db");
+        let db_path = dir
+            .path()
+            .join("test-history-open-writes-integrity-stamp.db");
 
         let db = HistoryDb::open(&db_path)?;
         drop(db);
 
         let stamp = load_history_integrity_stamp(&history_integrity_stamp_path(&db_path))
             .ok_or_else(|| {
-                color_eyre::eyre::eyre!(
-                    "fresh history database should persist an integrity stamp"
-                )
+                color_eyre::eyre::eyre!("fresh history database should persist an integrity stamp")
             })?;
         assert_eq!(stamp.schema_version, HISTORY_DB_SCHEMA_VERSION);
         Ok(())
@@ -5375,8 +5519,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_resolve_invocation_id_numeric_falls_back_to_background_job()
-    -> TestResult<()> {
+    async fn test_resolve_invocation_id_numeric_falls_back_to_background_job() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-invocation-selector-job-fallback.db");
         let db = HistoryDb::open(&db_path)?;
@@ -5405,7 +5548,9 @@ mod tests {
     async fn test_resolve_invocation_id_numeric_prefers_real_invocation_when_ambiguous()
     -> TestResult<()> {
         let dir = tempdir()?;
-        let db_path = dir.path().join("test-invocation-selector-ambiguous-numeric.db");
+        let db_path = dir
+            .path()
+            .join("test-invocation-selector-ambiguous-numeric.db");
         let db = HistoryDb::open(&db_path)?;
 
         for _ in 0..5 {
