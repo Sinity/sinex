@@ -332,19 +332,21 @@ impl PostgresManager {
     }
 
     pub fn ensure_user(&self, user: &str, is_superuser: bool, creator: &str) -> Result<()> {
-        let exists = self.psql(
-            creator,
-            "postgres",
-            &format!("SELECT 1 FROM pg_roles WHERE rolname = '{user}'"),
-        )?;
-        if exists.is_empty() {
-            let mut sql = format!("CREATE ROLE {user} LOGIN");
-            if is_superuser {
-                sql.push_str(" SUPERUSER CREATEDB");
-            }
-            self.psql(creator, "postgres", &sql)?;
-        }
-        Ok(())
+        Self::ensure_role_with(user, true, is_superuser, creator, |actor, db, sql| {
+            self.psql(actor, db, sql)
+        })
+    }
+
+    pub fn ensure_role(
+        &self,
+        role: &str,
+        login: bool,
+        is_superuser: bool,
+        creator: &str,
+    ) -> Result<()> {
+        Self::ensure_role_with(role, login, is_superuser, creator, |actor, db, sql| {
+            self.psql(actor, db, sql)
+        })
     }
 
     pub fn drop_db(&self, db: &str, creator: &str) -> Result<()> {
@@ -470,6 +472,36 @@ impl PostgresManager {
             }
         }
 
+        Ok(())
+    }
+
+    fn ensure_role_with<F>(
+        role: &str,
+        login: bool,
+        is_superuser: bool,
+        creator: &str,
+        mut psql: F,
+    ) -> Result<()>
+    where
+        F: FnMut(&str, &str, &str) -> Result<String>,
+    {
+        let exists = psql(
+            creator,
+            "postgres",
+            &format!("SELECT 1 FROM pg_roles WHERE rolname = '{role}'"),
+        )?;
+        if exists.is_empty() {
+            let mut sql = format!("CREATE ROLE {role}");
+            if login {
+                sql.push_str(" LOGIN");
+            } else {
+                sql.push_str(" NOLOGIN");
+            }
+            if is_superuser {
+                sql.push_str(" SUPERUSER CREATEDB");
+            }
+            psql(creator, "postgres", &sql)?;
+        }
         Ok(())
     }
 
@@ -682,6 +714,69 @@ mod tests {
             !statements
                 .iter()
                 .any(|sql| sql == "CREATE EXTENSION IF NOT EXISTS \"pg_jsonschema\" CASCADE")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ensure_role_creates_nologin_role() -> TestResult<()> {
+        let mut statements = Vec::new();
+
+        PostgresManager::ensure_role_with(
+            "sinex_gateway",
+            false,
+            false,
+            "postgres",
+            |actor, db, sql| {
+                statements.push((actor.to_string(), db.to_string(), sql.to_string()));
+                Ok(String::new())
+            },
+        )?;
+
+        assert_eq!(
+            statements,
+            vec![
+                (
+                    "postgres".to_string(),
+                    "postgres".to_string(),
+                    "SELECT 1 FROM pg_roles WHERE rolname = 'sinex_gateway'".to_string(),
+                ),
+                (
+                    "postgres".to_string(),
+                    "postgres".to_string(),
+                    "CREATE ROLE sinex_gateway NOLOGIN".to_string(),
+                ),
+            ]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ensure_role_skips_existing_role() -> TestResult<()> {
+        let mut statements = Vec::new();
+
+        PostgresManager::ensure_role_with(
+            "sinex_readonly",
+            false,
+            false,
+            "postgres",
+            |actor, db, sql| {
+                statements.push((actor.to_string(), db.to_string(), sql.to_string()));
+                if sql.contains("SELECT 1 FROM pg_roles") {
+                    Ok("1".to_string())
+                } else {
+                    Ok(String::new())
+                }
+            },
+        )?;
+
+        assert_eq!(
+            statements,
+            vec![(
+                "postgres".to_string(),
+                "postgres".to_string(),
+                "SELECT 1 FROM pg_roles WHERE rolname = 'sinex_readonly'".to_string(),
+            )]
         );
         Ok(())
     }
