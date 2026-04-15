@@ -49,6 +49,13 @@ slow-timeout = { period = "120s", terminate-after = 2 }
 filter = "package(sinex-macros) & test(/compile_fail/)"
 slow-timeout = { period = "180s", terminate-after = 2 }
 
+# The Id<T> compile-fail test cold-builds a full dependency tree inside its own
+# isolated trybuild target directory, so the default timeout is too tight under
+# a full workspace run.
+[[profile.default.overrides]]
+filter = "package(sinex-primitives) & test(id_type_mismatch_is_compile_error)"
+slow-timeout = { period = "300s", terminate-after = 2 }
+
 # xtask command edge case tests spawn cargo subprocesses (check, test)
 [[profile.default.overrides]]
 filter = "package(xtask) & test(/command_edge_cases/)"

@@ -252,7 +252,7 @@ expression: json
         },
         {
           "global": false,
-          "help": "Number of threads (default: 24, debug: 1)",
+          "help": "Number of threads (default: profile default; heavy defaults to <=4, debug: 1)",
           "long": "threads",
           "name": "threads",
           "possible_values": [],
@@ -3156,6 +3156,298 @@ expression: json
             }
           ],
           "name": "stages",
+          "subcommands": []
+        }
+      ]
+    },
+    {
+      "about": "Plan and materialize PR-sized git branch stacks from the current commit graph",
+      "args": [],
+      "name": "git-stack",
+      "subcommands": [
+        {
+          "about": "Walk the current commit graph and generate a stack plan plus PR/squash bodies",
+          "args": [
+            {
+              "global": false,
+              "help": "Base ref to split against. Defaults to origin/master when available, else master",
+              "long": "base",
+              "name": "base",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Head ref to analyze",
+              "long": "head",
+              "name": "head",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Branch prefix for generated slice refs",
+              "long": "branch-prefix",
+              "name": "branch_prefix",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Maximum number of commits per generated slice before forcing a split",
+              "long": "max-commits-per-slice",
+              "name": "max_commits_per_slice",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Output directory for generated artifacts",
+              "long": "output",
+              "name": "output",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Overwrite an existing output directory",
+              "long": "force",
+              "name": "force",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "plan",
+          "subcommands": []
+        },
+        {
+          "about": "Materialize branch refs from an existing stack plan",
+          "args": [
+            {
+              "global": false,
+              "help": "Path to a generated `plan.yaml`",
+              "long": "plan",
+              "name": "plan",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Overwrite existing branch refs",
+              "long": "force",
+              "name": "force",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Continue even when the plan recorded blockers",
+              "long": "allow-blockers",
+              "name": "allow_blockers",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "materialize",
+          "subcommands": []
+        },
+        {
+          "about": "Generate a stack plan and immediately materialize the resulting branches",
+          "args": [
+            {
+              "global": false,
+              "help": "Base ref to split against. Defaults to origin/master when available, else master",
+              "long": "base",
+              "name": "base",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Head ref to analyze",
+              "long": "head",
+              "name": "head",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Branch prefix for generated slice refs",
+              "long": "branch-prefix",
+              "name": "branch_prefix",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Maximum number of commits per generated slice before forcing a split",
+              "long": "max-commits-per-slice",
+              "name": "max_commits_per_slice",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Output directory for generated artifacts",
+              "long": "output",
+              "name": "output",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Overwrite an existing output directory and existing branch refs",
+              "long": "force",
+              "name": "force",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Continue even when the generated plan records blockers",
+              "long": "allow-blockers",
+              "name": "allow_blockers",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "split",
+          "subcommands": []
+        },
+        {
+          "about": "Push materialized branches and open/reuse PRs from a generated stack plan",
+          "args": [
+            {
+              "global": false,
+              "help": "Path to a generated `plan.yaml`",
+              "long": "plan",
+              "name": "plan",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Git remote to push branch refs to",
+              "long": "remote",
+              "name": "remote",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Create PRs as ready-for-review instead of drafts",
+              "long": "ready",
+              "name": "ready",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Push branches only; skip GitHub PR creation",
+              "long": "push-only",
+              "name": "push_only",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Force-update the remote branches with `--force-with-lease`",
+              "long": "force-with-lease",
+              "name": "force_with_lease",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Optional GitHub repo override for `gh`, e.g. `owner/name`",
+              "long": "repo",
+              "name": "repo",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Continue even when the plan recorded blockers",
+              "long": "allow-blockers",
+              "name": "allow_blockers",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "publish",
           "subcommands": []
         }
       ]
