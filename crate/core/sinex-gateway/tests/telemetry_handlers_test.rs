@@ -45,10 +45,10 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
 
     insert_event(
         &ctx,
-        "desktop.hyprland",
-        "focus.window",
+        "wm.hyprland",
+        "window.focused",
         json!({
-            "workspace": "code",
+            "workspace_id": 3,
             "window_class": "foot",
             "window_title": "cargo test",
             "window_id": "0xabc",
@@ -129,7 +129,7 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
 
     assert_eq!(window_focus.buckets.len(), 1);
     let focus = &window_focus.buckets[0];
-    assert_eq!(focus.workspace.as_deref(), Some("code"));
+    assert_eq!(focus.workspace.as_deref(), Some("3"));
     assert_eq!(focus.window_class.as_deref(), Some("foot"));
     assert_eq!(focus.window_title.as_deref(), Some("cargo test"));
     assert_eq!(focus.window_id.as_deref(), Some("0xabc"));
@@ -157,7 +157,7 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
             .entries
             .iter()
             .any(|entry| entry.activity_type == "window_focus"
-                && entry.context.as_deref() == Some("code")
+                && entry.context.as_deref() == Some("3")
                 && entry.detail.as_deref() == Some("foot"))
     );
     assert!(recent_activity.entries.iter().any(
@@ -193,10 +193,10 @@ async fn telemetry_handlers_bucket_activity_by_event_time(ctx: TestContext) -> T
 
     insert_event(
         &ctx,
-        "desktop.hyprland",
-        "focus.window",
+        "wm.hyprland",
+        "window.focused",
         json!({
-            "workspace": "retro",
+            "workspace_id": 42,
             "window_class": "kitty",
             "window_title": "imported focus",
             "window_id": "0x42",
@@ -269,7 +269,7 @@ async fn telemetry_handlers_bucket_activity_by_event_time(ctx: TestContext) -> T
         serde_json::from_value(handle_telemetry_system_state(ctx.pool(), params).await?)?;
 
     assert_eq!(window_focus.buckets.len(), 1);
-    assert_eq!(window_focus.buckets[0].workspace.as_deref(), Some("retro"));
+    assert_eq!(window_focus.buckets[0].workspace.as_deref(), Some("42"));
     assert_eq!(
         window_focus.buckets[0].window_class.as_deref(),
         Some("kitty")

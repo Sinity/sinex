@@ -4121,7 +4121,7 @@ mod tests {
             command: "echo 'hello from atuin'".to_string(),
             cwd: "/realm/project/sinex".to_string(),
             session_id: "session-1".to_string(),
-            hostname: "test-host".to_string(),
+            hostname: "test-host:test-user".to_string(),
         };
         let mut recent_hashes = VecDeque::new();
         process_atuin_entry(&watcher_ctx, &entry, &mut recent_hashes).await?;
@@ -4138,6 +4138,13 @@ mod tests {
                 .get("command_string")
                 .and_then(|value| value.as_str()),
             Some("echo 'hello from atuin'")
+        );
+        assert_eq!(
+            event
+                .payload
+                .get("hostname")
+                .and_then(|value| value.as_str()),
+            Some("test-host")
         );
         match event.provenance() {
             Provenance::Material { id, .. } => {
@@ -4287,7 +4294,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn process_atuin_entry_rejects_invalid_duration(ctx: TestContext) -> TestResult<()> {
+    async fn process_atuin_entry_normalizes_negative_duration(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().dedicated().await?;
         let TestRuntime {
             runtime,
@@ -4356,16 +4363,20 @@ mod tests {
             hostname: "test-host".to_string(),
         };
         let mut recent_hashes = VecDeque::new();
-        let error = process_atuin_entry(&watcher_ctx, &entry, &mut recent_hashes)
-            .await
-            .expect_err("invalid Atuin row should fail loudly");
-        assert!(
-            error.to_string().contains("invalid timestamp or duration"),
-            "unexpected error: {error}"
-        );
+        process_atuin_entry(&watcher_ctx, &entry, &mut recent_hashes).await?;
 
-        let next = timeout(Duration::from_millis(200), event_rx.recv()).await;
-        assert!(next.is_err(), "invalid Atuin row should not emit an event");
+        let event = timeout(Duration::from_secs(5), event_rx.recv())
+            .await?
+            .ok_or_else(|| color_eyre::eyre::eyre!("Atuin event not emitted"))?;
+        assert_eq!(
+            event
+                .payload
+                .get("duration_ns")
+                .and_then(|value| value.as_i64()),
+            Some(0)
+        );
+        assert_eq!(event.source.as_str(), "shell.atuin");
+        assert_eq!(event.event_type.as_str(), "command.executed");
 
         ingest_handle.stop().await?;
         Ok(())
