@@ -51,6 +51,7 @@ pkgs.testers.nixosTest {
         machine.wait_for_unit("postgresql.service", timeout=60)
         machine.wait_for_unit("sinex-gateway.service", timeout=60)
         machine.wait_for_unit("sinex-ingestd.service", timeout=60)
+        machine.wait_for_unit("sinex-filesystem-1.service", timeout=60)
         machine.wait_until_succeeds(
             "curl -k -s https://127.0.0.1:9999/health",
             timeout=30
@@ -71,6 +72,27 @@ pkgs.testers.nixosTest {
         else:
             return [json.loads(line) for line in lines if line.strip()]
 
+    def wait_for_query_event_count(source, minimum, timeout=60):
+        deadline = time.time() + timeout
+        last_result = None
+        last_error = None
+
+        while time.time() < deadline:
+            try:
+                result = sinexctl_json(f"query --source {source}")
+                events = result.get("events", []) if isinstance(result, dict) else result
+                last_result = result
+                if len(events) >= minimum:
+                    return events
+            except Exception as exc:
+                last_error = repr(exc)
+            time.sleep(1)
+
+        raise Exception(
+            f"Timed out waiting for >={minimum} events from {source}; "
+            f"last_result={last_result!r}; last_error={last_error!r}"
+        )
+
     # ── Initialize ───────────────────────────────────────────
     with subtest("System initialization"):
         wait_for_services()
@@ -83,15 +105,12 @@ pkgs.testers.nixosTest {
                 f"echo 'replay smoke test {i}' > /var/lib/sinex/watched/replay_test_{i}.txt"
             )
         # Wait for events to be ingested
-        machine.wait_until_succeeds(
-            "test $(sinexctl --insecure query --source fs-ingestor -f json 2>/dev/null | jq length) -ge 5",
-            timeout=60
-        )
+        wait_for_query_event_count("fs-watcher", 5, timeout=60)
 
     # ── Replay lifecycle ─────────────────────────────────────
     with subtest("Full replay lifecycle"):
         # Plan
-        plan_output = sinexctl("replay plan --node fs-ingestor --since 1h -f json")
+        plan_output = sinexctl("replay plan --node filesystem-watcher --since 1h -f json")
         plan = json.loads(plan_output.strip().split('\n')[-1])
         op_id = plan.get("operation_id", plan.get("operation", {}).get("operation_id"))
         assert op_id is not None, f"Failed to get operation_id from plan: {plan}"
@@ -127,8 +146,8 @@ pkgs.testers.nixosTest {
 
     # ── Verify consistency ───────────────────────────────────
     with subtest("Event consistency after replay"):
-        events = sinexctl("query --source fs-ingestor -f json")
-        event_list = [json.loads(line) for line in events.strip().split('\n') if line.strip()]
+        events = json.loads(sinexctl("query --source fs-watcher -f json"))
+        event_list = events.get("events", [])
         assert len(event_list) >= 5, \
             f"Should have >=5 events after replay, got {len(event_list)}"
         print(f"Event count after replay: {len(event_list)} (consistent)")

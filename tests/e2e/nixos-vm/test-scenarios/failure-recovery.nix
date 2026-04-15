@@ -336,7 +336,7 @@ pkgs.testers.nixosTest {
         uid = 1000;
       };
       
-      environment.etc."sinex/gateway-admin-token".text = "test-admin-token";
+      environment.etc."sinex/gateway-admin-token".text = "test-admin-token:admin";
       
       services.postgresql.authentication = lib.mkForce ''
 local   all             all                                     trust
@@ -344,25 +344,10 @@ host    all             all             127.0.0.1/32            trust
 host    all             all             ::1/128                 trust
 '';
 
-      # Run migrations before the services come up.
-      systemd.services.sinex-migrations = {
-        description = "Apply Sinex database migrations";
-        wantedBy = [ "multi-user.target" ];
-        after = [ "postgresql.service" "postgresql-setup.service" ];
-        requires = [ "postgresql.service" "postgresql-setup.service" ];
-        serviceConfig =
-          let
-            dbCfg = config.services.sinex.database;
-            dbUrl = "postgresql://${dbCfg.user}@${dbCfg.host}:${toString dbCfg.port}/${dbCfg.name}";
-          in {
-            Type = "oneshot";
-            ExecStart = "${sinexPackage}/bin/xtask infra schema-apply --database-url ${lib.escapeShellArg dbUrl}";
-          };
-      };
-      systemd.services.sinex-ingestd.after = [ "sinex-migrations.service" ];
-      systemd.services.sinex-ingestd.requires = [ "sinex-migrations.service" ];
-      systemd.services.sinex-gateway.after = [ "sinex-migrations.service" ];
-      systemd.services.sinex-gateway.requires = [ "sinex-migrations.service" ];
+      systemd.services.sinex-ingestd.after = [ "sinex-schema-apply.service" ];
+      systemd.services.sinex-ingestd.requires = [ "sinex-schema-apply.service" ];
+      systemd.services.sinex-gateway.after = [ "sinex-schema-apply.service" ];
+      systemd.services.sinex-gateway.requires = [ "sinex-schema-apply.service" ];
       systemd.services.sinex-ingestd.path = [ pkgs.git pkgs.git-annex ];
       systemd.services.sinex-gateway.path = [ pkgs.git pkgs.git-annex ];
       systemd.services.sinex-blob-init.path = [ pkgs.git pkgs.git-annex ];
