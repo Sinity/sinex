@@ -9,6 +9,7 @@ use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement
 use sqlx::{Executor, PgPool};
 
 const REQUIRED_EXTENSIONS: &[&str] = &["pg_jsonschema", "vector", "timescaledb", "pg_trgm"];
+pub const SHARED_ACCESS_ROLES: &[&str] = &["sinex_ingestd", "sinex_gateway", "sinex_readonly"];
 const EVENTS_REQUIRED_TRIGGERS: &[&str] =
     &["trg_events_no_update", "trg_events_archive_before_delete"];
 const EVENTS_REQUIRED_INDEXES: &[&str] = &[
@@ -108,6 +109,10 @@ pub async fn apply(pool: &PgPool) -> Result<(), ApplyError> {
     configure_timescaledb(pool).await?;
     apply_roles_and_grants(pool).await?;
     Ok(())
+}
+
+pub async fn ensure_shared_access_roles(pool: &PgPool) -> Result<(), ApplyError> {
+    execute_sql(pool, SHARED_ACCESS_ROLES_BOOTSTRAP_SQL).await
 }
 
 pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
@@ -1586,19 +1591,10 @@ GROUP BY source, scope_key, event_type, semantics_version, temporal_policy
 ORDER BY last_updated DESC;
 ";
 
+// Shared grant roles are provisioned during privileged bootstrap (xtask/NixOS or the
+// schema-apply bootstrap binary), so declarative schema apply remains safe to run as
+// the database owner role.
 const ROLE_GRANTS_SQL: &str = r"
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinex_ingestd') THEN
-    CREATE ROLE sinex_ingestd NOLOGIN;
-  END IF;
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinex_gateway') THEN
-    CREATE ROLE sinex_gateway NOLOGIN;
-  END IF;
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinex_readonly') THEN
-    CREATE ROLE sinex_readonly NOLOGIN;
-  END IF;
-END $$;
-
 GRANT USAGE ON SCHEMA core, raw, sinex_schemas, audit TO sinex_ingestd, sinex_gateway, sinex_readonly;
 
 REVOKE ALL ON sinex_schemas.gitops_schema_sources FROM sinex_ingestd, sinex_gateway, sinex_readonly;
@@ -1613,4 +1609,18 @@ GRANT EXECUTE ON FUNCTION core.execute_cascade_tombstone TO sinex_gateway;
 GRANT EXECUTE ON FUNCTION core.execute_cascade_restore TO sinex_gateway;
 GRANT EXECUTE ON FUNCTION core.lifecycle_tier_status TO sinex_gateway, sinex_readonly;
 GRANT EXECUTE ON FUNCTION core.jsonb_merge_deep TO sinex_ingestd, sinex_gateway;
+";
+
+const SHARED_ACCESS_ROLES_BOOTSTRAP_SQL: &str = r"
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinex_ingestd') THEN
+    CREATE ROLE sinex_ingestd NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinex_gateway') THEN
+    CREATE ROLE sinex_gateway NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinex_readonly') THEN
+    CREATE ROLE sinex_readonly NOLOGIN;
+  END IF;
+END $$;
 ";

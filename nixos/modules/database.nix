@@ -123,8 +123,18 @@ let
             ensureDBOwnership = false;
             ensureClauses.login = true;
           };
+
+      sharedAccessRoles = map (name: {
+        inherit name;
+        ensureDBOwnership = false;
+        ensureClauses.login = false;
+      }) [
+        "sinex_ingestd"
+        "sinex_gateway"
+        "sinex_readonly"
+      ];
     in
-    [ primaryUser ] ++ optionals (nodeUser != { }) [ nodeUser ];
+    [ primaryUser ] ++ optionals (nodeUser != { }) [ nodeUser ] ++ sharedAccessRoles;
 
   baseSettings = {
     # Timeouts
