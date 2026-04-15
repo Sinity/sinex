@@ -57,6 +57,28 @@ async fn declarative_apply_is_idempotent(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn shared_access_role_bootstrap_is_idempotent(ctx: TestContext) -> TestResult<()> {
+    sinex_schema::apply::ensure_shared_access_roles(&ctx.pool).await?;
+
+    for role in sinex_schema::apply::SHARED_ACCESS_ROLES {
+        let can_login = sqlx::query_scalar::<_, bool>(
+            r#"
+            SELECT rolcanlogin
+            FROM pg_roles
+            WHERE rolname = $1
+            "#,
+        )
+        .bind(*role)
+        .fetch_one(&ctx.pool)
+        .await?;
+
+        assert!(!can_login, "bootstrap role {role} must remain NOLOGIN");
+    }
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn declarative_diff_accepts_normalized_source_material_status_constraint(
     ctx: TestContext,
 ) -> TestResult<()> {
