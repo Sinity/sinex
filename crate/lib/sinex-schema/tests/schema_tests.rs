@@ -367,7 +367,9 @@ mod index_tests {
     #[ignore = "long"]
     async fn test_index_performance_benefit() -> color_eyre::eyre::Result<()> {
         let ctx = TestContext::new().await.unwrap();
+        let ctx = ctx.with_nats().shared().await?;
         let pool = &ctx.pool;
+        let _scope = ctx.pipeline().await?;
 
         // Create tables and indexes
         sqlx::query(
@@ -386,15 +388,11 @@ mod index_tests {
             let _ = sqlx::query(&sql).execute(pool).await; // ignore if exists
         }
 
-        for i in 0..40 {
-            ctx.publish(DynamicPayload::new(
-                "test-source",
-                "test-event",
-                serde_json::json!({"index": i}),
-            ))
-            .await
-            .unwrap();
-        }
+        let payloads: Vec<_> = (0..40)
+            .map(|i| DynamicPayload::new("test-source", "test-event", serde_json::json!({"index": i})))
+            .collect();
+        let events = ctx.publish_many(payloads).await?;
+        assert_eq!(events.len(), 40);
 
         sqlx::query("SET enable_seqscan = OFF")
             .execute(pool)

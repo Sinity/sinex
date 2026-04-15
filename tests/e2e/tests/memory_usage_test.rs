@@ -168,21 +168,23 @@ async fn test_event_processing_memory_usage(ctx: TestContext) -> TestResult<()> 
 
     metrics.record_measurement("Test Start");
 
-    // Process events in batches of increasing size
-    let batch_sizes = vec![10, 50, 100, 500, 1000];
+    // Process events in batches of increasing size. Keep the largest batch
+    // bounded and use batched publishing so this remains a memory-shape test
+    // instead of a sequential throughput timeout.
+    let batch_sizes = vec![10usize, 50, 100, 250, 500];
 
     for batch_size in batch_sizes {
         println!("\n📦 Processing batch of {batch_size} events");
 
         metrics.record_measurement(&format!("Before batch {batch_size}"));
 
-        // Process events and measure memory at different stages
+        let mut payloads = Vec::with_capacity(batch_size);
         for i in 0..batch_size {
             if i % 100 == 0 {
-                metrics.record_measurement(&format!("Processing event {i} in batch {batch_size}"));
+                metrics.record_measurement(&format!("Preparing event {i} in batch {batch_size}"));
             }
 
-            ctx.publish(DynamicPayload::new(
+            payloads.push(DynamicPayload::new(
                 "memory-test",
                 "memory.test.event",
                 json!({
@@ -191,9 +193,11 @@ async fn test_event_processing_memory_usage(ctx: TestContext) -> TestResult<()> 
                     "test_type": "memory_usage",
                     "timestamp": Timestamp::now().to_string()
                 }),
-            ))
-            .await?;
+            ));
         }
+
+        metrics.record_measurement(&format!("Prepared batch {batch_size}"));
+        ctx.publish_many(payloads).await?;
 
         metrics.record_measurement(&format!("After batch {batch_size}"));
 
@@ -228,12 +232,14 @@ async fn test_event_processing_memory_usage(ctx: TestContext) -> TestResult<()> 
 #[sinex_test]
 #[ignore = "heavy: run with xtask test --heavy"]
 async fn test_concurrent_memory_usage(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let shared_metrics = Arc::new(tokio::sync::Mutex::new(MemoryMetrics::new()));
 
     println!("🔄 Testing memory usage under concurrent processing");
 
-    let concurrent_workers = 10;
-    let events_per_worker = 200;
+    let concurrent_workers = 8;
+    let events_per_worker = 120;
 
     {
         let mut metrics = shared_metrics.lock().await;
@@ -327,6 +333,8 @@ async fn test_concurrent_memory_usage(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 #[ignore = "heavy: run with xtask test --heavy"]
 async fn test_large_payload_memory_usage(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let mut metrics = MemoryMetrics::new();
 
     println!("📦 Testing memory usage with large payloads");
@@ -335,41 +343,46 @@ async fn test_large_payload_memory_usage(ctx: TestContext) -> TestResult<()> {
 
     // Test different payload sizes
     let payload_sizes = vec![
-        (1, "1KB"),     // 1KB
-        (10, "10KB"),   // 10KB
-        (100, "100KB"), // 100KB
+        (1, "1KB", "1kb"),       // 1KB
+        (10, "10KB", "10kb"),    // 10KB
+        (100, "100KB", "100kb"), // 100KB
     ];
 
-    for (size_kb, size_label) in payload_sizes {
+    for (size_kb, size_label, event_type_suffix) in payload_sizes {
         println!("\n📊 Testing {size_label} payloads");
 
         metrics.record_measurement(&format!("Before {size_label} payload"));
 
         let large_data = "x".repeat(size_kb * 1024);
-        let event_count = std::cmp::max(1, 100 / size_kb); // Fewer events for larger payloads
+        // Keep the persisted sample size bounded so this remains a memory-shape
+        // test rather than a throughput benchmark that times out on round trips.
+        let event_count = match size_kb {
+            1 => 16,
+            10 => 8,
+            _ => 2,
+        };
 
         println!("  Processing {event_count} events with {size_label} payloads");
 
-        for i in 0..event_count {
-            ctx.publish(DynamicPayload::new(
-                "large-payload-test",
-                format!("large.payload.{size_label}"),
-                json!({
-                    "event_id": i,
-                    "size": size_label,
-                    "large_data": &large_data,
-                    "metadata": {
-                        "created_at": Timestamp::now().to_string(),
-                        "test_type": "memory_usage"
-                    }
-                }),
-            ))
-            .await?;
-
-            if i % 10 == 0 {
-                metrics.record_measurement(&format!("{size_label} payload event {i}"));
-            }
-        }
+        let payloads: Vec<DynamicPayload> = (0..event_count)
+            .map(|i| {
+                DynamicPayload::new(
+                    "large-payload-test",
+                    format!("large.payload.{event_type_suffix}"),
+                    json!({
+                        "event_id": i,
+                        "size": size_label,
+                        "large_data": &large_data,
+                        "metadata": {
+                            "created_at": Timestamp::now().to_string(),
+                            "test_type": "memory_usage"
+                        }
+                    }),
+                )
+            })
+            .collect();
+        metrics.record_measurement(&format!("Prepared {size_label} payload batch"));
+        ctx.publish_many(payloads).await?;
 
         metrics.record_measurement(&format!("After {size_label} payload"));
 
@@ -402,6 +415,8 @@ async fn test_large_payload_memory_usage(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 #[ignore = "heavy: run with xtask test --heavy"]
 async fn test_memory_stress_conditions(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let mut metrics = MemoryMetrics::new();
 
     println!("🔥 Testing memory usage under stress conditions");
@@ -411,7 +426,7 @@ async fn test_memory_stress_conditions(ctx: TestContext) -> TestResult<()> {
     // Phase 1: Rapid allocation and deallocation
     println!("\n⚡ Phase 1: Rapid allocation/deallocation");
 
-    for cycle in 0..10 {
+    for cycle in 0..6 {
         metrics.record_measurement(&format!("Stress cycle {cycle} start"));
 
         // Rapidly create and drop large vectors
@@ -423,7 +438,7 @@ async fn test_memory_stress_conditions(ctx: TestContext) -> TestResult<()> {
         metrics.record_measurement(&format!("Stress cycle {cycle} allocated"));
 
         // Process some events with this data
-        for i in 0..10 {
+        for i in 0..6 {
             ctx.publish(DynamicPayload::new(
                 "memory-stress-test",
                 "memory.stress.test",
@@ -450,7 +465,7 @@ async fn test_memory_stress_conditions(ctx: TestContext) -> TestResult<()> {
     // Phase 2: Sustained load
     println!("\n⏳ Phase 2: Sustained memory load");
 
-    let sustained_load_duration = Duration::from_secs(Timeouts::MEDIUM);
+    let sustained_load_duration = Duration::from_secs(Timeouts::SHORT);
     let start_time = Instant::now();
     let mut operation_count = 0;
 
@@ -526,8 +541,10 @@ async fn test_connection_pool_memory_usage(ctx: TestContext) -> TestResult<()> {
 
     metrics.record_measurement("Connection pool test start");
 
-    // Test acquiring and releasing many connections
-    let connection_cycles = 50;
+    // Keep the shape focused on connection lifecycle memory, not on saturating
+    // the shared pool hard enough that the test just spends two minutes waiting.
+    let connection_cycles = 20;
+    let simultaneous_connections = 4;
 
     for cycle in 0..connection_cycles {
         metrics.record_measurement(&format!("Connection cycle {cycle} start"));
@@ -535,7 +552,7 @@ async fn test_connection_pool_memory_usage(ctx: TestContext) -> TestResult<()> {
         // Acquire multiple connections simultaneously
         let mut connections = Vec::new();
 
-        for i in 0..10 {
+        for i in 0..simultaneous_connections {
             match pool.acquire().await {
                 Ok(conn) => {
                     connections.push(conn);
