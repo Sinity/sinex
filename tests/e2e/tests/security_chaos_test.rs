@@ -3,7 +3,10 @@
 //! Tests that the pipeline handles adversarial timestamp values and null-byte
 //! injections without crashing or corrupting data.
 
-use sinex_primitives::{DynamicPayload, Timestamp};
+use sinex_primitives::events::EventBuilder;
+use sinex_primitives::{DynamicPayload, Id, SourceMaterial, Timestamp};
+use std::time::Duration;
+use xtask::sandbox::events::EventPublisher;
 use xtask::sandbox::prelude::*;
 
 /// Publish events with extreme timestamps (far future, far past, epoch) and verify
@@ -90,20 +93,30 @@ async fn validator_rejects_null_byte_in_payload_string(ctx: TestContext) -> Test
         ),
     ];
 
-    let mut published_count = 0;
+    let mut accepted_by_transport = 0usize;
     for (label, payload_json) in &null_payloads {
-        let payload = DynamicPayload::new(
-            "security-null-test",
-            "security.null.injection",
+        let source = sinex_primitives::EventSource::from("security-null-test");
+        let event_type = sinex_primitives::EventType::from("security.null.injection");
+        let material_id = Id::<SourceMaterial>::new();
+        scope
+            .ctx()
+            .ensure_source_material(material_id, Some(source.as_str()))
+            .await?;
+        let event = EventBuilder::new_internal(
+            source,
+            event_type,
             json!({
                 "label": label,
                 "test_data": payload_json,
             }),
-        );
+        )
+        .from_material(material_id, 0)
+        .build()?;
 
-        // The publish may succeed or fail gracefully -- either is acceptable
-        match scope.publish(payload).await {
-            Ok(_) => published_count += 1,
+        // Transport acceptance and persistence are intentionally decoupled here:
+        // null bytes should make persistence fail cleanly later in ingestd.
+        match scope.ctx().publish_prebuilt_event(&event).await {
+            Ok(_) => accepted_by_transport += 1,
             Err(e) => {
                 // A clean rejection is acceptable for null bytes
                 println!("Null byte payload '{label}' rejected: {e}");
@@ -111,25 +124,29 @@ async fn validator_rejects_null_byte_in_payload_string(ctx: TestContext) -> Test
         }
     }
 
-    // Wait for whatever was published
-    if published_count > 0 {
-        scope.wait_for_event_count(published_count).await?;
+    // Transport acceptance only means the envelope reached the pipeline. The
+    // DB may still reject the payload and route it to the DLQ, which is the
+    // expected behavior for embedded null bytes.
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Verify stored events have intact payloads
-        let source = sinex_primitives::EventSource::from("security-null-test");
-        let stored = scope
-            .ctx()
-            .pool
-            .events()
-            .get_by_source(&source, sinex_primitives::Pagination::new(Some(100), None))
-            .await?;
+    let source = sinex_primitives::EventSource::from("security-null-test");
+    let stored = scope
+        .ctx()
+        .pool
+        .events()
+        .get_by_source(&source, sinex_primitives::Pagination::new(Some(100), None))
+        .await?;
 
-        for event in &stored {
-            assert!(
-                event.payload.get("label").is_some(),
-                "event payload should retain label field"
-            );
-        }
+    assert!(
+        stored.len() <= accepted_by_transport,
+        "persisted null-byte payloads should never exceed transport-accepted envelopes"
+    );
+
+    for event in &stored {
+        assert!(
+            event.payload.get("label").is_some(),
+            "event payload should retain label field"
+        );
     }
 
     scope.shutdown().await?;

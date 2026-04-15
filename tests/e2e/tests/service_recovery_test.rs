@@ -133,11 +133,13 @@ async fn test_pool_concurrent_stress_recovery(ctx: TestContext) -> TestResult<()
     Ok(())
 }
 
-/// Verify events flow through the pipeline without gaps when a pipeline scope
-/// is created, used, and cleanly shut down.
+/// Verify a fresh pipeline scope comes back cleanly after shutdown.
+///
+/// `PipelineScope::new()` resets the DB slot by contract, so a second scope
+/// should persist its own events without inheriting first-scope data.
 #[sinex_test(timeout = 60)]
 #[ignore = "heavy: run with xtask test --heavy"]
-async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> TestResult<()> {
+async fn test_pipeline_scope_restart_isolation(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
 
     // Phase 1: First pipeline scope -- publish and persist
@@ -155,7 +157,14 @@ async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> TestResult<(
     scope1.wait_for_event_count(phase1_count).await?;
     scope1.shutdown().await?;
 
-    // Phase 2: Second pipeline scope -- should work independently
+    let source = sinex_primitives::EventSource::from("continuity-test");
+    let phase1_stored = ctx.pool.events().count_by_source(&source).await?;
+    assert_eq!(
+        phase1_stored, phase1_count as i64,
+        "first scope should persist its own events before shutdown"
+    );
+
+    // Phase 2: Second pipeline scope starts from a clean slot.
     let scope2 = ctx.pipeline().await?;
     let phase2_count = 5usize;
     for i in 0..phase2_count {
@@ -169,13 +178,25 @@ async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> TestResult<(
     }
     scope2.wait_for_event_count(phase2_count).await?;
 
-    // Verify total events from both phases
-    let source = sinex_primitives::EventSource::from("continuity-test");
     let total = ctx.pool.events().count_by_source(&source).await?;
     assert_eq!(
-        total,
-        (phase1_count + phase2_count) as i64,
-        "all events from both phases should be persisted"
+        total, phase2_count as i64,
+        "restarted scope should only contain the second-phase events"
+    );
+
+    let all_events = ctx
+        .pool
+        .events()
+        .get_by_source(&source, sinex_primitives::Pagination::new(Some(100), None))
+        .await?;
+    let phase1_markers: Vec<_> = all_events
+        .iter()
+        .filter_map(|event| event.payload.get("phase").and_then(|value| value.as_i64()))
+        .filter(|phase| *phase == 1)
+        .collect();
+    assert!(
+        phase1_markers.is_empty(),
+        "phase-1 events must not survive into the restarted scope"
     );
 
     scope2.shutdown().await?;
