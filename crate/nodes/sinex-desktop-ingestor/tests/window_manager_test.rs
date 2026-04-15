@@ -16,7 +16,7 @@ use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
     HyprlandMonitorFocusedPayload, HyprlandStateCapturedPayload, HyprlandWindowClosedPayload,
     HyprlandWindowFocusedPayload, HyprlandWindowMovedPayload, HyprlandWindowOpenedPayload,
-    HyprlandWorkspaceSwitchedPayload, WindowGeometry,
+    HyprlandWindowTitleChangedPayload, HyprlandWorkspaceSwitchedPayload, WindowGeometry,
 };
 use xtask::sandbox::prelude::*;
 
@@ -274,6 +274,49 @@ async fn window_focused_no_previous_window() -> TestResult<()> {
         "first focused window has no predecessor"
     );
 
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// HyprlandWindowTitleChangedPayload: serde and trait
+// ---------------------------------------------------------------------------
+
+#[sinex_test]
+async fn window_title_changed_payload_serde_roundtrip() -> TestResult<()> {
+    let original = HyprlandWindowTitleChangedPayload {
+        window_id: "0x5a3b2c1d".to_string(),
+        window_title: "new title".to_string(),
+        previous_window_title: Some("old title".to_string()),
+        window_class: Some("kitty".to_string()),
+        workspace_id: Some(3),
+    };
+
+    let json = serde_json::to_string(&original)?;
+    let deserialized: HyprlandWindowTitleChangedPayload = serde_json::from_str(&json)?;
+
+    assert_eq!(deserialized.window_id, "0x5a3b2c1d");
+    assert_eq!(deserialized.window_title, "new title");
+    assert_eq!(
+        deserialized.previous_window_title.as_deref(),
+        Some("old title")
+    );
+    assert_eq!(deserialized.window_class.as_deref(), Some("kitty"));
+    assert_eq!(deserialized.workspace_id, Some(3));
+    Ok(())
+}
+
+#[sinex_test]
+async fn window_title_changed_payload_event_source_and_type() -> TestResult<()> {
+    let payload = HyprlandWindowTitleChangedPayload {
+        window_id: "0xabc".to_string(),
+        window_title: "sinex".to_string(),
+        previous_window_title: None,
+        window_class: None,
+        workspace_id: None,
+    };
+
+    assert_eq!(payload.event_source().as_ref(), "wm.hyprland");
+    assert_eq!(payload.event_type().as_ref(), "window.title_changed");
     Ok(())
 }
 

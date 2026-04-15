@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "previous_window_title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "window_class": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "window_id": {
+      "type": "string"
+    },
+    "window_title": {
+      "type": "string"
+    },
+    "workspace_id": {
+      "format": "int32",
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "window_id",
+    "window_title"
+  ],
+  "title": "HyprlandWindowTitleChangedPayload",
+  "type": "object",
+  "x-sinex-event-type": "window.title_changed",
+  "x-sinex-source": "wm.hyprland",
+  "x-sinex-version": "1.0.0"
+}
