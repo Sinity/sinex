@@ -358,20 +358,15 @@ impl DbusWatcher {
                 .map_err(|e| dbus_error("Failed to connect to system bus", e))?,
         };
 
-        // Spawn the connection resource handler
-        let bus_type_owned = bus_type.to_string();
-        tokio::spawn(async move {
-            let err = resource.await;
-            error!("D-Bus {} connection lost: {:?}", bus_type_owned, err);
-        });
-
         // Add match rules for signals and method calls
         let signal_rule = MatchRule::new().with_type(MessageType::Signal);
+        let signal_rule_match = signal_rule.match_str();
         conn.add_match(signal_rule)
             .await
             .map_err(|e| dbus_error("Failed to add signal match rule", e))?;
 
         let method_rule = MatchRule::new().with_type(MessageType::MethodCall);
+        let method_rule_match = method_rule.match_str();
         conn.add_match(method_rule)
             .await
             .map_err(|e| dbus_error("Failed to add method call match rule", e))?;
@@ -382,45 +377,47 @@ impl DbusWatcher {
         let (msg_tx, msg_rx) = mpsc::channel::<DbusMessageData>(DBUS_MESSAGE_CHANNEL_SIZE);
         // Activity tracker for connection health monitoring
         let activity_tracker = Arc::new(Mutex::new(std::time::Instant::now()));
+        let mut resource_task = tokio::spawn(async move {
+            Err::<(), _>(dbus_error("D-Bus connection lost", resource.await))
+        });
 
         // Spawn a single worker to process messages (Receiver is not clonable)
-        {
-            let tx = tx.clone();
-            let config = config.clone();
-            let bus_type_str = bus_type.to_string();
-            let mut msg_rx = msg_rx;
-            let material = material.clone();
-
-            tokio::spawn(async move {
-                debug!("D-Bus worker started for {} bus", bus_type_str);
-                while let Some(msg_data) = msg_rx.recv().await {
-                    if let Err(e) = Self::process_message(
-                        &bus_type_str,
-                        msg_data.msg_type,
-                        msg_data.interface,
-                        msg_data.path,
-                        msg_data.member,
-                        msg_data.sender,
-                        msg_data.destination,
-                        msg_data.args_json,
-                        tx.clone(),
-                        &config,
-                        &material,
-                    )
-                    .await
-                    {
-                        error!("Failed to process D-Bus message: {}", e);
-                    }
+        let tx = tx.clone();
+        let worker_config = config.clone();
+        let bus_type_str = bus_type.to_string();
+        let mut msg_rx = msg_rx;
+        let material = material.clone();
+        let worker_bus_type = bus_type_str.clone();
+        let mut worker_task = tokio::spawn(async move {
+            debug!("D-Bus worker started for {} bus", worker_bus_type);
+            while let Some(msg_data) = msg_rx.recv().await {
+                if let Err(e) = Self::process_message(
+                    &worker_bus_type,
+                    msg_data.msg_type,
+                    msg_data.interface,
+                    msg_data.path,
+                    msg_data.member,
+                    msg_data.sender,
+                    msg_data.destination,
+                    msg_data.args_json,
+                    tx.clone(),
+                    &worker_config,
+                    &material,
+                )
+                .await
+                {
+                    error!("Failed to process D-Bus message: {}", e);
                 }
-                debug!("D-Bus worker stopped for {} bus", bus_type_str);
-            });
-        }
+            }
+            debug!("D-Bus worker stopped for {} bus", worker_bus_type);
+        });
 
         // Set up message processing
         let activity_for_callback = activity_tracker.clone();
+        let callback_tx = msg_tx.clone();
 
         // Start receiving messages
-        conn.start_receive(
+        let receive_token = conn.start_receive(
             MatchRule::new(),
             Box::new(move |msg, _| {
                 // Update activity tracker
@@ -451,7 +448,7 @@ impl DbusWatcher {
 
                 // Send to worker pool via bounded channel
                 // If channel is full, drop newest message (backpressure)
-                if let Err(mpsc::error::TrySendError::Full(_)) = msg_tx.try_send(msg_data) {
+                if let Err(mpsc::error::TrySendError::Full(_)) = callback_tx.try_send(msg_data) {
                     warn!(
                         "D-Bus message channel full (capacity {}), dropping newest message",
                         DBUS_MESSAGE_CHANNEL_SIZE
@@ -468,7 +465,7 @@ impl DbusWatcher {
             Duration::from_secs(config.health_check_interval_secs.as_secs());
         let inactivity_timeout = Duration::from_secs(config.inactivity_timeout_secs.as_secs());
 
-        loop {
+        let exit_error = loop {
             tokio::time::sleep(health_check_interval).await;
 
             // Check if we've received activity recently
@@ -479,11 +476,94 @@ impl DbusWatcher {
                     config.inactivity_timeout_secs.as_secs()
                 );
                 // Return error to trigger reconnection via retry mechanism
-                return Err(sinex_node_sdk::SinexError::processing(format!(
+                break sinex_node_sdk::SinexError::processing(format!(
                     "D-Bus {} bus inactive for {}s",
                     bus_type,
                     config.inactivity_timeout_secs.as_secs()
-                )));
+                ));
+            }
+        };
+
+        let _ = conn.stop_receive(receive_token);
+        if let Err(error) = conn.remove_match_no_cb(&signal_rule_match).await {
+            warn!(
+                bus = %bus_type_str,
+                error = %error,
+                "Failed to remove D-Bus signal match during watcher shutdown"
+            );
+        }
+        if let Err(error) = conn.remove_match_no_cb(&method_rule_match).await {
+            warn!(
+                bus = %bus_type_str,
+                error = %error,
+                "Failed to remove D-Bus method match during watcher shutdown"
+            );
+        }
+        drop(msg_tx);
+        Self::drain_worker_task(&bus_type_str, &mut worker_task).await;
+        Self::shutdown_resource_task(&bus_type_str, &mut resource_task).await;
+
+        Err(exit_error)
+    }
+
+    async fn drain_worker_task(bus_type: &str, worker_task: &mut tokio::task::JoinHandle<()>) {
+        match tokio::time::timeout(Duration::from_secs(1), &mut *worker_task).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) if error.is_cancelled() => {
+                debug!(bus = bus_type, "D-Bus worker task cancelled during shutdown");
+            }
+            Ok(Err(error)) => {
+                warn!(
+                    bus = bus_type,
+                    error = %error,
+                    "D-Bus worker task failed while draining"
+                );
+            }
+            Err(_) => {
+                worker_task.abort();
+                match worker_task.await {
+                    Ok(()) => {}
+                    Err(error) if error.is_cancelled() => {}
+                    Err(error) => {
+                        warn!(
+                            bus = bus_type,
+                            error = %error,
+                            "D-Bus worker task panicked after forced shutdown"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    async fn shutdown_resource_task(
+        bus_type: &str,
+        resource_task: &mut tokio::task::JoinHandle<NodeResult<()>>,
+    ) {
+        if !resource_task.is_finished() {
+            resource_task.abort();
+        }
+
+        match resource_task.await {
+            Ok(Ok(())) => {
+                debug!(bus = bus_type, "D-Bus connection resource stopped cleanly");
+            }
+            Ok(Err(error)) => {
+                warn!(
+                    bus = bus_type,
+                    error = %error,
+                    "D-Bus connection resource reported an error during shutdown"
+                );
+            }
+            Err(error) if error.is_cancelled() => {
+                debug!(bus = bus_type, "D-Bus connection resource cancelled during shutdown");
+            }
+            Err(error) => {
+                warn!(
+                    bus = bus_type,
+                    error = %error,
+                    "D-Bus connection resource panicked during shutdown"
+                );
             }
         }
     }

@@ -864,6 +864,13 @@
     },
     {
       "source": "wm.hyprland",
+      "event_type": "window.title_changed",
+      "version": "1.0.0",
+      "path": "wm.hyprland/window.title_changed.json",
+      "content_hash": "ad435f32220bbe35305847a4ea4995958dab365db9ba8bb3420e9dcc5debe79b"
+    },
+    {
+      "source": "wm.hyprland",
       "event_type": "workspace.switched",
       "version": "1.0.0",
       "path": "wm.hyprland/workspace.switched.json",
