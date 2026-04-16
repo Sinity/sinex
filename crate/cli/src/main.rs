@@ -6,7 +6,8 @@ use sinexctl::commands::{
     AuditCommand, BlobCommands, CompletionsCommand, ConfigCommands, ContextCommand, CoreCommands,
     DemoCommand, DlqCommands, ErrorsCommand, GatewayCommands, GitOpsCommands, LifecycleCommands,
     NodeCommands, OpsCommands, QueryCommand, RecentCommand, ReplayCommands, ReportCommands,
-    StatusCommand, TelemetryCommands, TraceCommand, TuiCommand, WatchCommand,
+    ExplainCommand, StatusCommand,
+    TelemetryCommands, TraceCommand, TuiCommand, VerifyCommand, WatchCommand,
 };
 use sinexctl::model::OutputFormat;
 use sinexctl::{Config, default_rpc_url};
@@ -176,6 +177,13 @@ enum Commands {
     /// Show activity context for session resumption ("what was I doing?")
     Context(ContextCommand),
 
+    /// Explain a single event: full details, provenance, payload
+    Explain(ExplainCommand),
+
+
+    /// Verify trustworthiness invariants across the event store
+    Verify(VerifyCommand),
+
     /// Generate shell completions
     Completions(CompletionsCommand),
 }
@@ -262,6 +270,8 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Errors(cmd) => cmd.execute(&client).await?,
                 Commands::Watch(cmd) => cmd.execute(&client).await?,
                 Commands::Context(cmd) => cmd.execute(&client).await?,
+                Commands::Explain(cmd) => cmd.execute(&client).await?,
+                Commands::Verify(cmd) => cmd.execute(&client).await?,
                 Commands::Completions(_) => unreachable!("Completions command handled above"),
             }
         }
