@@ -159,7 +159,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             match status {
                 VerificationStatus::Pass => info!("✓ Pre-flight verification PASSED"),
                 VerificationStatus::Warning => {
-                    info!("⚠ Pre-flight verification completed with warnings")
+                    info!("⚠ Pre-flight verification completed with warnings");
                 }
                 VerificationStatus::Fail => error!("✗ Pre-flight verification FAILED"),
             }

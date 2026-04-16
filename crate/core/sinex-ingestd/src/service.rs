@@ -127,28 +127,12 @@ pub(crate) fn task_shutdown_error(
     .with_source(error.to_string())
 }
 
-fn cleanup_task_failure(name: &'static str, error: &SinexError) -> SinexError {
-    task_shutdown_error("critical", name, error)
-}
-
-fn cleanup_task_join_failure(name: &'static str, error: &tokio::task::JoinError) -> SinexError {
-    task_shutdown_error("critical", name, error)
-}
-
-fn cleanup_task_monitor_failure(error: &tokio::task::JoinError) -> SinexError {
-    task_shutdown_error("critical", "monitor", error)
-}
-
 fn cleanup_task_timeout(count: usize, timeout: Duration) -> SinexError {
     SinexError::timeout(format!(
         "timed out waiting for {count} critical tasks during shutdown"
     ))
     .with_duration(timeout)
     .with_count(count)
-}
-
-fn background_task_join_failure(index: usize, error: &tokio::task::JoinError) -> SinexError {
-    task_shutdown_error("background", &index.to_string(), error)
 }
 
 fn background_task_timeout(count: usize, timeout: Duration) -> SinexError {
@@ -606,19 +590,19 @@ impl IngestService {
                         Some(Ok((name, Ok(Err(error))))) => {
                             warn!(task = name, error = %error, "Critical task exited with error during shutdown");
                             if cleanup_error.is_none() {
-                                cleanup_error = Some(cleanup_task_failure(name, &error));
+                                cleanup_error = Some(task_shutdown_error("critical", name, &error));
                             }
                         }
                         Some(Ok((name, Err(error)))) => {
                             warn!(task = name, error = ?error, "Critical task join failed during shutdown");
                             if cleanup_error.is_none() {
-                                cleanup_error = Some(cleanup_task_join_failure(name, &error));
+                                cleanup_error = Some(task_shutdown_error("critical", name, &error));
                             }
                         }
                         Some(Err(error)) => {
                             warn!(error = ?error, "Critical task monitor join failed during shutdown");
                             if cleanup_error.is_none() {
-                                cleanup_error = Some(cleanup_task_monitor_failure(&error));
+                                cleanup_error = Some(task_shutdown_error("critical", "monitor", &error));
                             }
                         }
                         None => break,
@@ -1018,7 +1002,7 @@ impl IngestService {
                     error = %error,
                     "Background task exited unexpectedly during forced shutdown"
                 );
-                Some(background_task_join_failure(index, &error))
+                Some(task_shutdown_error("background", &index.to_string(), &error))
             }
         }
     }
@@ -1051,7 +1035,7 @@ impl IngestService {
                     } else {
                         debug!(task_index = i, error = %error, "Background task exited during shutdown");
                     }
-                    shutdown_errors.push(background_task_join_failure(i, &error));
+                    shutdown_errors.push(task_shutdown_error("background", &i.to_string(), &error));
                 }
             }
             shutdown_errors

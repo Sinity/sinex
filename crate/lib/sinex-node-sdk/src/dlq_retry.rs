@@ -92,7 +92,7 @@ impl DlqRetryHandler {
         info!("Starting DLQ retry operation");
 
         let js = jetstream::new(self.nats_client.clone());
-        let dlq_stream = self.env.nats_stream_name("EVENTS_DLQ");
+        let dlq_stream = self.env.nats_stream_name("SINEX_RAW_EVENTS_DLQ");
 
         let stream = js
             .get_stream(&dlq_stream)
@@ -186,7 +186,7 @@ impl DlqRetryHandler {
         info!("Retrying specific event: {event_id}");
 
         let js = jetstream::new(self.nats_client.clone());
-        let dlq_stream = self.env.nats_stream_name("EVENTS_DLQ");
+        let dlq_stream = self.env.nats_stream_name("SINEX_RAW_EVENTS_DLQ");
 
         let mut stream = js
             .get_stream(&dlq_stream)
@@ -431,7 +431,7 @@ impl DlqRetryHandler {
     /// Get DLQ statistics
     pub async fn get_stats(&self) -> NodeResult<DlqStats> {
         let js = jetstream::new(self.nats_client.clone());
-        let dlq_stream_name = self.env.nats_stream_name("EVENTS_DLQ");
+        let dlq_stream_name = self.env.nats_stream_name("SINEX_RAW_EVENTS_DLQ");
 
         let mut stream = js
             .get_stream(&dlq_stream_name)

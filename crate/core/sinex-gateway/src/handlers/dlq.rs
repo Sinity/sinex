@@ -79,7 +79,7 @@ pub async fn handle_dlq_peek(services: &ServiceContainer, params: Value) -> Resu
         serde_json::from_value(params).wrap_err("Invalid DLQ peek parameters")?;
 
     let js = jetstream::new(nats_client.clone());
-    let dlq_stream_name = env.nats_stream_name("EVENTS_DLQ");
+    let dlq_stream_name = env.nats_stream_name("SINEX_RAW_EVENTS_DLQ");
 
     let stream = js
         .get_stream(&dlq_stream_name)
@@ -289,7 +289,7 @@ pub async fn handle_dlq_purge(
     }
 
     let js = jetstream::new(nats_client.clone());
-    let dlq_stream_name = env.nats_stream_name("EVENTS_DLQ");
+    let dlq_stream_name = env.nats_stream_name("SINEX_RAW_EVENTS_DLQ");
 
     let mut stream = js
         .get_stream(&dlq_stream_name)

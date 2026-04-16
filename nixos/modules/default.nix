@@ -910,7 +910,7 @@ in
           filesystem = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = true; description = "Enable filesystem node."; };
+                enable = mkOption { type = bool; default = true; description = "Enable filesystem node. Watches large directory trees; needs more memory than other nodes."; };
                 watchPaths = mkOption {
                   type = strList;
                   default = [];
@@ -941,9 +941,9 @@ in
                   description = "Batch override (null ⇒ inherit defaults).";
                 };
                 resources = mkOption {
-                  type = nullOr (resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; });
-                  default = null;
-                  description = "Resource override (null ⇒ inherit defaults).";
+                  type = nullOr (resourceModule { defaultMemory = "1G"; defaultCpu = "50%"; });
+                  default = {};
+                  description = "Filesystem node resource limits. Defaults to 1G memory (higher than other nodes due to inotify watch overhead).";
                 };
                 env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
                 extraArgs = mkOption { type = strList; default = []; description = "Extra CLI args."; };

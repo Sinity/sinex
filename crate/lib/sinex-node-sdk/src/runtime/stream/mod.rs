@@ -1379,6 +1379,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         self.handles = Some(handles);
         self.service_info = Some(service_info);
         self.raw_config = Some(raw_config.clone());
+        let batcher_work_dir = work_dir_utf8.as_std_path().to_path_buf();
         self.work_dir_utf8 = Some(work_dir_utf8);
 
         let batcher_config = {
@@ -1402,6 +1403,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             batcher_config,
             event_receiver,
             batcher_shutdown_receiver,
+            batcher_work_dir,
         ));
 
         self.lifecycle = RunnerLifecycle::Initialized;
