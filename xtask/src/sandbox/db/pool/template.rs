@@ -795,7 +795,7 @@ async fn ensure_template_database_named(
     let desired_fingerprint = Some(schema_fingerprint()?);
 
     let mut admin_conn = connect_admin_with_retry(admin_url).await?;
-    let lock_key = advisory_lock_key(&template_name);
+    let lock_key = advisory_lock_key(template_name);
 
     let ensure_deadline = std::time::Instant::now() + Duration::from_secs(45);
     let mut backoff = Duration::from_millis(25);
@@ -806,16 +806,16 @@ async fn ensure_template_database_named(
         if let Some(extensions) = check_template_reuse(
             &mut admin_conn,
             admin_url,
-            &template_name,
+            template_name,
             &desired_fingerprint,
             false,
         )
         .await?
         {
-            harden_template_database(&mut admin_conn, &template_name).await?;
-            cache_template_name(&template_name);
+            harden_template_database(&mut admin_conn, template_name).await?;
+            cache_template_name(template_name);
             return Ok(build_template_guard(
-                &template_name,
+                template_name,
                 extensions,
                 lock_key,
                 admin_conn,
@@ -849,17 +849,17 @@ async fn ensure_template_database_named(
         if let Some(extensions) = check_template_reuse(
             &mut admin_conn,
             admin_url,
-            &template_name,
+            template_name,
             &desired_fingerprint,
             true,
         )
         .await?
         {
             downgrade_to_shared_lock(&mut admin_conn, lock_key).await?;
-            harden_template_database(&mut admin_conn, &template_name).await?;
-            cache_template_name(&template_name);
+            harden_template_database(&mut admin_conn, template_name).await?;
+            cache_template_name(template_name);
             return Ok(build_template_guard(
-                &template_name,
+                template_name,
                 extensions,
                 lock_key,
                 admin_conn,
@@ -869,7 +869,7 @@ async fn ensure_template_database_named(
         // Rebuild the template from scratch
         let extensions = rebuild_template(
             &mut admin_conn,
-            &template_name,
+            template_name,
             admin_url,
             &desired_fingerprint,
             slot_max_connections,
@@ -878,9 +878,9 @@ async fn ensure_template_database_named(
         .await?;
 
         downgrade_to_shared_lock(&mut admin_conn, lock_key).await?;
-        cache_template_name(&template_name);
+        cache_template_name(template_name);
         return Ok(build_template_guard(
-            &template_name,
+            template_name,
             extensions,
             lock_key,
             admin_conn,
