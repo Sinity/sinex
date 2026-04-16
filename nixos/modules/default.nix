@@ -1141,6 +1141,19 @@ in
                   description = "Health aggregator automaton.";
                 };
 
+                sessionDetector = mkOption {
+                  type = submodule {
+                    options = {
+                      enable = mkOption { type = bool; default = false; description = "Enable session detector automaton. Groups events by temporal proximity into session boundaries."; };
+                      subjects = mkOption { type = strList; default = [ "events.raw.>" ]; description = "Subject filters to consume (all events by default for cross-source session detection)."; };
+                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                      env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
+                    };
+                  };
+                  default = {};
+                  description = "Session detector automaton. Groups events by temporal proximity (gap > 5 min = new session boundary).";
+                };
+
                 profiles = mkOption {
                   type = attrsOf (submodule {
                     options = {
