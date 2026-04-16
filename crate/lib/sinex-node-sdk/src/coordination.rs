@@ -1249,21 +1249,18 @@ impl NodeCoordination {
 
                // Handoffs
                request = handoff_rx.recv() => {
-                   match request {
-                       Some(request) => {
-                           info!("Received handoff request");
-                           self.handle_graceful_handoff(request).await?;
-                           return Ok(LeaderLoopOutcome::Exit); // Exit after handoff
-                       }
-                       None => {
-                           warn!(service = %self.instance.service_name,
-                               instance_id = %self.instance.instance_id,
-                               "Handoff monitor terminated unexpectedly; cannot receive handoff requests"
-                           );
-                           return Err(SinexError::channel_receive(
-                               "Handoff monitor channel closed while leader is running",
-                           ));
-                       }
+                   if let Some(request) = request {
+                       info!("Received handoff request");
+                       self.handle_graceful_handoff(request).await?;
+                       return Ok(LeaderLoopOutcome::Exit); // Exit after handoff
+                   } else {
+                       warn!(service = %self.instance.service_name,
+                           instance_id = %self.instance.instance_id,
+                           "Handoff monitor terminated unexpectedly; cannot receive handoff requests"
+                       );
+                       return Err(SinexError::channel_receive(
+                           "Handoff monitor channel closed while leader is running",
+                       ));
                    }
                }
             }

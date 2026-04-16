@@ -265,10 +265,7 @@ fn parse_checkpoint_stream(checkpoint_str: &str) -> Checkpoint {
 }
 
 fn checkpoint_looks_like_json(checkpoint_str: &str) -> bool {
-    matches!(
-        checkpoint_str.chars().next(),
-        Some('{') | Some('[') | Some('"')
-    )
+    matches!(checkpoint_str.chars().next(), Some('{' | '[' | '"'))
 }
 
 fn checkpoint_looks_like_rfc3339(checkpoint_str: &str) -> bool {

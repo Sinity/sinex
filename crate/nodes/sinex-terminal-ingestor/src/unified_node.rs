@@ -2890,6 +2890,7 @@ impl IngestorNode for TerminalNode {
     type Config = TerminalConfig;
     type State = TerminalCheckpoint;
 
+    #[allow(clippy::unused_self)]
     fn name(&self) -> &'static str {
         "terminal-watcher"
     }
@@ -3040,9 +3041,7 @@ impl IngestorNode for TerminalNode {
             events_processed,
             duration: started_at.elapsed(),
             final_checkpoint: Self::checkpoint_from_states(checkpoint_states)?,
-            time_range: Self::checkpoint_timestamp(&from)
-                .zip(until.end_time())
-                .map(|(started_at, finished_at)| (started_at, finished_at)),
+            time_range: Self::checkpoint_timestamp(&from).zip(until.end_time()),
             node_stats: HashMap::new(),
             successful_targets,
             failed_targets,

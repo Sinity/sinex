@@ -517,10 +517,12 @@ mod tests {
         type Config = ();
         type State = TestState;
 
+        #[allow(clippy::unused_self)]
         fn name(&self) -> &str {
             "ingestor-adapter-test"
         }
 
+        #[allow(clippy::unused_self)]
         fn capabilities(&self) -> NodeCapabilities {
             NodeCapabilities::default()
         }

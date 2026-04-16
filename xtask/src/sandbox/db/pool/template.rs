@@ -898,7 +898,7 @@ async fn take_shared_advisory_lock(admin_conn: &mut PgConnection, lock_key: i64)
     )
     .await
     .map_err(|_| eyre!("Template shared-lock timeout"))?
-    .map_err(|e| eyre!(format!("Template shared-lock failed: {e}")))?;
+    .map_err(|e| eyre!("Template shared-lock failed: {e}"))?;
     Ok(())
 }
 
@@ -1131,7 +1131,7 @@ async fn rebuild_template(
     let extensions =
         run_template_schema_apply(template_name, &template_admin_url, template_pool_max)
             .await
-            .map_err(|e| eyre!(format!("Template schema/setup failed: {e}")))?;
+            .map_err(|e| eyre!("Template schema/setup failed: {e}"))?;
 
     let template_elapsed = template_start.elapsed();
     eprintln!(
@@ -1183,13 +1183,13 @@ async fn create_template_db(admin_conn: &mut PgConnection, template_name: &str) 
                 );
                 Ok(())
             } else {
-                Err(eyre!(format!("Create database failed: {err}")))
+                Err(eyre!("Create database failed: {err}"))
             }
         }
-        Err(_) => Err(eyre!(format!(
+        Err(_) => Err(eyre!(
             "Create database timed out after {:?} while creating template {template_name}",
             CREATE_TEMPLATE_DB_TIMEOUT
-        ))),
+        )),
     }
 }
 
@@ -1231,14 +1231,14 @@ async fn run_template_schema_apply(
     )
     .await
     .map_err(|_| {
-        eyre!(format!(
+        eyre!(
             "Schema apply timed out after {:?} for template database {template_name}. \
              Check for missing PostgreSQL extensions, exhausted Timescale background workers, \
              or a stuck declarative DDL statement.",
             APPLY_TEMPLATE_SCHEMA_TIMEOUT
-        ))
+        )
     })
-    .and_then(|res| res.map_err(|e| eyre!(format!("Schema apply failed: {e}"))));
+    .and_then(|res| res.map_err(|e| eyre!("Schema apply failed: {e}")));
     apply_result?;
 
     // Sanity-check: verify the schema was applied completely (≥ 8 tables in core.*).
@@ -1383,10 +1383,10 @@ async fn check_required_extensions(pool: &DbPool) -> TestResult<()> {
     }
 
     if !missing_required.is_empty() {
-        return Err(eyre!(format!(
+        return Err(eyre!(
             "Missing required PostgreSQL extensions: {}",
             missing_required.join(", ")
-        )));
+        ));
     }
 
     install_optional_extensions(pool).await;
@@ -1432,16 +1432,16 @@ async fn ensure_extension_installed(pool: &DbPool, extension: &str) -> TestResul
             .await?;
 
     if available.is_none() {
-        return Err(eyre!(format!(
+        return Err(eyre!(
             "Extension {extension} is not available in the current PostgreSQL installation"
-        )));
+        ));
     }
 
     let create_stmt = format!("CREATE EXTENSION IF NOT EXISTS {extension}");
     sqlx::query(&create_stmt)
         .execute(pool)
         .await
-        .map_err(|e| eyre!(format!("Failed to create extension {extension}: {e}")))?;
+        .map_err(|e| eyre!("Failed to create extension {extension}: {e}"))?;
 
     Ok(())
 }

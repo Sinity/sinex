@@ -243,10 +243,8 @@ async fn test_deps_timings_top_parameter_parsing() -> ::xtask::sandbox::TestResu
 
 #[sinex_test]
 async fn test_deps_timings_invalid_top() -> ::xtask::sandbox::TestResult<()> {
-    let error = match Cli::try_parse_from(["xtask", "deps", "timings", "--top", "invalid"]) {
-        Ok(_) => panic!("invalid --top should fail during clap parsing"),
-        Err(error) => error,
-    };
+    let error = Cli::try_parse_from(["xtask", "deps", "timings", "--top", "invalid"])
+        .expect_err("invalid --top should fail during clap parsing");
     let rendered = error.to_string();
     assert!(rendered.contains("invalid") || rendered.contains("integer"));
     Ok(())

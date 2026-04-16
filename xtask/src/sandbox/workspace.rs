@@ -281,10 +281,9 @@ mod tests {
         std::fs::remove_file(&lib_rs)?;
         std::fs::create_dir(&lib_rs)?;
 
-        let error = match workspace.inject_compile_error(DEFAULT_CRATE) {
-            Ok(_) => panic!("directory lib.rs should surface"),
-            Err(error) => error,
-        };
+        let error = workspace
+            .inject_compile_error(DEFAULT_CRATE)
+            .expect_err("directory lib.rs should surface");
         let message = format!("{error:#}");
         assert!(message.contains("inject_compile_error: read existing"));
         assert!(message.contains(lib_rs.display().to_string().as_str()));
@@ -298,10 +297,9 @@ mod tests {
         std::fs::remove_file(&cargo_toml)?;
         std::fs::create_dir(&cargo_toml)?;
 
-        let error = match workspace.inject_unused_dep(DEFAULT_CRATE, "serde_json", "1") {
-            Ok(_) => panic!("directory Cargo.toml should surface"),
-            Err(error) => error,
-        };
+        let error = workspace
+            .inject_unused_dep(DEFAULT_CRATE, "serde_json", "1")
+            .expect_err("directory Cargo.toml should surface");
         let message = format!("{error:#}");
         assert!(message.contains("inject_unused_dep: read existing"));
         assert!(message.contains(cargo_toml.display().to_string().as_str()));

@@ -945,13 +945,13 @@ impl WindowManagerWatcher {
         self.windows
             .entry(window_address.to_string())
             .and_modify(|window| {
-                window.title = window_title.clone();
+                window.title.clone_from(&window_title);
                 window.last_seen = now;
                 if !stored_class.is_empty() {
-                    window.class = stored_class.clone();
+                    window.class.clone_from(&stored_class);
                 }
                 if !stored_workspace.is_empty() {
-                    window.workspace_id = stored_workspace.clone();
+                    window.workspace_id.clone_from(&stored_workspace);
                 }
             })
             .or_insert_with(|| WindowInfo {

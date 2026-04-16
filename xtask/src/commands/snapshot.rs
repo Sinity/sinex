@@ -386,7 +386,7 @@ fn push_context_field(lines: &mut Vec<String>, name: &str, field: SnapshotContex
     if let Some(issue) = field.issue {
         lines.push(format!(
             "{name}_issue: {}",
-            serde_json::Value::String(issue).to_string()
+            serde_json::Value::String(issue)
         ));
     }
 }
@@ -436,10 +436,7 @@ fn format_active_diagnostics(ctx: &CommandContext) -> SnapshotContextField {
             .take(10)
             .map(|d| {
                 let file = d.file_path.as_deref().unwrap_or("?");
-                let line = d
-                    .line
-                    .map(|l| l.to_string())
-                    .unwrap_or_else(|| "?".to_string());
+                let line = d.line.map_or_else(|| "?".to_string(), |l| l.to_string());
                 let msg = d.message.chars().take(60).collect::<String>();
                 format!("{{file:\"{file}\", line:{line}, msg:\"{msg}\"}}")
             })
@@ -696,10 +693,10 @@ fn collect_transitive_workspace_deps(
 
         if result.insert(package.name.clone()) {
             for dependency in &package.dependencies {
-                if let Some(dep_id) = workspace_id_by_name.get(dependency.name.as_str()) {
-                    if !result.contains(dependency.name.as_str()) {
-                        queue.push_back(dep_id);
-                    }
+                if let Some(dep_id) = workspace_id_by_name.get(dependency.name.as_str())
+                    && !result.contains(dependency.name.as_str())
+                {
+                    queue.push_back(dep_id);
                 }
             }
         }

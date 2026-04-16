@@ -837,6 +837,7 @@ impl ClipboardWatcher {
 
 #[cfg(test)]
 impl ClipboardWatcher {
+    #[allow(clippy::unused_async)]
     async fn test_watcher(
         max_content_size: usize,
         stage_context: StageAsYouGoContext,

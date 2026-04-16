@@ -554,7 +554,7 @@ impl<'db> HistoryAnalysis<'db> {
         for pkg in &packages {
             results.push(self.package_health(pkg)?);
         }
-        results.sort_by(|a, b| b.diagnostic_count.cmp(&a.diagnostic_count));
+        results.sort_by_key(|p| std::cmp::Reverse(p.diagnostic_count));
         Ok(results)
     }
 
@@ -752,9 +752,7 @@ impl<'db> HistoryAnalysis<'db> {
 
         let build_score = ((100i32 - (error_count as i32 * 10) - (warning_count as i32 / 5))
             .clamp(0, 100)) as u32;
-        let test_score = avg_test_pass_rate
-            .map(|avg| (avg * 100.0).round() as u32)
-            .unwrap_or(75);
+        let test_score = avg_test_pass_rate.map_or(75, |avg| (avg * 100.0).round() as u32);
         let velocity_score = Self::compute_velocity_score(velocity_trends);
         let score =
             (build_score as f64 * 0.5 + test_score as f64 * 0.3 + velocity_score as f64 * 0.2)
@@ -1162,7 +1160,7 @@ impl<'db> HistoryAnalysis<'db> {
                 },
             })
             .collect();
-        hotspots.sort_by(|a, b| b.occurrences.cmp(&a.occurrences));
+        hotspots.sort_by_key(|h| std::cmp::Reverse(h.occurrences));
         hotspots.truncate(limit);
         Ok(hotspots)
     }
@@ -1280,7 +1278,7 @@ impl<'db> HistoryAnalysis<'db> {
         let failing_pkgs: Vec<_> = health
             .packages
             .iter()
-            .filter(|p| p.test_pass_rate.map(|r| r < 0.9).unwrap_or(false))
+            .filter(|p| p.test_pass_rate.is_some_and(|r| r < 0.9))
             .collect();
 
         let packages_with_tests = health
@@ -1377,8 +1375,7 @@ impl<'db> HistoryAnalysis<'db> {
                 severity: "info".to_string(),
                 category: "build".to_string(),
                 description: format!(
-                    "{} chronic diagnostic(s) have persisted across 3+ builds",
-                    chronic_count
+                    "{chronic_count} chronic diagnostic(s) have persisted across 3+ builds"
                 ),
                 action: "xtask history diagnostics --lifecycle --lifecycle-status chronic"
                     .to_string(),

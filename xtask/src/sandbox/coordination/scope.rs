@@ -520,10 +520,8 @@ impl Drop for PipelineScope<'_> {
                         warn!(error = %error, "Failed to stop pipeline ingestd during drop cleanup");
                     }
                 });
-            } else {
-                if let Err(error) = futures::executor::block_on(ingestd.stop()) {
-                    warn!(error = %error, "Failed to stop pipeline ingestd during sync drop cleanup");
-                }
+            } else if let Err(error) = futures::executor::block_on(ingestd.stop()) {
+                warn!(error = %error, "Failed to stop pipeline ingestd during sync drop cleanup");
             }
         }
     }

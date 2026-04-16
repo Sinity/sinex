@@ -943,19 +943,21 @@ fn collect_history_and_jobs_snapshot(
             &jobs_dir,
             jobs_recent_limit,
         )
-        .map(|(active, recent)| JobsSnapshot {
-            active,
-            recent,
-            issues: Vec::new(),
-        })
-        .unwrap_or_else(|error| JobsSnapshot {
-            active: Vec::new(),
-            recent: Vec::new(),
-            issues: vec![format!(
-                "Failed to read background jobs from {}: {error}",
-                ctx.history_db_path().display()
-            )],
-        });
+        .map_or_else(
+            |error| JobsSnapshot {
+                active: Vec::new(),
+                recent: Vec::new(),
+                issues: vec![format!(
+                    "Failed to read background jobs from {}: {error}",
+                    ctx.history_db_path().display()
+                )],
+            },
+            |(active, recent)| JobsSnapshot {
+                active,
+                recent,
+                issues: Vec::new(),
+            },
+        );
         emit_status_profile("jobs.read_snapshot", jobs_started_at);
         Ok((history, jobs))
     }) else {
@@ -1715,8 +1717,7 @@ impl<'a> MotdRenderer<'a> {
                 let age = format_age(info.age_mins);
                 let dur = info
                     .duration_secs
-                    .map(|duration| format!("{duration:.1}s"))
-                    .unwrap_or_else(|| "?".to_string());
+                    .map_or_else(|| "?".to_string(), |duration| format!("{duration:.1}s"));
                 parts.push(format!(
                     "{} {} {} {}",
                     name,
@@ -1881,7 +1882,7 @@ impl<'a> MotdRenderer<'a> {
             let label = if i == 0 {
                 style(label_text).dim().to_string()
             } else {
-                " ".repeat(label_text.len()).to_string()
+                " ".repeat(label_text.len())
             };
 
             let icon = if rec.severity == "critical" {
@@ -1988,7 +1989,7 @@ impl<'a> MotdRenderer<'a> {
         let heartbeat = metrics
             .last_heartbeat_age_secs
             .map(|secs| {
-                let s = format!("heartbeat {}s ago", secs);
+                let s = format!("heartbeat {secs}s ago");
                 if matches!(metrics.ingestd_status, IngestdStatus::Healthy) {
                     style(s).green().to_string()
                 } else if matches!(metrics.ingestd_status, IngestdStatus::Stale) {
@@ -2551,10 +2552,10 @@ async fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<
                     "  {:<15} {:<10} ({})",
                     entry.command,
                     status_style,
-                    entry
-                        .duration_secs
-                        .map(|duration| format!("{duration:.1}s"))
-                        .unwrap_or_else(|| "unknown".to_string())
+                    entry.duration_secs.map_or_else(
+                        || "unknown".to_string(),
+                        |duration| format!("{duration:.1}s")
+                    )
                 );
             }
         }
@@ -2617,16 +2618,13 @@ async fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<
 
 /// Full status (default mode)
 async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<CommandResult> {
-    if !watch {
-        if let Some(result) = render_status_tick(ctx, false).await? {
-            return Ok(result);
-        }
+    if !watch && let Some(result) = render_status_tick(ctx, false).await? {
+        return Ok(result);
     }
 
     let term = console::Term::stdout();
     WatchLoop::with_interval_secs(3)
         .run(|first| {
-            let ctx = ctx;
             let term = &term;
             async move {
                 if !first {

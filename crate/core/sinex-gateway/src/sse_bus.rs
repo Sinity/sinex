@@ -224,6 +224,12 @@ pub struct SubscriptionBus {
     active_subscriptions: AtomicUsize,
 }
 
+impl Default for SubscriptionBus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SubscriptionBus {
     /// Create a new subscription bus.
     #[must_use]

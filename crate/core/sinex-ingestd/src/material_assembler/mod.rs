@@ -1282,7 +1282,7 @@ mod tests {
         })?);
         let state_dir = tempfile::tempdir()?;
 
-        let error = match MaterialAssembler::new(
+        let error = MaterialAssembler::new(
             ctx.nats_client(),
             ctx.pool.clone(),
             annex,
@@ -1295,10 +1295,8 @@ mod tests {
             300,
             3_600,
             90,
-        ) {
-            Ok(_) => panic!("oversized material limits must fail honestly"),
-            Err(error) => error,
-        };
+        )
+        .expect_err("oversized material limits must fail honestly");
 
         assert!(
             error

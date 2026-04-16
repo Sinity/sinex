@@ -58,7 +58,8 @@ fn configured_work_dir() -> NodeResult<String> {
             .into_string()
             .map_err(|path| {
                 SinexError::configuration(format!(
-                    "Default cache directory for SINEX_WORK_DIR is not valid UTF-8: {path:?}"
+                    "Default cache directory for SINEX_WORK_DIR is not valid UTF-8: {}",
+                    path.to_string_lossy()
                 ))
             }),
         None => Ok("/tmp/sinex".to_string()),
@@ -657,7 +658,7 @@ fn configured_hostname_resolution_probe() -> ConfiguredHostnameResolutionProbe {
                 },
                 Err(raw) => invalid_inputs.push(InvalidResolutionTarget {
                     env_name,
-                    raw: format!("{raw:?}"),
+                    raw: raw.to_string_lossy().into_owned(),
                     error: "value contains non-unicode bytes".to_string(),
                 }),
             },
@@ -864,11 +865,11 @@ mod tests {
         }
 
         let mut env = EnvGuard::new();
-        env.set("SINEX_STATE_DIR", &state_dir.display().to_string());
-        env.set("SINEX_DATA_DIR", &data_dir.display().to_string());
-        env.set("SINEX_LOG_DIR", &log_dir.display().to_string());
-        env.set("TMPDIR", &tmp_dir.display().to_string());
-        env.set("SINEX_WORK_DIR", &missing_work_dir.display().to_string());
+        env.set("SINEX_STATE_DIR", state_dir.display().to_string());
+        env.set("SINEX_DATA_DIR", data_dir.display().to_string());
+        env.set("SINEX_LOG_DIR", log_dir.display().to_string());
+        env.set("TMPDIR", tmp_dir.display().to_string());
+        env.set("SINEX_WORK_DIR", missing_work_dir.display().to_string());
 
         let mut messages = Vec::new();
         let disk_info = verify_disk_space(&mut messages).await?;
@@ -897,11 +898,11 @@ mod tests {
         }
 
         let mut env = EnvGuard::new();
-        env.set("SINEX_STATE_DIR", &state_dir.display().to_string());
-        env.set("SINEX_DATA_DIR", &data_dir.display().to_string());
-        env.set("SINEX_LOG_DIR", &log_dir.display().to_string());
-        env.set("TMPDIR", &tmp_dir.display().to_string());
-        env.set("SINEX_WORK_DIR", &missing_work_dir.display().to_string());
+        env.set("SINEX_STATE_DIR", state_dir.display().to_string());
+        env.set("SINEX_DATA_DIR", data_dir.display().to_string());
+        env.set("SINEX_LOG_DIR", log_dir.display().to_string());
+        env.set("TMPDIR", tmp_dir.display().to_string());
+        env.set("SINEX_WORK_DIR", missing_work_dir.display().to_string());
 
         let mut messages = Vec::new();
         let fs_info = verify_filesystem_permissions(&mut messages).await?;
@@ -946,11 +947,11 @@ mod tests {
         fs::set_permissions(&locked_parent, fs::Permissions::from_mode(0o555))?;
 
         let mut env = EnvGuard::new();
-        env.set("SINEX_STATE_DIR", &state_dir.display().to_string());
-        env.set("SINEX_DATA_DIR", &data_dir.display().to_string());
-        env.set("SINEX_LOG_DIR", &log_dir.display().to_string());
-        env.set("TMPDIR", &tmp_dir.display().to_string());
-        env.set("SINEX_WORK_DIR", &missing_work_dir.display().to_string());
+        env.set("SINEX_STATE_DIR", state_dir.display().to_string());
+        env.set("SINEX_DATA_DIR", data_dir.display().to_string());
+        env.set("SINEX_LOG_DIR", log_dir.display().to_string());
+        env.set("TMPDIR", tmp_dir.display().to_string());
+        env.set("SINEX_WORK_DIR", missing_work_dir.display().to_string());
 
         let mut messages = Vec::new();
         let fs_info = verify_filesystem_permissions(&mut messages).await?;

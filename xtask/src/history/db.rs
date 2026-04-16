@@ -155,8 +155,7 @@ fn history_integrity_check_interval() -> Duration {
         Ok(raw) => raw
             .trim()
             .parse::<u64>()
-            .map(Duration::from_secs)
-            .unwrap_or(HISTORY_DB_INTEGRITY_CHECK_INTERVAL),
+            .map_or(HISTORY_DB_INTEGRITY_CHECK_INTERVAL, Duration::from_secs),
         Err(_) => HISTORY_DB_INTEGRITY_CHECK_INTERVAL,
     }
 }
@@ -289,10 +288,7 @@ where
     }
 
     Err(last_lock_error.expect("lock retry should preserve last error")).wrap_err_with(|| {
-        format!(
-            "failed to {action} after {} lock retries",
-            SQLITE_LOCK_RETRY_ATTEMPTS
-        )
+        format!("failed to {action} after {SQLITE_LOCK_RETRY_ATTEMPTS} lock retries")
     })
 }
 
@@ -3434,9 +3430,9 @@ impl HistoryDb {
         let mut prev_started: Option<OffsetDateTime> = None;
 
         for row in &rows {
-            let gap_exceeded = prev_started
-                .map(|prev| (row.started_at_ts - prev).whole_seconds() > gap_secs)
-                .unwrap_or(true);
+            let gap_exceeded = prev_started.map_or(true, |prev| {
+                (row.started_at_ts - prev).whole_seconds() > gap_secs
+            });
 
             if gap_exceeded {
                 if let Some(s) = current.take() {
@@ -3498,9 +3494,8 @@ impl HistoryDb {
             .optional()
             .context("failed to fetch invocation")?;
 
-        let inv = match inv {
-            Some(i) => i,
-            None => return Ok(None),
+        let Some(inv) = inv else {
+            return Ok(None);
         };
 
         let stages = self.get_stage_timings_for_invocation(id)?;
@@ -3561,8 +3556,7 @@ impl HistoryDb {
                         rusqlite::types::Value::Null => serde_json::Value::Null,
                         rusqlite::types::Value::Integer(n) => serde_json::Value::Number(n.into()),
                         rusqlite::types::Value::Real(f) => serde_json::Number::from_f64(f)
-                            .map(serde_json::Value::Number)
-                            .unwrap_or(serde_json::Value::Null),
+                            .map_or(serde_json::Value::Null, serde_json::Value::Number),
                         rusqlite::types::Value::Text(s) => serde_json::Value::String(s),
                         rusqlite::types::Value::Blob(_) => {
                             serde_json::Value::String("<blob>".to_string())
@@ -4384,7 +4378,7 @@ mod tests {
         };
         let message = format!("{error:#}");
         assert!(message.contains("failed to remove empty history database before recreation"));
-        assert!(message.contains(db_path.display().to_string().as_str()));
+        assert!(message.contains(&db_path.display().to_string()));
         Ok(())
     }
 
@@ -4436,10 +4430,7 @@ mod tests {
         )?;
         drop(db);
 
-        let error = match HistoryDb::open(&db_path) {
-            Ok(_) => panic!("stale pid query failures should surface"),
-            Err(error) => error,
-        };
+        let error = HistoryDb::open(&db_path).expect_err("stale pid query failures should surface");
         let message = format!("{error:#}");
         assert!(message.contains("failed to clean up stale invocations"));
         assert!(message.contains("failed to prepare stale invocation candidate query"));
@@ -4496,10 +4487,7 @@ mod tests {
         )?;
         drop(db);
 
-        let error = match HistoryDb::open(&db_path) {
-            Ok(_) => panic!("stale update failures should surface"),
-            Err(error) => error,
-        };
+        let error = HistoryDb::open(&db_path).expect_err("stale update failures should surface");
         let message = format!("{error:#}");
         assert!(message.contains("failed to clean up stale invocations"));
         assert!(message.contains("failed to mark stale invocations as cancelled"));

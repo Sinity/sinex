@@ -324,14 +324,14 @@ impl UdevWatcher {
     fn device_path_for_event(path: &Path) -> NodeResult<String> {
         path.to_str().map(str::to_owned).ok_or_else(|| {
             sinex_node_sdk::SinexError::processing("udev watcher received non-utf8 device path")
-                .with_context("path_debug", format!("{path:?}"))
+                .with_context("path_debug", path.display().to_string())
         })
     }
 
     fn class_name_for_event(path: &Path) -> NodeResult<&str> {
         let class_dir = path.parent().ok_or_else(|| {
             sinex_node_sdk::SinexError::processing("udev watcher path is missing class directory")
-                .with_context("path_debug", format!("{path:?}"))
+                .with_context("path_debug", path.display().to_string())
         })?;
         class_dir
             .file_name()
@@ -340,7 +340,7 @@ impl UdevWatcher {
                 sinex_node_sdk::SinexError::processing(
                     "udev watcher path has invalid class directory name",
                 )
-                .with_context("path_debug", format!("{path:?}"))
+                .with_context("path_debug", path.display().to_string())
             })
     }
 

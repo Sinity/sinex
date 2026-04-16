@@ -1,6 +1,7 @@
 #[path = "support/mod.rs"]
 mod support;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -39,7 +40,7 @@ impl Node for HangingNode {
             duration: std::time::Duration::from_millis(0),
             final_checkpoint: Checkpoint::stream("hanging", None),
             time_range: None,
-            node_stats: Default::default(),
+            node_stats: HashMap::new(),
             successful_targets: Vec::new(),
             failed_targets: Vec::new(),
             warnings: Vec::new(),

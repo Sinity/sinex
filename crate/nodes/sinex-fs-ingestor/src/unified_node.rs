@@ -1523,7 +1523,7 @@ fn sanitize_path(path: &Path) -> NodeResult<RecordedPath> {
 fn observed_path_string(path: &Path) -> NodeResult<String> {
     path.to_str().map(str::to_owned).ok_or_else(|| {
         SinexError::validation("filesystem watcher observed non-utf8 path")
-            .with_context("path_debug", format!("{path:?}"))
+            .with_context("path_debug", path.display().to_string())
     })
 }
 

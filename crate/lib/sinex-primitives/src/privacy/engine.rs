@@ -67,7 +67,7 @@ fn apply_mask(matched: &str, mask_ch: char, keep_prefix: usize, keep_suffix: usi
 }
 
 /// Recursively compile a `Matcher` into a `CompiledMatcher`.
-fn compile_matcher(matcher: &Matcher, rule_name: &str) -> Result<CompiledMatcher, regex::Error> {
+fn compile_matcher(matcher: &Matcher, _rule_name: &str) -> Result<CompiledMatcher, regex::Error> {
     match matcher {
         Matcher::Regex { pattern } => {
             let re = Regex::new(pattern)?;
@@ -85,14 +85,14 @@ fn compile_matcher(matcher: &Matcher, rule_name: &str) -> Result<CompiledMatcher
         Matcher::All(sub_matchers) => {
             let compiled = sub_matchers
                 .iter()
-                .map(|m| compile_matcher(m, rule_name))
+                .map(|m| compile_matcher(m, _rule_name))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(CompiledMatcher::All(compiled))
         }
         Matcher::Any(sub_matchers) => {
             let compiled = sub_matchers
                 .iter()
-                .map(|m| compile_matcher(m, rule_name))
+                .map(|m| compile_matcher(m, _rule_name))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(CompiledMatcher::Any(compiled))
         }
@@ -156,7 +156,7 @@ impl PrivacyEngine {
                     rule.strategy = strategy.clone();
                 }
                 if let Some(ref contexts) = ov.contexts {
-                    rule.contexts = contexts.clone();
+                    rule.contexts.clone_from(contexts);
                 }
             }
 
@@ -364,6 +364,7 @@ impl PrivacyEngine {
     // ── Internal ──
 
     /// Check if a matcher has any hit in the input (without replacement).
+    #[allow(clippy::only_used_in_recursion)]
     fn matcher_hits(&self, matcher: &CompiledMatcher, input: &str) -> bool {
         match matcher {
             CompiledMatcher::Regex(re) => re.is_match(input),

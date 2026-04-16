@@ -136,7 +136,8 @@ impl CheckCommand {
                 args.push(p.clone());
             }
             return Ok((args, WorkloadScope::Packages(packages)));
-        } else if !self.all {
+        }
+        if !self.all {
             // Affected mode is default ON, --all disables it
             let mut affected_pkgs = crate::affected::affected_packages()?;
             if affected_pkgs.is_empty() {
@@ -145,36 +146,34 @@ impl CheckCommand {
                 }
                 args.push("--workspace".to_string());
                 return Ok((args, WorkloadScope::Workspace));
-            } else {
-                affected_pkgs.sort();
-                affected_pkgs.dedup();
-                // H6: Narrate which packages were selected and why
-                if is_human {
-                    let pkg_list = if affected_pkgs.len() <= 4 {
-                        affected_pkgs.join(", ")
-                    } else {
-                        format!(
-                            "{}, …+{}",
-                            affected_pkgs[..3].join(", "),
-                            affected_pkgs.len() - 3
-                        )
-                    };
-                    eprintln!(
-                        "  ℹ Affected mode: {} package{} ({pkg_list})",
-                        affected_pkgs.len(),
-                        if affected_pkgs.len() == 1 { "" } else { "s" }
-                    );
-                }
-                for p in &affected_pkgs {
-                    args.push("-p".to_string());
-                    args.push(p.clone());
-                }
-                return Ok((args, WorkloadScope::Affected(affected_pkgs)));
             }
-        } else {
-            args.push("--workspace".to_string());
-            return Ok((args, WorkloadScope::Workspace));
+            affected_pkgs.sort();
+            affected_pkgs.dedup();
+            // H6: Narrate which packages were selected and why
+            if is_human {
+                let pkg_list = if affected_pkgs.len() <= 4 {
+                    affected_pkgs.join(", ")
+                } else {
+                    format!(
+                        "{}, …+{}",
+                        affected_pkgs[..3].join(", "),
+                        affected_pkgs.len() - 3
+                    )
+                };
+                eprintln!(
+                    "  ℹ Affected mode: {} package{} ({pkg_list})",
+                    affected_pkgs.len(),
+                    if affected_pkgs.len() == 1 { "" } else { "s" }
+                );
+            }
+            for p in &affected_pkgs {
+                args.push("-p".to_string());
+                args.push(p.clone());
+            }
+            return Ok((args, WorkloadScope::Affected(affected_pkgs)));
         }
+        args.push("--workspace".to_string());
+        Ok((args, WorkloadScope::Workspace))
     }
 
     /// Record diagnostics and compiled packages to history, add summary to result

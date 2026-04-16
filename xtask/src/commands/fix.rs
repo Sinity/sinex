@@ -80,16 +80,15 @@ impl XtaskCommand for FixCommand {
         let pre_fix = ctx.with_history_db(|db| db.get_current_diagnostic_counts());
 
         // H3: Advisory if there are current errors (fix won't resolve compile errors)
-        if ctx.is_human() {
-            if let Some(ref counts) = pre_fix {
-                if counts.errors > 0 {
-                    eprintln!(
-                        "→ {} compile error{} in history — fix cannot resolve compile errors. Run `xtask check` first.",
-                        counts.errors,
-                        if counts.errors == 1 { "" } else { "s" }
-                    );
-                }
-            }
+        if ctx.is_human()
+            && let Some(ref counts) = pre_fix
+            && counts.errors > 0
+        {
+            eprintln!(
+                "→ {} compile error{} in history — fix cannot resolve compile errors. Run `xtask check` first.",
+                counts.errors,
+                if counts.errors == 1 { "" } else { "s" }
+            );
         }
 
         // H2: Record pre-fix snapshot in the invocation record
@@ -139,20 +138,19 @@ impl XtaskCommand for FixCommand {
         // H2: Post-fix summary with before/after context
         let mut result = CommandResult::success().with_detail("fixes applied");
 
-        if ctx.is_human() {
-            if let Some(counts) = pre_fix {
-                if counts.warnings > 0 || counts.errors > 0 {
-                    eprintln!(
-                        "Before: {} error{}, {} warning{} ({} auto-fixable). Fixes applied.",
-                        counts.errors,
-                        if counts.errors == 1 { "" } else { "s" },
-                        counts.warnings,
-                        if counts.warnings == 1 { "" } else { "s" },
-                        counts.fixable
-                    );
-                    eprintln!("→ Verify with: xtask check");
-                }
-            }
+        if ctx.is_human()
+            && let Some(counts) = &pre_fix
+            && (counts.warnings > 0 || counts.errors > 0)
+        {
+            eprintln!(
+                "Before: {} error{}, {} warning{} ({} auto-fixable). Fixes applied.",
+                counts.errors,
+                if counts.errors == 1 { "" } else { "s" },
+                counts.warnings,
+                if counts.warnings == 1 { "" } else { "s" },
+                counts.fixable
+            );
+            eprintln!("→ Verify with: xtask check");
         } else if let Some(counts) = &pre_fix {
             // JSON mode: include pre_fix snapshot in result data
             result = result.with_data(serde_json::json!({
@@ -193,17 +191,15 @@ impl FixCommand {
     /// Resolve packages with fixable diagnostics from history DB.
     /// Falls back to normal resolve_packages() if no data available.
     fn resolve_smart_packages(&self, ctx: &CommandContext) -> Result<Vec<String>> {
-        let fixable = match ctx
-            .try_with_history_db(|db| db.get_current_diagnostics(None, None, None, None, true))
-        {
-            Some(result) => result?,
-            None => {
-                if ctx.is_human() {
-                    println!("No diagnostic history available, falling back to normal fix...");
-                }
-                return self.resolve_packages();
+        let Some(result) =
+            ctx.try_with_history_db(|db| db.get_current_diagnostics(None, None, None, None, true))
+        else {
+            if ctx.is_human() {
+                println!("No diagnostic history available, falling back to normal fix...");
             }
+            return self.resolve_packages();
         };
+        let fixable = result?;
 
         if fixable.is_empty() {
             if ctx.is_human() {

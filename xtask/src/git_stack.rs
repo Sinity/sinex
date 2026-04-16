@@ -378,9 +378,10 @@ pub fn execute_split(opts: SplitOptions) -> Result<CommandResult> {
 
     if !opts.allow_blockers && !plan.loose_ends.blockers.is_empty() {
         return Ok(CommandResult::partial()
-            .with_message(format!(
+            .with_message(
                 "Generated git stack plan with blockers; branches were not materialized"
-            ))
+                    .to_string(),
+            )
             .with_details(render_plan_details(&plan, &bundle))
             .with_warnings(plan.loose_ends.blockers.clone())
             .with_data(json!({
@@ -539,7 +540,7 @@ fn build_plan(
             &boundary_base,
             group,
         )?;
-        boundary_base = slice.original_tip_commit.clone();
+        slice.original_tip_commit.clone_into(&mut boundary_base);
         previous_branch = Some(slice.branch.clone());
         slices.push(slice);
     }
@@ -872,8 +873,7 @@ fn read_loose_ends(repo_root: &Path) -> Result<GitLooseEnds> {
 fn extract_status_path(rest: &str) -> String {
     rest.rsplit(" -> ")
         .next()
-        .map(str::trim)
-        .unwrap_or(rest)
+        .map_or(rest, str::trim)
         .to_string()
 }
 
@@ -1127,12 +1127,7 @@ fn finalize_slice(
 ) -> Result<GitStackSlice> {
     let anchor = select_anchor_commit(&group.commits);
     let title = anchor.subject.clone();
-    let slug = slugify(
-        title
-            .split_once(':')
-            .map(|(_, summary)| summary)
-            .unwrap_or(&title),
-    );
+    let slug = slugify(title.split_once(':').map_or(&title, |(_, summary)| summary));
     let branch = if branch_prefix.is_empty() {
         format!("{:02}-{slug}", index + 1)
     } else {
@@ -1778,13 +1773,13 @@ impl EmptyDefault for String {
 
 fn parse_subject(subject: &str) -> CommitSubjectParts {
     if let Some((prefix, _summary)) = subject.split_once(':') {
-        if let Some((kind, scope)) = prefix.split_once('(') {
-            if let Some(scope) = scope.strip_suffix(')') {
-                return CommitSubjectParts {
-                    kind: kind.trim().to_string(),
-                    scope: Some(scope.trim().to_string()),
-                };
-            }
+        if let Some((kind, scope)) = prefix.split_once('(')
+            && let Some(scope) = scope.strip_suffix(')')
+        {
+            return CommitSubjectParts {
+                kind: kind.trim().to_string(),
+                scope: Some(scope.trim().to_string()),
+            };
         }
         return CommitSubjectParts {
             kind: prefix.trim().to_string(),
@@ -1834,7 +1829,7 @@ fn intersection_count(left: &BTreeSet<String>, right: &BTreeSet<String>) -> usiz
 fn slugify(input: &str) -> String {
     let mut slug = String::new();
     let mut last_dash = false;
-    for ch in input.chars().flat_map(|ch| ch.to_lowercase()) {
+    for ch in input.chars().flat_map(char::to_lowercase) {
         if ch.is_ascii_alphanumeric() {
             slug.push(ch);
             last_dash = false;

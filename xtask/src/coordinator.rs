@@ -893,8 +893,7 @@ pub fn describe_scope(command: &str, args: &[String]) -> Option<String> {
 fn state_file_is_recent(path: &std::path::Path) -> bool {
     fs::metadata(path)
         .and_then(|m| m.modified())
-        .map(|t| t.elapsed().map(|e| e.as_secs() < 5).unwrap_or(false))
-        .unwrap_or(false)
+        .is_ok_and(|t| t.elapsed().is_ok_and(|e| e.as_secs() < 5))
 }
 
 /// Check if a process is still alive via `kill(pid, 0)`.
@@ -1008,8 +1007,7 @@ fn write_state(path: &std::path::Path, state: &CoordinationState) -> Result<()> 
     let unique_suffix = std::process::id();
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |duration| duration.as_nanos());
     let tmp_path = path
         .parent()
         .unwrap_or_else(|| Path::new("."))

@@ -352,8 +352,7 @@ where
         for event in outputs {
             let event_id = event
                 .id
-                .map(|id| id.to_string())
-                .unwrap_or_else(|| "<none>".to_string());
+                .map_or_else(|| "<none>".to_string(), |id| id.to_string());
             let event_source = event.source.as_ref().to_string();
             let event_type = event.event_type.as_ref().to_string();
 
@@ -701,7 +700,10 @@ where
             payload: filtered_payload,
             ts_orig: Some(ts_orig),
             host: HostName::new(&self.host)?,
-            node_run_id: self.runtime.as_ref().and_then(|r| r.node_run_id()),
+            node_run_id: self
+                .runtime
+                .as_ref()
+                .and_then(NodeRuntimeState::node_run_id),
             payload_schema_id: None,
             provenance,
             associated_blob_ids: None,
@@ -1259,10 +1261,10 @@ where
                         "Invalidation processing failed"
                     );
                     #[cfg(feature = "messaging")]
-                    if let Some(ref obs) = self.self_observer {
-                        if let Err(error) = obs.emit_counter("invalidation.errors", 1, None).await {
-                            log_self_observation_failure(node_name, "invalidation.errors", &error);
-                        }
+                    if let Some(ref obs) = self.self_observer
+                        && let Err(error) = obs.emit_counter("invalidation.errors", 1, None).await
+                    {
+                        log_self_observation_failure(node_name, "invalidation.errors", &error);
                     }
                     None
                 }
@@ -1305,41 +1307,41 @@ where
         // `recv_invalidation()` which has matching cfg'd signatures.
         #[cfg(feature = "messaging")]
         let mut invalidation_sub: Option<async_nats::Subscriber> = {
-            let nats_client = self.runtime.as_ref().and_then(|r| r.nats_client());
+            let nats_client = self
+                .runtime
+                .as_ref()
+                .and_then(NodeRuntimeState::nats_client);
 
-            match nats_client {
-                Some(client) => {
-                    let env = sinex_primitives::environment::environment();
-                    let subject = env.nats_subject(super::invalidation::INVALIDATION_SUBJECT);
-                    let queue_group = format!("derived.invalidation.{}", self.node.name());
-                    match client
-                        .queue_subscribe(subject.clone(), queue_group.clone())
-                        .await
-                    {
-                        Ok(sub) => {
-                            info!(
-                                node = %node_name,
-                                subject = %subject,
-                                queue_group = %queue_group,
-                                "Subscribed to invalidation signals"
-                            );
-                            Some(sub)
-                        }
-                        Err(e) => {
-                            warn!(
-                                node = %node_name,
-                                error = %e,
-                                "Failed to subscribe to invalidation signals — \
-                                 scope recomputation will not be triggered"
-                            );
-                            None
-                        }
+            if let Some(client) = nats_client {
+                let env = sinex_primitives::environment::environment();
+                let subject = env.nats_subject(super::invalidation::INVALIDATION_SUBJECT);
+                let queue_group = format!("derived.invalidation.{}", self.node.name());
+                match client
+                    .queue_subscribe(subject.clone(), queue_group.clone())
+                    .await
+                {
+                    Ok(sub) => {
+                        info!(
+                            node = %node_name,
+                            subject = %subject,
+                            queue_group = %queue_group,
+                            "Subscribed to invalidation signals"
+                        );
+                        Some(sub)
+                    }
+                    Err(e) => {
+                        warn!(
+                            node = %node_name,
+                            error = %e,
+                            "Failed to subscribe to invalidation signals — \
+                             scope recomputation will not be triggered"
+                        );
+                        None
                     }
                 }
-                None => {
-                    debug!(node = %node_name, "No NATS client — invalidation subscription skipped");
-                    None
-                }
+            } else {
+                debug!(node = %node_name, "No NATS client — invalidation subscription skipped");
+                None
             }
         };
         #[cfg(not(feature = "messaging"))]
@@ -1579,9 +1581,7 @@ where
                                         "Failed to save checkpoint after replay DLQ error"
                                     );
                                 }
-                                if let Err(dlq_err) = dlq_err {
-                                    return Err(dlq_err);
-                                }
+                                dlq_err?;
                             }
                             ErrorAction::Retry => {
                                 error!(node = %self.node.name(), error = %e, "Retryable error in historical replay; halting replay");
@@ -1878,7 +1878,7 @@ where
             return Ok(false);
         }
 
-        Ok(self.health_reporter.as_ref().map_or(true, |reporter| {
+        Ok(self.health_reporter.as_ref().is_none_or(|reporter| {
             reporter.current_status()
                 == sinex_primitives::events::payloads::process::ProcessStatus::Healthy
         }))
@@ -2011,22 +2011,21 @@ where
             lag_seconds: None,
             recent_activity: Vec::new(),
             total_items: None,
-            metadata: HashMap::from_iter(
-                [
-                    (
-                        "runtime_initialized".to_string(),
-                        serde_json::json!(runtime_initialized),
-                    ),
-                    ("node_model".to_string(), serde_json::json!(node_model)),
-                ]
-                .into_iter()
-                .chain(health_status.map(|status| {
-                    (
-                        "health_status".to_string(),
-                        serde_json::json!(status.to_string()),
-                    )
-                })),
-            ),
+            metadata: [
+                (
+                    "runtime_initialized".to_string(),
+                    serde_json::json!(runtime_initialized),
+                ),
+                ("node_model".to_string(), serde_json::json!(node_model)),
+            ]
+            .into_iter()
+            .chain(health_status.map(|status| {
+                (
+                    "health_status".to_string(),
+                    serde_json::json!(status.to_string()),
+                )
+            }))
+            .collect(),
         })
     }
 

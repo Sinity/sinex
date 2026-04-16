@@ -861,7 +861,7 @@ async fn reconcile_shared(
     manager: &Arc<AcquisitionManager>,
     stale_ttl: Duration,
 ) -> NodeResult<StageReconciliationSummary> {
-    let ttl = time::Duration::try_from(stale_ttl).unwrap_or_else(|_| time::Duration::MAX);
+    let ttl = time::Duration::try_from(stale_ttl).unwrap_or(time::Duration::MAX);
     let now = sinex_primitives::temporal::Timestamp::now();
     let stale_ids = {
         let registry_guard = registry.lock().await;

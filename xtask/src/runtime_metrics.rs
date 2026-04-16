@@ -190,26 +190,26 @@ impl RuntimeMetrics {
     /// Format as a compact one-line summary fragment for status --summary
     pub fn summary_fragment(&self) -> String {
         let ingestd = format!("ingestd:{}", self.ingestd_status);
-        let lag = self
-            .fresh_consumer_lag_pending()
-            .map(|v| format!("lag:{v:.0}"))
-            .unwrap_or_else(|| {
+        let lag = self.fresh_consumer_lag_pending().map_or_else(
+            || {
                 if self.consumer_lag_is_stale() {
                     "lag:stale".to_string()
                 } else {
                     "lag:-".to_string()
                 }
-            });
-        let batch = self
-            .fresh_batch_latency_ms()
-            .map(|v| format!("batch:{v:.0}ms"))
-            .unwrap_or_else(|| {
+            },
+            |v| format!("lag:{v:.0}"),
+        );
+        let batch = self.fresh_batch_latency_ms().map_or_else(
+            || {
                 if self.batch_latency_is_stale() {
                     "batch:stale".to_string()
                 } else {
                     "batch:-".to_string()
                 }
-            });
+            },
+            |v| format!("batch:{v:.0}ms"),
+        );
         let query = if self.query_error.is_some() {
             " query:error"
         } else {

@@ -383,7 +383,7 @@ impl TestCommand {
         self.threads.or_else(|| {
             if self.heavy && !self.debug {
                 let cpu_count = std::thread::available_parallelism()
-                    .map(|parallelism| parallelism.get())
+                    .map(std::num::NonZeroUsize::get)
                     .unwrap_or(HEAVY_TEST_THREAD_CAP);
                 Some(default_heavy_test_threads(cpu_count))
             } else {
@@ -567,7 +567,7 @@ impl XtaskCommand for TestCommand {
                     args.push(format!("--profile={}", bench.profile));
                     args.push(format!("--runs={}", bench.runs));
                     let threads_str: Vec<String> =
-                        bench.threads.iter().map(|t| t.to_string()).collect();
+                        bench.threads.iter().map(ToString::to_string).collect();
                     args.push(format!("--threads={}", threads_str.join(",")));
                     args.push(format!("--target={}", bench.target));
                     if bench.contracts {

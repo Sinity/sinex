@@ -162,12 +162,11 @@ impl DocumentNode {
     }
 
     fn is_allowed_path(&self, target: &str) -> NodeResult<bool> {
-        for root in &self.config.allowed_roots {
-            if validate_path_within_root(target, root).is_ok() {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        Ok(self
+            .config
+            .allowed_roots
+            .iter()
+            .any(|root| validate_path_within_root(target, root).is_ok()))
     }
 
     async fn ingest_targets(&self, targets: &[String]) -> NodeResult<ScanReport> {

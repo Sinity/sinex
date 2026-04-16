@@ -1517,8 +1517,9 @@ mod tests {
         .await
         .expect_err("panicing task must produce join error");
         let error = DbusWatcher::monitoring_task_exit_error(0, Err(join_error));
-        assert!(error.to_string().contains("panicked"));
-        assert!(error.to_string().contains("task_index"));
+        let error_text = error.to_string();
+        assert!(error_text.contains("panicked"));
+        assert!(error_text.contains("task_index"));
         Ok(())
     }
 }

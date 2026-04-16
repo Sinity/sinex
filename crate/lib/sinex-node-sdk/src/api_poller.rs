@@ -2,23 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::{debug, info};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ApiPollerState {
     pub cursor: Option<String>,
     pub last_poll_at: Option<String>,
     pub total_items_fetched: u64,
     pub consecutive_empty_polls: u32,
-}
-
-impl Default for ApiPollerState {
-    fn default() -> Self {
-        Self {
-            cursor: None,
-            last_poll_at: None,
-            total_items_fetched: 0,
-            consecutive_empty_polls: 0,
-        }
-    }
 }
 
 impl ApiPollerState {

@@ -134,7 +134,7 @@ pub fn parse_typed_config<T: serde::de::DeserializeOwned, S: ConfigAccessor>(
 
 /// Construct a NATS message settlement error with consistent context.
 ///
-/// Used by JetStream consumers and DLQ retry handlers when ack/nak operations fail.
+/// Used by JetStream consumers and DLQ retry handlers when `ack`/`nak` operations fail.
 pub fn nats_settlement_error(
     operation: &str,
     subject: &str,

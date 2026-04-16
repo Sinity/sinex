@@ -221,7 +221,7 @@ pub(super) async fn drop_database_if_exists(
     sqlx::query(&format!("DROP DATABASE IF EXISTS {quoted} WITH (FORCE)"))
         .execute(conn.as_mut())
         .await
-        .map_err(|err| eyre!(format!("Failed to drop database {name} with FORCE: {err}")))?;
+        .map_err(|err| eyre!("Failed to drop database {name} with FORCE: {err}"))?;
 
     Ok(())
 }
@@ -234,7 +234,7 @@ pub(super) async fn drop_database_if_exists_admin(
     sqlx::query(&format!("DROP DATABASE IF EXISTS {quoted} WITH (FORCE)"))
         .execute(&mut *conn)
         .await
-        .map_err(|err| eyre!(format!("Failed to drop database {name} with FORCE: {err}")))?;
+        .map_err(|err| eyre!("Failed to drop database {name} with FORCE: {err}"))?;
 
     Ok(())
 }
@@ -253,9 +253,7 @@ pub(super) async fn wait_for_database_absence(
         tokio::time::sleep(delay).await;
     }
 
-    Err(eyre!(format!(
-        "Database {name} still present after drop attempts"
-    )))
+    Err(eyre!("Database {name} still present after drop attempts"))
 }
 
 pub(super) async fn wait_for_database_absence_admin(
@@ -272,9 +270,7 @@ pub(super) async fn wait_for_database_absence_admin(
         tokio::time::sleep(delay).await;
     }
 
-    Err(eyre!(format!(
-        "Database {name} still present after drop attempts"
-    )))
+    Err(eyre!("Database {name} still present after drop attempts"))
 }
 
 // ── Permissions ─────────────────────────────────────────────────────────────
@@ -558,9 +554,9 @@ async fn ensure_pool_database_exists_inner(
             )
             .await
             .map_err(|recreate_err| {
-                eyre!(format!(
+                eyre!(
                     "slot provisioning failed for {db_name}: {provision_error}; recreate failed: {recreate_err}"
-                ))
+                )
             })?;
             Ok(EnsurePoolDatabaseOutcome::Ensured)
         }
@@ -734,9 +730,7 @@ where
     T: DeserializeOwned,
 {
     serde_json::from_str(comment).map_err(|error| {
-        eyre!(format!(
-            "failed to parse {kind} database metadata comment for {db_name}: {error}"
-        ))
+        eyre!("failed to parse {kind} database metadata comment for {db_name}: {error}")
     })
 }
 
@@ -772,8 +766,8 @@ pub(super) async fn store_template_meta(
     template_name: &str,
     meta: &TemplateMeta,
 ) -> TestResult<()> {
-    let payload = serde_json::to_string(meta)
-        .map_err(|e| eyre!(format!("Failed to serialize template meta: {e}")))?;
+    let payload =
+        serde_json::to_string(meta).map_err(|e| eyre!("Failed to serialize template meta: {e}"))?;
 
     // Postgres doesn't accept bind parameters in `COMMENT ON ... IS '<literal>'`,
     // so embed a properly escaped string literal. JSON doesn't normally contain
@@ -792,8 +786,8 @@ pub(super) async fn store_pool_meta(
     db_name: &str,
     meta: &PoolMeta,
 ) -> TestResult<()> {
-    let payload = serde_json::to_string(meta)
-        .map_err(|e| eyre!(format!("Failed to serialize pool meta: {e}")))?;
+    let payload =
+        serde_json::to_string(meta).map_err(|e| eyre!("Failed to serialize pool meta: {e}"))?;
 
     // Postgres doesn't accept bind parameters in `COMMENT ON ... IS '<literal>'`,
     // so embed a properly escaped string literal. JSON doesn't normally contain
@@ -819,7 +813,7 @@ pub(super) async fn store_pool_meta_checked(
 pub(super) async fn converge_pool_database_schema(db_name: &str, db_url: &str) -> TestResult<()> {
     sinex_db::apply_schema_for_url(db_url)
         .await
-        .map_err(|apply_err| eyre!(format!("schema apply failed for {db_name}: {apply_err}")))
+        .map_err(|apply_err| eyre!("schema apply failed for {db_name}: {apply_err}"))
 }
 
 async fn verify_pool_database_schema_clean(db_name: &str, db_url: &str) -> TestResult<()> {
@@ -876,9 +870,9 @@ pub(super) async fn connect_admin_with_retry(admin_url: &str) -> TestResult<PgCo
             Ok(Ok(conn)) => return Ok(conn),
             Ok(Err(err)) => {
                 if !is_too_many_clients_error(&err) {
-                    return Err(eyre!(format!(
+                    return Err(eyre!(
                         "Admin connection failed: {err}. Ensure the local PostgreSQL instance is running and accessible (try `just db-setup`, `pg_ctl start`, or set DATABASE_URL to a reachable server)."
-                    )));
+                    ));
                 }
                 last_error = Some(err);
                 eprintln!(
@@ -899,22 +893,22 @@ pub(super) async fn connect_admin_with_retry(admin_url: &str) -> TestResult<PgCo
         delay = (delay * 2).min(Duration::from_secs(2));
     }
 
-    Err(eyre!(format!(
+    Err(eyre!(
         "Admin connection failed after retries: {}. Ensure PostgreSQL is running and reachable for tests.",
         last_error.map_or_else(|| "unknown error".to_string(), |e| e.to_string())
-    )))
+    ))
 }
 
 fn effective_connection_budget(max_connections: i64, reserved: i64) -> TestResult<u32> {
     if max_connections <= 0 {
-        return Err(eyre!(format!(
+        return Err(eyre!(
             "PostgreSQL reported invalid max_connections value ({max_connections})"
-        )));
+        ));
     }
     if reserved < 0 {
-        return Err(eyre!(format!(
+        return Err(eyre!(
             "PostgreSQL reported invalid superuser_reserved_connections value ({reserved})"
-        )));
+        ));
     }
 
     // Leave headroom for template provisioning, cleanup tasks, and ad-hoc diagnostics.
@@ -924,11 +918,11 @@ fn effective_connection_budget(max_connections: i64, reserved: i64) -> TestResul
         .saturating_sub(reserved)
         .saturating_sub(SAFETY_MARGIN);
     if effective <= 0 {
-        return Err(eyre!(format!(
+        return Err(eyre!(
             "PostgreSQL effective connection budget is non-positive after reserving headroom \
              (max_connections={max_connections}, superuser_reserved_connections={reserved}, \
              safety_margin={SAFETY_MARGIN})"
-        )));
+        ));
     }
 
     Ok(effective as u32)
@@ -954,19 +948,19 @@ pub(super) async fn detect_connection_budget(admin_url: &str) -> TestResult<u32>
 // ── URL manipulation ────────────────────────────────────────────────────────
 
 pub(super) fn admin_url_from_slot(slot_url: &str) -> TestResult<String> {
-    let mut url = Url::parse(slot_url).map_err(|e| eyre!(format!("Invalid slot url: {e}")))?;
+    let mut url = Url::parse(slot_url).map_err(|e| eyre!("Invalid slot url: {e}"))?;
     url.set_path("/postgres");
     Ok(url.to_string())
 }
 
 pub(super) fn base_url_from_slot(slot_url: &str) -> TestResult<String> {
-    let mut url = Url::parse(slot_url).map_err(|e| eyre!(format!("Invalid slot url: {e}")))?;
+    let mut url = Url::parse(slot_url).map_err(|e| eyre!("Invalid slot url: {e}"))?;
     url.set_path("/sinex_dev");
     Ok(url.to_string())
 }
 
 pub(super) fn url_with_db_name(raw_url: &str, db_name: &str) -> TestResult<String> {
-    let mut url = Url::parse(raw_url).map_err(|e| eyre!(format!("Invalid database url: {e}")))?;
+    let mut url = Url::parse(raw_url).map_err(|e| eyre!("Invalid database url: {e}"))?;
     url.set_path(&format!("/{db_name}"));
     Ok(url.to_string())
 }

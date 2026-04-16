@@ -100,7 +100,7 @@ pub fn scan_for_new_files(
             continue;
         }
 
-        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        let size = entry.metadata().map_or(0, |m| m.len());
         let utf8_path = Utf8PathBuf::from_path_buf(path)
             .unwrap_or_else(|p| Utf8PathBuf::from(p.to_string_lossy().to_string()));
 

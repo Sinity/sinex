@@ -118,7 +118,8 @@ fn parse_material_state_folder(path: &std::path::Path) -> IngestdResult<Uuid> {
 
     let folder_name = folder_name.to_str().ok_or_else(|| {
         SinexError::invalid_state(format!(
-            "Assembler state folder {path:?} is not valid UTF-8"
+            "Assembler state folder {} is not valid UTF-8",
+            path.display()
         ))
     })?;
 

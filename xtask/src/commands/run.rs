@@ -309,12 +309,12 @@ async fn wait_for_any_child_exit(
 }
 
 async fn stop_bundle_child(name: &str, child: &mut Child) -> Result<()> {
-    match child
+    if child
         .try_wait()
         .with_context(|| format!("failed to poll {name} before bundle shutdown"))?
+        .is_some()
     {
-        Some(_) => return Ok(()),
-        None => {}
+        return Ok(());
     }
 
     match child.kill().await {
@@ -942,7 +942,7 @@ impl RunCommand {
         }
         let mut shutdown_failures = Vec::new();
         for (name, child) in &mut children {
-            if Some(&name.clone()) != exited_name.as_ref() {
+            if Some(name) != exited_name.as_ref() {
                 if let Err(error) = stop_bundle_child(name, child).await {
                     if ctx.is_human() {
                         eprintln!("Error stopping {name}: {error:#}");
@@ -1072,8 +1072,7 @@ impl RunCommand {
         let short_name = BINARIES
             .iter()
             .find(|(_, pkg, _)| *pkg == package)
-            .map(|(n, _, _)| *n)
-            .unwrap_or(binary);
+            .map_or(binary, |(n, _, _)| *n);
 
         let journal_path = self
             .dev_journal

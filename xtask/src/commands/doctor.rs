@@ -794,7 +794,7 @@ async fn execute_runtime_check(ctx: &CommandContext) -> Result<RuntimeCheckRepor
             } else {
                 style("✓").green()
             };
-            println!("  {} Consumer lag:       {:.0} pending", lag_icon, lag);
+            println!("  {lag_icon} Consumer lag:       {lag:.0} pending");
         } else if let Some(note) = metrics.consumer_lag_stale_note() {
             println!(
                 "  {} Consumer lag:       stale telemetry ({})",
@@ -810,7 +810,7 @@ async fn execute_runtime_check(ctx: &CommandContext) -> Result<RuntimeCheckRepor
             } else {
                 style("✓").green()
             };
-            println!("  {} Batch latency:      {:.0}ms", lat_icon, latency);
+            println!("  {lat_icon} Batch latency:      {latency:.0}ms");
         } else if let Some(note) = metrics.batch_latency_stale_note() {
             println!(
                 "  {} Batch latency:      stale telemetry ({})",
@@ -1055,9 +1055,7 @@ fn resolve_deployment_nats_config(
     nats_url: Option<&str>,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> NatsConnectionConfig {
-    let descriptor_declares_server = descriptor
-        .map(|value| !value.nats.servers.is_empty())
-        .unwrap_or(false);
+    let descriptor_declares_server = descriptor.is_some_and(|value| !value.nats.servers.is_empty());
 
     let mut config = apply_descriptor_nats_overrides(base_config, descriptor);
     if !descriptor_declares_server
@@ -1597,9 +1595,7 @@ fn check_terminal_sources(
     target: &TargetIdentity,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
-    let terminal_enabled = descriptor
-        .map(|value| value.terminal.surface.enabled)
-        .unwrap_or(true);
+    let terminal_enabled = descriptor.map_or(true, |value| value.terminal.surface.enabled);
     if !terminal_enabled {
         return DeploymentReadinessItem::skip(
             "terminal-sources",
@@ -1666,9 +1662,7 @@ fn check_hyprland_socket(
     target: &TargetIdentity,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
-    let desktop_enabled = descriptor
-        .map(|value| value.desktop.surface.enabled)
-        .unwrap_or(true);
+    let desktop_enabled = descriptor.map_or(true, |value| value.desktop.surface.enabled);
     if !desktop_enabled {
         return DeploymentReadinessItem::skip(
             "hyprland-socket",
@@ -1796,9 +1790,7 @@ fn check_activitywatch_db(
     target: &TargetIdentity,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
-    let desktop_enabled = descriptor
-        .map(|value| value.desktop.surface.enabled)
-        .unwrap_or(true);
+    let desktop_enabled = descriptor.map_or(true, |value| value.desktop.surface.enabled);
     if !desktop_enabled {
         return DeploymentReadinessItem::skip(
             "activitywatch-db",
@@ -1864,10 +1856,7 @@ fn check_git_annex() -> DeploymentReadinessItem {
 fn check_inotify_limit(
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
-    if descriptor
-        .map(|value| !value.filesystem.enabled)
-        .unwrap_or(false)
-    {
+    if descriptor.is_some_and(|value| !value.filesystem.enabled) {
         return DeploymentReadinessItem::skip(
             "inotify-max-user-watches",
             "Filesystem ingestion is disabled in the deployment descriptor",
@@ -1957,10 +1946,7 @@ async fn check_schema_apply(
     database_url: Option<&str>,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
-    if descriptor
-        .map(|value| !value.expectations.schema_apply)
-        .unwrap_or(false)
-    {
+    if descriptor.is_some_and(|value| !value.expectations.schema_apply) {
         return DeploymentReadinessItem::skip(
             "schema-apply",
             "Schema bootstrap is not expected in the deployment descriptor",
@@ -2063,10 +2049,7 @@ async fn check_nats_streams(
     nats_url: Option<&str>,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
-    if descriptor
-        .map(|value| !value.expectations.nats_streams)
-        .unwrap_or(false)
-    {
+    if descriptor.is_some_and(|value| !value.expectations.nats_streams) {
         return DeploymentReadinessItem::skip(
             "nats-streams",
             "JetStream runtime is not expected in the deployment descriptor",
@@ -2223,18 +2206,18 @@ fn check_secret_materials(
         PathBuf::from("/run/agenix/sinex-nats-client-nkey"),
     );
 
-    let mtls_expected = descriptor
-        .map(|value| {
-            value.gateway.require_client_tls
-                || value.secrets.gateway_tls_client_ca_file.as_ref().is_some()
-        })
-        .unwrap_or_else(|| {
+    let mtls_expected = descriptor.map_or_else(
+        || {
             env_truthy("SINEX_GATEWAY_REQUIRE_CLIENT_TLS")
                 || std::env::var("SINEX_GATEWAY_TLS_CLIENT_CA").is_ok()
-        });
-    let database_password_expected = descriptor
-        .map(|value| value.database.password_required)
-        .unwrap_or(!descriptor_present);
+        },
+        |value| {
+            value.gateway.require_client_tls || value.secrets.gateway_tls_client_ca_file.is_some()
+        },
+    );
+    let database_password_expected = descriptor.map_or(!descriptor_present, |value| {
+        value.database.password_required
+    });
 
     let mut missing = Vec::new();
     let mut present = Vec::new();
@@ -2476,10 +2459,7 @@ pub(crate) async fn check_gateway_ready(
     gateway_url: Option<&str>,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
-    if descriptor
-        .map(|value| !value.expectations.gateway_ready)
-        .unwrap_or(false)
-    {
+    if descriptor.is_some_and(|value| !value.expectations.gateway_ready) {
         return DeploymentReadinessItem::skip(
             "gateway-ready",
             "Gateway runtime is not expected in the deployment descriptor",
@@ -2493,9 +2473,7 @@ pub(crate) async fn check_gateway_ready(
     );
     let ready_url = format!("{base_url}/ready");
 
-    let mtls_expected = descriptor
-        .map(|value| value.gateway.require_client_tls)
-        .unwrap_or(false)
+    let mtls_expected = descriptor.is_some_and(|value| value.gateway.require_client_tls)
         || env_truthy("SINEX_GATEWAY_REQUIRE_CLIENT_TLS")
         || std::env::var("SINEX_GATEWAY_TLS_CLIENT_CA").is_ok();
     let probe_client = match build_gateway_probe_client(&base_url, descriptor).await {

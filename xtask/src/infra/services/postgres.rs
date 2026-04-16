@@ -578,7 +578,7 @@ fn pg_isready_probe(output: std::io::Result<std::process::Output>) -> Result<boo
     let output = output.wrap_err("failed to run pg_isready")?;
     match output.status.code() {
         Some(0) => Ok(true),
-        Some(1) | Some(2) => Ok(false),
+        Some(1 | 2) => Ok(false),
         _ => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let detail = stderr.trim();
@@ -597,7 +597,7 @@ mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
     #[cfg(unix)]
-    use std::ffi::OsString;
+    use std::ffi::{OsStr, OsString};
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
 
@@ -900,21 +900,21 @@ mod tests {
         let stop_args: Vec<OsString> = manager
             .pg_ctl_stop_command()
             .get_args()
-            .map(|arg| arg.to_os_string())
+            .map(OsStr::to_os_string)
             .collect();
         assert!(stop_args.iter().any(|arg| arg == data_dir.as_os_str()));
 
         let ready_args: Vec<OsString> = manager
             .pg_isready_command()
             .get_args()
-            .map(|arg| arg.to_os_string())
+            .map(OsStr::to_os_string)
             .collect();
         assert!(ready_args.iter().any(|arg| arg == run_dir.as_os_str()));
 
         let psql_args: Vec<OsString> = manager
             .psql_command("postgres", "sinex", "SELECT 1")
             .get_args()
-            .map(|arg| arg.to_os_string())
+            .map(OsStr::to_os_string)
             .collect();
         assert!(psql_args.iter().any(|arg| arg == run_dir.as_os_str()));
         Ok(())

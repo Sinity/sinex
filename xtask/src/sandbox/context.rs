@@ -174,14 +174,14 @@ impl Drop for NamespaceReaper {
                 // List all streams and delete those starting with our prefix
                 let mut streams = js.streams();
                 while let Some(Ok(stream)) = streams.next().await {
-                    if stream.config.name.starts_with(&prefix) {
-                        if let Err(error) = js.delete_stream(stream.config.name.clone()).await {
-                            warn!(
-                                stream = %stream.config.name,
-                                error = %error,
-                                "Failed to delete namespaced test stream during cleanup"
-                            );
-                        }
+                    if stream.config.name.starts_with(&prefix)
+                        && let Err(error) = js.delete_stream(stream.config.name.clone()).await
+                    {
+                        warn!(
+                            stream = %stream.config.name,
+                            error = %error,
+                            "Failed to delete namespaced test stream during cleanup"
+                        );
                     }
                 }
             });

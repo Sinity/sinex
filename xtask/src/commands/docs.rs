@@ -441,9 +441,7 @@ fn execute_agents(
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surface = generated_agents_surface(&workspace)?;
-    let dest = output
-        .map(|path| path.to_path_buf())
-        .unwrap_or(surface.path);
+    let dest = output.map_or(surface.path, |path| path.to_path_buf());
     write_generated_output(
         &dest,
         &surface.content,
@@ -463,9 +461,7 @@ fn execute_command_guide(
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surface = generated_command_guide_surface(&workspace);
-    let dest = output
-        .map(|path| path.to_path_buf())
-        .unwrap_or(surface.path);
+    let dest = output.map_or(surface.path, |path| path.to_path_buf());
 
     write_generated_output(
         &dest,
@@ -486,9 +482,7 @@ fn execute_command_reference(
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surface = generated_command_reference_surface(&workspace);
-    let dest = output
-        .map(|path| path.to_path_buf())
-        .unwrap_or(surface.path);
+    let dest = output.map_or(surface.path, |path| path.to_path_buf());
 
     write_generated_output(
         &dest,
@@ -673,9 +667,7 @@ fn execute_ast_grep_catalog(
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surface = generated_ast_grep_catalog_surface(&workspace)?;
-    let dest = output
-        .map(|path| path.to_path_buf())
-        .unwrap_or(surface.path);
+    let dest = output.map_or(surface.path, |path| path.to_path_buf());
 
     write_generated_output(
         &dest,
@@ -694,9 +686,7 @@ fn execute_schema_bundle(
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
-    let root = output_dir
-        .map(std::path::Path::to_path_buf)
-        .unwrap_or_else(|| workspace.join("schemas"));
+    let root = output_dir.map_or_else(|| workspace.join("schemas"), std::path::Path::to_path_buf);
     let outcome = sync_schema_bundle(generated_schema_bundle(&workspace, &root)?, check_only, ctx)?;
 
     let result = if check_only && outcome.changed {
@@ -886,9 +876,7 @@ fn load_ast_grep_rules(rules_dir: &std::path::Path) -> Result<Vec<AstGrepRuleCat
             .wrap_err_with(|| format!("Failed to read {}", path.display()))?;
         let mut rule: AstGrepRuleCatalogEntry = serde_yaml::from_str(&content)
             .wrap_err_with(|| format!("Failed to parse {}", path.display()))?;
-        rule.ignores
-            .get_or_insert_with(Vec::new)
-            .sort_by(|left, right| left.cmp(right));
+        rule.ignores.get_or_insert_with(Vec::new).sort();
         rules.push(rule);
     }
 

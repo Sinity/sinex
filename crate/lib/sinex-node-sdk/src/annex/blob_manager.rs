@@ -61,8 +61,7 @@ fn material_name_for_blob(blob: &Blob) -> String {
     blob.original_filename
         .as_deref()
         .filter(|filename| !filename.trim().is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| blob.annex_key())
+        .map_or_else(|| blob.annex_key(), ToOwned::to_owned)
 }
 
 fn require_ingest_filename<'a>(

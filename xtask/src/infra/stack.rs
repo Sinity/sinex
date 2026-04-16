@@ -653,15 +653,12 @@ where
     for entry in entries {
         match entry {
             Ok(name) => {
-                let name = match name.into_string() {
-                    Ok(name) => name,
-                    Err(_) => {
-                        issues.push(format!(
-                            "failed to read snapshot entry in {}: entry name is not valid UTF-8",
-                            dir.display()
-                        ));
-                        continue;
-                    }
+                let Ok(name) = name.into_string() else {
+                    issues.push(format!(
+                        "failed to read snapshot entry in {}: entry name is not valid UTF-8",
+                        dir.display()
+                    ));
+                    continue;
                 };
                 if name.ends_with(".tar.zst") {
                     snapshots.push(name.trim_end_matches(".tar.zst").to_string());

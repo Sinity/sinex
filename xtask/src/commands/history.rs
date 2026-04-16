@@ -2395,7 +2395,7 @@ fn execute_diagnostics_delta(
         // Find the invocation before `to_id` for the same command
         let inv = db.get_recent(50, None)?;
         inv.into_iter()
-            .filter(|i| {
+            .find(|i| {
                 i.id < to_id
                     && command.is_none_or(|cmd| i.command == cmd)
                     && matches!(
@@ -2403,7 +2403,6 @@ fn execute_diagnostics_delta(
                         InvocationStatus::Success | InvocationStatus::Failed
                     )
             })
-            .next()
             .map(|i| i.id)
             .ok_or_else(|| {
                 color_eyre::eyre::eyre!("No previous invocation found to compare against")
@@ -3077,7 +3076,7 @@ fn execute_query(db: &HistoryDb, sql: &str, ctx: &CommandContext) -> Result<Comm
             println!("(no rows)");
         } else {
             // Extract column names from first row
-            let cols: Vec<&str> = rows[0].keys().map(|k| k.as_str()).collect();
+            let cols: Vec<&str> = rows[0].keys().map(String::as_str).collect();
             let mut builder = Builder::new();
             builder.push_record(cols.clone());
             for row in &rows {
@@ -3131,11 +3130,9 @@ fn execute_shell(_db: &HistoryDb, ctx: &CommandContext) -> Result<CommandResult>
         .status()
         .wrap_err("failed to launch sqlite3")?;
 
+    let exit_code = status.code().unwrap_or(-1);
     Ok(CommandResult::success()
-        .with_message(format!(
-            "sqlite3 exited with code {}",
-            status.code().unwrap_or(-1)
-        ))
+        .with_message(format!("sqlite3 exited with code {exit_code}"))
         .with_duration(ctx.elapsed()))
 }
 
@@ -3846,7 +3843,7 @@ fn test_summary_probe_from_result(
 ) -> HistoryListEnrichmentProbe {
     match result {
         Ok((passed, failed, _)) if passed > 0 || failed > 0 => HistoryListEnrichmentProbe {
-            fragment: format!("tests:{}p{}f", passed, failed),
+            fragment: format!("tests:{passed}p{failed}f"),
             issue: None,
         },
         Ok(_) => HistoryListEnrichmentProbe {
