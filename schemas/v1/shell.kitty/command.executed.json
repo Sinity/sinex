@@ -1,23 +1,45 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "CommandText": {
+      "description": "A command line text",
+      "type": "string"
+    },
+    "ExitCode": {
+      "description": "Process exit code newtype.\n\nDistinguishes exit codes from other i32 values. Unix convention:\n- 0: success\n- 1-125: application-defined errors\n- 126: command not executable\n- 127: command not found\n- 128+N: killed by signal N",
+      "format": "int32",
+      "type": "integer"
+    },
+    "RecordedPath": {
+      "description": "A path recorded from observational data (filesystem events, shell CWDs). Preserved verbatim except null bytes.",
+      "type": "string"
+    },
+    "ShellName": {
+      "description": "A shell name (e.g., `bash`, `zsh`, `fish`)",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Kitty command executed event emitted by shell integration.",
   "properties": {
     "command": {
-      "type": "string"
+      "$ref": "#/$defs/CommandText"
     },
     "execution_time_ms": {
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": [
         "integer",
         "null"
       ]
     },
     "exit_status": {
-      "format": "int32",
-      "type": [
-        "integer",
-        "null"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExitCode"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "kitty_tab_id": {
@@ -27,23 +49,34 @@
       "type": "string"
     },
     "shell_type": {
-      "type": [
-        "string",
-        "null"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ShellName"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "working_directory": {
-      "type": [
-        "string",
-        "null"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RecordedPath"
+        },
+        {
+          "type": "null"
+        }
       ]
     }
   },
   "required": [
     "command",
-    "kitty_tab_id",
-    "kitty_window_id"
+    "kitty_window_id",
+    "kitty_tab_id"
   ],
   "title": "KittyCommandExecutedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "command.executed",
+  "x-sinex-source": "shell.kitty",
+  "x-sinex-version": "1.0.0"
 }

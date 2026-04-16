@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "encoding": {
       "type": [
@@ -18,7 +18,7 @@
     },
     "size_bytes": {
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "source_material_id": {
@@ -27,9 +27,12 @@
   },
   "required": [
     "file_path",
-    "size_bytes",
-    "source_material_id"
+    "source_material_id",
+    "size_bytes"
   ],
   "title": "DocumentIngestedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "document.ingested",
+  "x-sinex-source": "document-ingestor",
+  "x-sinex-version": "1.0.0"
 }

@@ -1,20 +1,75 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "PowerEventType": {
+      "description": "Power event type",
+      "oneOf": [
+        {
+          "const": "sleep",
+          "description": "System going to sleep",
+          "type": "string"
+        },
+        {
+          "const": "wake",
+          "description": "System waking from sleep",
+          "type": "string"
+        },
+        {
+          "const": "shutdown",
+          "description": "Shutdown initiated",
+          "type": "string"
+        },
+        {
+          "const": "reboot",
+          "description": "Reboot initiated",
+          "type": "string"
+        },
+        {
+          "const": "hibernate",
+          "description": "Hibernate",
+          "type": "string"
+        },
+        {
+          "const": "profile_changed",
+          "description": "Power profile changed",
+          "type": "string"
+        },
+        {
+          "const": "battery_changed",
+          "description": "Battery level changed",
+          "type": "string"
+        },
+        {
+          "const": "power_source_changed",
+          "description": "AC power connected/disconnected",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "High-level power management notification.",
   "properties": {
     "details": true,
     "event_type": {
-      "type": "string"
+      "$ref": "#/$defs/PowerEventType"
     },
     "timestamp": {
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     }
   },
   "required": [
-    "details",
     "event_type",
+    "details",
     "timestamp"
   ],
   "title": "DbusPowerStateChangedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "power.state_changed",
+  "x-sinex-source": "dbus",
+  "x-sinex-version": "1.0.0"
 }

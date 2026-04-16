@@ -1,15 +1,22 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "capture_timestamp": {
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "kitty_window_id": {
       "type": "string"
     },
     "line_start_offset": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "new_lines": {
@@ -20,11 +27,14 @@
     }
   },
   "required": [
-    "capture_timestamp",
     "kitty_window_id",
+    "new_lines",
     "line_start_offset",
-    "new_lines"
+    "capture_timestamp"
   ],
   "title": "KittyContentStreamedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "content.streamed",
+  "x-sinex-source": "shell.kitty",
+  "x-sinex-version": "1.0.0"
 }

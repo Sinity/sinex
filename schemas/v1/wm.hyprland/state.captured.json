@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "captured_at": {
       "type": "string"
@@ -26,13 +26,16 @@
     }
   },
   "required": [
-    "captured_at",
-    "current_monitor",
-    "current_workspace",
-    "monitors",
     "windows",
-    "workspaces"
+    "workspaces",
+    "monitors",
+    "current_workspace",
+    "current_monitor",
+    "captured_at"
   ],
   "title": "HyprlandStateCapturedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "state.captured",
+  "x-sinex-source": "wm.hyprland",
+  "x-sinex-version": "1.0.0"
 }

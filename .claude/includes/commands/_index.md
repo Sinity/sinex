@@ -1,6 +1,2 @@
-# Command Reference
-
-@./development.md
-@./stack.md
-@./diagnostics.md
-@./extended.md
+@../../../xtask/docs/command-guide.md
+@./sinexctl.md

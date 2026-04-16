@@ -1,17 +1,27 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "ExitCode": {
+      "description": "Process exit code newtype.\n\nDistinguishes exit codes from other i32 values. Unix convention:\n- 0: success\n- 1-125: application-defined errors\n- 126: command not executable\n- 127: command not found\n- 128+N: killed by signal N",
+      "format": "int32",
+      "type": "integer"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Kitty terminal session end event.",
   "properties": {
     "duration_seconds": {
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "exit_code": {
-      "format": "int32",
-      "type": [
-        "integer",
-        "null"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExitCode"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "tab_id": {
@@ -22,10 +32,13 @@
     }
   },
   "required": [
-    "duration_seconds",
+    "window_id",
     "tab_id",
-    "window_id"
+    "duration_seconds"
   ],
   "title": "KittySessionEndedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "session.ended",
+  "x-sinex-source": "terminal.kitty",
+  "x-sinex-version": "1.0.0"
 }

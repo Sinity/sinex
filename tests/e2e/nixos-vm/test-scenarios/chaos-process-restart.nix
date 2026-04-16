@@ -1,7 +1,5 @@
 # Chaos test: sinex-ingestd process kill during batch ingestion — Rust-driven.
 #
-# Replaces Python testScript with the typed Rust `sinex-vm-test-suite` binary.
-#
 # SIGKILLs ingestd mid-batch and verifies:
 #   - ingestd restarts (via systemd) and resumes from its checkpoint
 #   - no duplicate events in Postgres (idempotent re-processing)

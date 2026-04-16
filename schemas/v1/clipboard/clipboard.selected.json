@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "annex_key": {
       "type": [
@@ -18,7 +18,7 @@
     },
     "content_size": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "content_type": {
@@ -47,11 +47,14 @@
     }
   },
   "required": [
-    "content_hash",
-    "content_size",
+    "selection_type",
     "content_type",
-    "selection_type"
+    "content_size",
+    "content_hash"
   ],
   "title": "ClipboardSelectedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "clipboard.selected",
+  "x-sinex-source": "clipboard",
+  "x-sinex-version": "1.0.0"
 }

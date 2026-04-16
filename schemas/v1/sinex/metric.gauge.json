@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Gauge metric - point-in-time value that can increase or decrease\n\nUse for: connection count, queue depth, memory usage, fill percentage",
   "properties": {
     "component": {
@@ -14,7 +14,7 @@
       "type": "object"
     },
     "name": {
-      "description": "Metric name (e.g., \"stream.fill_pct\", \"pool.active_connections\")",
+      "description": "Metric name (e.g., \"`stream.fill_pct`\", \"`pool.active_connections`\")",
       "type": "string"
     },
     "value": {
@@ -24,10 +24,13 @@
     }
   },
   "required": [
-    "component",
     "name",
-    "value"
+    "value",
+    "component"
   ],
   "title": "MetricGaugePayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "metric.gauge",
+  "x-sinex-source": "sinex",
+  "x-sinex-version": "1.0.0"
 }

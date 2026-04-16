@@ -139,8 +139,8 @@ sinex_proptest! {
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `DATABASE_URL` | (from devenv) | Primary test database connection |
-| `SINEX_TEST_FAIL_DIR` | `target/test-artifacts/` | Failure snapshot directory |
+| `DATABASE_URL` | (from the devShell) | Primary test database connection |
+| `SINEX_TEST_FAIL_DIR` | `.sinex/test-artifacts/` | Failure snapshot directory |
 | `SINEX_TEST_USE_TLS` | `false` | Enable TLS in integration tests |
 | `SINEX_TEST_NATS_TOKEN` | — | NATS authentication token |
 | `SINEX_TEST_NATS_CONFIG_FILE` | — | Custom NATS config path |
@@ -167,18 +167,14 @@ sinex_proptest! {
 
 ## Feature Flags
 
-Enable in `Cargo.toml` for additional functionality:
+Add `xtask` as a dev-dependency in `Cargo.toml`:
 
 ```toml
 [dev-dependencies]
-xtask sandbox = { path = "../xtask sandbox", features = ["bench", "proptest"] }
+xtask = { path = "../xtask" }
 ```
 
-| Feature | Purpose |
-|---------|---------|
-| `bench` | Enable benchmarking support (`#[sinex_bench]`) |
-| `proptest` | Property-based testing integration |
-| `tracing` | Enhanced tracing and log capture |
+The sandbox harness is available from the `xtask::sandbox` module.
 
 ## Logging and Diagnostics
 
@@ -193,7 +189,7 @@ assert!(logs.iter().any(|l| l.contains("expected message")));
 ctx.assert_logged("checkpoint saved")?;
 ```
 
-When a test fails, the harness records a JSON artifact under `target/test-artifacts/` containing:
+When a test fails, the harness records a JSON artifact under `.sinex/test-artifacts/` containing:
 - Error message and backtrace
 - Pool statistics at failure time
 - Captured tracing logs (when TestContext is present)
@@ -213,10 +209,10 @@ xtask test --debug
 xtask test --prime
 
 # Single crate
-xtask test -- -p xtask
+xtask test -p xtask
 
 # Update snapshots
-INSTA_UPDATE=always xtask test --prime
+xtask test --prime --update-snapshots
 ```
 
 ## Documentation Index

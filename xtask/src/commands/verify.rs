@@ -245,7 +245,7 @@ pub fn execute_perf(args: PerfArgs, ctx: &CommandContext) -> Result<CommandResul
 
     let contracts_path = args
         .contracts
-        .unwrap_or_else(|| workspace_root().join("config/verify/perf-contracts.toml"));
+        .unwrap_or_else(|| workspace_root().join("xtask/config/perf-contracts.toml"));
     let output_root = args
         .output_dir
         .unwrap_or_else(|| cfg.state_dir.join("verify-perf"));

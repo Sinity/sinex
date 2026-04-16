@@ -451,9 +451,8 @@ impl NodeRuns {
 /// or updated schema files (e.g., `.json` files), and automatically register
 /// them in the `event_payload_schemas` table. This enables a fully automated,
 /// CI/CD-driven workflow for managing data contracts.
-///
-/// **STATUS:** Aspirational (table defined, no sync implementation).
-/// See `crate/lib/sinex-schema/docs/gitops-schema-sources-status.md` for roadmap.
+/// See `crate/lib/sinex-schema/docs/gitops-schema-sources-status.md` for the
+/// current ownership split and runtime status.
 #[derive(Iden, Copy, Clone)]
 pub enum GitopsSchemaSources {
     Table,

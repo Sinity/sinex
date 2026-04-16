@@ -1,5 +1,12 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Workflow pattern detection",
   "properties": {
     "analysis_type": {
@@ -7,12 +14,11 @@
     },
     "frequency": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "generated_at": {
-      "format": "date-time",
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "pattern": {
       "type": "string"
@@ -23,11 +29,14 @@
   },
   "required": [
     "analysis_type",
-    "frequency",
-    "generated_at",
     "pattern",
-    "pattern_type"
+    "frequency",
+    "pattern_type",
+    "generated_at"
   ],
   "title": "PKMWorkflowPatternPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "pkm.workflow_pattern",
+  "x-sinex-source": "pkm-automaton",
+  "x-sinex-version": "1.0.0"
 }

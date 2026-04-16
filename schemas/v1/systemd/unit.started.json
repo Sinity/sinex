@@ -1,15 +1,130 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "ProcessId": {
+      "description": "Unix process ID newtype.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "SystemdActiveState": {
+      "description": "Systemd unit active state",
+      "oneOf": [
+        {
+          "const": "active",
+          "description": "Unit is active",
+          "type": "string"
+        },
+        {
+          "const": "reloading",
+          "description": "Unit is reloading",
+          "type": "string"
+        },
+        {
+          "const": "inactive",
+          "description": "Unit is inactive",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Unit failed",
+          "type": "string"
+        },
+        {
+          "const": "activating",
+          "description": "Unit is activating",
+          "type": "string"
+        },
+        {
+          "const": "deactivating",
+          "description": "Unit is deactivating",
+          "type": "string"
+        },
+        {
+          "const": "maintenance",
+          "description": "Unit is in maintenance",
+          "type": "string"
+        }
+      ]
+    },
+    "SystemdUnitType": {
+      "description": "Systemd unit type",
+      "oneOf": [
+        {
+          "const": "service",
+          "description": "Service unit",
+          "type": "string"
+        },
+        {
+          "const": "socket",
+          "description": "Socket unit",
+          "type": "string"
+        },
+        {
+          "const": "target",
+          "description": "Target unit",
+          "type": "string"
+        },
+        {
+          "const": "device",
+          "description": "Device unit",
+          "type": "string"
+        },
+        {
+          "const": "mount",
+          "description": "Mount unit",
+          "type": "string"
+        },
+        {
+          "const": "automount",
+          "description": "Automount unit",
+          "type": "string"
+        },
+        {
+          "const": "timer",
+          "description": "Timer unit",
+          "type": "string"
+        },
+        {
+          "const": "swap",
+          "description": "Swap unit",
+          "type": "string"
+        },
+        {
+          "const": "path",
+          "description": "Path unit",
+          "type": "string"
+        },
+        {
+          "const": "slice",
+          "description": "Slice unit",
+          "type": "string"
+        },
+        {
+          "const": "scope",
+          "description": "Scope unit",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Other unit type",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "active_state": {
-      "type": "string"
+      "$ref": "#/$defs/SystemdActiveState"
     },
     "main_pid": {
-      "format": "uint32",
-      "minimum": 0.0,
-      "type": [
-        "integer",
-        "null"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProcessId"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "sub_state": {
@@ -19,15 +134,18 @@
       "type": "string"
     },
     "unit_type": {
-      "type": "string"
+      "$ref": "#/$defs/SystemdUnitType"
     }
   },
   "required": [
-    "active_state",
-    "sub_state",
     "unit_name",
-    "unit_type"
+    "unit_type",
+    "active_state",
+    "sub_state"
   ],
   "title": "SystemdUnitStartedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "unit.started",
+  "x-sinex-source": "systemd",
+  "x-sinex-version": "1.0.0"
 }

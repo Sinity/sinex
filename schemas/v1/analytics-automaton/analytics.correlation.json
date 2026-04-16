@@ -1,6 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "definitions": {
+  "$defs": {
     "CorrelationPair": {
       "description": "Correlation pair",
       "properties": {
@@ -16,19 +15,20 @@
         },
         "occurrences": {
           "format": "uint",
-          "minimum": 0.0,
+          "minimum": 0,
           "type": "integer"
         }
       },
       "required": [
-        "avg_gap_ms",
         "event_a",
         "event_b",
-        "occurrences"
+        "occurrences",
+        "avg_gap_ms"
       ],
       "type": "object"
     }
   },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Correlation analysis between event types",
   "properties": {
     "analysis_type": {
@@ -36,13 +36,13 @@
     },
     "pairs": {
       "items": {
-        "$ref": "#/definitions/CorrelationPair"
+        "$ref": "#/$defs/CorrelationPair"
       },
       "type": "array"
     },
     "window_seconds": {
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     }
   },
@@ -52,5 +52,8 @@
     "window_seconds"
   ],
   "title": "AnalyticsCorrelationPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "analytics.correlation",
+  "x-sinex-source": "analytics-automaton",
+  "x-sinex-version": "1.0.0"
 }

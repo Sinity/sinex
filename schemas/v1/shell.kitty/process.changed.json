@@ -1,8 +1,15 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "change_timestamp": {
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "current_process": true,
     "kitty_tab_id": {
@@ -20,11 +27,14 @@
     }
   },
   "required": [
-    "change_timestamp",
-    "current_process",
+    "kitty_window_id",
     "kitty_tab_id",
-    "kitty_window_id"
+    "current_process",
+    "change_timestamp"
   ],
   "title": "KittyProcessChangedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "process.changed",
+  "x-sinex-source": "shell.kitty",
+  "x-sinex-version": "1.0.0"
 }

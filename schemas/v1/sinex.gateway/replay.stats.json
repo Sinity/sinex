@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Replay operation metrics\n\nAddresses Issue 145: Replay Control Metrics",
   "properties": {
     "avg_duration_ms": {
@@ -13,34 +13,37 @@
     "events_affected": {
       "description": "Events affected by replays",
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "failed": {
       "description": "Failed replays",
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "successful": {
       "description": "Successful replays",
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "total_requests": {
       "description": "Total replay requests",
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     }
   },
   "required": [
-    "events_affected",
-    "failed",
+    "total_requests",
     "successful",
-    "total_requests"
+    "failed",
+    "events_affected"
   ],
   "title": "ReplayStatsPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "replay.stats",
+  "x-sinex-source": "sinex.gateway",
+  "x-sinex-version": "1.0.0"
 }

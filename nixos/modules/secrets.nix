@@ -8,13 +8,13 @@ let
   # Check if agenix is available (age.secrets option exists)
   agenixAvailable = options ? age && options.age ? secrets;
 
-  # Default to the `secret/` directory adjacent to the Sinex source tree.
+  # Default to the `nixos/secret/` directory in the Sinex source tree.
   # Overridable via services.sinex.secrets.secretsDirectory for external flake consumers
   # whose secrets live outside the Sinex repository.
   secretDir =
     if cfg.secrets.secretsDirectory != null
     then cfg.secrets.secretsDirectory
-    else ../../secret;
+    else ../secret;
   available = builtins.pathExists secretDir;
   files = if available then builtins.readDir secretDir else {};
   ageFiles = filterAttrs (name: kind: kind == "regular" && hasSuffix ".age" name) files;
@@ -36,9 +36,60 @@ let
 
   specs = mapAttrs' (filename: _: nameValuePair (removeSuffix ".age" filename) (mkSpec filename)) ageFiles;
 
+  conventionalEtcEntries = {
+    sinex-gateway-admin-token = "sinex/gateway-admin-token";
+    sinex-local-db = "sinex/db-password";
+    sinex-remote-db = "sinex/remote-db-password";
+    sinex-grafana-secret-key = "sinex/grafana-secret-key";
+    grafana-secret-key = "sinex/grafana-secret-key";
+    sinex-nats-server-cert = "sinex/nats-server-cert.pem";
+    nats-server-cert = "sinex/nats-server-cert.pem";
+    sinex-nats-server-key = "sinex/nats-server-key.pem";
+    nats-server-key = "sinex/nats-server-key.pem";
+    sinex-nats-client-ca = "sinex/nats-client-ca.pem";
+    nats-client-ca = "sinex/nats-client-ca.pem";
+    sinex-nats-ca = "sinex/nats-ca.pem";
+    nats-ca = "sinex/nats-ca.pem";
+    sinex-nats-client-cert = "sinex/nats-client-cert.pem";
+    nats-client-cert = "sinex/nats-client-cert.pem";
+    sinex-nats-client-key = "sinex/nats-client-key.pem";
+    nats-client-key = "sinex/nats-client-key.pem";
+    sinex-nats-client-creds = "sinex/nats-client.creds";
+    nats-client-creds = "sinex/nats-client.creds";
+    sinex-nats-client-nkey = "sinex/nats-client.nk";
+    nats-client-nkey = "sinex/nats-client.nk";
+    sinex-nats-token = "sinex/nats-token";
+    nats-token = "sinex/nats-token";
+    sinex-remote-nats-ca = "sinex/remote-nats-ca.pem";
+    sinex-remote-nats-cert = "sinex/remote-nats-cert.pem";
+    sinex-remote-nats-key = "sinex/remote-nats-key.pem";
+  };
+
+  lookupEtcSource =
+    etcName:
+    let
+      entry = attrByPath [ "environment" "etc" etcName ] null config;
+    in
+    if entry != null && entry ? source then entry.source else null;
+
+  conventionalEtcPaths = listToAttrs (
+    filter (item: item != null) (
+      mapAttrsToList
+        (
+          secretName: etcName:
+          let
+            source = lookupEtcSource etcName;
+          in
+          if source == null then null else nameValuePair secretName source
+        )
+        conventionalEtcEntries
+    )
+  );
+
   nonExport = [
     "sinex-local-db"
     "sinex-gateway-admin-token"  # gateway reads via SINEX_GATEWAY_ADMIN_TOKEN_FILE (file path, not raw content)
+    "sinex-grafana-secret-key"
     "sinex-nats-ca"
     "sinex-nats-client-ca"
     "sinex-nats-client-cert"
@@ -54,6 +105,7 @@ let
     "nats-client-creds"
     "nats-client-key"
     "nats-client-nkey"
+    "grafana-secret-key"
     "nats-server-cert"
     "nats-server-key"
     "nats-token"
@@ -82,6 +134,8 @@ let
   # `sinnix.services.sinex.provisionDatabase` need the resolved secret files even
   # before the full Sinex service stack is enabled.
   shouldConfigureAgenix = agenixAvailable && (cfg.secrets.enableAgenix or false);
+  agenixPaths = if shouldConfigureAgenix then mapAttrs (_: spec: spec.path) specs else {};
+  resolvedSecretPaths = conventionalEtcPaths // agenixPaths;
 
 in
 {
@@ -101,10 +155,10 @@ in
   # optionalAttrs agenixAvailable guards age.* options existing at all (safe: checks options, not config).
   # mkIf defers cfg.enable evaluation, avoiding infinite recursion from reading config at module top-level.
   config = mkMerge [
-    (mkIf shouldConfigureAgenix {
-      sinex.secrets.paths = mapAttrs (_: spec: spec.path) specs;
-      sinex.secrets.exportScript = exportScript;
-    })
+    {
+      sinex.secrets.paths = resolvedSecretPaths;
+      sinex.secrets.exportScript = if shouldConfigureAgenix then exportScript else "";
+    }
     (optionalAttrs agenixAvailable (mkIf shouldConfigureAgenix {
       age.identityPaths = mkDefault defaultIdentities;
       age.secrets = specs;

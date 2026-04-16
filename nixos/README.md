@@ -4,12 +4,12 @@ Complete deployment and operations guide for the Sinex Exocortex personal data c
 
 ## Documentation Structure
 
-- **example.nix** - Minimal workstation deployment (filesystem + terminal nodes)
-- **example-monitoring.nix** - Staging configuration with maintenance + observability stack
-- **example-dev-sandbox.nix** - Comprehensive developer sandbox with all services enabled
-- **example-headless.nix** - Headless/server capture (filesystem + system nodes)
-- **example-remote-node.nix** - Edge node forwarding events to remote ingest
-- **example-coordination.nix** - Hot standby deployment with coordination enabled
+- **examples/workstation.nix** - Minimal workstation deployment (filesystem + terminal nodes)
+- **examples/monitoring.nix** - Staging configuration with maintenance + observability stack
+- **examples/dev-sandbox.nix** - Comprehensive developer sandbox with all services enabled
+- **examples/headless.nix** - Headless/server capture (filesystem + system nodes)
+- **examples/remote-node.nix** - Edge node forwarding events to remote ingest
+- **examples/coordination.nix** - Hot standby deployment with coordination enabled
 - **modules/** - Implementation modules:
   - `default.nix` - Main module entry point and base options
   - `database.nix` - PostgreSQL provisioning, pooling, and health monitoring
@@ -40,9 +40,9 @@ Key architectural decisions and implementation details are documented at their i
   - Provenance and Stage-as-you-go responsibilities: [`crate/lib/sinex-node-sdk/docs/provenance.md`](../crate/lib/sinex-node-sdk/docs/provenance.md)
   - Stream bootstrap defaults + environment namespacing: [`modules/nats.nix`](modules/nats.nix)
 - **Node SDK Patterns**: [`crate/lib/sinex-node-sdk/docs/overview.md`](../crate/lib/sinex-node-sdk/docs/overview.md)
-  - Unified processor interface and checkpoint semantics
+  - Unified node interface and checkpoint semantics
   - Replay patterns and lifecycle hooks
-- **StatefulStreamProcessor Trait**: [`sinex-node-sdk/src/runtime/stream/mod.rs`](../crate/lib/sinex-node-sdk/src/runtime/stream/mod.rs#L300)
+- **Node stream runtime**: [`sinex-node-sdk/src/runtime/stream/mod.rs`](../crate/lib/sinex-node-sdk/src/runtime/stream/mod.rs)
   - Snapshot, historical, and continuous modes
 
 ### Node Implementations
@@ -70,12 +70,15 @@ Add to your NixOS configuration:
   services.sinex = {
     enable = true;
     users.target = "yourusername";  # REQUIRED: match the user defined above
-    secrets.gatewayAdminTokenFile = "/etc/sinex/gateway-admin-token"; # REQUIRED when gateway is enabled
   };
 
   environment.etc."sinex/gateway-admin-token".text = "replace-me-admin:admin";
 }
 ```
+
+The module picks that up automatically. Set
+`services.sinex.secrets.gatewayAdminTokenFile` only when you need a non-standard
+token path.
 
 Apply with:
 ```bash
@@ -192,6 +195,10 @@ services.sinex.shell = {
 
 Disabling `kitty.autoConfigure` keeps the helper scripts available without touching your existing Kitty configuration.
 
+For real secrets, prefer agenix over `environment.etc.*.text`; the inline
+`environment.etc` examples here are just the smallest declarative shape that
+exercises the module conventions.
+
 ### User-Session Node Wiring
 
 Terminal and desktop capture now default to the interactive target user more
@@ -244,8 +251,8 @@ they are no longer the primary workstation path.
 For production deployments with zero-downtime upgrades and automatic failover:
 
 ```bash
-cp nixos/example-coordination.nix /etc/nixos/sinex.nix
-# Edit targetUser and coordination settings
+cp nixos/examples/coordination.nix /etc/nixos/sinex.nix
+# Edit users.target and coordination settings
 sudo nixos-rebuild switch
 ```
 
@@ -260,8 +267,8 @@ This enables:
 For simpler single-instance deployment:
 
 ```bash
-cp nixos/example.nix /etc/nixos/sinex.nix
-# Edit targetUser and other settings
+cp nixos/examples/workstation.nix /etc/nixos/sinex.nix
+# Edit users.target and other settings
 sudo nixos-rebuild switch
 ```
 
@@ -271,36 +278,44 @@ Each example is exported through the flake. To explore them safely:
 
 ```bash
 # Boot the minimal example in a disposable VM
-nix build .#nixosConfigurations.example.config.system.build.vm
+nix build .#nixosConfigurations.workstation.config.system.build.vm
 ./result/bin/run-nixos-vm
 
 # Temporarily apply the developer sandbox on a host (rolls back on reboot)
-sudo nixos-rebuild test --flake .#exampleDevSandbox
+sudo nixos-rebuild test --flake .#devSandbox
 ```
 
 Switch permanently only after merging the example into your host configuration.
 > **Note**: The remote node example expects an existing remote NATS endpoint (feeding a central
 > ingestd/gateway deployment) and explicitly disables local PostgreSQL/NATS provisioning.
 
+Grafana, when enabled, now provisions:
+- a fixed Prometheus datasource (`sinex-prometheus`)
+- a fixed PostgreSQL datasource (`sinex-postgres`) pointed at the Sinex database
+- tracked dashboards from `nixos/monitoring/grafana-dashboards/`
+
+Those dashboards are built around the current `sinex_telemetry.*` surfaces: continuous aggregates
+for operator telemetry and live event-time views for recent activity.
+
 ## Architecture Overview
 
 Sinex uses a node architecture:
 
 ```
-External Data → Satellites → NATS JetStream → sinex-ingestd → PostgreSQL (`core.events`)
-                                         ↓
-                           confirmations/DLQ → Automata → Gateway/CLI
+External Data → Nodes → NATS JetStream → sinex-ingestd → PostgreSQL (`core.events`)
+                                    ↓
+                      confirmations/DLQ → Automata → Gateway/CLI
 ```
 
 Current implementation:
-- Satellites publish provisional events and source material slices directly to JetStream (`events.raw.*`, `source_material.*`).
+- Collector nodes publish provisional events and source material slices directly to JetStream (`events.raw.*`, `source_material.*`).
 - ingestd consumes from JetStream, validates, persists to PostgreSQL (TimescaleDB), then publishes confirmations (`events.confirmations.*`) and DLQ entries back to JetStream.
 - Automata consume confirmations via durable JetStream consumers; Gateway/CLI query PostgreSQL via JSON-RPC or direct DB mode.
 
 **Core Components:**
 - **ingestd**: JetStream consumer + validator + single-writer persistence + confirmations/DLQ publisher
 - **Gateway**: HTTP/JSON-RPC API for CLI and web access
-- **Satellites**: Independent services for data capture and processing
+- **Nodes**: Independent services for data capture and processing
 - **PostgreSQL**: Event storage with TimescaleDB for time-series data
 - **NATS JetStream**: Message bus for real-time event distribution
 
@@ -313,22 +328,20 @@ Full-featured setup capturing all digital activity:
 ```nix
 services.sinex = {
   enable = true;
-  targetUser = "myuser";
+  users.target = "myuser";
   
   nodes = {
     enable = true;
-    eventSources = {
-      filesystem = {
-        enable = true;
-        watchPaths = [ "~/Documents" "~/Projects" ];
-      };
-      terminal.enable = true;
-      desktop.enable = true;
-      system.enable = true;
+    filesystem = {
+      enable = true;
+      watchPaths = [ "~/Documents" "~/Projects" ];
     };
+    terminal.enable = true;
+    desktop.enable = true;
+    system.enable = true;
     automata = {
-      canonicalCommandSynthesizer.enable = true;  # Command processing
-      healthAggregator.enable = true;             # Health monitoring
+      canonicalizer.enable = true;     # Command processing
+      healthAggregator.enable = true;  # Health monitoring
     };
   };
 
@@ -336,16 +349,15 @@ services.sinex = {
     asciinema.autoRecord = false;
     kitty.enable = true;
   };
-  
+
   database.autoSetup = true;
-  blobStorage.enable = true;
 };
 ```
 
 > **Multiple databases:** use `database.extraDatabases` when you want the module
 > to create and prep additional DBs (for example `sinex_dev`) alongside the
 > primary `database.name`. Extensions such as TimescaleDB are installed in each
-> database listed, so `devenv` migrations “just work” no matter which schema you
+> database listed, so schema/bootstrap tooling works consistently no matter which schema you
 > target.
 
 ### 2. Server/Headless (Data Collection Only)
@@ -355,24 +367,21 @@ Minimal setup for server environments:
 ```nix
 services.sinex = {
   enable = true;
-  targetUser = "serveruser";
+  users.target = "serveruser";
   
   nodes = {
     enable = true;
-    eventSources = {
-      filesystem = {
-        enable = true;
-        watchPaths = [ "/srv/data" "/var/log" ];
-      };
-      terminal.enable = false;
-      desktop.enable = false;      # No GUI
-      system.enable = true;
+    filesystem = {
+      enable = true;
+      watchPaths = [ "/srv/data" "/var/log" ];
     };
+    terminal.enable = false;
+    desktop.enable = false;      # No GUI
+    system.enable = true;
     automata.healthAggregator.enable = true;
   };
   
   database.autoSetup = true;
-  security.level = "strict";       # Enhanced security
 };
 ```
 
@@ -383,19 +392,17 @@ Development setup with debugging enabled:
 ```nix
 services.sinex = {
   enable = true;
-  targetUser = "developer";
+  users.target = "developer";
   logLevel = "debug";              # Verbose logging
   
   nodes = {
     enable = true;
-    logLevel = "debug";
-    eventSources = {
-      filesystem = {
-        enable = true;
-        watchPaths = [ "~/Projects" ];  # Only watch projects
-      };
-      terminal.enable = true;
+    defaults.logLevel = "debug";
+    filesystem = {
+      enable = true;
+      watchPaths = [ "~/Projects" ];  # Only watch projects
     };
+    terminal.enable = true;
   };
   
   shell = {
@@ -411,8 +418,6 @@ services.sinex = {
     name = "sinex";
     extraDatabases = [ "sinex_dev" ];
   };
-  
-  monitoring.logging.performance.traceRequests = true;
 };
 ```
 
@@ -423,16 +428,14 @@ Minimal setup for automated testing:
 ```nix
 services.sinex = {
   enable = true;
-  targetUser = "testuser";
+  users.target = "testuser";
   
   nodes = {
     enable = true;
-    eventSources = {
-      filesystem.enable = false;
-      terminal.enable = false;
-      desktop.enable = false;
-      system.enable = false;
-    };
+    filesystem.enable = false;
+    terminal.enable = false;
+    desktop.enable = false;
+    system.enable = false;
   };
   
   shell.asciinema.autoRecord = false;
@@ -443,7 +446,7 @@ services.sinex = {
   };
   
   # Disable persistent storage
-  blobStorage.enable = false;
+  storage.blob.enable = false;
 };
 ```
 
@@ -691,19 +694,16 @@ Default directories (customizable):
 
 ### Environment Variables
 
-Key environment variables for debugging:
+Useful runtime variables for debugging:
 ```bash
 export RUST_LOG=debug                    # Enable debug logging
-export DATABASE_URL=postgresql:///sinex_dev  # Database connection
-export SINEX_WORK_DIR=/tmp/sinex         # Working directory
+export SINEX_ENVIRONMENT=dev             # Subject / stream namespace
+export SINEX_STATE_DIR=/var/lib/sinex    # Module state root
+export DATABASE_URL=postgresql:///sinex_dev  # DB connection when debugging locally
 ```
 
-### Security Configuration
-
-Security levels:
-- **minimal**: Basic security, maximum functionality
-- **balanced**: Default, reasonable security with monitoring
-- **strict**: Maximum security, may restrict some features
+The NixOS module owns the steady-state runtime environment; use these variables
+for ad-hoc debugging, not as the primary configuration surface.
 
 ### Resource Limits
 
@@ -714,9 +714,14 @@ Default resource limits per service:
 
 Adjust in configuration:
 ```nix
-services.sinex.resources.ingestd = {
+services.sinex.core.ingestd.resources = {
   memoryMax = "2G";
   cpuQuota = "200%";
+};
+
+services.sinex.nodes.defaults.resources = {
+  memoryMax = "384M";
+  cpuQuota = "75%";
 };
 ```
 
@@ -743,7 +748,7 @@ df -h /var/lib/sinex
 systemctl status sinex-filesystem-1
 journalctl -u sinex-filesystem-1 -f
 
-# Verify gateway readiness instead of a nonexistent ingestd socket
+# Verify gateway readiness
 curl -k https://127.0.0.1:9999/ready
 journalctl -u sinex-ingestd --since "10 minutes ago"
 
@@ -827,28 +832,30 @@ sudo -u sinex psql sinex_dev -c "REINDEX DATABASE sinex_dev;"
 
 For Sinex development:
 ```bash
-cd /path/to/sinex
-nix develop
-just dev          # Quick development cycle
-just test-dev     # Development tests
+cd /realm/project/sinex
+direnv allow      # first time only
+xtask check       # Quick development cycle
+xtask test        # Main local test loop
 ```
 
 ### VM Testing
 
-Run complete VM tests:
+Run the exported VM compatibility checks:
 ```bash
-cd test/nixos-vm
-./run-vm-tests.sh -c smoke    # Quick smoke tests
-./run-vm-tests.sh -c all      # Full test suite
+xtask test vm --category smoke
+xtask test vm --category integration
 ```
 
 ### Integration with Other Systems
 
 **Prometheus monitoring:**
 ```nix
-services.sinex.monitoring.prometheus.centralCollector = {
+services.sinex.observability.monitoring = {
   enable = true;
-  port = 2114;
+  prometheus = {
+    listen = "127.0.0.1";
+    port = 9090;
+  };
 };
 ```
 
@@ -858,10 +865,17 @@ services.grafana = {
   enable = true;
   provision.dashboards.settings.providers = [{
     name = "sinex";
-    options.path = ./nixos/grafana-dashboards;
+    options.path = ./nixos/monitoring/grafana-dashboards;
   }];
 };
 ```
+
+When enabling Grafana through the Sinex module, the module derives a stable
+local secret key automatically. Override it with `sinex-grafana-secret-key` /
+`grafana-secret-key` from agenix or declarative
+`environment.etc."sinex/grafana-secret-key"`, or with
+`services.sinex.observability.monitoring.grafana.secretKey{,File}`, only when
+you need operator-managed material instead of the declarative default.
 
 ## TimescaleDB Operational Guidelines
 

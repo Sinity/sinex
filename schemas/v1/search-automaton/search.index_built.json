@@ -1,6 +1,10 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "definitions": {
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
     "SearchIndexTopEntry": {
       "description": "Top search index entry summary",
       "properties": {
@@ -18,23 +22,23 @@
           "type": "number"
         },
         "timestamp": {
-          "format": "date-time",
-          "type": "string"
+          "$ref": "#/$defs/DateTime"
         },
         "title": {
           "type": "string"
         }
       },
       "required": [
+        "title",
         "event_type",
-        "keywords",
         "search_score",
-        "timestamp",
-        "title"
+        "keywords",
+        "timestamp"
       ],
       "type": "object"
     }
   },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Search index built event",
   "properties": {
     "analysis_type": {
@@ -50,47 +54,49 @@
     "content_type_distribution": {
       "additionalProperties": {
         "format": "uint",
-        "minimum": 0.0,
+        "minimum": 0,
         "type": "integer"
       },
       "type": "object"
     },
     "generated_at": {
-      "format": "date-time",
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "index_size_limit": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "indexing_window_hours": {
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "top_entries": {
       "items": {
-        "$ref": "#/definitions/SearchIndexTopEntry"
+        "$ref": "#/$defs/SearchIndexTopEntry"
       },
       "type": "array"
     },
     "total_entries": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     }
   },
   "required": [
     "analysis_type",
-    "avg_score_by_type",
+    "total_entries",
     "content_type_distribution",
-    "generated_at",
+    "avg_score_by_type",
+    "top_entries",
     "index_size_limit",
     "indexing_window_hours",
-    "top_entries",
-    "total_entries"
+    "generated_at"
   ],
   "title": "SearchIndexBuiltPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "search.index_built",
+  "x-sinex-source": "search-automaton",
+  "x-sinex-version": "1.0.0"
 }

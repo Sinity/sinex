@@ -1,29 +1,58 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "NodeType": {
+      "description": "Type of node in the system",
+      "oneOf": [
+        {
+          "const": "ingestor",
+          "description": "Ingestor node (captures events from external sources)",
+          "type": "string"
+        },
+        {
+          "const": "automaton",
+          "description": "Automaton node (processes events and generates derived data)",
+          "type": "string"
+        },
+        {
+          "const": "service",
+          "description": "Service node (provides API endpoints)",
+          "type": "string"
+        }
+      ]
+    },
+    "ProcessId": {
+      "description": "Unix process ID newtype.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "config": true,
     "pid": {
-      "format": "uint32",
-      "minimum": 0.0,
-      "type": "integer"
+      "$ref": "#/$defs/ProcessId"
     },
     "process_name": {
       "type": "string"
     },
     "process_type": {
-      "type": "string"
+      "$ref": "#/$defs/NodeType"
     },
     "version": {
       "type": "string"
     }
   },
   "required": [
-    "config",
-    "pid",
     "process_name",
     "process_type",
-    "version"
+    "pid",
+    "version",
+    "config"
   ],
   "title": "ProcessStartedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "process.started",
+  "x-sinex-source": "sinex",
+  "x-sinex-version": "1.0.0"
 }

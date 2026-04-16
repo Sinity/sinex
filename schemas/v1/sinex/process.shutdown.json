@@ -1,38 +1,116 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "properties": {
-    "exit_code": {
+  "$defs": {
+    "ExitCode": {
+      "description": "Process exit code newtype.\n\nDistinguishes exit codes from other i32 values. Unix convention:\n- 0: success\n- 1-125: application-defined errors\n- 126: command not executable\n- 127: command not found\n- 128+N: killed by signal N",
       "format": "int32",
       "type": "integer"
     },
-    "pid": {
+    "NodeType": {
+      "description": "Type of node in the system",
+      "oneOf": [
+        {
+          "const": "ingestor",
+          "description": "Ingestor node (captures events from external sources)",
+          "type": "string"
+        },
+        {
+          "const": "automaton",
+          "description": "Automaton node (processes events and generates derived data)",
+          "type": "string"
+        },
+        {
+          "const": "service",
+          "description": "Service node (provides API endpoints)",
+          "type": "string"
+        }
+      ]
+    },
+    "ProcessId": {
+      "description": "Unix process ID newtype.",
       "format": "uint32",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
+    },
+    "ShutdownReason": {
+      "description": "Reason for process shutdown",
+      "oneOf": [
+        {
+          "const": "requested",
+          "description": "Graceful shutdown requested",
+          "type": "string"
+        },
+        {
+          "const": "crashed",
+          "description": "Process crashed unexpectedly",
+          "type": "string"
+        },
+        {
+          "const": "timeout",
+          "description": "Shutdown due to timeout",
+          "type": "string"
+        },
+        {
+          "const": "resource_limit",
+          "description": "Resource limits exceeded (memory, CPU, etc.)",
+          "type": "string"
+        },
+        {
+          "const": "signal",
+          "description": "External signal received",
+          "type": "string"
+        },
+        {
+          "const": "dependency_failed",
+          "description": "Dependency failure",
+          "type": "string"
+        },
+        {
+          "const": "config_error",
+          "description": "Configuration error",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "Unknown reason",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "exit_code": {
+      "$ref": "#/$defs/ExitCode"
+    },
+    "pid": {
+      "$ref": "#/$defs/ProcessId"
     },
     "process_name": {
       "type": "string"
     },
     "process_type": {
-      "type": "string"
+      "$ref": "#/$defs/NodeType"
     },
     "shutdown_reason": {
-      "type": "string"
+      "$ref": "#/$defs/ShutdownReason"
     },
     "uptime_seconds": {
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     }
   },
   "required": [
-    "exit_code",
-    "pid",
     "process_name",
     "process_type",
+    "pid",
+    "uptime_seconds",
     "shutdown_reason",
-    "uptime_seconds"
+    "exit_code"
   ],
   "title": "ProcessShutdownPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "process.shutdown",
+  "x-sinex-source": "sinex",
+  "x-sinex-version": "1.0.0"
 }

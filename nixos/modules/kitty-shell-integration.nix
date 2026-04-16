@@ -151,21 +151,5 @@ in
         };
       };
     })
-
-    (mkIf (cfg.enable && kittySource.enable && !kittySource.autoConfigure) {
-      system.extraDependencies = [
-        (pkgs.writeText "sinex-kitty-manual-setup.md" ''
-          # Manual Kitty Shell Integration Setup for Sinex
-
-          Add the following block to your kitty.conf and restart Kitty to pick up the changes:
-
-          ```
-          ${kittySource.snippet}
-          ```
-
-          For more information, see: https://sw.kovidgoyal.net/kitty/shell-integration/
-        '')
-      ];
-    })
   ];
 }

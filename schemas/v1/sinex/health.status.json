@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Component health status change\n\nEmitted when a component's health status changes (healthy -> degraded, etc.)",
   "properties": {
     "component": {
@@ -27,9 +27,12 @@
   },
   "required": [
     "component",
-    "current_status",
-    "previous_status"
+    "previous_status",
+    "current_status"
   ],
   "title": "HealthStatusPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "health.status",
+  "x-sinex-source": "sinex",
+  "x-sinex-version": "1.0.0"
 }
