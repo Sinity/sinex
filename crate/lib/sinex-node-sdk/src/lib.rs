@@ -52,6 +52,7 @@
 pub mod acquisition_manager;
 #[cfg(feature = "db")]
 pub mod annex;
+pub mod api_poller;
 pub mod batch_importer;
 #[cfg(feature = "messaging")]
 pub mod automaton_base;
