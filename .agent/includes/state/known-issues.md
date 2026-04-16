@@ -2,11 +2,11 @@
 
 Canonical current-work backlog lives in:
 
-- `.claude/scratch/040-maximalist-remaining-plan.md`
+- `.agent/scratch/040-maximalist-remaining-plan.md`
 
 Canonical deferred deployment and horizon backlog lives in:
 
-- `.claude/scratch/041-advanced-horizon-plan.md`
+- `.agent/scratch/041-advanced-horizon-plan.md`
 
 This include keeps only the compressed memory surface for AGENTS consumers.
 

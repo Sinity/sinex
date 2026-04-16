@@ -7,37 +7,37 @@
 
 ## Architecture
 
-@.claude/includes/architecture/_index.md
+@.agent/includes/architecture/_index.md
 
 ---
 
 ## Agent Identity
 
-@.claude/includes/identity/_index.md
+@.agent/includes/identity/_index.md
 
 ---
 
 ## Commands
 
-@.claude/includes/commands/_index.md
+@.agent/includes/commands/_index.md
 
 ---
 
 ## Code Patterns
 
-@.claude/includes/patterns/_index.md
+@.agent/includes/patterns/_index.md
 
 ---
 
 ## Current State
 
-@.claude/includes/state/_index.md
+@.agent/includes/state/_index.md
 
 ---
 
 ## Reference
 
-@.claude/includes/reference/_index.md
+@.agent/includes/reference/_index.md
 
 ---
 

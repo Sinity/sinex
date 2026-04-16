@@ -2,7 +2,7 @@
 
 Canonical deferred deployment/host-activation backlog lives in:
 
-- `.claude/scratch/041-advanced-horizon-plan.md`
+- `.agent/scratch/041-advanced-horizon-plan.md`
 
 **Current state:** `sinex.enable = true; provisionDatabase = true` on `sinnix-prime`, and the
 host has been switched successfully under the checked-in NixOS module graph. The trustworthy gap
