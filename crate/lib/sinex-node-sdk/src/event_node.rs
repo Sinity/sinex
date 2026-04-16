@@ -3,8 +3,8 @@
 use crate::{NodeResult, nats_publisher::NatsPublisher};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::events::Event;
-use sinex_primitives::{JsonValue, Uuid, environment};
-use std::path::Path;
+use sinex_primitives::{JsonValue, Uuid};
+use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -100,24 +100,71 @@ pub struct EventBatcher {
     event_receiver: mpsc::Receiver<Event<JsonValue>>,
     shutdown: tokio::sync::oneshot::Receiver<()>,
     stats: Arc<EventBatcherStats>,
+    /// Persistent work directory used for the local DLQ fallback file.
+    ///
+    /// This must be a directory that survives service restarts (i.e. **not** under a
+    /// `PrivateTmp` systemd namespace).  It is populated from the node's `NodeConfig::work_dir`
+    /// by the runtime, which in turn reads `SINEX_WORK_DIR` / defaults to the system cache dir.
+    work_dir: PathBuf,
 }
 
 impl EventBatcher {
-    /// Create a new event batcher
+    /// Create a new event batcher.
+    ///
+    /// `work_dir` must be a persistent directory that survives service restarts (i.e. **not**
+    /// under `PrivateTmp`).  It is used as the fallback write location when NATS DLQ publishing
+    /// fails.  On creation, any leftover DLQ files from a previous run are detected and logged
+    /// as warnings so operators know there are events that require manual attention.
     #[must_use]
     pub fn new(
         transport: EventTransport,
         config: EventBatcherConfig,
         event_receiver: mpsc::Receiver<Event<JsonValue>>,
         shutdown: tokio::sync::oneshot::Receiver<()>,
+        work_dir: PathBuf,
     ) -> Self {
-        Self {
+        let batcher = Self {
             transport,
             config,
             event_receiver,
             shutdown,
             stats: Arc::new(EventBatcherStats::default()),
+            work_dir,
+        };
+        batcher.warn_leftover_dlq_files();
+        batcher
+    }
+
+    /// Check for leftover local DLQ files from a previous run and emit a warn-level log.
+    ///
+    /// This is intentionally informational only — no automatic retry is attempted.
+    fn warn_leftover_dlq_files(&self) {
+        let dlq_path = self.dlq_path();
+        match std::fs::metadata(&dlq_path) {
+            Ok(meta) => {
+                warn!(
+                    path = ?dlq_path,
+                    bytes = meta.len(),
+                    "Found leftover local DLQ file from a previous run; \
+                     events in this file were not delivered to NATS and require manual attention"
+                );
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // No leftover file — normal startup path.
+            }
+            Err(e) => {
+                warn!(
+                    path = ?dlq_path,
+                    error = %e,
+                    "Could not check for leftover local DLQ file on startup"
+                );
+            }
         }
+    }
+
+    /// Return the canonical path for the local DLQ fallback file in the node's work directory.
+    fn dlq_path(&self) -> PathBuf {
+        self.work_dir.join("sinex_dead_letter_events.json")
     }
 
     /// Run the event batching loop
@@ -229,7 +276,8 @@ impl EventBatcher {
             .publish_failures
             .fetch_add(batch.len() as u64, Ordering::Relaxed);
         // Store failed events in dead letter queue for later retry.
-        if let Err(e) = Self::store_dead_letter_events(batch).await {
+        let dlq_path = self.dlq_path();
+        if let Err(e) = Self::store_dead_letter_events(batch, &dlq_path).await {
             self.stats
                 .dlq_write_failures
                 .fetch_add(batch.len() as u64, Ordering::Relaxed);
@@ -245,19 +293,19 @@ impl EventBatcher {
         Ok(())
     }
 
-    /// Store failed events in dead letter queue
-    async fn store_dead_letter_events(events: &[Event<JsonValue>]) -> NodeResult<()> {
-        let env = environment();
-        let dead_letter_path = env
-            .work_directory(dirs::cache_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp")))
-            .join("sinex")
-            .join("sinex_dead_letter_events.json");
+    /// Store failed events in the local DLQ fallback file at `dead_letter_path`.
+    ///
+    /// The caller is responsible for providing a persistent path (not under `PrivateTmp`).
+    async fn store_dead_letter_events(
+        events: &[Event<JsonValue>],
+        dead_letter_path: &Path,
+    ) -> NodeResult<()> {
         warn!(
             path = ?dead_letter_path,
             events = events.len(),
             "Writing failed events to local DLQ file"
         );
-        Self::store_dead_letter_events_at_path(events, &dead_letter_path).await
+        Self::store_dead_letter_events_at_path(events, dead_letter_path).await
     }
 
     async fn store_dead_letter_events_at_path(
@@ -342,16 +390,20 @@ impl EventBatcher {
     }
 }
 
-/// Spawn the event batcher loop
+/// Spawn the event batcher loop.
+///
+/// `work_dir` must point to a directory that persists across service restarts so that any
+/// local DLQ fallback files survive a `PrivateTmp`-scoped restart and can be inspected.
 #[must_use]
 pub fn spawn_event_batcher(
     transport: EventTransport,
     config: EventBatcherConfig,
     event_receiver: mpsc::Receiver<Event<JsonValue>>,
     shutdown: tokio::sync::oneshot::Receiver<()>,
+    work_dir: PathBuf,
 ) -> tokio::task::JoinHandle<NodeResult<()>> {
     tokio::spawn(async move {
-        let batcher = EventBatcher::new(transport, config, event_receiver, shutdown);
+        let batcher = EventBatcher::new(transport, config, event_receiver, shutdown, work_dir);
         batcher.run().await
     })
 }
@@ -363,7 +415,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use tempfile::tempdir;
-    use xtask::sandbox::{TestResult, sinex_serial_test, sinex_test};
+    use xtask::sandbox::{TestResult, sinex_test};
 
     async fn remove_if_exists(path: &Path) -> TestResult<()> {
         match tokio::fs::remove_file(path).await {
@@ -401,8 +453,12 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_serial_test]
-    async fn dead_letter_write_uses_namespaced_work_directory() -> TestResult<()> {
+    #[sinex_test]
+    async fn dead_letter_write_uses_provided_work_directory() -> TestResult<()> {
+        let temp_dir = tempdir()?;
+        let work_dir = temp_dir.path().to_path_buf();
+        let dead_letter_path = work_dir.join("sinex_dead_letter_events.json");
+
         let event = DynamicPayload::new(
             "dlq.test",
             "dead_letter.path",
@@ -415,20 +471,13 @@ mod tests {
         .build()
         .expect("infallible: test provenance set");
 
-        let env = sinex_primitives::environment();
-        let dead_letter_path = env
-            .work_directory(dirs::cache_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp")))
-            .join("sinex")
-            .join("sinex_dead_letter_events.json");
-
         remove_if_exists(&dead_letter_path).await?;
-        EventBatcher::store_dead_letter_events(&[event]).await?;
+        EventBatcher::store_dead_letter_events(&[event], &dead_letter_path).await?;
         assert!(
             dead_letter_path.exists(),
             "expected DLQ file at {:?}",
             dead_letter_path
         );
-        remove_if_exists(&dead_letter_path).await?;
         Ok(())
     }
 }
