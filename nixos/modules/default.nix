@@ -1636,7 +1636,7 @@ in
         system = mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.system.enable) cfg.nodes.system.instances;
         automata = mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.automata.enable) null;
         expectations = {
-          schema_apply = cfg.enable && cfg.database.enable;
+          schema_apply = cfg.database.enable && cfg.database.autoSetup;
           nats_streams = cfg.enable && (cfg.core.enable || cfg.nodes.enable);
           gateway_ready = cfg.enable && cfg.core.enable && cfg.core.gateway.enable;
         };
