@@ -433,13 +433,13 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
     }
 
     async fn shutdown(&mut self) -> NodeResult<()> {
-        if let Some(tx) = self.shutdown_tx.take() {
-            if !signal_shutdown_channel(tx, self.ingestor.name()) {
-                warn!(
-                    node = self.ingestor.name(),
-                    "Skipping graceful continuous-loop shutdown confirmation because the receiver is gone"
-                );
-            }
+        if let Some(tx) = self.shutdown_tx.take()
+            && !signal_shutdown_channel(tx, self.ingestor.name())
+        {
+            warn!(
+                node = self.ingestor.name(),
+                "Skipping graceful continuous-loop shutdown confirmation because the receiver is gone"
+            );
         }
         self.ingestor.shutdown(&self.state.user_state).await?;
         self.save_state(true).await?;

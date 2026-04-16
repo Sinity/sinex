@@ -317,9 +317,8 @@ mod tests {
 
         restore_var("SINEX_PRIVACY_EXTRA_RULES", old_extra_rules);
 
-        let err = match result {
-            Ok(_) => panic!("invalid privacy env override should fail honestly"),
-            Err(err) => err,
+        let Err(err) = result else {
+            panic!("invalid privacy env override should fail honestly")
         };
         assert!(matches!(err, PrivacyError::Config(_)));
         assert!(

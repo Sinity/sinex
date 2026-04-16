@@ -1091,10 +1091,10 @@ where
 
         // Emit "received" counter
         #[cfg(feature = "messaging")]
-        if let Some(ref obs) = self.self_observer {
-            if let Err(error) = obs.emit_counter("invalidation.received", 1, None).await {
-                log_self_observation_failure(node_name, "invalidation.received", &error);
-            }
+        if let Some(ref obs) = self.self_observer
+            && let Err(error) = obs.emit_counter("invalidation.received", 1, None).await
+        {
+            log_self_observation_failure(node_name, "invalidation.received", &error);
         }
 
         let invalidation = match serde_json::from_slice::<
@@ -1110,10 +1110,10 @@ where
                     "Failed to deserialize invalidation signal"
                 );
                 #[cfg(feature = "messaging")]
-                if let Some(ref obs) = self.self_observer {
-                    if let Err(error) = obs.emit_counter("invalidation.errors", 1, None).await {
-                        log_self_observation_failure(node_name, "invalidation.errors", &error);
-                    }
+                if let Some(ref obs) = self.self_observer
+                    && let Err(error) = obs.emit_counter("invalidation.errors", 1, None).await
+                {
+                    log_self_observation_failure(node_name, "invalidation.errors", &error);
                 }
                 return None;
             }
@@ -1149,16 +1149,15 @@ where
                                 "Invalidation output emission failed"
                             );
                             #[cfg(feature = "messaging")]
-                            if let Some(ref obs) = self.self_observer {
-                                if let Err(obs_error) =
+                            if let Some(ref obs) = self.self_observer
+                                && let Err(obs_error) =
                                     obs.emit_counter("invalidation.errors", 1, None).await
-                                {
-                                    log_self_observation_failure(
-                                        node_name,
-                                        "invalidation.errors",
-                                        &obs_error,
-                                    );
-                                }
+                            {
+                                log_self_observation_failure(
+                                    node_name,
+                                    "invalidation.errors",
+                                    &obs_error,
+                                );
                             }
                             return None;
                         }
@@ -1174,43 +1173,41 @@ where
                             "Invalidation archive finalization failed after output emission"
                         );
                         #[cfg(feature = "messaging")]
-                        if let Some(ref obs) = self.self_observer {
-                            if let Err(obs_error) =
+                        if let Some(ref obs) = self.self_observer
+                            && let Err(obs_error) =
                                 obs.emit_counter("invalidation.errors", 1, None).await
-                            {
-                                log_self_observation_failure(
-                                    node_name,
-                                    "invalidation.errors",
-                                    &obs_error,
-                                );
-                            }
+                        {
+                            log_self_observation_failure(
+                                node_name,
+                                "invalidation.errors",
+                                &obs_error,
+                            );
                         }
                         return None;
                     }
                     self.record_state_mutation();
                     let duration_ms = processing_start.elapsed().as_millis() as f64;
 
-                    if self.should_checkpoint() {
-                        if let Err(e) = self.save_state().await {
-                            error!(
-                                node = %node_name,
-                                error = %e,
-                                "Failed to checkpoint after invalidation"
+                    if self.should_checkpoint()
+                        && let Err(e) = self.save_state().await
+                    {
+                        error!(
+                            node = %node_name,
+                            error = %e,
+                            "Failed to checkpoint after invalidation"
+                        );
+                        #[cfg(feature = "messaging")]
+                        if let Some(ref obs) = self.self_observer
+                            && let Err(obs_error) =
+                                obs.emit_counter("invalidation.errors", 1, None).await
+                        {
+                            log_self_observation_failure(
+                                node_name,
+                                "invalidation.errors",
+                                &obs_error,
                             );
-                            #[cfg(feature = "messaging")]
-                            if let Some(ref obs) = self.self_observer {
-                                if let Err(obs_error) =
-                                    obs.emit_counter("invalidation.errors", 1, None).await
-                                {
-                                    log_self_observation_failure(
-                                        node_name,
-                                        "invalidation.errors",
-                                        &obs_error,
-                                    );
-                                }
-                            }
-                            return None;
                         }
+                        return None;
                     }
 
                     // Emit success metrics
@@ -1523,13 +1520,13 @@ where
                 SinexError::database(format!("Historical replay query failed: {e}"))
             })?;
 
-            let (events, next_cursor) = match result {
-                EventQueryResult::Events {
-                    events,
-                    next_cursor,
-                    ..
-                } => (events, next_cursor),
-                _ => break,
+            let EventQueryResult::Events {
+                events,
+                next_cursor,
+                ..
+            } = result
+            else {
+                break;
             };
 
             if events.is_empty() {

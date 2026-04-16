@@ -1318,6 +1318,7 @@ fn rpc_layer_error_response(status: StatusCode, code: i32, message: String) -> i
 /// The `cors_origins` parameter controls allowed origins:
 /// - Empty: Only localhost origins allowed (<http://localhost>:*, <http://127.0.0.1>:*)
 /// - Non-empty: Only the specified origins allowed
+///
 /// Spawn the RPC server in a background task, returning the bound address and task handle.
 ///
 /// This is used for integration testing (binding to port 0) and by the main `run` entry point.

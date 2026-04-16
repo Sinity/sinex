@@ -102,17 +102,17 @@ pub fn tail_lines(state: &mut FileTailerState, max_lines: usize) -> Result<TailR
 
     let current_inode = file_inode(path);
 
-    if let (Some(old), Some(new)) = (state.inode, current_inode) {
-        if old != new {
-            let rotated = TailError::FileRotated {
-                old_inode: old,
-                new_inode: new,
-                path: path.clone(),
-            };
-            warn!(%rotated, "File rotated, resetting to beginning");
-            state.byte_offset = 0;
-            state.inode = current_inode;
-        }
+    if let (Some(old), Some(new)) = (state.inode, current_inode)
+        && old != new
+    {
+        let rotated = TailError::FileRotated {
+            old_inode: old,
+            new_inode: new,
+            path: path.clone(),
+        };
+        warn!(%rotated, "File rotated, resetting to beginning");
+        state.byte_offset = 0;
+        state.inode = current_inode;
     }
 
     let file = std::fs::File::open(path.as_std_path())?;

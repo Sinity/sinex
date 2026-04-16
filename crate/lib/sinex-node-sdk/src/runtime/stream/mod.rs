@@ -3466,18 +3466,15 @@ mod tests {
             received_at: Timestamp::now(),
         };
 
-        let error = match NodeRunner::<RuntimeTestNode>::resolve_provisionals_to_events(
+        let Err(error) = NodeRunner::<RuntimeTestNode>::resolve_provisionals_to_events(
             &[provisional],
             &Some(ctx.pool().clone()),
         )
         .await
-        {
-            Ok(_) => {
-                return Err(
-                    color_eyre::eyre::eyre!("missing confirmed events must fail honestly").into(),
-                );
-            }
-            Err(error) => error,
+        else {
+            return Err(
+                color_eyre::eyre::eyre!("missing confirmed events must fail honestly").into(),
+            );
         };
 
         let message = format!("{error:#}");
@@ -3579,19 +3576,14 @@ mod tests {
             received_at: Timestamp::now(),
         };
 
-        let error = match NodeRunner::<RuntimeTestNode>::resolve_provisionals_to_events(
-            &[provisional],
-            &None,
-        )
-        .await
-        {
-            Ok(_) => {
-                return Err(color_eyre::eyre::eyre!(
-                    "invalid provisional payloads must fail honestly when no db pool is available"
-                )
-                .into());
-            }
-            Err(error) => error,
+        let Err(error) =
+            NodeRunner::<RuntimeTestNode>::resolve_provisionals_to_events(&[provisional], &None)
+                .await
+        else {
+            return Err(color_eyre::eyre::eyre!(
+                "invalid provisional payloads must fail honestly when no db pool is available"
+            )
+            .into());
         };
 
         let message = format!("{error:#}");

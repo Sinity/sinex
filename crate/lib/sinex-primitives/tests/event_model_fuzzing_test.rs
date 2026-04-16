@@ -666,13 +666,11 @@ sinex_proptest! {
         host in problematic_strings(),
     ) -> TestResult<()> {
         // Source and event_type are validated — skip invalid combinations
-        let source = match EventSource::new(source) {
-            Ok(s) => s,
-            Err(_) => return TestCaseResult::Ok(()),
+        let Ok(source) = EventSource::new(source) else {
+            return TestCaseResult::Ok(());
         };
-        let event_type = match EventType::new(event_type) {
-            Ok(t) => t,
-            Err(_) => return TestCaseResult::Ok(()),
+        let Ok(event_type) = EventType::new(event_type) else {
+            return TestCaseResult::Ok(());
         };
         let mut event = event_fixture(
             source.clone(),

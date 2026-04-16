@@ -47,9 +47,7 @@ pub(crate) async fn handle_sse_stream(
     Query(params): Query<SseStreamParams>,
 ) -> Response {
     // ── Auth ──
-    let token = if let Ok(t) = state.auth.verify(&headers) {
-        t
-    } else {
+    let Ok(token) = state.auth.verify(&headers) else {
         log_access_audit(
             "sse",
             "events.stream",
@@ -64,9 +62,7 @@ pub(crate) async fn handle_sse_stream(
             .into_response();
     };
 
-    let auth_ctx = if let Ok(ctx) = RpcAuthContext::from_token(&token) {
-        ctx
-    } else {
+    let Ok(auth_ctx) = RpcAuthContext::from_token(&token) else {
         log_access_audit(
             "sse",
             "events.stream",

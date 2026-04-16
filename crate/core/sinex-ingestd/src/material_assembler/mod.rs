@@ -176,9 +176,7 @@ impl DiskSpaceMonitor {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
 
-        let path_cstr = if let Ok(p) = CString::new(self.state_root.as_os_str().as_bytes()) {
-            p
-        } else {
+        let Ok(path_cstr) = CString::new(self.state_root.as_os_str().as_bytes()) else {
             warn!("Failed to convert path to CString for disk space check");
             return true; // Fail open
         };

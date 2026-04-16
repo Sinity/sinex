@@ -852,10 +852,9 @@ impl ReplayControlServer {
                     return Err(eyre!(
                         "Replay execute does not support dry-run semantics; use preview before approval instead"
                     ));
-                } else {
-                    let updated = executor.execute(operation_id, actor).await?;
-                    ReplayControlResponse::success(Some(updated), None, None)
                 }
+                let updated = executor.execute(operation_id, actor).await?;
+                ReplayControlResponse::success(Some(updated), None, None)
             }
             ReplayControlRequest::Cancel {
                 operation_id,

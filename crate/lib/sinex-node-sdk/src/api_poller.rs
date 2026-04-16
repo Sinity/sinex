@@ -112,20 +112,19 @@ impl<T> PollResult<T> {
 pub fn should_poll(state: &ApiPollerState, config: &ApiPollerConfig) -> bool {
     let interval = state.backoff_duration(config.poll_interval);
 
-    if let Some(last_poll) = &state.last_poll_at {
-        if let Ok(last) =
+    if let Some(last_poll) = &state.last_poll_at
+        && let Ok(last) =
             time::OffsetDateTime::parse(last_poll, &time::format_description::well_known::Rfc3339)
-        {
-            let elapsed = time::OffsetDateTime::now_utc() - last;
-            let needed = time::Duration::new(interval.as_secs() as i64, 0);
-            if elapsed < needed {
-                debug!(
-                    next_poll_in_secs = (needed - elapsed).whole_seconds(),
-                    consecutive_empty = state.consecutive_empty_polls,
-                    "Skipping poll (backoff active)"
-                );
-                return false;
-            }
+    {
+        let elapsed = time::OffsetDateTime::now_utc() - last;
+        let needed = time::Duration::new(interval.as_secs() as i64, 0);
+        if elapsed < needed {
+            debug!(
+                next_poll_in_secs = (needed - elapsed).whole_seconds(),
+                consecutive_empty = state.consecutive_empty_polls,
+                "Skipping poll (backoff active)"
+            );
+            return false;
         }
     }
 

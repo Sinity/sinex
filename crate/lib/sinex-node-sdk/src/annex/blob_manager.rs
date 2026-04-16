@@ -214,9 +214,8 @@ impl BlobManager {
         blake3_hash: &str,
         filename: &str,
     ) -> NodeResult<Option<BlobMetadata>> {
-        let existing = match self.find_blob_by_blake3(blake3_hash).await? {
-            Some(blob) => blob,
-            None => return Ok(None),
+        let Some(existing) = self.find_blob_by_blake3(blake3_hash).await? else {
+            return Ok(None);
         };
 
         let existing_key = existing.annex_key().clone();
