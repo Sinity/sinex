@@ -240,7 +240,7 @@ fn column_is_not_null(column: &sea_query::ColumnDef) -> bool {
         .any(|spec| matches!(spec, ColumnSpec::NotNull))
 }
 
-fn verify_event_copy_contract() {
+pub fn verify_event_copy_contract() {
     let authoritative_columns = authoritative_copy_columns();
 
     let mut contract_names = BTreeSet::new();
