@@ -9,17 +9,18 @@
 //! "Any xtask --json invocation emits valid JSON with status/errors fields"
 //! is a JSON-consumer contract, not an implementation detail.
 
-use std::process::Command;
+mod support;
 
 use color_eyre::eyre::eyre;
 use serde_json::Value;
+use support::xtask_command;
 use xtask::sandbox::sinex_test;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /// Run `xtask <args>` and parse stdout as JSON. Returns `(json, exit_ok)`.
 fn run_json(args: &[&str]) -> color_eyre::eyre::Result<(Value, bool)> {
-    let output = Command::new("xtask").args(args).output()?;
+    let output = xtask_command()?.args(args).output()?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let json: Value = serde_json::from_str(&stdout)
         .map_err(|e| eyre!("stdout is not valid JSON: {e}\nstdout: {stdout}\nargs: {args:?}"))?;
@@ -89,7 +90,7 @@ async fn json_envelope_shape_for_valid_commands() -> ::xtask::sandbox::TestResul
 async fn json_flag_without_subcommand_emits_json() -> ::xtask::sandbox::TestResult<()> {
     // xtask with no subcommand succeeds (shows status/help by default) OR
     // fails — either way the output must be valid JSON when --json is passed.
-    let output = Command::new("xtask").args(["--json"]).output()?;
+    let output = xtask_command()?.args(["--json"]).output()?;
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // The critical assertion: stdout must be parseable as JSON.

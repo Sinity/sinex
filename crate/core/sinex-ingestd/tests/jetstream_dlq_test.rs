@@ -21,7 +21,7 @@ use support::{
 };
 use tokio::sync::RwLock;
 use tokio_stream::StreamExt;
-use xtask::sandbox::TestHooks;
+use xtask::sandbox::{TestHooks, hooks::TestCounters};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
@@ -425,6 +425,20 @@ async fn start_consumer_with_hooks_and_batch_config(
     })
 }
 
+async fn wait_for_retry_delivery(
+    setup: &ConsumerSetup,
+    counters: &TestCounters,
+) -> TestResult<()> {
+    WaitHelpers::wait_for_condition(
+        || async {
+            Ok::<bool, SinexError>(counters.delivery_count() >= 2 || setup.handle.is_finished())
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
+    Ok(())
+}
+
 /// FK violation errors (source material not yet registered) should result in a
 /// NAK with delay rather than routing to the DLQ. The consumer treats these as
 /// transient conditions that will resolve once the material is registered.
@@ -432,7 +446,7 @@ async fn start_consumer_with_hooks_and_batch_config(
 async fn test_fk_violation_naks_with_delay_not_dlq() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
     let suffix = format!("fk-nak-{}", Uuid::now_v7().to_string().to_lowercase());
-    let hooks = TestHooks::none();
+    let (hooks, counters) = TestHooks::builder().count_deliveries().build();
     let setup =
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
             .await?;
@@ -467,9 +481,7 @@ async fn test_fk_violation_naks_with_delay_not_dlq() -> TestResult<()> {
         .await?;
     setup.nats_client.flush().await?;
 
-    // Wait a brief period for the consumer to process + NAK the message.
-    // The event should NOT appear in the DLQ because FK violations are transient.
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    wait_for_retry_delivery(&setup, &counters).await?;
 
     let mut dlq_stream = setup
         .js
@@ -496,6 +508,10 @@ async fn test_fk_violation_naks_with_delay_not_dlq() -> TestResult<()> {
         dlq_info.state.messages, 0,
         "FK violation should NOT route to DLQ; it should NAK for retry (dlq_error={dlq_error:?})"
     );
+    assert!(
+        counters.delivery_count() >= 2,
+        "FK violation should have been retried before the assertion window"
+    );
 
     // Verify the consumer is still running (not crashed).
     assert!(
@@ -513,7 +529,7 @@ async fn test_fk_violation_with_valid_schema_and_node_run_retries_until_material
 -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
     let suffix = format!("fk-enriched-{}", Uuid::now_v7().to_string().to_lowercase());
-    let hooks = TestHooks::none();
+    let (hooks, counters) = TestHooks::builder().count_deliveries().build();
     let setup =
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
             .await?;
@@ -590,7 +606,7 @@ async fn test_fk_violation_with_valid_schema_and_node_run_retries_until_material
     .await?;
     setup.nats_client.flush().await?;
 
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    wait_for_retry_delivery(&setup, &counters).await?;
 
     let mut dlq_stream = setup
         .js
@@ -615,6 +631,10 @@ async fn test_fk_violation_with_valid_schema_and_node_run_retries_until_material
     assert_eq!(
         dlq_info.state.messages, 0,
         "enriched source-material FK violation should retry, not DLQ (dlq_error={dlq_error:?})"
+    );
+    assert!(
+        counters.delivery_count() >= 2,
+        "enriched FK violation should have been retried before the assertion window"
     );
     assert!(
         !setup.handle.is_finished(),

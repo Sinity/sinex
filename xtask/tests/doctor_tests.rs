@@ -5,7 +5,9 @@
 //! - Missing cert detection
 //! - Certificate chain and expiry reporting
 
-use std::process::Command;
+mod support;
+
+use support::xtask_command;
 use tempfile::TempDir;
 use xtask::sandbox::sinex_test;
 use xtask::tls::{CertConfig, generate_dev_certs};
@@ -13,7 +15,7 @@ use xtask::tls::{CertConfig, generate_dev_certs};
 #[sinex_test]
 async fn test_doctor_tls_without_certs() -> ::xtask::sandbox::TestResult<()> {
     // Doctor exits 0 even when certs are missing (it's a diagnostic report, not a gate)
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .env_remove("SINEX_GATEWAY_TLS_CERT")
         .env_remove("SINEX_GATEWAY_TLS_KEY")
         .env_remove("SINEX_GATEWAY_TLS_CLIENT_CA")
@@ -51,7 +53,7 @@ async fn test_doctor_tls_with_generated_certs() -> ::xtask::sandbox::TestResult<
     };
     generate_dev_certs(&config)?;
 
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .env("SINEX_GATEWAY_TLS_CERT", output_path.join("server.pem"))
         .env("SINEX_GATEWAY_TLS_KEY", output_path.join("server-key.pem"))
         .env("SINEX_GATEWAY_TLS_CLIENT_CA", output_path.join("ca.pem"))
@@ -98,7 +100,7 @@ async fn test_doctor_tls_chain_not_expired() -> ::xtask::sandbox::TestResult<()>
     };
     generate_dev_certs(&config)?;
 
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .env("SINEX_GATEWAY_TLS_CERT", output_path.join("server.pem"))
         .env("SINEX_GATEWAY_TLS_KEY", output_path.join("server-key.pem"))
         .env("SINEX_GATEWAY_TLS_CLIENT_CA", output_path.join("ca.pem"))
@@ -139,7 +141,7 @@ async fn test_doctor_tls_json_shape() -> ::xtask::sandbox::TestResult<()> {
     };
     generate_dev_certs(&config)?;
 
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .env("SINEX_GATEWAY_TLS_CERT", output_path.join("server.pem"))
         .env("SINEX_GATEWAY_TLS_KEY", output_path.join("server-key.pem"))
         .env_remove("SINEX_GATEWAY_TLS_CLIENT_CA")

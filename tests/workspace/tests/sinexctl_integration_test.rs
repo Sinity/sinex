@@ -1,8 +1,11 @@
 use sinex_gateway::{ServiceContainer, rpc_server};
 use sinex_workspace_tests::built_binary;
 use std::net::TcpListener;
+use std::process::Stdio;
 use std::time::Duration;
 use tempfile::NamedTempFile;
+use tokio::io::AsyncReadExt;
+use tokio::process::Command;
 use tokio::sync::watch;
 use xtask::sandbox::{TestContext, sinex_test, timing::Timeouts};
 
@@ -28,6 +31,28 @@ async fn wait_for_port(port: u16, timeout: Duration) -> color_eyre::Result<()> {
                 ));
             }
         }
+    }
+}
+
+async fn assert_process_stays_running(
+    child: &mut tokio::process::Child,
+    duration: Duration,
+    label: &str,
+) -> color_eyre::Result<()> {
+    match tokio::time::timeout(duration, child.wait()).await {
+        Err(_) => Ok(()),
+        Ok(Ok(status)) => {
+            let mut stderr = String::new();
+            if let Some(mut stream) = child.stderr.take() {
+                stream.read_to_string(&mut stderr).await.ok();
+            }
+            Err(color_eyre::eyre::eyre!(
+                "{label} exited before remaining stable for {duration:?}: {status}\nstderr: {stderr}"
+            ))
+        }
+        Ok(Err(error)) => Err(color_eyre::eyre::eyre!(
+            "failed while waiting for {label} process state: {error}"
+        )),
     }
 }
 
@@ -165,48 +190,21 @@ async fn sinexctl_watch_command_streams_events(ctx: TestContext) -> color_eyre::
     let gw = start_test_gateway(&ctx).await?;
     let url = format!("https://127.0.0.1:{}", gw.port);
 
-    let mut child = std::process::Command::new(built_binary("sinexctl"))
+    let mut child = Command::new(built_binary("sinexctl"))
         .arg("--token")
         .arg("test-token:admin")
         .arg("--insecure")
         .arg("--rpc-url")
         .arg(&url)
         .arg("watch")
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .expect("sinexctl binary should be executable");
 
-    // Let it run briefly — if it crashes immediately, we catch it
-    tokio::time::sleep(Duration::from_secs(2)).await;
-
-    // Check if process is still alive (watch should be running, not crashed)
-    match child.try_wait() {
-        Ok(None) => {
-            // Still running — expected for a streaming command. Kill it.
-            child.kill().ok();
-            child.wait().ok();
-        }
-        Ok(Some(status)) => {
-            // Exited early — check stderr for error
-            let stderr = child
-                .stderr
-                .take()
-                .map(|mut s| {
-                    let mut buf = String::new();
-                    std::io::Read::read_to_string(&mut s, &mut buf).ok();
-                    buf
-                })
-                .unwrap_or_default();
-            assert!(
-                status.success(),
-                "`sinexctl watch` exited early with {status}.\nstderr: {stderr}"
-            );
-        }
-        Err(e) => {
-            panic!("Failed to check watch process status: {e}");
-        }
-    }
+    assert_process_stays_running(&mut child, Duration::from_secs(2), "`sinexctl watch`").await?;
+    child.kill().await.ok();
+    let _ = child.wait().await;
 
     gw.handle.abort();
     Ok(())

@@ -404,11 +404,12 @@ async fn test_get_slowest_tests_excludes_failed() -> xtask::sandbox::TestResult<
     let slowest = db.get_slowest_tests(5)?;
     assert!(!slowest.is_empty(), "should find at least one test");
 
-    let (name, _pkg, avg_duration, _runs) = &slowest[0];
-    assert_eq!(name, "test_target");
+    let slowest_test = &slowest[0];
+    assert_eq!(slowest_test.test_name, "test_target");
     assert!(
-        *avg_duration < 5.0,
-        "avg duration should be ≈1s (pass only), not inflated by fail at 60s; got {avg_duration}"
+        slowest_test.avg_duration_secs < 5.0,
+        "avg duration should be ≈1s (pass only), not inflated by fail at 60s; got {}",
+        slowest_test.avg_duration_secs
     );
 
     cleanup_db(&db_path);

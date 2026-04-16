@@ -8,7 +8,7 @@ use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, eyre};
 use serde_json::Value;
 
 use crate::runner::TestRunner;
@@ -16,7 +16,7 @@ use crate::runner::TestRunner;
 /// State dir passed to every xtask invocation, isolated from sinex services.
 const STATE_DIR: &str = "/var/lib/sinex/xtask-concurrency-test";
 
-pub fn run(runner: &mut TestRunner) -> Result<()> {
+pub fn run(runner: &mut TestRunner) {
     println!("\n── xtask concurrency tests ────────────────────────────────");
 
     // Ensure state dir exists
@@ -27,25 +27,24 @@ pub fn run(runner: &mut TestRunner) -> Result<()> {
     test_pid_reuse_safety(runner);
     test_history_db_consistency(runner);
 
-    Ok(())
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-fn xtask(args: &[&str]) -> std::process::Output {
+fn xtask(args: &[&str]) -> Result<std::process::Output> {
     Command::new("xtask")
         .args(args)
         .env("SINEX_STATE_DIR", STATE_DIR)
         .env("NO_COLOR", "1")
         .env("FORCE_COLOR", "0")
         .output()
-        .expect("xtask not found on PATH")
+        .map_err(|error| eyre!("failed to run xtask: {error}"))
 }
 
 fn xtask_json(args: &[&str]) -> Option<Value> {
     let mut all_args = args.to_vec();
     all_args.push("--json");
-    let output = xtask(&all_args);
+    let output = xtask(&all_args).ok()?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Find last line that looks like JSON
     stdout
@@ -58,7 +57,9 @@ fn xtask_json(args: &[&str]) -> Option<Value> {
 fn jobs_list(limit: usize) -> Vec<Value> {
     let limit_str = limit.to_string();
     let args = ["jobs", "list", "--json", "--limit", &limit_str];
-    let output = xtask(&args);
+    let Ok(output) = xtask(&args) else {
+        return Vec::new();
+    };
     let stdout = String::from_utf8_lossy(&output.stdout);
     stdout
         .lines()
@@ -84,7 +85,9 @@ fn wait_for_job(job_id: u64, timeout: Duration) -> Option<String> {
 }
 
 fn invocation_count_for(command: &str) -> usize {
-    let output = xtask(&["history", "list", "--json", "--limit", "100"]);
+    let Ok(output) = xtask(&["history", "list", "--json", "--limit", "100"]) else {
+        return 0;
+    };
     let stdout = String::from_utf8_lossy(&output.stdout);
     stdout
         .lines()
@@ -171,11 +174,8 @@ fn test_zombie_reaping(runner: &mut TestRunner) {
     let name = "zombie reaping: orphaned jobs become terminal after SIGKILL";
 
     // Start a background job
-    let jid = if let Some(id) =
-        xtask_json(&["check", "--bg"]).and_then(|v| v["data"]["job_id"].as_u64())
-    {
-        id
-    } else {
+    let Some(jid) = xtask_json(&["check", "--bg"]).and_then(|v| v["data"]["job_id"].as_u64())
+    else {
         runner.fail(name, "failed to start background check job");
         return;
     };
@@ -251,7 +251,13 @@ fn test_pid_reuse_safety(runner: &mut TestRunner) {
     thread::sleep(Duration::from_secs(1));
 
     // Attempt to cancel — xtask should verify cmdline before sending signal
-    let cancel_out = xtask(&["jobs", "cancel", &jid.to_string(), "--json"]);
+    let cancel_out = match xtask(&["jobs", "cancel", &jid.to_string(), "--json"]) {
+        Ok(output) => output,
+        Err(error) => {
+            runner.fail(name, &format!("failed to invoke xtask jobs cancel: {error}"));
+            return;
+        }
+    };
     let stdout = String::from_utf8_lossy(&cancel_out.stdout);
     let stderr = String::from_utf8_lossy(&cancel_out.stderr);
     let combined = format!("{stdout}{stderr}");
@@ -289,7 +295,7 @@ fn test_history_db_consistency(runner: &mut TestRunner) {
     let before = invocation_count_for("check");
 
     // Run one foreground check (will be blocked by any ongoing bg check's coordinator)
-    xtask(&["check", "--json"]);
+    let _ = xtask(&["check", "--json"]);
 
     let after = invocation_count_for("check");
 

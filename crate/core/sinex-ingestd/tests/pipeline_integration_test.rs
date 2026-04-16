@@ -33,7 +33,7 @@ use xtask::sandbox::timing::Timeouts;
 // =============================================================================
 
 /// Minimal pipeline smoke test (single event, real ingestion path).
-#[sinex_serial_test(timeout = 60)]
+#[sinex_serial_test(timeout = 60, scope = "workspace")]
 async fn test_pipeline_smoke(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
@@ -58,7 +58,7 @@ async fn test_pipeline_smoke(ctx: TestContext) -> Result<()> {
 }
 
 /// Test complete event ingestion pipeline from raw input to database storage
-#[sinex_serial_test(timeout = 60)]
+#[sinex_serial_test(timeout = 60, scope = "workspace")]
 async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> {
     ctx.ensure_clean().await?;
     let ctx = ctx.with_nats().shared().await?;
@@ -234,7 +234,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
 }
 
 /// Test pipeline handling of concurrent event streams
-#[sinex_serial_test]
+#[sinex_serial_test(scope = "workspace")]
 async fn test_concurrent_pipeline_processing(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing concurrent pipeline processing");
     let ctx = Arc::new(ctx.with_nats().shared().await?);
@@ -375,7 +375,7 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> Result<()> {
 // =============================================================================
 
 /// Test pipeline data transformation and enrichment
-#[sinex_serial_test(timeout = 60)]
+#[sinex_serial_test(timeout = 60, scope = "workspace")]
 async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing pipeline data transformation and enrichment");
     ctx.ensure_clean().await?;
@@ -556,7 +556,7 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
 // =============================================================================
 
 /// Test pipeline error handling and recovery mechanisms
-#[sinex_serial_test(timeout = 60)]
+#[sinex_serial_test(timeout = 60, scope = "workspace")]
 async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing pipeline error handling and recovery");
     ctx.ensure_clean().await?;
@@ -719,7 +719,7 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
 // Pipeline Confirmation + DLQ Semantics
 // =============================================================================
 
-#[sinex_serial_test(timeout = 60)]
+#[sinex_serial_test(timeout = 60, scope = "workspace")]
 async fn test_confirmation_emitted_after_persistence_pipeline(
     ctx: TestContext,
 ) -> color_eyre::Result<()> {
@@ -783,7 +783,7 @@ async fn test_confirmation_emitted_after_persistence_pipeline(
     Ok(())
 }
 
-#[sinex_serial_test(timeout = 60)]
+#[sinex_serial_test(timeout = 60, scope = "workspace")]
 async fn test_mixed_validity_batch_semantics(ctx: TestContext) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;

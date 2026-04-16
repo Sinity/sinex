@@ -8,10 +8,12 @@
 //! - `CommandContext` behavior
 //! - `CommandResult` construction
 
-use std::process::Command;
-use std::time::Duration;
+mod support;
+
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
+use support::xtask_command;
 use xtask::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use xtask::output::{OutputFormat, OutputWriter, Status, StructuredError};
 use xtask::process::ProcessBuilder;
@@ -379,11 +381,21 @@ async fn test_command_metadata_factories() -> TestResult<()> {
 #[sinex_test]
 async fn test_command_context_elapsed() -> TestResult<()> {
     let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None, "test");
-    std::thread::sleep(Duration::from_millis(10));
-    let elapsed = ctx.elapsed();
+    let baseline = ctx.elapsed();
+    let deadline = Instant::now() + Duration::from_secs(1);
 
-    assert!(elapsed.as_millis() >= 10);
-    Ok(())
+    loop {
+        let elapsed = ctx.elapsed();
+        if elapsed > baseline {
+            return Ok(());
+        }
+
+        assert!(
+            Instant::now() < deadline,
+            "CommandContext::elapsed() never advanced past {baseline:?}"
+        );
+        std::thread::yield_now();
+    }
 }
 
 #[sinex_test]
@@ -545,7 +557,7 @@ async fn test_xtask_command_trait_metadata() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_cli_unknown_command() -> TestResult<()> {
-    let output = Command::new("xtask").arg("nonexistent-command").output()?;
+    let output = xtask_command()?.arg("nonexistent-command").output()?;
 
     assert!(!output.status.success(), "Command should fail");
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -558,7 +570,7 @@ async fn test_cli_unknown_command() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_cli_unknown_flag() -> TestResult<()> {
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .arg("check")
         .arg("--nonexistent-flag")
         .output()?;
@@ -575,7 +587,7 @@ async fn test_cli_unknown_flag() -> TestResult<()> {
 #[sinex_test]
 async fn test_cli_missing_required_arg() -> TestResult<()> {
     // `xtask reset` requires --yes to confirm the destructive operation
-    let output = Command::new("xtask").arg("reset").output()?;
+    let output = xtask_command()?.arg("reset").output()?;
 
     assert!(!output.status.success(), "Command should fail");
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -588,7 +600,7 @@ async fn test_cli_missing_required_arg() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_cli_invalid_format_option() -> TestResult<()> {
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .arg("--format")
         .arg("invalid_format")
         .arg("check")
@@ -602,7 +614,7 @@ async fn test_cli_invalid_format_option() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_cli_redundant_json_options() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
+    let mut cmd = xtask_command()?;
 
     // --json and --format json are redundant but should both work
     cmd.arg("--json")
@@ -650,7 +662,7 @@ async fn test_cli_redundant_json_options() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_json_output_is_valid_json() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
+    let mut cmd = xtask_command()?;
 
     cmd.arg("--json").arg("deps").arg("list");
 
@@ -667,7 +679,7 @@ async fn test_json_output_is_valid_json() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_json_output_contains_required_fields() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
+    let mut cmd = xtask_command()?;
 
     cmd.arg("--json").arg("deps").arg("list");
 
@@ -686,7 +698,7 @@ async fn test_json_output_contains_required_fields() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_json_output_status_values() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
+    let mut cmd = xtask_command()?;
 
     // Use 'deps list' which has clean JSON output (unlike 'status' which outputs human-readable + JSON)
     cmd.arg("--json").arg("deps").arg("list");
@@ -708,7 +720,7 @@ async fn test_json_output_status_values() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_json_output_for_failing_command() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
+    let mut cmd = xtask_command()?;
 
     // This should fail because the database likely isn't available
     cmd.arg("--json").arg("db").arg("schema").arg("status");
@@ -793,7 +805,7 @@ async fn test_test_command_accepts_passthrough_args() -> TestResult<()> {
     // fires (NEXTEST_RUN_ID inherited) and cargo target/ lock would deadlock
     // regardless.  Instead, verify the CLI accepts passthrough args via --help
     // and dry-run, matching the pattern used by test_check_skip_options.
-    let output = Command::new("xtask").arg("test").arg("--help").output()?;
+    let output = xtask_command()?.arg("test").arg("--help").output()?;
 
     assert!(output.status.success(), "Help command should succeed");
     let help = String::from_utf8_lossy(&output.stdout);
@@ -811,7 +823,7 @@ async fn test_test_command_accepts_passthrough_args() -> TestResult<()> {
     assert!(help.contains("coverage"), "missing coverage subcommand");
 
     // Verify dry-run actually works (doesn't invoke cargo)
-    let dry = Command::new("xtask")
+    let dry = xtask_command()?
         .args(["test", "--dry-run", "--json"])
         .output()?;
     assert!(dry.status.success(), "dry-run should succeed");
@@ -824,7 +836,7 @@ async fn test_test_command_accepts_passthrough_args() -> TestResult<()> {
 #[sinex_test]
 async fn test_db_reset_without_confirmation() -> TestResult<()> {
     // `xtask reset` requires --yes.
-    let output = Command::new("xtask").arg("reset").output()?;
+    let output = xtask_command()?.arg("reset").output()?;
 
     assert!(!output.status.success(), "Command should fail");
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -838,7 +850,7 @@ async fn test_db_reset_without_confirmation() -> TestResult<()> {
 #[sinex_test]
 async fn test_status_schemas_succeeds() -> TestResult<()> {
     // `contracts info` was folded into `xtask status --schemas`.
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .arg("status")
         .arg("--schemas")
         .output()?;
@@ -866,7 +878,7 @@ async fn test_check_skip_options() -> TestResult<()> {
     //
     // Safe alternative: verify flags are accepted by clap via --help output.
     // The unit tests in commands/check.rs cover the actual flag behavior.
-    let output = Command::new("xtask").arg("check").arg("--help").output()?;
+    let output = xtask_command()?.arg("check").arg("--help").output()?;
 
     assert!(output.status.success(), "Help command should succeed");
     let help = String::from_utf8_lossy(&output.stdout);
@@ -884,7 +896,7 @@ async fn test_check_skip_options() -> TestResult<()> {
 #[sinex_test]
 async fn test_completions_all_shells() -> TestResult<()> {
     for shell in ["bash", "zsh", "fish"] {
-        let output = Command::new("xtask")
+        let output = xtask_command()?
             .arg("completions")
             .arg(shell)
             .output()?;
@@ -900,7 +912,7 @@ async fn test_completions_all_shells() -> TestResult<()> {
 #[sinex_test]
 async fn test_completions_power_shell() -> TestResult<()> {
     // Clap uses kebab-case 'power-shell' for the PowerShell variant.
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .arg("completions")
         .arg("power-shell")
         .output()?;
@@ -917,7 +929,7 @@ async fn test_test_bench_dry_run_short_circuits_lane() -> TestResult<()> {
     // bench is now a subcommand: `xtask test bench --dry-run`
     // Running from inside nextest triggers the nextest guard — use --help to verify
     // the subcommand and --dry-run flag are accepted by clap.
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .arg("test")
         .arg("bench")
         .arg("--help")
@@ -941,7 +953,7 @@ async fn test_test_fuzz_lane_reports_no_targets_as_failure() -> TestResult<()> {
     // fuzz is now a subcommand: `xtask test fuzz`
     // Running from inside nextest triggers the nextest guard for test subcommands —
     // verify the subcommand and flags are accepted via --help instead.
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .arg("test")
         .arg("fuzz")
         .arg("--help")
@@ -961,7 +973,7 @@ async fn test_test_subcommands_are_recognized() -> TestResult<()> {
     // bench and fuzz are now subcommands (exclusivity enforced by clap's subcommand model).
     // Verify each subcommand is recognized via --help.
     for subcmd in &["bench", "fuzz", "coverage", "mutants", "vm"] {
-        let output = Command::new("xtask")
+        let output = xtask_command()?
             .arg("test")
             .arg(subcmd)
             .arg("--help")
@@ -972,7 +984,7 @@ async fn test_test_subcommands_are_recognized() -> TestResult<()> {
         );
     }
     // Verify that an unrecognized subcommand fails
-    let bad = Command::new("xtask")
+    let bad = xtask_command()?
         .arg("test")
         .arg("nonexistent-lane")
         .output()?;

@@ -1,7 +1,8 @@
 //! Parse and store nextest JSON output.
 
-use super::db::HistoryDb;
+use super::db::{HistoryDb, InvocationStatus};
 use color_eyre::eyre::{Result, WrapErr};
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 
 /// Status of a test execution.
@@ -306,24 +307,25 @@ impl HistoryDb {
     }
 
     /// Get frequently failing tests.
-    pub fn get_failing_tests(&self, limit: usize) -> Result<Vec<(String, String, f64)>> {
+    pub fn get_failing_tests(
+        &self,
+        invocation_id: i64,
+        limit: usize,
+    ) -> Result<Vec<(String, String, f64)>> {
         let mut stmt = self.conn.prepare(
             r"
             SELECT t.test_name, t.package, COALESCE(t.duration_secs, 0) as duration
             FROM test_results t
-            INNER JOIN (
-                SELECT MAX(i.id) as max_inv
-                FROM invocations i
-                WHERE i.command = 'test'
-                  AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
-            ) latest ON t.invocation_id = latest.max_inv
-            WHERE t.status = 'fail'
+            WHERE t.invocation_id = ?1
+              AND t.status = 'fail'
             ORDER BY t.test_name
-            LIMIT ?1
+            LIMIT ?2
             ",
         )?;
 
-        let rows = stmt.query_map([limit], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        let rows = stmt.query_map(rusqlite::params![invocation_id, limit as i64], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
 
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect failing tests")
@@ -333,25 +335,24 @@ impl HistoryDb {
     ///
     /// Includes failure_message and failure_type (populated from JUnit XML
     /// `<failure>` elements during metadata back-fill).
-    pub fn get_failing_tests_with_output(&self, limit: usize) -> Result<Vec<FailingTest>> {
+    pub fn get_failing_tests_with_output(
+        &self,
+        invocation_id: i64,
+        limit: usize,
+    ) -> Result<Vec<FailingTest>> {
         let mut stmt = self.conn.prepare(
             r"
             SELECT t.test_name, t.package, COALESCE(t.duration_secs, 0) as duration,
                    t.output, t.failure_message, t.failure_type, t.nats_context
             FROM test_results t
-            INNER JOIN (
-                SELECT MAX(i.id) as max_inv
-                FROM invocations i
-                WHERE i.command = 'test'
-                  AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
-            ) latest ON t.invocation_id = latest.max_inv
-            WHERE t.status = 'fail'
+            WHERE t.invocation_id = ?1
+              AND t.status = 'fail'
             ORDER BY t.test_name
-            LIMIT ?1
+            LIMIT ?2
             ",
         )?;
 
-        let rows = stmt.query_map([limit], |row| {
+        let rows = stmt.query_map(rusqlite::params![invocation_id, limit as i64], |row| {
             Ok(FailingTest {
                 test_name: row.get(0)?,
                 package: row.get(1)?,
@@ -371,7 +372,7 @@ impl HistoryDb {
     ///
     /// Only counts passing tests — failed/timed-out tests would inflate durations
     /// with timeout ceilings rather than reflecting real execution time.
-    pub fn get_slowest_tests(&self, limit: usize) -> Result<Vec<(String, String, f64, i64)>> {
+    pub fn get_slowest_tests(&self, limit: usize) -> Result<Vec<HistoricalSlowTest>> {
         let mut stmt = self.conn.prepare(
             r"
             SELECT test_name, package, AVG(duration_secs) as avg_duration, COUNT(*) as runs
@@ -385,11 +386,45 @@ impl HistoryDb {
         )?;
 
         let rows = stmt.query_map([limit], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            Ok(HistoricalSlowTest {
+                test_name: row.get(0)?,
+                package: row.get(1)?,
+                avg_duration_secs: row.get(2)?,
+                passing_runs: row.get(3)?,
+            })
         })?;
 
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect slowest tests")
+    }
+
+    /// Get the slowest concrete test results from one invocation.
+    pub fn get_slowest_tests_for_invocation(
+        &self,
+        invocation_id: i64,
+        limit: usize,
+    ) -> Result<Vec<RunSlowTest>> {
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT test_name, package, status, COALESCE(duration_secs, 0) as duration
+            FROM test_results
+            WHERE invocation_id = ?1
+            ORDER BY duration DESC, package, test_name
+            LIMIT ?2
+            ",
+        )?;
+
+        let rows = stmt.query_map(rusqlite::params![invocation_id, limit as i64], |row| {
+            Ok(RunSlowTest {
+                test_name: row.get(0)?,
+                package: row.get(1)?,
+                status: row.get(2)?,
+                duration_secs: row.get(3)?,
+            })
+        })?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .context("failed to collect slowest tests for invocation")
     }
 
     /// Get tests that are getting slower over time.
@@ -612,6 +647,8 @@ impl HistoryDb {
 pub struct TestSuiteAnalysis {
     /// Duration distribution buckets
     pub duration_buckets: Vec<DurationBucket>,
+    /// Slowest concrete tests in this invocation, ordered by observed duration
+    pub slowest_tests: Vec<RunSlowTest>,
     /// Tests that appear to have timed out (failed with duration near a timeout ceiling)
     pub probable_timeouts: Vec<ProbableTimeout>,
     /// Failure summary grouped by package
@@ -655,30 +692,224 @@ pub struct PackageFailureSummary {
     pub failed_tests: Vec<String>,
 }
 
+/// A historically slow test aggregated across passing runs.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct HistoricalSlowTest {
+    pub test_name: String,
+    pub package: String,
+    pub avg_duration_secs: f64,
+    pub passing_runs: i64,
+}
+
+/// A slow test result from one concrete invocation.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct RunSlowTest {
+    pub test_name: String,
+    pub package: String,
+    pub status: String,
+    pub duration_secs: f64,
+}
+
+/// A concrete test-run invocation resolved from stored history.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ResolvedTestRun {
+    pub invocation_id: i64,
+    pub started_at: String,
+    pub job_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TestRunSelector {
+    Latest,
+    Previous,
+    LatestSuccess,
+    LatestFailure,
+    InvocationId(i64),
+    BackgroundJobId(i64),
+}
+
 impl HistoryDb {
-    /// Comprehensive analysis of the most recent test run.
-    ///
-    /// Produces bucketed duration distributions, probable timeout detection,
-    /// and per-package failure summaries.
-    pub fn analyze_last_run(&self) -> Result<Option<TestSuiteAnalysis>> {
-        // Get the latest test invocation
-        let inv = self.conn.query_row(
+    fn parse_test_run_selector(selector: &str) -> Result<TestRunSelector> {
+        if selector == "latest" {
+            return Ok(TestRunSelector::Latest);
+        }
+        if selector == "previous" {
+            return Ok(TestRunSelector::Previous);
+        }
+        if selector == "latest-success" {
+            return Ok(TestRunSelector::LatestSuccess);
+        }
+        if selector == "latest-failure" {
+            return Ok(TestRunSelector::LatestFailure);
+        }
+
+        let (kind, raw_id) = if let Some(value) = selector.strip_prefix("job:") {
+            ("job", value)
+        } else if let Some(value) = selector.strip_prefix("background-job:") {
+            ("job", value)
+        } else if let Some(value) = selector.strip_prefix("inv:") {
+            ("invocation", value)
+        } else if let Some(value) = selector.strip_prefix("invocation:") {
+            ("invocation", value)
+        } else {
+            ("invocation", selector)
+        };
+
+        let id = raw_id.parse::<i64>().map_err(|_| {
+            color_eyre::eyre::eyre!(
+                "invalid test run selector: '{selector}' (expected 'latest', an invocation ID, 'inv:<id>', or 'job:<id>')"
+            )
+        })?;
+
+        Ok(match kind {
+            "job" => TestRunSelector::BackgroundJobId(id),
+            _ => TestRunSelector::InvocationId(id),
+        })
+    }
+
+    fn resolve_recent_test_run(
+        &self,
+        status_filter: Option<InvocationStatus>,
+        offset: usize,
+    ) -> Result<Option<ResolvedTestRun>> {
+        let status_clause = match status_filter {
+            Some(InvocationStatus::Success) => "AND i.status = 'success'",
+            Some(InvocationStatus::Failed) => "AND i.status = 'failed'",
+            _ => "AND i.status IN ('success', 'failed')",
+        };
+        let sql = format!(
             r"
             SELECT i.id, i.started_at
             FROM invocations i
             WHERE i.command = 'test'
+              {status_clause}
               AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
             ORDER BY i.started_at DESC
-            LIMIT 1
-            ",
-            [],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            LIMIT 1 OFFSET ?1
+            "
         );
 
-        let (inv_id, started_at) = match inv {
-            Ok(pair) => pair,
+        self.conn
+            .query_row(&sql, [offset as i64], |row| {
+                Ok(ResolvedTestRun {
+                    invocation_id: row.get(0)?,
+                    started_at: row.get(1)?,
+                    job_id: None,
+                })
+            })
+            .optional()
+            .map_err(Into::into)
+    }
+
+    fn resolve_test_run_invocation(&self, invocation_id: i64) -> Result<Option<ResolvedTestRun>> {
+        self.conn
+            .query_row(
+                r"
+                SELECT i.id, i.started_at
+                FROM invocations i
+                WHERE i.id = ?1
+                  AND i.command = 'test'
+                  AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
+                LIMIT 1
+                ",
+                [invocation_id],
+                |row| {
+                    Ok(ResolvedTestRun {
+                        invocation_id: row.get(0)?,
+                        started_at: row.get(1)?,
+                        job_id: None,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    fn resolve_test_run_background_job(&self, job_id: i64) -> Result<Option<ResolvedTestRun>> {
+        self.conn
+            .query_row(
+                r"
+                SELECT i.id, i.started_at
+                FROM background_jobs bj
+                JOIN invocations i ON i.id = bj.invocation_id
+                WHERE bj.id = ?1
+                  AND i.command = 'test'
+                  AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
+                LIMIT 1
+                ",
+                [job_id],
+                |row| {
+                    Ok(ResolvedTestRun {
+                        invocation_id: row.get(0)?,
+                        started_at: row.get(1)?,
+                        job_id: Some(job_id),
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    /// Resolve a test-run selector to a concrete invocation with stored test results.
+    ///
+    /// `None` and `"latest"` both select the most recent completed test invocation
+    /// that actually recorded test results. Explicit selectors also accept
+    /// `job:<id>`/`background-job:<id>`. Plain numeric selectors prefer
+    /// invocation IDs, but fall back to matching background job IDs when the
+    /// numeric invocation has no stored test results.
+    pub fn resolve_test_run(&self, selector: Option<&str>) -> Result<Option<ResolvedTestRun>> {
+        match selector {
+            None | Some("latest") => self.resolve_recent_test_run(None, 0),
+            Some(raw_selector) => match Self::parse_test_run_selector(raw_selector)? {
+                TestRunSelector::Latest => self.resolve_recent_test_run(None, 0),
+                TestRunSelector::Previous => self.resolve_recent_test_run(None, 1),
+                TestRunSelector::LatestSuccess => {
+                    self.resolve_recent_test_run(Some(InvocationStatus::Success), 0)
+                }
+                TestRunSelector::LatestFailure => {
+                    self.resolve_recent_test_run(Some(InvocationStatus::Failed), 0)
+                }
+                TestRunSelector::BackgroundJobId(job_id) => self
+                    .resolve_test_run_background_job(job_id)?
+                    .ok_or_else(|| {
+                        color_eyre::eyre::eyre!(
+                            "Background job #{job_id} does not map to a completed test run with stored results"
+                        )
+                    })
+                    .map(Some),
+                TestRunSelector::InvocationId(invocation_id) => {
+                    if let Some(resolved) = self.resolve_test_run_invocation(invocation_id)? {
+                        return Ok(Some(resolved));
+                    }
+
+                    if raw_selector.chars().all(|ch| ch.is_ascii_digit())
+                        && let Some(resolved) =
+                            self.resolve_test_run_background_job(invocation_id)?
+                    {
+                        return Ok(Some(resolved));
+                    }
+
+                    Err(color_eyre::eyre::eyre!(
+                        "Invocation #{invocation_id} has no stored test results"
+                    ))
+                }
+            }
+        }
+    }
+
+    /// Comprehensive analysis of the most recent test run.
+    ///
+    /// Produces bucketed duration distributions, probable timeout detection,
+    /// and per-package failure summaries.
+    pub fn analyze_test_run(&self, invocation_id: i64) -> Result<Option<TestSuiteAnalysis>> {
+        let started_at = match self.conn.query_row(
+            r"SELECT started_at FROM invocations WHERE id = ?1 AND command = 'test'",
+            [invocation_id],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(started_at) => started_at,
             Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
-            Err(e) => return Err(e.into()),
+            Err(error) => return Err(error.into()),
         };
 
         // Get all test results for this invocation
@@ -699,7 +930,7 @@ impl HistoryDb {
         }
 
         let rows: Vec<Row> = stmt
-            .query_map([inv_id], |row| {
+            .query_map([invocation_id], |row| {
                 Ok(Row {
                     test_name: row.get(0)?,
                     package: row.get(1)?,
@@ -708,7 +939,13 @@ impl HistoryDb {
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .wrap_err_with(|| format!("failed to read stored test rows for invocation {inv_id}"))?;
+            .wrap_err_with(|| {
+                format!("failed to read stored test rows for invocation {invocation_id}")
+            })?;
+
+        if rows.is_empty() {
+            return Ok(None);
+        }
 
         // Counts
         let total_passed = rows
@@ -724,6 +961,16 @@ impl HistoryDb {
             .filter(|r| matches!(r.status.as_str(), "ignored" | "skip"))
             .count();
         let total_duration_secs: f64 = rows.iter().map(|r| r.duration).sum();
+        let slowest_tests: Vec<RunSlowTest> = rows
+            .iter()
+            .take(10)
+            .map(|row| RunSlowTest {
+                test_name: row.test_name.clone(),
+                package: row.package.clone(),
+                status: row.status.clone(),
+                duration_secs: row.duration,
+            })
+            .collect();
 
         // Duration buckets
         let bucket_defs = [
@@ -808,36 +1055,44 @@ impl HistoryDb {
 
         Ok(Some(TestSuiteAnalysis {
             duration_buckets,
+            slowest_tests,
             probable_timeouts,
             failure_summary,
             total_passed,
             total_failed,
             total_ignored,
             total_duration_secs,
-            invocation_id: inv_id,
+            invocation_id,
             started_at,
         }))
     }
 
+    /// Comprehensive analysis of the most recent completed test run with stored results.
+    pub fn analyze_last_run(&self) -> Result<Option<TestSuiteAnalysis>> {
+        let Some(invocation) = self.resolve_test_run(None)? else {
+            return Ok(None);
+        };
+        self.analyze_test_run(invocation.invocation_id)
+    }
+
     /// Get test output for a specific test from the most recent run.
-    pub fn get_test_output(&self, test_pattern: &str) -> Result<Vec<TestOutputEntry>> {
+    pub fn get_test_output(
+        &self,
+        invocation_id: i64,
+        test_pattern: &str,
+    ) -> Result<Vec<TestOutputEntry>> {
         let pattern = format!("%{test_pattern}%");
         let mut stmt = self.conn.prepare(
             r"
             SELECT t.test_name, t.package, t.status, COALESCE(t.duration_secs, 0), t.output
             FROM test_results t
-            INNER JOIN (
-                SELECT MAX(i.id) as max_inv
-                FROM invocations i
-                WHERE i.command = 'test'
-                  AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
-            ) latest ON t.invocation_id = latest.max_inv
-            WHERE t.test_name LIKE ?1
+            WHERE t.invocation_id = ?1
+              AND t.test_name LIKE ?2
             ORDER BY t.test_name
             ",
         )?;
 
-        let rows = stmt.query_map([&pattern], |row| {
+        let rows = stmt.query_map(rusqlite::params![invocation_id, &pattern], |row| {
             Ok(TestOutputEntry {
                 test_name: row.get(0)?,
                 package: row.get(1)?,
@@ -856,23 +1111,23 @@ impl HistoryDb {
     /// Returns aggregated slot acquisition and cleanup timing from the metadata
     /// columns populated by slog event parsing. Returns `None` if no metadata
     /// columns exist or no data is available.
-    pub fn get_infra_timing_summary(&self) -> Result<Option<InfraTimingSummary>> {
+    pub fn get_infra_timing_summary(
+        &self,
+        invocation_id: i64,
+    ) -> Result<Option<InfraTimingSummary>> {
         let mut stmt = self.conn.prepare(
             r"
             SELECT slot_name, slot_wait_ms, cleanup_ms
             FROM test_results t
-            INNER JOIN (
-                SELECT MAX(i.id) as max_inv
-                FROM invocations i
-                WHERE i.command = 'test'
-                  AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
-            ) latest ON t.invocation_id = latest.max_inv
-            WHERE t.slot_name IS NOT NULL
+            WHERE t.invocation_id = ?1
+              AND t.slot_name IS NOT NULL
             ",
         )?;
 
         let rows: Vec<(String, i64, Option<i64>)> = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .query_map([invocation_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
             .collect::<std::result::Result<Vec<_>, _>>()
             .wrap_err("failed to read stored infrastructure timing rows")?;
 
@@ -1036,31 +1291,35 @@ pub struct RuntimeEstimate {
 
 impl HistoryDb {
     /// Full-text search across stored test output in the most recent invocation (G7 --grep).
-    pub fn search_test_output(&self, text: &str, limit: usize) -> Result<Vec<TestOutputEntry>> {
+    pub fn search_test_output(
+        &self,
+        invocation_id: i64,
+        text: &str,
+        limit: usize,
+    ) -> Result<Vec<TestOutputEntry>> {
         let pattern = format!("%{text}%");
         let mut stmt = self.conn.prepare(
             r"
             SELECT t.test_name, t.package, t.status, COALESCE(t.duration_secs, 0.0), t.output
             FROM test_results t
-            INNER JOIN (
-                SELECT id FROM invocations
-                WHERE command = 'test' AND status IN ('success', 'failed')
-                ORDER BY started_at DESC LIMIT 1
-            ) latest ON t.invocation_id = latest.id
-            WHERE t.output LIKE ?1
+            WHERE t.invocation_id = ?1
+              AND t.output LIKE ?2
             ORDER BY t.test_name
-            LIMIT ?2
+            LIMIT ?3
             ",
         )?;
-        let rows = stmt.query_map(rusqlite::params![&pattern, limit as i64], |row| {
-            Ok(TestOutputEntry {
-                test_name: row.get(0)?,
-                package: row.get(1)?,
-                status: row.get(2)?,
-                duration_secs: row.get(3)?,
-                output: row.get(4)?,
-            })
-        })?;
+        let rows = stmt.query_map(
+            rusqlite::params![invocation_id, &pattern, limit as i64],
+            |row| {
+                Ok(TestOutputEntry {
+                    test_name: row.get(0)?,
+                    package: row.get(1)?,
+                    status: row.get(2)?,
+                    duration_secs: row.get(3)?,
+                    output: row.get(4)?,
+                })
+            },
+        )?;
         let mut results = Vec::new();
         for row in rows {
             results.push(row?);
@@ -1069,19 +1328,13 @@ impl HistoryDb {
     }
 
     /// Per-package pass rate, count, avg duration, and flaky count (G7 --by-package).
-    pub fn get_tests_by_package(&self) -> Result<Vec<PackageTestStats>> {
-        // Aggregate from the most recent invocation
+    pub fn get_tests_by_package(&self, invocation_id: i64) -> Result<Vec<PackageTestStats>> {
         let mut stmt = self.conn.prepare(
             r"
-            WITH latest_inv AS (
-                SELECT id FROM invocations
-                WHERE command = 'test' AND status IN ('success', 'failed')
-                ORDER BY started_at DESC LIMIT 1
-            ),
             latest_tests AS (
                 SELECT t.test_name, t.package, t.status, COALESCE(t.duration_secs, 0.0) as dur
                 FROM test_results t
-                INNER JOIN latest_inv ON t.invocation_id = latest_inv.id
+                WHERE t.invocation_id = ?1
             ),
             flaky_counts AS (
                 SELECT t1.package, COUNT(DISTINCT t1.test_name) as flaky_count
@@ -1104,7 +1357,7 @@ impl HistoryDb {
             ORDER BY failed DESC, total DESC
             ",
         )?;
-        let rows = stmt.query_map([], |row| {
+        let rows = stmt.query_map([invocation_id], |row| {
             Ok(PackageTestStats {
                 package: row.get(0)?,
                 total: row.get(1)?,
@@ -1337,6 +1590,205 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_resolve_test_run_skips_invocations_without_results() -> TestResult<()> {
+        let (_dir, db, inv_with_results) = test_db_with_invocation()?;
+        db.store_test_results(
+            inv_with_results,
+            &[TestResult {
+                test_name: "test_alpha".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.1),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let inv_without_results = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(
+            inv_without_results,
+            super::super::db::InvocationStatus::Success,
+            Some(0),
+            1.0,
+        )?;
+
+        let resolved = db
+            .resolve_test_run(None)?
+            .expect("latest completed run with results should resolve");
+        assert_eq!(resolved.invocation_id, inv_with_results);
+        assert_eq!(resolved.job_id, None);
+
+        let error = db
+            .resolve_test_run(Some(&inv_without_results.to_string()))
+            .expect_err("explicit invocation without results should fail");
+        assert!(
+            error.to_string().contains("has no stored test results"),
+            "{error:#}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_test_run_accepts_background_job_selectors() -> TestResult<()> {
+        let (_dir, db, _first_inv) = test_db_with_invocation()?;
+
+        let (background_invocation, background_job) = db.start_background_job(
+            "test",
+            &[],
+            None,
+            std::path::Path::new(""),
+            std::path::Path::new(""),
+        )?;
+        db.finish_invocation(
+            background_invocation,
+            super::super::db::InvocationStatus::Success,
+            Some(0),
+            1.0,
+        )?;
+        db.store_test_results(
+            background_invocation,
+            &[TestResult {
+                test_name: "test_from_job".into(),
+                package: "pkg-job".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.2),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let resolved_from_prefix = db
+            .resolve_test_run(Some(&format!("job:{background_job}")))?
+            .expect("job selector should resolve");
+        assert_eq!(resolved_from_prefix.invocation_id, background_invocation);
+        assert_eq!(resolved_from_prefix.job_id, Some(background_job));
+
+        let resolved_from_numeric = db
+            .resolve_test_run(Some(&background_job.to_string()))?
+            .expect("plain numeric selector should fall back to background job id");
+        assert_eq!(resolved_from_numeric.invocation_id, background_invocation);
+        assert_eq!(resolved_from_numeric.job_id, Some(background_job));
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_test_run_supports_freshness_selectors() -> TestResult<()> {
+        let (_dir, db, first_inv) = test_db_with_invocation()?;
+        db.store_test_results(
+            first_inv,
+            &[TestResult {
+                test_name: "test_first".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.1),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let second_inv = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(second_inv, InvocationStatus::Failed, Some(1), 1.0)?;
+        db.store_test_results(
+            second_inv,
+            &[TestResult {
+                test_name: "test_second".into(),
+                package: "pkg-b".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(0.2),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let third_inv = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(third_inv, InvocationStatus::Success, Some(0), 1.0)?;
+        db.store_test_results(
+            third_inv,
+            &[TestResult {
+                test_name: "test_third".into(),
+                package: "pkg-c".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.3),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let latest = db
+            .resolve_test_run(Some("latest"))?
+            .expect("latest run should resolve");
+        assert_eq!(latest.invocation_id, third_inv);
+
+        let previous = db
+            .resolve_test_run(Some("previous"))?
+            .expect("previous run should resolve");
+        assert_eq!(previous.invocation_id, second_inv);
+
+        let latest_success = db
+            .resolve_test_run(Some("latest-success"))?
+            .expect("latest successful run should resolve");
+        assert_eq!(latest_success.invocation_id, third_inv);
+
+        let latest_failure = db
+            .resolve_test_run(Some("latest-failure"))?
+            .expect("latest failed run should resolve");
+        assert_eq!(latest_failure.invocation_id, second_inv);
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_analyze_test_run_can_target_non_latest_invocation() -> TestResult<()> {
+        let (_dir, db, first_inv) = test_db_with_invocation()?;
+        db.store_test_results(
+            first_inv,
+            &[TestResult {
+                test_name: "test_first".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.5),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let second_inv = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(
+            second_inv,
+            super::super::db::InvocationStatus::Success,
+            Some(0),
+            2.0,
+        )?;
+        db.store_test_results(
+            second_inv,
+            &[TestResult {
+                test_name: "test_second".into(),
+                package: "pkg-b".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(1.0),
+                attempt: 1,
+                output: Some("boom".into()),
+            }],
+        )?;
+
+        let first = db
+            .analyze_test_run(first_inv)?
+            .expect("first invocation should analyze");
+        let second = db
+            .analyze_test_run(second_inv)?
+            .expect("second invocation should analyze");
+
+        assert_eq!(first.invocation_id, first_inv);
+        assert_eq!(first.total_passed, 1);
+        assert_eq!(first.total_failed, 0);
+        assert_eq!(second.invocation_id, second_inv);
+        assert_eq!(second.total_passed, 0);
+        assert_eq!(second.total_failed, 1);
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_store_and_get_test_results() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
@@ -1524,7 +1976,7 @@ mod tests {
         ];
         db.store_test_results(inv_id, &results)?;
 
-        let failing = db.get_failing_tests(10)?;
+        let failing = db.get_failing_tests(inv_id, 10)?;
         assert_eq!(failing.len(), 2);
         // Ordered by test_name
         assert_eq!(failing[0].0, "test_also_broken");
@@ -1556,7 +2008,7 @@ mod tests {
         ];
         db.store_test_results(inv_id, &results)?;
 
-        let failing = db.get_failing_tests_with_output(10)?;
+        let failing = db.get_failing_tests_with_output(inv_id, 10)?;
         assert_eq!(failing.len(), 1);
         assert_eq!(failing[0].test_name, "test_fail");
         assert!(failing[0].output.as_deref().unwrap().contains("panicked"));
@@ -1598,9 +2050,62 @@ mod tests {
 
         let slowest = db.get_slowest_tests(10)?;
         assert_eq!(slowest.len(), 2, "Failed test should be excluded");
-        assert_eq!(slowest[0].0, "test_slow");
-        assert!(slowest[0].2 > 4.0); // avg duration > 4s
-        assert_eq!(slowest[1].0, "test_fast");
+        assert_eq!(slowest[0].test_name, "test_slow");
+        assert!(slowest[0].avg_duration_secs > 4.0); // avg duration > 4s
+        assert_eq!(slowest[1].test_name, "test_fast");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_get_slowest_tests_for_invocation_keeps_run_scope() -> TestResult<()> {
+        let (_dir, db, first_inv) = test_db_with_invocation()?;
+
+        db.store_test_results(
+            first_inv,
+            &[
+                TestResult {
+                    test_name: "test_medium".into(),
+                    package: "pkg".into(),
+                    status: TestStatus::Pass,
+                    duration_secs: Some(2.0),
+                    attempt: 1,
+                    output: None,
+                },
+                TestResult {
+                    test_name: "test_slowest".into(),
+                    package: "pkg".into(),
+                    status: TestStatus::Fail,
+                    duration_secs: Some(8.0),
+                    attempt: 1,
+                    output: Some("boom".into()),
+                },
+            ],
+        )?;
+
+        let second_inv = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(
+            second_inv,
+            super::super::db::InvocationStatus::Success,
+            Some(0),
+            1.0,
+        )?;
+        db.store_test_results(
+            second_inv,
+            &[TestResult {
+                test_name: "test_other_run".into(),
+                package: "pkg".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(20.0),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let slowest = db.get_slowest_tests_for_invocation(first_inv, 10)?;
+        assert_eq!(slowest.len(), 2);
+        assert_eq!(slowest[0].test_name, "test_slowest");
+        assert_eq!(slowest[0].status, "fail");
+        assert_eq!(slowest[1].test_name, "test_medium");
         Ok(())
     }
 
@@ -1641,6 +2146,9 @@ mod tests {
         assert_eq!(analysis.total_failed, 1);
         assert_eq!(analysis.total_ignored, 1);
         assert_eq!(analysis.invocation_id, inv_id);
+        assert_eq!(analysis.slowest_tests.len(), 3);
+        assert_eq!(analysis.slowest_tests[0].test_name, "test_two");
+        assert_eq!(analysis.slowest_tests[0].status, "fail");
 
         // Failure summary should have pkg-a with 1 failure
         assert_eq!(analysis.failure_summary.len(), 1);
@@ -1669,7 +2177,7 @@ mod tests {
         )?;
 
         let error = db
-            .analyze_last_run()
+            .analyze_test_run(inv_id)
             .expect_err("corrupted test rows should surface");
         let message = format!("{error:#}");
         assert!(message.contains("failed to read stored test rows for invocation"));
@@ -1720,7 +2228,7 @@ mod tests {
         )?;
 
         let error = db
-            .get_infra_timing_summary()
+            .get_infra_timing_summary(inv_id)
             .expect_err("corrupted infrastructure timing rows should surface");
         let message = format!("{error:#}");
         assert!(message.contains("failed to read stored infrastructure timing rows"));
@@ -1837,13 +2345,13 @@ mod tests {
         db.store_test_results(inv_id, &results)?;
 
         // Pattern match
-        let output = db.get_test_output("alpha")?;
+        let output = db.get_test_output(inv_id, "alpha")?;
         assert_eq!(output.len(), 1);
         assert_eq!(output[0].test_name, "module::test_alpha");
         assert_eq!(output[0].output.as_deref(), Some("all good"));
 
         // Pattern matching multiple
-        let output = db.get_test_output("test_")?;
+        let output = db.get_test_output(inv_id, "test_")?;
         assert_eq!(output.len(), 2);
         Ok(())
     }
