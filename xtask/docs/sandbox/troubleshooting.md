@@ -44,7 +44,7 @@ Common issues, debugging strategies, and patterns for writing reliable tests.
 xtask test --debug
 
 # Or increase PostgreSQL max_connections
-# (in postgresql.conf or via devenv)
+# (in postgresql.conf or via the devShell/Nix configuration)
 ```
 
 The pool size is `max(64, test_threads × 2)` and auto-shrinks if `max_connections` is too low.
@@ -74,9 +74,8 @@ psql -c "SELECT pg_terminate_backend(pid)
 
 **Cause**: Template database out of sync with migration files.
 
-**Solution**: The harness auto-rebuilds, but for manual reset:
+**Solution**: The harness auto-rebuilds. For a manual reset, prime the pool again:
 ```bash
-rm target/xtask/sandbox/template_stamp.json
 xtask test --prime
 ```
 
@@ -176,11 +175,11 @@ for log in &logs {
 
 ### Check Failure Artifacts
 
-When tests fail, artifacts are written to `target/test-artifacts/` (or `SINEX_TEST_FAIL_DIR`):
+When tests fail, artifacts are written to `.sinex/test-artifacts/` (or `SINEX_TEST_FAIL_DIR`):
 
 ```bash
-ls target/test-artifacts/
-cat target/test-artifacts/test_name_*.json
+ls .sinex/test-artifacts/
+cat .sinex/test-artifacts/test_name_*.json
 ```
 
 Artifacts contain:
@@ -386,4 +385,4 @@ xtask test --debug -- -p failing-crate
 | `nats.rs` | EphemeralNats management |
 | `macros/src/lib.rs` | `#[sinex_test]`, `#[sinex_prop]` |
 | `.config/nextest.toml` | Nextest profiles |
-| `target/test-artifacts/` | Failure snapshots |
+| `.sinex/test-artifacts/` | Failure snapshots |

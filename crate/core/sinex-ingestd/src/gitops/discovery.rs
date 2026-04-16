@@ -2,7 +2,7 @@
 //!
 //! For each matching JSON file, metadata is extracted either from:
 //! 1. `x-sinex` fields inside the JSON (`x-sinex-source`, `x-sinex-event-type`, `x-sinex-version`)
-//! 2. Path convention: `schemas/{source}/{event_type}/{version}.json`
+//! 2. Path convention fallback: `schemas/{source}/{event_type}/{version}.json`
 
 use crate::gitops::types::DiscoveredSchema;
 use crate::{IngestdResult, SinexError};
@@ -243,6 +243,31 @@ mod tests {
         assert_eq!(schema.source, "metadata-source");
         assert_eq!(schema.event_type, "metadata.type");
         assert_eq!(schema.version, "2.0.0");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn discover_schemas_supports_metadata_without_path_convention() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let repo = temp.path();
+        let nested = repo.join("exports/contracts");
+        std::fs::create_dir_all(&nested)?;
+        let file = nested.join("event.json");
+        std::fs::write(
+            &file,
+            serde_json::to_vec_pretty(&json!({
+                "type": "object",
+                "x-sinex-source": "metadata-source",
+                "x-sinex-event-type": "metadata.event",
+                "x-sinex-version": "3.0.0"
+            }))?,
+        )?;
+
+        let schemas = SchemaDiscovery::discover_schemas(repo, "**/*.json")?;
+        assert_eq!(schemas.len(), 1);
+        assert_eq!(schemas[0].source, "metadata-source");
+        assert_eq!(schemas[0].event_type, "metadata.event");
+        assert_eq!(schemas[0].version, "3.0.0");
         Ok(())
     }
 }

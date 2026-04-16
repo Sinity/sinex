@@ -19,7 +19,7 @@ use crate::process::ProcessBuilder;
 use crate::resources;
 use crate::tools::{ToolInfo, ToolManager};
 
-/// Check command configuration
+/// Run the fast workspace verification pipeline.
 #[derive(Debug, Clone, Default, clap::Args)]
 pub struct CheckCommand {
     /// Run clippy lints (slower, ~20s warm — subsumes cargo check)
@@ -478,11 +478,17 @@ impl XtaskCommand for CheckCommand {
                 .execute(ctx)
                 .await;
             ctx.finish_stage(stage, forbidden_result.is_ok());
-            forbidden_result?;
+            let forbidden_result = forbidden_result?;
+            for detail in forbidden_result.details {
+                result = result.with_detail(detail);
+            }
+            for warning in forbidden_result.warnings {
+                result = result.with_warning(warning);
+            }
             result = result.with_detail("forbidden pattern scan passed");
         }
 
-        // 4. Nix flake evaluation (Q6 — optional, off by default, ON with --nix or --full)
+        // 4. Optional Nix flake evaluation.
         if this.nix {
             ensure_nix_tool_ready_with(ToolManager::check_tool)?;
 
@@ -500,12 +506,12 @@ impl XtaskCommand for CheckCommand {
             result = result.with_detail("nix flake check passed");
         }
 
-        // Q5: if NixOS modules are dirty, suggest running the NixOS compatibility gate
+        // If NixOS modules are dirty, suggest running the NixOS compatibility gate.
         match crate::affected::nixos_modules_dirty() {
             Ok(true) if ctx.is_human() => {
                 eprintln!(
                     "→ NixOS modules modified. Run the NixOS compatibility gate: \
-                     xtask test --vm --category smoke"
+                     xtask test vm --category smoke"
                 );
             }
             Ok(_) => {}

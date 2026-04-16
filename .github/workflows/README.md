@@ -1,22 +1,22 @@
 # GitHub Actions Workflows
 
 This directory documents the live workflows and how to rerun them locally. The
-default GitHub Actions gate is narrower than the full VM/e2e story: today it is
-the Postgres-backed workspace gate through `xtask ci`, plus a handful of
-separate scheduled/manual workflows.
+default GitHub Actions gate today is the Postgres-backed workspace lane through
+`xtask ci`, plus a handful of separate scheduled/manual workflows.
 
 ## Active Workflows
 
 - **`ci.yml`** — Main gate on pushes/PRs. Runs
-  `xtask xtr ci postgres -- xtask xtr ci workspace`.
+  `xtask ci postgres -- xtask ci workspace`.
 
   The workspace stage applies declarative schema, checks contract tables, runs
-  `cargo deny`, runs `xtask check` and `xtask lint-forbidden` in parallel, enforces
-  workspace cleanliness, runs the `sinex-e2e-tests` package, then runs the rest of
-  the test suite with `sinex-e2e-tests` excluded. It does **not** run the NixOS VM
-  suite in `tests/e2e/nixos-vm/`.
+  `cargo deny`, runs `xtask check` plus the internal forbidden-pattern lane in
+  parallel, enforces workspace cleanliness, runs the `sinex-e2e-tests` package,
+  then runs the rest of the test suite with `sinex-e2e-tests` excluded. The
+  closest public local equivalent is `xtask check --forbidden` or `xtask check --full`.
+  It does **not** run the NixOS VM suite in `tests/e2e/nixos-vm/`.
 - **`db-checks.yml`** — Path-filtered database checks. When schemas change, runs a
-  narrower schema-focused pipeline rather than the full CI gate.
+  schema-focused pipeline.
 - **`verify-perf.yml`** — Nightly / on-demand performance verification. Runs
   `xtask test bench --contracts` inside an ephemeral Postgres environment and
   uploads the perf-verification artifacts.
@@ -28,11 +28,9 @@ separate scheduled/manual workflows.
   crashes are found.
 - **`schema-compatibility.yml`** — PR guard that runs contract compatibility checks
   against the base branch.
-- **`schema-management.yml`** — Validates JSON schemas, regenerates from code, and
-  on default-branch pushes deploys via `xtask schema deploy` if the production DB
-  secret is present.
-- **`schema-auto-update.yml`** — Scheduled schema drift catch-up that regenerates
-  schemas via `xtask` and opens auto-PRs against the default branch.
+- **`schema-management.yml`** — Validates JSON schemas, regenerates the checked-in
+  schema bundle from the Rust registry, and on default-branch pushes deploys via
+  `xtask infra schema-apply` if the production DB secret is present.
 
 ## Local Reproduction
 
@@ -41,13 +39,14 @@ Run workflow steps inside `nix develop`:
 ```bash
 # Postgres-backed workspace gate from ci.yml
 nix develop --accept-flake-config --no-pure-eval --command \
-  xtask xtr ci postgres -- \
-  xtask xtr ci workspace
+  xtask ci postgres -- \
+  xtask ci workspace
 
 # Schema contract check (matches schema-compatibility.yml)
-CI_BASE_BRANCH=master xtask contracts compat
+xtask ci compat --base master
 ```
 
 Use `xtask check` for the fastest local preflight. Use
-`./tests/e2e/nixos-vm/run-vm-tests.sh` separately when a change touches the VM
-deployment path, because the default GitHub Actions gate does not execute that suite.
+`xtask test vm --category smoke` (or `--category integration`) when a change
+touches the VM deployment path, because the default GitHub Actions gate does
+not execute that suite.

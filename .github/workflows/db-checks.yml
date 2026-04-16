@@ -26,9 +26,10 @@ jobs:
           filters: |
             schema:
               - 'schemas/**'
-              - 'crate/lib/sinex-core/src/types/events/**'
+              - 'crate/lib/sinex-primitives/src/events/**'
+              - 'crate/lib/sinex-macros/**'
               - 'crate/lib/sinex-schema/**'
-              - 'xtask/src/main.rs'
+              - 'xtask/src/**/*.rs'
 
   schema_validation:
     name: Schema Validation Pipeline
@@ -73,10 +74,10 @@ jobs:
           cache-name: sinity
           cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
 
-      - name: Run schema sync
+      - name: Run schema-only pipeline
         shell: bash
         run: |
           nix develop --accept-flake-config --no-pure-eval --command bash -lc '
             set -euo pipefail
-            xtask ci postgres -- xtask ci schema-sync
+            xtask ci postgres -- xtask ci schema-only
           '

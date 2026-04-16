@@ -1,9 +1,9 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "errors_in_window": {
       "format": "uint32",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "last_error_message": {
@@ -18,15 +18,18 @@
     },
     "uptime_seconds": {
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     }
   },
   "required": [
-    "errors_in_window",
     "process_name",
-    "uptime_seconds"
+    "uptime_seconds",
+    "errors_in_window"
   ],
   "title": "ProcessFailedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "process.failed",
+  "x-sinex-source": "sinex",
+  "x-sinex-version": "1.0.0"
 }

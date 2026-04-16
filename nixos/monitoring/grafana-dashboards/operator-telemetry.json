@@ -1,0 +1,380 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT bucket AS time, source, avg_latency_ms FROM sinex_telemetry.gateway_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
+          "refId": "A"
+        }
+      ],
+      "title": "Gateway Average Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT bucket AS time, source, max_p99_latency_ms FROM sinex_telemetry.gateway_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
+          "refId": "A"
+        }
+      ],
+      "title": "Gateway P99 Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT bucket AS time, avg_batch_size AS \"Average batch size\", max_batch_size AS \"Max batch size\" FROM sinex_telemetry.ingestd_batch_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
+          "refId": "A"
+        }
+      ],
+      "title": "Ingest Batch Size",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 8
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT bucket AS time, avg_latency_ms AS \"Average latency\", max_latency_ms AS \"Max latency\" FROM sinex_telemetry.ingestd_batch_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
+          "refId": "A"
+        }
+      ],
+      "title": "Ingest Batch Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 8
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT bucket AS time, stream_name, max_fill_pct FROM sinex_telemetry.stream_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
+          "refId": "A"
+        }
+      ],
+      "title": "JetStream Fill Percentage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT bucket AS time, node_type, total_events_processed FROM sinex_telemetry.node_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
+          "refId": "A"
+        }
+      ],
+      "title": "Node Throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT bucket AS time, total_completed AS completed, total_failed AS failed, total_timed_out AS timed_out, total_cancelled AS cancelled FROM sinex_telemetry.assembly_stats_1h WHERE $__timeFilter(bucket) ORDER BY time ASC",
+          "refId": "A"
+        }
+      ],
+      "title": "Assembly Outcomes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "sinex-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "id": 8,
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "sinex-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT aggregate, latest_bucket, ROUND(EXTRACT(EPOCH FROM (NOW() - latest_bucket)) / 60.0, 2) AS minutes_behind FROM (SELECT 'gateway_stats_1h' AS aggregate, MAX(bucket) AS latest_bucket FROM sinex_telemetry.gateway_stats_1h UNION ALL SELECT 'stream_stats_1h' AS aggregate, MAX(bucket) AS latest_bucket FROM sinex_telemetry.stream_stats_1h UNION ALL SELECT 'assembly_stats_1h' AS aggregate, MAX(bucket) AS latest_bucket FROM sinex_telemetry.assembly_stats_1h UNION ALL SELECT 'node_stats_1h' AS aggregate, MAX(bucket) AS latest_bucket FROM sinex_telemetry.node_stats_1h UNION ALL SELECT 'metric_counters_1h' AS aggregate, MAX(bucket) AS latest_bucket FROM sinex_telemetry.metric_counters_1h UNION ALL SELECT 'ingestd_batch_stats_1h' AS aggregate, MAX(bucket) AS latest_bucket FROM sinex_telemetry.ingestd_batch_stats_1h) freshness ORDER BY aggregate ASC",
+          "refId": "A"
+        }
+      ],
+      "title": "Continuous Aggregate Freshness",
+      "type": "table"
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": [
+    "sinex",
+    "operator"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-48h",
+    "to": "now"
+  },
+  "timezone": "",
+  "title": "Sinex Operator Telemetry",
+  "uid": "sinex-operator-telemetry",
+  "version": 1,
+  "weekStart": ""
+}

@@ -1,7 +1,7 @@
 //! Integration tests for extracted xtask commands
 //!
 //! Tests command execution, output formatting, and error handling
-//! for commands extracted during Phase 2 refactoring.
+//! for extracted command modules.
 //!
 //! Tests assert behavioral invariants visible to users, not implementation details.
 //! "Doesn't panic" is not an invariant. "Returns events in descending chronological order" is.

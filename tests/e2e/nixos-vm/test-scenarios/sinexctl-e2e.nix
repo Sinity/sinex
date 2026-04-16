@@ -26,7 +26,7 @@ pkgs.testers.nixosTest {
     ];
 
     # Enable gateway for CLI tests
-    services.sinex.gateway.enable = true;
+    services.sinex.core.gateway.enable = true;
 
     # Enable filesystem node to generate events
     services.sinex.nodes = {

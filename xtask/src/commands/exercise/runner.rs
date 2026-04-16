@@ -333,11 +333,11 @@ pub fn setup_output_dir() -> Result<PathBuf> {
             |s| s.trim().to_string(),
         );
 
-    let base = PathBuf::from("target/exercise");
+    let base = crate::config::workspace_state_root().join("exercise");
     let run_dir = base.join(format!("run-{timestamp}"));
     fs::create_dir_all(&run_dir).context("create exercise output directory")?;
 
-    // Symlink target/exercise/latest → run-<timestamp>
+    // Symlink .sinex/exercise/latest → run-<timestamp>
     let latest = base.join("latest");
     if let Err(error) = fs::remove_file(&latest)
         && error.kind() != std::io::ErrorKind::NotFound

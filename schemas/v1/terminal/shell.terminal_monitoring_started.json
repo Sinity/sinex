@@ -1,5 +1,12 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "enabled_sources": {
       "additionalProperties": {
@@ -8,8 +15,7 @@
       "type": "object"
     },
     "start_time": {
-      "format": "date-time",
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     }
   },
   "required": [
@@ -17,5 +23,8 @@
     "start_time"
   ],
   "title": "TerminalMonitoringStartedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "shell.terminal_monitoring_started",
+  "x-sinex-source": "terminal",
+  "x-sinex-version": "1.0.0"
 }

@@ -98,7 +98,7 @@ Ingestors          Automata             Clients
 ```bash
 git clone https://github.com/sinity/sinex.git
 cd sinex
-nix develop  # or: direnv allow
+direnv allow  # loads the flake devShell and puts xtask on PATH
 
 xtask infra start
 xtask run core --logs
@@ -108,17 +108,13 @@ sinexctl recent -n 10
 
 ## Development
 
-```bash
-xtask check
-xtask test
-xtask check --full && xtask test
-```
+Start with the canonical repo workflow docs:
 
-Useful entrypoints:
-
+- contributing workflow: [CONTRIBUTING.md](CONTRIBUTING.md)
+- testing workflow: [TESTING.md](TESTING.md)
 - local runtime loop: `xtask infra start` and `xtask run core --logs`
-- xtask/tooling reference: [xtask/README.md](xtask/README.md)
-- testing workflows: [xtask/docs/sandbox/README.md](xtask/docs/sandbox/README.md)
+- xtask/tooling reference: [xtask/docs/README.md](xtask/docs/README.md)
+- sandbox harness details: [xtask/docs/sandbox/README.md](xtask/docs/sandbox/README.md)
 
 ## Deployment & Operations
 
@@ -160,7 +156,8 @@ journalctl -u sinex-gateway -u sinex-ingestd -f
 | Deploy on NixOS | [nixos/README.md](nixos/README.md) |
 | Build a node or derived service | [crate/lib/sinex-node-sdk/docs/overview.md](crate/lib/sinex-node-sdk/docs/overview.md) |
 | Understand event schemas | [crate/lib/sinex-schema/docs/event-taxonomy.md](crate/lib/sinex-schema/docs/event-taxonomy.md) |
-| Work on the CLI/tooling loop | [xtask/README.md](xtask/README.md) |
+| Work on repo workflow or verification | [CONTRIBUTING.md](CONTRIBUTING.md), [TESTING.md](TESTING.md) |
+| Work on the CLI/tooling loop | [xtask/docs/README.md](xtask/docs/README.md) |
 
 ## Security
 
@@ -183,7 +180,7 @@ Current controls:
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT.
 
 ---
 

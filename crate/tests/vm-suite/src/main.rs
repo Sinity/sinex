@@ -5,8 +5,6 @@
 //! Called from testScript with:
 //!
 //!   `su - postgres -c "DATABASE_URL=postgresql:///sinex ${suite}/bin/run-suite --category smoke"`
-//!
-//! Replaces Python testScript assertions in `.nix` VM test files.
 
 use clap::Parser;
 use color_eyre::eyre::{Result, bail};

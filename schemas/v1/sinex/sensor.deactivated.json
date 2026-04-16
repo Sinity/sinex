@@ -1,33 +1,72 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DeactivationReason": {
+      "description": "Reason for sensor deactivation",
+      "oneOf": [
+        {
+          "const": "shutdown",
+          "description": "Normal shutdown",
+          "type": "string"
+        },
+        {
+          "const": "error",
+          "description": "Error occurred",
+          "type": "string"
+        },
+        {
+          "const": "resource_unavailable",
+          "description": "Resource not available",
+          "type": "string"
+        },
+        {
+          "const": "config_change",
+          "description": "Configuration change",
+          "type": "string"
+        },
+        {
+          "const": "user_requested",
+          "description": "User requested",
+          "type": "string"
+        }
+      ]
+    },
+    "EventCount": {
+      "description": "Event count newtype for statistics and metrics.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "events_generated": {
-      "format": "uint64",
-      "minimum": 0.0,
-      "type": "integer"
+      "$ref": "#/$defs/EventCount"
     },
     "node": {
       "type": "string"
     },
     "reason": {
-      "type": "string"
+      "$ref": "#/$defs/DeactivationReason"
     },
     "sensor": {
       "type": "string"
     },
     "uptime_seconds": {
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     }
   },
   "required": [
-    "events_generated",
-    "node",
-    "reason",
     "sensor",
-    "uptime_seconds"
+    "node",
+    "uptime_seconds",
+    "events_generated",
+    "reason"
   ],
   "title": "SensorDeactivatedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "sensor.deactivated",
+  "x-sinex-source": "sinex",
+  "x-sinex-version": "1.0.0"
 }

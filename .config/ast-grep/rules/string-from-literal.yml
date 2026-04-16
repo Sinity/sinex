@@ -1,9 +1,0 @@
-id: string-from-literal
-message: "Prefer .to_string() or .into() over String::from() for literals"
-severity: hint
-language: rust
-rule:
-  pattern: String::from("$STR")
-note: |
-  Style preference: "text".to_string() reads more naturally than String::from("text").
-  Consider using .to_string() or .into() for literal strings.

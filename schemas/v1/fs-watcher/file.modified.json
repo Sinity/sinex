@@ -1,28 +1,76 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "properties": {
-    "modification_type": {
-      "type": "string"
-    },
-    "modified_at": {
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
       "format": "date-time",
       "type": "string"
     },
-    "path": {
+    "FileModificationType": {
+      "description": "Type of file modification detected",
+      "oneOf": [
+        {
+          "const": "content",
+          "description": "File content was modified",
+          "type": "string"
+        },
+        {
+          "const": "metadata",
+          "description": "File metadata (timestamps, etc.) changed",
+          "type": "string"
+        },
+        {
+          "const": "permissions",
+          "description": "File permissions changed",
+          "type": "string"
+        },
+        {
+          "const": "size",
+          "description": "File size changed",
+          "type": "string"
+        },
+        {
+          "const": "ownership",
+          "description": "File ownership (uid/gid) changed",
+          "type": "string"
+        },
+        {
+          "const": "multiple",
+          "description": "Multiple attributes changed",
+          "type": "string"
+        }
+      ]
+    },
+    "RecordedPath": {
+      "description": "A path recorded from observational data (filesystem events, shell CWDs). Preserved verbatim except null bytes.",
       "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "modification_type": {
+      "$ref": "#/$defs/FileModificationType"
+    },
+    "modified_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "path": {
+      "$ref": "#/$defs/RecordedPath"
     },
     "size": {
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     }
   },
   "required": [
-    "modification_type",
-    "modified_at",
     "path",
-    "size"
+    "size",
+    "modified_at",
+    "modification_type"
   ],
   "title": "FileModifiedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "file.modified",
+  "x-sinex-source": "fs-watcher",
+  "x-sinex-version": "1.0.0"
 }

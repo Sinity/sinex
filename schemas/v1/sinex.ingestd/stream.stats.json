@@ -1,17 +1,17 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "description": "NATS JetStream stream statistics\n\nAddresses Issue 3: Stream Capacity Monitoring",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "NATS `JetStream` stream statistics\n\nAddresses Issue 3: Stream Capacity Monitoring",
   "properties": {
     "bytes": {
       "description": "Current byte count",
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "consumer_count": {
       "description": "Consumer count",
       "format": "uint32",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "fill_pct": {
@@ -22,31 +22,31 @@
     "first_seq": {
       "description": "First sequence number",
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "last_seq": {
       "description": "Last sequence number",
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "max_bytes": {
       "description": "Maximum bytes",
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "max_messages": {
       "description": "Maximum message count (capacity)",
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "messages": {
       "description": "Current message count",
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "stream": {
@@ -55,16 +55,19 @@
     }
   },
   "required": [
+    "stream",
+    "messages",
+    "max_messages",
     "bytes",
+    "max_bytes",
     "consumer_count",
     "fill_pct",
     "first_seq",
-    "last_seq",
-    "max_bytes",
-    "max_messages",
-    "messages",
-    "stream"
+    "last_seq"
   ],
   "title": "StreamStatsPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "stream.stats",
+  "x-sinex-source": "sinex.ingestd",
+  "x-sinex-version": "1.0.0"
 }

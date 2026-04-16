@@ -1,5 +1,12 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "blob_id": {
       "type": "string"
@@ -12,21 +19,23 @@
     },
     "size_bytes": {
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "stored_at": {
-      "format": "date-time",
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     }
   },
   "required": [
     "blob_id",
     "content_type",
-    "hash_sha256",
     "size_bytes",
+    "hash_sha256",
     "stored_at"
   ],
   "title": "BlobStoredPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "blob.stored",
+  "x-sinex-source": "blob_storage",
+  "x-sinex-version": "1.0.0"
 }

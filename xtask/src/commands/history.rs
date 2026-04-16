@@ -335,7 +335,7 @@ pub enum HistoryTestsSubcommand {
     },
 }
 
-/// History management command
+/// Query build, test, and runtime history recorded by xtask.
 #[derive(Debug, Clone, clap::Args)]
 pub struct HistoryCommand {
     #[command(subcommand)]

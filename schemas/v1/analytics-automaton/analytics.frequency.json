@@ -1,6 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "definitions": {
+  "$defs": {
     "FrequencyAnomaly": {
       "description": "Frequency anomaly detection",
       "properties": {
@@ -19,6 +18,7 @@
       "type": "object"
     }
   },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Frequency analysis of events",
   "properties": {
     "analysis_type": {
@@ -26,7 +26,7 @@
     },
     "anomalies": {
       "items": {
-        "$ref": "#/definitions/FrequencyAnomaly"
+        "$ref": "#/$defs/FrequencyAnomaly"
       },
       "type": "array"
     },
@@ -36,54 +36,57 @@
     },
     "top_event_types": {
       "items": {
-        "items": [
+        "maxItems": 2,
+        "minItems": 2,
+        "prefixItems": [
           {
             "type": "string"
           },
           {
             "format": "uint",
-            "minimum": 0.0,
+            "minimum": 0,
             "type": "integer"
           }
         ],
-        "maxItems": 2,
-        "minItems": 2,
         "type": "array"
       },
       "type": "array"
     },
     "top_sources": {
       "items": {
-        "items": [
+        "maxItems": 2,
+        "minItems": 2,
+        "prefixItems": [
           {
             "type": "string"
           },
           {
             "format": "uint",
-            "minimum": 0.0,
+            "minimum": 0,
             "type": "integer"
           }
         ],
-        "maxItems": 2,
-        "minItems": 2,
         "type": "array"
       },
       "type": "array"
     },
     "window_seconds": {
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     }
   },
   "required": [
     "analysis_type",
-    "anomalies",
     "events_per_minute",
     "top_event_types",
     "top_sources",
+    "anomalies",
     "window_seconds"
   ],
   "title": "AnalyticsFrequencyPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "analytics.frequency",
+  "x-sinex-source": "analytics-automaton",
+  "x-sinex-version": "1.0.0"
 }

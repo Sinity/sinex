@@ -13,7 +13,7 @@ use crate::config::config;
 use crate::history::{InvocationProgress, JobLifecycleStatus, StageTiming};
 use crate::jobs::JobManager;
 
-/// Jobs command configuration
+/// Inspect and manage background xtask jobs.
 #[derive(Debug, Clone, clap::Args)]
 pub struct JobsCommand {
     #[command(subcommand)]

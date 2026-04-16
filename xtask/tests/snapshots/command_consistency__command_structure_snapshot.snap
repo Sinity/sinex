@@ -5,7 +5,7 @@ expression: json
 {
   "commands": [
     {
-      "about": null,
+      "about": "Apply automatic fixes across workspace packages",
       "args": [
         {
           "global": false,
@@ -61,7 +61,7 @@ expression: json
       "subcommands": []
     },
     {
-      "about": "Check command configuration",
+      "about": "Run the fast workspace verification pipeline",
       "args": [
         {
           "global": false,
@@ -205,7 +205,7 @@ expression: json
         },
         {
           "global": false,
-          "help": "Run `nix flake check --no-build` (evaluation only, ~2-5s). Included in --full. Skipped silently when `nix` is not on PATH",
+          "help": "Run `nix flake check --no-build` (evaluation only, ~2-5s). Included in --full. Fails if `nix` is unavailable or unhealthy",
           "long": "nix",
           "name": "nix",
           "possible_values": [
@@ -221,7 +221,7 @@ expression: json
       "subcommands": []
     },
     {
-      "about": "Test command configuration",
+      "about": "Run the repo's primary nextest-backed test workflows",
       "args": [
         {
           "global": false,
@@ -392,7 +392,7 @@ expression: json
         },
         {
           "global": false,
-          "help": "Update insta snapshots (sets INSTA_UPDATE=always). Replaces the manual `INSTA_UPDATE=always cargo nextest run ...` pattern",
+          "help": "Update insta snapshots (sets `INSTA_UPDATE=always`)",
           "long": "update-snapshots",
           "name": "update_snapshots",
           "possible_values": [
@@ -477,7 +477,7 @@ expression: json
             },
             {
               "global": false,
-              "help": "Enforce perf contracts from config/verify/perf-contracts.toml",
+              "help": "Enforce perf contracts from xtask/config/perf-contracts.toml",
               "long": "contracts",
               "name": "contracts",
               "possible_values": [
@@ -490,7 +490,7 @@ expression: json
             },
             {
               "global": false,
-              "help": "Contract file path (default: config/verify/perf-contracts.toml)",
+              "help": "Contract file path (default: xtask/config/perf-contracts.toml)",
               "long": "contracts-file",
               "name": "contracts_file",
               "possible_values": [],
@@ -500,7 +500,7 @@ expression: json
             },
             {
               "global": false,
-              "help": "Print summary from a perf report JSON (replaces `xtask verify report`)",
+              "help": "Print summary from a stored perf report JSON",
               "long": "report",
               "name": "report",
               "possible_values": [],
@@ -771,7 +771,7 @@ expression: json
       ]
     },
     {
-      "about": null,
+      "about": "Build workspace packages while capturing compiler diagnostics",
       "args": [
         {
           "global": false,
@@ -903,6 +903,19 @@ expression: json
           "help": "Show periodic runtime metrics overlay (heartbeat, lag, batch latency)",
           "long": "metrics",
           "name": "metrics",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": true,
+          "help": "Write pseudo-journald NDJSON to .sinex/state/dev-journal.log",
+          "long": "dev-journal",
+          "name": "dev_journal",
           "possible_values": [
             "true",
             "false"
@@ -1085,7 +1098,7 @@ expression: json
       ]
     },
     {
-      "about": null,
+      "about": "Manage local infrastructure (Postgres, NATS, VMs)",
       "args": [],
       "name": "infra",
       "subcommands": [
@@ -1186,12 +1199,89 @@ expression: json
           "subcommands": []
         },
         {
+          "about": "Apply the declarative schema to a database",
+          "args": [
+            {
+              "global": false,
+              "help": "Target database URL. Falls back to DATABASE_URL, then the current checkout stack",
+              "long": "database-url",
+              "name": "database_url",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "schema-apply",
+          "subcommands": []
+        },
+        {
+          "about": "Generate gateway TLS certificates using rcgen",
+          "args": [
+            {
+              "global": false,
+              "help": "Output directory for generated files",
+              "long": "output-dir",
+              "name": "output_dir",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Subject alternative name to include. Repeat for multiple SANs",
+              "long": "san",
+              "name": "san",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Common name for the generated certificate authority",
+              "long": "ca-name",
+              "name": "ca_name",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Certificate validity in days",
+              "long": "validity-days",
+              "name": "validity_days",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Overwrite an existing certificate set",
+              "long": "force",
+              "name": "force",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "tls-init-gateway",
+          "subcommands": []
+        },
+        {
           "about": "Manage VM integration",
           "args": [],
           "name": "vm",
           "subcommands": [
             {
-              "about": "Run exported NixOS VM flake checks natively (replaces run-vm-tests.sh) (Q2)",
+              "about": "Run exported NixOS VM flake checks",
               "args": [
                 {
                   "global": false,
@@ -1284,7 +1374,7 @@ expression: json
               "args": [
                 {
                   "global": false,
-                  "help": "VM preset placeholder. Interactive preset wiring is currently unfinished.",
+                  "help": "VM preset name. Interactive preset wiring is not implemented yet",
                   "long": null,
                   "name": "preset",
                   "possible_values": [],
@@ -1383,7 +1473,7 @@ expression: json
       ]
     },
     {
-      "about": "Jobs command configuration",
+      "about": "Inspect and manage background xtask jobs",
       "args": [],
       "name": "jobs",
       "subcommands": [
@@ -1541,18 +1631,8 @@ expression: json
       ]
     },
     {
-      "about": null,
+      "about": "Inspect workspace status, service health, and recent activity",
       "args": [
-        {
-          "global": false,
-          "help": "Service to check (default: all)",
-          "long": null,
-          "name": "service",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
         {
           "global": false,
           "help": "Watch for changes (live updates)",
@@ -1597,7 +1677,7 @@ expression: json
       "subcommands": []
     },
     {
-      "about": "Dependency analysis command (promoted from analyze deps)",
+      "about": "Analyze workspace dependency structure and impact",
       "args": [],
       "name": "deps",
       "subcommands": [
@@ -1792,7 +1872,7 @@ expression: json
       ]
     },
     {
-      "about": "History management command",
+      "about": "Query build, test, and runtime history recorded by xtask",
       "args": [],
       "name": "history",
       "subcommands": [
@@ -2949,7 +3029,7 @@ expression: json
       ]
     },
     {
-      "about": null,
+      "about": "Probe developer-environment health and deployment readiness",
       "args": [
         {
           "global": false,
@@ -2989,13 +3069,26 @@ expression: json
           "required": false,
           "short": null,
           "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Check deployment readiness (schema, services, permissions)",
+          "long": "deployment-readiness",
+          "name": "deployment_readiness",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
         }
       ],
       "name": "doctor",
       "subcommands": []
     },
     {
-      "about": "Privacy engine command",
+      "about": "Run privacy-engine catalog, test, key, and config utilities",
       "args": [],
       "name": "privacy",
       "subcommands": [
@@ -3116,7 +3209,7 @@ expression: json
       ]
     },
     {
-      "about": "Documentation generation command",
+      "about": "Generate and verify repo documentation surfaces",
       "args": [],
       "name": "docs",
       "subcommands": [
@@ -3231,9 +3324,193 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Exit non-zero if the generated output would change",
+              "long": "check",
+              "name": "check",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
             }
           ],
           "name": "agents",
+          "subcommands": []
+        },
+        {
+          "about": "Generate the concise xtask command guide used for agent memory and humans",
+          "args": [
+            {
+              "global": false,
+              "help": "Output file (default: xtask/docs/command-guide.md)",
+              "long": "output",
+              "name": "output",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Print to stdout instead of writing a file",
+              "long": "stdout",
+              "name": "stdout",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Exit non-zero if the generated output would change",
+              "long": "check",
+              "name": "check",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "command-guide",
+          "subcommands": []
+        },
+        {
+          "about": "Generate the exhaustive xtask public command reference from the live clap tree",
+          "args": [
+            {
+              "global": false,
+              "help": "Output file (default: xtask/docs/command-reference.md)",
+              "long": "output",
+              "name": "output",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Print to stdout instead of writing a file",
+              "long": "stdout",
+              "name": "stdout",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Exit non-zero if the generated output would change",
+              "long": "check",
+              "name": "check",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "command-reference",
+          "subcommands": []
+        },
+        {
+          "about": "Generate the checked-in JSON schema bundle from the Rust EventPayload registry",
+          "args": [
+            {
+              "global": false,
+              "help": "Output directory root (default: schemas/ in workspace root)",
+              "long": "output-dir",
+              "name": "output_dir",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Exit non-zero if the generated bundle would change",
+              "long": "check",
+              "name": "check",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "schema-bundle",
+          "subcommands": []
+        },
+        {
+          "about": "Generate the live ast-grep rule catalog from `.config/ast-grep/rules/`",
+          "args": [
+            {
+              "global": false,
+              "help": "Output file (default: .config/ast-grep/README.md)",
+              "long": "output",
+              "name": "output",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Print to stdout instead of writing a file",
+              "long": "stdout",
+              "name": "stdout",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Exit non-zero if the generated output would change",
+              "long": "check",
+              "name": "check",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "ast-grep-catalog",
+          "subcommands": []
+        },
+        {
+          "about": "Refresh all generated repo surfaces tracked in the repo",
+          "args": [],
+          "name": "sync",
+          "subcommands": []
+        },
+        {
+          "about": "Verify that all generated repo surfaces are up to date",
+          "args": [],
+          "name": "check",
           "subcommands": []
         },
         {

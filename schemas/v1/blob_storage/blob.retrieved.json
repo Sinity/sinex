@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "blob_id": {
       "type": "string"
@@ -9,15 +9,18 @@
     },
     "retrieval_time_ms": {
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     }
   },
   "required": [
     "blob_id",
-    "cache_hit",
-    "retrieval_time_ms"
+    "retrieval_time_ms",
+    "cache_hit"
   ],
   "title": "BlobRetrievedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "blob.retrieved",
+  "x-sinex-source": "blob_storage",
+  "x-sinex-version": "1.0.0"
 }

@@ -1,6 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "definitions": {
+  "$defs": {
     "ComponentHealth": {
       "properties": {
         "events_processed": {
@@ -17,8 +16,7 @@
           ]
         },
         "last_heartbeat": {
-          "format": "date-time",
-          "type": "string"
+          "$ref": "#/$defs/DateTime"
         },
         "memory_usage_mb": {
           "format": "int32",
@@ -31,7 +29,7 @@
           "type": "string"
         },
         "status": {
-          "$ref": "#/definitions/HealthStatus"
+          "$ref": "#/$defs/SystemHealthStatus"
         },
         "uptime_seconds": {
           "format": "int64",
@@ -48,13 +46,18 @@
         }
       },
       "required": [
-        "last_heartbeat",
         "service_name",
-        "status"
+        "status",
+        "last_heartbeat"
       ],
       "type": "object"
     },
-    "HealthStatus": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "SystemHealthStatus": {
       "enum": [
         "healthy",
         "degraded",
@@ -64,56 +67,59 @@
       "type": "string"
     }
   },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "components": {
       "additionalProperties": {
-        "$ref": "#/definitions/ComponentHealth"
+        "$ref": "#/$defs/ComponentHealth"
       },
       "type": "object"
     },
     "degraded_components": {
       "format": "uint32",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "failed_components": {
       "format": "uint32",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "healthy_components": {
       "format": "uint32",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "last_updated": {
-      "format": "date-time",
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "missing_components": {
       "format": "uint32",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "overall_status": {
-      "$ref": "#/definitions/HealthStatus"
+      "$ref": "#/$defs/SystemHealthStatus"
     },
     "total_components": {
       "format": "uint32",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     }
   },
   "required": [
-    "components",
+    "overall_status",
+    "healthy_components",
     "degraded_components",
     "failed_components",
-    "healthy_components",
-    "last_updated",
     "missing_components",
-    "overall_status",
-    "total_components"
+    "total_components",
+    "last_updated",
+    "components"
   ],
   "title": "SystemHealthSummaryPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "system.health_summary",
+  "x-sinex-source": "health-aggregator",
+  "x-sinex-version": "1.0.0"
 }

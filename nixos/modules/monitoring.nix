@@ -4,13 +4,68 @@ with lib;
 
 let
   cfg = config.services.sinex;
+  secretResolution = import ./lib/secret-resolution.nix { inherit lib; };
+  inherit (secretResolution) resolveNamedSecretPath;
   obs = cfg.observability;
   monitoringCfg = obs.monitoring;
   loggingCfg = obs.logging;
   alertsCfg = obs.alerts;
+  secretPaths = config.sinex.secrets.paths or {};
 
   logDir = obs.logDir;
   prometheusCfg = monitoringCfg.prometheus;
+  grafanaDashboardsPath = ../monitoring/grafana-dashboards;
+  grafanaPrometheusUid = "sinex-prometheus";
+  grafanaPostgresUid = "sinex-postgres";
+  grafanaPostgresHost =
+    if cfg.database.host == "0.0.0.0" then
+      "127.0.0.1"
+    else if cfg.database.host == "::" then
+      "::1"
+    else
+      cfg.database.host;
+  grafanaPostgresSslMode =
+    if builtins.elem grafanaPostgresHost [
+      "127.0.0.1"
+      "localhost"
+      "::1"
+    ] then
+      "disable"
+    else
+      "require";
+  effectiveDatabasePasswordFile = resolveNamedSecretPath secretPaths cfg.database.passwordFile [
+    "sinex-local-db"
+    "sinex-remote-db"
+  ];
+  grafanaPasswordRef =
+    if effectiveDatabasePasswordFile != null then
+      "$__file{${toString effectiveDatabasePasswordFile}}"
+    else
+      null;
+  effectiveGrafanaSecretKeyFile = resolveNamedSecretPath secretPaths monitoringCfg.grafana.secretKeyFile [
+    "sinex-grafana-secret-key"
+    "grafana-secret-key"
+  ];
+  derivedGrafanaSecretKey =
+    let
+      fingerprint = builtins.hashString "sha256" (
+        concatStringsSep ":" [
+          (config.networking.hostName or "localhost")
+          cfg.nats.environment
+          cfg.database.name
+          (toString cfg.stateRoot)
+          cfg.users.nodes
+        ]
+      );
+    in
+    "sinex-grafana-${builtins.substring 0 48 fingerprint}";
+  grafanaSecretKeySetting =
+    if effectiveGrafanaSecretKeyFile != null then
+      "$__file{${toString effectiveGrafanaSecretKeyFile}}"
+    else if monitoringCfg.grafana.secretKey != null then
+      monitoringCfg.grafana.secretKey
+    else
+      derivedGrafanaSecretKey;
 
   enablePrometheus = cfg.enable && obs.enable && monitoringCfg.enable && prometheusCfg.enable;
   enableGrafana = cfg.enable && obs.enable && monitoringCfg.enable && monitoringCfg.grafana.enable;
@@ -104,23 +159,61 @@ in
     })
 
     (mkIf enableGrafana {
-      services.grafana = {
+      services.grafana.provision = {
         enable = true;
-        settings.server = {
-          http_addr = mkDefault "127.0.0.1";
-          http_port = monitoringCfg.grafana.port;
-        };
-        provision = mkIf enablePrometheus {
-          enable = true;
-          datasources.settings.datasources = [
-            {
-              name = "Prometheus";
-              type = "prometheus";
-              url = "http://${prometheusCfg.listen}:${toString prometheusCfg.port}";
+        datasources.settings.datasources =
+          (optional enablePrometheus {
+            name = "Prometheus";
+            type = "prometheus";
+            uid = grafanaPrometheusUid;
+            url = "http://${prometheusCfg.listen}:${toString prometheusCfg.port}";
+            isDefault = false;
+            access = "proxy";
+            editable = false;
+          })
+          ++ [
+            ({
+              name = "Sinex PostgreSQL";
+              type = "postgres";
+              uid = grafanaPostgresUid;
+              url = "${grafanaPostgresHost}:${toString cfg.database.port}";
+              database = cfg.database.name;
+              user = cfg.database.user;
               isDefault = true;
               access = "proxy";
+              editable = false;
+              jsonData = {
+                sslmode = grafanaPostgresSslMode;
+                timescaledb = true;
+              };
             }
+            // optionalAttrs (grafanaPasswordRef != null) {
+              secureJsonData = {
+                password = grafanaPasswordRef;
+              };
+            })
           ];
+        dashboards.settings.providers = [
+          {
+            name = "sinex";
+            type = "file";
+            folder = "Sinex";
+            disableDeletion = false;
+            allowUiUpdates = false;
+            updateIntervalSeconds = 30;
+            options.path = grafanaDashboardsPath;
+          }
+        ];
+      };
+
+      services.grafana = {
+        enable = true;
+        settings = {
+          server = {
+            http_addr = mkDefault "127.0.0.1";
+            http_port = monitoringCfg.grafana.port;
+          };
+          security.secret_key = grafanaSecretKeySetting;
         };
       };
     })

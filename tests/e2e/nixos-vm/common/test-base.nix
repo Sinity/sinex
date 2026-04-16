@@ -64,17 +64,10 @@ in
     ../../../../nixos  # Import Sinex NixOS module
   ];
 
-  # Secrets/agenix integration is not needed for VM smoke tests and can
-  # introduce evaluation errors when the age module is absent. Disable it here.
-  disabledModules = [ ../../../../nixos/modules/secrets.nix ];
-
   # Basic Sinex configuration
   services.sinex = sinexConfigBase
     // lib.optionalAttrs (sinexCliPackage != null) {
       cliPackage = sinexCliPackage;
-    }
-    // {
-      secrets.gatewayAdminTokenFile = "/etc/sinex/gateway-admin-token";
     };
 
   # Provide dummy secrets expected by the gateway.
@@ -100,7 +93,6 @@ in
   # Ensure core services wait for migrations.
   systemd.services.sinex-gateway.after = [ "sinex-migrations.service" "sinex-blob-init.service" ];
   systemd.services.sinex-gateway.requires = [ "sinex-migrations.service" "sinex-blob-init.service" ];
-  systemd.services.sinex-gateway.environment.SINEX_RPC_TOKEN_FILE = "/etc/sinex/gateway-admin-token";
   systemd.services.sinex-ingestd.path = [ pkgs.git pkgs.git-annex ];
   systemd.services.sinex-gateway.path = [ pkgs.git pkgs.git-annex ];
   systemd.services.sinex-blob-init.path = [ pkgs.git pkgs.git-annex ];

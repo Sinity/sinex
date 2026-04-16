@@ -18,7 +18,9 @@ mod affected;
 pub mod bench;
 pub mod cargo_diagnostics;
 pub mod cargo_runner;
+pub mod command_catalog;
 pub mod command;
+pub mod command_docs;
 pub mod commands;
 mod config;
 pub mod coordinator;
@@ -196,86 +198,8 @@ pub(crate) fn parse_one_shot_i64_env(var_name: &str, purpose: &str) -> Option<i6
 /// Subcommands are hidden from clap's auto-generated list and presented here
 /// grouped by category instead. Each subcommand's own `--help` still works.
 fn commands_help() -> String {
-    use std::io::IsTerminal;
-
-    let use_color = std::io::stdout().is_terminal();
-
-    let mut out = String::from("Commands:\n");
-    let categories: &[(&str, &[(&str, &str)])] = &[
-        (
-            "Development",
-            &[
-                ("fix", "Apply automatic fixes (fmt, clippy, fix)"),
-                ("check", "Fast compile check, clippy, lint-forbidden"),
-                (
-                    "test",
-                    "Run tests (subcommands: bench, fuzz, coverage, mutants, vm)",
-                ),
-                ("build", "Build workspace packages"),
-                ("work", "Workflow shortcut (check → test pipeline)"),
-            ],
-        ),
-        (
-            "Runtime",
-            &[
-                ("run", "Run sinex binaries (ingestd, gateway, nodes)"),
-                ("infra", "Manage local infrastructure (Postgres, NATS, VMs)"),
-                ("jobs", "Background job management"),
-                ("status", "Workspace status and service health"),
-            ],
-        ),
-        (
-            "Analysis",
-            &[
-                (
-                    "deps",
-                    "Dependency analysis (tree, duplicates, unused, timings, impact)",
-                ),
-                ("history", "Build/test execution history and trends"),
-                (
-                    "analytics",
-                    "Developer intelligence (health, hotspots, reliability, velocity)",
-                ),
-            ],
-        ),
-        (
-            "Diagnostics",
-            &[
-                ("doctor", "Health check and auto-remediation"),
-                ("privacy", "Privacy engine utilities"),
-            ],
-        ),
-        (
-            "Generation",
-            &[(
-                "docs",
-                "Documentation (rustdoc, AGENTS.md, AI snapshot) — subcommands: build, serve, agents, snapshot",
-            )],
-        ),
-        (
-            "Maintenance",
-            &[
-                ("exercise", "xtask self-validation suite"),
-                ("reset", "Wipe developer state for a clean slate"),
-            ],
-        ),
-    ];
-
-    for (i, (category, cmds)) in categories.iter().enumerate() {
-        if i > 0 {
-            out.push('\n');
-        }
-        if use_color {
-            // Bold + underline
-            out.push_str(&format!("  \x1b[1;4m{category}\x1b[0m\n"));
-        } else {
-            out.push_str(&format!("  {category}:\n"));
-        }
-        for (name, desc) in *cmds {
-            out.push_str(&format!("    {name:<12}{desc}\n"));
-        }
-    }
-    out
+    let commands = crate::command_catalog::collect_command_catalog();
+    crate::command_docs::render_commands_help(&commands)
 }
 
 #[derive(Parser)]
@@ -340,7 +264,7 @@ enum Commands {
     // ─── Runtime ───────────────────────────────────────────────────
     #[command(hide = true)]
     Run(commands::RunCommand),
-    #[command(hide = true)]
+    #[command(hide = true, about = "Manage local infrastructure (Postgres, NATS, VMs)")]
     Infra {
         #[command(subcommand)]
         cmd: commands::infra::InfraSubcommand,
@@ -407,6 +331,7 @@ pub async fn run_cli() -> Result<()> {
         }
     };
     let cli = Cli::from_arg_matches(&matches).map_err(|e| eyre!(e.to_string()))?;
+    let output_format = cli.global.output_format();
 
     let bg_job_dir = std::env::var("XTASK_JOB_DIR").ok();
     if bg_job_dir.is_some() {
@@ -420,7 +345,7 @@ pub async fn run_cli() -> Result<()> {
 
     // Handle --list-commands before normal dispatch
     if cli.global.list_commands {
-        return list_commands(cli.global.output_format());
+        return list_commands(output_format);
     }
 
     // Require a command if not using --list-commands
@@ -430,7 +355,7 @@ pub async fn run_cli() -> Result<()> {
     let command = match command {
         Ok(c) => c,
         Err(e) => {
-            if matches!(cli.global.output_format(), OutputFormat::Json) {
+            if matches!(output_format, OutputFormat::Json) {
                 let json = serde_json::json!({
                     "command": "xtask",
                     "status": "error",
@@ -543,7 +468,7 @@ pub async fn run_cli() -> Result<()> {
 
     // Create context with invocation ID
     let ctx = CommandContext::new(
-        OutputWriter::new(cli.global.output_format()),
+        OutputWriter::new(output_format),
         cli.global.is_background(),
         invocation_id,
         command_name,
@@ -801,72 +726,7 @@ fn init_tracing(verbosity: u8) {
 
 /// List all available commands using clap introspection.
 fn list_commands(format: OutputFormat) -> Result<()> {
-    use clap::CommandFactory;
-    use serde::Serialize;
-
-    #[derive(Serialize)]
-    struct ArgInfo {
-        name: String,
-        short: Option<char>,
-        long: Option<String>,
-        help: Option<String>,
-        required: bool,
-        global: bool,
-        possible_values: Vec<String>,
-        takes_value: bool,
-    }
-
-    #[derive(Serialize)]
-    struct CommandInfo {
-        name: String,
-        about: Option<String>,
-        subcommands: Vec<CommandInfo>,
-        args: Vec<ArgInfo>,
-    }
-
-    // Internal commands excluded from --list-commands output
-    const INTERNAL_COMMANDS: &[&str] = &["ci", "completions", "help"];
-
-    fn extract_commands(cmd: &clap::Command) -> Vec<CommandInfo> {
-        cmd.get_subcommands()
-            // All user-facing commands are hidden from clap's auto-help (we render
-            // categorized help ourselves), so we can't use is_hide_set() as filter.
-            // Instead, exclude only truly internal commands by name.
-            .filter(|sub| !INTERNAL_COMMANDS.contains(&sub.get_name()))
-            .map(|sub| {
-                let args = sub
-                    .get_arguments()
-                    .map(|arg| ArgInfo {
-                        name: arg.get_id().to_string(),
-                        short: arg.get_short(),
-                        long: arg.get_long().map(String::from),
-                        help: arg.get_help().map(ToString::to_string),
-                        required: arg.is_required_set(),
-                        global: arg.is_global_set(),
-                        possible_values: arg
-                            .get_possible_values()
-                            .iter()
-                            .map(|v| v.get_name().to_string())
-                            .collect(),
-                        takes_value: matches!(
-                            arg.get_action(),
-                            clap::ArgAction::Set | clap::ArgAction::Append
-                        ),
-                    })
-                    .collect();
-
-                CommandInfo {
-                    name: sub.get_name().to_string(),
-                    about: sub.get_about().map(std::string::ToString::to_string),
-                    subcommands: extract_commands(sub),
-                    args,
-                }
-            })
-            .collect()
-    }
-
-    let cli = Cli::command();
-    let commands = extract_commands(&cli);
+    let commands = crate::command_catalog::collect_command_catalog();
 
     if matches!(format, OutputFormat::Json) {
         let output = serde_json::json!({
@@ -883,7 +743,8 @@ fn list_commands(format: OutputFormat) -> Result<()> {
 
             if !cmd.args.is_empty() {
                 // Filter out global args for cleaner output in the main listing
-                let local_args: Vec<&ArgInfo> = cmd.args.iter().filter(|a| !a.global).collect();
+                let local_args: Vec<&crate::command_catalog::ArgInfo> =
+                    cmd.args.iter().filter(|a| !a.global).collect();
 
                 if !local_args.is_empty() {
                     println!();

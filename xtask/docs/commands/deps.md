@@ -12,7 +12,7 @@ xtask deps list
 xtask deps duplicates
 
 # Show dependency tree for a package
-xtask deps tree --package sinex-core
+xtask deps tree --package sinex-gateway
 ```
 
 ## Commands
@@ -43,7 +43,7 @@ xtask deps list --format json
 Workspace packages (15 total):
 
   xtask v0.1.0
-  sinex-core v0.1.0
+  sinex-gateway v0.1.0
   sinex-gateway v0.1.0
   sinex-ingestd v0.1.0
   ...
@@ -70,7 +70,7 @@ xtask deps tree [--package <name>] [--depth <n>]
 xtask deps tree
 
 # Specific package
-xtask deps tree --package sinex-core
+xtask deps tree --package sinex-gateway
 
 # Limited depth
 xtask deps tree --package sinex-gateway --depth 3
@@ -78,16 +78,12 @@ xtask deps tree --package sinex-gateway --depth 3
 
 **Output**:
 ```
-Dependency tree for 'sinex-core' (depth: 10):
-(Full tree visualization will be available in Phase 3)
-
-Workspace packages:
-  - sinex-core v0.1.0
-  - sinex-macros v0.1.0
-  ...
+Dependency tree for 'sinex-gateway' (depth: 10):
+sinex-gateway
+├── sinex-primitives
+├── sinex-db
+└── ...
 ```
-
-**Note**: Full dependency tree visualization will be implemented in Phase 3.
 
 ---
 
@@ -213,7 +209,7 @@ Human Format:
 ```
 Found 3 unused dependencies (tool: cargo-machete):
 
-  sinex-core:
+  sinex-gateway:
     - serde_json
     - tokio-util
 
@@ -225,8 +221,8 @@ JSON Format:
 ```json
 {
   "unused": [
-    { "package": "sinex-core", "dependency": "serde_json" },
-    { "package": "sinex-core", "dependency": "tokio-util" },
+    { "package": "sinex-gateway", "dependency": "serde_json" },
+    { "package": "sinex-gateway", "dependency": "tokio-util" },
     { "package": "sinex-gateway", "dependency": "anyhow" }
   ],
   "tool": "cargo-machete"
@@ -285,7 +281,7 @@ Build Timing Analysis
 Total build time: 127.45s
 
 Top 10 slowest crates:
-  1. sinex-core - 45.23s (35.5%)
+  1. sinex-gateway - 45.23s (35.5%)
   2. sinex-gateway - 23.12s (18.1%)
   3. sinex-ingestd - 18.34s (14.4%)
   4. sinex-node-sdk - 12.45s (9.8%)
@@ -295,13 +291,13 @@ Top 10 slowest crates:
   8. sinex-test-utils - 2.89s (2.3%)
   9. xtask - 0.56s (0.4%)
 
-HTML report: /realm/project/sinex/target/cargo-timings/cargo-timing.html
+HTML report: /realm/project/sinex/.sinex/target/cargo-timings/cargo-timing.html
 ```
 
 **Notes**:
 
 - First run executes `cargo build --release --timings` which may take time
-- Generates an HTML report with detailed timing breakdown at `target/cargo-timings/cargo-timing.html`
+- Generates an HTML report with detailed timing breakdown at `.sinex/target/cargo-timings/cargo-timing.html`
 - Compare parameter (--compare) reserved for future enhancement
 - Run periodically to track build performance trends
 
@@ -322,7 +318,7 @@ xtask deps unused --ci
 xtask deps timings --top 15
 
 # Check rebuild impact of changes
-xtask deps impact sinex-core
+xtask deps impact sinex-gateway
 ```
 
 ### Dependency Audit

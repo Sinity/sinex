@@ -1,0 +1,78 @@
+{
+  "$defs": {
+    "CommandText": {
+      "description": "A command line text",
+      "type": "string"
+    },
+    "ExitCode": {
+      "description": "Process exit code newtype.\n\nDistinguishes exit codes from other i32 values. Unix convention:\n- 0: success\n- 1-125: application-defined errors\n- 126: command not executable\n- 127: command not found\n- 128+N: killed by signal N",
+      "format": "int32",
+      "type": "integer"
+    },
+    "RecordedPath": {
+      "description": "A path recorded from observational data (filesystem events, shell CWDs). Preserved verbatim except null bytes.",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Command executed event captured from live Zsh history monitoring.",
+  "properties": {
+    "command": {
+      "$ref": "#/$defs/CommandText"
+    },
+    "duration_ms": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "environment_hash": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "exit_code": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExitCode"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "session_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "user": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "working_directory": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RecordedPath"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "command"
+  ],
+  "title": "ZshCommandExecutedPayload",
+  "type": "object",
+  "x-sinex-event-type": "command.executed",
+  "x-sinex-source": "shell.history.zsh",
+  "x-sinex-version": "1.0.0"
+}

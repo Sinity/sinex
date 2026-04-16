@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Histogram metric - distribution of values with percentiles\n\nUse for: latency distributions, size distributions",
   "properties": {
     "component": {
@@ -9,7 +9,7 @@
     "count": {
       "description": "Sample count in this window",
       "format": "uint64",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "labels": {
@@ -30,7 +30,7 @@
       "type": "number"
     },
     "name": {
-      "description": "Metric name (e.g., \"gateway.request_latency_ms\")",
+      "description": "Metric name (e.g., \"`gateway.request_latency_ms`\")",
       "type": "string"
     },
     "p50": {
@@ -69,13 +69,16 @@
     }
   },
   "required": [
-    "component",
-    "count",
-    "max",
-    "min",
     "name",
-    "sum"
+    "count",
+    "sum",
+    "min",
+    "max",
+    "component"
   ],
   "title": "MetricHistogramPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "metric.histogram",
+  "x-sinex-source": "sinex",
+  "x-sinex-version": "1.0.0"
 }

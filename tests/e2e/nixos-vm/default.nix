@@ -15,10 +15,6 @@
     inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli sinexVmTestSuite;
   };
 
-  "basic-flow-unified" = import ./test-scenarios/basic-flow-unified.nix {
-    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
-  };
-
   "replay-smoke" = import ./test-scenarios/replay-smoke.nix {
     inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
   };

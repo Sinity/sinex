@@ -109,14 +109,14 @@ pub struct ExerciseCommand {
     /// Write a deterministic QA manifest (exercise IDs + pass/fail) to this path.
     ///
     /// The manifest is small and stable — no timings, no paths, just behavioral
-    /// outcomes. Commit it as `config/verify/exercise-baseline.json` to create a
+    /// outcomes. Commit it as `xtask/config/exercise-baseline.json` to create a
     /// regression gate. Use `--ci-check` to enforce it in CI.
     #[arg(long, value_name = "PATH")]
     pub audit_file: Option<std::path::PathBuf>,
 
     /// Diff results against the committed baseline, fail on regressions.
     ///
-    /// Reads `config/verify/exercise-baseline.json` (or the path given by
+    /// Reads `xtask/config/exercise-baseline.json` (or the path given by
     /// `--baseline`). Any exercise that was passing in the baseline and is now
     /// failing is a regression — exits non-zero with a clear report.
     ///
@@ -130,7 +130,7 @@ pub struct ExerciseCommand {
 
     /// Update the committed baseline with the current run results.
     ///
-    /// Writes to `config/verify/exercise-baseline.json` (or `--baseline` path).
+    /// Writes to `xtask/config/exercise-baseline.json` (or `--baseline` path).
     /// Requires `--ci-check` so the update is intentional.
     #[arg(long, requires = "ci_check")]
     pub update_baseline: bool,
@@ -145,7 +145,7 @@ impl ExerciseCommand {
     fn baseline_path(&self) -> PathBuf {
         self.baseline
             .clone()
-            .unwrap_or_else(|| workspace_root().join("config/verify/exercise-baseline.json"))
+            .unwrap_or_else(|| workspace_root().join("xtask/config/exercise-baseline.json"))
     }
 }
 

@@ -1,11 +1,108 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "properties": {
-    "connection_type": {
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
       "type": "string"
     },
+    "NetworkConnectionType": {
+      "description": "Network connection type",
+      "oneOf": [
+        {
+          "const": "wifi",
+          "description": "`WiFi` connection",
+          "type": "string"
+        },
+        {
+          "const": "ethernet",
+          "description": "Wired ethernet",
+          "type": "string"
+        },
+        {
+          "const": "vpn",
+          "description": "VPN tunnel",
+          "type": "string"
+        },
+        {
+          "const": "cellular",
+          "description": "Mobile/cellular",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Other connection type",
+          "type": "string"
+        }
+      ]
+    },
+    "NetworkEventType": {
+      "description": "Network state change event type",
+      "oneOf": [
+        {
+          "const": "connected",
+          "description": "Network connected",
+          "type": "string"
+        },
+        {
+          "const": "disconnected",
+          "description": "Network disconnected",
+          "type": "string"
+        },
+        {
+          "const": "ip_changed",
+          "description": "IP address changed",
+          "type": "string"
+        },
+        {
+          "const": "state_changed",
+          "description": "Connection state changed",
+          "type": "string"
+        }
+      ]
+    },
+    "NetworkState": {
+      "description": "Network interface state",
+      "oneOf": [
+        {
+          "const": "unknown",
+          "description": "Unknown state",
+          "type": "string"
+        },
+        {
+          "const": "down",
+          "description": "Interface is down",
+          "type": "string"
+        },
+        {
+          "const": "disconnected",
+          "description": "Interface is disconnected",
+          "type": "string"
+        },
+        {
+          "const": "connecting",
+          "description": "Connecting",
+          "type": "string"
+        },
+        {
+          "const": "connected",
+          "description": "Connected",
+          "type": "string"
+        },
+        {
+          "const": "disconnecting",
+          "description": "Disconnecting",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "connection_type": {
+      "$ref": "#/$defs/NetworkConnectionType"
+    },
     "event_type": {
-      "type": "string"
+      "$ref": "#/$defs/NetworkEventType"
     },
     "interface": {
       "type": "string"
@@ -23,19 +120,22 @@
       ]
     },
     "state": {
-      "type": "string"
+      "$ref": "#/$defs/NetworkState"
     },
     "timestamp": {
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     }
   },
   "required": [
-    "connection_type",
     "event_type",
     "interface",
+    "connection_type",
     "state",
     "timestamp"
   ],
   "title": "DbusNetworkStateChangedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "network.state_changed",
+  "x-sinex-source": "dbus",
+  "x-sinex-version": "1.0.0"
 }

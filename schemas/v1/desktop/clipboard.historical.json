@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "note": {
       "type": "string"
@@ -12,10 +12,13 @@
     }
   },
   "required": [
-    "note",
+    "source",
     "scan_type",
-    "source"
+    "note"
   ],
   "title": "ClipboardHistoricalPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "clipboard.historical",
+  "x-sinex-source": "desktop",
+  "x-sinex-version": "1.0.0"
 }

@@ -32,6 +32,25 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use xshell::{Shell, cmd};
 
+/// Canonical low-level cargo command constructor.
+///
+/// Use this when a call site needs stdio/process control that `ProcessBuilder`
+/// does not currently expose. Keeping cargo construction here gives xtask one
+/// seam for future policy changes.
+#[must_use]
+pub fn cargo_command() -> Command {
+    Command::new("cargo")
+}
+
+/// Canonical async cargo command constructor.
+///
+/// Prefer `ProcessBuilder::cargo()` for simple invocations; use this helper when
+/// the caller needs direct access to `tokio::process::Command`.
+#[must_use]
+pub fn cargo_tokio_command() -> tokio::process::Command {
+    tokio::process::Command::new("cargo")
+}
+
 /// Output from a process execution.
 #[derive(Debug)]
 pub struct ProcessOutput {
