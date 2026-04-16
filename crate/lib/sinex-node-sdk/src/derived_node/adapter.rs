@@ -1911,7 +1911,8 @@ where
         let output_count = outputs.len();
 
         if !outputs.is_empty() {
-            self.emit_output_events(outputs, "event bridge batch").await?;
+            self.emit_output_events(outputs, "event bridge batch")
+                .await?;
         }
 
         debug!(
