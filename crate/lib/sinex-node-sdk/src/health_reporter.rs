@@ -14,7 +14,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
 };
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 static PROCESS_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
@@ -22,14 +22,39 @@ fn get_process_start() -> Instant {
     *PROCESS_START.get_or_init(Instant::now)
 }
 
+/// Monotonic clock source used for health-window calculations.
+pub trait HealthClock: std::fmt::Debug + Send + Sync {
+    /// Monotonic time since an arbitrary epoch.
+    fn now(&self) -> Duration;
+}
+
+#[derive(Debug)]
+struct SystemHealthClock {
+    started_at: Instant,
+}
+
+impl Default for SystemHealthClock {
+    fn default() -> Self {
+        Self {
+            started_at: Instant::now(),
+        }
+    }
+}
+
+impl HealthClock for SystemHealthClock {
+    fn now(&self) -> Duration {
+        self.started_at.elapsed()
+    }
+}
+
 #[derive(Debug)]
 struct OutcomeSample {
-    recorded_at: Instant,
+    recorded_at: Duration,
     is_error: bool,
 }
 
 /// Atomic counters for health metrics
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct HealthMetrics {
     pub events_processed: AtomicU64,
     pub errors: AtomicU64,
@@ -37,25 +62,44 @@ pub struct HealthMetrics {
     pub last_error_time: AtomicU64, // Unix timestamp in seconds (wall clock)
     pub last_error_monotonic: AtomicU64, // Seconds since process start (monotonic)
     recent_outcomes: Mutex<VecDeque<OutcomeSample>>,
+    clock: Arc<dyn HealthClock>,
+}
+
+impl Default for HealthMetrics {
+    fn default() -> Self {
+        Self::with_clock(Arc::new(SystemHealthClock::default()))
+    }
 }
 
 impl HealthMetrics {
+    fn with_clock(clock: Arc<dyn HealthClock>) -> Self {
+        Self {
+            events_processed: AtomicU64::default(),
+            errors: AtomicU64::default(),
+            warnings: AtomicU64::default(),
+            last_error_time: AtomicU64::default(),
+            last_error_monotonic: AtomicU64::default(),
+            recent_outcomes: Mutex::new(VecDeque::new()),
+            clock,
+        }
+    }
+
     fn prune_recent_outcomes(
         outcomes: &mut VecDeque<OutcomeSample>,
         window_seconds: u64,
-        now: Instant,
+        now: Duration,
     ) {
-        let window = std::time::Duration::from_secs(window_seconds);
+        let window = Duration::from_secs(window_seconds);
         while outcomes
             .front()
-            .is_some_and(|sample| now.duration_since(sample.recorded_at) >= window)
+            .is_some_and(|sample| now.saturating_sub(sample.recorded_at) >= window)
         {
             outcomes.pop_front();
         }
     }
 
     fn push_recent_outcome(&self, is_error: bool, window_seconds: u64) {
-        let now = Instant::now();
+        let now = self.clock.now();
         let mut outcomes = self.recent_outcomes.lock();
         Self::prune_recent_outcomes(&mut outcomes, window_seconds, now);
         outcomes.push_back(OutcomeSample {
@@ -70,7 +114,7 @@ impl HealthMetrics {
     /// errors. This stays faithful to the advertised sliding-window semantics
     /// instead of diluting recent failures with long-expired lifetime totals.
     pub fn error_rate(&self, window_seconds: u64) -> f64 {
-        let now = Instant::now();
+        let now = self.clock.now();
         let mut outcomes = self.recent_outcomes.lock();
         Self::prune_recent_outcomes(&mut outcomes, window_seconds, now);
         let total = outcomes.len();
@@ -185,10 +229,26 @@ impl HealthReporter {
         observer: Arc<SelfObserver>,
         thresholds: HealthThresholds,
     ) -> Self {
+        Self::new_with_clock(
+            component_name,
+            observer,
+            thresholds,
+            Arc::new(SystemHealthClock::default()),
+        )
+    }
+
+    /// Create a health reporter with an explicit monotonic clock source.
+    #[must_use]
+    pub fn new_with_clock(
+        component_name: String,
+        observer: Arc<SelfObserver>,
+        thresholds: HealthThresholds,
+        clock: Arc<dyn HealthClock>,
+    ) -> Self {
         Self {
             component_name,
             observer,
-            metrics: Arc::new(HealthMetrics::default()),
+            metrics: Arc::new(HealthMetrics::with_clock(clock)),
             last_status: Arc::new(RwLock::new(ProcessStatus::Healthy)),
             thresholds,
         }

@@ -11,7 +11,7 @@ use tabled::{builder::Builder, settings::Style};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
 use crate::history::{InvocationProgress, JobLifecycleStatus, StageTiming};
-use crate::jobs::JobManager;
+use crate::jobs::{JobManager, JobQueryManager};
 
 /// Inspect and manage background xtask jobs.
 #[derive(Debug, Clone, clap::Args)]
@@ -71,32 +71,51 @@ impl XtaskCommand for JobsCommand {
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         let cfg = config();
-        let job_manager = JobManager::new(cfg.jobs_dir())?;
-
         match &self.subcommand {
             JobsSubcommand::List { limit, active } => {
+                let job_query = JobQueryManager::new(cfg.jobs_dir())?;
                 if *active {
-                    execute_active(&job_manager, ctx)
+                    execute_active(&job_query, ctx)
                 } else {
-                    execute_list(&job_manager, *limit, ctx)
+                    execute_list(&job_query, *limit, ctx)
                 }
             }
             JobsSubcommand::Status { id, follow } => {
-                execute_status(&job_manager, *id, *follow, ctx).await
+                let job_query = JobQueryManager::new(cfg.jobs_dir())?;
+                execute_status(&job_query, *id, *follow, ctx).await
             }
             JobsSubcommand::Output { id, stderr } => {
-                execute_output(&job_manager, *id, *stderr, ctx)
+                let job_query = JobQueryManager::new(cfg.jobs_dir())?;
+                execute_output(&job_query, *id, *stderr, ctx)
             }
             JobsSubcommand::Wait { id, timeout } => {
-                execute_wait(&job_manager, *id, *timeout, ctx).await
+                let job_query = JobQueryManager::new(cfg.jobs_dir())?;
+                execute_wait(&job_query, *id, *timeout, ctx).await
             }
-            JobsSubcommand::Cancel { id } => execute_cancel(&job_manager, *id, ctx),
-            JobsSubcommand::Prune { older_than } => execute_prune(&job_manager, *older_than, ctx),
+            JobsSubcommand::Cancel { id } => {
+                let job_manager = JobManager::new(cfg.jobs_dir())?;
+                execute_cancel(&job_manager, *id, ctx)
+            }
+            JobsSubcommand::Prune { older_than } => {
+                let job_manager = JobManager::new(cfg.jobs_dir())?;
+                execute_prune(&job_manager, *older_than, ctx)
+            }
         }
     }
 
     fn metadata(&self) -> CommandMetadata {
-        CommandMetadata::utility()
+        match self.subcommand {
+            JobsSubcommand::List { .. }
+            | JobsSubcommand::Status { .. }
+            | JobsSubcommand::Output { .. }
+            | JobsSubcommand::Wait { .. } => CommandMetadata::utility()
+                .with_history_access(crate::command::HistoryAccessMode::Query),
+            JobsSubcommand::Cancel { .. } | JobsSubcommand::Prune { .. } => {
+                CommandMetadata::utility()
+                    .with_state_mutation(true)
+                    .with_history_access(crate::command::HistoryAccessMode::ReadWrite)
+            }
+        }
     }
 }
 
@@ -106,11 +125,11 @@ fn format_job_pid(pid: Option<u32>) -> String {
 }
 
 fn execute_list(
-    job_manager: &JobManager,
+    job_query: &JobQueryManager,
     limit: usize,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let jobs = job_manager.list_recent(limit)?;
+    let jobs = job_query.list_recent(limit)?;
     let mut progress_issues = Vec::new();
 
     if ctx.is_human() {
@@ -171,8 +190,8 @@ fn execute_list(
     Ok(result)
 }
 
-fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Result<CommandResult> {
-    let active = job_manager.list_active()?;
+fn execute_active(job_query: &JobQueryManager, ctx: &CommandContext) -> Result<CommandResult> {
+    let active = job_query.list_active()?;
     let mut progress_issues = Vec::new();
 
     if ctx.is_human() {
@@ -235,12 +254,12 @@ fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Result<Comm
 }
 
 async fn execute_status(
-    job_manager: &JobManager,
+    job_query: &JobQueryManager,
     id: i64,
     follow: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let job = job_manager
+    let job = job_query
         .get(id)?
         .ok_or_else(|| eyre!("job {id} not found"))?;
 
@@ -263,7 +282,7 @@ async fn execute_status(
             }
 
             // Reload and check status
-            let updated = job_manager.get(id)?;
+            let updated = job_query.get(id)?;
             match updated {
                 Some(j) if j.is_terminal() => {
                     // One more read to catch final output before file is archived
@@ -401,12 +420,12 @@ fn read_stdout_delta_from_file(path: &Path, last_pos: u64) -> Result<Option<(Str
 }
 
 fn execute_output(
-    job_manager: &JobManager,
+    job_query: &JobQueryManager,
     id: i64,
     stderr: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let job = job_manager
+    let job = job_query
         .get(id)?
         .ok_or_else(|| eyre!("job {id} not found"))?;
 
@@ -449,7 +468,7 @@ fn execute_output(
 }
 
 async fn execute_wait(
-    job_manager: &JobManager,
+    job_query: &JobQueryManager,
     id: i64,
     timeout_secs: u64,
     ctx: &CommandContext,
@@ -460,7 +479,7 @@ async fn execute_wait(
         None
     };
 
-    let job = job_manager.wait(id, timeout).await?;
+    let job = job_query.wait(id, timeout).await?;
 
     if ctx.is_human() {
         println!("Job {} completed: {}", id, status_to_str(job.job_status));
@@ -608,9 +627,10 @@ struct StageTimingsProbe {
 
 fn load_invocation_progress(ctx: &CommandContext, invocation_id: Option<i64>) -> ProgressProbe {
     match invocation_id {
-        Some(iid) => {
-            progress_probe_from_result(iid, ctx.try_with_history_db(|db| db.get_progress(iid)))
-        }
+        Some(iid) => progress_probe_from_result(
+            iid,
+            ctx.try_with_history_db_query(|db| db.get_progress(iid)),
+        ),
         None => ProgressProbe {
             progress: None,
             issue: None,
@@ -646,7 +666,7 @@ fn load_stage_timings(ctx: &CommandContext, invocation_id: Option<i64>) -> Stage
     match invocation_id {
         Some(iid) => stage_timings_probe_from_result(
             iid,
-            ctx.try_with_history_db(|db| db.get_stage_timings_for_invocation(iid)),
+            ctx.try_with_history_db_query(|db| db.get_stage_timings_for_invocation(iid)),
         ),
         None => StageTimingsProbe {
             stages: Vec::new(),
@@ -703,8 +723,31 @@ mod tests {
             subcommand: JobsSubcommand::Prune { older_than: 7 },
         };
         let metadata = cmd.metadata();
+        assert!(metadata.modifies_state);
+        assert!(!metadata.track_in_history);
+        assert_eq!(
+            metadata.history_access,
+            crate::command::HistoryAccessMode::ReadWrite
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_observational_jobs_metadata_uses_query_history()
+    -> ::xtask::sandbox::TestResult<()> {
+        let cmd = JobsCommand {
+            subcommand: JobsSubcommand::Status {
+                id: 42,
+                follow: false,
+            },
+        };
+        let metadata = cmd.metadata();
         assert!(!metadata.modifies_state);
         assert!(!metadata.track_in_history);
+        assert_eq!(
+            metadata.history_access,
+            crate::command::HistoryAccessMode::Query
+        );
         Ok(())
     }
 

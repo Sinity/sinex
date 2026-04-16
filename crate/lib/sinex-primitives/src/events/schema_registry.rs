@@ -5,6 +5,7 @@
 use crate::error::Result;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 /// Information about a payload type collected by the inventory registry.
 ///
@@ -26,6 +27,8 @@ pub struct PayloadInfo {
 // Register PayloadInfo for inventory collection
 inventory::collect!(PayloadInfo);
 
+static ALL_SCHEMAS_CACHE: OnceLock<HashMap<(String, String, String), Value>> = OnceLock::new();
+
 /// Get all registered payload types via the inventory registry.
 ///
 /// Returns an iterator over all `PayloadInfo` structs that have been registered
@@ -39,7 +42,13 @@ pub fn get_all_payloads() -> impl Iterator<Item = &'static PayloadInfo> {
 /// Returns a `HashMap` keyed by (source, `event_type`, version) tuples, mapping to their JSON schemas.
 /// Used for schema synchronization and validation.
 pub fn generate_all_schemas() -> Result<HashMap<(String, String, String), Value>> {
-    generate_schemas_from_payloads(get_all_payloads())
+    if let Some(schemas) = ALL_SCHEMAS_CACHE.get() {
+        return Ok(schemas.clone());
+    }
+
+    let schemas = generate_schemas_from_payloads(get_all_payloads())?;
+    let _ = ALL_SCHEMAS_CACHE.set(schemas.clone());
+    Ok(schemas)
 }
 
 fn generate_schemas_from_payloads<'a, I>(

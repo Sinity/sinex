@@ -294,7 +294,6 @@ impl Drop for TestDatabase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sandbox::db::pool::acquire_pool_test_guard;
     use crate::sandbox::db::pool::config::PoolConfig;
     use crate::sandbox::db::pool::provisioning::{
         advisory_lock_key, connect_admin_with_retry, drop_database_if_exists_admin,
@@ -322,7 +321,6 @@ mod tests {
 
     #[sinex_test]
     async fn process_cleanup_task_restores_recreated_pool() -> TestResult<()> {
-        let _guard = acquire_pool_test_guard().await;
         let config = PoolConfig::default();
         let db_name = format!("sinex_test_cleanup_recreated_pool_{}", std::process::id());
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;

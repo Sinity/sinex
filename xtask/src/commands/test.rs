@@ -43,11 +43,60 @@ fn flaky_test_probe_issue(ctx: &CommandContext, error: Option<&color_eyre::Repor
     }
 }
 
+fn test_analysis_issue(ctx: &CommandContext, error: Option<&color_eyre::Report>) -> String {
+    match error {
+        Some(error) => format!(
+            "Failed to analyze current test run from history DB at {}: {error}",
+            ctx.history_db_path().display()
+        ),
+        None => format!(
+            "History DB unavailable at {} while analyzing the current test run",
+            ctx.history_db_path().display()
+        ),
+    }
+}
+
+fn load_current_test_analysis(ctx: &CommandContext) -> (Option<serde_json::Value>, Option<String>) {
+    let Some(invocation_id) = ctx.invocation_id() else {
+        return (
+            None,
+            Some("Current test invocation ID unavailable for analysis".to_string()),
+        );
+    };
+
+    match ctx.try_with_history_db(|db| db.analyze_test_run(invocation_id)) {
+        Some(Ok(Some(analysis))) => match serde_json::to_value(&analysis) {
+            Ok(value) => (Some(value), None),
+            Err(error) => (
+                None,
+                Some(format!(
+                    "Failed to serialize test analysis for invocation {invocation_id}: {error}"
+                )),
+            ),
+        },
+        Some(Ok(None)) => (
+            None,
+            Some(format!(
+                "No stored test analysis rows found for invocation {invocation_id}"
+            )),
+        ),
+        Some(Err(error)) => (None, Some(test_analysis_issue(ctx, Some(&error)))),
+        None => (None, Some(test_analysis_issue(ctx, None))),
+    }
+}
+
 fn load_failing_test_details(
     ctx: &CommandContext,
     limit: usize,
 ) -> (Vec<crate::history::FailingTest>, Option<String>) {
-    match ctx.try_with_history_db(|db| db.get_failing_tests_with_output(limit)) {
+    let Some(invocation_id) = ctx.invocation_id() else {
+        return (
+            Vec::new(),
+            Some("Current test invocation ID unavailable".to_string()),
+        );
+    };
+
+    match ctx.try_with_history_db(|db| db.get_failing_tests_with_output(invocation_id, limit)) {
         Some(Ok(failures)) => (failures, None),
         Some(Err(error)) => (
             Vec::new(),
@@ -362,6 +411,123 @@ impl TestCommand {
         args.push(scope.encode_marker());
         args
     }
+
+    fn resolve_execution_plan(&self, ctx: Option<&CommandContext>) -> Result<NextestExecutionPlan> {
+        let explicit_packages = normalize_packages(&self.packages);
+        let inferred_packages = if !self.all {
+            if let Some(filter) = &self.filter {
+                let inferred_result = if let Some(ctx) = ctx {
+                    let stage = ctx.start_stage("scope-inference");
+                    let inferred = affected::infer_packages_for_test_filter(filter);
+                    ctx.finish_stage(stage, inferred.is_ok());
+                    inferred
+                } else {
+                    affected::infer_packages_for_test_filter(filter)
+                };
+                let inferred = normalize_packages(&inferred_result?);
+                if let Some(ctx) = ctx
+                    && ctx.is_human()
+                    && !inferred.is_empty()
+                {
+                    println!(
+                        "Inferred package scope from filter: {}",
+                        inferred.join(", ")
+                    );
+                }
+                inferred
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
+        let affected_packages =
+            if !self.all && explicit_packages.is_empty() && inferred_packages.is_empty() {
+                let affected_result = if let Some(ctx) = ctx {
+                    let stage = ctx.start_stage("affected");
+                    let packages = affected::affected_packages();
+                    ctx.finish_stage(stage, packages.is_ok());
+                    packages
+                } else {
+                    affected::affected_packages()
+                };
+                let affected_packages = normalize_packages(&affected_result?);
+                if !affected_packages.is_empty() {
+                    if let Some(ctx) = ctx
+                        && ctx.is_human()
+                    {
+                        println!("{}", affected::affected_summary(&affected_packages));
+                    }
+                    Some(affected_packages)
+                } else {
+                    if let Some(ctx) = ctx
+                        && ctx.is_human()
+                    {
+                        println!("No changes detected. Running ALL tests.");
+                    }
+                    None
+                }
+            } else {
+                None
+            };
+
+        Ok(resolve_nextest_execution_plan(
+            &explicit_packages,
+            inferred_packages,
+            affected_packages,
+        ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NextestExecutionPlan {
+    runner_packages: Vec<String>,
+    workload_scope: WorkloadScope,
+}
+
+fn normalize_packages(packages: &[String]) -> Vec<String> {
+    let mut packages = packages.to_vec();
+    packages.sort();
+    packages.dedup();
+    packages
+}
+
+fn resolve_nextest_execution_plan(
+    explicit_packages: &[String],
+    inferred_packages: Vec<String>,
+    affected_packages: Option<Vec<String>>,
+) -> NextestExecutionPlan {
+    let explicit_packages = normalize_packages(explicit_packages);
+    if !explicit_packages.is_empty() {
+        return NextestExecutionPlan {
+            runner_packages: explicit_packages.clone(),
+            workload_scope: WorkloadScope::Packages(explicit_packages),
+        };
+    }
+
+    let inferred_packages = normalize_packages(&inferred_packages);
+    if !inferred_packages.is_empty() {
+        return NextestExecutionPlan {
+            runner_packages: inferred_packages.clone(),
+            workload_scope: WorkloadScope::Packages(inferred_packages),
+        };
+    }
+
+    if let Some(affected_packages) = affected_packages {
+        let affected_packages = normalize_packages(&affected_packages);
+        if !affected_packages.is_empty() {
+            return NextestExecutionPlan {
+                runner_packages: affected_packages.clone(),
+                workload_scope: WorkloadScope::Affected(affected_packages),
+            };
+        }
+    }
+
+    NextestExecutionPlan {
+        runner_packages: Vec::new(),
+        workload_scope: WorkloadScope::Workspace,
+    }
 }
 
 impl XtaskCommand for TestCommand {
@@ -529,6 +695,16 @@ impl XtaskCommand for TestCommand {
                         args.push("--".to_string());
                         args.extend(self.args.clone());
                     }
+
+                    let execution_plan = self.resolve_execution_plan(None)?;
+                    let coordination_args =
+                        self.semantic_invocation_args(&execution_plan.workload_scope);
+                    return crate::coordinator::coordinate_and_spawn_with_scope(
+                        "test",
+                        &args,
+                        &coordination_args,
+                        ctx,
+                    );
                 }
             }
 
@@ -548,29 +724,6 @@ impl XtaskCommand for TestCommand {
 
         if self.dry_run {
             return Ok(CommandResult::success().with_detail("dry-run passed"));
-        }
-
-        // Record fingerprint+scope for coordinator freshness detection.
-        {
-            let mut scope_args = Vec::new();
-            for p in &self.packages {
-                scope_args.push("-p".to_string());
-                scope_args.push(p.clone());
-            }
-            if let Some(ref f) = self.filter {
-                scope_args.push("-E".to_string());
-                scope_args.push(f.clone());
-            }
-            if self.heavy {
-                scope_args.push("--heavy".to_string());
-            }
-            if self.include_ignored {
-                scope_args.push("--include-ignored".to_string());
-            }
-            if self.all {
-                scope_args.push("--all".to_string());
-            }
-            ctx.record_coordination_fingerprint("test", &scope_args);
         }
 
         let disk_space_status = check_disk_space_gb(2);
@@ -632,49 +785,24 @@ impl XtaskCommand for TestCommand {
         let use_fail_fast = self.fail_fast;
 
         // Affected mode is default ON, --all disables it
-        let use_affected = !self.all && self.packages.is_empty();
-        let (affected_filter, workload_scope) = if use_affected {
-            let stage = ctx.start_stage("affected");
-            let packages = affected::affected_packages();
-            ctx.finish_stage(stage, packages.is_ok());
-            let mut packages = packages?;
-            if packages.is_empty() {
-                // Smart default: If no changes detected (clean repo), run EVERYTHING
-                // instead of running nothing.
-                if ctx.is_human() {
-                    println!("No changes detected. Running ALL tests.");
-                }
-                (None, WorkloadScope::Workspace)
-            } else {
-                packages.sort();
-                packages.dedup();
-                let filter = affected::build_nextest_filter(&packages);
-                if ctx.is_human() {
-                    println!("{}", affected::affected_summary(&packages));
-                }
-                (Some(filter), WorkloadScope::Affected(packages))
-            }
-        } else {
-            let scope = if self.packages.is_empty() {
-                WorkloadScope::Workspace
-            } else {
-                let mut packages = self.packages.clone();
-                packages.sort();
-                packages.dedup();
-                WorkloadScope::Packages(packages)
-            };
-            (None, scope)
-        };
-        ctx.record_invocation_args(&self.semantic_invocation_args(&workload_scope));
+        let execution_plan = self.resolve_execution_plan(Some(ctx))?;
+        let workload_scope = execution_plan.workload_scope.clone();
+        let coordination_args = self.semantic_invocation_args(&workload_scope);
+        ctx.record_coordination_fingerprint("test", &coordination_args);
+        ctx.record_invocation_args(&coordination_args);
 
         // List: show tests only
         if self.list {
-            // For brevity, skipping full list impl here for now,
-            // but could delegate to `nextest list` via ProcessBuilder
-            // simplified:
-            let mut cmd = ProcessBuilder::cargo().args(["nextest", "list", "--workspace"]);
-            if let Some(f) = &affected_filter {
-                cmd = cmd.args(["-E", f]);
+            let mut cmd = ProcessBuilder::cargo().args(["nextest", "list"]);
+            if execution_plan.runner_packages.is_empty() {
+                cmd = cmd.arg("--workspace");
+            } else {
+                for package in &execution_plan.runner_packages {
+                    cmd = cmd.args(["-p", package]);
+                }
+            }
+            if let Some(filter) = &self.filter {
+                cmd = cmd.args(["-E", filter]);
             }
             cmd.run_ok()?;
             return Ok(CommandResult::success().with_detail("tests listed"));
@@ -712,35 +840,13 @@ impl XtaskCommand for TestCommand {
             runner.add_arg(format!("--timeout={timeout}"));
         }
 
-        // Filters
-        // When -p is specified, skip the affected filter — -p already constrains
-        // the package scope and the affected filter is redundant.
-        // When both affected and user filters exist, AND them into a single -E
-        // expression, because nextest ORs multiple -E args (which would make
-        // the narrower filter a no-op).
-        if self.packages.is_empty() {
-            match (affected_filter.as_ref(), self.filter.as_ref()) {
-                (Some(affected), Some(user)) => {
-                    // AND them: run only tests matching BOTH filters.
-                    runner.add_arg("-E");
-                    runner.add_arg(format!("({affected}) & ({user})"));
-                }
-                (Some(filter), None) | (None, Some(filter)) => {
-                    runner.add_arg("-E");
-                    runner.add_arg(filter);
-                }
-                (None, None) => {}
-            }
-        } else {
-            for pkg in &self.packages {
-                runner.add_arg("-p");
-                runner.add_arg(pkg);
-            }
-            // Only the user filter applies when -p is specified.
-            if let Some(ref filter) = self.filter {
-                runner.add_arg("-E");
-                runner.add_arg(filter);
-            }
+        for package in &execution_plan.runner_packages {
+            runner.add_arg("-p");
+            runner.add_arg(package);
+        }
+        if let Some(ref filter) = self.filter {
+            runner.add_arg("-E");
+            runner.add_arg(filter);
         }
 
         if self.include_ignored || self.heavy {
@@ -767,6 +873,7 @@ impl XtaskCommand for TestCommand {
         if stats.failed > 0 {
             // Query per-test failure details from history DB for structured output
             let (failures, failure_details_issue) = load_failing_test_details(ctx, 50);
+            let (analysis, analysis_issue) = load_current_test_analysis(ctx);
 
             // H4: Inline failure table for human mode (capped at 5)
             if ctx.is_human() && !failures.is_empty() {
@@ -796,12 +903,19 @@ impl XtaskCommand for TestCommand {
                 ),
             })
             .with_data(serde_json::json!({
+                "invocation_id": ctx.invocation_id(),
                 "passed": stats.passed,
                 "failed": stats.failed,
                 "ignored": stats.ignored,
                 "failures": failures,
                 "failure_details_issue": failure_details_issue.clone(),
+                "analysis": analysis,
+                "analysis_issue": analysis_issue.clone(),
             }))
+            .with_detail(format!(
+                "Inspect with: xtask history tests analyze --invocation {}",
+                ctx.invocation_id().unwrap_or_default()
+            ))
             .with_duration(ctx.elapsed());
             if matches!(disk_space_status, DiskSpaceStatus::Low { .. }) {
                 result = result.with_warning(low_disk_space_warning);
@@ -812,10 +926,14 @@ impl XtaskCommand for TestCommand {
             if let Some(issue) = failure_details_issue {
                 result = result.with_warning(issue);
             }
+            if let Some(issue) = analysis_issue {
+                result = result.with_warning(issue);
+            }
             Ok(result)
         } else {
             // H7: Surface flaky tests after a clean run
             let (flaky, flaky_issue) = load_flaky_tests(ctx, 5);
+            let (analysis, analysis_issue) = load_current_test_analysis(ctx);
             if ctx.is_human() && !flaky.is_empty() {
                 eprintln!(
                     "\n⚠  {} test{} passed on retry (flaky):",
@@ -847,6 +965,20 @@ impl XtaskCommand for TestCommand {
                     "Passed: {}, Ignored: {}",
                     stats.passed, stats.ignored
                 ))
+                .with_data(serde_json::json!({
+                    "invocation_id": ctx.invocation_id(),
+                    "passed": stats.passed,
+                    "failed": stats.failed,
+                    "ignored": stats.ignored,
+                    "flaky": flaky,
+                    "flaky_issue": flaky_issue.clone(),
+                    "analysis": analysis,
+                    "analysis_issue": analysis_issue.clone(),
+                }))
+                .with_detail(format!(
+                    "Inspect with: xtask history tests analyze --invocation {}",
+                    ctx.invocation_id().unwrap_or_default()
+                ))
                 .with_duration(ctx.elapsed());
             if matches!(disk_space_status, DiskSpaceStatus::Low { .. }) {
                 result = result.with_warning(low_disk_space_warning);
@@ -855,6 +987,9 @@ impl XtaskCommand for TestCommand {
                 result = result.with_warning(warning.clone());
             }
             if let Some(issue) = flaky_issue {
+                result = result.with_warning(issue);
+            }
+            if let Some(issue) = analysis_issue {
                 result = result.with_warning(issue);
             }
             Ok(result)
@@ -877,10 +1012,17 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     fn test_context(db_path: std::path::PathBuf) -> CommandContext {
+        test_context_with_invocation(db_path, None)
+    }
+
+    fn test_context_with_invocation(
+        db_path: std::path::PathBuf,
+        invocation_id: Option<i64>,
+    ) -> CommandContext {
         CommandContext::new_with_db_override(
             OutputWriter::new(OutputFormat::Silent),
             false,
-            None,
+            invocation_id,
             "test",
             db_path,
         )
@@ -895,7 +1037,8 @@ mod tests {
         let conn = rusqlite::Connection::open(&db_path)?;
         conn.execute("DROP TABLE test_results", [])?;
 
-        let (_failures, issue) = load_failing_test_details(&test_context(db_path.clone()), 50);
+        let (_failures, issue) =
+            load_failing_test_details(&test_context_with_invocation(db_path.clone(), Some(1)), 50);
         let issue = issue.expect("query failure should surface");
         assert!(issue.contains("Failed to read failing-test details"));
         assert!(issue.contains(&db_path.display().to_string()));
@@ -947,6 +1090,135 @@ mod tests {
         let (_db, invocation_id) =
             super::nextest_history(&ctx, &db).expect("history should keep the real invocation id");
         assert_eq!(invocation_id, 42);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_nextest_execution_plan_prefers_explicit_packages()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = resolve_nextest_execution_plan(
+            &["sinex-db".into(), "xtask".into()],
+            vec!["sinex-services".into()],
+            Some(vec!["sinex-e2e-tests".into()]),
+        );
+
+        assert_eq!(
+            plan,
+            NextestExecutionPlan {
+                runner_packages: vec!["sinex-db".into(), "xtask".into()],
+                workload_scope: WorkloadScope::Packages(vec!["sinex-db".into(), "xtask".into()]),
+            }
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_nextest_execution_plan_prefers_inferred_packages_over_affected_scope()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = resolve_nextest_execution_plan(
+            &[],
+            vec!["sinex-services".into()],
+            Some(vec!["xtask".into(), "sinex-db".into(), "xtask".into()]),
+        );
+
+        assert_eq!(
+            plan,
+            NextestExecutionPlan {
+                runner_packages: vec!["sinex-services".into()],
+                workload_scope: WorkloadScope::Packages(vec!["sinex-services".into()]),
+            }
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_nextest_execution_plan_falls_back_to_affected_when_no_inference()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = resolve_nextest_execution_plan(
+            &[],
+            Vec::new(),
+            Some(vec!["xtask".into(), "sinex-db".into(), "xtask".into()]),
+        );
+
+        assert_eq!(
+            plan,
+            NextestExecutionPlan {
+                runner_packages: vec!["sinex-db".into(), "xtask".into()],
+                workload_scope: WorkloadScope::Affected(vec!["sinex-db".into(), "xtask".into()]),
+            }
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_nextest_execution_plan_falls_back_to_inferred_packages()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = resolve_nextest_execution_plan(
+            &[],
+            vec!["sinex-e2e-tests".into(), "sinex-e2e-tests".into()],
+            None,
+        );
+
+        assert_eq!(
+            plan,
+            NextestExecutionPlan {
+                runner_packages: vec!["sinex-e2e-tests".into()],
+                workload_scope: WorkloadScope::Packages(vec!["sinex-e2e-tests".into()]),
+            }
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_load_current_test_analysis_surfaces_current_invocation_summary()
+    -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test.db");
+        let db = HistoryDb::open(&db_path)?;
+        let invocation_id = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(
+            invocation_id,
+            crate::history::InvocationStatus::Success,
+            Some(0),
+            1.0,
+        )?;
+        db.store_test_results(
+            invocation_id,
+            &[crate::history::TestResult {
+                test_name: "test_alpha".into(),
+                package: "pkg-a".into(),
+                status: crate::history::TestStatus::Pass,
+                duration_secs: Some(0.25),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let ctx = test_context_with_invocation(db_path, Some(invocation_id));
+        let (analysis, issue) = super::load_current_test_analysis(&ctx);
+
+        assert!(issue.is_none());
+        let analysis = analysis.expect("analysis should be available");
+        assert_eq!(analysis["invocation_id"], invocation_id);
+        assert_eq!(analysis["total_passed"], 1);
+        assert_eq!(analysis["total_failed"], 0);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_load_current_test_analysis_requires_invocation_id()
+    -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test.db");
+        let _db = HistoryDb::open(&db_path)?;
+        let ctx = test_context(db_path);
+
+        let (analysis, issue) = super::load_current_test_analysis(&ctx);
+        assert!(analysis.is_none());
+        assert_eq!(
+            issue.as_deref(),
+            Some("Current test invocation ID unavailable for analysis")
+        );
         Ok(())
     }
 

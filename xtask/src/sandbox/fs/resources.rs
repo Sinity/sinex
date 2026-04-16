@@ -9,9 +9,63 @@
 use super::path_validation::{create_test_temp_dir, validate_test_path};
 use crate::sandbox::prelude::*;
 use camino::{Utf8Path, Utf8PathBuf};
-
+use std::collections::hash_map::DefaultHasher;
+use std::ffi::OsString;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use tempfile::TempDir;
+
+/// Per-test temporary directory redirect.
+///
+/// Keeps `tempfile`, `std::env::temp_dir()`, and subprocesses on a
+/// checkout-backed `.sinex/test-tmp` tree instead of the host `/tmp`.
+pub struct TestTempEnv {
+    original: [(&'static str, Option<OsString>); 3],
+    _dir: TempDir,
+}
+
+/// Redirect temporary-directory environment variables for the duration of a test.
+pub fn prepare_test_temp_env(test_name: &str) -> TestResult<TestTempEnv> {
+    let temp_root = workspace_test_temp_root()?;
+    let dir = tempfile::Builder::new()
+        .prefix(&short_test_temp_prefix(test_name))
+        .tempdir_in(temp_root.as_std_path())
+        .map_err(|e| eyre!(format!("Failed to create workspace-backed temp directory: {e}")))?;
+
+    // Nextest executes each test case in its own process, so we can redirect the
+    // temp-directory variables for the full test lifetime without holding the
+    // process-wide EnvGuard lock and deadlocking nested EnvGuard users.
+    let original = [
+        ("TMPDIR", std::env::var_os("TMPDIR")),
+        ("TMP", std::env::var_os("TMP")),
+        ("TEMP", std::env::var_os("TEMP")),
+    ];
+
+    unsafe {
+        std::env::set_var("TMPDIR", dir.path());
+        std::env::set_var("TMP", dir.path());
+        std::env::set_var("TEMP", dir.path());
+    }
+
+    Ok(TestTempEnv {
+        original,
+        _dir: dir,
+    })
+}
+
+impl Drop for TestTempEnv {
+    fn drop(&mut self) {
+        unsafe {
+            for (key, previous) in &self.original {
+                if let Some(value) = previous {
+                    std::env::set_var(key, value);
+                } else {
+                    std::env::remove_var(key);
+                }
+            }
+        }
+    }
+}
 
 /// Create a secure temporary directory for test operations
 ///
@@ -110,6 +164,50 @@ pub fn verify_test_path_safety(path: &str) -> TestResult<()> {
     validate_test_path(path).map(|_| ()).map_err(Error::from)
 }
 
+fn workspace_test_temp_root() -> TestResult<Utf8PathBuf> {
+    let manifest_dir = Utf8Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir
+        .parent()
+        .ok_or_else(|| eyre!("xtask manifest directory has no workspace parent"))?;
+    let temp_root = workspace_root.join(".sinex/test-tmp");
+    std::fs::create_dir_all(temp_root.as_std_path()).map_err(|e| {
+        eyre!(format!(
+            "Failed to create workspace-backed test temp root {}: {e}",
+            temp_root
+        ))
+    })?;
+    Ok(temp_root)
+}
+
+fn sanitize_filename(filename: &str) -> String {
+    filename
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect::<String>()
+        .trim_matches('.')
+        .to_string()
+}
+
+fn short_test_temp_prefix(test_name: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    test_name.hash(&mut hasher);
+    let digest = hasher.finish();
+    let slug = sanitize_filename(test_name)
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(12)
+        .collect::<String>();
+    if slug.is_empty() {
+        format!("st-{digest:016x}-")
+    } else {
+        format!("st-{slug}-{digest:016x}-")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,6 +229,24 @@ mod tests {
         let _temp_path = temp_dir.path().to_path_buf();
         drop(temp_dir);
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_short_test_temp_prefix_keeps_unix_socket_paths_short()
+    -> ::xtask::sandbox::TestResult<()> {
+        let root = workspace_test_temp_root()?;
+        for test_name in [
+            "notify_preserves_socket_for_followup_messages",
+            "watchdog_task_emits_ping_when_enabled",
+        ] {
+            let socket_path = root.join(short_test_temp_prefix(test_name)).join("notify.sock");
+            assert!(
+                socket_path.as_str().len() < 108,
+                "socket path must stay below sockaddr_un::sun_path limit: {} ({socket_path})",
+                socket_path.as_str().len()
+            );
+        }
         Ok(())
     }
 

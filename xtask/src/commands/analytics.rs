@@ -64,12 +64,14 @@ impl XtaskCommand for AnalyticsCommand {
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::analysis()
+            .with_history_tracking(false)
+            .with_history_access(crate::command::HistoryAccessMode::Query)
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         use color_eyre::eyre::eyre;
         let sub = &self.subcommand;
-        ctx.try_with_history_db(|db| {
+        ctx.try_with_history_db_query(|db| {
             let analysis = HistoryAnalysis::new(db);
             match sub {
                 AnalyticsSubcommand::WorkspaceHealth { breakdown } => {

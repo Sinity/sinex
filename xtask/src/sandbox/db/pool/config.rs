@@ -53,22 +53,25 @@ impl PoolConfig {
 }
 
 pub(super) fn default_pool_size() -> usize {
+    let test_threads = detected_nextest_test_threads_or_cpu_count();
+    let target = test_threads.saturating_mul(POOL_SIZE_MULTIPLIER);
+    target.max(MIN_POOL_SIZE)
+}
+
+fn detected_nextest_test_threads_or_cpu_count() -> usize {
     let cpu_count =
         std::thread::available_parallelism().map_or(MIN_POOL_SIZE, std::num::NonZero::get);
-    let test_threads = match nextest_test_threads(cpu_count) {
-        Ok(Some(value)) => value,
-        Ok(None) => cpu_count,
+    match nextest_test_threads(cpu_count) {
+        Ok(Some(value)) => value.max(1),
+        Ok(None) => cpu_count.max(1),
         Err(error) => {
             eprintln!(
                 "⚠️  Failed to detect nextest test thread count from .config/nextest.toml: {error:#}. \
                  Using CPU count ({cpu_count})"
             );
-            cpu_count
+            cpu_count.max(1)
         }
     }
-    .max(1);
-    let target = test_threads.saturating_mul(POOL_SIZE_MULTIPLIER);
-    target.max(MIN_POOL_SIZE)
 }
 
 fn nextest_test_threads(cpu_count: usize) -> Result<Option<usize>> {

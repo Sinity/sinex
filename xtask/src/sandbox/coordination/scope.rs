@@ -11,6 +11,7 @@ use crate::sandbox::nats::{acquire_pipeline_permit, wait_for_event_persisted};
 use crate::sandbox::orchestrator::{TestIngestdConfig, start_test_ingestd_with_config};
 use crate::sandbox::prelude::{EventId, TestResult};
 use crate::sandbox::timing::{DEFAULT_WAIT_SECS, WaitHelpers};
+use sinex_db::DbPoolExt;
 use sinex_primitives::Timestamp;
 use sinex_primitives::events::{Publishable, SourceMaterial};
 use sinex_primitives::{EventType, Id};
@@ -139,16 +140,17 @@ impl<'ctx> PipelineScope<'ctx> {
         .await
     }
 
-    /// Prepare and publish an event to NATS without waiting for DB persistence.
+    /// Prepare an event for NATS publishing without waiting for DB persistence.
     ///
-    /// This is the fast path used by batch methods. Returns the event ID.
-    async fn prepare_and_publish_to_nats(
+    /// This is the fast path used by batch methods, which can then publish many
+    /// prepared envelopes with a single flush.
+    async fn prepare_event_for_nats(
         &self,
         source: sinex_primitives::EventSource,
         event_type: sinex_primitives::EventType,
         payload: serde_json::Value,
         overrides: EventOverrides,
-    ) -> TestResult<EventId> {
+    ) -> TestResult<sinex_primitives::events::Event<serde_json::Value>> {
         let timestamp_override = if let Some(ts) = overrides.ts_orig {
             Some(Timestamp::parse_rfc3339(&ts)?)
         } else {
@@ -162,7 +164,7 @@ impl<'ctx> PipelineScope<'ctx> {
             .await?;
 
         // Construct event manually to handle overrides
-        let event = sinex_primitives::events::Event::<serde_json::Value> {
+        Ok(sinex_primitives::events::Event::<serde_json::Value> {
             id: overrides.id.map(sinex_primitives::Id::from_uuid),
             source,
             event_type,
@@ -185,8 +187,22 @@ impl<'ctx> PipelineScope<'ctx> {
             equivalence_key: None,
             created_by_operation_id: None,
             node_model: None,
-        };
+        })
+    }
 
+    /// Prepare and publish an event to NATS without waiting for DB persistence.
+    ///
+    /// This is the fast path used by one-off publish helpers. Returns the event ID.
+    async fn prepare_and_publish_to_nats(
+        &self,
+        source: sinex_primitives::EventSource,
+        event_type: sinex_primitives::EventType,
+        payload: serde_json::Value,
+        overrides: EventOverrides,
+    ) -> TestResult<EventId> {
+        let event = self
+            .prepare_event_for_nats(source, event_type, payload, overrides)
+            .await?;
         let event_id: uuid::Uuid = self.ctx.publish_prebuilt_event(&event).await?;
         Ok(event_id.into())
     }
@@ -296,20 +312,30 @@ impl<'ctx> PipelineScope<'ctx> {
     where
         F: Fn(usize) -> serde_json::Value,
     {
-        let mut ids = Vec::with_capacity(count);
+        let event_source = sinex_primitives::EventSource::new(source)?;
+        let expected_total = self.ctx.pool.events().count_by_source(&event_source).await? as usize
+            + count;
+        let mut events = Vec::with_capacity(count);
         for i in 0..count {
             let payload = payload_fn(i);
-            let id = self
-                .prepare_and_publish_to_nats(
-                    sinex_primitives::EventSource::new(source)?,
+            let event = self
+                .prepare_event_for_nats(
+                    event_source.clone(),
                     sinex_primitives::EventType::new(event_type)?,
                     payload,
                     EventOverrides::default(),
                 )
                 .await?;
-            ids.push(id);
+            events.push(event);
         }
-        self.wait_for_source_events(source, count).await?;
+        let ids = self
+            .ctx
+            .publish_prebuilt_events(&events)
+            .await?
+            .into_iter()
+            .map(EventId::from)
+            .collect();
+        self.wait_for_source_events(source, expected_total).await?;
         Ok(ids)
     }
 
@@ -353,7 +379,10 @@ impl<'ctx> PipelineScope<'ctx> {
             time::Duration::seconds(0)
         };
 
-        let mut ids = Vec::with_capacity(count);
+        let event_source = sinex_primitives::EventSource::new(source)?;
+        let expected_total = self.ctx.pool.events().count_by_source(&event_source).await? as usize
+            + count;
+        let mut events = Vec::with_capacity(count);
         for i in 0..count {
             let timestamp = Timestamp::new(*start + step * (i as i32));
             let payload = payload_fn(i);
@@ -361,18 +390,24 @@ impl<'ctx> PipelineScope<'ctx> {
                 ts_orig: Some(timestamp.format_rfc3339()),
                 ..Default::default()
             };
-            let id = self
-                .prepare_and_publish_to_nats(
-                    sinex_primitives::EventSource::new(source)?,
+            let event = self
+                .prepare_event_for_nats(
+                    event_source.clone(),
                     sinex_primitives::EventType::new(event_type)?,
                     payload,
                     overrides,
                 )
                 .await?;
-            ids.push(id);
+            events.push(event);
         }
-
-        self.wait_for_source_events(source, count).await?;
+        let ids = self
+            .ctx
+            .publish_prebuilt_events(&events)
+            .await?
+            .into_iter()
+            .map(EventId::from)
+            .collect();
+        self.wait_for_source_events(source, expected_total).await?;
         Ok(ids)
     }
 

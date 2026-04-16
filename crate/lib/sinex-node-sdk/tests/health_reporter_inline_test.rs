@@ -1,25 +1,45 @@
 #![cfg(feature = "messaging")]
 
 use sinex_node_sdk::SinexError;
-use sinex_node_sdk::health_reporter::{HealthReporter, HealthThresholds};
+use sinex_node_sdk::health_reporter::{HealthClock, HealthReporter, HealthThresholds};
 use sinex_node_sdk::self_observation::{SelfObserver, SelfObserverConfig};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use xtask::sandbox::prelude::*;
+
+#[derive(Debug, Default)]
+struct ManualHealthClock {
+    elapsed_ms: AtomicU64,
+}
+
+impl ManualHealthClock {
+    fn advance(&self, duration: Duration) {
+        let millis = duration.as_millis().min(u128::from(u64::MAX)) as u64;
+        self.elapsed_ms.fetch_add(millis, Ordering::Relaxed);
+    }
+}
+
+impl HealthClock for ManualHealthClock {
+    fn now(&self) -> Duration {
+        Duration::from_millis(self.elapsed_ms.load(Ordering::Relaxed))
+    }
+}
 
 #[sinex_test]
 async fn test_health_metrics_error_rate(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let clock = Arc::new(ManualHealthClock::default());
     let observer = Arc::new(SelfObserver::new(
         ctx.nats_client(),
         SelfObserverConfig {
             component: "health-inline".to_string(),
             subject_prefix: "sinex.telemetry".to_string(),
             enabled: true,
-            min_emission_interval: Duration::from_millis(10),
+            min_emission_interval: Duration::ZERO,
         },
     ));
-    let reporter = HealthReporter::new(
+    let reporter = HealthReporter::new_with_clock(
         "health-inline".to_string(),
         observer,
         HealthThresholds {
@@ -27,12 +47,13 @@ async fn test_health_metrics_error_rate(ctx: TestContext) -> TestResult<()> {
             error_rate_failed: 0.75,
             window_seconds: 1,
         },
+        Arc::clone(&clock) as Arc<dyn HealthClock>,
     );
 
     for _ in 0..100 {
         reporter.record_success();
     }
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    clock.advance(Duration::from_secs(2));
 
     reporter.record_success();
     reporter.record_error(&SinexError::processing("recent failure"));
@@ -63,7 +84,7 @@ async fn test_process_status_calculation(ctx: TestContext) -> TestResult<()> {
             component: "health-thresholds".to_string(),
             subject_prefix: "sinex.telemetry".to_string(),
             enabled: true,
-            min_emission_interval: Duration::from_millis(10),
+            min_emission_interval: Duration::ZERO,
         },
     ));
     let thresholds = HealthThresholds {
@@ -95,7 +116,7 @@ async fn test_process_status_calculation(ctx: TestContext) -> TestResult<()> {
                 component: "health-thresholds-failed".to_string(),
                 subject_prefix: "sinex.telemetry".to_string(),
                 enabled: true,
-                min_emission_interval: Duration::from_millis(10),
+                min_emission_interval: Duration::ZERO,
             },
         )),
         thresholds.clone(),

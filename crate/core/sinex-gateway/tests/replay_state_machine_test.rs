@@ -4,7 +4,6 @@ use sinex_primitives::{Uuid, temporal::Timestamp};
 use std::collections::HashMap;
 use time::{Date, Month, Time};
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
 #[sinex_test]
 async fn state_transitions_follow_rules() -> Result<()> {
@@ -602,21 +601,20 @@ async fn execution_lock_is_released_when_guard_drops(ctx: TestContext) -> Result
         "lock should be exclusive while held"
     );
 
-    drop(first_guard);
-
-    WaitHelpers::wait_for_condition(
-        || {
-            let pool = ctx.pool.clone();
-            let operation_id = operation.operation_id;
-            async move {
-                let replay = sinex_gateway::ReplayStateMachine::new(pool);
-                let guard = replay.acquire_execution_lock(operation_id).await?;
-                Ok::<bool, sinex_primitives::SinexError>(guard.is_some())
-            }
-        },
-        Timeouts::SHORT,
-    )
-    .await?;
+    first_guard
+        .expect("first execution lock guard should be present")
+        .cleanup_now()
+        .await;
+    let third_guard = replay
+        .acquire_execution_lock(operation.operation_id)
+        .await?;
+    assert!(
+        third_guard.is_some(),
+        "execution lock should be reacquirable immediately after awaited cleanup"
+    );
+    if let Some(third_guard) = third_guard {
+        third_guard.cleanup_now().await;
+    }
 
     Ok(())
 }
@@ -651,7 +649,9 @@ async fn recover_stale_executing_clears_executor_node(ctx: TestContext) -> Resul
         .acquire_execution_lock(operation.operation_id)
         .await?;
     assert!(lock_guard.is_some());
-    drop(lock_guard);
+    if let Some(lock_guard) = lock_guard {
+        lock_guard.cleanup_now().await;
+    }
 
     let stale_started_at = sinex_primitives::temporal::now() - time::Duration::hours(2);
     let executor_node = serde_json::to_value("node-a")?;
