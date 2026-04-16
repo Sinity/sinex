@@ -66,8 +66,7 @@ struct RegistryEntry {
 /// Registry for RPC method dispatch
 ///
 /// Maps method names to handler functions and required authorization roles.
-/// This replaces the large match statement in `dispatch_rpc_method` with
-/// a maintainable registry pattern.
+/// Keeps dispatch data-driven instead of embedding one large match tree.
 pub(crate) struct RpcRegistry {
     methods: HashMap<&'static str, RegistryEntry>,
 }

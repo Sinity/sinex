@@ -356,6 +356,7 @@ fn flush_batch(conn: &mut Connection, batch: &mut Vec<TraceRecord>) {
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    use crate::sandbox::timing::WaitHelpers;
     use color_eyre::eyre::Context;
     use tempfile::tempdir;
     use tracing_subscriber::prelude::*;
@@ -385,21 +386,43 @@ mod tests {
             tracing::warn!(target: "xtask::history.tests", code = 17_i64, "persist trace event");
         });
 
-        for _ in 0..50 {
-            if db_path.exists() {
-                let conn = Connection::open(&db_path)
-                    .with_context(|| format!("failed to open {}", db_path.display()))?;
-                let count: i64 =
-                    conn.query_row("SELECT COUNT(*) FROM trace_events", [], |row| row.get(0))?;
-                if count == 1 {
-                    return Ok(());
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        WaitHelpers::wait_for_condition(
+            || {
+                let db_path = db_path.clone();
+                async move {
+                    if !db_path.exists() {
+                        return Ok::<bool, color_eyre::Report>(false);
+                    }
 
-        Err(color_eyre::eyre::eyre!(
-            "history tracing layer did not persist the first warning event in time"
-        ))
+                    let conn = Connection::open(&db_path)
+                        .with_context(|| format!("failed to open {}", db_path.display()))?;
+                    let table_exists = conn
+                        .query_row(
+                            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'trace_events'",
+                            [],
+                            |_| Ok(()),
+                        )
+                        .map(|_| true)
+                        .or_else(|error| {
+                            if matches!(error, rusqlite::Error::QueryReturnedNoRows) {
+                                Ok(false)
+                            } else {
+                                Err(error)
+                            }
+                        })?;
+                    if !table_exists {
+                        return Ok::<bool, color_eyre::Report>(false);
+                    }
+
+                    let count: i64 =
+                        conn.query_row("SELECT COUNT(*) FROM trace_events", [], |row| row.get(0))?;
+                    Ok::<bool, color_eyre::Report>(count == 1)
+                }
+            },
+            5,
+        )
+        .await?;
+
+        Ok(())
     }
 }

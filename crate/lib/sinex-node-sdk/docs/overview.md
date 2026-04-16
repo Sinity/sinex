@@ -1,14 +1,19 @@
 # Sinex Node SDK: Architecture Overview
 
-The Sinex Node SDK is the foundational library for building all Sinex services. It implements a **Unified Node Architecture** where the distinction between data capturers (Ingestors) and data nodes (Automata) is eliminated—both are modeled as **Stateful Stream Nodes**.
+The Sinex Node SDK is the foundational library for building Sinex ingestors and
+derived nodes. It does not erase the distinction between those roles; it gives
+them shared runtime infrastructure where that sharing is useful and separate
+authoring traits where their responsibilities differ.
 
-## 📐 Core Vision: Unified Architecture
+## 📐 Core Runtime Shape
 
-Every node in the system implements the unified `Node` trait. This ensures architectural consistency across the system:
+The SDK exposes a low-level `Node` runtime surface plus higher-level traits and
+adapters for the common cases:
 
-1.  **Unified Interface**: Both Ingestors and Automata use the same `scan(from: Checkpoint, until: TimeHorizon)` primitive.
-2.  **Unified Checkpoints**: Resumption logic is identical whether tracking a file offset (Ingestor) or a NATS sequence number (Automaton).
-3.  **Unified Deployment**: Nodes can be deployed as lightweight "Edge" nodes (NATS-only) or "Core" automatons (Postgres-heavy).
+1. **Shared lifecycle phases**: snapshot, historical catch-up, and continuous processing.
+2. **Shared checkpointing**: durable checkpoint/state management across node restarts.
+3. **Shared runtime plumbing**: NATS transport, confirmations, health reporting, coordination, and shutdown handling.
+4. **Different authoring traits**: `IngestorNode` for external capture, and `TransducerNode` / `WindowedNode` / `ScopeReconcilerNode` for synthesis.
 
 ## 🛰️ Distributed Service Architecture
 
@@ -33,7 +38,10 @@ Sinex nodes communicate via a distributed event bus powered by NATS `JetStream`.
 ```
 
 ### 🛡️ Data Integrity: The Single-Writer Pattern
-Nodes never write directly to the `core.events` database table. They submit provisional events to NATS. The `sinex-ingestd` daemon acts as the **Single Writer**, persisting events to Postgres and emitting a **Confirmation** with the canonical Database ID.
+Nodes do not write directly to the `core.events` table. They submit provisional
+events to NATS. `sinex-ingestd` acts as the single persistence writer, commits
+the validated events to Postgres, and publishes confirmations back onto the
+runtime bus.
 
 ## 🔄 Three-Phase Startup Pattern
 

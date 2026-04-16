@@ -119,8 +119,23 @@ fn is_retryable_io_kind(kind: ErrorKind) -> bool {
 }
 
 pub(super) fn is_retryable_connection_error(err: &sqlx::Error) -> bool {
+    if err.as_database_error().is_some_and(|db_err| {
+        db_err
+            .message()
+            .contains("is not currently accepting connections")
+    }) {
+        return true;
+    }
+
     if let Some(code) = postgres_error_code(err) {
         return RETRYABLE_CONNECTION_SQLSTATES.contains(&code.as_str());
+    }
+
+    if err
+        .to_string()
+        .contains("is not currently accepting connections")
+    {
+        return true;
     }
 
     match err {

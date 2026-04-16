@@ -350,6 +350,25 @@ impl CommandResult {
     }
 }
 
+/// Semantic workload scope recorded in invocation history for timing analysis.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkloadScope {
+    Workspace,
+    Packages(Vec<String>),
+    Affected(Vec<String>),
+}
+
+impl WorkloadScope {
+    #[must_use]
+    pub fn encode_marker(&self) -> String {
+        match self {
+            Self::Workspace => "--scope=workspace".to_string(),
+            Self::Packages(packages) => format!("--scope=packages:{}", packages.join(",")),
+            Self::Affected(packages) => format!("--scope=affected:{}", packages.join(",")),
+        }
+    }
+}
+
 /// Context passed to commands during execution.
 ///
 /// Implements `Drop` to ensure invocations stuck in 'running' are marked as
@@ -688,6 +707,39 @@ impl CommandContext {
             self.with_history_db(|db| db.record_compiled_packages(inv_id, packages));
         }
         Ok(())
+    }
+
+    /// Persist semantic invocation arguments for workload-aware history analysis.
+    ///
+    /// Commands should record the workload they actually executed rather than
+    /// the raw CLI argv. This lets history distinguish affected-package runs,
+    /// workspace baselines, and materially different modes like `--lint`.
+    pub fn record_invocation_args(&self, args: &[String]) {
+        if let Some(inv_id) = self.invocation_id {
+            let serialized = match serde_json::to_string(args) {
+                Ok(serialized) => serialized,
+                Err(error) => {
+                    tracing::warn!(
+                        target: "xtask::command",
+                        invocation_id = inv_id,
+                        error = %error,
+                        "failed to serialize invocation args"
+                    );
+                    return;
+                }
+            };
+
+            if let Some(Err(error)) =
+                self.try_with_history_db(|db| db.update_invocation_args(inv_id, &serialized))
+            {
+                tracing::warn!(
+                    target: "xtask::command",
+                    invocation_id = inv_id,
+                    error = %error,
+                    "failed to record invocation args"
+                );
+            }
+        }
     }
 
     fn resolve_coordination_fingerprint(

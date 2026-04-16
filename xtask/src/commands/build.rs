@@ -5,7 +5,7 @@
 
 use crate::affected;
 use crate::cargo_diagnostics::{estimate_package_count, run_cargo_build_streaming};
-use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
+use crate::command::{CommandContext, CommandMetadata, CommandResult, WorkloadScope, XtaskCommand};
 use crate::preflight;
 use color_eyre::eyre::Result;
 
@@ -89,21 +89,42 @@ impl XtaskCommand for BuildCommand {
         }
 
         let mut packages = self.packages.clone();
+        let workload_scope;
 
         // Affected mode is default ON, --all disables it
         if !self.all {
             let stage = ctx.start_stage("affected");
             let affected = affected::affected_packages();
             ctx.finish_stage(stage, affected.is_ok());
-            let affected = affected?;
+            let mut affected = affected?;
             if affected.is_empty() {
                 if ctx.is_human() {
                     println!("No changes detected. Building ALL packages.");
                 }
                 // Fall through to build all (packages is empty -> --workspace)
+                workload_scope = if packages.is_empty() {
+                    WorkloadScope::Workspace
+                } else {
+                    packages.sort();
+                    WorkloadScope::Packages(packages.clone())
+                };
             } else {
+                affected.sort();
                 packages.extend(affected);
+                packages.sort();
+                packages.dedup();
+                workload_scope = if self.packages.is_empty() {
+                    WorkloadScope::Affected(packages.clone())
+                } else {
+                    WorkloadScope::Packages(packages.clone())
+                };
             }
+        } else if packages.is_empty() {
+            workload_scope = WorkloadScope::Workspace;
+        } else {
+            packages.sort();
+            packages.dedup();
+            workload_scope = WorkloadScope::Packages(packages.clone());
         }
 
         if packages.is_empty() {
@@ -114,6 +135,13 @@ impl XtaskCommand for BuildCommand {
                 args.push(p.clone());
             }
         }
+
+        let mut workload_args = Vec::new();
+        if self.release {
+            workload_args.push("--release".to_string());
+        }
+        workload_args.push(workload_scope.encode_marker());
+        ctx.record_invocation_args(&workload_args);
 
         if ctx.is_human() {
             println!("Building packages (args: {args:?})...");

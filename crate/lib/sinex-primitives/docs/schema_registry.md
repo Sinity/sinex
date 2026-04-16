@@ -34,7 +34,7 @@ To optimize performance for replayed or re-processed events:
 Schemas are typically defined as Rust structs using the `EventPayload` derive macro.
 
 - **Compile-time Discovery**: The macro registers schema metadata using the `inventory` crate.
-- **Automated Sync**: The `xtask schema generate` command collects all registered schemas and synchronizes them with the database registry.
+- **Automated Runtime Sync**: preflight / ingest startup collects all registered schemas and synchronizes them with the database registry.
 - **Manual Registration**: Dynamic schemas can also be registered at runtime via the `register_schema` API.
 
 ## Historical Validation

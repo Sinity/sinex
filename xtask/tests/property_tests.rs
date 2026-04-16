@@ -6,8 +6,6 @@
 //! - JSON output conforms to expected schema
 //! - `HistoryDb` database roundtrips preserve written data
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use proptest::prelude::*;
 use sinex_primitives::temporal;
 use xtask::command::CommandResult;
@@ -19,22 +17,10 @@ use xtask::sandbox::sinex_proptest;
 // HistoryDb Test Utilities
 // ============================================================================
 
-/// Generate a unique temporary database path per proptest case.
-///
-/// Uses nanosecond timestamps since proptest runs cases sequentially —
-/// each case starts at a different nanosecond, guaranteeing distinct paths.
-fn prop_temp_db_path() -> std::path::PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    std::env::temp_dir().join(format!("xtask-prop-db-{nanos}.db"))
-}
-
-fn prop_cleanup_db(path: &std::path::Path) {
-    let _ = std::fs::remove_file(path);
-    let _ = std::fs::remove_file(path.with_extension("db-wal"));
-    let _ = std::fs::remove_file(path.with_extension("db-shm"));
+fn prop_temp_db_path() -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().expect("tempdir creation must succeed");
+    let path = dir.path().join("history.db");
+    (dir, path)
 }
 
 // ============================================================================
@@ -478,7 +464,7 @@ sinex_proptest! {
         exit_code in 0i32..=1i32,
         duration_secs in 0.1f64..=60.0f64
     ) -> TestResult<()> {
-        let path = prop_temp_db_path();
+        let (_dir, path) = prop_temp_db_path();
         let db = HistoryDb::open(&path).expect("temp DB open must succeed");
 
         let inv_id = db.start_invocation(command, None, None, None)
@@ -503,7 +489,6 @@ sinex_proptest! {
         prop_assert_eq!(&record.command, &command, "command must round-trip");
         prop_assert_eq!(record.exit_code, Some(exit_code), "exit_code must round-trip");
 
-        prop_cleanup_db(&path);
         Ok(())
     }
 
@@ -512,12 +497,13 @@ sinex_proptest! {
     /// The limit parameter is a hard upper bound, not a hint. Violating this
     /// would overflow agent-facing JSON payloads and break UX assumptions
     /// (e.g. `xtask history list --limit 5` returning 20 entries).
+    #[cases(32)]
     fn historydb_recent_respects_limit(
         write_count in 5usize..=15usize,
         query_limit in 1usize..=4usize
     ) -> TestResult<()> {
         // write_count (5–15) > query_limit (1–4) guarantees the cap is always exercised
-        let path = prop_temp_db_path();
+        let (_dir, path) = prop_temp_db_path();
         let db = HistoryDb::open(&path).expect("temp DB open must succeed");
 
         for _ in 0..write_count {
@@ -536,7 +522,6 @@ sinex_proptest! {
             query_limit, results.len(), query_limit
         );
 
-        prop_cleanup_db(&path);
         Ok(())
     }
 
@@ -545,11 +530,12 @@ sinex_proptest! {
     /// Page 0 and page 1 (same page size) must not share any invocation IDs.
     /// Broken pagination would cause `xtask history list --offset N` to show
     /// duplicate entries or skip entries silently.
+    #[cases(32)]
     fn historydb_offset_pages_are_disjoint(
         total in 6usize..=12usize,
         page_size in 2usize..=3usize
     ) -> TestResult<()> {
-        let path = prop_temp_db_path();
+        let (_dir, path) = prop_temp_db_path();
         let db = HistoryDb::open(&path).expect("temp DB open must succeed");
 
         for _ in 0..total {
@@ -573,7 +559,6 @@ sinex_proptest! {
             "pages 0 and 1 must not share entries, but shared: {:?}", overlap
         );
 
-        prop_cleanup_db(&path);
         Ok(())
     }
 }

@@ -128,6 +128,9 @@ async fn snapshot_status_summary_json() -> ::xtask::sandbox::TestResult<()> {
         // Velocity and health analytics depend on history DB contents
         &["data", "health_score"],
         &["data", "velocity"],
+        &["data", "baseline_velocity"],
+        &["data", "history"],
+        &["data", "runtime"],
         // Working tree state: varies by uncommitted files, stash, last commit
         &["data", "uncommitted_count"],
         &["data", "stash_count"],

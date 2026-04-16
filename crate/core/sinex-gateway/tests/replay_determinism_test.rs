@@ -7,7 +7,7 @@
 use color_eyre::eyre::bail;
 use futures::StreamExt;
 use serde_json::json;
-use sinex_db::repositories::DbPoolExt;
+use sinex_db::{DbPool, repositories::DbPoolExt};
 use sinex_gateway::{ServiceContainer, config::GatewayConfig, rpc_server};
 use sinex_node_sdk::{Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ScanReport};
 use sinex_primitives::rpc::methods;
@@ -131,6 +131,7 @@ async fn spawn_fake_scan_node(
     let node_name = node_name.to_string();
     let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
     let mut sub = nats.subscribe(subject).await?;
+    nats.flush().await?;
 
     let handle = tokio::spawn(async move {
         let Some(msg) = sub.next().await else { return };
@@ -150,6 +151,81 @@ async fn spawn_fake_scan_node(
             };
             if let Ok(bytes) = serde_json::to_vec(&ack) {
                 let _ = nats.publish(reply, bytes.into()).await;
+            }
+        }
+
+        let progress = NodeScanProgress {
+            operation_id,
+            node_name: node_name.clone(),
+            events_processed,
+            events_emitted: events_processed,
+            final_report: Some(ScanReport {
+                events_processed,
+                duration: Duration::from_millis(5),
+                final_checkpoint: Checkpoint::None,
+                time_range: None,
+                node_stats: HashMap::from([("events_emitted".into(), events_processed)]),
+                successful_targets: vec![node_name.clone()],
+                failed_targets: Vec::new(),
+                warnings: Vec::new(),
+            }),
+            error: None,
+        };
+        if let Ok(bytes) = serde_json::to_vec(&progress) {
+            let _ = nats.publish(progress_subject, bytes.into()).await;
+        }
+    });
+
+    Ok(handle)
+}
+
+async fn spawn_fake_reemitting_scan_node(
+    pool: DbPool,
+    nats: async_nats::Client,
+    env: sinex_primitives::environment::SinexEnvironment,
+    node_name: &str,
+    material_id: uuid::Uuid,
+    events_processed: u64,
+) -> TestResult<tokio::task::JoinHandle<()>> {
+    let node_name = node_name.to_string();
+    let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
+    let mut sub = nats.subscribe(subject).await?;
+    nats.flush().await?;
+
+    let handle = tokio::spawn(async move {
+        let Some(msg) = sub.next().await else { return };
+        let Ok(command) = serde_json::from_slice::<NodeScanCommand>(&msg.payload) else {
+            return;
+        };
+        let operation_id = command.operation_id;
+        let progress_subject =
+            env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
+
+        if let Some(reply) = msg.reply {
+            let ack = NodeScanAck {
+                operation_id,
+                node_name: node_name.clone(),
+                accepted: true,
+                error: None,
+            };
+            if let Ok(bytes) = serde_json::to_vec(&ack) {
+                let _ = nats.publish(reply, bytes.into()).await;
+            }
+        }
+
+        for i in 0..events_processed {
+            let Ok(event) = DynamicPayload::new(
+                node_name.as_str(),
+                "file.created",
+                json!({ "path": format!("/tmp/{node_name}-replay-{operation_id}-{i}.txt") }),
+            )
+            .from_material(Id::from(material_id))
+            .build() else {
+                return;
+            };
+
+            if pool.events().insert(event).await.is_err() {
+                return;
             }
         }
 
@@ -338,7 +414,15 @@ async fn double_replay_idempotent(ctx: TestContext) -> TestResult<()> {
     // First replay
     let nats = ctx.nats_client();
     let env = sinex_primitives::environment::environment();
-    let scan1 = spawn_fake_scan_node(nats.clone(), env.clone(), "dbl-node", 2).await?;
+    let scan1 = spawn_fake_reemitting_scan_node(
+        ctx.pool.clone(),
+        nats.clone(),
+        env.clone(),
+        "dbl-node",
+        *material_id.as_uuid(),
+        2,
+    )
+    .await?;
     run_replay(
         &gw,
         "dbl-node",
@@ -361,7 +445,15 @@ async fn double_replay_idempotent(ctx: TestContext) -> TestResult<()> {
     .await?;
 
     // Second replay of same scope — need a new fake node since the first was consumed
-    let scan2 = spawn_fake_scan_node(nats.clone(), env, "dbl-node", live_after_1 as u64).await?;
+    let scan2 = spawn_fake_reemitting_scan_node(
+        ctx.pool.clone(),
+        nats.clone(),
+        env,
+        "dbl-node",
+        *material_id.as_uuid(),
+        live_after_1 as u64,
+    )
+    .await?;
     run_replay(
         &gw,
         "dbl-node",

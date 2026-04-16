@@ -1,13 +1,7 @@
-Status: canonical  
-Last Verified: 2025-12-02 (manual review)
-
 # User Interaction & Query Architecture
 
-* **Version:** 2.1
-* **Date:** 2025-07-24
-* **Implementation Status:** ✅ **OPERATIONAL** – Gateway + CLI in production; `JetStream` command bus remains planned
 * **Purpose:** Describe how users and tools interact with Sinex today: gateway service, CLI, and supporting service layer.
-* **Scope:** Current behaviour. Future enhancements are called out explicitly.
+* **Scope:** Current behaviour.
 
 ## 1. Components Overview
 
@@ -16,8 +10,6 @@ Last Verified: 2025-12-02 (manual review)
 | `sinex-gateway` | `crate/core/sinex-gateway` | Hosts a JSON-RPC server (TLS-only TCP) and an optional native-messaging bridge | ✅ operational |
 | `sinexctl` CLI | `crate/cli` | Primary operator tooling for gateway RPC; also exposes direct DB commands under `db` | ✅ operational |
 | Service layer | `crate/lib/sinex-services` | Analytics, search, PKM, and content APIs invoked by gateway handlers | ✅ operational |
-| `JetStream` command bus | — | Planned async command/response fabric | 🚧 planned |
-
 ## 2. Gateway Architecture
 
 ### 2.1 Execution Modes
@@ -94,16 +86,8 @@ Gateway handlers delegate to `sinex-services`, which provides cohesive APIs over
 
 These modules run synchronously and use shared database pools. Keep transactions small to avoid blocking other RPCs.
 
-## 5. Roadmap
-
-* **`JetStream` command/response:** Revisit once ingestion and automata have stabilised on `JetStream` end-to-end. Expected benefits include async processing and richer auditing.
-* **Streaming / WebSocket APIs:** Layer on top of the gateway after command bus work lands.
-* **Authentication & authorisation:** Harden credential lifecycle (rotation/auditability), and continue refining per-method RBAC coverage.
-* **Observability:** Instrument RPC handlers with tracing and metrics once performance hotspots are identified.
-
-## 6. Reference Material
+## 5. Reference Material
 
 - Gateway source: `crate/core/sinex-gateway/src/main.rs`, `rpc_server.rs`, `handlers.rs`, `service_container.rs`.
 * CLI docs: `crate/cli/README.md`, `crate/cli/DESIGN.md`.
 * Service documentation: `crate/lib/sinex-services/docs/*.md`.
-* Future architecture: `/realm/project/sinex-target-vision/canon/vision.md`, `/realm/project/sinex-target-vision/analysis/domains/capture-infrastructure.md`.
