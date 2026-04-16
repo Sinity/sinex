@@ -377,8 +377,7 @@ fn build_probe_issues_html(env: &Environment) -> String {
         .probe_issues
         .iter()
         .map(|issue| format!("<li>{}</li>", html_escape(issue)))
-        .collect::<Vec<_>>()
-        .join("");
+        .collect::<String>();
     format!(
         r#"<div class="card">
         <h2>Probe issues</h2>

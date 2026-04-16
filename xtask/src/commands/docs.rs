@@ -384,9 +384,9 @@ fn resolve_transclusions(
             let raw_path = &trimmed[1..]; // strip leading @
 
             // Expand ~ to $HOME
-            let expanded = if raw_path.starts_with('~') {
+            let expanded = if let Some(stripped) = raw_path.strip_prefix('~') {
                 let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
-                format!("{home}{}", &raw_path[1..])
+                format!("{home}{stripped}")
             } else {
                 raw_path.to_string()
             };
@@ -441,7 +441,7 @@ fn execute_agents(
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surface = generated_agents_surface(&workspace)?;
-    let dest = output.map_or(surface.path, |path| path.to_path_buf());
+    let dest = output.map_or(surface.path, std::path::Path::to_path_buf);
     write_generated_output(
         &dest,
         &surface.content,
@@ -461,7 +461,7 @@ fn execute_command_guide(
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surface = generated_command_guide_surface(&workspace);
-    let dest = output.map_or(surface.path, |path| path.to_path_buf());
+    let dest = output.map_or(surface.path, std::path::Path::to_path_buf);
 
     write_generated_output(
         &dest,
@@ -482,7 +482,7 @@ fn execute_command_reference(
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surface = generated_command_reference_surface(&workspace);
-    let dest = output.map_or(surface.path, |path| path.to_path_buf());
+    let dest = output.map_or(surface.path, std::path::Path::to_path_buf);
 
     write_generated_output(
         &dest,
@@ -667,7 +667,7 @@ fn execute_ast_grep_catalog(
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surface = generated_ast_grep_catalog_surface(&workspace)?;
-    let dest = output.map_or(surface.path, |path| path.to_path_buf());
+    let dest = output.map_or(surface.path, std::path::Path::to_path_buf);
 
     write_generated_output(
         &dest,

@@ -126,12 +126,10 @@ fn postprocess_zsh(script: &str) -> String {
 
     // The run node NAME arg shows as :NAME:_default in the generated completions.
     // Replace it with dynamic run-target completion.
-    let script = script.replace(
+    script.replace(
         "':NAME:_default'",
         "':NAME:($(xtask completions list-run-targets 2>/dev/null))'",
-    );
-
-    script
+    )
 }
 
 impl CompletionsCommand {

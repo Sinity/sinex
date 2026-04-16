@@ -1275,10 +1275,8 @@ struct FreshPackagesProbe {
 fn fresh_packages_probe(job_id: i64) -> FreshPackagesProbe {
     let cfg = config();
     let db_path = cfg.history_db_path();
-    let result = crate::history::HistoryDb::open(&db_path).and_then(|db| {
-        db.get_compiled_packages_for_invocation(job_id)
-            .map_err(Into::into)
-    });
+    let result = crate::history::HistoryDb::open(&db_path)
+        .and_then(|db| db.get_compiled_packages_for_invocation(job_id));
     fresh_packages_probe_from_result(job_id, &db_path, result)
 }
 

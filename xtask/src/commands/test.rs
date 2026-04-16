@@ -383,8 +383,7 @@ impl TestCommand {
         self.threads.or_else(|| {
             if self.heavy && !self.debug {
                 let cpu_count = std::thread::available_parallelism()
-                    .map(std::num::NonZeroUsize::get)
-                    .unwrap_or(HEAVY_TEST_THREAD_CAP);
+                    .map_or(HEAVY_TEST_THREAD_CAP, std::num::NonZeroUsize::get);
                 Some(default_heavy_test_threads(cpu_count))
             } else {
                 None
@@ -1637,7 +1636,7 @@ fn check_disk_space_gb(min_gb: u64) -> DiskSpaceStatus {
     #[cfg(unix)]
     {
         use nix::sys::statvfs::statvfs;
-        return classify_disk_space_probe_result(
+        classify_disk_space_probe_result(
             statvfs(".")
                 .map(|stat| {
                     let available_bytes = stat.blocks_available() * stat.fragment_size();
@@ -1645,7 +1644,7 @@ fn check_disk_space_gb(min_gb: u64) -> DiskSpaceStatus {
                 })
                 .map_err(|error| error.to_string()),
             min_gb,
-        );
+        )
     }
     #[cfg(not(unix))]
     {

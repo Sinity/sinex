@@ -1025,26 +1025,38 @@ fn apply_descriptor_nats_overrides(
     };
 
     if let Some(url) = descriptor.nats.servers.first() {
-        config.url = url.clone();
+        config.url.clone_from(url);
     }
 
     if config.ca_cert.is_none() {
-        config.ca_cert = descriptor.secrets.nats_ca_cert_file.clone();
+        config
+            .ca_cert
+            .clone_from(&descriptor.secrets.nats_ca_cert_file);
     }
     if config.client_cert.is_none() {
-        config.client_cert = descriptor.secrets.nats_client_cert_file.clone();
+        config
+            .client_cert
+            .clone_from(&descriptor.secrets.nats_client_cert_file);
     }
     if config.client_key.is_none() {
-        config.client_key = descriptor.secrets.nats_client_key_file.clone();
+        config
+            .client_key
+            .clone_from(&descriptor.secrets.nats_client_key_file);
     }
     if config.token_file.is_none() {
-        config.token_file = descriptor.secrets.nats_token_file.clone();
+        config
+            .token_file
+            .clone_from(&descriptor.secrets.nats_token_file);
     }
     if config.creds_file.is_none() {
-        config.creds_file = descriptor.secrets.nats_creds_file.clone();
+        config
+            .creds_file
+            .clone_from(&descriptor.secrets.nats_creds_file);
     }
     if config.nkey_seed_file.is_none() {
-        config.nkey_seed_file = descriptor.secrets.nats_nkey_seed_file.clone();
+        config
+            .nkey_seed_file
+            .clone_from(&descriptor.secrets.nats_nkey_seed_file);
     }
 
     config
@@ -1595,7 +1607,7 @@ fn check_terminal_sources(
     target: &TargetIdentity,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
-    let terminal_enabled = descriptor.map_or(true, |value| value.terminal.surface.enabled);
+    let terminal_enabled = descriptor.is_none_or(|value| value.terminal.surface.enabled);
     if !terminal_enabled {
         return DeploymentReadinessItem::skip(
             "terminal-sources",
@@ -1662,7 +1674,7 @@ fn check_hyprland_socket(
     target: &TargetIdentity,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
-    let desktop_enabled = descriptor.map_or(true, |value| value.desktop.surface.enabled);
+    let desktop_enabled = descriptor.is_none_or(|value| value.desktop.surface.enabled);
     if !desktop_enabled {
         return DeploymentReadinessItem::skip(
             "hyprland-socket",
@@ -1790,7 +1802,7 @@ fn check_activitywatch_db(
     target: &TargetIdentity,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
-    let desktop_enabled = descriptor.map_or(true, |value| value.desktop.surface.enabled);
+    let desktop_enabled = descriptor.is_none_or(|value| value.desktop.surface.enabled);
     if !desktop_enabled {
         return DeploymentReadinessItem::skip(
             "activitywatch-db",

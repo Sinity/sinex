@@ -55,7 +55,7 @@ pub(crate) fn runtime_database_expected() -> NodeResult<bool> {
 
     Ok(
         deployment_descriptor_result("preflight runtime expectation")?
-            .map_or(true, |descriptor| descriptor.expectations.schema_apply),
+            .is_none_or(|descriptor| descriptor.expectations.schema_apply),
     )
 }
 

@@ -657,7 +657,7 @@ async fn execute_test(
         } else {
             InvocationStatus::Failed
         };
-        let exit_code = if failed.is_empty() { 0 } else { 1 };
+        let exit_code = i32::from(!failed.is_empty());
         ctx.with_history_db(|db| {
             db.finish_invocation(inv_id, final_status, Some(exit_code), suite_duration)
         });

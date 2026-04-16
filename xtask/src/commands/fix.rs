@@ -77,7 +77,7 @@ impl XtaskCommand for FixCommand {
         };
 
         // H2/H3: Capture pre-fix diagnostic snapshot
-        let pre_fix = ctx.with_history_db(|db| db.get_current_diagnostic_counts());
+        let pre_fix = ctx.with_history_db(crate::history::HistoryDb::get_current_diagnostic_counts);
 
         // H3: Advisory if there are current errors (fix won't resolve compile errors)
         if ctx.is_human()

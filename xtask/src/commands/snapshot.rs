@@ -503,7 +503,7 @@ fn format_coordinator_state() -> SnapshotContextField {
 }
 
 fn format_active_jobs(ctx: &CommandContext) -> SnapshotContextField {
-    match ctx.try_with_history_db_query(|db| db.get_active_background_jobs()) {
+    match ctx.try_with_history_db_query(crate::history::HistoryDb::get_active_background_jobs) {
         Some(Ok(active)) => {
             let items: Vec<String> = active
                 .iter()
@@ -810,10 +810,10 @@ mod tests {
         fs::create_dir_all(&bin_dir)?;
         write_executable_script(
             &bin_dir.join("git"),
-            r#"#!/bin/sh
+            r"#!/bin/sh
 printf 'fatal: synthetic git failure\n' >&2
 exit 128
-"#,
+",
         )?;
 
         let mut env = EnvGuard::new();
@@ -888,10 +888,10 @@ exit 1
         fs::create_dir_all(&bin_dir)?;
         write_executable_script(
             &bin_dir.join("cargo"),
-            r#"#!/bin/sh
+            r"#!/bin/sh
 printf 'cargo metadata exploded\n' >&2
 exit 101
-"#,
+",
         )?;
 
         let mut env = EnvGuard::new();

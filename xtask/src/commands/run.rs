@@ -942,13 +942,13 @@ impl RunCommand {
         }
         let mut shutdown_failures = Vec::new();
         for (name, child) in &mut children {
-            if Some(name) != exited_name.as_ref() {
-                if let Err(error) = stop_bundle_child(name, child).await {
-                    if ctx.is_human() {
-                        eprintln!("Error stopping {name}: {error:#}");
-                    }
-                    shutdown_failures.push(format!("{name}: {error:#}"));
+            if Some(name) != exited_name.as_ref()
+                && let Err(error) = stop_bundle_child(name, child).await
+            {
+                if ctx.is_human() {
+                    eprintln!("Error stopping {name}: {error:#}");
                 }
+                shutdown_failures.push(format!("{name}: {error:#}"));
             }
         }
         if !shutdown_failures.is_empty() {
@@ -1178,7 +1178,7 @@ impl RunCommand {
         }
 
         let workspace_root = crate::config::workspace_root();
-        let workspace_utf8 = camino::Utf8PathBuf::from_path_buf(workspace_root.to_path_buf())
+        let workspace_utf8 = camino::Utf8PathBuf::from_path_buf(workspace_root.clone())
             .map_err(|p| eyre!("workspace root is not valid UTF-8: {}", p.display()))?;
 
         // Build extra args for this binary type

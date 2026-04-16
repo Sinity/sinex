@@ -3126,7 +3126,7 @@ fn execute_shell(_db: &HistoryDb, ctx: &CommandContext) -> Result<CommandResult>
     }
 
     let status = std::process::Command::new("sqlite3")
-        .arg(&db_path)
+        .arg(db_path)
         .status()
         .wrap_err("failed to launch sqlite3")?;
 
@@ -3223,12 +3223,14 @@ fn render_timeline_table(entries: &[InvocationTimelineEntry]) {
         let duration = e
             .duration_secs
             .map_or_else(|| "-".into(), |d| format!("{d:.1}s"));
-        let delta = if e.diagnostic_delta == 0 {
-            "—".to_string()
-        } else if e.diagnostic_delta > 0 {
-            style(format!("+{}", e.diagnostic_delta)).red().to_string()
-        } else {
-            style(format!("{}", e.diagnostic_delta)).green().to_string()
+        let delta = match e.diagnostic_delta.cmp(&0) {
+            std::cmp::Ordering::Equal => "—".to_string(),
+            std::cmp::Ordering::Greater => {
+                style(format!("+{}", e.diagnostic_delta)).red().to_string()
+            }
+            std::cmp::Ordering::Less => {
+                style(format!("{}", e.diagnostic_delta)).green().to_string()
+            }
         };
         builder.push_record([
             e.id.to_string(),

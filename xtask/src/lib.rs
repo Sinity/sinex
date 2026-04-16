@@ -438,44 +438,36 @@ pub async fn run_cli() -> Result<()> {
         parse_one_shot_i64_env("XTASK_BG_INVOCATION_ID", "background invocation claim");
     let invocation_id = if tracks_invocation {
         if let Some(bg_id) = claimed_bg_invocation {
-            match history_db_write.as_ref() {
-                Some(db) => {
-                    if let Err(error) = db.claim_background_invocation(
-                        bg_id,
-                        command_name,
-                        subcommand,
-                        profile,
-                        None,
-                    ) {
-                        eprintln!("⚠️  Failed to claim background invocation {bg_id}: {error}");
-                    }
+            if let Some(db) = history_db_write.as_ref() {
+                if let Err(error) =
+                    db.claim_background_invocation(bg_id, command_name, subcommand, profile, None)
+                {
+                    eprintln!("⚠️  Failed to claim background invocation {bg_id}: {error}");
                 }
-                None => {
-                    let error = history_db_open_error
-                        .as_deref()
-                        .unwrap_or("unknown history DB open failure");
-                    eprintln!(
-                        "⚠️  Failed to open history DB for background invocation {bg_id}: {error}"
-                    );
-                }
+            } else {
+                let error = history_db_open_error
+                    .as_deref()
+                    .unwrap_or("unknown history DB open failure");
+                eprintln!(
+                    "⚠️  Failed to open history DB for background invocation {bg_id}: {error}"
+                );
             }
             Some(bg_id)
         } else {
-            match history_db_write.as_ref() {
-                Some(db) => match db.start_invocation(command_name, subcommand, profile, None) {
+            if let Some(db) = history_db_write.as_ref() {
+                match db.start_invocation(command_name, subcommand, profile, None) {
                     Ok(id) => Some(id),
                     Err(error) => {
                         eprintln!("⚠️  Failed to start invocation history row: {error}");
                         None
                     }
-                },
-                None => {
-                    let error = history_db_open_error
-                        .as_deref()
-                        .unwrap_or("unknown history DB open failure");
-                    eprintln!("⚠️  Failed to open history DB to start invocation: {error}");
-                    None
                 }
+            } else {
+                let error = history_db_open_error
+                    .as_deref()
+                    .unwrap_or("unknown history DB open failure");
+                eprintln!("⚠️  Failed to open history DB to start invocation: {error}");
+                None
             }
         }
     } else {

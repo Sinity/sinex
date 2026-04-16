@@ -1912,12 +1912,12 @@ mod tests {
             .connect(&slot_url)
             .await?;
         sqlx::query(
-            r#"
+            r"
             ALTER TABLE raw.source_material_registry
                 DROP CONSTRAINT IF EXISTS source_material_registry_status_check,
                 ADD CONSTRAINT source_material_registry_status_check
                 CHECK (status IN ('sensing', 'completed', 'recovered_partial', 'failed'))
-            "#,
+            ",
         )
         .execute(&slot_pool)
         .await?;
@@ -1977,12 +1977,12 @@ mod tests {
             .connect(&slot_url)
             .await?;
         sqlx::query(
-            r#"
+            r"
             ALTER TABLE raw.source_material_registry
                 DROP CONSTRAINT IF EXISTS source_material_registry_status_check,
                 ADD CONSTRAINT source_material_registry_status_check
                 CHECK (status IN ('sensing', 'completed', 'recovered_partial', 'failed'))
-            "#,
+            ",
         )
         .execute(&slot_pool)
         .await?;

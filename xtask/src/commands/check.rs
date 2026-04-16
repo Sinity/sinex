@@ -612,7 +612,7 @@ fn resolve_fixable_diagnostic_count(ctx: &CommandContext) -> (Option<usize>, Opt
         return (None, None);
     }
 
-    match ctx.try_with_history_db(|db| db.get_fixable_diagnostic_count()) {
+    match ctx.try_with_history_db(crate::history::HistoryDb::get_fixable_diagnostic_count) {
         Some(Ok(count)) => (Some(count), None),
         Some(Err(error)) => (
             None,

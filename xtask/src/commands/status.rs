@@ -202,18 +202,20 @@ async fn collect_core_service_statuses(
     runtime_metrics: Option<&RuntimeMetrics>,
     active_jobs: &[crate::jobs::Job],
 ) -> Vec<ServiceStatus> {
-    let ingestd = active_job_for_service("sinex-ingestd", active_jobs)
-        .map(|job| service_status_from_active_job("sinex-ingestd", job))
-        .unwrap_or_else(|| ingestd_service_status_from_runtime_metrics(runtime_metrics));
-    let gateway_process = active_job_for_service("sinex-gateway", active_jobs)
-        .map(|job| service_status_from_active_job("sinex-gateway", job))
-        .unwrap_or_else(|| ServiceStatus {
+    let ingestd = active_job_for_service("sinex-ingestd", active_jobs).map_or_else(
+        || ingestd_service_status_from_runtime_metrics(runtime_metrics),
+        |job| service_status_from_active_job("sinex-ingestd", job),
+    );
+    let gateway_process = active_job_for_service("sinex-gateway", active_jobs).map_or_else(
+        || ServiceStatus {
             name: "sinex-gateway".to_string(),
             status: ServiceRunStatus::Stopped,
             probe: "checkout_local",
             pid: None,
             message: Some("no active checkout-local gateway job is tracked".to_string()),
-        });
+        },
+        |job| service_status_from_active_job("sinex-gateway", job),
+    );
     let gateway_force_probe = matches!(gateway_process.status, ServiceRunStatus::Running);
 
     vec![
@@ -708,28 +710,25 @@ fn probe_git_state(cwd: &Path) -> GitState {
         });
 
     let now_unix_ts = current_unix_timestamp_secs();
-    let last_age = commit
-        .as_ref()
-        .and_then(|(_, _, commit_unix_ts)| match now_unix_ts {
-            Some(now_unix_ts) => {
-                parse_git_commit_age_mins(commit_unix_ts, now_unix_ts).or_else(|| {
-                    record_git_probe_issue(
-                        &mut probe_issues,
-                        &["log", "-1", "--format=%h\t%s\t%ct"],
-                        format!("unexpected commit timestamp: {commit_unix_ts}"),
-                    );
-                    None
-                })
-            }
-            None => {
+    let last_age = commit.as_ref().and_then(|(_, _, commit_unix_ts)| {
+        if let Some(now_unix_ts) = now_unix_ts {
+            parse_git_commit_age_mins(commit_unix_ts, now_unix_ts).or_else(|| {
                 record_git_probe_issue(
                     &mut probe_issues,
                     &["log", "-1", "--format=%h\t%s\t%ct"],
-                    "system clock is before the Unix epoch".to_string(),
+                    format!("unexpected commit timestamp: {commit_unix_ts}"),
                 );
                 None
-            }
-        });
+            })
+        } else {
+            record_git_probe_issue(
+                &mut probe_issues,
+                &["log", "-1", "--format=%h\t%s\t%ct"],
+                "system clock is before the Unix epoch".to_string(),
+            );
+            None
+        }
+    });
     let last_hash = commit.as_ref().map(|(hash, _, _)| hash.clone());
     let last_msg = commit.as_ref().map(|(_, message, _)| message.clone());
 
@@ -1629,7 +1628,7 @@ impl<'a> MotdRenderer<'a> {
             ));
         }
 
-        let right = format!("{}   {}{}  ", score_part, branch_part, ab_part);
+        let right = format!("{score_part}   {branch_part}{ab_part}  ");
         let right_vis = console::measure_text_width(&right);
 
         let padding = inner.saturating_sub(left_vis + right_vis);
@@ -1839,7 +1838,7 @@ impl<'a> MotdRenderer<'a> {
                 let avg = format!("~{:.1}s", v.recent_avg_secs.unwrap_or(0.0));
                 let delta = match v.delta_pct {
                     Some(d) if d < -5.0 => style(format!("↓{:.0}%", d.abs())).green().to_string(),
-                    Some(d) if d > 5.0 => style(format!("↑{:.0}%", d)).red().to_string(),
+                    Some(d) if d > 5.0 => style(format!("↑{d:.0}%")).red().to_string(),
                     _ => style("→").dim().to_string(),
                 };
                 let label = match v.scope_label.as_deref() {

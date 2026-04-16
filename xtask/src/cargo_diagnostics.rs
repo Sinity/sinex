@@ -291,19 +291,17 @@ fn progress_target_packages(package_args: &[&str]) -> Option<std::collections::H
 
     if workspace_mode {
         // Use cargo metadata to count workspace packages (no rustc involved)
-        let output = match cargo_command()
+        let Ok(output) = cargo_command()
             .args(["metadata", "--no-deps", "--format-version", "1"])
             .output()
-        {
-            Ok(o) => o,
-            Err(_) => return None,
+        else {
+            return None;
         };
         if !output.status.success() {
             return None;
         }
-        let text = match std::str::from_utf8(&output.stdout) {
-            Ok(s) => s,
-            Err(_) => return None,
+        let Ok(text) = std::str::from_utf8(&output.stdout) else {
+            return None;
         };
         let json: serde_json::Value = match serde_json::from_str(text) {
             Ok(v) => v,
@@ -582,7 +580,7 @@ pub fn parse_cargo_json_output(
             {
                 // Attach package attribution from the outer JSON envelope
                 if diag.package.is_none() {
-                    diag.package = package.clone();
+                    diag.package.clone_from(&package);
                 }
                 diagnostics.push(diag);
             }
@@ -721,9 +719,8 @@ fn extract_fix_from_children(
     Option<u32>,
     Option<u32>,
 ) {
-    let children = match msg.get("children").and_then(|c| c.as_array()) {
-        Some(c) => c,
-        None => return (None, None, None, None, None),
+    let Some(children) = msg.get("children").and_then(|c| c.as_array()) else {
+        return (None, None, None, None, None);
     };
 
     let mut suggestion_text: Option<String> = None;

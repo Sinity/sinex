@@ -329,7 +329,7 @@ fn execute_velocity(analysis: &HistoryAnalysis<'_>, ctx: &CommandContext) -> Res
                 .map_or_else(|| "-".into(), |s| format!("{s:.1}s"));
             let delta = t
                 .delta_pct
-                .map_or_else(|| "-".into(), |d| format!("{:+.1}%", d));
+                .map_or_else(|| "-".into(), |d| format!("{d:+.1}%"));
             let trend_colored = match t.trend.as_str() {
                 "faster" => style("↓ faster").green().to_string(),
                 "slower" => style("↑ slower").red().to_string(),

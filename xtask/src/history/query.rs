@@ -1171,7 +1171,7 @@ impl<'db> HistoryAnalysis<'db> {
         let flaky_tests = self.db.get_flaky_tests(200)?;
 
         let mut results = Vec::new();
-        for pkg in packages.iter() {
+        for pkg in &packages {
             let total_7d = TestResultQuery::new().package(pkg).days(7).count(self.db)?;
             if total_7d == 0 {
                 continue;
@@ -1748,8 +1748,10 @@ impl HistoryDb {
         bound_params.push(Box::new(q.offset as i64));
 
         let mut stmt = conn.prepare(&sql)?;
-        let param_refs: Vec<&dyn rusqlite::ToSql> =
-            bound_params.iter().map(|value| value.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = bound_params
+            .iter()
+            .map(std::convert::AsRef::as_ref)
+            .collect();
         let rows = stmt.query_map(rusqlite::params_from_iter(param_refs), row_to_invocation)?;
 
         let mut results = Vec::new();

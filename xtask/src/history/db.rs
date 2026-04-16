@@ -3430,9 +3430,8 @@ impl HistoryDb {
         let mut prev_started: Option<OffsetDateTime> = None;
 
         for row in &rows {
-            let gap_exceeded = prev_started.map_or(true, |prev| {
-                (row.started_at_ts - prev).whole_seconds() > gap_secs
-            });
+            let gap_exceeded = prev_started
+                .is_none_or(|prev| (row.started_at_ts - prev).whole_seconds() > gap_secs);
 
             if gap_exceeded {
                 if let Some(s) = current.take() {

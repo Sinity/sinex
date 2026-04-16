@@ -956,7 +956,7 @@ impl CommandContext {
         let Some(inv_id) = self.invocation_id else {
             return;
         };
-        let summary = terminal_summary.or_else(|| {
+        let summary = terminal_summary.or({
             // Auto-compute if items counts are available
             None
         });

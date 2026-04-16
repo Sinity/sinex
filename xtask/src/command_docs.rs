@@ -302,7 +302,7 @@ pub fn render_commands_help(commands: &[CommandInfo]) -> String {
         for path in category.command_paths {
             let command = lookup_command(commands, path);
             let summary = command_summary(command, "No summary available");
-            out.push_str(&format!("    {:<12}{}\n", path, summary));
+            out.push_str(&format!("    {path:<12}{summary}\n"));
         }
     }
 

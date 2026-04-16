@@ -85,7 +85,7 @@ fn render_invocation_scoped_nextest_config(
         .ok_or_else(|| eyre!("nextest profile `{profile}` is missing"))?;
     let junit_table = profile_table
         .entry("junit")
-        .or_insert(toml::Value::Table(Default::default()))
+        .or_insert(toml::Value::Table(toml::map::Map::default()))
         .as_table_mut()
         .ok_or_else(|| eyre!("nextest profile `{profile}` junit config must be a table"))?;
     junit_table.insert(
