@@ -18,6 +18,7 @@ pub mod shortcuts;
 pub mod telemetry;
 pub mod trace;
 pub mod tui;
+pub mod verify;
 
 pub use audit::AuditCommand;
 pub use blob::BlobCommands;
@@ -39,3 +40,4 @@ pub use shortcuts::{ErrorsCommand, RecentCommand, StatusCommand, WatchCommand};
 pub use telemetry::TelemetryCommands;
 pub use trace::TraceCommand;
 pub use tui::TuiCommand;
+pub use verify::VerifyCommand;
