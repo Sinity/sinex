@@ -52,6 +52,8 @@
 pub mod acquisition_manager;
 #[cfg(feature = "db")]
 pub mod annex;
+pub mod api_poller;
+pub mod batch_importer;
 #[cfg(feature = "messaging")]
 pub mod automaton_base;
 #[cfg(feature = "messaging")]
@@ -70,6 +72,7 @@ pub mod derived_node;
 pub mod error_helpers;
 #[cfg(feature = "messaging")]
 pub mod event_node;
+pub mod file_tailer;
 #[cfg(feature = "messaging")]
 pub mod examples;
 #[cfg(feature = "messaging")]
