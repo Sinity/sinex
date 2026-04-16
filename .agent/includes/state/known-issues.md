@@ -14,10 +14,12 @@ This include keeps only the compressed memory surface for AGENTS consumers.
 
 | Issue | Location | Notes |
 |-------|----------|-------|
-| Clean prod query-backed smoke is still unproven | deployment surface | Local end-to-end proof exists and the host is live, but the honest deployment threshold is still a queryable smoke event from the cleaned prod stack. |
+| Gateway smoke unproven (token was empty) | deployment surface | 562K events in prod via ingestor path. Gateway dead until rebuild with re-encrypted token. After rebuild: prove `sinexctl gateway ingest → sinexctl query`. |
+| FS ingestor OOM (pending rebuild) | deployment surface | NixOS module `defaultMemory` raised 256M → 1G. OOM-kills until `nixos-rebuild switch`. |
+| Operator CAs empty | self-observation | `ingestd_batch_stats_1h` etc. are empty. Self-observation events publish to `sinex.telemetry` but don't persist — routing gap. |
 | Browser/webhistory historical capture still lacks the right source-shaped ingestion path | source capture surface | The direct CLI shortcut is gone. The remaining work is native browser-DB ingestion plus historical import support for real browser export formats (`json`, `jsonl`, `csv`). |
 
-### Recently Fixed (verified through 2026-04-04)
+### Recently Fixed (verified through 2026-04-16)
 
 | Issue | Fix |
 |-------|-----|
@@ -50,6 +52,11 @@ This include keeps only the compressed memory surface for AGENTS consumers.
 | Local pipeline had no real end-to-end proof | Clean dev-stack proof now exists for gateway + terminal + filesystem through `NATS -> ingestd -> Postgres -> sinexctl query` |
 | Host activation was still theoretical | `sinnix-prime` is switched live with healthy gateway readiness, materialized admin token, and active managed services |
 | Terminal/desktop target-user bridges were unproven | Host ACL/runtime bridge fix now yields live `.zsh_history`, Atuin, and Hyprland source-material emission under systemd |
+| DLQ stream name mismatch | gateway and node-sdk used `EVENTS_DLQ`; ingestd creates `SINEX_RAW_EVENTS_DLQ`. Fixed in 5 files (2026-04-16). |
+| Desktop ingestor hard-error on unknown window address | `activewindowv2` handler panicked on startup race with unknown address. Now falls back to `hyprctl clients -j` (2026-04-16). |
+| Automata processed 0 events during normal operation | `DerivedNodeAdapter` used invalidation-only loop (`manages_own_continuous_loop: true`). Changed to `false`, implemented `process_event_batch` for confirmation stream bridge (2026-04-16). |
+| FS ingestor OOM (256M NixOS limit) | NixOS module `defaultMemory` raised to 1G. Needs rebuild to take effect (2026-04-16). |
+| Gateway admin token empty | agenix secret was encrypted with empty plaintext. Re-encrypted with real token in sinnix repo. Needs rebuild (2026-04-16). |
 
 ### Design Tensions (Both Sides Are Correct)
 

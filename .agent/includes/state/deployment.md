@@ -19,23 +19,26 @@ the desktop/terminal services now emit real source-material traffic under system
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Compilation | 0 errors, 0 warnings | Clean workspace |
-| FS ingestor | READY | `/realm` is btrfs mount (755), `ProtectHome=read-only` override exists |
-| System ingestor | READY | journald API access works for service user |
-| ingestd | READY | sd_notify support added |
-| gateway | READY | sd_notify added, `Type=simple` override in NixOS |
+| FS ingestor | FIXED — needs rebuild | OOM-killing at 256M; NixOS module raised to 1G |
+| System ingestor | ACTIVE in prod | 386K dbus signals in 17h on sinnix-prime |
+| ingestd | ACTIVE in prod | 225K+ events processed; sd_notify support present |
+| gateway | FIXED — needs rebuild | Was dead (empty agenix token); re-encrypted in sinnix repo |
 | Schema apply | READY | `sinex-schema-apply.service` exists in both NixOS paths |
 | sinexctl | READY | query, trace, telemetry, context, report, import subcommands |
 | Local end-to-end proof | VERIFIED | gateway + terminal + filesystem traffic persisted on the dev stack and was queried back through `sinexctl` |
-| Desktop ingestor on host | VERIFIED | Hyprland/window-manager traffic creates and finalizes source material on `sinnix-prime` |
-| Terminal ingestor on host | VERIFIED | target-home ACL bridge now permits `.zsh_history` and Atuin reads; fresh source material was created after host switch |
-| Gateway admin token on host | VERIFIED | `/run/agenix/sinex-gateway-admin-token` is readable after switch |
+| Desktop ingestor on host | ACTIVE in prod | 163 window.focused + 100K+ unhandled dbus signals; activewindowv2 race fixed |
+| Terminal ingestor on host | ACTIVE in prod | 73K commands from Atuin in 17h on sinnix-prime |
+| Automata event bridge | FIXED | `DerivedNodeAdapter` now uses confirmation stream bridge (was stuck in invalidation-only loop) |
+| Production pipeline | PROVEN | 562K real events in sinex_prod from 3 ingestors over 17h |
 
 ### What's Still Blocking Trusted Production
 
 | Component | Blocker | Fix |
 |-----------|---------|-----|
-| Production persisted smoke | The live prod host still needs a clean `events.ingest -> NATS -> ingestd -> Postgres -> query` proof after clearing earlier poisoned/raw backlog state | Reset the prod proof surface, ingest a smoke event through the real gateway, and query it back |
-| Production historical-path proof | Terminal/desktop access and live source-material emission are now proved, but the host still lacks a clean proof for historical backfill behavior on the prod stack | Re-run terminal/desktop historical scans on the cleaned prod environment and query the resulting rows |
+| Gateway smoke | Token was empty; token fixed in sinnix. Gateway dead until rebuild. | `nixos-rebuild switch` then `sinexctl gateway ingest → sinexctl query` |
+| FS ingestor stability | OOM-killing; MemoryMax fix in NixOS module needs rebuild. | `nixos-rebuild switch` |
+| Production historical-path proof | Terminal/desktop historical scans not yet query-verified on prod. | Re-run historical scans post-rebuild and query resulting rows. |
+| Operator CAs empty | Self-observation events don't persist (telemetry routing gap). | Known gap; investigate sinex.telemetry subject → ingestd routing. |
 
 ### Activation Sequence (Critical Path)
 
@@ -70,7 +73,8 @@ The sinex service user (uid=991) runs all services. The target user (sinity, uid
 ```
 A (done)   → Activation: FS + system ingestors give file changes + journal events
 B (done)   → Full capture bridges: terminal + desktop host access proved
-C (next)   → Clean prod persisted smoke + historical proofs
-D (days)   → Intelligence: entity extractor, session detector (SDK complete, logic vacant)
-E (weeks)  → Semantic: embedding pipeline, hybrid search
+C (done)   → 562K real events in prod; automata bridged to event stream
+D (next)   → Gateway smoke + FS OOM fix via rebuild; historical backfill proof
+E (days)   → Intelligence: session detector deploy; monitor automata derived output
+F (weeks)  → Semantic: embedding pipeline, hybrid search
 ```
