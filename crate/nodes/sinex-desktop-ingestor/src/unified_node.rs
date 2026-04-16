@@ -269,7 +269,7 @@ impl DesktopNode {
         Ok(state)
     }
 
-    async fn initialize_watcher_handles(&mut self) -> NodeResult<()> {
+    fn initialize_watcher_handles(&mut self) -> NodeResult<()> {
         if self.config.clipboard_enabled && self.clipboard_watcher.is_none() {
             // Create initialized handle
             let handle = WatcherHandle::initialized("clipboard");
@@ -735,7 +735,7 @@ impl IngestorNode for DesktopNode {
         self.stage_context = Some(stage_context);
         self.acquisition = Some(acquisition);
 
-        self.initialize_watcher_handles().await?;
+        self.initialize_watcher_handles()?;
 
         Ok(())
     }
@@ -876,7 +876,7 @@ impl IngestorNode for DesktopNode {
         let mut warnings = Vec::new();
 
         // Ensure handles are initialized
-        self.initialize_watcher_handles().await?;
+        self.initialize_watcher_handles()?;
 
         let stage_context = self
             .stage_context
@@ -895,9 +895,7 @@ impl IngestorNode for DesktopNode {
                 self.config.clipboard_poll_interval_secs,
                 stage_context.clone(),
                 watcher_shutdown_rx,
-            )
-            .await
-            {
+            ) {
                 Ok(mut watcher) => {
                     *handle = WatcherHandle::initialized("clipboard");
                     let health = handle.health_tracker();

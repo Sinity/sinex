@@ -136,11 +136,11 @@ impl NodeRuntimeState {
         HeartbeatEmitter::from_runtime(self, interval_seconds)
     }
 
-    pub async fn coordination(
+    pub fn coordination(
         &self,
         instance_id: impl Into<String>,
     ) -> NodeResult<NodeCoordination> {
-        NodeCoordination::from_runtime(self, instance_id.into()).await
+        NodeCoordination::from_runtime(self, instance_id.into())
     }
 
     #[must_use]

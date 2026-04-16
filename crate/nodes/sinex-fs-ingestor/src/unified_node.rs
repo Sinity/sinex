@@ -457,7 +457,7 @@ impl FilesystemNode {
         Ok(contexts)
     }
 
-    async fn spawn_watchers(&self) -> NodeResult<Vec<tokio::task::JoinHandle<()>>> {
+    fn spawn_watchers(&self) -> NodeResult<Vec<tokio::task::JoinHandle<()>>> {
         let contexts = self.build_watch_contexts()?;
 
         let mut handles = Vec::with_capacity(contexts.len());
@@ -760,7 +760,7 @@ impl IngestorNode for FilesystemNode {
         from: Checkpoint,
         shutdown_rx: tokio::sync::watch::Receiver<bool>,
     ) -> NodeResult<ScanReport> {
-        let handles = self.spawn_watchers().await?;
+        let handles = self.spawn_watchers()?;
         {
             let mut guard = self.watch_handles.lock().await;
             guard.extend(handles);
@@ -1527,6 +1527,10 @@ fn observed_path_string(path: &Path) -> NodeResult<String> {
     })
 }
 
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "Returns None under #[cfg(not(unix))]; Option shape is forced by the cross-platform split"
+)]
 fn file_permissions(metadata: &StdMetadata) -> Option<u32> {
     #[cfg(unix)]
     {

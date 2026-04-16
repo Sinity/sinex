@@ -527,7 +527,7 @@ impl SystemNode {
     }
 
     /// Initialize watcher metadata (actual streaming starts during continuous scans).
-    async fn initialize_watchers(&mut self) -> NodeResult<()> {
+    fn initialize_watchers(&mut self) -> NodeResult<()> {
         if self.config.dbus_enabled {
             if self.dbus_watcher.is_none() {
                 info!(
@@ -990,7 +990,7 @@ impl IngestorNode for SystemNode {
             "System node configuration"
         );
 
-        self.initialize_watchers().await?;
+        self.initialize_watchers()?;
 
         Ok(())
     }

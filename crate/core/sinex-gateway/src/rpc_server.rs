@@ -1031,7 +1031,7 @@ const TCP_LISTEN_BACKLOG: i32 = 128;
 /// - Both can accept connections (kernel load balances)
 /// - Coordination/handoff mechanism ensures only one is the leader
 /// - Old instance exits gracefully after handoff
-async fn bind_with_reuseport(addr: &str) -> std::io::Result<tokio::net::TcpListener> {
+fn bind_with_reuseport(addr: &str) -> std::io::Result<tokio::net::TcpListener> {
     use socket2::{Domain, Protocol, Socket, Type};
     use std::net::SocketAddr;
 
@@ -1386,7 +1386,6 @@ pub async fn spawn(
 
     let app = RpcServer::build_app(&limits, &config.cors_origins_list(), state);
     let listener = bind_with_reuseport(&addr_str)
-        .await
         .wrap_err_with(|| format!("Failed to bind TCP listener to {addr_str}"))?;
 
     let local_addr = listener.local_addr()?;

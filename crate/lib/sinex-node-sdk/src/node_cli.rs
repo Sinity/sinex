@@ -510,17 +510,14 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
                 coverage_analysis,
                 limit,
                 ref export_to,
-            } => {
-                self.handle_explore_command(
-                    node,
-                    source_state,
-                    ingestion_history,
-                    coverage_analysis,
-                    limit,
-                    export_to.as_ref(),
-                )
-                .await
-            }
+            } => self.handle_explore_command(
+                node,
+                source_state,
+                ingestion_history,
+                coverage_analysis,
+                limit,
+                export_to.as_ref(),
+            ),
         }
     }
 
@@ -599,14 +596,14 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
             // Create coordination with generated instance ID
             let instance_id = Uuid::new_v4().to_string();
 
-            let coordination = NodeCoordination::from_runtime(&runtime_snapshot, instance_id);
+            let mut coordination =
+                NodeCoordination::from_runtime(&runtime_snapshot, instance_id)?;
 
             // Wrap runner in Arc<Mutex<>> for sharing
             let runner = Arc::new(Mutex::new(runner));
 
             // Run with coordination (hot standby pattern)
             coordination
-                .await?
                 .run_coordination_loop(move || {
                     let runner = runner.clone();
                     async move {
@@ -777,7 +774,7 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
         Ok(())
     }
 
-    async fn handle_explore_command(
+    fn handle_explore_command(
         &self,
         node: T,
         source_state: bool,

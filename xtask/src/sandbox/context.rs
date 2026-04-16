@@ -583,6 +583,10 @@ impl Sandbox {
     }
 
     /// Initialize tracing for tests (static method for use without context)
+    #[allow(
+        clippy::panic,
+        reason = "Test setup: a broken tracing filter means the tests cannot run; panic is fatal-by-design"
+    )]
     pub fn init_tracing(level: &str) {
         use tracing_subscriber::{fmt, prelude::*};
 

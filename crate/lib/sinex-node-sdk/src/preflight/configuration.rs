@@ -30,7 +30,7 @@ pub async fn verify_configuration_generation()
     info!("Verifying configuration generation and validation");
 
     // Environment variable validation
-    match verify_environment_variables(&mut messages).await {
+    match verify_environment_variables(&mut messages) {
         Ok(env_info) => {
             details.insert("environment", env_info);
         }
@@ -41,7 +41,7 @@ pub async fn verify_configuration_generation()
     }
 
     // Runtime configuration contract validation
-    match verify_runtime_configuration_contract(&mut messages).await {
+    match verify_runtime_configuration_contract(&mut messages) {
         Ok(config_info) => {
             details.insert("runtime_config_contract", config_info);
         }
@@ -52,7 +52,7 @@ pub async fn verify_configuration_generation()
     }
 
     // Event source configuration validation
-    match verify_event_source_configuration(&mut messages).await {
+    match verify_event_source_configuration(&mut messages) {
         Ok(event_config) => {
             if !event_config
                 .get("deployment_descriptor_loaded")
@@ -113,7 +113,7 @@ pub async fn verify_configuration_generation()
     Ok((status, json!(details), messages))
 }
 
-async fn verify_environment_variables(messages: &mut Vec<String>) -> NodeResult<Value> {
+fn verify_environment_variables(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut env_vars = HashMap::new();
     let mut missing_vars = Vec::new();
     let mut has_issues = false;
@@ -232,7 +232,7 @@ async fn verify_environment_variables(messages: &mut Vec<String>) -> NodeResult<
     }))
 }
 
-async fn verify_runtime_configuration_contract(messages: &mut Vec<String>) -> NodeResult<Value> {
+fn verify_runtime_configuration_contract(messages: &mut Vec<String>) -> NodeResult<Value> {
     messages.push(
         "✓ Runtime configuration contract is env-first and NixOS-managed for deployed systems"
             .to_string(),
@@ -245,7 +245,7 @@ async fn verify_runtime_configuration_contract(messages: &mut Vec<String>) -> No
     }))
 }
 
-async fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeResult<Value> {
+fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut event_sources = HashMap::new();
     let descriptor = deployment_descriptor_result("preflight configuration checks")?;
     let mut configured_unavailable = Vec::new();

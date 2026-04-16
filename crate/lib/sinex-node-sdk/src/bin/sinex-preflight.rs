@@ -179,7 +179,7 @@ async fn run_complete_verification(
 ) -> NodeResult<VerificationStatus> {
     let report = build_verification_report(timeout_secs, skip_phases).await?;
     let overall_status = report.overall_status;
-    output_report(&report, output_format).await?;
+    output_report(&report, output_format)?;
     Ok(overall_status)
 }
 
@@ -197,7 +197,7 @@ async fn build_verification_report(
         completed_at: None,
         duration_ms: None,
         phases: HashMap::new(),
-        system_info: collect_system_info().await?,
+        system_info: collect_system_info()?,
         warnings: Vec::new(),
         errors: Vec::new(),
     };
@@ -316,7 +316,7 @@ async fn run_verification_phase(phase: &VerificationPhase) -> NodeResult<PhaseRe
     })
 }
 
-async fn collect_system_info() -> NodeResult<SystemInfo> {
+fn collect_system_info() -> NodeResult<SystemInfo> {
     use sysinfo::System;
 
     let mut sys = System::new_all();
@@ -347,7 +347,7 @@ fn get_available_disk_space() -> NodeResult<f64> {
     Ok(available_bytes as f64 / 1024.0 / 1024.0 / 1024.0)
 }
 
-async fn output_report(report: &VerificationReport, format: OutputFormat) -> NodeResult<()> {
+fn output_report(report: &VerificationReport, format: OutputFormat) -> NodeResult<()> {
     match format {
         OutputFormat::Json => {
             println!(
@@ -407,10 +407,7 @@ async fn output_report(report: &VerificationReport, format: OutputFormat) -> Nod
     Ok(())
 }
 
-async fn output_report_summary(
-    report: &VerificationReport,
-    format: OutputFormat,
-) -> NodeResult<()> {
+fn output_report_summary(report: &VerificationReport, format: OutputFormat) -> NodeResult<()> {
     let phases: Vec<_> = report
         .phases
         .iter()
@@ -556,9 +553,9 @@ async fn generate_verification_report(
     let overall_status = report.overall_status;
 
     if detailed {
-        output_report(&report, output_format).await?;
+        output_report(&report, output_format)?;
     } else {
-        output_report_summary(&report, output_format).await?;
+        output_report_summary(&report, output_format)?;
     }
 
     Ok(overall_status)

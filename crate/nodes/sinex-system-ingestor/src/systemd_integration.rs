@@ -315,7 +315,7 @@ impl JournalReader {
 
     /// Read new entries from the journal (simplified text reading)
     /// Note: For production use, you'd want to parse the binary journal format
-    pub async fn read_new_entries(&mut self) -> Result<Vec<String>> {
+    pub fn read_new_entries(&mut self) -> Result<Vec<String>> {
         let file = self
             .file
             .as_mut()
@@ -356,7 +356,7 @@ impl JournalReader {
         self.open_system_journal()?;
 
         loop {
-            let entries = self.read_new_entries().await?;
+            let entries = self.read_new_entries()?;
             if !forward_journal_entries(&tx, entries).await {
                 return Ok(());
             }
@@ -527,7 +527,7 @@ mod tests {
             last_position: 0,
         };
 
-        let entries = reader.read_new_entries().await?;
+        let entries = reader.read_new_entries()?;
 
         assert_eq!(entries, vec!["entry-1".to_string(), "entry-2".to_string()]);
         assert_eq!(
@@ -557,7 +557,6 @@ mod tests {
 
         let error = reader
             .read_new_entries()
-            .await
             .expect_err("invalid UTF-8 journal lines must fail honestly");
 
         assert!(error.to_string().contains("Failed to read journal line 2"));

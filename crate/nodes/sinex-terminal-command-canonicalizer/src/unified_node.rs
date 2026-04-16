@@ -157,6 +157,10 @@ where
     })
 }
 
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "Signature symmetry with the fallible canonicalize_atuin for match-arm uniformity"
+)]
 fn canonicalize_kitty(
     payload: KittyCommandExecutedPayload,
     ts_orig: sinex_primitives::Timestamp,
@@ -218,6 +222,10 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
     })
 }
 
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "Signature symmetry with the fallible canonicalize_atuin for match-arm uniformity"
+)]
 fn canonicalize_history(
     command: String,
     working_directory: Option<sinex_primitives::domain::RecordedPath>,

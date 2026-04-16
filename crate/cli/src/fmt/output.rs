@@ -84,17 +84,20 @@ pub fn empty_result(format: &OutputFormat, message: &str) {
 /// CommandOutput::success("Operation completed")
 ///     .display(&OutputFormat::Table)?;
 /// ```
+type ListTableFormatter<T> = Box<dyn FnOnce(&[T]) -> String>;
+type SingleTableFormatter<T> = Box<dyn FnOnce(&T) -> String>;
+
 pub enum CommandOutput<T: Serialize> {
     /// List of items with optional empty message
     List {
         items: Vec<T>,
         empty_msg: &'static str,
-        table_formatter: Box<dyn FnOnce(&[T]) -> String>,
+        table_formatter: ListTableFormatter<T>,
     },
     /// Single item
     Single {
         item: T,
-        table_formatter: Box<dyn FnOnce(&T) -> String>,
+        table_formatter: SingleTableFormatter<T>,
     },
     /// Empty result with message
     Empty { message: &'static str },

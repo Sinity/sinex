@@ -94,7 +94,7 @@ pub async fn verify_system_resources() -> NodeResult<(VerificationStatus, Value,
     info!("Verifying system resource availability");
 
     // Memory verification
-    match verify_memory_availability(&mut messages).await {
+    match verify_memory_availability(&mut messages) {
         Ok(memory_info) => {
             details.insert("memory", memory_info);
         }
@@ -105,7 +105,7 @@ pub async fn verify_system_resources() -> NodeResult<(VerificationStatus, Value,
     }
 
     // Disk space verification
-    match verify_disk_space(&mut messages).await {
+    match verify_disk_space(&mut messages) {
         Ok(disk_info) => {
             details.insert("disk", disk_info);
         }
@@ -116,7 +116,7 @@ pub async fn verify_system_resources() -> NodeResult<(VerificationStatus, Value,
     }
 
     // CPU load verification
-    match verify_cpu_capacity(&mut messages).await {
+    match verify_cpu_capacity(&mut messages) {
         Ok(cpu_info) => {
             // Check if system is under high load
             if let Some(load) = cpu_info
@@ -155,7 +155,7 @@ pub async fn verify_system_resources() -> NodeResult<(VerificationStatus, Value,
     }
 
     // Network connectivity verification
-    match verify_network_connectivity(&mut messages).await {
+    match verify_network_connectivity(&mut messages) {
         Ok(network_info) => {
             details.insert("network", network_info);
         }
@@ -165,16 +165,7 @@ pub async fn verify_system_resources() -> NodeResult<(VerificationStatus, Value,
         }
     }
 
-    // Process limits verification
-    match verify_process_limits(&mut messages) {
-        Ok(limits_info) => {
-            details.insert("process_limits", limits_info);
-        }
-        Err(e) => {
-            messages.push(format!("⚠ Process limits verification warning: {e}"));
-            has_warnings = true;
-        }
-    }
+    details.insert("process_limits", verify_process_limits(&mut messages));
 
     let status = if has_failures {
         VerificationStatus::Fail
@@ -188,7 +179,7 @@ pub async fn verify_system_resources() -> NodeResult<(VerificationStatus, Value,
     Ok((status, json!(details), messages))
 }
 
-async fn verify_memory_availability(messages: &mut Vec<String>) -> NodeResult<Value> {
+fn verify_memory_availability(messages: &mut Vec<String>) -> NodeResult<Value> {
     use sysinfo::System;
 
     let mut sys = System::new_all();
@@ -227,7 +218,7 @@ async fn verify_memory_availability(messages: &mut Vec<String>) -> NodeResult<Va
     }))
 }
 
-async fn verify_disk_space(messages: &mut Vec<String>) -> NodeResult<Value> {
+fn verify_disk_space(messages: &mut Vec<String>) -> NodeResult<Value> {
     let state_dir = configured_state_dir()?;
     let data_dir = configured_data_dir()?;
     let tmp_dir = configured_tmp_dir()?;
@@ -327,7 +318,7 @@ fn get_disk_space(path: &str) -> NodeResult<(f64, f64)> {
     Ok((total_gb, available_gb))
 }
 
-async fn verify_cpu_capacity(messages: &mut Vec<String>) -> NodeResult<Value> {
+fn verify_cpu_capacity(messages: &mut Vec<String>) -> NodeResult<Value> {
     use sysinfo::System;
 
     let mut sys = System::new_all();
@@ -540,7 +531,7 @@ async fn check_directory_permissions(dir_path: &str) -> NodeResult<Value> {
     }
 }
 
-async fn verify_network_connectivity(messages: &mut Vec<String>) -> NodeResult<Value> {
+fn verify_network_connectivity(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut network_info = HashMap::new();
 
     match test_loopback_resolution() {
@@ -711,7 +702,7 @@ fn test_loopback_resolution() -> NodeResult<()> {
     Ok(())
 }
 
-fn verify_process_limits(messages: &mut Vec<String>) -> NodeResult<Value> {
+fn verify_process_limits(messages: &mut Vec<String>) -> Value {
     let mut limits_info = HashMap::new();
 
     // Check file descriptor limits
@@ -736,7 +727,7 @@ fn verify_process_limits(messages: &mut Vec<String>) -> NodeResult<Value> {
         }
     }
 
-    Ok(json!(limits_info))
+    json!(limits_info)
 }
 
 fn check_file_descriptor_limits() -> NodeResult<Value> {
@@ -872,7 +863,7 @@ mod tests {
         env.set("SINEX_WORK_DIR", missing_work_dir.display().to_string());
 
         let mut messages = Vec::new();
-        let disk_info = verify_disk_space(&mut messages).await?;
+        let disk_info = verify_disk_space(&mut messages)?;
         let missing_work_dir_str = missing_work_dir.display().to_string();
         assert!(
             disk_info["paths"][missing_work_dir_str.as_str()]["meets_requirements"]

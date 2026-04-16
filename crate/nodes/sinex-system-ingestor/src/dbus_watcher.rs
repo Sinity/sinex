@@ -216,7 +216,7 @@ impl DbusWatcher {
     }
 
     /// Create new D-Bus watcher
-    pub async fn new(config: DbusConfig) -> NodeResult<Self> {
+    pub fn new(config: DbusConfig) -> NodeResult<Self> {
         info!("D-Bus watcher initialized with config: {:?}", config);
         Ok(Self { config })
     }

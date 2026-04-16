@@ -1414,6 +1414,10 @@ impl ReplayExecutionEngine {
     }
 
     #[cfg(not(test))]
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "Shape must match the #[cfg(test)] fault-injection variant, which returns Err"
+    )]
     fn maybe_fail_checkpoint_persist(&self) -> Result<()> {
         Ok(())
     }
@@ -1447,6 +1451,10 @@ impl ReplayExecutionEngine {
     }
 
     #[cfg(not(test))]
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "Shape must match the #[cfg(test)] fault-injection variant, which returns Err"
+    )]
     fn maybe_fail_scope_metadata_collection(&self) -> Result<()> {
         Ok(())
     }
@@ -1466,6 +1474,10 @@ impl ReplayExecutionEngine {
     }
 
     #[cfg(not(test))]
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "Shape must match the #[cfg(test)] fault-injection variant, which returns Err"
+    )]
     fn maybe_fail_scope_invalidation_publish(&self) -> Result<()> {
         Ok(())
     }
@@ -1485,6 +1497,10 @@ impl ReplayExecutionEngine {
     }
 
     #[cfg(not(test))]
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "Shape must match the #[cfg(test)] fault-injection variant, which returns Err"
+    )]
     fn maybe_fail_replacement_recording(&self) -> Result<()> {
         Ok(())
     }

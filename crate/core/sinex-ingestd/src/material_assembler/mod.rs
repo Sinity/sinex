@@ -485,14 +485,14 @@ impl MaterialAssembler {
     }
 
     /// Fetch a handle to an existing assembler state for a material.
-    async fn get_state_handle(&self, material_id: &Uuid) -> Option<Arc<Mutex<AssemblerState>>> {
+    fn get_state_handle(&self, material_id: &Uuid) -> Option<Arc<Mutex<AssemblerState>>> {
         self.assembler_state
             .get(material_id)
             .map(|entry| entry.value().clone())
     }
 
     /// Insert a new assembler state if one does not already exist.
-    async fn insert_state_handle(
+    fn insert_state_handle(
         &self,
         material_id: Uuid,
         state: AssemblerState,
@@ -1316,7 +1316,7 @@ mod tests {
 
         let mut state = assembler.create_placeholder_state(material_id).await?;
         state.last_slice_received = Timestamp::now() - time::Duration::minutes(10);
-        let state_handle = assembler.insert_state_handle(material_id, state).await;
+        let state_handle = assembler.insert_state_handle(material_id, state);
 
         let locked_state = state_handle.lock().await;
         let scan_assembler = assembler.clone_for_task();

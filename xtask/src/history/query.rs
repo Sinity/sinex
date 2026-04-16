@@ -662,14 +662,7 @@ impl<'db> HistoryAnalysis<'db> {
         Ok(self.build_workspace_health_report(packages, counts, &baseline_velocity))
     }
 
-    pub fn analytics_snapshot(
-        &self,
-    ) -> Result<(
-        WorkspaceHealthReport,
-        Vec<VelocityTrend>,
-        Vec<VelocityTrend>,
-        Vec<Recommendation>,
-    )> {
+    pub fn analytics_snapshot(&self) -> Result<AnalyticsSnapshot> {
         let packages = self.all_packages_health()?;
         let counts = self.db.get_current_diagnostic_counts()?;
         let loop_velocity = self.loop_velocity_trends()?;
@@ -677,17 +670,15 @@ impl<'db> HistoryAnalysis<'db> {
         let health = self.build_workspace_health_report(packages, counts, &baseline_velocity);
         let recommendations =
             self.build_recommendations(&health, &baseline_velocity, &loop_velocity)?;
-        Ok((health, loop_velocity, baseline_velocity, recommendations))
+        Ok(AnalyticsSnapshot {
+            health,
+            loop_velocity,
+            baseline_velocity,
+            recommendations,
+        })
     }
 
-    pub fn status_summary_snapshot(
-        &self,
-    ) -> Result<(
-        WorkspaceHealthReport,
-        Vec<VelocityTrend>,
-        Vec<VelocityTrend>,
-        Vec<Recommendation>,
-    )> {
+    pub fn status_summary_snapshot(&self) -> Result<AnalyticsSnapshot> {
         let counts = self.db.get_current_diagnostic_counts()?;
         let loop_velocity = self.loop_velocity_trends()?;
         let baseline_velocity = self.workspace_baseline_velocity_trends()?;
@@ -702,7 +693,12 @@ impl<'db> HistoryAnalysis<'db> {
         );
         let recommendations =
             self.build_status_recommendations(&health, &baseline_velocity, &loop_velocity);
-        Ok((health, loop_velocity, baseline_velocity, recommendations))
+        Ok(AnalyticsSnapshot {
+            health,
+            loop_velocity,
+            baseline_velocity,
+            recommendations,
+        })
     }
 
     fn build_workspace_health_report(
@@ -1242,8 +1238,7 @@ impl<'db> HistoryAnalysis<'db> {
     /// Each recommendation includes the exact `xtask` command to run next.
     /// Sorted: critical → warning → info.
     pub fn recommendations(&self) -> Result<Vec<Recommendation>> {
-        let (_, _, _, recommendations) = self.analytics_snapshot()?;
-        Ok(recommendations)
+        Ok(self.analytics_snapshot()?.recommendations)
     }
 
     fn build_recommendations(
@@ -1489,6 +1484,19 @@ impl<'db> HistoryAnalysis<'db> {
 }
 
 // ─── Analytics output types ──────────────────────────────────────────────────
+
+/// Snapshot of workspace analytics: health, recent/baseline velocity, and derived recommendations.
+///
+/// Returned by `HistoryAnalysis::analytics_snapshot` and `status_summary_snapshot`. The two
+/// methods compute the same shape via different paths: `analytics_snapshot` is the full fan-out
+/// that walks every package; `status_summary_snapshot` is the fast path used by `xtask status`.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyticsSnapshot {
+    pub health: WorkspaceHealthReport,
+    pub loop_velocity: Vec<VelocityTrend>,
+    pub baseline_velocity: Vec<VelocityTrend>,
+    pub recommendations: Vec<Recommendation>,
+}
 
 /// Composite workspace health report.
 #[derive(Debug, Clone, Serialize)]
@@ -2022,13 +2030,12 @@ mod tests {
         )?;
 
         let analysis = HistoryAnalysis::new(&db);
-        let (health, _loop_velocity, _baseline_velocity, recommendations) =
-            analysis.status_summary_snapshot()?;
+        let snapshot = analysis.status_summary_snapshot()?;
 
-        assert!(health.packages.is_empty());
-        assert_eq!(health.avg_test_pass_rate, Some(1.0));
-        assert!(health.score > 0);
-        assert!(recommendations.is_empty());
+        assert!(snapshot.health.packages.is_empty());
+        assert_eq!(snapshot.health.avg_test_pass_rate, Some(1.0));
+        assert!(snapshot.health.score > 0);
+        assert!(snapshot.recommendations.is_empty());
         Ok(())
     }
 }

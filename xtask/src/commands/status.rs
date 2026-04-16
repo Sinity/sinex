@@ -876,16 +876,16 @@ fn collect_history_snapshot_from_db(
         let analysis = HistoryAnalysis::new(db);
         let analytics_started_at = Instant::now();
         match analysis.status_summary_snapshot() {
-            Ok((report, velocity, baseline_velocity, recommendations)) => {
+            Ok(analytics) => {
                 snapshot.diag_counts = DiagnosticCounts {
-                    errors: report.error_count,
-                    warnings: report.warning_count,
-                    fixable: report.fixable_count,
+                    errors: analytics.health.error_count,
+                    warnings: analytics.health.warning_count,
+                    fixable: analytics.health.fixable_count,
                 };
-                snapshot.health_report = Some(report);
-                snapshot.velocity = velocity;
-                snapshot.baseline_velocity = baseline_velocity;
-                snapshot.recommendations = recommendations;
+                snapshot.health_report = Some(analytics.health);
+                snapshot.velocity = analytics.loop_velocity;
+                snapshot.baseline_velocity = analytics.baseline_velocity;
+                snapshot.recommendations = analytics.recommendations;
             }
             Err(error) => snapshot.issues.push(format!(
                 "Failed to compute workspace analytics snapshot: {error}"

@@ -80,7 +80,7 @@ pub struct UdevWatcher {
 
 impl UdevWatcher {
     /// Create new udev watcher
-    pub async fn new(monitor_hotplug: bool) -> NodeResult<Self> {
+    pub fn new(monitor_hotplug: bool) -> NodeResult<Self> {
         let watcher = Self {
             _monitor_hotplug: monitor_hotplug,
         };

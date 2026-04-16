@@ -129,7 +129,7 @@ pub struct EventRepository<'a> {
 ///
 /// Array-size limits are retained because large `source_event_ids` arrays have
 /// real query-performance implications irrespective of cycles.
-async fn ensure_no_synthesis_cycles<'e, E>(
+fn ensure_no_synthesis_cycles<'e, E>(
     _executor: E,
     event_id: &Id<Event<JsonValue>>,
     source_event_ids: &[EventId],
@@ -271,9 +271,9 @@ fn ensure_batch_event_ids(events: &mut [Event<JsonValue>]) {
     }
 }
 
-fn collect_synthesis_checks(
-    events: &[Event<JsonValue>],
-) -> DbResult<Vec<(Id<Event<JsonValue>>, Vec<EventId>)>> {
+type SynthesisChecks = Vec<(Id<Event<JsonValue>>, Vec<EventId>)>;
+
+fn collect_synthesis_checks(events: &[Event<JsonValue>]) -> DbResult<SynthesisChecks> {
     let mut synthesis_checks = Vec::new();
 
     for event in events {
@@ -737,7 +737,7 @@ impl<'a> EventRepository<'a> {
                     set_repeatable_read(tx).await?;
 
                     if let Some(source_event_ids) = source_event_ids.as_ref() {
-                        ensure_no_synthesis_cycles(&mut **tx, &id, source_event_ids).await?;
+                        ensure_no_synthesis_cycles(&mut **tx, &id, source_event_ids)?;
                     }
 
                     let record = sqlx::query_as!(
@@ -853,7 +853,7 @@ impl<'a> EventRepository<'a> {
         ) = extract_provenance(&event)?;
 
         if let Some(source_event_ids) = source_event_ids.as_ref() {
-            ensure_no_synthesis_cycles(&mut **tx, &id, source_event_ids).await?;
+            ensure_no_synthesis_cycles(&mut **tx, &id, source_event_ids)?;
         }
 
         // Convert IDs to UUIDs before the query to avoid temporary value issues
@@ -1166,7 +1166,7 @@ impl<'a> EventRepository<'a> {
 
         // Enforce synthesis cycle detection (parity with insert/insert_stream_batch)
         for (event_id, source_ids) in &synthesis_checks {
-            ensure_no_synthesis_cycles(&mut **tx, event_id, source_ids).await?;
+            ensure_no_synthesis_cycles(&mut **tx, event_id, source_ids)?;
         }
 
         // QueryBuilder is required here because UNNEST cannot represent ragged arrays
@@ -1273,7 +1273,7 @@ impl<'a> EventRepository<'a> {
                 set_repeatable_read(&mut tx).await?;
 
                 for (event_id, source_ids) in &synthesis_checks {
-                    ensure_no_synthesis_cycles(&mut *tx, event_id, source_ids).await?;
+                    ensure_no_synthesis_cycles(&mut *tx, event_id, source_ids)?;
                 }
 
                 let result = Self::execute_batch_insert(&mut *tx, batch).await?;

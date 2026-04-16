@@ -735,7 +735,7 @@ impl XtaskCommand for TestCommand {
                 TestSubcommand::Bench(bench) => execute_bench(bench, ctx),
                 TestSubcommand::Fuzz(fuzz) => execute_fuzz(fuzz, ctx).await,
                 TestSubcommand::Coverage(cov) => execute_coverage(cov, ctx).await,
-                TestSubcommand::Mutants(m) => execute_mutants(m, ctx).await,
+                TestSubcommand::Mutants(m) => execute_mutants(m, ctx),
                 TestSubcommand::Vm(vm) => execute_vm(vm, ctx).await,
             };
         }
@@ -1539,7 +1539,7 @@ async fn execute_coverage(cov: &CoverageArgs, ctx: &CommandContext) -> Result<Co
         .await
 }
 
-async fn execute_mutants(m: &MutantsArgs, _ctx: &CommandContext) -> Result<CommandResult> {
+fn execute_mutants(m: &MutantsArgs, _ctx: &CommandContext) -> Result<CommandResult> {
     use color_eyre::eyre::eyre;
 
     // Guard: mutants invokes cargo-mutants which needs target/ lock

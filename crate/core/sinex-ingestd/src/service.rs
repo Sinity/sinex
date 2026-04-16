@@ -324,16 +324,18 @@ impl IngestService {
         };
 
         if let Some(set) = ready_set.clone() {
-            let handle = self.start_material_ready_set_maintenance_task(set).await;
+            let handle = self.start_material_ready_set_maintenance_task(set);
             self.track_task(handle).await;
         }
 
         // Start JetStream and MaterialAssembler tasks (critical - failure stops service)
         let (mut js_handle, mut js_ready_rx) = match (&self.nats_client, &self.db_pool) {
             (Some(nats), Some(pool)) => {
-                let (h, rx) = self
-                    .start_jetstream_consumer_task(nats.clone(), pool.clone(), ready_set.clone())
-                    .await;
+                let (h, rx) = self.start_jetstream_consumer_task(
+                    nats.clone(),
+                    pool.clone(),
+                    ready_set.clone(),
+                );
                 (Some(h), Some(rx))
             }
             _ => (None, None),
@@ -341,25 +343,25 @@ impl IngestService {
 
         let (mut ma_handle, mut ma_ready_rx) = match (&self.nats_client, &self.db_pool) {
             (Some(nats), Some(pool)) => {
-                let (h, rx) = self
-                    .start_material_assembler_task(nats.clone(), pool.clone(), ready_set.clone())
-                    .await;
+                let (h, rx) = self.start_material_assembler_task(
+                    nats.clone(),
+                    pool.clone(),
+                    ready_set.clone(),
+                );
                 (Some(h), Some(rx))
             }
             _ => (None, None),
         };
 
         if let Some(ref pool) = self.db_pool {
-            let handle = self
-                .start_schema_reload_task(pool.clone(), self.nats_client.clone())
-                .await;
+            let handle = self.start_schema_reload_task(pool.clone(), self.nats_client.clone());
             self.track_task(handle).await;
         }
 
         // Start GitOps sync service if enabled
         if self.config.gitops_enabled {
             if let Some(ref pool) = self.db_pool {
-                let handle = self.start_gitops_sync_task(pool.clone()).await;
+                let handle = self.start_gitops_sync_task(pool.clone());
                 self.track_task(handle).await;
                 info!("GitOps schema sync service started");
             } else {
@@ -707,7 +709,7 @@ impl IngestService {
     ///
     /// The receiver fires after the durable `JetStream` consumer has been created and the pull
     /// loop is about to start. Await it before emitting `sd_notify(READY)`.
-    async fn start_jetstream_consumer_task(
+    fn start_jetstream_consumer_task(
         &self,
         nats_client: NatsClient,
         pool: PgPool,
@@ -780,7 +782,7 @@ impl IngestService {
     ///
     /// The receiver fires after stream bootstrap and WAL restore complete, just before
     /// the consumer sub-tasks start. Await it before emitting `sd_notify(READY)`.
-    async fn start_material_assembler_task(
+    fn start_material_assembler_task(
         &self,
         nats_client: NatsClient,
         pool: PgPool,
@@ -860,7 +862,7 @@ impl IngestService {
     }
 
     /// Start schema reload task
-    async fn start_schema_reload_task(
+    fn start_schema_reload_task(
         &self,
         pool: PgPool,
         nats_client: Option<NatsClient>,
@@ -915,7 +917,7 @@ impl IngestService {
     }
 
     /// Start the `GitOps` schema sync background task
-    async fn start_gitops_sync_task(&self, pool: PgPool) -> JoinHandle<()> {
+    fn start_gitops_sync_task(&self, pool: PgPool) -> JoinHandle<()> {
         let shutdown_flag = self.shutdown_flag.clone();
         let work_dir = self.config.gitops_work_dir.clone().into_std_path_buf();
 
@@ -925,7 +927,7 @@ impl IngestService {
         })
     }
 
-    async fn start_material_ready_set_maintenance_task(
+    fn start_material_ready_set_maintenance_task(
         &self,
         ready_set: MaterialReadySet,
     ) -> JoinHandle<()> {
@@ -1605,9 +1607,7 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(15)).await;
 
-        let handle = service
-            .start_material_ready_set_maintenance_task(ready_set.clone())
-            .await;
+        let handle = service.start_material_ready_set_maintenance_task(ready_set.clone());
         service.task_handles.lock().await.push(handle);
 
         WaitHelpers::wait_for_condition(

@@ -208,6 +208,10 @@ struct AuthoritativeEventColumn {
     not_null: bool,
 }
 
+#[allow(
+    clippy::panic,
+    reason = "Schema-authority drift detector: panic if the declared schema lacks a type for a core.events column"
+)]
 fn authoritative_copy_columns() -> BTreeMap<String, AuthoritativeEventColumn> {
     Events::create_table_statement()
         .get_columns()
@@ -240,6 +244,10 @@ fn column_is_not_null(column: &sea_query::ColumnDef) -> bool {
         .any(|spec| matches!(spec, ColumnSpec::NotNull))
 }
 
+#[allow(
+    clippy::panic,
+    reason = "COPY contract drift detector: panic at startup if COPY columns drift from schema authority"
+)]
 pub fn verify_event_copy_contract() {
     let authoritative_columns = authoritative_copy_columns();
 
@@ -326,6 +334,10 @@ pub(crate) fn event_copy_column_list_sql() -> String {
         .join(", ")
 }
 
+#[allow(
+    clippy::panic,
+    reason = "Staging SQL builder: panic if authoritative schema lacks a COPY-listed column (drift)"
+)]
 pub(crate) fn event_copy_staging_columns_sql() -> String {
     let authoritative = authoritative_copy_columns();
     copy_columns()

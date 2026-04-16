@@ -236,7 +236,7 @@ async fn main() -> color_eyre::Result<()> {
     let format = config.default_format;
     let command = cli.command;
     match command {
-        Commands::Config { cmd } => cmd.execute().await?,
+        Commands::Config { cmd } => cmd.execute()?,
         Commands::Completions(cmd) => {
             let mut clap_cmd = Cli::command();
             cmd.execute(&mut clap_cmd)?;

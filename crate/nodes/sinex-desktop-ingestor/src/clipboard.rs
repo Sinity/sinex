@@ -99,7 +99,7 @@ pub struct ClipboardWatcher {
 
 impl ClipboardWatcher {
     /// Create new clipboard watcher with Stage-as-You-Go integration
-    pub async fn new(
+    pub fn new(
         _poll_interval_secs: Seconds, // Reserved for future configurability
         stage_context: StageAsYouGoContext,
         shutdown_rx: watch::Receiver<bool>,
@@ -654,7 +654,7 @@ impl ClipboardWatcher {
 
     /// Get current primary selection content (Linux)
     /// Uses arboard's `GetExtLinux` trait to access PRIMARY selection
-    async fn get_primary_selection_content(&self) -> Option<ClipboardContent> {
+    fn get_primary_selection_content(&self) -> Option<ClipboardContent> {
         if !self.enable_primary_selection {
             return None;
         }
@@ -781,7 +781,7 @@ impl ClipboardWatcher {
 
     /// Check primary selection for changes
     async fn check_primary_selection(&mut self) -> NodeResult<()> {
-        if let Some(current_primary) = self.get_primary_selection_content().await {
+        if let Some(current_primary) = self.get_primary_selection_content() {
             let primary_changed = match &self.last_primary_content {
                 Some(last) => last.hash != current_primary.hash,
                 None => true,

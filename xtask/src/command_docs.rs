@@ -464,6 +464,10 @@ fn invocation(path: &str) -> String {
     format!("xtask {path}")
 }
 
+#[allow(
+    clippy::panic,
+    reason = "Doc-build fatal: a documented command path that isn't registered is a build-config bug"
+)]
 fn lookup_command<'a>(commands: &'a [CommandInfo], path: &str) -> &'a CommandInfo {
     find_command(commands, path)
         .unwrap_or_else(|| panic!("documented command path missing: {path}"))

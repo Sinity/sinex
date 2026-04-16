@@ -699,7 +699,7 @@ impl AcquisitionManager {
     }
 
     /// Check if rotation is needed (ported from `MaterialRotationManager`)
-    pub async fn should_rotate(&self, handle: &SourceMaterialHandle) -> bool {
+    pub fn should_rotate(&self, handle: &SourceMaterialHandle) -> bool {
         let age_seconds = (Timestamp::now() - handle.started_at)
             .whole_seconds()
             .max(0) as u64;
@@ -829,7 +829,7 @@ impl AppendStreamAcquirer {
             .ok_or_else(|| SinexError::invalid_state("current_handle should be initialized"))?;
 
         // Check rotation
-        if self.manager.should_rotate(handle).await {
+        if self.manager.should_rotate(handle) {
             info!("Rotating material due to size/age limits");
             let old_handle = self.current_handle.take().ok_or_else(|| {
                 SinexError::invalid_state("current_handle should exist for rotation")

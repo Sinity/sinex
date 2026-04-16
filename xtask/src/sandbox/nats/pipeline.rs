@@ -14,6 +14,10 @@ pub struct EventOverrides {
 }
 
 static PIPELINE_SEMAPHORE: std::sync::LazyLock<Arc<Semaphore>> = std::sync::LazyLock::new(|| {
+    #[allow(
+        clippy::panic,
+        reason = "LazyLock init: a malformed SINEX_TEST_PIPELINE_CONCURRENCY is fatal for the whole test run"
+    )]
     let permits = pipeline_concurrency_from_env().unwrap_or_else(|error| panic!("{error}"));
     Arc::new(Semaphore::new(permits))
 });

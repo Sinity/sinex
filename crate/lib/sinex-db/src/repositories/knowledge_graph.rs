@@ -1191,10 +1191,9 @@ fn merge_aliases(target: &EntityRecord, source: &EntityRecord) -> (Vec<String>, 
     (merged, added)
 }
 
-fn merge_source_event_ids(
-    target: &EntityRecord,
-    source: &EntityRecord,
-) -> (Vec<Id<Event<JsonValue>>>, Vec<Id<Event<JsonValue>>>) {
+type MergedEventIds = (Vec<Id<Event<JsonValue>>>, Vec<Id<Event<JsonValue>>>);
+
+fn merge_source_event_ids(target: &EntityRecord, source: &EntityRecord) -> MergedEventIds {
     let mut merged = Vec::new();
     let mut added = Vec::new();
     let mut seen = HashSet::new();

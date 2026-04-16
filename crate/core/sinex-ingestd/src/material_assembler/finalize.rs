@@ -95,7 +95,7 @@ impl MaterialAssembler {
     }
 
     async fn begin_failure_cleanup(&self, material_id: Uuid, reason: &str) -> FailureCleanupClaim {
-        if let Some(state_handle) = self.get_state_handle(&material_id).await {
+        if let Some(state_handle) = self.get_state_handle(&material_id) {
             let mut state = state_handle.lock().await;
             if state.phase == AssemblyPhase::Finalizing {
                 debug!(
@@ -137,7 +137,7 @@ impl MaterialAssembler {
     }
 
     async fn revert_failure_cleanup_start(&self, material_id: Uuid, resume_phase: AssemblyPhase) {
-        if let Some(state_handle) = self.get_state_handle(&material_id).await {
+        if let Some(state_handle) = self.get_state_handle(&material_id) {
             let mut state = state_handle.lock().await;
             if state.phase == AssemblyPhase::Finalizing {
                 state.phase = resume_phase;
@@ -1207,7 +1207,7 @@ impl MaterialAssembler {
             ));
         }
 
-        let state_handle = if let Some(existing) = self.get_state_handle(&material_id).await {
+        let state_handle = if let Some(existing) = self.get_state_handle(&material_id) {
             existing
         } else {
             if self.material_is_terminal(material_id).await? {
@@ -1224,7 +1224,7 @@ impl MaterialAssembler {
                 "End message received before material state existed; creating placeholder"
             );
             let placeholder = self.create_placeholder_state(material_id).await?;
-            self.insert_state_handle(material_id, placeholder).await
+            self.insert_state_handle(material_id, placeholder)
         };
 
         // Record end so we can tolerate out-of-order delivery across begin/slices/end streams.
@@ -1310,7 +1310,7 @@ mod tests {
 
         let mut state = assembler.create_placeholder_state(material_id).await?;
         state.phase = AssemblyPhase::Finalizing;
-        assembler.insert_state_handle(material_id, state).await;
+        assembler.insert_state_handle(material_id, state);
 
         assembler
             .finalize_failed_material(material_id, "slice_arrival_timeout")
@@ -1377,7 +1377,7 @@ mod tests {
         let temp_path = state.temp_path.clone();
         tokio::fs::write(&temp_path, b"partial").await?;
         state.phase = AssemblyPhase::Accumulating;
-        let state_handle = assembler.insert_state_handle(material_id, state).await;
+        let state_handle = assembler.insert_state_handle(material_id, state);
 
         ctx.pool.close().await;
 
@@ -1444,7 +1444,7 @@ mod tests {
             total_size_bytes: 4,
             metadata: json!({}),
         });
-        let state_handle = assembler.insert_state_handle(material_id, state).await;
+        let state_handle = assembler.insert_state_handle(material_id, state);
 
         assembler
             .try_finalize_pending_end(material_id, state_handle, PendingEndBehavior::Error)
@@ -1512,7 +1512,7 @@ mod tests {
             total_size_bytes: 4,
             metadata: json!({}),
         });
-        let state_handle = assembler.insert_state_handle(material_id, state).await;
+        let state_handle = assembler.insert_state_handle(material_id, state);
 
         assembler
             .try_finalize_pending_end(material_id, state_handle, PendingEndBehavior::Error)

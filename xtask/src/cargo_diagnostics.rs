@@ -682,8 +682,7 @@ fn parse_diagnostic_message(msg: &serde_json::Value) -> Option<CompilerDiagnosti
     };
 
     // Extract suggestion text and machine-applicable fix metadata from children
-    let (suggestion, fix_replacement, fix_applicability, fix_byte_start, fix_byte_end) =
-        extract_fix_from_children(msg);
+    let fix = extract_fix_from_children(msg);
 
     Some(CompilerDiagnostic {
         level: level.to_string(),
@@ -693,13 +692,23 @@ fn parse_diagnostic_message(msg: &serde_json::Value) -> Option<CompilerDiagnosti
         line,
         column,
         rendered,
-        suggestion,
+        suggestion: fix.suggestion,
         package: None, // Set by caller from outer JSON envelope
-        fix_replacement,
-        fix_applicability,
-        fix_byte_start,
-        fix_byte_end,
+        fix_replacement: fix.replacement,
+        fix_applicability: fix.applicability,
+        fix_byte_start: fix.byte_start,
+        fix_byte_end: fix.byte_end,
     })
+}
+
+/// Suggestion and machine-applicable fix metadata extracted from a diagnostic's `children`.
+#[derive(Default)]
+struct FixSuggestion {
+    suggestion: Option<String>,
+    replacement: Option<String>,
+    applicability: Option<String>,
+    byte_start: Option<u32>,
+    byte_end: Option<u32>,
 }
 
 /// Extract suggestion text and machine-applicable fix metadata from diagnostic children.
@@ -710,17 +719,9 @@ fn parse_diagnostic_message(msg: &serde_json::Value) -> Option<CompilerDiagnosti
 /// - `byte_start` / `byte_end`: byte offsets in the source file
 ///
 /// We prefer `MachineApplicable` suggestions when available, falling back to any help message.
-fn extract_fix_from_children(
-    msg: &serde_json::Value,
-) -> (
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<u32>,
-    Option<u32>,
-) {
+fn extract_fix_from_children(msg: &serde_json::Value) -> FixSuggestion {
     let Some(children) = msg.get("children").and_then(|c| c.as_array()) else {
-        return (None, None, None, None, None);
+        return FixSuggestion::default();
     };
 
     let mut suggestion_text: Option<String> = None;
@@ -776,14 +777,17 @@ fn extract_fix_from_children(
     }
 
     match best_fix {
-        Some((replacement, applicability, byte_start, byte_end)) => (
-            suggestion_text,
-            Some(replacement),
-            Some(applicability),
+        Some((replacement, applicability, byte_start, byte_end)) => FixSuggestion {
+            suggestion: suggestion_text,
+            replacement: Some(replacement),
+            applicability: Some(applicability),
             byte_start,
             byte_end,
-        ),
-        None => (suggestion_text, None, None, None, None),
+        },
+        None => FixSuggestion {
+            suggestion: suggestion_text,
+            ..FixSuggestion::default()
+        },
     }
 }
 
