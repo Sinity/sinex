@@ -39,7 +39,7 @@ pub mod timing;
 pub mod workspace;
 
 // Re-export types referenced by proc macro expansion (`::xtask::sandbox::TestResult`, etc.)
-pub use db::pool::acquire_pool_test_guard;
+pub use db::pool::{acquire_process_test_guard, acquire_workspace_test_guard};
 
 // Re-export key types used by internal sandbox submodules via `super::` / `crate::sandbox::`
 pub use context::Sandbox;
@@ -49,7 +49,7 @@ pub use nats::EphemeralNats;
 pub use chaos::ChaosInjector;
 pub use coordination::PipelineNamespace;
 pub use events::EventPublisher;
-pub use fs::EnvGuard;
+pub use fs::{EnvGuard, TestTempEnv, prepare_test_temp_env};
 pub use hooks::TestHooks;
 pub use nats::EventOverrides;
 pub use node_runtime::{TestRuntime, TestRuntimeBuilder};

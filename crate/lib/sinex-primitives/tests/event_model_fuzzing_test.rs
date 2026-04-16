@@ -206,22 +206,25 @@ fn smoke_fuzzed_events() -> impl Strategy<Value = Event<JsonValue>> {
         Just(EventSource::from_static("clipboard")),
         Just(EventSource::from_static("wm.hyprland")),
         Just(EventSource::from_static("shell.kitty")),
-        regex_strategy("[a-z][a-z0-9_]{2,20}")
-            .prop_map(|raw| EventSource::new(raw).expect("regex yields valid EventSource")),
+        regex_strategy("[a-z][a-z0-9_]{2,20}").prop_map(|raw| {
+            EventSource::new(raw).unwrap_or_else(|_| unreachable!("regex yields valid EventSource"))
+        }),
     ];
     let event_types = prop_oneof![
         Just(EventType::from_static("file.created")),
         Just(EventType::from_static("window.focused")),
         Just(EventType::from_static("command.executed")),
         Just(EventType::from_static("clipboard.copied")),
-        regex_strategy("[a-z][a-z0-9_-]{1,20}\\.[a-z][a-z0-9_-]{1,20}")
-            .prop_map(|raw| EventType::new(raw).expect("regex yields valid EventType")),
+        regex_strategy("[a-z][a-z0-9_-]{1,20}\\.[a-z][a-z0-9_-]{1,20}").prop_map(|raw| {
+            EventType::new(raw).unwrap_or_else(|_| unreachable!("regex yields valid EventType"))
+        }),
     ];
     let hosts = prop_oneof![
-        Just(HostName::new("localhost").expect("localhost is a valid hostname")),
-        Just(HostName::new("node-1").expect("node-1 is a valid hostname")),
-        regex_strategy("([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]{0,30}[a-zA-Z0-9])(\\.([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]{0,30}[a-zA-Z0-9])){0,2}")
-            .prop_map(|raw| HostName::new(raw).expect("regex yields valid HostName")),
+        Just(HostName::from_static("localhost")),
+        Just(HostName::from_static("node-1")),
+        regex_strategy("([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]{0,30}[a-zA-Z0-9])(\\.([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]{0,30}[a-zA-Z0-9])){0,2}").prop_map(|raw| {
+            HostName::new(raw).unwrap_or_else(|_| unreachable!("regex yields valid HostName"))
+        }),
     ];
 
     (

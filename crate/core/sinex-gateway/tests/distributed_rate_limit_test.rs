@@ -9,6 +9,7 @@
 
 use sinex_gateway::distributed_rate_limit::{DistributedRateLimitConfig, DistributedRateLimiter};
 use std::num::NonZeroU32;
+use std::time::{Duration, Instant};
 use tokio::sync::Barrier;
 use xtask::sandbox::prelude::*;
 
@@ -172,33 +173,55 @@ async fn fail_closed_on_nats_kv_unavailable(ctx: TestContext) -> TestResult<()> 
     let nats = ctx.nats_handle()?;
     nats.shutdown().await?;
 
-    // Wait a moment for the connection to become stale
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
     // After local bucket is exhausted, requests must fail closed.
     // The local bucket was seeded with ~49 remaining tokens from the first
     // successful reservation. Drain them.
     let mut drained_count = 0;
+    let mut first_fail_closed_elapsed = None;
     for _ in 0..100 {
+        let started = Instant::now();
         if !limiter.check_and_increment("fail-closed-token").await {
+            first_fail_closed_elapsed = Some(started.elapsed());
             break;
         }
         drained_count += 1;
     }
 
+    let first_fail_closed_elapsed =
+        first_fail_closed_elapsed.expect("draining should hit a fail-closed backend probe");
+    assert!(
+        first_fail_closed_elapsed < Duration::from_secs(2),
+        "first backend failure should fail closed promptly, not hang for the async-nats default timeout: {:?}",
+        first_fail_closed_elapsed
+    );
+
     // Once local bucket is drained, next request MUST be rejected (fail closed)
+    let same_token_started = Instant::now();
     let result = limiter.check_and_increment("fail-closed-token").await;
+    let same_token_elapsed = same_token_started.elapsed();
     assert!(
         !result,
         "MUST fail closed when NATS KV is unavailable (drained {drained_count} local tokens first). \
          Allowing requests through would be a security bypass."
     );
+    assert!(
+        same_token_elapsed < Duration::from_millis(500),
+        "repeated failures for the same token should use the backend-failure cooldown and fail fast: {:?}",
+        same_token_elapsed
+    );
 
     // A different token with no local bucket should also be rejected immediately
+    let new_token_started = Instant::now();
     let result_new_token = limiter.check_and_increment("brand-new-token").await;
+    let new_token_elapsed = new_token_started.elapsed();
     assert!(
         !result_new_token,
         "New token with no local bucket must also fail closed when NATS is down"
+    );
+    assert!(
+        new_token_elapsed < Duration::from_millis(500),
+        "new tokens should also fail fast while the backend outage cooldown is active: {:?}",
+        new_token_elapsed
     );
 
     Ok(())

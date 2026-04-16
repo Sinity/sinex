@@ -9,8 +9,8 @@ use color_eyre::eyre::WrapErr;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::history::query::HistoryAnalysis;
 use crate::history::{
-    DiagnosticQuery, ExerciseResultRow, HistoryDb, InvocationStatus, InvocationTimelineEntry,
-    LifecycleStatus,
+    DiagnosticQuery, ExerciseResultRow, HistoryDb, InvocationQuery, InvocationStatus,
+    InvocationTimelineEntry, LifecycleStatus,
 };
 
 /// History command variants
@@ -31,6 +31,14 @@ pub enum HistorySubcommand {
         /// Skip N entries (pagination)
         #[arg(long, default_value = "0")]
         offset: usize,
+        /// Only show invocations with IDs greater than this selector
+        /// (`latest`, `previous`, `current`, numeric, `inv:<id>`, `job:<id>`)
+        #[arg(long)]
+        after_invocation: Option<String>,
+        /// Only show invocations with IDs less than this selector
+        /// (`latest`, `previous`, `current`, numeric, `inv:<id>`, `job:<id>`)
+        #[arg(long)]
+        before_invocation: Option<String>,
         /// Sort field: started (default), duration, status
         #[arg(long, default_value = "started")]
         sort_by: String,
@@ -214,12 +222,14 @@ pub enum HistorySubcommand {
     },
     /// Show complete details for a single invocation (I7)
     Invocation {
-        /// Invocation ID or 'latest'
+        /// Invocation selector: `latest`, `previous`, `current`, invocation ID,
+        /// `inv:<id>`, or `job:<id>`. Bare numeric IDs resolve as invocation IDs
+        /// first; use `job:<id>` for unambiguous background-job lookup.
         id: String,
         /// Include full stage timing and diagnostic details
         #[arg(long)]
         full: bool,
-        /// Filter 'latest' resolution to a specific command
+        /// Filter selector resolution to a specific command
         #[arg(long)]
         command: Option<String>,
     },
@@ -242,9 +252,11 @@ pub enum HistorySubcommand {
     },
     /// Show live or final progress for an invocation
     Progress {
-        /// Invocation ID to show progress for. Defaults to the most recent invocation.
+        /// Invocation selector: `current` (default), `latest`, `previous`,
+        /// invocation ID, `inv:<id>`, or `job:<id>`. Bare numeric IDs resolve as
+        /// invocation IDs first; use `job:<id>` for unambiguous background-job lookup.
         #[arg(long)]
-        invocation_id: Option<i64>,
+        invocation: Option<String>,
     },
     /// Show ETA estimates for a command based on recorded phase timings
     Eta {
@@ -274,6 +286,10 @@ pub enum HistoryTestsSubcommand {
     Slowest {
         #[arg(long, default_value = "10")]
         limit: usize,
+        /// Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`,
+        /// invocation ID, `inv:<id>`, or `job:<id>`
+        #[arg(long)]
+        invocation: Option<String>,
     },
     Flaky {
         #[arg(long, default_value = "10")]
@@ -302,15 +318,28 @@ pub enum HistoryTestsSubcommand {
         /// Show captured failure output (can be verbose)
         #[arg(long)]
         output: bool,
+        /// Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`,
+        /// invocation ID, `inv:<id>`, or `job:<id>`
+        #[arg(long, default_value = "latest")]
+        invocation: String,
     },
     /// Comprehensive analysis of the most recent test run
     ///
     /// Shows duration distribution, probable timeouts, and per-package failure summaries.
-    Analyze,
+    Analyze {
+        /// Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`,
+        /// invocation ID, `inv:<id>`, or `job:<id>`
+        #[arg(long, default_value = "latest")]
+        invocation: String,
+    },
     /// Show captured output for a test (pass or fail)
     Output {
         /// Test name pattern to search for
         pattern: String,
+        /// Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`,
+        /// invocation ID, `inv:<id>`, or `job:<id>`
+        #[arg(long, default_value = "latest")]
+        invocation: String,
     },
     Eta,
     /// Full-text search across stored test output (G7)
@@ -319,9 +348,18 @@ pub enum HistoryTestsSubcommand {
         text: String,
         #[arg(long, default_value = "20")]
         limit: usize,
+        /// Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`,
+        /// invocation ID, `inv:<id>`, or `job:<id>`
+        #[arg(long, default_value = "latest")]
+        invocation: String,
     },
     /// Per-package pass rate, test count, avg duration, and flaky count (G7)
-    ByPackage,
+    ByPackage {
+        /// Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`,
+        /// invocation ID, `inv:<id>`, or `job:<id>`
+        #[arg(long, default_value = "latest")]
+        invocation: String,
+    },
     /// P95 duration per test over recent runs (G7)
     DurationP95 {
         #[arg(long, default_value = "20")]
@@ -349,7 +387,7 @@ impl XtaskCommand for HistoryCommand {
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         use color_eyre::eyre::eyre;
-        ctx.try_with_history_db(|db| {
+        ctx.try_with_history_db_query(|db| {
             db.warn_if_synthetic(ctx.history_db_path());
             match &self.subcommand {
                 HistorySubcommand::List {
@@ -358,6 +396,8 @@ impl XtaskCommand for HistoryCommand {
                     first,
                     no_limit,
                     offset,
+                    after_invocation,
+                    before_invocation,
                     sort_by,
                     since,
                     with_diagnostics,
@@ -374,6 +414,8 @@ impl XtaskCommand for HistoryCommand {
                             *limit,
                             *offset,
                             command.as_deref(),
+                            after_invocation.as_deref(),
+                            before_invocation.as_deref(),
                             since.as_deref(),
                             sort_by.as_str(),
                             *with_diagnostics,
@@ -544,8 +586,8 @@ impl XtaskCommand for HistoryCommand {
                 HistorySubcommand::Seed { days, invocations } => {
                     execute_seed(&db, *days, *invocations, ctx)
                 }
-                HistorySubcommand::Progress { invocation_id } => {
-                    execute_progress(&db, *invocation_id, ctx)
+                HistorySubcommand::Progress { invocation } => {
+                    execute_progress(&db, invocation.as_deref(), ctx)
                 }
                 HistorySubcommand::Eta {
                     command,
@@ -562,6 +604,8 @@ impl XtaskCommand for HistoryCommand {
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::diagnostics()
+            .with_history_tracking(false)
+            .with_history_access(crate::command::HistoryAccessMode::Query)
     }
 }
 
@@ -597,6 +641,8 @@ fn execute_list(
     limit: usize,
     offset: usize,
     command: Option<&str>,
+    after_invocation: Option<&str>,
+    before_invocation: Option<&str>,
     since: Option<&str>,
     sort_by: &str,
     with_diagnostics: bool,
@@ -617,8 +663,35 @@ fn execute_list(
         })
         .transpose()?;
 
-    let invocations =
-        db.get_recent_filtered(limit, offset, command, since_ts.as_deref(), sort_by)?;
+    let after_id = after_invocation
+        .map(|value| db.resolve_invocation_id(value, command))
+        .transpose()?
+        .flatten();
+    let before_id = before_invocation
+        .map(|value| db.resolve_invocation_id(value, command))
+        .transpose()?
+        .flatten();
+
+    let mut query = InvocationQuery::new().limit(limit).offset(offset);
+    if let Some(command) = command {
+        query = query.command(command);
+    }
+    if let Some(after_id) = after_id {
+        query = query.after_invocation(after_id);
+    }
+    if let Some(before_id) = before_id {
+        query = query.before_invocation(before_id);
+    }
+    if let Some(since_ts) = since_ts {
+        query = query.since_rfc3339(since_ts);
+    }
+    query = match sort_by {
+        "duration" => query.sort_duration(),
+        "status" => query.sort_status(),
+        _ => query.sort_started(),
+    };
+
+    let invocations = query.run(db)?;
 
     if ctx.is_human() {
         if invocations.is_empty() {
@@ -930,7 +1003,9 @@ fn execute_tests(
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     match tests_cmd {
-        HistoryTestsSubcommand::Slowest { limit } => execute_tests_slowest(db, *limit, ctx),
+        HistoryTestsSubcommand::Slowest { limit, invocation } => {
+            execute_tests_slowest(db, invocation.as_deref(), *limit, ctx)
+        }
         HistoryTestsSubcommand::Flaky { limit } => execute_tests_flaky(db, *limit, ctx),
         HistoryTestsSubcommand::GettingSlower {
             threshold_pct,
@@ -942,14 +1017,27 @@ fn execute_tests(
             package,
             runs,
         } => execute_tests_trends(db, pattern.as_deref(), package.as_deref(), *runs, ctx),
-        HistoryTestsSubcommand::Failures { limit, output } => {
-            execute_tests_failures(db, *limit, *output, ctx)
+        HistoryTestsSubcommand::Failures {
+            limit,
+            output,
+            invocation,
+        } => execute_tests_failures(db, invocation, *limit, *output, ctx),
+        HistoryTestsSubcommand::Analyze { invocation } => {
+            execute_tests_analyze(db, invocation, ctx)
         }
-        HistoryTestsSubcommand::Analyze => execute_tests_analyze(db, ctx),
-        HistoryTestsSubcommand::Output { pattern } => execute_tests_output(db, pattern, ctx),
+        HistoryTestsSubcommand::Output {
+            pattern,
+            invocation,
+        } => execute_tests_output(db, invocation, pattern, ctx),
         HistoryTestsSubcommand::Eta => execute_tests_eta(db, ctx),
-        HistoryTestsSubcommand::Grep { text, limit } => execute_tests_grep(db, text, *limit, ctx),
-        HistoryTestsSubcommand::ByPackage => execute_tests_by_package(db, ctx),
+        HistoryTestsSubcommand::Grep {
+            text,
+            limit,
+            invocation,
+        } => execute_tests_grep(db, invocation, text, *limit, ctx),
+        HistoryTestsSubcommand::ByPackage { invocation } => {
+            execute_tests_by_package(db, invocation, ctx)
+        }
         HistoryTestsSubcommand::DurationP95 { limit } => {
             execute_tests_duration_p95(db, *limit, ctx)
         }
@@ -957,11 +1045,80 @@ fn execute_tests(
     }
 }
 
+fn resolve_selected_test_run(
+    db: &HistoryDb,
+    invocation: &str,
+) -> Result<Option<crate::history::ResolvedTestRun>> {
+    db.resolve_test_run(Some(invocation))
+}
+
+fn describe_test_run(run: &crate::history::ResolvedTestRun) -> String {
+    match run.job_id {
+        Some(job_id) => format!("invocation #{} (job #{job_id})", run.invocation_id),
+        None => format!("invocation #{}", run.invocation_id),
+    }
+}
+
 fn execute_tests_slowest(
     db: &HistoryDb,
+    invocation: Option<&str>,
     limit: usize,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
+    if let Some(invocation) = invocation {
+        let Some(test_run) = resolve_selected_test_run(db, invocation)? else {
+            if ctx.is_human() {
+                println!("No test run data found.");
+            }
+            return Ok(CommandResult::success()
+                .with_message("No test run data")
+                .with_duration(ctx.elapsed()));
+        };
+        let tests = db.get_slowest_tests_for_invocation(test_run.invocation_id, limit)?;
+
+        if ctx.is_human() {
+            if tests.is_empty() {
+                println!(
+                    "No test timing rows found for {}.",
+                    describe_test_run(&test_run)
+                );
+            } else {
+                println!(
+                    "{}, started {}",
+                    describe_test_run(&test_run),
+                    test_run.started_at
+                );
+                println!(
+                    "{:<50} {:<20} {:<10} {:>10}",
+                    "TEST", "PACKAGE", "STATUS", "DURATION"
+                );
+                for test in &tests {
+                    let display_name = if test.test_name.len() > 48 {
+                        format!("...{}", &test.test_name[test.test_name.len() - 45..])
+                    } else {
+                        test.test_name.clone()
+                    };
+                    println!(
+                        "{display_name:<50} {:<20} {:<10} {:>10.3}",
+                        test.package, test.status, test.duration_secs
+                    );
+                }
+            }
+        } else {
+            let json = serde_json::to_string_pretty(&tests)?;
+            println!("{json}");
+        }
+
+        return Ok(CommandResult::success()
+            .with_message(format!(
+                "Found {} slowest tests for {}",
+                tests.len(),
+                describe_test_run(&test_run)
+            ))
+            .with_data(serde_json::to_value(&tests)?)
+            .with_duration(ctx.elapsed()));
+    }
+
     let tests = db.get_slowest_tests(limit)?;
 
     if ctx.is_human() {
@@ -972,13 +1129,16 @@ fn execute_tests_slowest(
                 "{:<50} {:<20} {:>10} {:>6}",
                 "TEST", "PACKAGE", "AVG (s)", "RUNS"
             );
-            for (name, package, avg, runs) in &tests {
-                let display_name = if name.len() > 48 {
-                    format!("...{}", &name[name.len() - 45..])
+            for test in &tests {
+                let display_name = if test.test_name.len() > 48 {
+                    format!("...{}", &test.test_name[test.test_name.len() - 45..])
                 } else {
-                    name.clone()
+                    test.test_name.clone()
                 };
-                println!("{display_name:<50} {package:<20} {avg:>10.3} {runs:>6}");
+                println!(
+                    "{display_name:<50} {:<20} {:>10.3} {:>6}",
+                    test.package, test.avg_duration_secs, test.passing_runs
+                );
             }
         }
     } else {
@@ -988,6 +1148,7 @@ fn execute_tests_slowest(
 
     Ok(CommandResult::success()
         .with_message(format!("Found {} slowest tests", tests.len()))
+        .with_data(serde_json::to_value(&tests)?)
         .with_duration(ctx.elapsed()))
 }
 
@@ -1623,16 +1784,26 @@ fn compute_trend_direction(
 
 fn execute_tests_failures(
     db: &HistoryDb,
+    invocation: &str,
     limit: usize,
     show_output: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let tests = db.get_failing_tests_with_output(limit)?;
+    let Some(test_run) = resolve_selected_test_run(db, invocation)? else {
+        if ctx.is_human() {
+            println!("No test run data found.");
+        }
+        return Ok(CommandResult::success()
+            .with_message("No test run data")
+            .with_duration(ctx.elapsed()));
+    };
+    let tests = db.get_failing_tests_with_output(test_run.invocation_id, limit)?;
 
     if ctx.is_human() {
         if tests.is_empty() {
-            println!("No failing tests in the most recent run.");
+            println!("No failing tests in {}.", describe_test_run(&test_run));
         } else {
+            println!("{}", describe_test_run(&test_run));
             let mut builder = Builder::new();
             let has_failure_msgs = tests.iter().any(|t| t.failure_message.is_some());
             if has_failure_msgs {
@@ -1700,29 +1871,53 @@ fn execute_tests_failures(
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Found {} failing tests", tests.len()))
+        .with_message(format!(
+            "Found {} failing tests in {}",
+            tests.len(),
+            describe_test_run(&test_run)
+        ))
         .with_duration(ctx.elapsed()))
 }
 
-fn execute_tests_analyze(db: &HistoryDb, ctx: &CommandContext) -> Result<CommandResult> {
-    let analysis = db.analyze_last_run()?;
+fn execute_tests_analyze(
+    db: &HistoryDb,
+    invocation: &str,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let Some(test_run) = resolve_selected_test_run(db, invocation)? else {
+        if ctx.is_human() {
+            println!("No test run data found.");
+        }
+        return Ok(CommandResult::success()
+            .with_message("No test run data")
+            .with_duration(ctx.elapsed()));
+    };
+    let analysis = db.analyze_test_run(test_run.invocation_id)?;
 
     match analysis {
         None => {
             if ctx.is_human() {
-                println!("No test run data found.");
+                println!(
+                    "No test result rows found for {}.",
+                    describe_test_run(&test_run)
+                );
             }
             Ok(CommandResult::success()
-                .with_message("No test run data")
+                .with_message(format!(
+                    "No test result rows for {}",
+                    describe_test_run(&test_run)
+                ))
                 .with_duration(ctx.elapsed()))
         }
         Some(analysis) => {
-            let infra_probe = infra_timing_probe_from_result(db.get_infra_timing_summary());
+            let infra_probe =
+                infra_timing_probe_from_result(db.get_infra_timing_summary(test_run.invocation_id));
             if ctx.is_human() {
                 println!("{}", style("━━━ Test Suite Analysis ━━━").bold());
                 println!(
-                    "Invocation #{}, started {}",
-                    analysis.invocation_id, analysis.started_at
+                    "{}, started {}",
+                    describe_test_run(&test_run),
+                    analysis.started_at
                 );
                 println!(
                     "  {} passed, {} failed, {} ignored",
@@ -1743,6 +1938,28 @@ fn execute_tests_analyze(db: &HistoryDb, ctx: &CommandContext) -> Result<Command
                         let bar = "█".repeat(std::cmp::min(bucket.count, 50));
                         println!("  {:>8} │ {:>4} │ {}", bucket.label, bucket.count, bar);
                     }
+                }
+
+                if !analysis.slowest_tests.is_empty() {
+                    println!("\n{}", style("Slowest Tests:").bold());
+                    let mut builder = Builder::new();
+                    builder.push_record(["TEST", "PACKAGE", "STATUS", "DURATION"]);
+                    for test in &analysis.slowest_tests {
+                        let display_name = if test.test_name.len() > 48 {
+                            format!("...{}", &test.test_name[test.test_name.len() - 45..])
+                        } else {
+                            test.test_name.clone()
+                        };
+                        builder.push_record([
+                            display_name,
+                            test.package.clone(),
+                            test.status.clone(),
+                            format!("{:.3}s", test.duration_secs),
+                        ]);
+                    }
+                    let mut table = builder.build();
+                    table.with(Style::rounded());
+                    println!("{table}");
                 }
 
                 // Probable timeouts
@@ -1822,8 +2039,10 @@ fn execute_tests_analyze(db: &HistoryDb, ctx: &CommandContext) -> Result<Command
 
             let mut result = CommandResult::success()
                 .with_message(format!(
-                    "Analysis: {} passed, {} failed",
-                    analysis.total_passed, analysis.total_failed
+                    "Analysis for {}: {} passed, {} failed",
+                    describe_test_run(&test_run),
+                    analysis.total_passed,
+                    analysis.total_failed
                 ))
                 .with_data(serde_json::to_value(&analysis)?)
                 .with_duration(ctx.elapsed());
@@ -1837,15 +2056,28 @@ fn execute_tests_analyze(db: &HistoryDb, ctx: &CommandContext) -> Result<Command
 
 fn execute_tests_output(
     db: &HistoryDb,
+    invocation: &str,
     pattern: &str,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let entries = db.get_test_output(pattern)?;
+    let Some(test_run) = resolve_selected_test_run(db, invocation)? else {
+        if ctx.is_human() {
+            println!("No test run data found.");
+        }
+        return Ok(CommandResult::success()
+            .with_message("No test run data")
+            .with_duration(ctx.elapsed()));
+    };
+    let entries = db.get_test_output(test_run.invocation_id, pattern)?;
 
     if ctx.is_human() {
         if entries.is_empty() {
-            println!("No tests matching '{pattern}' found in the most recent run.");
+            println!(
+                "No tests matching '{pattern}' found in {}.",
+                describe_test_run(&test_run)
+            );
         } else {
+            println!("{}", describe_test_run(&test_run));
             for entry in &entries {
                 println!(
                     "── {} ({}, {}, {:.3}s) ──",
@@ -1865,7 +2097,11 @@ fn execute_tests_output(
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Found {} matching tests", entries.len()))
+        .with_message(format!(
+            "Found {} matching tests in {}",
+            entries.len(),
+            describe_test_run(&test_run)
+        ))
         .with_duration(ctx.elapsed()))
 }
 
@@ -1905,16 +2141,29 @@ fn execute_tests_eta(db: &HistoryDb, ctx: &CommandContext) -> Result<CommandResu
 /// Search stored test output for text (G7 --grep).
 fn execute_tests_grep(
     db: &HistoryDb,
+    invocation: &str,
     text: &str,
     limit: usize,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let results = db.search_test_output(text, limit)?;
+    let Some(test_run) = resolve_selected_test_run(db, invocation)? else {
+        if ctx.is_human() {
+            println!("No test run data found.");
+        }
+        return Ok(CommandResult::success()
+            .with_message("No test run data")
+            .with_duration(ctx.elapsed()));
+    };
+    let results = db.search_test_output(test_run.invocation_id, text, limit)?;
 
     if ctx.is_human() {
         if results.is_empty() {
-            println!("No test output matching '{text}' found in the most recent run.");
+            println!(
+                "No test output matching '{text}' found in {}.",
+                describe_test_run(&test_run)
+            );
         } else {
+            println!("{}", describe_test_run(&test_run));
             let mut builder = Builder::new();
             builder.push_record(["TEST", "PACKAGE", "STATUS", "DURATION"]);
             for entry in &results {
@@ -1955,18 +2204,38 @@ fn execute_tests_grep(
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Found {} matching tests", results.len()))
+        .with_message(format!(
+            "Found {} matching tests in {}",
+            results.len(),
+            describe_test_run(&test_run)
+        ))
         .with_duration(ctx.elapsed()))
 }
 
 /// Per-package test stats (G7 --by-package).
-fn execute_tests_by_package(db: &HistoryDb, ctx: &CommandContext) -> Result<CommandResult> {
-    let stats = db.get_tests_by_package()?;
+fn execute_tests_by_package(
+    db: &HistoryDb,
+    invocation: &str,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let Some(test_run) = resolve_selected_test_run(db, invocation)? else {
+        if ctx.is_human() {
+            println!("No test run data found.");
+        }
+        return Ok(CommandResult::success()
+            .with_message("No test run data")
+            .with_duration(ctx.elapsed()));
+    };
+    let stats = db.get_tests_by_package(test_run.invocation_id)?;
 
     if ctx.is_human() {
         if stats.is_empty() {
-            println!("No test run data found.");
+            println!(
+                "No per-package test data found in {}.",
+                describe_test_run(&test_run)
+            );
         } else {
+            println!("{}", describe_test_run(&test_run));
             let mut builder = Builder::new();
             builder.push_record(["PACKAGE", "TOTAL", "PASSED", "FAILED", "AVG (s)", "FLAKY"]);
             for s in &stats {
@@ -1994,7 +2263,11 @@ fn execute_tests_by_package(db: &HistoryDb, ctx: &CommandContext) -> Result<Comm
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Stats for {} packages", stats.len()))
+        .with_message(format!(
+            "Stats for {} packages in {}",
+            stats.len(),
+            describe_test_run(&test_run)
+        ))
         .with_duration(ctx.elapsed()))
 }
 
@@ -3252,17 +3525,13 @@ fn execute_seed(
 /// Show live/final progress for an invocation.
 fn execute_progress(
     db: &HistoryDb,
-    invocation_id: Option<i64>,
+    invocation: Option<&str>,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    // Resolve invocation ID: use provided, or fall back to most recent
-    let inv_id = if let Some(id) = invocation_id {
-        id
-    } else {
-        db.get_last("")?
-            .map(|i| i.id)
-            .ok_or_else(|| color_eyre::eyre::eyre!("No invocation history found"))?
-    };
+    let selector = invocation.unwrap_or("current");
+    let inv_id = db
+        .resolve_invocation_id(selector, None)?
+        .ok_or_else(|| color_eyre::eyre::eyre!("No invocation found for selector '{selector}'"))?;
 
     let progress = db.get_progress(inv_id)?;
 
@@ -3632,7 +3901,7 @@ fn exercise_results_probe_from_result(
 mod tests {
     use super::*;
     use crate::cargo_diagnostics::CompilerDiagnostic;
-    use crate::history::HistoryDb;
+    use crate::history::{HistoryDb, TestResult as StoredTestResult, TestStatus};
     use crate::output::{OutputFormat, OutputWriter};
     use crate::sandbox::sinex_test;
     use color_eyre::eyre::eyre;
@@ -3772,6 +4041,27 @@ mod tests {
         HistoryDb::open(&db_path)
     }
 
+    fn store_test_result(
+        db: &HistoryDb,
+        invocation_id: i64,
+        test_name: &str,
+        package: &str,
+        status: TestStatus,
+    ) -> Result<()> {
+        db.store_test_results(
+            invocation_id,
+            &[StoredTestResult {
+                test_name: test_name.to_string(),
+                package: package.to_string(),
+                status,
+                duration_secs: Some(0.1),
+                attempt: 1,
+                output: None,
+            }],
+        )
+        .map(|_| ())
+    }
+
     #[sinex_test]
     async fn test_history_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = HistoryCommand {
@@ -3781,6 +4071,8 @@ mod tests {
                 first: false,
                 no_limit: false,
                 offset: 0,
+                after_invocation: None,
+                before_invocation: None,
                 sort_by: "started".to_string(),
                 since: None,
                 with_diagnostics: false,
@@ -3927,6 +4219,169 @@ mod tests {
             result.message.as_deref(),
             Some("Found 1 diagnostics from invocation")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_execute_tests_analyze_honors_explicit_invocation()
+    -> ::xtask::sandbox::TestResult<()> {
+        let db = seeded_history_db("tests-analyze-explicit.db")?;
+        let ctx = silent_ctx();
+
+        let older = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(older, InvocationStatus::Success, Some(0), 1.0)?;
+        store_test_result(&db, older, "older_pass", "pkg-a", TestStatus::Pass)?;
+
+        let newer = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(newer, InvocationStatus::Success, Some(0), 2.0)?;
+        store_test_result(&db, newer, "newer_fail", "pkg-b", TestStatus::Fail)?;
+
+        let result = execute_tests_analyze(&db, &older.to_string(), &ctx)?;
+        let data = result.data.expect("analysis data should be present");
+        let invocation_id = data
+            .get("invocation_id")
+            .and_then(serde_json::Value::as_i64)
+            .expect("analysis invocation id should be present");
+        let passed = data
+            .get("total_passed")
+            .and_then(serde_json::Value::as_u64)
+            .expect("analysis passed count should be present");
+        let failed = data
+            .get("total_failed")
+            .and_then(serde_json::Value::as_u64)
+            .expect("analysis failed count should be present");
+
+        assert_eq!(invocation_id, older);
+        assert_eq!(passed, 1);
+        assert_eq!(failed, 0);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_execute_tests_analyze_accepts_background_job_selector()
+    -> ::xtask::sandbox::TestResult<()> {
+        let db = seeded_history_db("tests-analyze-job.db")?;
+        let ctx = silent_ctx();
+
+        let (invocation_id, job_id) = db.start_background_job(
+            "test",
+            &[],
+            None,
+            std::path::Path::new(""),
+            std::path::Path::new(""),
+        )?;
+        db.finish_invocation(invocation_id, InvocationStatus::Success, Some(0), 1.0)?;
+        store_test_result(&db, invocation_id, "job_pass", "pkg-job", TestStatus::Pass)?;
+
+        let result = execute_tests_analyze(&db, &format!("job:{job_id}"), &ctx)?;
+        let data = result.data.expect("analysis data should be present");
+        let resolved_invocation_id = data
+            .get("invocation_id")
+            .and_then(serde_json::Value::as_i64)
+            .expect("analysis invocation id should be present");
+        let expected_message =
+            format!("Analysis for invocation #{invocation_id} (job #{job_id}): 1 passed, 0 failed");
+
+        assert_eq!(resolved_invocation_id, invocation_id);
+        assert_eq!(result.message.as_deref(), Some(expected_message.as_str()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_execute_progress_defaults_to_current_selector()
+    -> ::xtask::sandbox::TestResult<()> {
+        let db = seeded_history_db("progress-current-selector.db")?;
+        let ctx = silent_ctx();
+
+        let older = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(older, InvocationStatus::Success, Some(0), 1.0)?;
+
+        let stdout = std::path::Path::new("");
+        let stderr = std::path::Path::new("");
+        let (running_invocation, _job_id) =
+            db.start_background_job("test", &[], None, stdout, stderr)?;
+        db.write_progress(
+            running_invocation,
+            Some("tests"),
+            Some("compiling targeted crates"),
+            Some(12.5),
+            Some(5),
+            Some(40),
+        )?;
+
+        let result = execute_progress(&db, None, &ctx)?;
+        let expected_message = format!("Progress for invocation #{running_invocation}");
+
+        assert_eq!(
+            result.message.as_deref(),
+            Some(expected_message.as_str())
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_execute_tests_slowest_accepts_explicit_invocation()
+    -> ::xtask::sandbox::TestResult<()> {
+        let db = seeded_history_db("tests-slowest-explicit.db")?;
+        let ctx = silent_ctx();
+
+        let older = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(older, InvocationStatus::Success, Some(0), 4.0)?;
+        db.store_test_results(
+            older,
+            &[
+                StoredTestResult {
+                    test_name: "older_slowest".into(),
+                    package: "pkg-a".into(),
+                    status: TestStatus::Fail,
+                    duration_secs: Some(4.0),
+                    attempt: 1,
+                    output: Some("boom".into()),
+                },
+                StoredTestResult {
+                    test_name: "older_fast".into(),
+                    package: "pkg-a".into(),
+                    status: TestStatus::Pass,
+                    duration_secs: Some(0.2),
+                    attempt: 1,
+                    output: None,
+                },
+            ],
+        )?;
+
+        let newer = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(newer, InvocationStatus::Success, Some(0), 20.0)?;
+        db.store_test_results(
+            newer,
+            &[StoredTestResult {
+                test_name: "newer_only".into(),
+                package: "pkg-b".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(20.0),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let result = execute_tests_slowest(&db, Some(&older.to_string()), 10, &ctx)?;
+        let data = result.data.expect("slowest test data should be present");
+        let tests = data
+            .as_array()
+            .expect("run-scoped slowest data should be an array");
+        let expected_message = format!("Found 2 slowest tests for invocation #{older}");
+
+        assert_eq!(tests.len(), 2);
+        assert_eq!(
+            tests[0]
+                .get("test_name")
+                .and_then(serde_json::Value::as_str),
+            Some("older_slowest")
+        );
+        assert_eq!(
+            tests[0].get("status").and_then(serde_json::Value::as_str),
+            Some("fail")
+        );
+        assert_eq!(result.message.as_deref(), Some(expected_message.as_str()));
         Ok(())
     }
 

@@ -23,16 +23,11 @@ async fn test_data_persistence_safety(ctx: TestContext) -> TestResult<()> {
 
     // Phase 1: Seed initial data
     let initial_count = 10usize;
-    for i in 0..initial_count {
-        scope
-            .publish(DynamicPayload::new(
-                "pipeline-safety",
-                "pipeline.initial",
-                json!({"seq": i, "batch": "initial", "checksum": format!("init-{i}")}),
-            ))
-            .await?;
-    }
-    scope.wait_for_event_count(initial_count).await?;
+    scope
+        .publish_batch(initial_count, "pipeline-safety", "pipeline.initial", |i| {
+            json!({"seq": i, "batch": "initial", "checksum": format!("init-{i}")})
+        })
+        .await?;
 
     // Capture initial data fingerprint
     let source = sinex_primitives::EventSource::from("pipeline-safety");
@@ -57,17 +52,10 @@ async fn test_data_persistence_safety(ctx: TestContext) -> TestResult<()> {
 
     // Phase 2: Add more data
     let additional_count = 5usize;
-    for i in 0..additional_count {
-        scope
-            .publish(DynamicPayload::new(
-                "pipeline-safety",
-                "pipeline.additional",
-                json!({"seq": i, "batch": "additional", "checksum": format!("add-{i}")}),
-            ))
-            .await?;
-    }
     scope
-        .wait_for_event_count(initial_count + additional_count)
+        .publish_batch(additional_count, "pipeline-safety", "pipeline.additional", |i| {
+            json!({"seq": i, "batch": "additional", "checksum": format!("add-{i}")})
+        })
         .await?;
 
     // Verify initial data is still intact
@@ -111,31 +99,21 @@ async fn test_pipeline_idempotency(ctx: TestContext) -> TestResult<()> {
     let batch_size = 5usize;
 
     // First execution of the batch
-    for i in 0..batch_size {
-        scope
-            .publish(DynamicPayload::new(
-                "idempotency-pipeline",
-                "pipeline.batch",
-                json!({"seq": i, "run": 1}),
-            ))
-            .await?;
-    }
-    scope.wait_for_event_count(batch_size).await?;
+    scope
+        .publish_batch(batch_size, "idempotency-pipeline", "pipeline.batch", |i| {
+            json!({"seq": i, "run": 1})
+        })
+        .await?;
 
     let source = sinex_primitives::EventSource::from("idempotency-pipeline");
     let after_first = scope.ctx().pool.events().count_by_source(&source).await?;
 
     // Second execution of the same batch
-    for i in 0..batch_size {
-        scope
-            .publish(DynamicPayload::new(
-                "idempotency-pipeline",
-                "pipeline.batch",
-                json!({"seq": i, "run": 2}),
-            ))
-            .await?;
-    }
-    scope.wait_for_event_count(batch_size * 2).await?;
+    scope
+        .publish_batch(batch_size, "idempotency-pipeline", "pipeline.batch", |i| {
+            json!({"seq": i, "run": 2})
+        })
+        .await?;
 
     let after_second = scope.ctx().pool.events().count_by_source(&source).await?;
 

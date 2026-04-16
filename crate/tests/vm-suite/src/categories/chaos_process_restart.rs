@@ -146,7 +146,7 @@ async fn test_no_duplicate_events_after_restart(runner: &mut TestRunner, pool: &
     .await;
 
     match result {
-        Ok(Some(dup_count)) if dup_count == 0 => runner.pass(name),
+        Ok(Some(0)) => runner.pass(name),
         Ok(Some(dup_count)) => runner.fail(
             name,
             &format!("{dup_count} events have duplicate IDs (replay violation)"),

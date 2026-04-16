@@ -82,6 +82,15 @@ pub trait EventPublisher {
 
     /// Publish a pre-built event to the ingestion pipeline via NATS.
     async fn publish_prebuilt_event(&self, event: &Event<JsonValue>) -> TestResult<Uuid>;
+
+    /// Publish multiple pre-built events to the ingestion pipeline via NATS.
+    ///
+    /// This is the batch fast path for helpers that already prepared concrete
+    /// envelopes and only need one flush at the end of the burst.
+    async fn publish_prebuilt_events(
+        &self,
+        events: &[Event<JsonValue>],
+    ) -> TestResult<Vec<Uuid>>;
 }
 
 impl EventPublisher for Sandbox {
@@ -169,34 +178,50 @@ impl EventPublisher for Sandbox {
 
     async fn publish_prebuilt_event(&self, event: &Event<JsonValue>) -> TestResult<Uuid> {
         // Just publish to NATS - caller (PipelineScope) is responsible for ingestd
+        let mut event_ids = self.publish_prebuilt_events(std::slice::from_ref(event)).await?;
+        Ok(event_ids
+            .pop()
+            .expect("single-event batch publish must return one event id"))
+    }
+
+    async fn publish_prebuilt_events(&self, events: &[Event<JsonValue>]) -> TestResult<Vec<Uuid>> {
+        if events.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Just publish to NATS - caller (PipelineScope) is responsible for ingestd
         let client = self.nats_client();
-        let mut envelope = event.clone();
+        let mut published = Vec::with_capacity(events.len());
 
-        // Assign an ID if the event doesn't have one
-        let event_id = if let Some(id) = &envelope.id {
-            *id.as_uuid()
-        } else {
-            let new_id = Id::new();
-            let uuid = *new_id.as_uuid();
-            envelope.id = Some(new_id);
-            uuid
-        };
+        for event in events {
+            let mut envelope = event.clone();
 
-        let payload = serde_json::to_vec(&envelope)?;
+            // Assign an ID if the event doesn't have one.
+            let event_id = if let Some(id) = &envelope.id {
+                *id.as_uuid()
+            } else {
+                let new_id = Id::new();
+                let uuid = *new_id.as_uuid();
+                envelope.id = Some(new_id);
+                uuid
+            };
 
-        let subject = self.env().nats_raw_event_subject_with_namespace(
-            Some(self.pipeline_namespace().prefix()),
-            event.source.as_str(),
-            event.event_type.as_str(),
-        );
+            let payload = serde_json::to_vec(&envelope)?;
+            let subject = self.env().nats_raw_event_subject_with_namespace(
+                Some(self.pipeline_namespace().prefix()),
+                event.source.as_str(),
+                event.event_type.as_str(),
+            );
+            client.publish(subject, payload.into()).await?;
+            published.push(event_id);
+        }
 
-        client.publish(subject.clone(), payload.into()).await?;
         client
             .flush()
             .await
             .map_err(|e| eyre!("NATS flush failed: {e}"))?;
 
-        Ok(event_id)
+        Ok(published)
     }
 }
 

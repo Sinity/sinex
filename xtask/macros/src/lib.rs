@@ -20,11 +20,18 @@ use syn::{
 struct SinexTestConfig {
     timeout: Option<u64>,
     trace: bool,
-    serial: bool,
+    serial_scope: SerialScope,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SerialScope {
+    None,
+    Process,
+    Workspace,
 }
 
 /// Known `sinex_test` attribute names for error reporting.
-const KNOWN_SINEX_TEST_ATTRS: &[&str] = &["timeout", "trace", "serial"];
+const KNOWN_SINEX_TEST_ATTRS: &[&str] = &["timeout", "trace", "serial", "scope"];
 
 fn parse_u64_lit(lit: &Lit, field_name: &str) -> Result<u64, Error> {
     match lit {
@@ -51,6 +58,25 @@ fn parse_bool_lit(lit: &Lit, field_name: &str) -> Result<bool, Error> {
     }
 }
 
+fn parse_serial_scope_lit(lit: &Lit, field_name: &str) -> Result<SerialScope, Error> {
+    match lit {
+        Lit::Str(lit_str) => match lit_str.value().to_lowercase().as_str() {
+            "process" => Ok(SerialScope::Process),
+            "workspace" => Ok(SerialScope::Workspace),
+            other => Err(Error::new(
+                lit.span(),
+                format!(
+                    "invalid `{field_name}` value `{other}`; expected \"process\" or \"workspace\""
+                ),
+            )),
+        },
+        _ => Err(Error::new(
+            lit.span(),
+            format!("`{field_name}` must be a string literal"),
+        )),
+    }
+}
+
 fn lit_from_expr<'a>(expr: &'a Expr, field_name: &str) -> Result<&'a Lit, Error> {
     if let Expr::Lit(expr_lit) = expr {
         Ok(&expr_lit.lit)
@@ -63,7 +89,7 @@ fn lit_from_expr<'a>(expr: &'a Expr, field_name: &str) -> Result<&'a Lit, Error>
 }
 
 /// Parse `sinex_test` attributes.
-/// Supports: timeout = 30, trace = true, serial = true
+/// Supports: timeout = 30, trace = true, serial = true, scope = "workspace"
 ///
 /// Returns a compile error for unknown attribute names, preventing
 /// silent typo bugs like `#[sinex_test(timout = 30)]`.
@@ -73,7 +99,7 @@ fn parse_sinex_test_attrs_tokens(
     let mut config = SinexTestConfig {
         timeout: None,
         trace: false,
-        serial: false,
+        serial_scope: SerialScope::None,
     };
 
     if attr_tokens.is_empty() {
@@ -126,7 +152,30 @@ fn parse_sinex_test_attrs_tokens(
                     };
                     match parse_bool_lit(lit, "serial") {
                         Ok(serial) => {
-                            config.serial = serial;
+                            config.serial_scope = if serial {
+                                match config.serial_scope {
+                                    SerialScope::None => SerialScope::Process,
+                                    scope => scope,
+                                }
+                            } else {
+                                SerialScope::None
+                            };
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+                Meta::NameValue(MetaNameValue { path, value, .. }) if path.is_ident("scope") => {
+                    let lit = match &value {
+                        Expr::Lit(ExprLit { lit, .. }) => lit,
+                        _ => {
+                            let error =
+                                Error::new(value.span(), "`scope` must be a string literal");
+                            return Err(error);
+                        }
+                    };
+                    match parse_serial_scope_lit(lit, "scope") {
+                        Ok(scope) => {
+                            config.serial_scope = scope;
                         }
                         Err(error) => return Err(error),
                     }
@@ -135,7 +184,9 @@ fn parse_sinex_test_attrs_tokens(
                     config.trace = true;
                 }
                 Meta::Path(path) if path.is_ident("serial") => {
-                    config.serial = true;
+                    if matches!(config.serial_scope, SerialScope::None) {
+                        config.serial_scope = SerialScope::Process;
+                    }
                 }
                 other => {
                     let name = match &other {
@@ -179,7 +230,23 @@ fn parse_sinex_test_attrs_tokens(
         } else if nv.path.is_ident("serial") {
             match lit_from_expr(&nv.value, "serial").and_then(|lit| parse_bool_lit(lit, "serial")) {
                 Ok(serial) => {
-                    config.serial = serial;
+                    config.serial_scope = if serial {
+                        match config.serial_scope {
+                            SerialScope::None => SerialScope::Process,
+                            scope => scope,
+                        }
+                    } else {
+                        SerialScope::None
+                    };
+                }
+                Err(error) => return Err(error),
+            }
+        } else if nv.path.is_ident("scope") {
+            match lit_from_expr(&nv.value, "scope")
+                .and_then(|lit| parse_serial_scope_lit(lit, "scope"))
+            {
+                Ok(scope) => {
+                    config.serial_scope = scope;
                 }
                 Err(error) => return Err(error),
             }
@@ -200,7 +267,7 @@ fn parse_sinex_test_attrs_tokens(
 
     Err(Error::new(
         proc_macro2::Span::call_site(),
-        "failed to parse sinex_test attributes — expected e.g. #[sinex_test(timeout = 30, trace, serial)]",
+        "failed to parse sinex_test attributes — expected e.g. #[sinex_test(timeout = 30, trace, serial, scope = \"workspace\")]",
     ))
 }
 
@@ -500,6 +567,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
             let test_name = stringify!(#fn_name);
             let start = std::time::Instant::now();
             eprintln!("🔄 {} [prop, timeout: {}s, cases: {}]", test_name.replace('_', " "), #timeout_secs, #cases);
+            let _test_temp_env = ::xtask::sandbox::prepare_test_temp_env(test_name)?;
             let ctx_holder = if #expects_ctx {
                 Some(::xtask::sandbox::Sandbox::with_name(test_name).await?)
             } else {
@@ -838,7 +906,9 @@ pub fn sinex_serial_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         Ok(c) => c,
         Err(err) => return err,
     };
-    config.serial = true;
+    if matches!(config.serial_scope, SerialScope::None) {
+        config.serial_scope = SerialScope::Process;
+    }
     let input = parse_macro_input!(item as ItemFn);
     expand_sinex_test(config, input)
 }
@@ -929,13 +999,15 @@ fn has_result_return_type(output: &syn::ReturnType) -> bool {
 }
 
 /// Generate the serial guard token stream (empty if serial is disabled).
-fn serial_guard_tokens(enable_serial: bool) -> proc_macro2::TokenStream {
-    if enable_serial {
-        quote! {
-            let _serial_guard = ::xtask::sandbox::acquire_pool_test_guard().await;
-        }
-    } else {
-        quote! {}
+fn serial_guard_tokens(scope: SerialScope) -> proc_macro2::TokenStream {
+    match scope {
+        SerialScope::None => quote! {},
+        SerialScope::Process => quote! {
+            let _serial_guard = ::xtask::sandbox::acquire_process_test_guard().await;
+        },
+        SerialScope::Workspace => quote! {
+            let _serial_guard = ::xtask::sandbox::acquire_workspace_test_guard().await?;
+        },
     }
 }
 
@@ -944,7 +1016,7 @@ fn expand_rstest_variant(
     input: &ItemFn,
     attrs: &ClassifiedAttrs,
     timeout_secs: u64,
-    enable_serial: bool,
+    serial_scope: SerialScope,
     enable_tracing: bool,
 ) -> TokenStream {
     let fn_name = &input.sig.ident;
@@ -973,7 +1045,7 @@ fn expand_rstest_variant(
     let mut new_sig = input.sig.clone();
     new_sig.inputs = filtered_inputs.into_iter().collect();
 
-    let serial_guard = serial_guard_tokens(enable_serial);
+    let serial_guard = serial_guard_tokens(serial_scope);
     let tracing_block = if enable_tracing {
         quote! { ::xtask::Sandbox::init_tracing("debug"); }
     } else {
@@ -984,6 +1056,7 @@ fn expand_rstest_variant(
         quote! {
             #serial_guard
             #tracing_block
+            let _test_temp_env = ::xtask::sandbox::prepare_test_temp_env(test_name)?;
             let ctx = ::xtask::Sandbox::with_name(test_name).await?;
             async { #fn_body }.await
         }
@@ -991,6 +1064,7 @@ fn expand_rstest_variant(
         quote! {
             #serial_guard
             #tracing_block
+            let _test_temp_env = ::xtask::sandbox::prepare_test_temp_env(test_name)?;
             async { #fn_body }.await
         }
     };
@@ -1045,21 +1119,22 @@ fn expand_async_context_test(
     test_attrs: &[syn::Attribute],
     fn_body: &syn::Block,
     timeout_secs: u64,
-    enable_serial: bool,
+    serial_scope: SerialScope,
 ) -> proc_macro2::TokenStream {
     let fn_name = &input.sig.ident;
     let fn_vis = &input.vis;
-    let serial_guard = serial_guard_tokens(enable_serial);
+    let serial_guard = serial_guard_tokens(serial_scope);
 
     quote! {
         #(#test_attrs)*
         #[tokio::test]
         #fn_vis async fn #fn_name() -> ::xtask::sandbox::TestResult<()> {
             let test_future = async {
-                #serial_guard
                 let test_name = stringify!(#fn_name);
                 let start = std::time::Instant::now();
                 eprintln!("🔄 {} [timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
+                #serial_guard
+                let _test_temp_env = ::xtask::sandbox::prepare_test_temp_env(test_name)?;
 
                 let ctx = ::xtask::Sandbox::with_name(test_name).await?;
                 let ctx_failure_snapshot = ctx.failure_snapshot();
@@ -1123,44 +1198,49 @@ fn expand_simple_async_test(
     test_attrs: &[syn::Attribute],
     fn_body: &syn::Block,
     timeout_secs: u64,
-    enable_serial: bool,
+    serial_scope: SerialScope,
 ) -> proc_macro2::TokenStream {
     let fn_name = &input.sig.ident;
     let fn_vis = &input.vis;
-    let serial_guard = serial_guard_tokens(enable_serial);
+    let serial_guard = serial_guard_tokens(serial_scope);
 
     quote! {
         #(#test_attrs)*
         #[tokio::test]
         #fn_vis async fn #fn_name() -> ::xtask::sandbox::TestResult<()> {
-            let test_name = stringify!(#fn_name);
-            let start = std::time::Instant::now();
-            eprintln!("🔄 {} [simple, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
+            let test_future = async {
+                let test_name = stringify!(#fn_name);
+                let start = std::time::Instant::now();
+                eprintln!("🔄 {} [simple, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
+                #serial_guard
+                let _test_temp_env = ::xtask::sandbox::prepare_test_temp_env(test_name)?;
 
-            let result = tokio::time::timeout(
-                std::time::Duration::from_secs(#timeout_secs),
-                async {
-                    #serial_guard
+                let result = async {
                     #fn_body
-                }
-            ).await
-            .map_err(|_| ::color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?;
+                }.await;
 
-            let elapsed = start.elapsed();
-            match &result {
-                Ok(_) => {
-                    eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                let elapsed = start.elapsed();
+                match &result {
+                    Ok(_) => {
+                        eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                    }
+                    Err(err) => {
+                        eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                        ::xtask::sandbox::snapshot_helper::persist_failure(
+                            test_name,
+                            format!("{err:?}"),
+                            ::xtask::sandbox::snapshot_helper::FailureContext::None,
+                        );
+                    }
                 }
-                Err(err) => {
-                    eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                    ::xtask::sandbox::snapshot_helper::persist_failure(
-                        test_name,
-                        format!("{err:?}"),
-                        ::xtask::sandbox::snapshot_helper::FailureContext::None,
-                    );
-                }
-            }
-            result
+                result
+            };
+
+            tokio::time::timeout(
+                std::time::Duration::from_secs(#timeout_secs),
+                test_future
+            ).await
+            .map_err(|_| ::color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?
         }
     }
 }
@@ -1200,7 +1280,13 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
 
     // Dispatch to the appropriate code generation variant
     if attrs.has_rstest_cases {
-        return expand_rstest_variant(&input, &attrs, timeout_secs, config.serial, config.trace);
+        return expand_rstest_variant(
+            &input,
+            &attrs,
+            timeout_secs,
+            config.serial_scope,
+            config.trace,
+        );
     }
 
     let fn_body = *input.block.clone();
@@ -1211,7 +1297,7 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
             &attrs.test_attrs,
             &fn_body,
             timeout_secs,
-            config.serial,
+            config.serial_scope,
         )
     } else {
         expand_simple_async_test(
@@ -1219,7 +1305,7 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
             &attrs.test_attrs,
             &fn_body,
             timeout_secs,
-            config.serial,
+            config.serial_scope,
         )
     };
 
@@ -1466,8 +1552,12 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_sinex_test_attrs_tokens;
+    use super::{
+        SerialScope, expand_async_context_test, expand_simple_async_test,
+        parse_sinex_test_attrs_tokens, serial_guard_tokens,
+    };
     use quote::quote;
+    use syn::{ItemFn, parse2};
 
     fn parse_ok(tokens: proc_macro2::TokenStream) -> super::SinexTestConfig {
         parse_sinex_test_attrs_tokens(tokens).expect("attributes should parse")
@@ -1481,11 +1571,16 @@ mod tests {
 
     #[test]
     fn sinex_test_attrs_parse_valid_timeout_and_flags() {
-        let config = parse_ok(quote!(timeout = 45, trace = true, serial));
+        let config = parse_ok(quote!(
+            timeout = 45,
+            trace = true,
+            serial,
+            scope = "workspace"
+        ));
 
         assert_eq!(config.timeout, Some(45));
         assert!(config.trace);
-        assert!(config.serial);
+        assert!(matches!(config.serial_scope, SerialScope::Workspace));
     }
 
     #[test]
@@ -1507,5 +1602,80 @@ mod tests {
         let error = parse_err(quote!(timout = 30));
         assert!(error.contains("unknown sinex_test attribute"));
         assert!(error.contains("timout"));
+    }
+
+    fn parse_item_fn(tokens: proc_macro2::TokenStream) -> ItemFn {
+        parse2(tokens).expect("test function should parse")
+    }
+
+    fn count_occurrences(haystack: &str, needle: &str) -> usize {
+        haystack.match_indices(needle).count()
+    }
+
+    #[test]
+    fn serial_guard_tokens_propagate_lock_acquisition_failures() {
+        let rendered = serial_guard_tokens(SerialScope::Workspace).to_string();
+        assert!(rendered.contains("acquire_workspace_test_guard"));
+        assert!(
+            rendered.contains(". await ?"),
+            "rendered tokens: {rendered}"
+        );
+    }
+
+    #[test]
+    fn process_serial_guard_tokens_do_not_require_fallible_lock_acquisition() {
+        let rendered = serial_guard_tokens(SerialScope::Process).to_string();
+        assert!(rendered.contains("acquire_process_test_guard"));
+        assert!(
+            !rendered.contains(". await ?"),
+            "rendered tokens: {rendered}"
+        );
+    }
+
+    #[test]
+    fn async_context_expansion_keeps_single_serial_guard_inside_timed_future() {
+        let input = parse_item_fn(quote! {
+            async fn serial_context_test(ctx: ::xtask::sandbox::TestContext) -> ::xtask::sandbox::TestResult<()> {
+                let _ = ctx;
+                Ok(())
+            }
+        });
+
+        let rendered =
+            expand_async_context_test(&input, &[], &input.block, 30, SerialScope::Workspace)
+                .to_string();
+        assert_eq!(
+            count_occurrences(&rendered, "acquire_workspace_test_guard"),
+            1,
+            "rendered tokens: {rendered}"
+        );
+        assert!(
+            rendered.contains("let test_future = async"),
+            "rendered tokens: {rendered}"
+        );
+        assert!(rendered.contains("timeout"), "rendered tokens: {rendered}");
+    }
+
+    #[test]
+    fn simple_async_expansion_keeps_single_serial_guard_inside_timed_future() {
+        let input = parse_item_fn(quote! {
+            async fn serial_simple_test() -> ::xtask::sandbox::TestResult<()> {
+                Ok(())
+            }
+        });
+
+        let rendered =
+            expand_simple_async_test(&input, &[], &input.block, 30, SerialScope::Workspace)
+                .to_string();
+        assert_eq!(
+            count_occurrences(&rendered, "acquire_workspace_test_guard"),
+            1,
+            "rendered tokens: {rendered}"
+        );
+        assert!(
+            rendered.contains("let test_future = async"),
+            "rendered tokens: {rendered}"
+        );
+        assert!(rendered.contains("timeout"), "rendered tokens: {rendered}");
     }
 }

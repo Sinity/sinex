@@ -234,6 +234,7 @@ impl XtaskCommand for VerifyCommand {
             timeout: Some(Duration::from_mins(30)),
             modifies_state: true,
             track_in_history: true,
+            history_access: crate::command::HistoryAccessMode::ReadWrite,
         }
     }
 }

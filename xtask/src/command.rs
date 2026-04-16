@@ -56,6 +56,29 @@ pub struct StageHandle {
 use crate::output::{OutputWriter, Status, StructuredError};
 
 /// Metadata about a command's execution requirements and characteristics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryAccessMode {
+    /// Command does not need the history DB at all.
+    None,
+    /// Command only reads history and must not pay writer-open side effects.
+    Query,
+    /// Command may mutate history state and should use a read-write handle.
+    ReadWrite,
+}
+
+impl HistoryAccessMode {
+    #[must_use]
+    pub fn needs_history_db(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    #[must_use]
+    pub fn uses_writer(self) -> bool {
+        matches!(self, Self::ReadWrite)
+    }
+}
+
+/// Metadata about a command's execution requirements and characteristics.
 #[derive(Debug, Clone)]
 pub struct CommandMetadata {
     /// Command category for organization (e.g., "build", "test", "database")
@@ -66,6 +89,8 @@ pub struct CommandMetadata {
     pub modifies_state: bool,
     /// Whether to track this command in history
     pub track_in_history: bool,
+    /// How this command accesses the history DB, if at all.
+    pub history_access: HistoryAccessMode,
 }
 
 impl Default for CommandMetadata {
@@ -75,6 +100,7 @@ impl Default for CommandMetadata {
             timeout: None,
             modifies_state: false,
             track_in_history: true,
+            history_access: HistoryAccessMode::ReadWrite,
         }
     }
 }
@@ -88,6 +114,7 @@ impl CommandMetadata {
             timeout: Some(Duration::from_mins(5)), // 5 minutes
             modifies_state: true,
             track_in_history: true,
+            history_access: HistoryAccessMode::ReadWrite,
         }
     }
 
@@ -99,6 +126,7 @@ impl CommandMetadata {
             timeout: Some(Duration::from_mins(10)), // 10 minutes
             modifies_state: false,
             track_in_history: true,
+            history_access: HistoryAccessMode::ReadWrite,
         }
     }
 
@@ -110,6 +138,7 @@ impl CommandMetadata {
             timeout: Some(Duration::from_mins(2)), // 2 minutes
             modifies_state: true,
             track_in_history: true,
+            history_access: HistoryAccessMode::ReadWrite,
         }
     }
 
@@ -121,6 +150,7 @@ impl CommandMetadata {
             timeout: Some(Duration::from_mins(5)), // 5 minutes (preflight + fmt + check + clippy)
             modifies_state: false,
             track_in_history: true,
+            history_access: HistoryAccessMode::ReadWrite,
         }
     }
 
@@ -132,6 +162,7 @@ impl CommandMetadata {
             timeout: None,
             modifies_state: false,
             track_in_history: false,
+            history_access: HistoryAccessMode::None,
         }
     }
 
@@ -143,6 +174,7 @@ impl CommandMetadata {
             timeout: Some(Duration::from_mins(2)), // 2 minutes
             modifies_state: false,
             track_in_history: true,
+            history_access: HistoryAccessMode::ReadWrite,
         }
     }
 
@@ -154,6 +186,7 @@ impl CommandMetadata {
             timeout: Some(Duration::from_mins(5)),
             modifies_state: true,
             track_in_history: true,
+            history_access: HistoryAccessMode::ReadWrite,
         }
     }
 
@@ -165,7 +198,26 @@ impl CommandMetadata {
             timeout: Some(Duration::from_mins(2)),
             modifies_state: false,
             track_in_history: true,
+            history_access: HistoryAccessMode::ReadWrite,
         }
+    }
+
+    #[must_use]
+    pub fn with_history_access(mut self, history_access: HistoryAccessMode) -> Self {
+        self.history_access = history_access;
+        self
+    }
+
+    #[must_use]
+    pub fn with_history_tracking(mut self, track_in_history: bool) -> Self {
+        self.track_in_history = track_in_history;
+        self
+    }
+
+    #[must_use]
+    pub fn with_state_mutation(mut self, modifies_state: bool) -> Self {
+        self.modifies_state = modifies_state;
+        self
     }
 }
 
@@ -384,11 +436,12 @@ pub struct CommandContext {
     /// Set to true when `finish_invocation` is called explicitly in lib.rs.
     /// The Drop impl only acts if this is false (catching panics/early exits).
     finished: AtomicBool,
-    /// Lazily-cached history DB connection. Opened on first use, reused for all
-    /// subsequent operations (diagnostics, stage timing, fingerprints). Eliminates
-    /// the N-opens-per-command anti-pattern where each method independently called
-    /// `HistoryDb::open()`.
-    history_db: Mutex<Option<crate::history::HistoryDb>>,
+    /// Lazily-cached read-write history DB connection. Used for tracked commands
+    /// and any mutation of invocation/job history.
+    history_db_write: Mutex<Option<crate::history::HistoryDb>>,
+    /// Lazily-cached query-only history DB connection. Used for observational
+    /// commands and read paths that must stay responsive under write load.
+    history_db_query: Mutex<Option<crate::history::HistoryDb>>,
     /// Path to the history database file (computed once at construction).
     db_path: PathBuf,
     /// Accumulates completed stage timings for `print_stage_summary()`.
@@ -418,7 +471,8 @@ impl CommandContext {
             command_name: command_name.into(),
             invocation_id,
             finished: AtomicBool::new(false),
-            history_db: Mutex::new(None),
+            history_db_write: Mutex::new(None),
+            history_db_query: Mutex::new(None),
             db_path,
             completed_stages: Mutex::new(Vec::new()),
             cargo_runner: std::sync::Arc::new(crate::cargo_runner::RealCargoRunner),
@@ -445,7 +499,8 @@ impl CommandContext {
             command_name: command_name.into(),
             invocation_id,
             finished: AtomicBool::new(false),
-            history_db: Mutex::new(None),
+            history_db_write: Mutex::new(None),
+            history_db_query: Mutex::new(None),
             db_path,
             completed_stages: Mutex::new(Vec::new()),
             cargo_runner: std::sync::Arc::new(crate::cargo_runner::RealCargoRunner),
@@ -458,13 +513,31 @@ impl CommandContext {
     /// invocation tracking instead of paying `HistoryDb::open()` twice inside
     /// one command run.
     #[must_use]
-    pub fn with_preopened_history_db(self, db: Option<crate::history::HistoryDb>) -> Self {
-        let mut guard = match self.history_db.lock() {
+    pub fn with_preopened_history_db_write(self, db: Option<crate::history::HistoryDb>) -> Self {
+        let mut guard = match self.history_db_write.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
                 tracing::warn!(
                     target: "xtask::history",
                     "history DB mutex was poisoned while seeding preopened state; recovering inner state"
+                );
+                poisoned.into_inner()
+            }
+        };
+        *guard = db;
+        drop(guard);
+        self
+    }
+
+    /// Seed the context with an already-open query-only history DB connection.
+    #[must_use]
+    pub fn with_preopened_history_db_query(self, db: Option<crate::history::HistoryDb>) -> Self {
+        let mut guard = match self.history_db_query.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                tracing::warn!(
+                    target: "xtask::history",
+                    "history DB query mutex was poisoned while seeding preopened state; recovering inner state"
                 );
                 poisoned.into_inner()
             }
@@ -510,34 +583,17 @@ impl CommandContext {
     where
         F: FnOnce(&crate::history::HistoryDb) -> Result<R>,
     {
-        let mut guard = match self.history_db.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => {
-                tracing::warn!(
+        match self.try_with_history_db(f) {
+            Some(Ok(value)) => Some(value),
+            Some(Err(error)) => {
+                tracing::debug!(
                     target: "xtask::history",
-                    "history DB mutex was poisoned; recovering inner state"
+                    error = %error,
+                    "history DB operation failed (best-effort)"
                 );
-                poisoned.into_inner()
-            }
-        };
-        if guard.is_none() {
-            match crate::history::HistoryDb::open(&self.db_path) {
-                Ok(db) => {
-                    *guard = Some(db);
-                }
-                Err(e) => {
-                    tracing::debug!(target: "xtask::history", path = %self.db_path.display(), error = %e, "failed to open history DB");
-                    return None;
-                }
-            }
-        }
-        let db = guard.as_ref()?;
-        match f(db) {
-            Ok(v) => Some(v),
-            Err(e) => {
-                tracing::debug!(target: "xtask::history", error = %e, "history DB operation failed (best-effort)");
                 None
             }
+            None => None,
         }
     }
 
@@ -550,7 +606,7 @@ impl CommandContext {
     where
         F: FnOnce(&crate::history::HistoryAnalysis<'_>) -> Result<R>,
     {
-        self.try_with_history_db(|db| {
+        self.try_with_history_db_query(|db| {
             let analysis = crate::history::HistoryAnalysis::new(db);
             f(&analysis)
         })
@@ -565,7 +621,38 @@ impl CommandContext {
     where
         F: FnOnce(&crate::history::HistoryDb) -> Result<R>,
     {
-        let mut guard = match self.history_db.lock() {
+        self.try_with_history_db_using(
+            &self.history_db_write,
+            crate::history::HistoryDb::open,
+            f,
+        )
+    }
+
+    /// Execute a closure with the cached history DB opened in query mode.
+    ///
+    /// Use this for observational commands that only need to read historical
+    /// data and should not pay the writer-open cleanup/integrity path.
+    pub fn try_with_history_db_query<F, R>(&self, f: F) -> Option<Result<R>>
+    where
+        F: FnOnce(&crate::history::HistoryDb) -> Result<R>,
+    {
+        self.try_with_history_db_using(
+            &self.history_db_query,
+            crate::history::HistoryDb::open_query,
+            f,
+        )
+    }
+
+    fn try_with_history_db_using<F, R>(
+        &self,
+        slot: &Mutex<Option<crate::history::HistoryDb>>,
+        opener: fn(&std::path::Path) -> Result<crate::history::HistoryDb>,
+        f: F,
+    ) -> Option<Result<R>>
+    where
+        F: FnOnce(&crate::history::HistoryDb) -> Result<R>,
+    {
+        let mut guard = match slot.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
                 tracing::warn!(
@@ -576,7 +663,7 @@ impl CommandContext {
             }
         };
         if guard.is_none() {
-            match crate::history::HistoryDb::open(&self.db_path) {
+            match opener(&self.db_path) {
                 Ok(db) => {
                     *guard = Some(db);
                 }
@@ -639,6 +726,18 @@ impl CommandContext {
     #[must_use]
     pub fn is_human(&self) -> bool {
         matches!(self.writer.format(), crate::output::OutputFormat::Human)
+    }
+
+    /// Whether this command execution may launch interactive convenience work
+    /// that has side effects outside the command's primary contract.
+    ///
+    /// This is intentionally stricter than "foreground": machine-oriented
+    /// executions (`--json`, compact, silent) should be observational and
+    /// deterministic, not consult ambient workstation history to start helper
+    /// subprocesses.
+    #[must_use]
+    pub fn allows_ambient_optimizations(&self) -> bool {
+        !self.is_background() && self.is_human()
     }
 
     /// Check if output format is JSON.
@@ -949,26 +1048,48 @@ impl CommandContext {
         let cfg = config();
         let manager = JobManager::new(cfg.jobs_dir())?;
         let job = manager.spawn_xtask(subcommand, args, self.writer.format())?;
+        let history_selector = format!("job:{}", job.id);
+        let history_hint = format!("xtask history invocation {history_selector}");
+        let progress_hint = format!("xtask history progress --invocation {history_selector}");
+        let test_analysis_hint = (subcommand == "test")
+            .then(|| format!("xtask history tests analyze --invocation job:{}", job.id));
 
         let result = CommandResult::success()
-            .with_message(format!("Started background job {}", job.id))
+            .with_message(match job.invocation_id {
+                Some(invocation_id) => {
+                    format!("Started background job {} (invocation {invocation_id})", job.id)
+                }
+                None => format!("Started background job {}", job.id),
+            })
             .with_data(serde_json::json!({
                 "job_id": job.id,
+                "invocation_id": job.invocation_id,
                 "pid": job.pid,
                 "stdout": job.stdout_path.display().to_string(),
                 "stderr": job.stderr_path.display().to_string(),
                 "command": subcommand,
                 "args": args,
                 "hint": format!("Monitor with: xtask jobs status {}", job.id),
+                "history_hint": history_hint,
+                "progress_hint": progress_hint,
+                "test_analysis_hint": test_analysis_hint,
             }));
 
         if self.is_human() {
             println!("🚀 Started background job {}", job.id);
             println!("   Command: xtask {} {}", subcommand, args.join(" "));
+            if let Some(invocation_id) = job.invocation_id {
+                println!("   Invocation: {invocation_id}");
+            }
             println!("   Logs: {}", job.stdout_path.display());
             println!();
             println!("   Monitor: xtask jobs status {}", job.id);
             println!("   Output:  xtask jobs output {}", job.id);
+            println!("   History: {history_hint}");
+            println!("   Progress: {progress_hint}");
+            if let Some(test_analysis_hint) = &test_analysis_hint {
+                println!("   Analyze: {test_analysis_hint}");
+            }
             println!("   Cancel:  xtask jobs cancel {}", job.id);
             // Suppress the automatic CommandResult print — we already wrote the job summary.
             // In JSON mode is_silent is ignored when data is present, so the JSON envelope
@@ -1174,11 +1295,21 @@ mod tests {
             None,
             "test",
         );
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        let elapsed = ctx.elapsed();
+        let baseline = ctx.elapsed();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
 
-        assert!(elapsed.as_millis() >= 10);
-        Ok(())
+        loop {
+            let elapsed = ctx.elapsed();
+            if elapsed > baseline {
+                return Ok(());
+            }
+
+            assert!(
+                std::time::Instant::now() < deadline,
+                "CommandContext::elapsed() never advanced past {baseline:?}"
+            );
+            std::thread::yield_now();
+        }
     }
 
     #[sinex_test]
@@ -1231,10 +1362,22 @@ mod tests {
         let test_meta = CommandMetadata::test();
         assert_eq!(test_meta.category, Some("test"));
         assert!(!test_meta.modifies_state);
+        assert!(test_meta.track_in_history);
+        assert_eq!(test_meta.history_access, HistoryAccessMode::ReadWrite);
 
         let db_meta = CommandMetadata::database();
         assert_eq!(db_meta.category, Some("database"));
         assert!(db_meta.modifies_state);
+
+        let utility_meta = CommandMetadata::utility();
+        assert!(!utility_meta.track_in_history);
+        assert_eq!(utility_meta.history_access, HistoryAccessMode::None);
+
+        let observational_meta = CommandMetadata::analysis()
+            .with_history_tracking(false)
+            .with_history_access(HistoryAccessMode::Query);
+        assert!(!observational_meta.track_in_history);
+        assert_eq!(observational_meta.history_access, HistoryAccessMode::Query);
         Ok(())
     }
 

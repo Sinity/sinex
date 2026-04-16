@@ -1,5 +1,6 @@
 //! `SQLite` database operations for xtask history.
 
+use super::query::InvocationQuery;
 use color_eyre::eyre::{Result, WrapErr};
 
 /// Opening half of the package-scoped supersession CTE used by diagnostic queries.
@@ -20,11 +21,12 @@ const LATEST_PER_PACKAGE_CTE_CLOSE: &str = "
         GROUP BY ip.package
     )
 ";
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::temporal::Timestamp;
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::Duration;
 use time::OffsetDateTime;
 
@@ -32,12 +34,153 @@ const HISTORY_DB_SCHEMA_VERSION: i32 = 1;
 const SQLITE_LOCK_RETRY_ATTEMPTS: usize = 6;
 const SQLITE_LOCK_RETRY_BASE_DELAY: Duration = Duration::from_millis(50);
 const SQLITE_LOCK_RETRY_MAX_DELAY: Duration = Duration::from_millis(500);
+const SQLITE_PERSISTENT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+const SQLITE_EPHEMERAL_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+const SQLITE_QUERY_BUSY_TIMEOUT: Duration = Duration::from_secs(1);
+const SQLITE_STALE_CLEANUP_BUSY_TIMEOUT: Duration = Duration::from_millis(50);
+const HISTORY_DB_INTEGRITY_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+const HISTORY_DB_INTEGRITY_STAMP_EXTENSION: &str = "db.integrity.json";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HistoryDbOpenMode {
+    Persistent,
+    Ephemeral,
+    Query,
+}
+
+impl HistoryDbOpenMode {
+    fn pragmas(self) -> &'static str {
+        match self {
+            Self::Persistent => {
+                "PRAGMA foreign_keys=ON;
+                 PRAGMA journal_mode=WAL;
+                 PRAGMA synchronous=NORMAL;
+                 PRAGMA busy_timeout=5000;"
+            }
+            Self::Ephemeral => {
+                "PRAGMA foreign_keys=ON;
+                 PRAGMA journal_mode=MEMORY;
+                 PRAGMA synchronous=OFF;
+                 PRAGMA temp_store=MEMORY;
+                 PRAGMA busy_timeout=5000;"
+            }
+            Self::Query => {
+                "PRAGMA foreign_keys=ON;
+                 PRAGMA query_only=ON;
+                 PRAGMA busy_timeout=1000;"
+            }
+        }
+    }
+
+    const fn busy_timeout(self) -> Duration {
+        match self {
+            Self::Persistent => SQLITE_PERSISTENT_BUSY_TIMEOUT,
+            Self::Ephemeral => SQLITE_EPHEMERAL_BUSY_TIMEOUT,
+            Self::Query => SQLITE_QUERY_BUSY_TIMEOUT,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct GitSnapshot {
+    commit: Option<String>,
+    dirty: bool,
+}
+
+static CURRENT_PROCESS_GIT_SNAPSHOT: LazyLock<GitSnapshot> = LazyLock::new(|| GitSnapshot {
+    commit: get_git_commit_uncached(),
+    dirty: is_git_dirty_uncached(),
+});
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct HistoryIntegrityStamp {
+    schema_version: i32,
+    checked_at_unix: i64,
+}
+
+impl HistoryIntegrityStamp {
+    fn new(now: OffsetDateTime) -> Self {
+        Self {
+            schema_version: HISTORY_DB_SCHEMA_VERSION,
+            checked_at_unix: now.unix_timestamp(),
+        }
+    }
+
+    fn is_fresh(&self, now: OffsetDateTime, interval: Duration) -> bool {
+        if self.schema_version != HISTORY_DB_SCHEMA_VERSION {
+            return false;
+        }
+
+        let age_secs = now.unix_timestamp().saturating_sub(self.checked_at_unix);
+        age_secs <= interval.as_secs().min(i64::MAX as u64) as i64
+    }
+}
 
 fn remove_history_artifact(path: &Path, reason: &str) -> Result<()> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error).with_context(|| format!("{reason}: {}", path.display())),
+    }
+}
+
+fn history_integrity_stamp_path(path: &Path) -> PathBuf {
+    path.with_extension(HISTORY_DB_INTEGRITY_STAMP_EXTENSION)
+}
+
+fn history_integrity_check_interval() -> Duration {
+    match std::env::var("XTASK_HISTORY_INTEGRITY_INTERVAL_SECS") {
+        Ok(raw) => raw
+            .trim()
+            .parse::<u64>()
+            .map(Duration::from_secs)
+            .unwrap_or(HISTORY_DB_INTEGRITY_CHECK_INTERVAL),
+        Err(_) => HISTORY_DB_INTEGRITY_CHECK_INTERVAL,
+    }
+}
+
+fn load_history_integrity_stamp(path: &Path) -> Option<HistoryIntegrityStamp> {
+    let bytes = std::fs::read(path).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn should_run_history_integrity_check(path: &Path, now: OffsetDateTime) -> bool {
+    let interval = history_integrity_check_interval();
+    if interval.is_zero() {
+        return true;
+    }
+
+    let stamp_path = history_integrity_stamp_path(path);
+    !load_history_integrity_stamp(&stamp_path)
+        .is_some_and(|stamp| stamp.is_fresh(now, interval))
+}
+
+fn persist_history_integrity_stamp(path: &Path, now: OffsetDateTime) -> Result<()> {
+    let stamp_path = history_integrity_stamp_path(path);
+    let temp_path = stamp_path.with_extension("db.integrity.json.tmp");
+    let payload = serde_json::to_vec_pretty(&HistoryIntegrityStamp::new(now))
+        .context("failed to serialize history integrity stamp")?;
+    std::fs::write(&temp_path, payload).with_context(|| {
+        format!(
+            "failed to write temporary history integrity stamp: {}",
+            temp_path.display()
+        )
+    })?;
+    std::fs::rename(&temp_path, &stamp_path).with_context(|| {
+        format!(
+            "failed to persist history integrity stamp: {}",
+            stamp_path.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn refresh_history_integrity_stamp(path: &Path, now: OffsetDateTime) {
+    if let Err(error) = persist_history_integrity_stamp(path, now) {
+        eprintln!(
+            "⚠️  Failed to refresh history DB integrity stamp at {}: {error:#}",
+            history_integrity_stamp_path(path).display()
+        );
     }
 }
 
@@ -305,13 +448,111 @@ enum StaleCleanupOutcome {
     SkippedLockHeld,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InvocationSelector {
+    Latest,
+    Previous,
+    Current,
+    InvocationId(i64),
+    BackgroundJobId(i64),
+}
+
 impl HistoryDb {
     /// Open or create the history database at the given path.
     pub fn open(path: &Path) -> Result<Self> {
-        Self::open_with_schema_version_probe(path, Self::schema_version)
+        Self::open_with_schema_version_probe(
+            path,
+            HistoryDbOpenMode::Persistent,
+            Self::schema_version,
+        )
     }
 
-    fn open_with_schema_version_probe<F>(path: &Path, schema_version_probe: F) -> Result<Self>
+    /// Open an existing history database for read-only observational queries.
+    ///
+    /// Query surfaces like `xtask status`, `xtask history`, and `xtask analytics`
+    /// should not pay integrity sweeps or stale-cleanup work just to read recent
+    /// rows. If the database does not exist yet, return an empty in-memory view.
+    pub fn open_query(path: &Path) -> Result<Self> {
+        if !path.exists() {
+            return Self::open_in_memory();
+        }
+
+        let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .with_context(|| {
+                let path_display = path.display();
+                format!("failed to open history database for query: {path_display}")
+            })?;
+        Self::configure_connection(&conn, HistoryDbOpenMode::Query)?;
+
+        let mut db = Self {
+            conn,
+            is_synthetic: false,
+        };
+        let current_version = db
+            .schema_version()
+            .context("failed to read history DB schema version for query")?;
+        if current_version != HISTORY_DB_SCHEMA_VERSION {
+            color_eyre::eyre::bail!(
+                "history DB schema v{current_version} != v{HISTORY_DB_SCHEMA_VERSION}; query open requires a compatible database"
+            );
+        }
+        db.is_synthetic = db.check_synthetic()?;
+        Ok(db)
+    }
+
+    /// Open an isolated in-memory history database.
+    ///
+    /// This keeps test and scratch workflows off the filesystem durability
+    /// path while still exercising the real schema and query logic.
+    pub fn open_in_memory() -> Result<Self> {
+        let conn =
+            Connection::open_in_memory().context("failed to open in-memory history database")?;
+        Self::configure_connection(&conn, HistoryDbOpenMode::Ephemeral)?;
+        let db = Self {
+            conn,
+            is_synthetic: false,
+        };
+        db.init_schema()?;
+        db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
+        Ok(db)
+    }
+
+    fn configure_connection(conn: &Connection, mode: HistoryDbOpenMode) -> Result<()> {
+        conn.execute_batch(mode.pragmas())
+            .context("failed to configure history database connection")
+    }
+
+    fn with_busy_timeout<T, F>(
+        &self,
+        timeout: Duration,
+        restore_mode: HistoryDbOpenMode,
+        operation: F,
+    ) -> Result<T>
+    where
+        F: FnOnce() -> Result<T>,
+    {
+        self.conn
+            .busy_timeout(timeout)
+            .context("failed to configure temporary history database busy timeout")?;
+
+        let operation_result = operation();
+        let restore_result = self
+            .conn
+            .busy_timeout(restore_mode.busy_timeout())
+            .context("failed to restore history database busy timeout");
+
+        match (operation_result, restore_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), Ok(())) => Err(error),
+            (_, Err(error)) => Err(error),
+        }
+    }
+
+    fn open_with_schema_version_probe<F>(
+        path: &Path,
+        mode: HistoryDbOpenMode,
+        schema_version_probe: F,
+    ) -> Result<Self>
     where
         F: FnOnce(&Self) -> Result<i32>,
     {
@@ -323,10 +564,12 @@ impl HistoryDb {
             })?;
         }
 
+        let mut db_existed = path.exists();
+
         // Detect and recover from corrupted (0-byte) database files.
         // SQLite treats a 0-byte file as valid (empty DB) but our WAL/schema
         // setup may leave it in an inconsistent state. Delete and recreate.
-        if path.exists()
+        if db_existed
             && let Ok(meta) = std::fs::metadata(path)
             && meta.len() == 0
         {
@@ -338,6 +581,11 @@ impl HistoryDb {
                 path,
                 "failed to remove empty history database before recreation",
             )?;
+            remove_history_artifact(
+                &history_integrity_stamp_path(path),
+                "failed to remove empty history database integrity stamp before recreation",
+            )?;
+            db_existed = false;
         }
 
         let conn = Connection::open(path).with_context(|| {
@@ -345,54 +593,68 @@ impl HistoryDb {
             format!("failed to open history database: {path_display}")
         })?;
 
-        // WAL mode enables concurrent readers during writes (critical for
-        // querying test history while a test run is in progress).
-        // busy_timeout prevents SQLITE_BUSY on concurrent access from parallel xtask processes.
-        conn.execute_batch(
-            "PRAGMA journal_mode=WAL;
-             PRAGMA busy_timeout=5000;",
-        )?;
+        Self::configure_connection(&conn, mode)?;
 
-        // Fast path: quick_check is materially cheaper on large history DBs and
-        // catches the common corruption cases. If it reports a problem, fall back
-        // to the full integrity sweep before deciding to recreate the DB.
-        let integrity_ok = sqlite_integrity_pragma_ok(&conn, "PRAGMA quick_check")
-            || sqlite_integrity_pragma_ok(&conn, "PRAGMA integrity_check");
-        if !integrity_ok {
-            drop(conn);
-            eprintln!(
-                "⚠️  History database at {} failed integrity check, recreating",
-                path.display()
-            );
-            remove_history_artifact(
-                path,
-                "failed to remove corrupt history database before recreation",
-            )?;
-            // Remove WAL and SHM files too
-            let wal_path = path.with_extension("db-wal");
-            let shm_path = path.with_extension("db-shm");
-            remove_history_artifact(
-                &wal_path,
-                "failed to remove corrupt history database WAL before recreation",
-            )?;
-            remove_history_artifact(
-                &shm_path,
-                "failed to remove corrupt history database SHM before recreation",
-            )?;
-            let conn = Connection::open(path).with_context(|| {
-                format!("failed to recreate history database: {}", path.display())
-            })?;
-            conn.execute_batch(
-                "PRAGMA journal_mode=WAL;
-                 PRAGMA busy_timeout=5000;",
-            )?;
+        // Fresh databases do not need integrity sweeps, schema-version probing,
+        // or stale-invocation cleanup. This fast path keeps temp/ephemeral
+        // history stores cheap and deterministic.
+        if !db_existed {
             let db = Self {
                 conn,
                 is_synthetic: false,
             };
             db.init_schema()?;
             db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
+            refresh_history_integrity_stamp(path, OffsetDateTime::now_utc());
             return Ok(db);
+        }
+
+        let now = OffsetDateTime::now_utc();
+        if should_run_history_integrity_check(path, now) {
+            // Integrity checks are expensive on large history databases. Run them
+            // only on a periodic maintenance cadence instead of taxing every
+            // tracked xtask command.
+            let integrity_ok = sqlite_integrity_pragma_ok(&conn, "PRAGMA quick_check")
+                || sqlite_integrity_pragma_ok(&conn, "PRAGMA integrity_check");
+            if !integrity_ok {
+                drop(conn);
+                eprintln!(
+                    "⚠️  History database at {} failed integrity check, recreating",
+                    path.display()
+                );
+                remove_history_artifact(
+                    path,
+                    "failed to remove corrupt history database before recreation",
+                )?;
+                let wal_path = path.with_extension("db-wal");
+                let shm_path = path.with_extension("db-shm");
+                let stamp_path = history_integrity_stamp_path(path);
+                remove_history_artifact(
+                    &wal_path,
+                    "failed to remove corrupt history database WAL before recreation",
+                )?;
+                remove_history_artifact(
+                    &shm_path,
+                    "failed to remove corrupt history database SHM before recreation",
+                )?;
+                remove_history_artifact(
+                    &stamp_path,
+                    "failed to remove corrupt history database integrity stamp before recreation",
+                )?;
+                let conn = Connection::open(path).with_context(|| {
+                    format!("failed to recreate history database: {}", path.display())
+                })?;
+                Self::configure_connection(&conn, mode)?;
+                let db = Self {
+                    conn,
+                    is_synthetic: false,
+                };
+                db.init_schema()?;
+                db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
+                refresh_history_integrity_stamp(path, OffsetDateTime::now_utc());
+                return Ok(db);
+            }
+            refresh_history_integrity_stamp(path, now);
         }
 
         let mut db = Self {
@@ -430,22 +692,24 @@ impl HistoryDb {
                     &shm_path,
                     "failed to remove unreadable history database SHM before recreation",
                 )?;
+                remove_history_artifact(
+                    &history_integrity_stamp_path(path),
+                    "failed to remove unreadable history database integrity stamp before recreation",
+                )?;
                 let conn = Connection::open(path).with_context(|| {
                     format!(
                         "failed to recreate history database after unreadable schema version: {}",
                         path.display()
                     )
                 })?;
-                conn.execute_batch(
-                    "PRAGMA journal_mode=WAL;
-                     PRAGMA busy_timeout=5000;",
-                )?;
+                Self::configure_connection(&conn, mode)?;
                 let recreated = Self {
                     conn,
                     is_synthetic: false,
                 };
                 recreated.init_schema()?;
                 recreated.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
+                refresh_history_integrity_stamp(path, OffsetDateTime::now_utc());
                 return Ok(recreated);
             }
             Err(error) => {
@@ -473,9 +737,14 @@ impl HistoryDb {
             db.drop_all_tables()?;
             db.init_schema()?;
             db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
+            refresh_history_integrity_stamp(path, OffsetDateTime::now_utc());
         }
         db.is_synthetic = db.check_synthetic()?;
-        if let Err(error) = db.cleanup_stale_invocations_on_open(path) {
+        if let Err(error) = db.with_busy_timeout(
+            SQLITE_STALE_CLEANUP_BUSY_TIMEOUT,
+            HistoryDbOpenMode::Persistent,
+            || db.cleanup_stale_invocations_on_open(path),
+        ) {
             if is_sqlite_lock_error(&error) {
                 eprintln!(
                     "⚠️  History DB is busy; skipping stale invocation cleanup for now: {error:#}"
@@ -845,8 +1114,9 @@ impl HistoryDb {
         profile: Option<&str>,
         args_json: Option<&str>,
     ) -> Result<i64> {
-        let git_commit = get_git_commit();
-        let git_dirty = is_git_dirty();
+        let git_snapshot = current_git_snapshot();
+        let git_commit = git_snapshot.commit.clone();
+        let git_dirty = git_snapshot.dirty;
         let host = crate::config::config().hostname.clone();
         let cwd = capture_working_directory(std::env::current_dir());
         let started_at = Timestamp::now().format_rfc3339();
@@ -1394,35 +1664,11 @@ impl HistoryDb {
         limit: usize,
         command_filter: Option<&str>,
     ) -> Result<Vec<Invocation>> {
-        let sql = if command_filter.is_some() {
-            r"
-            SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty,
-                   started_at, finished_at, duration_secs, exit_code, status, host, cwd, live_stage
-            FROM invocations
-            WHERE command = ?1
-            ORDER BY started_at DESC
-            LIMIT ?2
-            "
-        } else {
-            r"
-            SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty,
-                   started_at, finished_at, duration_secs, exit_code, status, host, cwd, live_stage
-            FROM invocations
-            ORDER BY started_at DESC
-            LIMIT ?1
-            "
-        };
-
-        let mut stmt = self.conn.prepare(sql)?;
-
-        let rows = if let Some(cmd) = command_filter {
-            stmt.query_map(params![cmd, limit], row_to_invocation)?
-        } else {
-            stmt.query_map(params![limit], row_to_invocation)?
-        };
-
-        rows.collect::<Result<Vec<_>, _>>()
-            .context("failed to collect invocations")
+        let mut query = InvocationQuery::new().limit(limit);
+        if let Some(command_filter) = command_filter {
+            query = query.command(command_filter);
+        }
+        query.run(self)
     }
 
     /// Get recent invocations with filtering, sorting, and pagination (G5).
@@ -1438,56 +1684,36 @@ impl HistoryDb {
         since_rfc3339: Option<&str>,
         sort_by: &str,
     ) -> Result<Vec<Invocation>> {
-        let order = match sort_by {
-            "duration" => "duration_secs DESC NULLS LAST",
-            "status" => "status ASC",
-            _ => "started_at DESC",
-        };
-
-        let mut conditions: Vec<String> = Vec::new();
-        if command_filter.is_some() {
-            conditions.push("command = ?1".into());
+        let mut query = InvocationQuery::new().limit(limit).offset(offset);
+        if let Some(command_filter) = command_filter {
+            query = query.command(command_filter);
         }
-        if since_rfc3339.is_some() {
-            let n = conditions.len() + 1;
-            conditions.push(format!("started_at >= ?{n}"));
+        if let Some(since_rfc3339) = since_rfc3339 {
+            query = query.since_rfc3339(since_rfc3339);
         }
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", conditions.join(" AND "))
+        query = match sort_by {
+            "duration" => query.sort_duration(),
+            "status" => query.sort_status(),
+            _ => query.sort_started(),
         };
+        query.run(self)
+    }
 
-        let offset_n = conditions.len() + 1;
-        let limit_n = conditions.len() + 2;
-        let sql = format!(
+    /// Get a specific invocation by database ID.
+    pub fn get_invocation(&self, invocation_id: i64) -> Result<Option<Invocation>> {
+        let mut stmt = self.conn.prepare(
             r"
             SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty,
                    started_at, finished_at, duration_secs, exit_code, status, host, cwd, live_stage
             FROM invocations
-            {where_clause}
-            ORDER BY {order}
-            LIMIT ?{limit_n} OFFSET ?{offset_n}
-            "
-        );
+            WHERE id = ?1
+            LIMIT 1
+            ",
+        )?;
 
-        let mut stmt = self.conn.prepare(&sql)?;
-
-        // Build params dynamically
-        let mut param_values: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        if let Some(cmd) = command_filter {
-            param_values.push(Box::new(cmd.to_string()));
-        }
-        if let Some(since) = since_rfc3339 {
-            param_values.push(Box::new(since.to_string()));
-        }
-        param_values.push(Box::new(offset as i64));
-        param_values.push(Box::new(limit as i64));
-
-        let refs: Vec<&dyn rusqlite::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
-        let rows = stmt.query_map(refs.as_slice(), row_to_invocation)?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .context("failed to collect filtered invocations")
+        stmt.query_row(params![invocation_id], row_to_invocation)
+            .optional()
+            .context("failed to get invocation by id")
     }
 
     /// Get diagnostic error/warning counts for a specific invocation (G5 --with-diagnostics).
@@ -1958,8 +2184,9 @@ impl HistoryDb {
         stderr_path: &Path,
     ) -> Result<(i64, i64)> {
         let args_json = serde_json::to_string(args)?;
-        let git_commit = get_git_commit();
-        let git_dirty = is_git_dirty();
+        let git_snapshot = current_git_snapshot();
+        let git_commit = git_snapshot.commit.clone();
+        let git_dirty = git_snapshot.dirty;
         let host = crate::config::config().hostname.clone();
         let cwd = capture_working_directory(std::env::current_dir());
         let started_at = Timestamp::now().format_rfc3339();
@@ -3324,40 +3551,174 @@ impl HistoryDb {
         Ok(rows)
     }
 
-    /// Resolve an invocation identifier ('latest' or numeric ID string) to a concrete ID.
+    fn parse_invocation_selector(selector: &str) -> Result<InvocationSelector> {
+        if selector == "latest" {
+            return Ok(InvocationSelector::Latest);
+        }
+        if selector == "previous" {
+            return Ok(InvocationSelector::Previous);
+        }
+        if selector == "current" {
+            return Ok(InvocationSelector::Current);
+        }
+
+        let (kind, raw_id) = if let Some(value) = selector.strip_prefix("job:") {
+            ("job", value)
+        } else if let Some(value) = selector.strip_prefix("background-job:") {
+            ("job", value)
+        } else if let Some(value) = selector.strip_prefix("inv:") {
+            ("invocation", value)
+        } else if let Some(value) = selector.strip_prefix("invocation:") {
+            ("invocation", value)
+        } else {
+            ("invocation", selector)
+        };
+
+        let id = raw_id.parse::<i64>().map_err(|_| {
+            color_eyre::eyre::eyre!(
+                "invalid invocation selector: '{selector}' (expected 'latest', 'previous', 'current', a numeric invocation ID, 'inv:<id>', or 'job:<id>')"
+            )
+        })?;
+
+        Ok(match kind {
+            "job" => InvocationSelector::BackgroundJobId(id),
+            _ => InvocationSelector::InvocationId(id),
+        })
+    }
+
+    fn resolve_completed_invocation_offset(
+        &self,
+        command: Option<&str>,
+        offset: usize,
+    ) -> Result<Option<i64>> {
+        let offset = offset as i64;
+        let id = if let Some(cmd) = command {
+            self.conn
+                .query_row(
+                    r"SELECT id FROM invocations WHERE status IN ('success', 'failed')
+                      AND command = ?1 ORDER BY id DESC LIMIT 1 OFFSET ?2",
+                    params![cmd, offset],
+                    |row| row.get(0),
+                )
+                .optional()?
+        } else {
+            self.conn
+                .query_row(
+                    r"SELECT id FROM invocations WHERE status IN ('success', 'failed')
+                      ORDER BY id DESC LIMIT 1 OFFSET ?1",
+                    params![offset],
+                    |row| row.get(0),
+                )
+                .optional()?
+        };
+        Ok(id)
+    }
+
+    fn resolve_current_invocation(&self, command: Option<&str>) -> Result<Option<i64>> {
+        let host = crate::config::config().hostname.clone();
+        let cwd = capture_working_directory(std::env::current_dir());
+        let id = if let Some(cmd) = command {
+            self.conn
+                .query_row(
+                    r"
+                    SELECT id
+                    FROM invocations
+                    WHERE host = ?1
+                      AND cwd = ?2
+                      AND command = ?3
+                    ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, id DESC
+                    LIMIT 1
+                    ",
+                    params![host, cwd, cmd],
+                    |row| row.get(0),
+                )
+                .optional()?
+        } else {
+            self.conn
+                .query_row(
+                    r"
+                    SELECT id
+                    FROM invocations
+                    WHERE host = ?1
+                      AND cwd = ?2
+                    ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, id DESC
+                    LIMIT 1
+                    ",
+                    params![host, cwd],
+                    |row| row.get(0),
+                )
+                .optional()?
+        };
+        Ok(id)
+    }
+
+    fn resolve_background_job_invocation(
+        &self,
+        job_id: i64,
+        command: Option<&str>,
+    ) -> Result<Option<i64>> {
+        let id = if let Some(cmd) = command {
+            self.conn
+                .query_row(
+                    r"
+                    SELECT invocation_id
+                    FROM background_jobs
+                    WHERE id = ?1
+                      AND command = ?2
+                    LIMIT 1
+                    ",
+                    params![job_id, cmd],
+                    |row| row.get(0),
+                )
+                .optional()?
+        } else {
+            self.conn
+                .query_row(
+                    r"SELECT invocation_id FROM background_jobs WHERE id = ?1 LIMIT 1",
+                    params![job_id],
+                    |row| row.get(0),
+                )
+                .optional()?
+        };
+        Ok(id)
+    }
+
+    /// Resolve an invocation selector to a concrete invocation ID.
+    ///
+    /// Supports:
+    /// - `latest`: most recent completed invocation (`success` / `failed`)
+    /// - `previous`: invocation immediately before `latest`
+    /// - `current`: most recent invocation from the current checkout, preferring a running one
+    /// - numeric ID / `inv:<id>`: explicit invocation
+    /// - `job:<id>`: background job handle mapped back to its invocation
     pub fn resolve_invocation_id(
         &self,
         id_or_latest: &str,
         command: Option<&str>,
     ) -> Result<Option<i64>> {
-        if id_or_latest == "latest" {
-            let id = if let Some(cmd) = command {
-                self.conn
-                    .query_row(
-                        r"SELECT id FROM invocations WHERE status IN ('success', 'failed')
-                          AND command = ?1 ORDER BY id DESC LIMIT 1",
-                        params![cmd],
-                        |row| row.get(0),
-                    )
-                    .optional()?
-            } else {
-                self.conn
-                    .query_row(
-                        r"SELECT id FROM invocations WHERE status IN ('success', 'failed')
-                          ORDER BY id DESC LIMIT 1",
-                        [],
-                        |row| row.get(0),
-                    )
-                    .optional()?
-            };
-            Ok(id)
-        } else {
-            let id = id_or_latest.parse::<i64>().map_err(|_| {
-                color_eyre::eyre::eyre!(
-                    "invalid invocation ID: '{id_or_latest}' (expected a number or 'latest')"
-                )
-            })?;
-            Ok(Some(id))
+        match Self::parse_invocation_selector(id_or_latest)? {
+            InvocationSelector::Latest => self.resolve_completed_invocation_offset(command, 0),
+            InvocationSelector::Previous => self.resolve_completed_invocation_offset(command, 1),
+            InvocationSelector::Current => self.resolve_current_invocation(command),
+            InvocationSelector::BackgroundJobId(job_id) => {
+                self.resolve_background_job_invocation(job_id, command)
+            }
+            InvocationSelector::InvocationId(invocation_id) => {
+                if id_or_latest.chars().all(|ch| ch.is_ascii_digit())
+                    && self
+                        .conn
+                        .query_row(
+                            r"SELECT 1 FROM invocations WHERE id = ?1 LIMIT 1",
+                            params![invocation_id],
+                            |_| Ok(()),
+                        )
+                        .optional()?
+                        .is_none()
+                {
+                    return self.resolve_background_job_invocation(invocation_id, command);
+                }
+                Ok(Some(invocation_id))
+            }
         }
     }
 
@@ -3833,7 +4194,11 @@ pub(super) fn row_to_invocation(row: &rusqlite::Row) -> rusqlite::Result<Invocat
 }
 
 /// Get current git commit hash (short form).
-fn get_git_commit() -> Option<String> {
+fn current_git_snapshot() -> &'static GitSnapshot {
+    &CURRENT_PROCESS_GIT_SNAPSHOT
+}
+
+fn get_git_commit_uncached() -> Option<String> {
     std::process::Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
         .output()
@@ -3843,7 +4208,7 @@ fn get_git_commit() -> Option<String> {
 }
 
 /// Check if the git working directory has uncommitted changes.
-fn is_git_dirty() -> bool {
+fn is_git_dirty_uncached() -> bool {
     std::process::Command::new("git")
         .args(["status", "--porcelain"])
         .output()
@@ -4192,6 +4557,105 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_history_db_open_query_does_not_mutate_stale_rows() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-open-query-cleanup.db");
+        let db = HistoryDb::open(&db_path)?;
+        db.conn.execute(
+            r"
+            INSERT INTO invocations (
+                command, started_at, status, host, cwd, pid, is_background
+            ) VALUES (?1, ?2, 'running', ?3, ?4, ?5, 1)
+            ",
+            params![
+                "check",
+                "2000-01-01T00:00:00Z",
+                "localhost",
+                "/tmp",
+                std::process::id() as i64
+            ],
+        )?;
+        drop(db);
+
+        let queried = HistoryDb::open_query(&db_path)?;
+        let status: String = queried
+            .conn
+            .query_row("SELECT status FROM invocations LIMIT 1", [], |row| row.get(0))?;
+        assert_eq!(
+            status, "running",
+            "query opens should not perform stale cleanup mutations"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_db_open_writes_integrity_stamp_for_new_database() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-open-writes-integrity-stamp.db");
+
+        let db = HistoryDb::open(&db_path)?;
+        drop(db);
+
+        let stamp = load_history_integrity_stamp(&history_integrity_stamp_path(&db_path))
+            .ok_or_else(|| {
+                color_eyre::eyre::eyre!(
+                    "fresh history database should persist an integrity stamp"
+                )
+            })?;
+        assert_eq!(stamp.schema_version, HISTORY_DB_SCHEMA_VERSION);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_integrity_check_is_due_without_recent_stamp() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-integrity-check-due.db");
+
+        assert!(
+            should_run_history_integrity_check(&db_path, OffsetDateTime::now_utc()),
+            "missing integrity stamp should force a maintenance check"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_integrity_check_skips_when_recent_stamp_exists() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-integrity-check-fresh.db");
+        let now = OffsetDateTime::now_utc();
+
+        persist_history_integrity_stamp(&db_path, now)?;
+
+        assert!(
+            !should_run_history_integrity_check(&db_path, now),
+            "recent integrity stamp should skip the expensive open-time sweep"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_integrity_check_runs_when_stamp_is_stale() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-integrity-check-stale.db");
+        let stamp_path = history_integrity_stamp_path(&db_path);
+        let now = OffsetDateTime::now_utc();
+        let stale_stamp = HistoryIntegrityStamp {
+            schema_version: HISTORY_DB_SCHEMA_VERSION,
+            checked_at_unix: now
+                .unix_timestamp()
+                .saturating_sub(history_integrity_check_interval().as_secs() as i64 + 1),
+        };
+
+        std::fs::write(&stamp_path, serde_json::to_vec_pretty(&stale_stamp)?)?;
+
+        assert!(
+            should_run_history_integrity_check(&db_path, now),
+            "stale integrity stamp should re-enable maintenance"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_history_db_open_recreates_when_schema_version_read_is_unreadable()
     -> TestResult<()> {
         let dir = tempdir()?;
@@ -4203,19 +4667,23 @@ mod tests {
         db.finish_invocation(invocation_id, InvocationStatus::Success, Some(0), 0.1)?;
         drop(db);
 
-        let reopened = HistoryDb::open_with_schema_version_probe(&db_path, |_db| {
-            Err::<i32, color_eyre::Report>(
-                rusqlite::Error::FromSqlConversionFailure(
-                    0,
-                    rusqlite::types::Type::Integer,
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "synthetic schema version read failure",
-                    )),
+        let reopened = HistoryDb::open_with_schema_version_probe(
+            &db_path,
+            HistoryDbOpenMode::Persistent,
+            |_db| {
+                Err::<i32, color_eyre::Report>(
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Integer,
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "synthetic schema version read failure",
+                        )),
+                    )
+                    .into(),
                 )
-                .into(),
-            )
-        })?;
+            },
+        )?;
 
         assert_eq!(reopened.schema_version()?, HISTORY_DB_SCHEMA_VERSION);
         let recent = reopened.get_recent(10, None)?;
@@ -4861,6 +5329,100 @@ mod tests {
         // Get all 5
         let all = db.get_recent_background_jobs(10)?;
         assert_eq!(all.len(), 5);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_invocation_id_supports_current_previous_and_job_selectors()
+    -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-invocation-selectors.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let first_check = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(first_check, InvocationStatus::Success, Some(0), 0.1)?;
+
+        let second_check = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(second_check, InvocationStatus::Failed, Some(1), 0.2)?;
+
+        let stdout = dir.path().join("job-stdout.log");
+        let stderr = dir.path().join("job-stderr.log");
+        let (running_test, job_id) =
+            db.start_background_job("test", &[], None, &stdout, &stderr)?;
+
+        assert_eq!(
+            db.resolve_invocation_id("latest", Some("check"))?,
+            Some(second_check)
+        );
+        assert_eq!(
+            db.resolve_invocation_id("previous", Some("check"))?,
+            Some(first_check)
+        );
+        assert_eq!(
+            db.resolve_invocation_id("current", Some("check"))?,
+            Some(second_check)
+        );
+        assert_eq!(
+            db.resolve_invocation_id("current", Some("test"))?,
+            Some(running_test)
+        );
+        assert_eq!(
+            db.resolve_invocation_id(&format!("job:{job_id}"), None)?,
+            Some(running_test)
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_invocation_id_numeric_falls_back_to_background_job()
+    -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-invocation-selector-job-fallback.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let stdout = dir.path().join("job-fallback-stdout.log");
+        let stderr = dir.path().join("job-fallback-stderr.log");
+
+        db.conn.execute(
+            "INSERT OR REPLACE INTO sqlite_sequence(name, seq) VALUES ('background_jobs', 99)",
+            [],
+        )?;
+        let (running_test, job_id) =
+            db.start_background_job("test", &[], None, &stdout, &stderr)?;
+        assert_eq!(job_id, 100);
+        assert_eq!(running_test, 1);
+
+        assert_eq!(
+            db.resolve_invocation_id(&job_id.to_string(), None)?,
+            Some(running_test)
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_invocation_id_numeric_prefers_real_invocation_when_ambiguous()
+    -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-invocation-selector-ambiguous-numeric.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        for _ in 0..5 {
+            let id = db.start_invocation("check", None, None, None)?;
+            db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.1)?;
+        }
+
+        let stdout = dir.path().join("job-ambiguous-stdout.log");
+        let stderr = dir.path().join("job-ambiguous-stderr.log");
+        let (running_test, job_id) =
+            db.start_background_job("test", &[], None, &stdout, &stderr)?;
+        assert_eq!(job_id, 1);
+        assert_eq!(running_test, 6);
+
+        assert_eq!(db.resolve_invocation_id("1", None)?, Some(1));
+        assert_eq!(db.resolve_invocation_id("job:1", None)?, Some(running_test));
+
         Ok(())
     }
 

@@ -58,6 +58,9 @@ fn run_in_pty(state_dir: &Path, args: &[&str]) -> Result<String> {
     let mut cmd = CommandBuilder::new(bin);
     cmd.cwd("/realm/project/sinex");
     cmd.env("SINEX_STATE_DIR", state_dir);
+    // PTY child xtask invocations must read the seeded fixture DB, not any
+    // suite-level XTASK_HISTORY_DB override inherited from the parent process.
+    cmd.env("XTASK_HISTORY_DB", history_db_path(state_dir));
     cmd.env("NO_COLOR", "1");
     for arg in args {
         cmd.arg(arg);
@@ -85,10 +88,10 @@ fn run_in_pty(state_dir: &Path, args: &[&str]) -> Result<String> {
 
     let mut parser = vt100::Parser::new(ROWS, COLS, 0);
     parser.process(&bytes);
-    Ok(normalize_screen(parser.screen().contents()))
+    Ok(normalize_screen(&parser.screen().contents()))
 }
 
-fn normalize_screen(screen: String) -> String {
+fn normalize_screen(screen: &str) -> String {
     screen
         .lines()
         .map(str::trim_end)
@@ -196,7 +199,7 @@ async fn snapshot_history_progress_terminal_grid() -> ::xtask::sandbox::TestResu
         &[
             "history",
             "progress",
-            "--invocation-id",
+            "--invocation",
             &invocation_id.to_string(),
         ],
     )?

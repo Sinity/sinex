@@ -567,6 +567,8 @@ impl XtaskCommand for StatusCommand {
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::diagnostics()
+            .with_history_tracking(false)
+            .with_history_access(crate::command::HistoryAccessMode::Query)
     }
 }
 
@@ -933,7 +935,7 @@ fn collect_history_and_jobs_snapshot(
     jobs_recent_limit: usize,
 ) -> (HistorySnapshot, JobsSnapshot) {
     let jobs_dir = config().jobs_dir();
-    let Some(result) = ctx.try_with_history_db(|db| {
+    let Some(result) = ctx.try_with_history_db_query(|db| {
         let history = collect_history_snapshot_from_db(db, history_recent_limit, include_analytics);
         let jobs_started_at = Instant::now();
         let jobs = crate::jobs::snapshot_recent_and_active_from_history_db(
@@ -2683,7 +2685,11 @@ mod tests {
         };
         let metadata = cmd.metadata();
         assert!(!metadata.modifies_state);
-        assert!(metadata.track_in_history);
+        assert!(!metadata.track_in_history);
+        assert_eq!(
+            metadata.history_access,
+            crate::command::HistoryAccessMode::Query
+        );
         Ok(())
     }
 
@@ -3482,7 +3488,9 @@ mod tests {
 
     #[sinex_test]
     async fn test_probe_git_state_reports_non_repo_failures() -> ::xtask::sandbox::TestResult<()> {
-        let dir = tempdir()?;
+        let dir = tempfile::Builder::new()
+            .prefix("xtask-nongit-")
+            .tempdir_in("/tmp")?;
 
         let git = probe_git_state(dir.path());
 
