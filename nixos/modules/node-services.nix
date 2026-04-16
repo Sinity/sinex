@@ -1037,6 +1037,7 @@ let
       let
         canon = nodesCfg.automata.canonicalizer;
         health = nodesCfg.automata.healthAggregator;
+        session = nodesCfg.automata.sessionDetector;
         canonicalizerUnit =
           if !canon.enable then {} else {
             "sinex-canonicalizer" = mkAutomataUnit {
@@ -1059,8 +1060,19 @@ let
               extraArgs = [];
             };
           };
+        sessionUnit =
+          if !session.enable then {} else {
+            "sinex-session-detector" = mkAutomataUnit {
+              binary = "session-detector";
+              description = "Sinex session detector";
+              profile = session.profile;
+              subjects = session.subjects;
+              env = session.env;
+              extraArgs = [];
+            };
+          };
       in
-      canonicalizerUnit // healthUnit;
+      canonicalizerUnit // healthUnit // sessionUnit;
 
   nodeservices =
     if !nodesEnabled then {} else

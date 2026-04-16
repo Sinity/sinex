@@ -3,6 +3,7 @@
 pub mod blobs;
 // pub mod checkpoints; // Removed
 pub mod common;
+pub mod embeddings;
 pub mod events;
 pub mod events_extensions;
 pub mod gitops;
@@ -16,6 +17,10 @@ pub mod state;
 pub use blobs::{BlobRepository, StorageStats};
 // pub use checkpoints::{Checkpoint, CheckpointExt, CheckpointRecord, CheckpointRepository}; // Removed
 pub use common::{DbResult, EnhancedRepository, Repository, TableDef, TransactionSupport};
+pub use embeddings::{
+    CachedEmbeddingHit, EmbeddingModelRecord, EmbeddingRepository, HybridSearchResult,
+    SimilarityResult,
+};
 pub use events::{
     COPY_BATCH_THRESHOLD, EventAnnotation, EventPayloadSchema, EventRepository, EventRepositoryTx,
     ReplacementKind, ReplacementRecord, StreamBatchInsertResult, StreamBatchRow,
@@ -49,6 +54,7 @@ use sqlx::PgPool;
 /// ```
 pub trait DbPoolExt {
     fn blobs(&self) -> blobs::BlobRepository;
+    fn embeddings(&self) -> embeddings::EmbeddingRepository<'_>;
     fn events(&self) -> events::EventRepository<'_>;
     fn gitops(&self) -> gitops::GitOpsRepository<'_>;
     fn source_materials(&self) -> source_materials::SourceMaterialRepository<'_>;
@@ -61,6 +67,10 @@ pub trait DbPoolExt {
 impl DbPoolExt for PgPool {
     fn blobs(&self) -> blobs::BlobRepository {
         blobs::BlobRepository::new(self.clone())
+    }
+
+    fn embeddings(&self) -> embeddings::EmbeddingRepository<'_> {
+        embeddings::EmbeddingRepository::new(self)
     }
 
     fn events(&self) -> events::EventRepository<'_> {
