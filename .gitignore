@@ -51,7 +51,7 @@ result
 .direnv/
 
 # Claude Code (track includes, ignore ephemeral)
-.claude/scratch/
+.agent/scratch/
 .claude/worktrees/
 .claude/*.local.md
 .claude/*.local.json

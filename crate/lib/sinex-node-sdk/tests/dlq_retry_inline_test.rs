@@ -21,7 +21,7 @@ async fn ensure_retry_streams(
     })
     .await?;
     js.get_or_create_stream(jetstream::stream::Config {
-        name: env.nats_stream_name("EVENTS_DLQ"),
+        name: env.nats_stream_name("SINEX_RAW_EVENTS_DLQ"),
         subjects: vec![env.nats_subject("events.dlq.>")],
         storage: jetstream::stream::StorageType::Memory,
         allow_direct: true,

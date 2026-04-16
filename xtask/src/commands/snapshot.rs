@@ -39,7 +39,7 @@ pub struct SnapshotCommand {
     #[arg(long)]
     pub context: bool,
 
-    /// U4: Include CLAUDE.md and .claude/includes/ (project memory) in the snapshot
+    /// U4: Include CLAUDE.md and .agent/includes/ (project memory) in the snapshot
     #[arg(long)]
     pub project_memory: bool,
 
@@ -128,12 +128,12 @@ impl XtaskCommand for SnapshotCommand {
             dynamic_includes.extend(changed_files);
         }
 
-        // U4: Include project memory (CLAUDE.md + .claude/includes/)
+        // U4: Include project memory (CLAUDE.md + .agent/includes/)
         if self.project_memory {
             dynamic_includes.push("CLAUDE.md".to_string());
-            dynamic_includes.push(".claude/**".to_string());
+            dynamic_includes.push(".agent/**".to_string());
             if ctx.is_human() {
-                println!("  Project memory: including CLAUDE.md and .claude/");
+                println!("  Project memory: including CLAUDE.md and .agent/");
             }
         }
 
