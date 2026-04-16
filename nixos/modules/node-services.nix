@@ -20,7 +20,7 @@ let
   coreEnabled = sinexEnabled && coreCfg.enable;
   nodesEnabled = sinexEnabled && nodesCfg.enable;
   natsEnabled = cfg.nats.enable || cfg.nats.autoSetup;
-  schemaApplyEnabled = sinexEnabled && cfg.database.enable;
+  schemaApplyEnabled = cfg.database.enable && cfg.database.autoSetup;
   localPostgresEnabled = cfg.database.enable && (cfg.database.autoSetup || config.services.postgresql.enable);
 
   stateRoot = cfg.stateRoot;

@@ -34,6 +34,7 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `deps` | Analyze workspace dependency structure and impact |
 | `history` | Query build, test, and runtime history recorded by xtask |
 | `analytics` | `xtask analytics` — developer intelligence analytics |
+| `git-stack` | Plan and materialize PR-sized git branch stacks from the current commit graph |
 | `doctor` | Probe developer-environment health and deployment readiness |
 | `privacy` | Run privacy-engine catalog, test, key, and config utilities |
 | `docs` | Generate and verify repo documentation surfaces |
@@ -736,6 +737,8 @@ List recent invocations
 | `--first` | no | no | Show only the most recent invocation (like the old `last` subcommand) |
 | `--no-limit` | no | no | Export all history as JSON without limit |
 | `--offset` | yes | no | Skip N entries (pagination) |
+| `--after-invocation` | yes | no | Only show invocations with IDs greater than this selector (`latest`, `previous`, `current`, numeric, `inv:<id>`, `job:<id>`) |
+| `--before-invocation` | yes | no | Only show invocations with IDs less than this selector (`latest`, `previous`, `current`, numeric, `inv:<id>`, `job:<id>`) |
 | `--sort-by` | yes | no | Sort field: started (default), duration, status |
 | `--since` | yes | no | Only show invocations started after this duration ago (e.g. "1h", "30m", "1d") |
 | `--with-diagnostics` | no | no | Include diagnostic error/warning counts for each invocation |
@@ -797,6 +800,7 @@ Query test result history
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `--limit` | yes | no |  |
+| `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>` |
 
 
 #### `xtask history tests flaky`
@@ -840,11 +844,18 @@ Show failing tests from the most recent test run
 |---|---|---|---|
 | `--limit` | yes | no |  |
 | `--output` | no | no | Show captured failure output (can be verbose) |
+| `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>` |
 
 
 #### `xtask history tests analyze`
 
 Comprehensive analysis of the most recent test run
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>` |
 
 
 #### `xtask history tests output`
@@ -856,6 +867,7 @@ Show captured output for a test (pass or fail)
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `pattern` | yes | yes | Test name pattern to search for |
+| `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>` |
 
 
 #### `xtask history tests eta`
@@ -871,11 +883,18 @@ Full-text search across stored test output (G7)
 |---|---|---|---|
 | `text` | yes | yes | Text to search for in captured test output |
 | `--limit` | yes | no |  |
+| `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>` |
 
 
 #### `xtask history tests by-package`
 
 Per-package pass rate, test count, avg duration, and flaky count (G7)
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>` |
 
 
 #### `xtask history tests duration-p95`
@@ -1032,9 +1051,9 @@ Show complete details for a single invocation (I7)
 
 | Flag | Value | Required | Description |
 |---|---|---|---|
-| `id` | yes | yes | Invocation ID or 'latest' |
+| `id` | yes | yes | Invocation selector: `latest`, `previous`, `current`, invocation ID, `inv:<id>`, or `job:<id>`. Bare numeric IDs resolve as invocation IDs first; use `job:<id>` for unambiguous background-job lookup |
 | `--full` | no | no | Include full stage timing and diagnostic details |
-| `--command` | yes | no | Filter 'latest' resolution to a specific command |
+| `--command` | yes | no | Filter selector resolution to a specific command |
 
 
 ### `xtask history seed`
@@ -1057,7 +1076,7 @@ Show live or final progress for an invocation
 
 | Flag | Value | Required | Description |
 |---|---|---|---|
-| `--invocation-id` | yes | no | Invocation ID to show progress for. Defaults to the most recent invocation |
+| `--invocation` | yes | no | Invocation selector: `current` (default), `latest`, `previous`, invocation ID, `inv:<id>`, or `job:<id>`. Bare numeric IDs resolve as invocation IDs first; use `job:<id>` for unambiguous background-job lookup |
 
 
 ### `xtask history eta`
@@ -1166,6 +1185,82 @@ Stage-level timing breakdowns aggregated across invocations (J7)
 |---|---|---|---|
 | `--command` | yes | no | Filter by command |
 | `--limit` | yes | no | Number of slowest stages to show |
+
+
+## `xtask git-stack`
+
+Plan and materialize PR-sized git branch stacks from the current commit graph
+
+**Subcommands**
+
+| Command | Purpose |
+|---|---|
+| `plan` | Walk the current commit graph and generate a stack plan plus PR/squash bodies |
+| `materialize` | Materialize branch refs from an existing stack plan |
+| `split` | Generate a stack plan and immediately materialize the resulting branches |
+| `publish` | Push materialized branches and open/reuse PRs from a generated stack plan |
+
+### `xtask git-stack plan`
+
+Walk the current commit graph and generate a stack plan plus PR/squash bodies
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--base` | yes | no | Base ref to split against. Defaults to origin/master when available, else master |
+| `--head` | yes | no | Head ref to analyze |
+| `--branch-prefix` | yes | no | Branch prefix for generated slice refs |
+| `--max-commits-per-slice` | yes | no | Maximum number of commits per generated slice before forcing a split |
+| `--output` | yes | no | Output directory for generated artifacts |
+| `--force` | no | no | Overwrite an existing output directory |
+
+
+### `xtask git-stack materialize`
+
+Materialize branch refs from an existing stack plan
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--plan` | yes | yes | Path to a generated `plan.yaml` |
+| `--force` | no | no | Overwrite existing branch refs |
+| `--allow-blockers` | no | no | Continue even when the plan recorded blockers |
+
+
+### `xtask git-stack split`
+
+Generate a stack plan and immediately materialize the resulting branches
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--base` | yes | no | Base ref to split against. Defaults to origin/master when available, else master |
+| `--head` | yes | no | Head ref to analyze |
+| `--branch-prefix` | yes | no | Branch prefix for generated slice refs |
+| `--max-commits-per-slice` | yes | no | Maximum number of commits per generated slice before forcing a split |
+| `--output` | yes | no | Output directory for generated artifacts |
+| `--force` | no | no | Overwrite an existing output directory and existing branch refs |
+| `--allow-blockers` | no | no | Continue even when the generated plan records blockers |
+
+
+### `xtask git-stack publish`
+
+Push materialized branches and open/reuse PRs from a generated stack plan
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--plan` | yes | yes | Path to a generated `plan.yaml` |
+| `--remote` | yes | no | Git remote to push branch refs to |
+| `--ready` | no | no | Create PRs as ready-for-review instead of drafts |
+| `--push-only` | no | no | Push branches only; skip GitHub PR creation |
+| `--force-with-lease` | no | no | Force-update the remote branches with `--force-with-lease` |
+| `--repo` | yes | no | Optional GitHub repo override for `gh`, e.g. `owner/name` |
+| `--allow-blockers` | no | no | Continue even when the plan recorded blockers |
 
 
 ## `xtask doctor`
