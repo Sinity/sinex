@@ -17,7 +17,10 @@ pub mod state;
 pub use blobs::{BlobRepository, StorageStats};
 // pub use checkpoints::{Checkpoint, CheckpointExt, CheckpointRecord, CheckpointRepository}; // Removed
 pub use common::{DbResult, EnhancedRepository, Repository, TableDef, TransactionSupport};
-pub use embeddings::{CachedEmbeddingHit, EmbeddingModelRecord, EmbeddingRepository, SimilarityResult};
+pub use embeddings::{
+    CachedEmbeddingHit, EmbeddingModelRecord, EmbeddingRepository, HybridSearchResult,
+    SimilarityResult,
+};
 pub use events::{
     COPY_BATCH_THRESHOLD, EventAnnotation, EventPayloadSchema, EventRepository, EventRepositoryTx,
     ReplacementKind, ReplacementRecord, StreamBatchInsertResult, StreamBatchRow,

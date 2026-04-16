@@ -118,6 +118,79 @@ impl<'a> EmbeddingRepository<'a> {
             .collect())
     }
 
+    pub async fn hybrid_search(
+        &self,
+        model_id: Uuid,
+        query_text: &str,
+        query_embedding: &[f32],
+        limit: i64,
+        rrf_k: i64,
+    ) -> DbResult<Vec<HybridSearchResult>> {
+        let embedding_str = format_vector(query_embedding);
+        let rows = sqlx::query(
+            r"
+            WITH vector_results AS (
+                SELECT ee.event_id, ee.embedded_text,
+                       ROW_NUMBER() OVER (ORDER BY ee.embedding <=> $1::vector) as vector_rank,
+                       1 - (ee.embedding <=> $1::vector) as vector_similarity
+                FROM core.event_embeddings ee
+                WHERE ee.embedding_model_id = $2
+                ORDER BY ee.embedding <=> $1::vector
+                LIMIT $4 * 3
+            ),
+            fts_results AS (
+                SELECT e.id as event_id,
+                       ROW_NUMBER() OVER (ORDER BY ts_rank_cd(
+                           to_tsvector('simple', e.payload::text),
+                           websearch_to_tsquery('simple', $3)
+                       ) DESC) as fts_rank,
+                       ts_rank_cd(
+                           to_tsvector('simple', e.payload::text),
+                           websearch_to_tsquery('simple', $3)
+                       ) as fts_score
+                FROM core.events e
+                WHERE to_tsvector('simple', e.payload::text) @@ websearch_to_tsquery('simple', $3)
+                ORDER BY fts_score DESC
+                LIMIT $4 * 3
+            ),
+            combined AS (
+                SELECT COALESCE(v.event_id, f.event_id) as event_id,
+                       COALESCE(v.embedded_text, '') as embedded_text,
+                       COALESCE(1.0 / ($5 + v.vector_rank), 0) as vector_rrf,
+                       COALESCE(1.0 / ($5 + f.fts_rank), 0) as fts_rrf,
+                       COALESCE(v.vector_similarity, 0) as vector_similarity,
+                       COALESCE(f.fts_score, 0) as fts_score
+                FROM vector_results v
+                FULL OUTER JOIN fts_results f ON v.event_id = f.event_id
+            )
+            SELECT event_id, embedded_text,
+                   vector_rrf + fts_rrf as rrf_score,
+                   vector_similarity, fts_score
+            FROM combined
+            ORDER BY rrf_score DESC
+            LIMIT $4
+            ",
+        )
+        .bind(&embedding_str)
+        .bind(model_id)
+        .bind(query_text)
+        .bind(limit)
+        .bind(rrf_k)
+        .fetch_all(self.pool)
+        .await?;
+
+        Ok(rows
+            .iter()
+            .map(|r| HybridSearchResult {
+                event_id: r.get("event_id"),
+                embedded_text: r.get("embedded_text"),
+                rrf_score: r.get("rrf_score"),
+                vector_similarity: r.get("vector_similarity"),
+                fts_score: r.get::<f32, _>("fts_score") as f64,
+            })
+            .collect())
+    }
+
     pub async fn count_embeddings(&self) -> DbResult<i64> {
         let count: (i64,) = sqlx::query_as(
             "SELECT count(*) FROM core.event_embeddings",
@@ -214,6 +287,15 @@ pub struct SimilarityResult {
     pub event_id: Uuid,
     pub embedded_text: String,
     pub similarity: f64,
+}
+
+#[derive(Debug)]
+pub struct HybridSearchResult {
+    pub event_id: Uuid,
+    pub embedded_text: String,
+    pub rrf_score: f64,
+    pub vector_similarity: f64,
+    pub fts_score: f64,
 }
 
 #[derive(Debug)]
