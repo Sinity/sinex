@@ -136,9 +136,14 @@ pub fn build_nextest_filter(packages: &[String]) -> String {
 
     packages
         .iter()
+        .filter(|package| is_valid_nextest_package_name(package))
         .map(|p| format!("package({p})"))
         .collect::<Vec<_>>()
         .join(" | ")
+}
+
+fn is_valid_nextest_package_name(package: &str) -> bool {
+    !package.is_empty() && !package.starts_with('.')
 }
 
 /// Get list of changed files from git.
@@ -260,6 +265,9 @@ fn path_to_package(path: &str) -> Option<String> {
     if parts.len() >= 3 && parts[0] == "crate" {
         let category = parts[1];
         let name = parts[2];
+        if name.starts_with('.') {
+            return None;
+        }
         let pkg_name = name.replace('_', "-");
 
         return match category {
@@ -406,6 +414,14 @@ mod tests {
         assert_eq!(path_to_package("Cargo.toml"), None);
         assert_eq!(path_to_package("Cargo.lock"), None);
         assert_eq!(path_to_package(".config/nextest.toml"), None);
+        assert_eq!(
+            path_to_package("crate/lib/.sinex/test-artifacts/report.json"),
+            None
+        );
+        assert_eq!(
+            path_to_package("crate/cli/.sinex/test-artifacts/report.json"),
+            None
+        );
         Ok(())
     }
 
@@ -487,6 +503,13 @@ mod tests {
     #[sinex_test]
     async fn test_build_nextest_filter_single_package() -> TestResult<()> {
         let filter = build_nextest_filter(&["sinex-db".into()]);
+        assert_eq!(filter, "package(sinex-db)");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_build_nextest_filter_ignores_hidden_checkout_state() -> TestResult<()> {
+        let filter = build_nextest_filter(&["sinex-db".into(), ".sinex".into()]);
         assert_eq!(filter, "package(sinex-db)");
         Ok(())
     }

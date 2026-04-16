@@ -326,6 +326,53 @@ async fn submit_previewed_operation_sets_execution_metadata_atomically(
 }
 
 #[sinex_test]
+async fn begin_execution_sets_execution_metadata_atomically(ctx: TestContext) -> Result<()> {
+    let replay = sinex_gateway::ReplayStateMachine::new(ctx.pool.clone());
+    let scope = ReplayScope {
+        node_id: "execute-node".to_string(),
+        time_window: None,
+        material_filter: None,
+        filters: HashMap::new(),
+    };
+
+    let operation = replay
+        .create_operation(scope, "test:planner".to_string())
+        .await?;
+    replay
+        .update_preview(
+            operation.operation_id,
+            serde_json::json!({
+                "total_events": 1,
+                "time_window": {
+                    "start": (Timestamp::now() - time::Duration::minutes(1)).format_rfc3339(),
+                    "end": Timestamp::now().format_rfc3339(),
+                },
+                "root_event_ids": [Uuid::now_v7()],
+            }),
+        )
+        .await?;
+    replay
+        .approve(operation.operation_id, "admin:approver".to_string())
+        .await?;
+
+    replay
+        .begin_execution(
+            operation.operation_id,
+            sinex_primitives::domain::NodeName::new("gateway-node"),
+        )
+        .await?;
+
+    let loaded = replay.load_operation(operation.operation_id).await?;
+    assert_eq!(loaded.state, ReplayState::Executing);
+    assert!(loaded.started_at.is_some());
+    assert_eq!(loaded.executor_node.as_deref(), Some("gateway-node"));
+    assert_eq!(loaded.outcome, None);
+    assert_eq!(loaded.error_details, None);
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn mark_failed_persists_pre_execution_and_execution_failures(ctx: TestContext) -> Result<()> {
     let replay = sinex_gateway::ReplayStateMachine::new(ctx.pool.clone());
     let scope = ReplayScope {

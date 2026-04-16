@@ -50,11 +50,11 @@ use sinex_primitives::{
 };
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::sync::{RwLock, watch};
+use tokio::sync::{RwLock, oneshot, watch};
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
@@ -82,6 +82,7 @@ pub struct SchemaBroadcastEntry {
 }
 const CONFIRMED_EVENT_CHANNEL_CAPACITY: usize = 1024;
 const LISTENER_RETRY_DELAY: Duration = Duration::from_secs(1);
+const LISTENER_STARTUP_GRACE_PERIOD: Duration = Duration::from_secs(2);
 const TASK_SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_millis(250);
 
 async fn run_resubscribing_listener<S, E, Subscribe, SubscribeFut, Handle, HandleFut>(
@@ -423,6 +424,8 @@ async fn maybe_start_schema_listener(
     let validator = Arc::new(crate::schema_validator::NodeSchemaValidator::new());
     let validator_clone = validator.clone();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let (listener_ready_tx, listener_ready_rx) = oneshot::channel();
+    let listener_ready_tx = Arc::new(Mutex::new(Some(listener_ready_tx)));
 
     // Background task to update cache and validator
     let listener_subject = subject.clone();
@@ -445,8 +448,16 @@ async fn maybe_start_schema_listener(
                 let cache = cache_clone.clone();
                 let validator = validator_clone.clone();
                 let kv = kv.clone();
+                let listener_ready_tx = listener_ready_tx.clone();
                 let mut shutdown_rx = subscription_shutdown_rx.clone();
                 async move {
+                    if let Some(listener_ready_tx) = listener_ready_tx
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .take()
+                    {
+                        let _ = listener_ready_tx.send(());
+                    }
                     loop {
                         tokio::select! {
                             maybe_msg = sub.next() => {
@@ -483,6 +494,28 @@ async fn maybe_start_schema_listener(
         )
         .await;
     });
+
+    match tokio::time::timeout(LISTENER_STARTUP_GRACE_PERIOD, listener_ready_rx).await {
+        Ok(Ok(())) => {
+            debug!(
+                subject,
+                "Schema broadcast listener established before initialization completed"
+            );
+        }
+        Ok(Err(_)) => {
+            warn!(
+                subject,
+                "Schema broadcast listener ended before reporting initial readiness"
+            );
+        }
+        Err(_) => {
+            warn!(
+                subject,
+                startup_grace_ms = LISTENER_STARTUP_GRACE_PERIOD.as_millis(),
+                "Schema broadcast listener did not report readiness before initialization completed"
+            );
+        }
+    }
 
     info!("Started schema broadcast listener and validator for {subject}");
 

@@ -793,7 +793,7 @@ impl ReplayStateMachine {
                 .await
                 .map_err(|e| SinexError::database(format!("cascade preview begin: {e}")))?;
 
-            // Phase 1: cascade expansion via repo_tx (borrows &mut tx)
+            // Expand the cascade via repo_tx (borrows &mut tx).
             let (all_cascade_ids, derived_ids) = {
                 let mut repo_tx = EventRepositoryTx::new(&mut tx);
                 let session_id = format!("preview_{}", Uuid::now_v7().simple());
@@ -832,7 +832,7 @@ impl ReplayStateMachine {
             };
             // repo_tx dropped — tx is free to use directly
 
-            // Phase 2: query metadata for derived events
+            // Query metadata for derived events.
             let affected_nodes = Self::load_cascade_affected_nodes(&mut tx, &derived_ids).await?;
             let affected_scopes = Self::load_cascade_affected_scopes(&mut tx, &derived_ids).await?;
 
@@ -1027,6 +1027,65 @@ impl ReplayStateMachine {
         );
 
         Self::decode_meta_to_operation(operation_id, row.operator, scope_val, meta_json)
+    }
+
+    /// Atomically transition an approved operation into execution while recording the executor.
+    pub async fn begin_execution(&self, operation_id: Uuid, executor_node: NodeName) -> Result<()> {
+        let now = sinex_primitives::temporal::now();
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query!(
+            r#"
+            SELECT preview_summary
+            FROM core.operations_log
+            WHERE id = $1::uuid
+            FOR UPDATE
+            "#,
+            operation_id
+        )
+        .fetch_one(tx.as_mut())
+        .await?;
+        let mut meta = Self::decode_meta_json(row.preview_summary)?;
+        if meta.state != ReplayState::Approved {
+            return Err(SinexError::invalid_state(
+                "Operation must be approved before execution can begin",
+            )
+            .with_context("current_state", format!("{:?}", meta.state))
+            .with_id("operation_id", operation_id.to_string())
+            .with_operation("begin_replay_execution"));
+        }
+
+        meta.state = ReplayState::Executing;
+        meta.started_at = Some(now);
+        meta.finished_at = None;
+        meta.outcome = None;
+        meta.error_details = None;
+        meta.executor_node = Some(executor_node.clone());
+        let (status, msg) = Self::map_state_to_status(&meta.state);
+        let meta_json = serde_json::to_value(&meta)?;
+        sqlx::query!(
+            r#"
+            UPDATE core.operations_log
+            SET result_status = $2,
+                result_message = $3,
+                preview_summary = $4
+            WHERE id = $1::uuid
+            "#,
+            operation_id,
+            status,
+            msg,
+            meta_json
+        )
+        .execute(tx.as_mut())
+        .await?;
+        tx.commit().await?;
+
+        info!(
+            operation_id = %operation_id,
+            executor_node = %executor_node,
+            "Atomically transitioned replay operation into execution"
+        );
+
+        Ok(())
     }
 
     /// Update checkpoint

@@ -5,7 +5,9 @@
 //! - `deps timings` parametrization
 //! - broader `deps list/tree/duplicates` behavior
 
+use clap::Parser;
 use std::process::Command;
+use xtask::Cli;
 use xtask::sandbox::sinex_test;
 
 // --- Help & Discovery Tests ---
@@ -233,38 +235,18 @@ async fn test_deps_duplicates_help_shows_threshold_param() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_deps_timings_top_parameter_parsing() -> TestResult<()> {
-    // Test that top parameter is parsed correctly
-    let mut cmd = Command::new("xtask");
-
-    cmd.arg("deps").arg("timings").arg("--top").arg("15");
-
-    let output = cmd
-        .output()
-        .expect("xtask deps timings command failed to execute");
-
-    // Should not fail due to parameter parsing error
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(!stderr.contains("unexpected argument"));
-    }
+    Cli::try_parse_from(["xtask", "deps", "timings", "--top", "15"])?;
     Ok(())
 }
 
 #[sinex_test]
 async fn test_deps_timings_invalid_top() -> TestResult<()> {
-    // Test with invalid top value (non-numeric)
-    let mut cmd = Command::new("xtask");
-
-    cmd.arg("deps").arg("timings").arg("--top").arg("invalid");
-
-    let output = cmd
-        .output()
-        .expect("xtask deps timings command failed to execute");
-
-    // Should fail with parse error
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("invalid") || stderr.contains("integer"));
+    let error = match Cli::try_parse_from(["xtask", "deps", "timings", "--top", "invalid"]) {
+        Ok(_) => panic!("invalid --top should fail during clap parsing"),
+        Err(error) => error,
+    };
+    let rendered = error.to_string();
+    assert!(rendered.contains("invalid") || rendered.contains("integer"));
     Ok(())
 }
 

@@ -471,7 +471,7 @@ pub enum PathOp {
     IsNotNull,
 }
 
-/// Aggregation mode — replaces event listing with grouped/bucketed results.
+/// Aggregation mode for grouped or bucketed query results.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum AggregationMode {

@@ -55,7 +55,7 @@ pub struct Event<T = JsonValue> {
     pub host: HostName,
 
     /// UUID of the node run (session) that created this event.
-    /// References `core.node_runs.id` — replaces the old `node_version` string.
+    /// References `core.node_runs.id`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node_run_id: Option<Uuid>,
 

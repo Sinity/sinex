@@ -1239,12 +1239,8 @@ impl ReplayExecutionEngine {
         let (total_events, execution_window, preview_root_ids) =
             Self::execution_inputs_from_operation(operation_id, &op)?;
 
-        // Transition to Executing state
         self.replay
-            .transition(operation_id, ReplayState::Executing)
-            .await?;
-        self.replay
-            .set_executor_node(operation_id, NodeName::new(executor_name))
+            .begin_execution(operation_id, NodeName::new(executor_name))
             .await?;
 
         info!(
@@ -3544,8 +3540,7 @@ mod tests {
             .await
             .expect_err("execute should fail when the node never reports completion");
         assert!(
-            err.to_string()
-                .contains("archived cascade left untouched"),
+            err.to_string().contains("archived cascade left untouched"),
             "timeout failure should explain why replay execution failed: {err}"
         );
 

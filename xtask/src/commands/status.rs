@@ -11,8 +11,8 @@ use crate::history::{
     DiagnosticCounts, HistoryAnalysis, HistoryDb, Invocation, InvocationStatus, Recommendation,
     VelocityTrend, WorkspaceHealthReport,
 };
-use crate::infra::stack::StackConfig;
 use crate::infra::probe::{NatsProbe, PostgresProbe, probe_nats, probe_postgres};
+use crate::infra::stack::StackConfig;
 use crate::runtime_metrics::{IngestdStatus, RuntimeAssessment, RuntimeMetrics};
 use crate::session::{WatchAction, WatchLoop};
 use color_eyre::eyre::{Result, WrapErr};
@@ -175,7 +175,10 @@ async fn probe_gateway_service_status(
 
 fn status_profile_enabled() -> bool {
     std::env::var("SINEX_STATUS_PROFILE").is_ok_and(|value| {
-        matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+        matches!(
+            value.to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
     })
 }
 
@@ -237,11 +240,17 @@ fn ingestd_service_status_from_runtime_metrics(
             IngestdStatus::Healthy => (ServiceRunStatus::Running, None),
             IngestdStatus::Down => (
                 ServiceRunStatus::Stopped,
-                Some("no checkout-local ingestd heartbeat found in the local runtime database".to_string()),
+                Some(
+                    "no checkout-local ingestd heartbeat found in the local runtime database"
+                        .to_string(),
+                ),
             ),
             IngestdStatus::Stale => (
                 ServiceRunStatus::Unknown,
-                Some("checkout-local ingestd heartbeat is stale in the local runtime database".to_string()),
+                Some(
+                    "checkout-local ingestd heartbeat is stale in the local runtime database"
+                        .to_string(),
+                ),
             ),
             IngestdStatus::Unknown => (
                 ServiceRunStatus::Unknown,
@@ -279,6 +288,17 @@ fn collect_runtime_metrics(runtime_db_url: Result<Option<String>>) -> Option<Run
         },
         Ok(None) => None,
         Err(error) => Some(RuntimeMetrics::query_failure(error.to_string())),
+    }
+}
+
+fn collect_runtime_metrics_if_postgres_ready(
+    pg_probe: &PostgresProbe,
+    runtime_db_url: Result<Option<String>>,
+) -> Option<RuntimeMetrics> {
+    if pg_probe.ready() {
+        collect_runtime_metrics(runtime_db_url)
+    } else {
+        Some(RuntimeMetrics::unavailable())
     }
 }
 
@@ -351,6 +371,8 @@ struct SummaryOutput {
     health_score: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     velocity: Option<Vec<VelocityTrendOutput>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    baseline_velocity: Option<Vec<VelocityTrendOutput>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     recommendations: Option<Vec<RecommendationOutput>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -442,6 +464,7 @@ fn runtime_query_error_message(metrics: &RuntimeMetrics) -> Option<String> {
 #[derive(Debug, Serialize)]
 struct VelocityTrendOutput {
     command: String,
+    scope_label: Option<String>,
     recent_avg_secs: Option<f64>,
     delta_pct: Option<f64>,
     trend: String,
@@ -452,6 +475,7 @@ impl From<&VelocityTrend> for VelocityTrendOutput {
     fn from(v: &VelocityTrend) -> Self {
         Self {
             command: v.command.clone(),
+            scope_label: v.scope_label.clone(),
             recent_avg_secs: v.recent_avg_secs,
             delta_pct: v.delta_pct,
             trend: v.trend.clone(),
@@ -745,6 +769,7 @@ struct HistorySnapshot {
     is_synthetic: bool,
     health_report: Option<WorkspaceHealthReport>,
     velocity: Vec<VelocityTrend>,
+    baseline_velocity: Vec<VelocityTrend>,
     recommendations: Vec<Recommendation>,
     issues: Vec<String>,
 }
@@ -850,7 +875,7 @@ fn collect_history_snapshot_from_db(
         let analysis = HistoryAnalysis::new(db);
         let analytics_started_at = Instant::now();
         match analysis.status_summary_snapshot() {
-            Ok((report, velocity, recommendations)) => {
+            Ok((report, velocity, baseline_velocity, recommendations)) => {
                 snapshot.diag_counts = DiagnosticCounts {
                     errors: report.error_count,
                     warnings: report.warning_count,
@@ -858,6 +883,7 @@ fn collect_history_snapshot_from_db(
                 };
                 snapshot.health_report = Some(report);
                 snapshot.velocity = velocity;
+                snapshot.baseline_velocity = baseline_velocity;
                 snapshot.recommendations = recommendations;
             }
             Err(error) => snapshot.issues.push(format!(
@@ -873,7 +899,10 @@ fn collect_history_snapshot_from_db(
                 .issues
                 .push(format!("Failed to read current diagnostics: {error}")),
         }
-        emit_status_profile("history.get_current_diagnostic_counts", diagnostics_started_at);
+        emit_status_profile(
+            "history.get_current_diagnostic_counts",
+            diagnostics_started_at,
+        );
     }
 
     if snapshot.diag_counts.errors > 0 {
@@ -979,22 +1008,26 @@ async fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
         runtime_metrics,
         gateway_url,
     ) = std::thread::scope(|s| {
+        let runtime_db_url = resolve_runtime_metrics_database_url(cfg.database_url.as_deref());
         // Thread 1: Infrastructure
         let infra_handle = s.spawn(move || {
             let started_at = Instant::now();
             let pg = probe_postgres();
             let nats = probe_nats();
-            ((pg, nats), started_at.elapsed())
+            let infra_duration = started_at.elapsed();
+
+            let runtime_metrics_started_at = Instant::now();
+            let runtime_metrics = collect_runtime_metrics_if_postgres_ready(&pg, runtime_db_url);
+            let runtime_duration = runtime_metrics_started_at.elapsed();
+
+            (
+                (pg, nats, runtime_metrics),
+                infra_duration,
+                runtime_duration,
+            )
         });
 
-        // Thread 2: Runtime metrics from Postgres
-        let runtime_db_url = resolve_runtime_metrics_database_url(cfg.database_url.as_deref());
-        let runtime_metrics_handle = s.spawn(move || {
-            let started_at = Instant::now();
-            (collect_runtime_metrics(runtime_db_url), started_at.elapsed())
-        });
-
-        // Thread 3: History + jobs snapshot (single SQLite handle)
+        // Thread 2: History + jobs snapshot (single SQLite handle)
         let history_jobs_handle = s.spawn(move || {
             let started_at = Instant::now();
             (
@@ -1003,7 +1036,7 @@ async fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
             )
         });
 
-        // Thread 4: Git state (expanded for rich mode)
+        // Thread 3: Git state (expanded for rich mode)
         let git_handle = s.spawn(move || match std::env::current_dir() {
             Ok(cwd) => {
                 let started_at = Instant::now();
@@ -1030,14 +1063,15 @@ async fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
         });
 
         // Collect thread results
-        let ((pg_probe, nats_probe), infra_duration) = match infra_handle.join() {
-            Ok(result) => result,
-            Err(payload) => {
-                let message = format!(
-                    "infra probe thread panicked: {}",
-                    describe_thread_panic(&*payload)
-                );
-                (
+        let ((pg_probe, nats_probe, runtime_metrics), infra_duration, runtime_duration) =
+            match infra_handle.join() {
+                Ok(result) => result,
+                Err(payload) => {
+                    let message = format!(
+                        "infra probe thread panicked: {}",
+                        describe_thread_panic(&*payload)
+                    );
+                    (
                     (
                         PostgresProbe {
                             running: false,
@@ -1052,21 +1086,16 @@ async fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
                             port: 4222,
                             message: Some(message),
                         },
+                        Some(RuntimeMetrics::query_failure(
+                            "runtime metrics collection skipped because infra probe thread panicked"
+                                .to_string(),
+                        )),
                     ),
                     Duration::ZERO,
+                    Duration::ZERO,
                 )
-            }
-        };
-        let (runtime_metrics, runtime_duration) = match runtime_metrics_handle.join() {
-            Ok((metrics, duration)) => (metrics, duration),
-            Err(payload) => (
-                Some(RuntimeMetrics::query_failure(format!(
-                    "runtime metrics collection thread panicked: {}",
-                    describe_thread_panic(&*payload)
-                ))),
-                Duration::ZERO,
-            ),
-        };
+                }
+            };
         let (git, git_duration) = git_handle.join().unwrap_or_else(|payload| {
             (
                 GitState {
@@ -1333,7 +1362,9 @@ async fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     }
     warnings.extend(data.history.issues.clone());
     warnings.extend(data.job_issues.clone());
-    if let Some(runtime_metrics) = data.runtime_metrics.as_ref() {
+    if data.pg_probe.ready()
+        && let Some(runtime_metrics) = data.runtime_metrics.as_ref()
+    {
         warnings.extend(runtime_metrics.assessment().warnings);
     }
     let runtime_impact = data
@@ -1444,6 +1475,17 @@ async fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         } else {
             None
         },
+        baseline_velocity: if !data.history.baseline_velocity.is_empty() {
+            Some(
+                data.history
+                    .baseline_velocity
+                    .iter()
+                    .map(VelocityTrendOutput::from)
+                    .collect(),
+            )
+        } else {
+            None
+        },
         recommendations: if !data.history.recommendations.is_empty() {
             Some(
                 data.history
@@ -1512,7 +1554,8 @@ impl<'a> MotdRenderer<'a> {
         self.render_build();
 
         // Velocity trends (when meaningful data exists)
-        self.render_velocity();
+        self.render_loop_velocity();
+        self.render_baseline_velocity();
 
         // Recommendations (when critical/warning exist)
         self.render_recommendations();
@@ -1776,11 +1819,8 @@ impl<'a> MotdRenderer<'a> {
 
     // ─── Velocity ───────────────────────────────────────────────────────
 
-    fn render_velocity(&self) {
-        let meaningful: Vec<_> = self
-            .data
-            .history
-            .velocity
+    fn render_velocity_line(&self, label_text: &str, trends: &[VelocityTrend]) {
+        let meaningful: Vec<_> = trends
             .iter()
             .filter(|v| v.sample_count >= 4 && v.recent_avg_secs.is_some())
             .collect();
@@ -1789,7 +1829,7 @@ impl<'a> MotdRenderer<'a> {
             return;
         }
 
-        let label = style("  trend").dim();
+        let label = style(label_text).dim();
         let parts: Vec<String> = meaningful
             .iter()
             .map(|v| {
@@ -1799,11 +1839,23 @@ impl<'a> MotdRenderer<'a> {
                     Some(d) if d > 5.0 => style(format!("↑{:.0}%", d)).red().to_string(),
                     _ => style("→").dim().to_string(),
                 };
-                format!("{} {} {}", v.command, avg, delta)
+                let label = match v.scope_label.as_deref() {
+                    Some(scope) if !scope.is_empty() => format!("{} [{}]", v.command, scope),
+                    _ => v.command.clone(),
+                };
+                format!("{label} {avg} {delta}")
             })
             .collect();
 
         println!("{label}    {}", parts.join("   "));
+    }
+
+    fn render_loop_velocity(&self) {
+        self.render_velocity_line("  loop", &self.data.history.velocity);
+    }
+
+    fn render_baseline_velocity(&self) {
+        self.render_velocity_line("  repo", &self.data.history.baseline_velocity);
     }
 
     // ─── Recommendations ────────────────────────────────────────────────
@@ -2119,36 +2171,44 @@ async fn collect_status_data(
         .is_some();
 
     let threaded_stage_started_at = Instant::now();
-    let (pg_probe, nats_probe, runtime_metrics, jobs, history) =
-        std::thread::scope(|s| {
-            // Thread 1: Infrastructure
-            let infra_handle = s.spawn(move || {
-                let started_at = Instant::now();
-                let pg = probe_postgres();
-                let nats = probe_nats();
-                ((pg, nats), started_at.elapsed())
-            });
+    let (pg_probe, nats_probe, runtime_metrics, jobs, history) = std::thread::scope(|s| {
+        let runtime_db_url = resolve_runtime_metrics_database_url(cfg.database_url.as_deref());
+        // Thread 1: Infrastructure
+        let infra_handle = s.spawn(move || {
+            let started_at = Instant::now();
+            let pg = probe_postgres();
+            let nats = probe_nats();
+            let infra_duration = started_at.elapsed();
 
-            let runtime_metrics_handle = s.spawn(move || {
-                let started_at = Instant::now();
-                (collect_runtime_metrics(runtime_db_url), started_at.elapsed())
-            });
-            let history_jobs_handle = s.spawn(move || {
-                let started_at = Instant::now();
+            let runtime_metrics_started_at = Instant::now();
+            let runtime_metrics = collect_runtime_metrics_if_postgres_ready(&pg, runtime_db_url);
+            let runtime_duration = runtime_metrics_started_at.elapsed();
+
+            (
+                (pg, nats, runtime_metrics),
+                infra_duration,
+                runtime_duration,
+            )
+        });
+
+        let history_jobs_handle = s.spawn(move || {
+            let started_at = Instant::now();
+            (
+                collect_history_and_jobs_snapshot(ctx, 10, false, 20),
+                started_at.elapsed(),
+            )
+        });
+
+        let ((pg, nats, runtime_metrics), infra_duration, runtime_duration) = match infra_handle
+            .join()
+        {
+            Ok(result) => result,
+            Err(payload) => {
+                let message = format!(
+                    "infra probe thread panicked: {}",
+                    describe_thread_panic(&*payload)
+                );
                 (
-                    collect_history_and_jobs_snapshot(ctx, 10, false, 20),
-                    started_at.elapsed(),
-                )
-            });
-
-            let ((pg, nats), infra_duration) = match infra_handle.join() {
-                Ok(result) => result,
-                Err(payload) => {
-                    let message = format!(
-                        "infra probe thread panicked: {}",
-                        describe_thread_panic(&*payload)
-                    );
-                    (
                         (
                             PostgresProbe {
                                 running: false,
@@ -2163,47 +2223,42 @@ async fn collect_status_data(
                                 port: 4222,
                                 message: Some(message),
                             },
-                        ),
-                        Duration::ZERO,
-                    )
-                }
-            };
-            let (runtime_metrics, runtime_duration) = match runtime_metrics_handle.join() {
-                Ok((metrics, duration)) => (metrics, duration),
-                Err(payload) => (
-                    Some(RuntimeMetrics::query_failure(format!(
-                        "runtime metrics collection thread panicked: {}",
-                        describe_thread_panic(&*payload)
-                    ))),
-                    Duration::ZERO,
-                ),
-            };
-            let ((history, jobs), history_jobs_duration) =
-                history_jobs_handle.join().unwrap_or_else(|payload| {
-                    (
-                        (
-                            HistorySnapshot::unavailable(format!(
-                                "history collection thread panicked: {}",
-                                describe_thread_panic(&*payload)
+                            Some(RuntimeMetrics::query_failure(
+                                "runtime metrics collection skipped because infra probe thread panicked"
+                                    .to_string(),
                             )),
-                            JobsSnapshot {
-                                active: Vec::new(),
-                                recent: Vec::new(),
-                                issues: vec![format!(
-                                    "background job collection thread panicked: {}",
-                                    describe_thread_panic(&*payload)
-                                )],
-                            },
                         ),
                         Duration::ZERO,
+                        Duration::ZERO,
                     )
-                });
-            emit_status_profile_duration("full.infra_probe", infra_duration);
-            emit_status_profile_duration("full.runtime_metrics", runtime_duration);
-            emit_status_profile_duration("full.history_jobs", history_jobs_duration);
+            }
+        };
+        let ((history, jobs), history_jobs_duration) =
+            history_jobs_handle.join().unwrap_or_else(|payload| {
+                (
+                    (
+                        HistorySnapshot::unavailable(format!(
+                            "history collection thread panicked: {}",
+                            describe_thread_panic(&*payload)
+                        )),
+                        JobsSnapshot {
+                            active: Vec::new(),
+                            recent: Vec::new(),
+                            issues: vec![format!(
+                                "background job collection thread panicked: {}",
+                                describe_thread_panic(&*payload)
+                            )],
+                        },
+                    ),
+                    Duration::ZERO,
+                )
+            });
+        emit_status_profile_duration("full.infra_probe", infra_duration);
+        emit_status_profile_duration("full.runtime_metrics", runtime_duration);
+        emit_status_profile_duration("full.history_jobs", history_jobs_duration);
 
-            (pg, nats, runtime_metrics, jobs, history)
-        });
+        (pg, nats, runtime_metrics, jobs, history)
+    });
     emit_status_profile("full.threaded_stage", threaded_stage_started_at);
     let service_stage_started_at = Instant::now();
     let services = collect_core_service_statuses(
@@ -2314,7 +2369,9 @@ async fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<
     }
     warnings.extend(history.issues.clone());
     warnings.extend(jobs.issues.clone());
-    if let Some(runtime_assessment) = runtime_assessment.as_ref() {
+    if pg_probe.ready()
+        && let Some(runtime_assessment) = runtime_assessment.as_ref()
+    {
         warnings.extend(runtime_assessment.warnings.clone());
     }
 
@@ -2793,7 +2850,10 @@ mod tests {
         }];
 
         let matched = active_job_for_service("sinex-ingestd", &jobs);
-        assert!(matched.is_some(), "active job should match by binary basename");
+        assert!(
+            matched.is_some(),
+            "active job should match by binary basename"
+        );
         assert_eq!(matched.and_then(|job| job.pid), Some(std::process::id()));
         Ok(())
     }
@@ -2943,10 +3003,19 @@ mod tests {
             health_score: Some(85),
             velocity: Some(vec![VelocityTrendOutput {
                 command: "check".into(),
+                scope_label: Some("-p sinex-db".into()),
                 recent_avg_secs: Some(4.2),
                 delta_pct: Some(-12.0),
                 trend: "improving".into(),
                 sample_count: 8,
+            }]),
+            baseline_velocity: Some(vec![VelocityTrendOutput {
+                command: "test".into(),
+                scope_label: Some("workspace".into()),
+                recent_avg_secs: Some(61.0),
+                delta_pct: Some(9.0),
+                trend: "slower".into(),
+                sample_count: 6,
             }]),
             recommendations: Some(vec![RecommendationOutput {
                 severity: "warning".into(),
@@ -3011,6 +3080,8 @@ mod tests {
         assert!(json["velocity"].is_array());
         assert_eq!(json["velocity"][0]["command"], "check");
         assert_eq!(json["velocity"][0]["delta_pct"], -12.0);
+        assert!(json["baseline_velocity"].is_array());
+        assert_eq!(json["baseline_velocity"][0]["command"], "test");
         assert!(json["recommendations"].is_array());
         assert_eq!(json["recommendations"][0]["severity"], "warning");
         assert_eq!(json["recommendations"][0]["action"], "xtask fix --smart");
@@ -3072,6 +3143,7 @@ mod tests {
             },
             health_score: None,
             velocity: None,
+            baseline_velocity: None,
             recommendations: None,
             runtime: None,
             services: None,
@@ -3137,6 +3209,7 @@ mod tests {
             },
             health_score: None,
             velocity: None,
+            baseline_velocity: None,
             recommendations: None,
             runtime: None,
             services: None,
@@ -3279,6 +3352,30 @@ mod tests {
             runtime_query_error_message(&metrics).as_deref(),
             Some("Runtime metrics query failed: runtime metrics collection thread panicked: boom")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_collect_runtime_metrics_skips_offline_postgres_probe()
+    -> ::xtask::sandbox::TestResult<()> {
+        let pg_probe = PostgresProbe {
+            running: false,
+            accepting_connections: false,
+            latency_ms: 0,
+            message: Some("postgres is offline".to_string()),
+        };
+
+        let metrics = collect_runtime_metrics_if_postgres_ready(
+            &pg_probe,
+            Ok(Some(
+                "postgresql:///sinex_dev?host=/tmp/never-used".to_string(),
+            )),
+        )
+        .unwrap_or_else(|| panic!("expected runtime metrics placeholder"));
+
+        assert_eq!(metrics.ingestd_status, IngestdStatus::Unknown);
+        assert!(metrics.query_error.is_none());
+        assert!(runtime_query_error_message(&metrics).is_none());
         Ok(())
     }
 

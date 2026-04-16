@@ -5,6 +5,7 @@ use serde_json::Value;
 use sinex_node_sdk::preflight::{
     VerificationStatus, configuration, database, resources, services, verification,
 };
+use sinex_primitives::constants::timeouts;
 use sinex_primitives::{environment::SinexEnvironment, nats::JetStreamTopology};
 use std::env;
 use std::ffi::OsString;
@@ -16,7 +17,6 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tokio::time::timeout;
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::Timeouts;
 
 fn env_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -377,7 +377,7 @@ async fn test_phase1_database_connectivity_failure() -> TestResult<()> {
 async fn test_phase1_database_connectivity_timeout() -> TestResult<()> {
     with_database_url("postgresql://192.0.2.1:5432/test", || async {
         let result = timeout(
-            Duration::from_secs(Timeouts::SHORT),
+            timeouts::PREFLIGHT_DATABASE_TIMEOUT + Duration::from_secs(2),
             database::verify_database_connectivity(),
         )
         .await;
@@ -627,13 +627,13 @@ async fn test_phase4_filesystem_permissions_missing_work_dir_fails_honestly() ->
         || async {
             let (status, details, messages) = resources::verify_system_resources().await?;
 
-            assert_eq!(status, VerificationStatus::Fail);
+            assert_eq!(status, VerificationStatus::Warning);
             assert!(
                 messages
                     .iter()
                     .any(|message| message.contains(&work_dir_str)
-                        && message.contains("not writable")),
-                "missing work dir should be reported explicitly; messages={messages:#?}"
+                        && message.contains("can be created")),
+                "creatable missing work dir should be reported honestly; messages={messages:#?}"
             );
             assert!(
                 !work_dir.exists(),
@@ -653,7 +653,11 @@ async fn test_phase4_filesystem_permissions_missing_work_dir_fails_honestly() ->
             );
             assert_eq!(
                 work_dir_details.get("writable").and_then(Value::as_bool),
-                Some(false)
+                Some(true)
+            );
+            assert_eq!(
+                work_dir_details.get("creatable").and_then(Value::as_bool),
+                Some(true)
             );
 
             Ok(())

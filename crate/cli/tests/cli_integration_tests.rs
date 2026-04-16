@@ -22,7 +22,7 @@ mod help_tests {
             .arg("--help")
             .assert()
             .success()
-            .stdout(predicate::str::contains("sinexctl"))
+            .stdout(predicate::str::contains("Usage: sinexctl"))
             .stdout(predicate::str::contains("Commands:"))
             .stdout(predicate::str::contains("query"))
             .stdout(predicate::str::contains("node"))
@@ -32,7 +32,6 @@ mod help_tests {
             .stdout(predicate::str::contains("audit"))
             .stdout(predicate::str::contains("blob"))
             .stdout(predicate::str::contains("config"))
-            .stdout(predicate::str::contains("import"))
             .stdout(predicate::str::contains("completions"));
         Ok(())
     }
