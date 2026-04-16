@@ -1,7 +1,7 @@
 //! Tests replay idempotency guard: rejects duplicate operations for the same node.
 //!
 //! Verifies the guard added in `create_operation()` that prevents concurrent
-//! replay operations targeting the same node_id.
+//! replay operations targeting the same `node_id`.
 
 use color_eyre::eyre::bail;
 use serde_json::json;

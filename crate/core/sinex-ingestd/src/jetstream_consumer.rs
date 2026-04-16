@@ -207,7 +207,7 @@ fn rows_depend_only_on_source_material_fk(batch: &[StreamBatchRow]) -> bool {
             && row
                 .source_event_ids
                 .as_ref()
-                .is_none_or(|source_ids| source_ids.is_empty())
+                .is_none_or(std::vec::Vec::is_empty)
             && row.payload_schema_id.is_none()
             && row.node_run_id.is_none()
     })
@@ -270,7 +270,7 @@ const ERROR_CLASS_CONFIRMATION_DURABILITY_GAP: &str = "confirmation_durability_g
 /// be partially committed if one sub-batch succeeds before a sibling fails.
 const BATCH_ATOMICITY_SCOPE: &str = "per_successful_persistence_attempt";
 const SUSPICIOUS_TS_ORIG_FUTURE_SKEW: time::Duration = time::Duration::hours(1);
-/// Events with ts_orig before this date are implausibly old: sinex didn't exist then.
+/// Events with `ts_orig` before this date are implausibly old: sinex didn't exist then.
 /// 2000-01-01 00:00:00 UTC as a Unix timestamp.
 const TS_ORIG_LOWER_BOUND: Timestamp =
     Timestamp::from_const(time::macros::datetime!(2000-01-01 00:00:00 UTC));
@@ -348,14 +348,13 @@ fn dlq_publish_msg_id(
         return format!("dlq.{event_id}");
     }
 
-    match original_nats_msg_id {
-        Some(original_id) => format!("dlq.msg.{original_id}"),
-        None => {
-            let mut hasher = blake3::Hasher::new();
-            hasher.update(msg.subject.as_str().as_bytes());
-            hasher.update(&msg.payload);
-            format!("dlq.hash.{}", hasher.finalize().to_hex())
-        }
+    if let Some(original_id) = original_nats_msg_id {
+        format!("dlq.msg.{original_id}")
+    } else {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(msg.subject.as_str().as_bytes());
+        hasher.update(&msg.payload);
+        format!("dlq.hash.{}", hasher.finalize().to_hex())
     }
 }
 
@@ -1103,7 +1102,7 @@ impl JetStreamConsumer {
     /// Persist and settle a prepared batch.
     ///
     /// Atomicity is intentionally scoped to each successful persistence attempt,
-    /// not to the original JetStream pull batch. If a non-retryable row poisons a
+    /// not to the original `JetStream` pull batch. If a non-retryable row poisons a
     /// mixed batch, ingestd bisects the batch to isolate the poison row. Any sibling
     /// sub-batch that already persisted keeps its commit and raw-message ACKs, while
     /// the isolated row is retried or routed to the DLQ on its own. Replay and
@@ -1459,8 +1458,7 @@ impl JetStreamConsumer {
             ValidationResult::NoSchema => {
                 if strict_mode {
                     Err(SinexError::validation(format!(
-                        "Strict validation enabled: event has no registered schema (source={}, event_type={})",
-                        source, event_type
+                        "Strict validation enabled: event has no registered schema (source={source}, event_type={event_type})"
                     ))
                     .with_operation("jetstream_consumer.validate_event")
                     .with_context("strict_mode", "enabled"))

@@ -107,7 +107,7 @@ pub struct EventRepository<'a> {
 ///
 /// # Why only the direct self-reference check here?
 ///
-/// Events are identified by UUIDv7, which is monotonically increasing in
+/// Events are identified by `UUIDv7`, which is monotonically increasing in
 /// time. A newly-created event ID is unique and cannot yet exist in the
 /// database. Therefore:
 ///
@@ -120,7 +120,7 @@ pub struct EventRepository<'a> {
 ///
 /// The previous implementation ran a `WITH RECURSIVE` CTE to walk the full
 /// ancestry graph on every synthesis insert. That check added a full
-/// recursive DB round-trip per batch row for a condition that UUIDv7
+/// recursive DB round-trip per batch row for a condition that `UUIDv7`
 /// monotonicity already makes structurally impossible. It has been removed.
 ///
 /// Batch-local cycles are still possible when a caller inserts multiple new

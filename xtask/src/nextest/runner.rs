@@ -108,8 +108,12 @@ fn prepare_invocation_scoped_nextest_config(
         .join(profile)
         .join("runs")
         .join(scope);
-    fs::create_dir_all(&run_dir)
-        .with_context(|| format!("failed to create nextest run directory {}", run_dir.display()))?;
+    fs::create_dir_all(&run_dir).with_context(|| {
+        format!(
+            "failed to create nextest run directory {}",
+            run_dir.display()
+        )
+    })?;
 
     let junit_path = run_dir.join("junit.xml");
     let config_path = run_dir.join("nextest.toml");
@@ -318,7 +322,10 @@ store-success-output = true
             parsed["profile"]["default"]["junit"]["path"].as_str(),
             Some("/tmp/custom-junit.xml")
         );
-        assert_eq!(parsed["profile"]["default"]["retries"].as_integer(), Some(2));
+        assert_eq!(
+            parsed["profile"]["default"]["retries"].as_integer(),
+            Some(2)
+        );
         assert_eq!(
             parsed["profile"]["default"]["junit"]["store-success-output"].as_bool(),
             Some(true)

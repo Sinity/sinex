@@ -245,8 +245,7 @@ enum LocalStateRestore {
 
 fn default_polling_interval() -> Seconds {
     sinex_primitives::env::parse_optional::<u64>(ENV_POLLING_INTERVAL, "terminal polling interval")
-        .map(Seconds::from_secs)
-        .unwrap_or(DEFAULT_POLLING_INTERVAL)
+        .map_or(DEFAULT_POLLING_INTERVAL, Seconds::from_secs)
 }
 
 fn classify_history_source(source: &HistorySourceConfig) -> HistorySourceMode {
@@ -901,8 +900,8 @@ impl HistoryWatcherContext {
 
 async fn load_history_state(path: Option<&std::path::Path>) -> NodeResult<Option<HistoryState>> {
     let Some(path) = path else {
-            return Ok(None);
-        };
+        return Ok(None);
+    };
     match fs::read(path).await {
         Ok(bytes) => match serde_json::from_slice::<HistoryState>(&bytes) {
             Ok(state) => Ok(Some(state)),
@@ -1514,20 +1513,19 @@ impl HistoryWatcherContext {
                             .with_context("path", path.display().to_string())
                             .with_context("temp_path", temp_path.display().to_string())
                             .with_std_error(&e));
-                        } else {
-                            // Fsync the parent directory to ensure the rename is durable.
-                            // Without this, the renamed file might not be visible after a crash.
-                            if let Some(parent) = path.parent()
-                                && let Ok(dir) = std::fs::File::open(parent)
-                                && let Err(e) = dir.sync_all()
-                            {
-                                return Err(SinexError::io(
-                                    "failed to fsync terminal history state directory",
-                                )
-                                .with_context("path", path.display().to_string())
-                                .with_context("parent", parent.display().to_string())
-                                .with_std_error(&e));
-                            }
+                        }
+                        // Fsync the parent directory to ensure the rename is durable.
+                        // Without this, the renamed file might not be visible after a crash.
+                        if let Some(parent) = path.parent()
+                            && let Ok(dir) = std::fs::File::open(parent)
+                            && let Err(e) = dir.sync_all()
+                        {
+                            return Err(SinexError::io(
+                                "failed to fsync terminal history state directory",
+                            )
+                            .with_context("path", path.display().to_string())
+                            .with_context("parent", parent.display().to_string())
+                            .with_std_error(&e));
                         }
                     }
                     Err(e) => {
@@ -2853,13 +2851,13 @@ impl TerminalNode {
             warnings,
         ) {
             Ok(IncomingHistoryCheckpointState::State(state)) => Ok(Some(state)),
-            Ok(IncomingHistoryCheckpointState::MissingSource)
-            | Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => {
-                match context.load_valid_local_state_for_recovery(warnings).await {
-                    LocalStateRestore::Present(state) => Ok(Some(state)),
-                    LocalStateRestore::Missing | LocalStateRestore::Unusable => Ok(None),
-                }
-            }
+            Ok(
+                IncomingHistoryCheckpointState::MissingSource
+                | IncomingHistoryCheckpointState::MissingCheckpoint,
+            ) => match context.load_valid_local_state_for_recovery(warnings).await {
+                LocalStateRestore::Present(state) => Ok(Some(state)),
+                LocalStateRestore::Missing | LocalStateRestore::Unusable => Ok(None),
+            },
             Err(error) => {
                 warnings.push(context.strict_warning(format!(
                     "incoming checkpoint state is unusable for continuous monitoring: {error}"
@@ -3408,13 +3406,11 @@ mod tests {
 
         assert!(
             file_name.as_bytes().starts_with(&expected_prefix),
-            "unexpected temp file prefix: {:?}",
-            file_name
+            "unexpected temp file prefix: {file_name:?}"
         );
         assert!(
             file_name.as_bytes().ends_with(b".tmp"),
-            "unexpected temp file suffix: {:?}",
-            file_name
+            "unexpected temp file suffix: {file_name:?}"
         );
         Ok(())
     }
@@ -4156,7 +4152,7 @@ mod tests {
                     "expected material provenance in Atuin event"
                 ));
             }
-        };
+        }
 
         ingest_handle.stop().await?;
         Ok(())
@@ -4372,7 +4368,7 @@ mod tests {
             event
                 .payload
                 .get("duration_ns")
-                .and_then(|value| value.as_i64()),
+                .and_then(serde_json::Value::as_i64),
             Some(0)
         );
         assert_eq!(event.source.as_str(), "shell.atuin");
@@ -6365,7 +6361,7 @@ mod tests {
         {
             let mut guard = node.watch_handles.lock().await;
             guard.push(tokio::spawn(async {
-                tokio::time::sleep(Duration::from_secs(60)).await;
+                tokio::time::sleep(Duration::from_mins(1)).await;
                 Ok::<(), SinexError>(())
             }));
             guard.push(tokio::spawn(async { Ok::<(), SinexError>(()) }));

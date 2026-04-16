@@ -368,7 +368,7 @@ async fn health_aggregator_system_status_includes_trigger_component(
             .payload
             .get("components")
             .and_then(serde_json::Value::as_array)
-            .map(|components| components.len()),
+            .map(std::vec::Vec::len),
         Some(1),
         "component list should include the trigger component"
     );

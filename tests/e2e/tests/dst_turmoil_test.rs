@@ -19,7 +19,7 @@
 //! - Connection retry limit enforcement
 //! - Reconnect-after-partition semantics (connect → partition → reconnect)
 //!
-//! They do NOT test async-nats / NATS JetStream internals (those use tokio::net
+//! They do NOT test async-nats / NATS `JetStream` internals (those use `tokio::net`
 //! directly and are not compatible with turmoil's shim without patching the crate).
 //!
 //! Run with: `xtask test --heavy -E 'test(dst_turmoil)'`
@@ -145,23 +145,18 @@ fn dst_turmoil_connect_retry_until_server_available() {
 
         loop {
             attempts += 1;
-            match TcpStream::connect(server_addr).await {
-                Ok(_stream) => {
-                    // Connected — verify we retried a reasonable number of times
-                    // Server is up at t=5s, base retry=1s, so ~3-6 attempts expected
-                    assert!(
-                        attempts >= 3 && attempts <= 8,
-                        "expected 3-8 connection attempts before success, got {attempts}"
-                    );
-                    break;
-                }
-                Err(_) => {
-                    let delay = backoff.next();
-                    tokio::time::sleep(delay).await;
-                    if backoff.attempt() > 15 {
-                        panic!("too many retries: {attempts}");
-                    }
-                }
+            if let Ok(_stream) = TcpStream::connect(server_addr).await {
+                // Connected — verify we retried a reasonable number of times
+                // Server is up at t=5s, base retry=1s, so ~3-6 attempts expected
+                assert!(
+                    (3..=8).contains(&attempts),
+                    "expected 3-8 connection attempts before success, got {attempts}"
+                );
+                break;
+            } else {
+                let delay = backoff.next();
+                tokio::time::sleep(delay).await;
+                assert!(backoff.attempt() <= 15, "too many retries: {attempts}");
             }
         }
 

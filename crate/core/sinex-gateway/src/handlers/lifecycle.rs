@@ -232,7 +232,7 @@ pub async fn handle_lifecycle_archive(
         request.dry_run,
     );
     let mut scope = json!({
-        "source": request.source.as_ref().map(|source| source.to_string()),
+        "source": request.source.as_ref().map(std::string::ToString::to_string),
         "before": request.before.clone(),
         "requested_event_ids": Value::Null,
         "limit": limit,

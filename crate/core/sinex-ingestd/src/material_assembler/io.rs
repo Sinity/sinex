@@ -118,8 +118,7 @@ fn parse_material_state_folder(path: &std::path::Path) -> IngestdResult<Uuid> {
 
     let folder_name = folder_name.to_str().ok_or_else(|| {
         SinexError::invalid_state(format!(
-            "Assembler state folder {:?} is not valid UTF-8",
-            path
+            "Assembler state folder {path:?} is not valid UTF-8"
         ))
     })?;
 
@@ -393,7 +392,7 @@ fn parse_wal_envelope_line(line: &str) -> Result<WalEntryEnvelope, String> {
 
 /// Extract the raw JSON bytes of the "entry" field from a WAL line without
 /// re-serializing. This preserves the original byte sequence for CRC verification,
-/// avoiding sensitivity to serde_json key-ordering changes across versions.
+/// avoiding sensitivity to `serde_json` key-ordering changes across versions.
 fn extract_raw_entry_bytes(line: &str) -> Option<&str> {
     // The envelope format is: {"seq":N,"crc":C,"entry":{...}}
     // Find the "entry": key and extract everything from the opening { to the matching }.
@@ -1641,7 +1640,7 @@ mod tests {
         tokio::fs::write(material_dir.join(TEMP_FILE_NAME), &[]).await?;
 
         let persisted_last_slice_received = Timestamp::now();
-        let stale_wal_mtime = std::time::SystemTime::now() - std::time::Duration::from_secs(120);
+        let stale_wal_mtime = std::time::SystemTime::now() - std::time::Duration::from_mins(2);
         write_wal_entry(
             &material_dir.join(WAL_FILE_NAME),
             WalEntry::Checkpoint(PersistedState {

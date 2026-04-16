@@ -567,20 +567,20 @@ impl SystemNode {
     /// Abort and drop any active watcher handles.
     async fn shutdown_watchers(&mut self) -> NodeResult<()> {
         let mut shutdown_errors = Vec::new();
-        if let Some(handle) = self.dbus_watcher.take() {
-            if let Err(error) = self.finalize_watcher_handle(handle).await {
-                shutdown_errors.push(("dbus watcher".to_string(), error));
-            }
+        if let Some(handle) = self.dbus_watcher.take()
+            && let Err(error) = self.finalize_watcher_handle(handle).await
+        {
+            shutdown_errors.push(("dbus watcher".to_string(), error));
         }
-        if let Some(handle) = self.unified_journal_watcher.take() {
-            if let Err(error) = self.finalize_watcher_handle(handle).await {
-                shutdown_errors.push(("unified journal watcher".to_string(), error));
-            }
+        if let Some(handle) = self.unified_journal_watcher.take()
+            && let Err(error) = self.finalize_watcher_handle(handle).await
+        {
+            shutdown_errors.push(("unified journal watcher".to_string(), error));
         }
-        if let Some(handle) = self.udev_watcher.take() {
-            if let Err(error) = self.finalize_watcher_handle(handle).await {
-                shutdown_errors.push(("udev watcher".to_string(), error));
-            }
+        if let Some(handle) = self.udev_watcher.take()
+            && let Err(error) = self.finalize_watcher_handle(handle).await
+        {
+            shutdown_errors.push(("udev watcher".to_string(), error));
         }
 
         if let Some(material) = self.node_material.take()

@@ -3,7 +3,7 @@
 //! Uses `proptest` to generate random sequences of repository operations, runs
 //! them in parallel against:
 //!   - A **reference model** (in-memory `HashMap`) — always correct by construction
-//!   - The **real `EventRepository`** — backed by a live PostgreSQL TestContext
+//!   - The **real `EventRepository`** — backed by a live `PostgreSQL` `TestContext`
 //!
 //! After each operation, the test asserts that the real DB matches the model's
 //! expected output. If they diverge, proptest automatically shrinks the operation
@@ -31,7 +31,7 @@ use xtask::sandbox::prelude::*;
 /// that mirrors what the DB maintains.
 #[derive(Default)]
 struct ReferenceModel {
-    /// event_id → (source, event_type)
+    /// `event_id` → (source, `event_type`)
     events: HashMap<String, (String, String)>,
 }
 
@@ -62,7 +62,7 @@ impl ReferenceModel {
 /// The set of operations we apply to both the model and the real DB.
 #[derive(Debug, Clone)]
 enum EventRepoOp {
-    /// Insert a new event with the given source tag (0–2) and event_type tag (0–2).
+    /// Insert a new event with the given source tag (0–2) and `event_type` tag (0–2).
     Insert { source_idx: u8, type_idx: u8 },
     /// Re-insert an already-inserted event (idempotency check).
     ReInsertLast,
@@ -161,8 +161,7 @@ async fn prop_event_repo_model_matches_reference(
 
                 let id_str = inserted
                     .id
-                    .map(|id| id.to_string())
-                    .unwrap_or_else(|| format!("unknown-{step}"));
+                    .map_or_else(|| format!("unknown-{step}"), |id| id.to_string());
 
                 model.insert(id_str.clone(), source_str, type_str.to_string());
                 inserted_ids.push(id_str);
@@ -194,8 +193,7 @@ async fn prop_event_repo_model_matches_reference(
 
                     let id_str = inserted
                         .id
-                        .map(|id| id.to_string())
-                        .unwrap_or_else(|| format!("reinsert-{step}"));
+                        .map_or_else(|| format!("reinsert-{step}"), |id| id.to_string());
 
                     model.insert(
                         id_str.clone(),

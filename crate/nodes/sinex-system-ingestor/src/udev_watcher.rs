@@ -328,7 +328,7 @@ impl UdevWatcher {
         })
     }
 
-    fn class_name_for_event<'a>(path: &'a Path) -> NodeResult<&'a str> {
+    fn class_name_for_event(path: &Path) -> NodeResult<&str> {
         let class_dir = path.parent().ok_or_else(|| {
             sinex_node_sdk::SinexError::processing("udev watcher path is missing class directory")
                 .with_context("path_debug", format!("{path:?}"))

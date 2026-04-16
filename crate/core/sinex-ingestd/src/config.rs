@@ -519,8 +519,8 @@ fn validated_path_override(raw: &str, context: &str) -> IngestdResult<Utf8PathBu
 }
 
 fn default_path_base_dir() -> Utf8PathBuf {
-    match dirs::cache_dir() {
-        Some(path) => match Utf8PathBuf::from_path_buf(path) {
+    if let Some(path) = dirs::cache_dir() {
+        match Utf8PathBuf::from_path_buf(path) {
             Ok(path) => path,
             Err(path) => {
                 warn!(
@@ -529,11 +529,10 @@ fn default_path_base_dir() -> Utf8PathBuf {
                 );
                 Utf8PathBuf::from("/tmp")
             }
-        },
-        None => {
-            warn!("Cache directory unavailable; falling back to /tmp");
-            Utf8PathBuf::from("/tmp")
         }
+    } else {
+        warn!("Cache directory unavailable; falling back to /tmp");
+        Utf8PathBuf::from("/tmp")
     }
 }
 

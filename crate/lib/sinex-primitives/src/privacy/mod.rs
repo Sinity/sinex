@@ -47,10 +47,10 @@ pub fn engine() -> Result<&'static PrivacyEngine, &'static PrivacyError> {
 }
 
 /// Process text with the global privacy engine.
-pub fn process<'a>(
-    text: &'a str,
+pub fn process(
+    text: &str,
     context: ProcessingContext,
-) -> Result<Processed<'a>, &'static PrivacyError> {
+) -> Result<Processed<'_>, &'static PrivacyError> {
     Ok(engine()?.process(text, context))
 }
 

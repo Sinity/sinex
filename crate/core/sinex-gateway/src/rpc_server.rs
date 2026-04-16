@@ -1204,7 +1204,7 @@ fn warn_if_remote_bind(bind_address: &BindAddress) {
     }
 }
 
-fn request_id_for_span<'a, B>(request: &'a Request<B>) -> Cow<'a, str> {
+fn request_id_for_span<B>(request: &Request<B>) -> Cow<'_, str> {
     match request.headers().get("x-request-id") {
         Some(value) => match value.to_str() {
             Ok(request_id) => Cow::Borrowed(request_id),

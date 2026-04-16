@@ -9,9 +9,9 @@ use serde_json::Value;
 
 /// Request: events.ingest
 ///
-/// Publishes a single event directly to the NATS JetStream raw event stream.
+/// Publishes a single event directly to the NATS `JetStream` raw event stream.
 /// The gateway forwards it to the appropriate subject based on `source` and
-/// `event_type`. The event is assigned a new UUIDv7 ID by the gateway and
+/// `event_type`. The event is assigned a new `UUIDv7` ID by the gateway and
 /// returned in the response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventIngestRequest {
@@ -31,8 +31,8 @@ pub struct EventIngestRequest {
 /// Response: events.ingest
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventIngestResponse {
-    /// The UUIDv7 assigned to the published event
+    /// The `UUIDv7` assigned to the published event
     pub event_id: String,
-    /// NATS JetStream sequence number the message was stored at
+    /// NATS `JetStream` sequence number the message was stored at
     pub sequence: u64,
 }

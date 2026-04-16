@@ -1874,7 +1874,7 @@ mod tests {
         {
             let mut guard = node.watch_handles.lock().await;
             guard.push(tokio::spawn(async {
-                tokio::time::sleep(Duration::from_secs(60)).await;
+                tokio::time::sleep(Duration::from_mins(1)).await;
             }));
             guard.push(tokio::spawn(async {}));
         }

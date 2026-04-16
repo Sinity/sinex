@@ -87,8 +87,8 @@ pub struct MirrorSpec {
     /// Legacy columns to drop from the mirror (may differ from primary).
     pub columns_to_drop: &'static [&'static str],
     /// When true, skip columns that use `.extra("GENERATED ALWAYS AS …")`.
-    /// Required for the archived_events mirror since generated expressions
-    /// cannot be replicated — the mirror uses plain TIMESTAMPTZ for ts_coided.
+    /// Required for the `archived_events` mirror since generated expressions
+    /// cannot be replicated — the mirror uses plain TIMESTAMPTZ for `ts_coided`.
     pub skip_extra_generated: bool,
 }
 
@@ -109,7 +109,7 @@ pub struct ConvergibleTable {
     pub foreign_keys: Vec<NamedForeignKey>,
     /// Columns that are no longer part of the schema and should be dropped.
     pub columns_to_drop: &'static [&'static str],
-    /// Optional mirror table (e.g., audit.archived_events for core.events).
+    /// Optional mirror table (e.g., `audit.archived_events` for core.events).
     pub mirror: Option<MirrorSpec>,
 }
 
@@ -156,7 +156,7 @@ fn extract_column_sqls(
 fn extract_column_names(stmt: &TableCreateStatement) -> Vec<String> {
     stmt.get_columns()
         .iter()
-        .map(|col| col.get_column_name())
+        .map(sea_query::ColumnDef::get_column_name)
         .collect()
 }
 
@@ -486,35 +486,6 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
     ])
 }
 
-#[cfg(test)]
-mod tests {
-    // Exception to per-crate tests/: this exercises private registry lookup helpers
-    // without widening the convergence API.
-    use super::*;
-    use xtask::sandbox::prelude::*;
-
-    #[sinex_test]
-    async fn find_meta_surfaces_missing_registry_entries() -> TestResult<()> {
-        let tables: &[TableMeta] = &[];
-        let err = find_meta_in(tables, "core.missing").expect_err("missing table should fail");
-        assert!(matches!(err, ApplyError::Internal(_)));
-        assert_eq!(
-            err.to_string(),
-            "convergence registry references unknown table metadata: core.missing"
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn convergible_tables_resolve_known_metadata() -> TestResult<()> {
-        let tables = convergible_tables()?;
-        assert_eq!(tables.len(), 2);
-        assert_eq!(tables[0].meta.qualified_name, "core.events");
-        assert_eq!(tables[1].meta.qualified_name, "core.node_manifests");
-        Ok(())
-    }
-}
-
 /// Converges each registered table against the live database.
 ///
 /// Designed to be called from `apply()` after `create_tables()`. Idempotent —
@@ -640,4 +611,33 @@ pub async fn report_column_gaps(
     }
 
     Ok(gaps)
+}
+
+#[cfg(test)]
+mod tests {
+    // Exception to per-crate tests/: this exercises private registry lookup helpers
+    // without widening the convergence API.
+    use super::*;
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn find_meta_surfaces_missing_registry_entries() -> TestResult<()> {
+        let tables: &[TableMeta] = &[];
+        let err = find_meta_in(tables, "core.missing").expect_err("missing table should fail");
+        assert!(matches!(err, ApplyError::Internal(_)));
+        assert_eq!(
+            err.to_string(),
+            "convergence registry references unknown table metadata: core.missing"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn convergible_tables_resolve_known_metadata() -> TestResult<()> {
+        let tables = convergible_tables()?;
+        assert_eq!(tables.len(), 2);
+        assert_eq!(tables[0].meta.qualified_name, "core.events");
+        assert_eq!(tables[1].meta.qualified_name, "core.node_manifests");
+        Ok(())
+    }
 }

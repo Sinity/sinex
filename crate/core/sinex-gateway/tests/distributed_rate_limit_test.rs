@@ -191,8 +191,7 @@ async fn fail_closed_on_nats_kv_unavailable(ctx: TestContext) -> TestResult<()> 
         first_fail_closed_elapsed.expect("draining should hit a fail-closed backend probe");
     assert!(
         first_fail_closed_elapsed < Duration::from_secs(2),
-        "first backend failure should fail closed promptly, not hang for the async-nats default timeout: {:?}",
-        first_fail_closed_elapsed
+        "first backend failure should fail closed promptly, not hang for the async-nats default timeout: {first_fail_closed_elapsed:?}"
     );
 
     // Once local bucket is drained, next request MUST be rejected (fail closed)
@@ -206,8 +205,7 @@ async fn fail_closed_on_nats_kv_unavailable(ctx: TestContext) -> TestResult<()> 
     );
     assert!(
         same_token_elapsed < Duration::from_millis(500),
-        "repeated failures for the same token should use the backend-failure cooldown and fail fast: {:?}",
-        same_token_elapsed
+        "repeated failures for the same token should use the backend-failure cooldown and fail fast: {same_token_elapsed:?}"
     );
 
     // A different token with no local bucket should also be rejected immediately
@@ -220,8 +218,7 @@ async fn fail_closed_on_nats_kv_unavailable(ctx: TestContext) -> TestResult<()> 
     );
     assert!(
         new_token_elapsed < Duration::from_millis(500),
-        "new tokens should also fail fast while the backend outage cooldown is active: {:?}",
-        new_token_elapsed
+        "new tokens should also fail fast while the backend outage cooldown is active: {new_token_elapsed:?}"
     );
 
     Ok(())

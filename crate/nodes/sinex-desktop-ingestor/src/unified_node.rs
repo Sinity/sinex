@@ -988,15 +988,15 @@ impl IngestorNode for DesktopNode {
 
     async fn shutdown(&mut self, _state: &Self::State) -> NodeResult<()> {
         let mut shutdown_errors = Vec::new();
-        if let Some(handle) = self.clipboard_watcher.take() {
-            if let Err(error) = handle.shutdown().await {
-                shutdown_errors.push(("clipboard watcher", error));
-            }
+        if let Some(handle) = self.clipboard_watcher.take()
+            && let Err(error) = handle.shutdown().await
+        {
+            shutdown_errors.push(("clipboard watcher", error));
         }
-        if let Some(handle) = self.window_manager_watcher.take() {
-            if let Err(error) = handle.shutdown().await {
-                shutdown_errors.push(("window manager watcher", error));
-            }
+        if let Some(handle) = self.window_manager_watcher.take()
+            && let Err(error) = handle.shutdown().await
+        {
+            shutdown_errors.push(("window manager watcher", error));
         }
         Self::collapse_shutdown_errors(shutdown_errors)
     }

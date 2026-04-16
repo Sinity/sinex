@@ -257,8 +257,10 @@ impl ScopeReconcilerNode for HealthAggregator {
             .get("component")
             .and_then(|v| v.as_str())
             .filter(|component| !component.trim().is_empty())
-            .map(str::to_owned)
-            .unwrap_or_else(|| format!("__invalid_component__:{}", context.trigger_uuid()));
+            .map_or_else(
+                || format!("__invalid_component__:{}", context.trigger_uuid()),
+                str::to_owned,
+            );
         vec![component]
     }
 

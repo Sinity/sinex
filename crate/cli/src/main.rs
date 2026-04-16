@@ -4,10 +4,10 @@ use sinex_primitives::strict_env_filter_source;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
     AuditCommand, BlobCommands, CompletionsCommand, ConfigCommands, ContextCommand, CoreCommands,
-    DemoCommand, DlqCommands, ErrorsCommand, GatewayCommands, GitOpsCommands, LifecycleCommands,
-    NodeCommands, OpsCommands, QueryCommand, RecentCommand, ReplayCommands, ReportCommands,
-    ExplainCommand, StatusCommand,
-    TelemetryCommands, TraceCommand, TuiCommand, VerifyCommand, WatchCommand,
+    DemoCommand, DlqCommands, ErrorsCommand, ExplainCommand, GatewayCommands, GitOpsCommands,
+    LifecycleCommands, NodeCommands, OpsCommands, QueryCommand, RecentCommand, ReplayCommands,
+    ReportCommands, StatusCommand, TelemetryCommands, TraceCommand, TuiCommand, VerifyCommand,
+    WatchCommand,
 };
 use sinexctl::model::OutputFormat;
 use sinexctl::{Config, default_rpc_url};
@@ -180,7 +180,6 @@ enum Commands {
     /// Explain a single event: full details, provenance, payload
     Explain(ExplainCommand),
 
-
     /// Verify trustworthiness invariants across the event store
     Verify(VerifyCommand),
 
@@ -275,7 +274,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Completions(_) => unreachable!("Completions command handled above"),
             }
         }
-    };
+    }
 
     Ok(())
 }

@@ -55,10 +55,7 @@ impl std::fmt::Display for TailError {
                 old_inode,
                 new_inode,
                 path,
-            } => write!(
-                f,
-                "file rotated: {path} (inode {old_inode} -> {new_inode})"
-            ),
+            } => write!(f, "file rotated: {path} (inode {old_inode} -> {new_inode})"),
             Self::FileTruncated {
                 old_offset,
                 new_size,
@@ -88,9 +85,7 @@ pub struct TailResult {
 #[cfg(target_os = "linux")]
 fn file_inode(path: &Utf8Path) -> Option<u64> {
     use std::os::unix::fs::MetadataExt;
-    std::fs::metadata(path.as_std_path())
-        .ok()
-        .map(|m| m.ino())
+    std::fs::metadata(path.as_std_path()).ok().map(|m| m.ino())
 }
 
 #[cfg(not(target_os = "linux"))]

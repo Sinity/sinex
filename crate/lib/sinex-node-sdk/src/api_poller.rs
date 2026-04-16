@@ -69,7 +69,11 @@ impl ApiPollerConfig {
         }
     }
 
-    pub fn with_auth(mut self, header_name: impl Into<String>, header_value: impl Into<String>) -> Self {
+    pub fn with_auth(
+        mut self,
+        header_name: impl Into<String>,
+        header_value: impl Into<String>,
+    ) -> Self {
         self.auth_header = Some((header_name.into(), header_value.into()));
         self
     }
@@ -109,7 +113,9 @@ pub fn should_poll(state: &ApiPollerState, config: &ApiPollerConfig) -> bool {
     let interval = state.backoff_duration(config.poll_interval);
 
     if let Some(last_poll) = &state.last_poll_at {
-        if let Ok(last) = time::OffsetDateTime::parse(last_poll, &time::format_description::well_known::Rfc3339) {
+        if let Ok(last) =
+            time::OffsetDateTime::parse(last_poll, &time::format_description::well_known::Rfc3339)
+        {
             let elapsed = time::OffsetDateTime::now_utc() - last;
             let needed = time::Duration::new(interval.as_secs() as i64, 0);
             if elapsed < needed {

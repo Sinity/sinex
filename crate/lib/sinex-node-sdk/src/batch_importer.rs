@@ -90,9 +90,7 @@ pub fn scan_for_new_files(
         };
 
         if !extensions.is_empty() {
-            let matches_extension = extensions
-                .iter()
-                .any(|ext| filename.ends_with(ext));
+            let matches_extension = extensions.iter().any(|ext| filename.ends_with(ext));
             if !matches_extension {
                 continue;
             }
@@ -226,7 +224,10 @@ mod tests {
             size: 17,
         };
         let content = read_file_content(&file).unwrap();
-        assert_eq!(std::str::from_utf8(&content).unwrap(), r#"{"hello":"world"}"#);
+        assert_eq!(
+            std::str::from_utf8(&content).unwrap(),
+            r#"{"hello":"world"}"#
+        );
     }
 
     #[test]

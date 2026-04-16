@@ -254,12 +254,12 @@ async fn converge_operations_log_constraints(pool: &PgPool) -> Result<(), ApplyE
 
     execute_sql(
         pool,
-        r#"
+        r"
         ALTER TABLE core.operations_log
             DROP CONSTRAINT IF EXISTS operations_log_operation_type_check,
             ADD CONSTRAINT operations_log_operation_type_check
             CHECK (operation_type ~ '^[a-z][a-z0-9_.-]*$')
-        "#,
+        ",
     )
     .await?;
 
@@ -270,7 +270,7 @@ async fn operations_log_operation_type_constraint_is_current(
     pool: &PgPool,
 ) -> Result<bool, ApplyError> {
     let definition = sqlx::query_scalar::<_, String>(
-        r#"
+        r"
         SELECT pg_get_constraintdef(c.oid)
         FROM pg_constraint c
         JOIN pg_class r ON c.conrelid = r.oid
@@ -278,7 +278,7 @@ async fn operations_log_operation_type_constraint_is_current(
         WHERE n.nspname = 'core'
           AND r.relname = 'operations_log'
           AND c.conname = 'operations_log_operation_type_check'
-        "#,
+        ",
     )
     .fetch_optional(pool)
     .await?;
@@ -302,12 +302,12 @@ async fn converge_source_material_registry_constraints(pool: &PgPool) -> Result<
 
     execute_sql(
         pool,
-        r#"
+        r"
         ALTER TABLE raw.source_material_registry
             DROP CONSTRAINT IF EXISTS source_material_registry_status_check,
             ADD CONSTRAINT source_material_registry_status_check
             CHECK (status IN ('sensing', 'completed', 'cancelled', 'recovered_partial', 'failed'))
-        "#,
+        ",
     )
     .await?;
 
@@ -318,7 +318,7 @@ async fn source_material_registry_status_constraint_is_current(
     pool: &PgPool,
 ) -> Result<bool, ApplyError> {
     let definition = sqlx::query_scalar::<_, String>(
-        r#"
+        r"
         SELECT pg_get_constraintdef(c.oid)
         FROM pg_constraint c
         JOIN pg_class r ON c.conrelid = r.oid
@@ -326,7 +326,7 @@ async fn source_material_registry_status_constraint_is_current(
         WHERE n.nspname = 'raw'
           AND r.relname = 'source_material_registry'
           AND c.conname = 'source_material_registry_status_check'
-        "#,
+        ",
     )
     .fetch_optional(pool)
     .await?;
@@ -580,11 +580,11 @@ pub(crate) async fn relation_exists(
 
 async fn relation_kind(pool: &PgPool, qualified_name: &str) -> Result<Option<char>, ApplyError> {
     let relation_kind = sqlx::query_scalar::<_, Option<String>>(
-        r#"
+        r"
         SELECT c.relkind::text
         FROM pg_class c
         WHERE c.oid = to_regclass($1)
-        "#,
+        ",
     )
     .bind(qualified_name)
     .fetch_optional(pool)
@@ -599,14 +599,14 @@ async fn continuous_aggregate_exists(
     relation: &str,
 ) -> Result<bool, ApplyError> {
     let exists = sqlx::query_scalar::<_, bool>(
-        r#"
+        r"
         SELECT EXISTS (
             SELECT 1
             FROM timescaledb_information.continuous_aggregates
             WHERE view_schema = $1
               AND view_name = $2
         )
-        "#,
+        ",
     )
     .bind(schema)
     .bind(relation)

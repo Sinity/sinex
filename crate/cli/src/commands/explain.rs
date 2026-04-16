@@ -13,17 +13,16 @@ EXAMPLES:
     sinexctl explain 019d95af-fcd8-7aa3-b5b7-65da9e28dc12
 ")]
 pub struct ExplainCommand {
-    /// Event ID to explain (UUIDv7)
+    /// Event ID to explain (`UUIDv7`)
     pub event_id: String,
 }
 
 impl ExplainCommand {
     pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
-        let event_id: Id<Event<serde_json::Value>> = Id::from_uuid(
-            self.event_id.parse().map_err(|e| {
+        let event_id: Id<Event<serde_json::Value>> =
+            Id::from_uuid(self.event_id.parse().map_err(|e| {
                 color_eyre::eyre::eyre!("Invalid event ID '{}': {}", self.event_id, e)
-            })?,
-        );
+            })?);
 
         let query = LineageQuery {
             event_id,
@@ -39,7 +38,13 @@ impl ExplainCommand {
         println!("{}", style("═".repeat(60)).dim());
 
         println!();
-        print_field("ID", &event.id.as_ref().map_or("?".to_string(), |id| id.to_string()));
+        print_field(
+            "ID",
+            &event
+                .id
+                .as_ref()
+                .map_or("?".to_string(), std::string::ToString::to_string),
+        );
         print_field("Source", event.source.as_ref());
         print_field("Event Type", event.event_type.as_ref());
         print_field("Host", event.host.as_ref());
@@ -69,10 +74,12 @@ impl ExplainCommand {
                     );
                 }
             }
-            Provenance::Synthesis { source_event_ids, .. } => {
+            Provenance::Synthesis {
+                source_event_ids, ..
+            } => {
                 print_field("Type", "Synthesis (derived from other events)");
                 print_field("Parent Count", &source_event_ids.len().to_string());
-                for pid in source_event_ids.iter() {
+                for pid in source_event_ids {
                     println!("  {:<20} {}", style("  └─").dim(), pid);
                 }
             }
@@ -99,7 +106,13 @@ impl ExplainCommand {
                 println!(
                     "  depth={} {} {} [{}]",
                     node.depth,
-                    style(node.event.id.as_ref().map_or("?".to_string(), |id| id.to_string())).dim(),
+                    style(
+                        node.event
+                            .id
+                            .as_ref()
+                            .map_or("?".to_string(), std::string::ToString::to_string)
+                    )
+                    .dim(),
                     style(node.event.event_type.as_ref()).yellow(),
                     node.event.source.as_ref(),
                 );
@@ -114,7 +127,13 @@ impl ExplainCommand {
                 println!(
                     "  depth={} {} {} [{}]",
                     node.depth,
-                    style(node.event.id.as_ref().map_or("?".to_string(), |id| id.to_string())).dim(),
+                    style(
+                        node.event
+                            .id
+                            .as_ref()
+                            .map_or("?".to_string(), std::string::ToString::to_string)
+                    )
+                    .dim(),
                     style(node.event.event_type.as_ref()).yellow(),
                     node.event.source.as_ref(),
                 );

@@ -4581,7 +4581,12 @@ mod tests {
                 invocation_id, command, pid, job_status, started_at
             ) VALUES (?1, ?2, ?3, 'running', ?4)
             ",
-            params![invocation_id, "check", 999_999_999_i64, "2000-01-01T00:00:00Z"],
+            params![
+                invocation_id,
+                "check",
+                999_999_999_i64,
+                "2000-01-01T00:00:00Z"
+            ],
         )?;
         drop(db);
 

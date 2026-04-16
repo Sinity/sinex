@@ -1300,8 +1300,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_retryable_connection_report_treats_runtime_shutdown_as_transient(
-    ) -> TestResult<()> {
+    async fn test_retryable_connection_report_treats_runtime_shutdown_as_transient()
+    -> TestResult<()> {
         let report = eyre!(
             "error communicating with database: A Tokio 1.x context was found, but it is being shutdown."
         );

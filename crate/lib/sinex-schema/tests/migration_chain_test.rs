@@ -10,13 +10,13 @@ async fn drop_telemetry_relation(
     relation_name: &str,
 ) -> Result<(), sqlx::Error> {
     let relation_kind = sqlx::query_scalar::<_, Option<String>>(
-        r#"
+        r"
         SELECT c.relkind::text
         FROM pg_class c
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'sinex_telemetry'
           AND c.relname = $1
-        "#,
+        ",
     )
     .bind(relation_name)
     .fetch_optional(pool)
@@ -62,11 +62,11 @@ async fn shared_access_role_bootstrap_is_idempotent(ctx: TestContext) -> TestRes
 
     for role in sinex_schema::apply::SHARED_ACCESS_ROLES {
         let can_login = sqlx::query_scalar::<_, bool>(
-            r#"
+            r"
             SELECT rolcanlogin
             FROM pg_roles
             WHERE rolname = $1
-            "#,
+            ",
         )
         .bind(*role)
         .fetch_one(&ctx.pool)
@@ -83,12 +83,12 @@ async fn declarative_diff_accepts_normalized_source_material_status_constraint(
     ctx: TestContext,
 ) -> TestResult<()> {
     sqlx::query(
-        r#"
+        r"
         ALTER TABLE raw.source_material_registry
             DROP CONSTRAINT IF EXISTS source_material_registry_status_check,
             ADD CONSTRAINT source_material_registry_status_check
             CHECK (status IN ('sensing', 'completed', 'cancelled', 'recovered_partial', 'failed'))
-        "#,
+        ",
     )
     .execute(&ctx.pool)
     .await?;
@@ -111,7 +111,7 @@ async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> T
     drop_telemetry_relation(pool, "recent_activity_summary").await?;
     drop_telemetry_relation(pool, "command_frequency_hourly").await?;
     sqlx::query(
-        r#"
+        r"
         CREATE MATERIALIZED VIEW sinex_telemetry.command_frequency_hourly AS
         SELECT
             NOW() AS bucket,
@@ -122,7 +122,7 @@ async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> T
             0::bigint AS failed_executions,
             NULL::float8 AS avg_duration_ms
         WITH NO DATA
-        "#,
+        ",
     )
     .execute(pool)
     .await?;
@@ -130,7 +130,7 @@ async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> T
     sinex_schema::apply::apply(pool).await?;
 
     let relation_state = sqlx::query_as::<_, (String, String)>(
-        r#"
+        r"
         SELECT
             c.relkind::text,
             pg_get_viewdef(c.oid, true)
@@ -138,7 +138,7 @@ async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> T
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'sinex_telemetry'
           AND c.relname = 'command_frequency_hourly'
-        "#,
+        ",
     )
     .fetch_one(pool)
     .await?;
@@ -149,13 +149,13 @@ async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> T
     );
 
     let definition = sqlx::query_scalar::<_, String>(
-        r#"
+        r"
         SELECT pg_get_viewdef(c.oid, true)
         FROM pg_class c
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'sinex_telemetry'
           AND c.relname = 'command_frequency_hourly'
-        "#,
+        ",
     )
     .fetch_one(pool)
     .await?;
@@ -169,14 +169,14 @@ async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> T
     );
 
     let ca_exists = sqlx::query_scalar::<_, bool>(
-        r#"
+        r"
         SELECT EXISTS (
             SELECT 1
             FROM timescaledb_information.continuous_aggregates
             WHERE view_schema = 'sinex_telemetry'
               AND view_name = 'command_frequency_hourly'
         )
-        "#,
+        ",
     )
     .fetch_one(pool)
     .await?;
@@ -186,14 +186,14 @@ async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> T
     );
 
     let summary_exists = sqlx::query_scalar::<_, bool>(
-        r#"
+        r"
         SELECT EXISTS (
             SELECT 1
             FROM pg_views
             WHERE schemaname = 'sinex_telemetry'
               AND viewname = 'recent_activity_summary'
         )
-        "#,
+        ",
     )
     .fetch_one(pool)
     .await?;
@@ -210,7 +210,7 @@ async fn declarative_diff_detects_polluted_telemetry_view_kind(ctx: TestContext)
     drop_telemetry_relation(&ctx.pool, "recent_activity_summary").await?;
     drop_telemetry_relation(&ctx.pool, "command_frequency_hourly").await?;
     sqlx::query(
-        r#"
+        r"
         CREATE MATERIALIZED VIEW sinex_telemetry.command_frequency_hourly AS
         SELECT
             NOW() AS bucket,
@@ -221,7 +221,7 @@ async fn declarative_diff_detects_polluted_telemetry_view_kind(ctx: TestContext)
             0::bigint AS failed_executions,
             NULL::float8 AS avg_duration_ms
         WITH NO DATA
-        "#,
+        ",
     )
     .execute(&ctx.pool)
     .await?;
@@ -432,7 +432,7 @@ async fn relation_columns(
     relation: &str,
 ) -> TestResult<Vec<String>> {
     let columns = sqlx::query_scalar::<_, String>(
-        r#"
+        r"
         SELECT a.attname
         FROM pg_attribute a
         JOIN pg_class c ON c.oid = a.attrelid
@@ -442,7 +442,7 @@ async fn relation_columns(
           AND a.attnum > 0
           AND NOT a.attisdropped
         ORDER BY a.attnum
-        "#,
+        ",
     )
     .bind(schema)
     .bind(relation)
@@ -633,12 +633,12 @@ async fn telemetry_continuous_aggregate_registry_matches_expected_surface(
     sinex_schema::apply::apply(&ctx.pool).await?;
 
     let actual = sqlx::query_scalar::<_, String>(
-        r#"
+        r"
         SELECT view_name
         FROM timescaledb_information.continuous_aggregates
         WHERE view_schema = 'sinex_telemetry'
         ORDER BY view_name
-        "#,
+        ",
     )
     .fetch_all(&ctx.pool)
     .await?

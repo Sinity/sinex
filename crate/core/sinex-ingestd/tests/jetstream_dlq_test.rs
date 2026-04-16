@@ -864,7 +864,7 @@ async fn test_mixed_batch_isolates_non_retryable_row_and_persists_rest() -> Test
     let entry: serde_json::Value = serde_json::from_slice(&msg.payload)?;
     assert_eq!(
         entry["original_payload"]["payload"]["index"].as_u64(),
-        Some(bad_index as u64)
+        Some(u64::from(bad_index))
     );
 
     for event_id in good_event_ids {

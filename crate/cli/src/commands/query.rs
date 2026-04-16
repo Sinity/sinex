@@ -237,7 +237,7 @@ fn format_event_query_result_table(
         output.push_str("\nNext cursor:");
         output.push_str(&format!("\n  {cursor_json}"));
         output.push_str("\nReuse with:");
-        output.push_str(&format!("\n  --cursor-json '{}'", cursor_json));
+        output.push_str(&format!("\n  --cursor-json '{cursor_json}'"));
     }
 
     output

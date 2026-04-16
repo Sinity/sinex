@@ -262,8 +262,7 @@ impl ClipboardWatcher {
         .await
         .map_err(|_| {
             SinexError::processing(format!(
-                "Timed out querying active Hyprland window after {:?}",
-                CLIPBOARD_COMMAND_TIMEOUT
+                "Timed out querying active Hyprland window after {CLIPBOARD_COMMAND_TIMEOUT:?}"
             ))
         })?
         .map_err(|error| {
@@ -295,8 +294,7 @@ impl ClipboardWatcher {
         .await
         .map_err(|_| {
             SinexError::processing(format!(
-                "Timed out querying active X11 window {field} after {:?}",
-                CLIPBOARD_COMMAND_TIMEOUT
+                "Timed out querying active X11 window {field} after {CLIPBOARD_COMMAND_TIMEOUT:?}"
             ))
         })?
         .map_err(|error| {

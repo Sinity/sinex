@@ -100,15 +100,14 @@ impl ContextCommand {
             let age = result_event
                 .event
                 .ts_orig
-                .map(|ts| format_age(now - ts))
-                .unwrap_or_else(|| "?".to_string());
+                .map_or_else(|| "?".to_string(), |ts| format_age(now - ts));
 
             let detail = build_detail(result_event);
 
             println!(
                 "  {:<label_width$}  {}  {}",
                 style(&label).cyan(),
-                style(format!("{:>6}", age)).dim(),
+                style(format!("{age:>6}")).dim(),
                 detail,
                 label_width = label_width,
             );
@@ -161,10 +160,10 @@ fn display_source(source: &str) -> String {
 /// then falling back to well-known payload fields.
 fn build_detail(result_event: &sinex_primitives::query::QueryResultEvent) -> String {
     // If the server produced a snippet, use it (already truncated server-side or here)
-    if let Some(snippet) = &result_event.snippet {
-        if !snippet.is_empty() {
-            return truncate(snippet, 55);
-        }
+    if let Some(snippet) = &result_event.snippet
+        && !snippet.is_empty()
+    {
+        return truncate(snippet, 55);
     }
 
     // Fallback: extract meaningful fields from the payload
@@ -191,7 +190,7 @@ fn short_event_type(event_type: &str) -> &str {
     event_type.rsplit('.').next().unwrap_or(event_type)
 }
 
-/// Format a Duration into a compact "XmYs ago" / "Xs ago" / "Xh ago" string.
+/// Format a Duration into a compact "`XmYs` ago" / "Xs ago" / "Xh ago" string.
 fn format_age(d: time::Duration) -> String {
     let total_secs = d.whole_seconds().max(0) as u64;
     if total_secs < 60 {

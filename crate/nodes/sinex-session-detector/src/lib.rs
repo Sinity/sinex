@@ -40,7 +40,7 @@ fn gap_threshold() -> Duration {
 }
 
 /// Persistent window state tracking the current activity session.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionState {
     /// Start time of the current session.
     pub session_start: Option<Timestamp>,
@@ -54,7 +54,7 @@ pub struct SessionState {
     /// Unique event sources observed in the current session.
     pub sources: BTreeSet<String>,
 
-    /// UUIDv7 IDs of events in the current session (for provenance).
+    /// `UUIDv7` IDs of events in the current session (for provenance).
     pub event_ids: Vec<Uuid>,
 
     /// Session counter for generating deterministic session IDs.
@@ -69,21 +69,6 @@ pub struct SessionState {
     /// Deferred first event of the next session when a gap boundary is hit.
     #[serde(default)]
     pub pending_session_seed: Option<PendingSessionSeed>,
-}
-
-impl Default for SessionState {
-    fn default() -> Self {
-        Self {
-            session_start: None,
-            last_event_time: None,
-            event_count: 0,
-            sources: BTreeSet::new(),
-            event_ids: Vec::new(),
-            session_counter: 0,
-            gap_detected: false,
-            pending_session_seed: None,
-        }
-    }
 }
 
 impl SessionState {
@@ -169,16 +154,17 @@ impl WindowedNode for SessionDetector {
         // A gap is detected when the incoming event's ts_orig is more than
         // gap_threshold after the last event's ts_orig. This uses event
         // time, not wall clock, so replay produces the same boundaries.
-        if let Some(last_time) = state.last_event_time {
-            if state.event_count > 0 && (event_time - last_time) >= self.gap_threshold {
-                state.gap_detected = true;
-                state.pending_session_seed = Some(PendingSessionSeed {
-                    event_time,
-                    source,
-                    event_id,
-                });
-                return Ok(());
-            }
+        if let Some(last_time) = state.last_event_time
+            && state.event_count > 0
+            && (event_time - last_time) >= self.gap_threshold
+        {
+            state.gap_detected = true;
+            state.pending_session_seed = Some(PendingSessionSeed {
+                event_time,
+                source,
+                event_id,
+            });
+            return Ok(());
         }
 
         // Initialize session start if this is the first event

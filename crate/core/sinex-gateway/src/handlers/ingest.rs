@@ -1,7 +1,7 @@
 //! Event ingest handler
 //!
 //! Provides the `events.ingest` RPC endpoint, which accepts a raw event and
-//! publishes it directly to the NATS JetStream raw event stream. This is the
+//! publishes it directly to the NATS `JetStream` raw event stream. This is the
 //! thin gateway entry-point for clients that don't run a full node SDK.
 
 use crate::service_container::ServiceContainer;
@@ -78,7 +78,7 @@ async fn mark_events_ingest_material_failed(
 ///
 /// Validates the request, registers a backing source-material row so the
 /// published event satisfies provenance/FK invariants, then publishes the
-/// full event envelope to JetStream on `events.raw.<source>.<event_type>`.
+/// full event envelope to `JetStream` on `events.raw.<source>.<event_type>`.
 pub async fn handle_events_ingest(services: &ServiceContainer, params: Value) -> Result<Value> {
     let Some(raw_ts_orig) = params
         .get("ts_orig")

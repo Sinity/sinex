@@ -665,11 +665,11 @@ impl StateRepository<'_> {
         let status_str = status.map(|s| s.to_string());
 
         let mut qb = sqlx::QueryBuilder::new(
-            r#"SELECT
+            r"SELECT
                 id,
                 operation_type, operator, scope,
                 result_status, result_message, preview_summary, duration_ms
-            FROM core.operations_log WHERE 1=1"#,
+            FROM core.operations_log WHERE 1=1",
         );
 
         if let Some(op_type) = operation_type {
@@ -1744,12 +1744,12 @@ impl StateRepository<'_> {
         limit: i64,
     ) -> DbResult<Vec<OperationRecord>> {
         let phase = state
-            .map(|state| serde_json::to_value(state))
+            .map(serde_json::to_value)
             .transpose()?
             .and_then(|value| value.as_str().map(str::to_string));
 
         let mut qb = sqlx::QueryBuilder::new(
-            r#"
+            r"
             SELECT
                 id,
                 operation_type,
@@ -1761,7 +1761,7 @@ impl StateRepository<'_> {
                 duration_ms
             FROM core.operations_log
             WHERE operation_type = 'tombstone'
-            "#,
+            ",
         );
 
         if let Some(phase) = phase {

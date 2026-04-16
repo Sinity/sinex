@@ -198,7 +198,7 @@ const EVENT_COPY_COLUMNS: [EventCopyColumn; 22] = [
 static EVENT_COPY_CONTRACT_CHECK: OnceLock<()> = OnceLock::new();
 
 fn copy_columns() -> &'static [EventCopyColumn] {
-    EVENT_COPY_CONTRACT_CHECK.get_or_init(|| verify_event_copy_contract());
+    EVENT_COPY_CONTRACT_CHECK.get_or_init(verify_event_copy_contract);
     &EVENT_COPY_COLUMNS
 }
 
@@ -252,15 +252,14 @@ pub fn verify_event_copy_contract() {
         }
     }
 
-    if !duplicate_contract_names.is_empty() {
-        panic!(
-            "COPY contract duplicates core.events columns: {}",
-            duplicate_contract_names
-                .into_iter()
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-    }
+    assert!(
+        duplicate_contract_names.is_empty(),
+        "COPY contract duplicates core.events columns: {}",
+        duplicate_contract_names
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 
     let authoritative_names: BTreeSet<String> = authoritative_columns.keys().cloned().collect();
     if contract_names != authoritative_names {

@@ -72,7 +72,7 @@ pub struct SourceMaterialRecord {
     pub staged_on_host: Option<String>,
     pub optional_blob_id: Option<Uuid>,
     /// Total size of the source material in bytes, set during finalization.
-    /// NULL until finalization completes. Used for anchor_byte plausibility checks.
+    /// NULL until finalization completes. Used for `anchor_byte` plausibility checks.
     pub total_bytes: Option<i64>,
 }
 

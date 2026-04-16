@@ -317,6 +317,7 @@ impl RpcRegistry {
 
     /// Returns a map of method names to their required roles.
     #[cfg(any(test, feature = "test-support"))]
+    #[must_use]
     pub fn method_roles(&self) -> HashMap<&'static str, Role> {
         self.methods
             .iter()
@@ -364,6 +365,7 @@ impl RpcRegistry {
 ///
 /// This function registers all RPC methods from the original dispatch table.
 /// Handler functions are imported from the handlers module.
+#[must_use]
 pub fn build_registry() -> RpcRegistry {
     use crate::handlers::{
         handle_audit_get, handle_coordination_get_leader, handle_coordination_instance_health,

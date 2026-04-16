@@ -47,36 +47,34 @@ pub(crate) async fn handle_sse_stream(
     Query(params): Query<SseStreamParams>,
 ) -> Response {
     // ── Auth ──
-    let token = match state.auth.verify(&headers) {
-        Ok(t) => t,
-        Err(_) => {
-            log_access_audit(
-                "sse",
-                "events.stream",
-                AccessOutcome::Unauthenticated,
-                None,
-                Some("missing or invalid bearer token"),
-            );
-            return (
-                StatusCode::UNAUTHORIZED,
-                "Authentication required. Provide SINEX_RPC_TOKEN via Authorization header.",
-            )
-                .into_response();
-        }
+    let token = if let Ok(t) = state.auth.verify(&headers) {
+        t
+    } else {
+        log_access_audit(
+            "sse",
+            "events.stream",
+            AccessOutcome::Unauthenticated,
+            None,
+            Some("missing or invalid bearer token"),
+        );
+        return (
+            StatusCode::UNAUTHORIZED,
+            "Authentication required. Provide SINEX_RPC_TOKEN via Authorization header.",
+        )
+            .into_response();
     };
 
-    let auth_ctx = match RpcAuthContext::from_token(&token) {
-        Ok(ctx) => ctx,
-        Err(_) => {
-            log_access_audit(
-                "sse",
-                "events.stream",
-                AccessOutcome::Rejected,
-                None,
-                Some("invalid token role encoding"),
-            );
-            return (StatusCode::UNAUTHORIZED, "Invalid token role encoding.").into_response();
-        }
+    let auth_ctx = if let Ok(ctx) = RpcAuthContext::from_token(&token) {
+        ctx
+    } else {
+        log_access_audit(
+            "sse",
+            "events.stream",
+            AccessOutcome::Rejected,
+            None,
+            Some("invalid token role encoding"),
+        );
+        return (StatusCode::UNAUTHORIZED, "Invalid token role encoding.").into_response();
     };
 
     if !auth_ctx.has_permission(Role::ReadOnly) {
@@ -91,22 +89,21 @@ pub(crate) async fn handle_sse_stream(
     }
 
     // ── SSE bus required ──
-    let bus = match state.sse_bus.as_ref() {
-        Some(bus) => Arc::clone(bus),
-        None => {
-            log_access_audit(
-                "sse",
-                "events.stream",
-                AccessOutcome::Unavailable,
-                Some(&auth_ctx),
-                Some("subscription bus unavailable"),
-            );
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Event streaming unavailable (NATS not connected).",
-            )
-                .into_response();
-        }
+    let bus = if let Some(bus) = state.sse_bus.as_ref() {
+        Arc::clone(bus)
+    } else {
+        log_access_audit(
+            "sse",
+            "events.stream",
+            AccessOutcome::Unavailable,
+            Some(&auth_ctx),
+            Some("subscription bus unavailable"),
+        );
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Event streaming unavailable (NATS not connected).",
+        )
+            .into_response();
     };
 
     // ── Parse filter ──
@@ -147,7 +144,7 @@ pub(crate) async fn handle_sse_stream(
     let resume_from = match parse_last_event_id(&headers) {
         Ok(last_event_id) => last_event_id,
         Err(error) => {
-            let detail = error.to_string();
+            let detail = error.clone();
             log_access_audit(
                 "sse",
                 "events.stream",
@@ -300,6 +297,36 @@ fn serialize_sse_payload<T: Serialize>(payload_kind: &str, payload: &T) -> Strin
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Cleanup stream — unregisters subscription on drop
+// ─────────────────────────────────────────────────────────────────────
+
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+struct CleanupStream<S> {
+    inner: Pin<Box<S>>,
+    bus: Arc<SubscriptionBus>,
+    sub_id: u64,
+}
+
+impl<S> futures::Stream for CleanupStream<S>
+where
+    S: futures::Stream + Unpin,
+{
+    type Item = S::Item;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.inner.as_mut().poll_next(cx)
+    }
+}
+
+impl<S> Drop for CleanupStream<S> {
+    fn drop(&mut self) {
+        self.bus.unregister(self.sub_id);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{LAST_EVENT_ID_HEADER, parse_last_event_id, serialize_sse_payload};
@@ -357,35 +384,5 @@ mod tests {
         let error = parse_last_event_id(&headers).expect_err("sequence ids must be rejected");
         assert!(error.contains("persisted event UUID"));
         Ok(())
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// Cleanup stream — unregisters subscription on drop
-// ─────────────────────────────────────────────────────────────────────
-
-use std::pin::Pin;
-use std::task::{Context, Poll};
-
-struct CleanupStream<S> {
-    inner: Pin<Box<S>>,
-    bus: Arc<SubscriptionBus>,
-    sub_id: u64,
-}
-
-impl<S> futures::Stream for CleanupStream<S>
-where
-    S: futures::Stream + Unpin,
-{
-    type Item = S::Item;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.inner.as_mut().poll_next(cx)
-    }
-}
-
-impl<S> Drop for CleanupStream<S> {
-    fn drop(&mut self) {
-        self.bus.unregister(self.sub_id);
     }
 }

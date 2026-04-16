@@ -510,7 +510,10 @@ impl DbusWatcher {
         match tokio::time::timeout(Duration::from_secs(1), &mut *worker_task).await {
             Ok(Ok(())) => {}
             Ok(Err(error)) if error.is_cancelled() => {
-                debug!(bus = bus_type, "D-Bus worker task cancelled during shutdown");
+                debug!(
+                    bus = bus_type,
+                    "D-Bus worker task cancelled during shutdown"
+                );
             }
             Ok(Err(error)) => {
                 warn!(
@@ -556,7 +559,10 @@ impl DbusWatcher {
                 );
             }
             Err(error) if error.is_cancelled() => {
-                debug!(bus = bus_type, "D-Bus connection resource cancelled during shutdown");
+                debug!(
+                    bus = bus_type,
+                    "D-Bus connection resource cancelled during shutdown"
+                );
             }
             Err(error) => {
                 warn!(

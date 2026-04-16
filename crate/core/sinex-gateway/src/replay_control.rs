@@ -1623,7 +1623,7 @@ impl ReplayExecutionEngine {
         expected: &ExpectedReplayOutputs,
     ) -> Result<i64> {
         sqlx::query_scalar::<_, i64>(
-            r#"
+            r"
             SELECT COUNT(*)::bigint
             FROM core.events
             INNER JOIN raw.source_material_registry smr
@@ -1635,7 +1635,7 @@ impl ReplayExecutionEngine {
                     smr.metadata->>'logical_source_identifier',
                     split_part(smr.source_identifier, '#material=', 1)
                   ) = ANY($4::text[])
-            "#,
+            ",
         )
         .bind(operation_id)
         .bind(&expected.sources)
@@ -1916,14 +1916,13 @@ impl ReplayExecutionEngine {
                             event_type,
                             bucket.scope_keys.len()
                         ));
-                    } else {
-                        debug!(
-                            operation_id = %operation_id,
-                            event_type = %event_type,
-                            scope_count = bucket.scope_keys.len(),
-                            "Published scope invalidation"
-                        );
                     }
+                    debug!(
+                        operation_id = %operation_id,
+                        event_type = %event_type,
+                        scope_count = bucket.scope_keys.len(),
+                        "Published scope invalidation"
+                    );
                 }
                 Err(e) => {
                     return Err(eyre!(
@@ -2201,12 +2200,12 @@ impl ReplayExecutionEngine {
         );
 
         // Publish scope invalidation signals for archived derived events
-        if !scope_metadata.is_empty() {
-            if let Err(invalidation_error) = self
+        if !scope_metadata.is_empty()
+            && let Err(invalidation_error) = self
                 .publish_scope_invalidations(&scope_metadata, operation_id)
                 .await
-            {
-                return self
+        {
+            return self
                     .abort_before_scan_ack(
                         pool,
                         &cascade_ids,
@@ -2217,7 +2216,6 @@ impl ReplayExecutionEngine {
                         ),
                     )
                     .await;
-            }
         }
 
         checkpoint.total_events = material_roots.len() as u64;
@@ -2431,7 +2429,7 @@ impl ReplayExecutionEngine {
                             }
                         }
                     }
-                    _ = tokio::time::sleep(Self::EXECUTION_STATE_POLL_INTERVAL) => {
+                    () = tokio::time::sleep(Self::EXECUTION_STATE_POLL_INTERVAL) => {
                         match replay.load_operation(operation_id).await {
                             Ok(operation) if operation.state == ReplayState::Executing => {}
                             Ok(operation)
@@ -2442,8 +2440,7 @@ impl ReplayExecutionEngine {
                             {
                                 return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
                                     error: SinexError::cancelled(format!(
-                                        "Replay operation {} was cancelled during execution",
-                                        operation_id
+                                        "Replay operation {operation_id} was cancelled during execution"
                                     ))
                                     .into(),
                                     emitted_count: events_emitted,
@@ -2513,27 +2510,25 @@ impl ReplayExecutionEngine {
                     restore_archived_cascade = failure.restore_archived_cascade,
                     "Replay scan failed"
                 );
-                if failure.restore_archived_cascade {
-                    if let Err(restore_error) =
+                if failure.restore_archived_cascade
+                    && let Err(restore_error) =
                         self.restore_cascade(pool, &cascade_ids, operation_id).await
-                    {
-                        return Err(failure.error.wrap_err(format!(
+                {
+                    return Err(failure.error.wrap_err(format!(
                             "Replay scan failed before emitting replacement events, and restoring the archived cascade also failed: {restore_error}"
                         )));
-                    }
                 }
                 // Publish compensating scope invalidations when either:
                 // - we restored the cascade (so automata reconcile against restored events)
                 // - events were emitted before failure (so automata reconcile the mixed state)
-                if failure.restore_archived_cascade || failure.emitted_count > 0 {
-                    if let Err(invalidation_error) = self
+                if (failure.restore_archived_cascade || failure.emitted_count > 0)
+                    && let Err(invalidation_error) = self
                         .publish_scope_invalidations(&scope_metadata, operation_id)
                         .await
-                    {
-                        return Err(failure.error.wrap_err(format!(
+                {
+                    return Err(failure.error.wrap_err(format!(
                             "Replay scan failed and compensating scope invalidation also failed: {invalidation_error}"
                         )));
-                    }
                 }
                 Err(failure.error).wrap_err(if failure.restore_archived_cascade {
                     "Replay scan failed before emitting replacement events; restored archived cascade and published compensating scope invalidations"
@@ -2928,13 +2923,12 @@ mod tests {
                 .replay
                 .as_ref()
                 .and_then(|replay| replay.materials.first())
-                .map(ReplayExecutionEngine::logical_source_identifier)
-                .unwrap_or(path)
+                .map_or(path, ReplayExecutionEngine::logical_source_identifier)
                 .to_string();
             let material_id = Uuid::now_v7();
             let source_identifier = format!("{logical_source_identifier}#material={material_id}");
             sqlx::query(
-                r#"
+                r"
                 INSERT INTO raw.source_material_registry (
                     id,
                     material_kind,
@@ -2944,7 +2938,7 @@ mod tests {
                     metadata
                 )
                 VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime', $3::jsonb)
-                "#,
+                ",
             )
             .bind(material_id)
             .bind(&source_identifier)
@@ -3806,9 +3800,9 @@ mod tests {
         assert_eq!(live_target_count, 0);
         assert_eq!(archived_target_count, 1);
 
-        let dispatched_command = scan_command_rx
-            .await
-            .map_err(|_| eyre!("fake visibility-timeout-test node did not receive a scan command"))?;
+        let dispatched_command = scan_command_rx.await.map_err(|_| {
+            eyre!("fake visibility-timeout-test node did not receive a scan command")
+        })?;
         assert_eq!(dispatched_command.operation_id, planned.operation_id);
 
         scan_handle
@@ -4141,13 +4135,12 @@ mod tests {
         .bind(target_id)
         .fetch_one(&ctx.pool)
         .await?;
-        let live_replacement_count: i64 =
-            sqlx::query_scalar(
-                "SELECT COUNT(*)::bigint FROM core.events WHERE created_by_operation_id = $1::uuid",
-            )
-                .bind(replay_command.operation_id)
-                .fetch_one(&ctx.pool)
-                .await?;
+        let live_replacement_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM core.events WHERE created_by_operation_id = $1::uuid",
+        )
+        .bind(replay_command.operation_id)
+        .fetch_one(&ctx.pool)
+        .await?;
         assert_eq!(
             live_target_count, 0,
             "replacement-record failure occurs after the original event has already been archived"

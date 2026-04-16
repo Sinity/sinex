@@ -90,10 +90,10 @@ async fn query_affected_events_by_operation_links(
 ) -> Result<(Vec<EventSummary>, bool)> {
     let page_size = limit.min(MAX_AUDIT_PAGE_SIZE);
     let fetch_limit = page_size + 1;
-    let cursor_uuid = after_id.map(|id| id.to_uuid());
+    let cursor_uuid = after_id.map(sinex_db::Id::to_uuid);
 
     let mut rows = sqlx::query_as::<_, AffectedEventRow>(
-        r#"
+        r"
         WITH tiered_events AS (
             SELECT
                 e.id::uuid AS id,
@@ -129,7 +129,7 @@ async fn query_affected_events_by_operation_links(
         WHERE ($2::uuid IS NULL OR id < $2::uuid)
         ORDER BY id DESC
         LIMIT $3
-        "#,
+        ",
     )
     .bind(operation_id.to_uuid())
     .bind(cursor_uuid)
@@ -172,9 +172,9 @@ async fn query_affected_events_by_ids(
 ) -> Result<(Vec<EventSummary>, bool)> {
     let page_size = limit.min(MAX_AUDIT_PAGE_SIZE);
     let fetch_limit = page_size + 1;
-    let cursor_uuid = after_id.map(|id| id.to_uuid());
+    let cursor_uuid = after_id.map(sinex_db::Id::to_uuid);
     let mut rows = sqlx::query_as::<_, AffectedEventRow>(
-        r#"
+        r"
         WITH affected_ids AS (
             SELECT unnest($1::uuid[]) AS id
         ),
@@ -226,7 +226,7 @@ async fn query_affected_events_by_ids(
         WHERE ($2::uuid IS NULL OR id < $2::uuid)
         ORDER BY id DESC
         LIMIT $3
-        "#,
+        ",
     )
     .bind(affected_event_ids)
     .bind(cursor_uuid)
@@ -325,7 +325,7 @@ async fn query_affected_events(
             LIMIT $3
             ",
         )
-        .bind(&op_uuid)
+        .bind(op_uuid)
         .bind(duration_secs)
         .bind(fetch_limit)
         .bind(cursor_uuid)
@@ -351,7 +351,7 @@ async fn query_affected_events(
             LIMIT $3
             ",
         )
-        .bind(&op_uuid)
+        .bind(op_uuid)
         .bind(duration_secs)
         .bind(fetch_limit)
         .fetch_all(pool)

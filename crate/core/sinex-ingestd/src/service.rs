@@ -1002,7 +1002,11 @@ impl IngestService {
                     error = %error,
                     "Background task exited unexpectedly during forced shutdown"
                 );
-                Some(task_shutdown_error("background", &index.to_string(), &error))
+                Some(task_shutdown_error(
+                    "background",
+                    &index.to_string(),
+                    &error,
+                ))
             }
         }
     }
@@ -1041,30 +1045,26 @@ impl IngestService {
             shutdown_errors
         };
 
-        match tokio::time::timeout(timeout, wait_task).await {
-            Ok(shutdown_errors) => {
-                info!("All background tasks finished");
-                Self::collapse_background_shutdown_errors(shutdown_errors)
+        if let Ok(shutdown_errors) = tokio::time::timeout(timeout, wait_task).await {
+            info!("All background tasks finished");
+            Self::collapse_background_shutdown_errors(shutdown_errors)
+        } else {
+            warn!(
+                "Timed out waiting for background tasks after {:?}, aborting {} remaining",
+                timeout,
+                handles.len()
+            );
+            for handle in &handles {
+                handle.abort();
             }
-            Err(_) => {
-                warn!(
-                    "Timed out waiting for background tasks after {:?}, aborting {} remaining",
-                    timeout,
-                    handles.len()
-                );
-                for handle in &handles {
-                    handle.abort();
+            let mut shutdown_errors = vec![background_task_timeout(handles.len(), timeout)];
+            // Await aborted handles so their destructors run before we return.
+            for (index, handle) in handles.into_iter().enumerate() {
+                if let Some(error) = Self::log_aborted_task_shutdown_result(index, handle.await) {
+                    shutdown_errors.push(error);
                 }
-                let mut shutdown_errors = vec![background_task_timeout(handles.len(), timeout)];
-                // Await aborted handles so their destructors run before we return.
-                for (index, handle) in handles.into_iter().enumerate() {
-                    if let Some(error) = Self::log_aborted_task_shutdown_result(index, handle.await)
-                    {
-                        shutdown_errors.push(error);
-                    }
-                }
-                Self::collapse_background_shutdown_errors(shutdown_errors)
             }
+            Self::collapse_background_shutdown_errors(shutdown_errors)
         }
     }
 
@@ -1114,9 +1114,9 @@ struct SchemaBroadcastEntry {
 }
 
 impl IngestService {
-    fn parse_schema_broadcast_entries<'a>(
-        entries: &'a [SchemaBroadcastEntry],
-    ) -> IngestdResult<Vec<(uuid::Uuid, &'a SchemaBroadcastEntry)>> {
+    fn parse_schema_broadcast_entries(
+        entries: &[SchemaBroadcastEntry],
+    ) -> IngestdResult<Vec<(uuid::Uuid, &SchemaBroadcastEntry)>> {
         entries
             .iter()
             .map(|entry| {
@@ -1627,7 +1627,7 @@ mod tests {
     async fn material_ready_set_maintenance_stops_promptly_on_shutdown()
     -> xtask::sandbox::TestResult<()> {
         let mut service = test_service();
-        let ready_set = MaterialReadySet::with_policy_for_tests(Duration::from_secs(60), u64::MAX);
+        let ready_set = MaterialReadySet::with_policy_for_tests(Duration::from_mins(1), u64::MAX);
         let handle = service
             .start_material_ready_set_maintenance_task(ready_set)
             .await;
