@@ -74,3 +74,4 @@ docs/analysis
 AGENTS.override.md
 # Generated instruction surface
 AGENTS.md
+.agent/scratch/
