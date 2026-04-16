@@ -337,8 +337,8 @@ fn offset_kind_label(kind: OffsetKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_PUBLISH_CONCURRENCY, NatsPublisher, build_publish_payload,
-        destructure_provenance, wait_for_publish_ack,
+        DEFAULT_PUBLISH_CONCURRENCY, NatsPublisher, build_publish_payload, destructure_provenance,
+        wait_for_publish_ack,
     };
     use sinex_primitives::{
         DynamicPayload, Id, Uuid,
@@ -414,7 +414,10 @@ mod tests {
         )?;
         let decoded: Event<serde_json::Value> = serde_json::from_slice(&payload)?;
 
-        assert_eq!(decoded.temporal_policy, Some(SyntheticTemporalPolicy::LatestInput));
+        assert_eq!(
+            decoded.temporal_policy,
+            Some(SyntheticTemporalPolicy::LatestInput)
+        );
         assert_eq!(decoded.semantics_version.as_deref(), Some("2026-04-13"));
         assert_eq!(decoded.scope_key.as_deref(), Some("scope:publisher"));
         assert_eq!(decoded.equivalence_key.as_deref(), Some("publisher-slot"));

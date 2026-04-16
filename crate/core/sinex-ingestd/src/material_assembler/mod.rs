@@ -64,18 +64,6 @@ type MaterialTaskOutcome = (
     Result<IngestdResult<()>, tokio::task::JoinError>,
 );
 
-fn material_task_cleanup_failure(name: &'static str, error: &SinexError) -> SinexError {
-    crate::service::task_shutdown_error("material", name, error)
-}
-
-fn material_task_join_failure(name: &'static str, error: &tokio::task::JoinError) -> SinexError {
-    crate::service::task_shutdown_error("material", name, error)
-}
-
-fn material_task_monitor_failure(error: &tokio::task::JoinError) -> SinexError {
-    crate::service::task_shutdown_error("material", "monitor", error)
-}
-
 fn material_task_timeout(count: usize, timeout: Duration) -> SinexError {
     SinexError::service(format!(
         "timed out waiting for {count} material tasks during shutdown"
@@ -762,7 +750,7 @@ impl MaterialAssembler {
             maybe_task = tasks.join_next(), if !tasks.is_empty() => {
                 match maybe_task {
                     Some(Ok((name, result))) => Self::handle_task_exit(name, result, &shutdown_flag),
-                    Some(Err(error)) => Err(material_task_monitor_failure(&error)),
+                    Some(Err(error)) => Err(crate::service::task_shutdown_error("material", "monitor", &error)),
                     None => Ok(()),
                 }
             }
@@ -813,19 +801,19 @@ impl MaterialAssembler {
                         Some(Ok((name, Ok(Err(error))))) => {
                             warn!(task = name, error = %error, "Material task exited with error during shutdown");
                             if cleanup_error.is_none() {
-                                cleanup_error = Some(material_task_cleanup_failure(name, &error));
+                                cleanup_error = Some(crate::service::task_shutdown_error("material", name, &error));
                             }
                         }
                         Some(Ok((name, Err(error)))) => {
                             warn!(task = name, error = ?error, "Material task join failed during shutdown");
                             if cleanup_error.is_none() {
-                                cleanup_error = Some(material_task_join_failure(name, &error));
+                                cleanup_error = Some(crate::service::task_shutdown_error("material", name, &error));
                             }
                         }
                         Some(Err(error)) => {
                             warn!(error = ?error, "Material task monitor join failed during shutdown");
                             if cleanup_error.is_none() {
-                                cleanup_error = Some(material_task_monitor_failure(&error));
+                                cleanup_error = Some(crate::service::task_shutdown_error("material", "monitor", &error));
                             }
                         }
                         None => break,

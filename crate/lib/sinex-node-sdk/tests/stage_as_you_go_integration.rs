@@ -108,6 +108,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
         node_batch_config,
         event_rx,
         shutdown_rx,
+        std::env::temp_dir(),
     );
 
     let context = StageAsYouGoContext::from_sender(

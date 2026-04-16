@@ -47,7 +47,7 @@ async fn wait_for_dlq_stream_messages(
     expected: u64,
 ) -> TestResult<()> {
     let js = jetstream::new(client.clone());
-    let stream_name = env.nats_stream_name("EVENTS_DLQ");
+    let stream_name = env.nats_stream_name("SINEX_RAW_EVENTS_DLQ");
     WaitHelpers::wait_for_condition(
         || {
             let js = js.clone();
@@ -339,7 +339,7 @@ async fn dlq_requeue_by_id_requeues_ingestd_style_entry(ctx: TestContext) -> Tes
     let harness = NatsHarness::start(ctx).await?;
     let js = jetstream::new(harness.client.clone());
     js.get_or_create_stream(jetstream::stream::Config {
-        name: harness.env.nats_stream_name("EVENTS_DLQ"),
+        name: harness.env.nats_stream_name("SINEX_RAW_EVENTS_DLQ"),
         subjects: vec![harness.env.nats_subject("events.dlq.ingestd")],
         retention: jetstream::stream::RetentionPolicy::Limits,
         max_messages: 1000,

@@ -1483,7 +1483,7 @@ Generate a codebase snapshot for AI context (via repomix)
 | `--diagnostics` | no | no | U1: Auto-include files mentioned in the most recent build_diagnostics run |
 | `--changed` | no | no | U2: Include files changed since HEAD (staged + unstaged) |
 | `--context` | no | no | U3: Inject structured xtask state (recent checks, diagnostics, jobs) into the snapshot |
-| `--project-memory` | no | no | U4: Include CLAUDE.md and .claude/includes/ (project memory) in the snapshot |
+| `--project-memory` | no | no | U4: Include CLAUDE.md and .agent/includes/ (project memory) in the snapshot |
 | `--scope` | yes | no | U5: Scope to a crate or directory group (e.g., sinex-db, core, nodes, tests) |
 
 
