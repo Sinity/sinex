@@ -70,6 +70,7 @@ pub mod derived_node;
 pub mod error_helpers;
 #[cfg(feature = "messaging")]
 pub mod event_node;
+pub mod file_tailer;
 #[cfg(feature = "messaging")]
 pub mod examples;
 #[cfg(feature = "messaging")]
