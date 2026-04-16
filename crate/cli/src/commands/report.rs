@@ -36,6 +36,18 @@ pub enum ReportCommands {
     Today,
     /// Summary of yesterday's activity (yesterday midnight to today midnight)
     Yesterday,
+    /// Cross-source calendar view showing daily activity for a week
+    Calendar(CalendarArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct CalendarArgs {
+    /// Show this many days (default: 7)
+    #[arg(long, default_value_t = 7)]
+    pub days: u32,
+    /// Start from this many days ago (default: 0, i.e., ending today)
+    #[arg(long, default_value_t = 0)]
+    pub offset: u32,
 }
 
 impl ReportCommands {
@@ -48,6 +60,9 @@ impl ReportCommands {
             Self::Yesterday => {
                 let (start, end) = yesterday_range();
                 (time_range_new(start, end), label_for_yesterday())
+            }
+            Self::Calendar(args) => {
+                return print_calendar(client, args.days, args.offset).await;
             }
         };
 
@@ -228,6 +243,111 @@ async fn print_report(client: &GatewayClient, time_range: TimeRange, label: &str
 
     println!();
     Ok(())
+}
+
+// ─── Calendar view ──────────────────────────────────────────────────────────
+
+async fn print_calendar(client: &GatewayClient, days: u32, offset: u32) -> Result<()> {
+    let now = OffsetDateTime::now_utc();
+    let end_date = now.date() - time::Duration::days(i64::from(offset));
+    let start_date = end_date - time::Duration::days(i64::from(days) - 1);
+
+    println!();
+    println!(
+        "{}",
+        style(format!(
+            "Activity Calendar: {} to {}",
+            format_date(start_date),
+            format_date(end_date)
+        ))
+        .bold()
+        .cyan()
+    );
+    println!("{}", style("═".repeat(60)).dim());
+
+    let mut max_total = 0i64;
+    let mut day_data = Vec::new();
+
+    for i in 0..days {
+        let date = start_date + time::Duration::days(i64::from(i));
+        #[allow(clippy::expect_used)]
+        let day_start = Timestamp::new(
+            date.with_hms(0, 0, 0)
+                .expect("midnight valid")
+                .assume_utc(),
+        );
+        let next_date = date + time::Duration::days(1);
+        #[allow(clippy::expect_used)]
+        let day_end = Timestamp::new(
+            next_date
+                .with_hms(0, 0, 0)
+                .expect("midnight valid")
+                .assume_utc(),
+        );
+
+        let time_range = TimeRange::new(Some(day_start), Some(day_end))
+            .expect("day range valid");
+
+        let count_query = EventQuery {
+            time_range: Some(time_range),
+            aggregation: Some(AggregationMode::Count),
+            ..Default::default()
+        };
+
+        let total = match client.query_events(count_query).await? {
+            EventQueryResult::Count { count } => count,
+            _ => 0,
+        };
+
+        let sources_query = EventQuery {
+            time_range: Some(time_range),
+            aggregation: Some(AggregationMode::CountBy {
+                field: GroupByField::Source,
+                limit: 5,
+            }),
+            direction: SortDirection::Desc,
+            ..Default::default()
+        };
+
+        let top_sources = match client.query_events(sources_query).await {
+            Ok(EventQueryResult::GroupedCounts { groups }) => groups
+                .iter()
+                .map(|g| format!("{}:{}", g.key, format_count(g.count)))
+                .collect::<Vec<_>>()
+                .join(" "),
+            _ => String::new(),
+        };
+
+        max_total = max_total.max(total);
+        day_data.push((date, total, top_sources));
+    }
+
+    println!();
+    let weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    for (date, total, sources) in &day_data {
+        let weekday_idx = date.weekday().number_from_monday() as usize - 1;
+        let weekday = weekdays[weekday_idx];
+        let bar = render_bar(*total, max_total.max(1), 15);
+        let date_str = format_date(*date);
+
+        println!(
+            "  {} {} {} {:>8}  {}",
+            style(weekday).dim(),
+            style(&date_str).cyan(),
+            bar,
+            style(format_count(*total)).bold(),
+            style(sources).dim()
+        );
+    }
+
+    println!();
+    Ok(())
+}
+
+fn format_date(date: time::Date) -> String {
+    #[allow(clippy::expect_used)]
+    date.format(time::macros::format_description!("[year]-[month]-[day]"))
+        .expect("date format valid")
 }
 
 // ─── Formatting helpers ───────────────────────────────────────────────────────
