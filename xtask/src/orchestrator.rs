@@ -14,6 +14,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 
+use crate::process::cargo_tokio_command;
 use crate::watcher::{FileWatcher, WatchEvent};
 
 /// Arguments for running a binary with hot reload
@@ -135,7 +136,7 @@ impl DevOrchestrator {
     async fn build(&self) -> Result<PathBuf> {
         println!("[build] Building {}...", self.args.binary);
 
-        let mut cmd = Command::new("cargo");
+        let mut cmd = cargo_tokio_command();
         cmd.arg("build")
             .arg("-p")
             .arg(&self.args.binary)

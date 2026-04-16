@@ -1,5 +1,12 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Text content analysis",
   "properties": {
     "analysis_type": {
@@ -7,7 +14,7 @@
     },
     "character_count": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "content_preview": {
@@ -17,12 +24,11 @@
       "type": "string"
     },
     "generated_at": {
-      "format": "date-time",
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "line_count": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "source_event_id": {
@@ -33,38 +39,41 @@
     },
     "top_keywords": {
       "items": {
-        "items": [
+        "maxItems": 2,
+        "minItems": 2,
+        "prefixItems": [
           {
             "type": "string"
           },
           {
             "format": "uint",
-            "minimum": 0.0,
+            "minimum": 0,
             "type": "integer"
           }
         ],
-        "maxItems": 2,
-        "minItems": 2,
         "type": "array"
       },
       "type": "array"
     },
     "word_count": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     }
   },
   "required": [
     "analysis_type",
+    "word_count",
     "character_count",
-    "content_preview",
-    "detected_language",
-    "generated_at",
     "line_count",
+    "detected_language",
     "top_keywords",
-    "word_count"
+    "content_preview",
+    "generated_at"
   ],
   "title": "ContentAnalyzedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "content.analyzed",
+  "x-sinex-source": "content-automaton",
+  "x-sinex-version": "1.0.0"
 }

@@ -1,5 +1,52 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "LoopStatus": {
+      "description": "Media loop/repeat status",
+      "oneOf": [
+        {
+          "const": "none",
+          "description": "No looping",
+          "type": "string"
+        },
+        {
+          "const": "track",
+          "description": "Loop current track",
+          "type": "string"
+        },
+        {
+          "const": "playlist",
+          "description": "Loop playlist",
+          "type": "string"
+        }
+      ]
+    },
+    "PlaybackStatus": {
+      "description": "Media playback status",
+      "oneOf": [
+        {
+          "const": "playing",
+          "description": "Currently playing",
+          "type": "string"
+        },
+        {
+          "const": "paused",
+          "description": "Paused",
+          "type": "string"
+        },
+        {
+          "const": "stopped",
+          "description": "Stopped",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Media player metadata snapshot extracted from D-Bus.",
   "properties": {
     "album": {
@@ -55,9 +102,13 @@
       ]
     },
     "loop_status": {
-      "type": [
-        "string",
-        "null"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LoopStatus"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "player": {
@@ -80,10 +131,10 @@
       ]
     },
     "status": {
-      "type": "string"
+      "$ref": "#/$defs/PlaybackStatus"
     },
     "timestamp": {
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "title": {
       "type": [
@@ -113,16 +164,19 @@
     }
   },
   "required": [
-    "can_go_next",
-    "can_go_previous",
-    "can_pause",
-    "can_play",
-    "can_seek",
     "player",
     "player_instance",
     "status",
+    "can_go_next",
+    "can_go_previous",
+    "can_play",
+    "can_pause",
+    "can_seek",
     "timestamp"
   ],
   "title": "DbusMediaStateChangedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "media.state_changed",
+  "x-sinex-source": "dbus",
+  "x-sinex-version": "1.0.0"
 }

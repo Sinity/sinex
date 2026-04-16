@@ -4,7 +4,9 @@ with lib;
 
 let
   systemdHardening = import ./lib/systemd-hardening.nix { inherit lib; };
+  secretResolution = import ./lib/secret-resolution.nix { inherit lib; };
   inherit (systemdHardening) mkHelperServiceConfig;
+  inherit (secretResolution) resolveNamedSecretPath;
   cfg = config.services.sinex.nats;
   sinexCfg = config.services.sinex;
   stateRoot = config.services.sinex.stateRoot;
@@ -19,12 +21,7 @@ let
     if lib.hasPrefix "${envUpper}_" name then name else "${envUpper}_" + name;
   prefixSubject = subject:
     if lib.hasPrefix "${envName}." subject then subject else "${envName}." + subject;
-  resolveSecretPath = explicit: names:
-    if explicit != null then explicit else
-    let
-      match = findFirst (name: builtins.hasAttr name secretPaths) null names;
-    in
-    if match == null then null else builtins.getAttr match secretPaths;
+  resolveSecretPath = resolveNamedSecretPath secretPaths;
   isLoopbackHost = host: elem host [ "127.0.0.1" "::1" "localhost" ];
   effectiveServerCertFile = resolveSecretPath cfg.tls.certFile [
     "sinex-nats-server-cert"
@@ -41,14 +38,17 @@ let
   effectiveSharedClientCaFile = resolveSecretPath sinexCfg.nodes.nats.tls.caCertFile [
     "sinex-nats-ca"
     "nats-ca"
+    "sinex-remote-nats-ca"
   ];
   effectiveSharedClientCertFile = resolveSecretPath sinexCfg.nodes.nats.tls.clientCertFile [
     "sinex-nats-client-cert"
     "nats-client-cert"
+    "sinex-remote-nats-cert"
   ];
   effectiveSharedClientKeyFile = resolveSecretPath sinexCfg.nodes.nats.tls.clientKeyFile [
     "sinex-nats-client-key"
     "nats-client-key"
+    "sinex-remote-nats-key"
   ];
   effectiveSharedClientTokenFile = resolveSecretPath sinexCfg.nodes.nats.auth.tokenFile [
     "sinex-nats-token"
@@ -206,8 +206,9 @@ in
             default = null;
             description = ''
               Server certificate for the managed NATS listener.
-              If unset, the module falls back to agenix secrets named
-              <literal>sinex-nats-server-cert</literal> or <literal>nats-server-cert</literal>.
+              If unset, the module falls back to the conventional secret sources
+              <literal>sinex-nats-server-cert</literal> or <literal>nats-server-cert</literal>,
+              including declarative <literal>/etc/sinex/nats-server-cert.pem</literal>.
             '';
           };
           keyFile = mkOption {
@@ -215,8 +216,9 @@ in
             default = null;
             description = ''
               Server private key for the managed NATS listener.
-              If unset, the module falls back to agenix secrets named
-              <literal>sinex-nats-server-key</literal> or <literal>nats-server-key</literal>.
+              If unset, the module falls back to the conventional secret sources
+              <literal>sinex-nats-server-key</literal> or <literal>nats-server-key</literal>,
+              including declarative <literal>/etc/sinex/nats-server-key.pem</literal>.
             '';
           };
           caCertFile = mkOption {
@@ -224,8 +226,9 @@ in
             default = null;
             description = ''
               Client CA bundle used when verifying client certificates.
-              If unset, the module falls back to agenix secrets named
-              <literal>sinex-nats-client-ca</literal> or <literal>nats-client-ca</literal>.
+              If unset, the module falls back to the conventional secret sources
+              <literal>sinex-nats-client-ca</literal> or <literal>nats-client-ca</literal>,
+              including declarative <literal>/etc/sinex/nats-client-ca.pem</literal>.
             '';
           };
           verifyClients = mkOption {
@@ -264,7 +267,8 @@ in
                     server. The matching seed should be provided via
                     <literal>services.sinex.nodes.nats.auth.nkeySeedFile</literal> or an agenix
                     secret named <literal>sinex-nats-client-nkey</literal> /
-                    <literal>nats-client-nkey</literal>.
+                    <literal>nats-client-nkey</literal>, including declarative
+                    <literal>/etc/sinex/nats-client.nk</literal>.
                   '';
                 };
                 extraPublishAllow = mkOption {
@@ -364,11 +368,19 @@ in
       }
       {
         assertion = (!cfg.tls.enable) || (effectiveServerCertFile != null && effectiveServerKeyFile != null);
-        message = "Managed NATS TLS requires services.sinex.nats.tls.certFile/keyFile or agenix secrets named sinex-nats-server-cert and sinex-nats-server-key.";
+        message = ''
+          Managed NATS TLS requires services.sinex.nats.tls.certFile/keyFile,
+          sinex-nats-server-cert / sinex-nats-server-key,
+          or declarative /etc/sinex/nats-server-cert.pem and /etc/sinex/nats-server-key.pem.
+        '';
       }
       {
         assertion = (!(cfg.tls.verifyClients || cfg.tls.verifyAndMap)) || effectiveClientCaFile != null;
-        message = "Managed NATS client-certificate verification requires services.sinex.nats.tls.caCertFile or an agenix secret named sinex-nats-client-ca.";
+        message = ''
+          Managed NATS client-certificate verification requires
+          services.sinex.nats.tls.caCertFile, sinex-nats-client-ca,
+          or declarative /etc/sinex/nats-client-ca.pem.
+        '';
       }
       {
         assertion = !(cfg.tls.verifyClients && cfg.tls.verifyAndMap);
@@ -380,7 +392,11 @@ in
       }
       {
         assertion = (!cfg.authorization.sharedClient.enable) || effectiveSharedClientNkeySeedFile != null;
-        message = "Managed NATS shared-client authorization requires services.sinex.nodes.nats.auth.nkeySeedFile or an agenix secret named sinex-nats-client-nkey.";
+        message = ''
+          Managed NATS shared-client authorization requires
+          services.sinex.nodes.nats.auth.nkeySeedFile, sinex-nats-client-nkey,
+          or declarative /etc/sinex/nats-client.nk.
+        '';
       }
       {
         assertion = isLoopbackHost cfg.host || (serverTlsEnabled && serverAuthorizationEnabled);

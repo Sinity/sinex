@@ -5,6 +5,7 @@ use crate::preflight;
 use crate::process::ProcessBuilder;
 use color_eyre::eyre::{Result, eyre};
 
+/// Apply automatic fixes across workspace packages.
 #[derive(Debug, Clone, Default, clap::Args)]
 pub struct FixCommand {
     /// Packages to fix (default: all workspace packages)

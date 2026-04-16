@@ -1030,7 +1030,7 @@ async fn optimize_template_for_tests(pool: &DbPool) -> TestResult<()> {
             "idx_ai_content_search",
             // Complex multi-column indexes for test data
             "idx_event_annotations_complex",
-            // Note: artifact-related indexes removed in Phase 1.3 cleanup
+            // Artifact-related indexes are already absent from the schema.
         ];
 
         for index in expensive_indexes {

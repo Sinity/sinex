@@ -1,5 +1,12 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Pattern detection event",
   "properties": {
     "avg_delta_ms": {
@@ -10,15 +17,18 @@
       "type": "string"
     },
     "last_seen": {
-      "format": "date-time",
-      "type": [
-        "string",
-        "null"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DateTime"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "occurrences": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "pattern_type": {
@@ -29,12 +39,15 @@
     }
   },
   "required": [
-    "avg_delta_ms",
-    "from_event",
-    "occurrences",
     "pattern_type",
-    "to_event"
+    "from_event",
+    "to_event",
+    "occurrences",
+    "avg_delta_ms"
   ],
   "title": "AnalyticsPatternDetectedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "analytics.pattern.detected",
+  "x-sinex-source": "analytics-automaton",
+  "x-sinex-version": "1.0.0"
 }

@@ -62,7 +62,8 @@ impl TimingAnalyzer {
             .context("Failed to execute cargo build")?;
 
         // Prefer JSON timing data if available (more accurate than stderr parsing)
-        let timing_json = PathBuf::from("target/cargo-timings/cargo-timing.json");
+        let timing_json =
+            crate::config::workspace_target_dir().join("cargo-timings/cargo-timing.json");
         if timing_json.exists()
             && let Ok(report) = Self::parse_timing_json(&timing_json)
         {
@@ -82,7 +83,8 @@ impl TimingAnalyzer {
     /// so we approximate based on the HTML report if available.
     fn parse_build_output(output: &str) -> TimingReport {
         // Check for HTML report path in output
-        let html_report = PathBuf::from("target/cargo-timings/cargo-timing.html");
+        let html_report =
+            crate::config::workspace_target_dir().join("cargo-timings/cargo-timing.html");
         let html_exists = html_report.exists();
 
         // Count compiled crates from output

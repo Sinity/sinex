@@ -22,6 +22,7 @@ use std::any::Any;
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+/// Inspect workspace status, service health, and recent activity.
 #[derive(Debug, Clone, clap::Args)]
 pub struct StatusCommand {
     /// Watch for changes (live updates)

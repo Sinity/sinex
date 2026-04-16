@@ -45,8 +45,9 @@ postgres_data/
 # Nix
 result
 
-# Project state (all runtime state lives under .sinex/)
-.sinex/
+# Project state (track the root, ignore checkout-local contents)
+.sinex/*
+!.sinex/.gitignore
 .direnv/
 
 # Claude Code (track includes, ignore ephemeral)
@@ -71,5 +72,5 @@ audit_*.md
 docs/analysis
 
 AGENTS.override.md
-# Override global gitignore — AGENTS.md is a generated artifact tracked here
-!AGENTS.md
+# Generated instruction surface
+AGENTS.md

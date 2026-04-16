@@ -1,5 +1,47 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "BluetoothEventType": {
+      "description": "Bluetooth device event type",
+      "oneOf": [
+        {
+          "const": "connected",
+          "description": "Device connected",
+          "type": "string"
+        },
+        {
+          "const": "disconnected",
+          "description": "Device disconnected",
+          "type": "string"
+        },
+        {
+          "const": "paired",
+          "description": "Device paired",
+          "type": "string"
+        },
+        {
+          "const": "unpaired",
+          "description": "Device unpaired",
+          "type": "string"
+        },
+        {
+          "const": "discovered",
+          "description": "Device discovered",
+          "type": "string"
+        },
+        {
+          "const": "properties_changed",
+          "description": "Device properties changed",
+          "type": "string"
+        }
+      ]
+    },
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "connected": {
       "type": "boolean"
@@ -20,33 +62,38 @@
       ]
     },
     "event_type": {
-      "type": "string"
+      "$ref": "#/$defs/BluetoothEventType"
     },
     "paired": {
       "type": "boolean"
     },
     "rssi": {
       "format": "int16",
+      "maximum": 32767,
+      "minimum": -32768,
       "type": [
         "integer",
         "null"
       ]
     },
     "timestamp": {
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "trusted": {
       "type": "boolean"
     }
   },
   "required": [
-    "connected",
-    "device_address",
     "event_type",
+    "device_address",
+    "connected",
     "paired",
-    "timestamp",
-    "trusted"
+    "trusted",
+    "timestamp"
   ],
   "title": "DbusBluetoothDeviceChangedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "bluetooth.device_changed",
+  "x-sinex-source": "dbus",
+  "x-sinex-version": "1.0.0"
 }

@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "devpath": {
       "type": "string"
@@ -30,11 +30,14 @@
     }
   },
   "required": [
+    "syspath",
     "devpath",
-    "properties",
     "subsystem",
-    "syspath"
+    "properties"
   ],
   "title": "UdevDeviceAddedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "device.added",
+  "x-sinex-source": "udev",
+  "x-sinex-version": "1.0.0"
 }

@@ -1,5 +1,12 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Desktop notification dispatched over D-Bus.",
   "properties": {
     "actions": {
@@ -26,24 +33,28 @@
       "type": "integer"
     },
     "timestamp": {
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "urgency": {
       "format": "uint8",
-      "minimum": 0.0,
+      "maximum": 255,
+      "minimum": 0,
       "type": "integer"
     }
   },
   "required": [
-    "actions",
     "app_name",
-    "body",
-    "hints",
     "summary",
+    "body",
+    "urgency",
     "timeout",
-    "timestamp",
-    "urgency"
+    "actions",
+    "hints",
+    "timestamp"
   ],
   "title": "DbusNotificationSentPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "notification.sent",
+  "x-sinex-source": "dbus",
+  "x-sinex-version": "1.0.0"
 }

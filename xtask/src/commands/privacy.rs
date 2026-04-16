@@ -63,7 +63,7 @@ pub enum PrivacySubcommand {
     },
 }
 
-/// Privacy engine command
+/// Run privacy-engine catalog, test, key, and config utilities.
 #[derive(Debug, Clone, Args)]
 pub struct PrivacyCommand {
     #[command(subcommand)]

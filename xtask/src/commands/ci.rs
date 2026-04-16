@@ -57,12 +57,12 @@ pub enum CiSubcommand {
     },
     /// Full workspace validation (schema setup + lint + tests)
     Workspace {
-        #[arg(long, default_value = "target/ci")]
+        #[arg(long, default_value = ".sinex/target/ci")]
         target_dir: String,
     },
     /// Schema-only pipeline (apply, check-ready)
     SchemaOnly {
-        #[arg(long, default_value = "target/ci-schema")]
+        #[arg(long, default_value = ".sinex/target/ci-schema")]
         target_dir: String,
     },
     /// Verify required tables exist in database
@@ -80,7 +80,7 @@ pub enum CiSubcommand {
         #[arg(long)]
         base: Option<String>,
         /// Glob pattern for schema files
-        #[arg(long, default_value = "schemas/v1")]
+        #[arg(long, default_value = "schemas")]
         glob: String,
     },
 }
@@ -235,7 +235,7 @@ async fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<Com
         .run_ok()?;
     ctx.finish_stage(stage, true);
 
-    // 3.4: Check (clippy+fmt) and forbidden (ast-grep) are fully independent — run concurrently.
+    // 3.4: Check (clippy+fmt) and the forbidden-pattern lane are fully independent — run concurrently.
     if ctx.is_human() {
         println!("Running check and lint-forbidden in parallel...");
     }

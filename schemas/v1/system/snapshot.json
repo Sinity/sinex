@@ -1,9 +1,16 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "active_watchers": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "dbus_enabled": {
@@ -13,8 +20,7 @@
       "type": "boolean"
     },
     "snapshot_time": {
-      "format": "date-time",
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "systemd_enabled": {
       "type": "boolean"
@@ -27,10 +33,13 @@
     "active_watchers",
     "dbus_enabled",
     "journal_enabled",
-    "snapshot_time",
+    "udev_enabled",
     "systemd_enabled",
-    "udev_enabled"
+    "snapshot_time"
   ],
   "title": "SystemSnapshotPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "snapshot",
+  "x-sinex-source": "system",
+  "x-sinex-version": "1.0.0"
 }

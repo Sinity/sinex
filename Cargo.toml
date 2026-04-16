@@ -36,9 +36,7 @@ members = [
 
   # NixOS VM test suite binary (runs inside VMs to assert behavioral invariants)
   "crate/tests/vm-suite",
-
-  # Test modules are integration tests within the main workspace
-  # "test/*", # Removed - tests are integration tests, not separate workspace members
+  "tests/workspace",
 
   # Disabled/folded crates
   # "crate/sinex-annex", # Folded into sinex-node-sdk
@@ -279,51 +277,6 @@ sha2 = "0.10"
 
 # Database (for Atuin integration)
 rusqlite = { version = "0.32.1", features = ["bundled"] }
-
-# Workspace-level integration tests package
-[package]
-name = "sinex-workspace"
-version = "0.4.2"
-edition = "2024"
-authors = ["Sinex Exocortex Contributors"]
-repository = "https://github.com/sinex/exocortex"
-license = "MIT"
-build = "build.rs"
-
-[build-dependencies]
-time = { workspace = true }
-
-[dev-dependencies]
-regex = { workspace = true }
-jsonschema = { workspace = true }
-which = { workspace = true }
-rstest = { workspace = true }
-proptest = { workspace = true }
-serde_json = { workspace = true }
-time = { workspace = true }
-tracing = { workspace = true }
-tokio = { workspace = true }
-futures = { workspace = true }
-tracing-test = { workspace = true }
-uuid = { workspace = true }
-color-eyre = { workspace = true }
-
-blake3 = { workspace = true }
-async-nats = { workspace = true }
-sinex-gateway = { path = "crate/core/sinex-gateway" }
-sinex-primitives = { path = "crate/lib/sinex-primitives" }
-sinex-db = { path = "crate/lib/sinex-db" }
-sqlx = { workspace = true }
-xtask = { path = "xtask" }
-rcgen = { workspace = true }
-tempfile = { workspace = true }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-
-[dependencies]
-# Test utilities and dependencies for workspace-level integration tests
-sinex-node-sdk = { path = "crate/lib/sinex-node-sdk" }
-
-# (Removed duplicate optional test deps; consolidated under dev-dependencies above)
 
 # Speed-optimized profiles for development
 [profile.dev]

@@ -1262,7 +1262,7 @@ impl HistoryDb {
             });
         }
 
-        // Also mark orphaned background_jobs rows (separate table, Phase 3).
+        // Also mark orphaned background_jobs rows in the dedicated job table.
         self.conn
             .execute(
                 r"UPDATE background_jobs
@@ -1752,7 +1752,7 @@ impl HistoryDb {
     ) -> Result<usize> {
         let mut updated_tests = 0usize;
 
-        // Phase 1: Back-fill output for tests that don't have it yet
+        // Back-fill output for tests that do not have it yet.
         let mut output_stmt = self.conn.prepare(
             r"
             UPDATE test_results
@@ -1761,7 +1761,7 @@ impl HistoryDb {
             ",
         )?;
 
-        // Phase 2: Update failure info and package from classname
+        // Update failure info and package from classname.
         let mut meta_stmt = self.conn.prepare(
             r"
             UPDATE test_results
@@ -1809,7 +1809,7 @@ impl HistoryDb {
         drop(output_stmt);
         drop(meta_stmt);
 
-        // Phase 3: Parse slog events from output to extract sandbox metadata
+        // Parse slog events from output to extract sandbox metadata.
         self.extract_sandbox_metadata(invocation_id)?;
 
         Ok(updated_tests)
@@ -1933,7 +1933,7 @@ impl HistoryDb {
         Ok(count)
     }
 
-    // ============ Background Job Methods (Phase 3: Jobs Split) ============
+    // ============ Background Job Methods ============
 
     /// Start a background job. Creates both an invocation row and a background_jobs row.
     ///
@@ -2107,7 +2107,7 @@ impl HistoryDb {
         Ok(pid.is_some_and(is_process_running))
     }
 
-    // ============ Diagnostics Methods (Phase 4: Build Diagnostics Capture) ============
+    // ============ Diagnostics Methods ============
 
     /// Record a build diagnostic (warning/error).
     pub fn record_diagnostic(

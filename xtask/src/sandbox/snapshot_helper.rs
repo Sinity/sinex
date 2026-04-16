@@ -60,11 +60,14 @@ pub enum FailureContext<'a> {
 }
 
 /// Persist contextual information about a failing test. Artifacts are written to
-/// `target/test-artifacts/` by default and can be overridden via the
+/// `.sinex/test-artifacts/` by default and can be overridden via the
 /// `SINEX_TEST_FAIL_DIR` environment variable.
 pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureContext<'_>) {
     let snapshot_dir = env::var("SINEX_TEST_FAIL_DIR")
-        .map_or_else(|_| PathBuf::from("target/test-artifacts"), PathBuf::from);
+        .map_or_else(
+            |_| crate::config::workspace_state_root().join("test-artifacts"),
+            PathBuf::from,
+        );
 
     if let Err(err) = fs::create_dir_all(&snapshot_dir) {
         eprintln!(

@@ -10,7 +10,14 @@ with lib;
 
 let
   cfg = config.services.sinex;
+  secretResolution = import ./lib/secret-resolution.nix { inherit lib; };
+  inherit (secretResolution) resolveNamedSecretPath;
   db = cfg.database;
+  secretPaths = config.sinex.secrets.paths or {};
+  effectiveDatabasePasswordFile = resolveNamedSecretPath secretPaths db.passwordFile [
+    "sinex-local-db"
+    "sinex-remote-db"
+  ];
   allDatabases = unique ([ db.name ] ++ db.extraDatabases);
 
   sinexEnabled = cfg.enable;
@@ -200,10 +207,13 @@ in
     (mkIf (db.enable && db.autoSetup) {
       assertions = [
         {
-          assertion = db.localAuth != "scram-sha-256" || db.passwordFile != null;
+          assertion = db.localAuth != "scram-sha-256" || effectiveDatabasePasswordFile != null;
           message = ''
             services.sinex.database.localAuth = "scram-sha-256" requires
-            services.sinex.database.passwordFile to be set, otherwise no services can connect.
+            a database password source (services.sinex.database.passwordFile or
+            the conventional sinex-local-db / sinex-remote-db sources, including
+            declarative /etc/sinex/db-password / /etc/sinex/remote-db-password),
+            otherwise no services can connect.
           '';
         }
       ];
@@ -266,7 +276,7 @@ SQL
       '';
     })
 
-    (mkIf (db.enable && db.autoSetup && db.passwordFile != null) {
+    (mkIf (db.enable && db.autoSetup && effectiveDatabasePasswordFile != null) {
       systemd.services.postgresql-setup.script = lib.mkAfter ''
         sync_role_password() {
           local roleName="$1"
@@ -288,7 +298,7 @@ ALTER ROLE :"sinex_role" WITH PASSWORD :'sinex_password';
 SQL
         }
 
-        sync_role_password ${escapeShellArg db.user} ${escapeShellArg db.passwordFile}
+        sync_role_password ${escapeShellArg db.user} ${escapeShellArg effectiveDatabasePasswordFile}
       '';
     })
   ];

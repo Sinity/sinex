@@ -296,6 +296,7 @@ pkgs.testers.nixosTest {
         cliPackage = sinexCliPackage;
         users.target = "test";
         secrets.gatewayAdminTokenFile = "/etc/sinex/gateway-admin-token";
+        core.gateway.autoGenerateTls = true;
         database.autoSetup = true;
         database.connectionPool.maxConnections = 20;
 
@@ -423,20 +424,24 @@ host    all             all             ::1/128                 trust
 
       # Enhanced service configuration for failure testing
       systemd.services.sinex-ingestd = {
+        unitConfig = {
+          StartLimitIntervalSec = lib.mkForce "300";
+          StartLimitBurst = lib.mkForce "10";
+        };
         serviceConfig = {
           Restart = lib.mkForce "always";
           RestartSec = lib.mkForce "5";
-          StartLimitInterval = "300";
-          StartLimitBurst = "10";
         };
       };
 
       systemd.services.sinex-gateway = {
+        unitConfig = {
+          StartLimitIntervalSec = lib.mkForce "300";
+          StartLimitBurst = lib.mkForce "10";
+        };
         serviceConfig = {
           Restart = lib.mkForce "always";
           RestartSec = lib.mkForce "5";
-          StartLimitInterval = "300";
-          StartLimitBurst = "10";
         };
         environment.SINEX_RPC_TOKEN_FILE = "/etc/sinex/gateway-admin-token";
       };
