@@ -3,6 +3,22 @@
 > Sequenced by leverage × feasibility. Each wave unlocks the next.
 > Items marked ⚡ are parallelizable via subagents.
 
+## Progress (2026-04-16 session)
+
+**14 PRs merged (#286-#299), 20 commits:**
+
+| Wave | Planned | Done | Items Completed |
+|------|---------|------|-----------------|
+| 1 (Verifiability) | 8 | 4 | Privacy property tests, auth boundary, checkpoint durability, COPY contract |
+| 2 (SDK Adapters) | 4 | 3 | File tailer, batch importer, API poller |
+| 3 (Intelligence) | 6 | 3 | Session detector NixOS, embedding repository, hybrid search |
+| 4 (Lynchpin P1) | 5 | 2 | Calendar report, git capture hook |
+| 5 (Operational) | 6 | 2 | sinexctl verify, sinexctl explain |
+
+**Skipped (already existed):** replay e2e (30+ tests), concurrent ingestor+automaton (pipeline_end_to_end.rs), privacy middleware (already in DerivedNodeAdapter)
+
+**Remaining high-leverage:** embedding automaton, entity extractor, AI session ingestor, browser ingestor, self-observation persistence, DLQ consolidation, circuit breaker, Grafana
+
 ## Current State (post-verification sprint)
 
 - 762K real events in sinex_prod, 8/8 services active
