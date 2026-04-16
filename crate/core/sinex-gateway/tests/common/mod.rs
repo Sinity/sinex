@@ -85,7 +85,7 @@ pub async fn ensure_dlq_stream(
     storage: jetstream::stream::StorageType,
 ) -> TestResult<jetstream::stream::Stream> {
     let js = jetstream::new(client.clone());
-    let stream_name = env.nats_stream_name("EVENTS_DLQ");
+    let stream_name = env.nats_stream_name("SINEX_RAW_EVENTS_DLQ");
     let dlq_subject = env.nats_subject("events.dlq.>");
     let mut streams = js.streams();
     while let Some(stream) = streams.next().await {
