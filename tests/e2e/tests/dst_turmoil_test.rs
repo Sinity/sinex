@@ -76,7 +76,9 @@ impl BackoffSchedule {
 /// for 1+2+4+8+16 = 31 real seconds.
 #[test]
 fn dst_turmoil_backoff_timing_deterministic() {
-    let mut sim = turmoil::Builder::new().build();
+    let mut builder = turmoil::Builder::new();
+    builder.simulation_duration(Duration::from_secs(40));
+    let mut sim = builder.build();
 
     sim.host("client", || async {
         let mut backoff = BackoffSchedule::new(Duration::from_secs(1), Duration::from_secs(16));
@@ -218,12 +220,15 @@ fn dst_turmoil_network_partition_and_reconnect() {
 
 // ─── Test 4: Deadline enforcement ────────────────────────────────────────────
 
-/// Verify that a `tokio::time::timeout` wrapping a connection attempt
-/// fires at the correct virtual time. This tests that sinex's connection
-/// timeouts (e.g., `Duration::from_secs(10)`) are correctly enforced.
+/// Verify that a `tokio::time::timeout` wrapping a retry loop fires at the
+/// correct virtual time. A bare `TcpStream::connect()` to an unbound turmoil
+/// host fails immediately with connection refused, so the timeout must wrap the
+/// higher-level retry behavior that actually waits.
 #[test]
 fn dst_turmoil_connection_timeout_fires_at_correct_virtual_time() {
-    let mut sim = turmoil::Builder::new().build();
+    let mut builder = turmoil::Builder::new();
+    builder.simulation_duration(Duration::from_secs(15));
+    let mut sim = builder.build();
 
     // Server never comes up
     sim.host("unreachable", || async {
@@ -236,14 +241,21 @@ fn dst_turmoil_connection_timeout_fires_at_correct_virtual_time() {
         let timeout = Duration::from_secs(10);
         let start = tokio::time::Instant::now();
 
-        let result = tokio::time::timeout(timeout, TcpStream::connect("unreachable:9999")).await;
+        let result = tokio::time::timeout(timeout, async {
+            loop {
+                let _ = TcpStream::connect("unreachable:9999").await;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            #[allow(unreachable_code)]
+            Ok::<(), std::io::Error>(())
+        })
+        .await;
 
         let elapsed = start.elapsed();
 
-        // Must time out (not connect)
         assert!(
-            result.is_err() || result.unwrap().is_err(),
-            "connection to unreachable host should fail"
+            result.is_err(),
+            "retry loop should time out before succeeding"
         );
 
         // Virtual time elapsed must be at least the timeout duration
@@ -294,7 +306,9 @@ fn dst_turmoil_backoff_never_exceeds_max() {
 #[test]
 fn dst_turmoil_same_seed_produces_identical_outcomes() {
     fn run_sim() -> Vec<Duration> {
-        let mut sim = turmoil::Builder::new().build();
+        let mut builder = turmoil::Builder::new();
+        builder.simulation_duration(Duration::from_secs(20));
+        let mut sim = builder.build();
         let delays = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Duration>::new()));
         let delays_clone = delays.clone();
 

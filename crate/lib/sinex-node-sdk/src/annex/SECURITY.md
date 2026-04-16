@@ -23,11 +23,11 @@ A comprehensive path validation security review has been completed for the core 
   - Implemented secure temporary file creation with `create_secure_temp_path()`
   - Blob manager now validates ingestion paths and cleans up secure temp files automatically
 
-#### 3. **sinex-core** - Database Operations
+#### 3. **sinex-primitives / sinex-db** - Shared Validation and Database Operations
 - **Status**: SECURED  
 - **Key Changes**:
   - File watcher and directory manager utilities already use validated paths
-  - SanitizedPath and validate_path are available throughout sinex-core
+  - `SanitizedPath` and `validate_path` are available throughout the shared primitives layer
   - No direct filesystem operations found that bypass validation
 
 #### 4. **sinex-services** - Content Storage

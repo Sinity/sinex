@@ -140,11 +140,6 @@ pub fn is_retryable_db_error(err: &SinexError) -> bool {
         return true;
     }
 
-    // Fall back to variant-level retryability for structured wrappers.
-    if err.is_retryable() {
-        return true;
-    }
-
     // Preserve legacy message-based classification for plain Database errors
     // created without SQLSTATE context.
     let rendered = err.to_string().to_lowercase();

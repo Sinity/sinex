@@ -618,11 +618,28 @@ async fn test_cli_redundant_json_options() -> TestResult<()> {
     // Either it succeeds OR gives a clear error about format validation
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        // Should not be a cryptic error
-        assert!(
-            stderr.contains("fmt") || stderr.contains("check") || stderr.contains("error"),
-            "Should give a clear error, not cryptic failure: {stderr}"
-        );
+        if stderr.trim().is_empty() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let parsed: serde_json::Value = serde_json::from_str(&stdout)?;
+            assert_eq!(parsed.get("command").and_then(|v| v.as_str()), Some("xtask"));
+            assert!(
+                matches!(parsed.get("status").and_then(|v| v.as_str()), Some("error")),
+                "redundant JSON flags should still produce a structured failure envelope: {stdout}"
+            );
+            assert!(
+                parsed
+                    .get("errors")
+                    .and_then(|value| value.as_array())
+                    .is_some_and(|errors| !errors.is_empty()),
+                "redundant JSON flags should surface structured argument errors: {stdout}"
+            );
+        } else {
+            // Should not be a cryptic error
+            assert!(
+                stderr.contains("fmt") || stderr.contains("check") || stderr.contains("error"),
+                "Should give a clear error, not cryptic failure: {stderr}"
+            );
+        }
     }
     Ok(())
 }

@@ -24,12 +24,12 @@ use sinex_node_sdk::{SelfObservationError, SelfObserver};
 use sinex_primitives::Timestamp;
 use sinex_primitives::{Id, JsonValue, Uuid, environment::SinexEnvironment};
 use std::future::Future;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr, sync::Arc};
 use tokio::{
     fs,
     fs::File,
-    sync::Mutex,
+    sync::{Mutex, Notify},
     task::{JoinHandle, JoinSet},
     time::Duration,
 };
@@ -46,6 +46,16 @@ fn signal_ready(ready_tx: Option<tokio::sync::oneshot::Sender<()>>, component: &
             }
         }
         None => true,
+    }
+}
+
+async fn shutdown_signal(shutdown_flag: &Arc<AtomicBool>, shutdown_notify: &Arc<Notify>) {
+    loop {
+        let notified = shutdown_notify.notified();
+        if shutdown_flag.load(Ordering::Acquire) {
+            return;
+        }
+        notified.await;
     }
 }
 
@@ -679,9 +689,10 @@ impl MaterialAssembler {
     /// Run the assembler service with a shared shutdown flag.
     pub async fn run_with_shutdown(
         self,
-        shutdown_flag: Arc<std::sync::atomic::AtomicBool>,
+        shutdown_flag: Arc<AtomicBool>,
     ) -> IngestdResult<()> {
-        self.run_with_shutdown_and_ready(shutdown_flag, None).await
+        self.run_with_shutdown_signal_and_ready(shutdown_flag, Arc::new(Notify::new()), None)
+            .await
     }
 
     /// Run the assembler, optionally signalling readiness after streams are bound
@@ -689,7 +700,18 @@ impl MaterialAssembler {
     /// `sd_notify(READY)` to ensure the assembler is actually ready to process slices.
     pub async fn run_with_shutdown_and_ready(
         self,
-        shutdown_flag: Arc<std::sync::atomic::AtomicBool>,
+        shutdown_flag: Arc<AtomicBool>,
+        ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> IngestdResult<()> {
+        self.run_with_shutdown_signal_and_ready(shutdown_flag, Arc::new(Notify::new()), ready_tx)
+            .await
+    }
+
+    /// Run the assembler with a shared shutdown signal and readiness handoff.
+    pub async fn run_with_shutdown_signal_and_ready(
+        self,
+        shutdown_flag: Arc<AtomicBool>,
+        shutdown_notify: Arc<Notify>,
         ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
     ) -> IngestdResult<()> {
         info!("Starting Material Assembler");
@@ -730,17 +752,30 @@ impl MaterialAssembler {
         let cleanup_task = {
             let assembler = self.clone_for_task();
             let shutdown = shutdown_flag.clone();
-            tokio::spawn(async move { assembler.run_stale_assembly_cleanup(shutdown).await })
+            let shutdown_notify = shutdown_notify.clone();
+            tokio::spawn(async move {
+                assembler
+                    .run_stale_assembly_cleanup(shutdown, shutdown_notify)
+                    .await
+            })
         };
         Self::track_material_task(&mut tasks, "material stale cleanup task", cleanup_task);
 
-        let result = match tasks.join_next().await {
-            Some(Ok((name, result))) => Self::handle_task_exit(name, result, &shutdown_flag),
-            Some(Err(error)) => Err(material_task_monitor_failure(&error)),
-            None => Ok(()),
+        let result = tokio::select! {
+            maybe_task = tasks.join_next(), if !tasks.is_empty() => {
+                match maybe_task {
+                    Some(Ok((name, result))) => Self::handle_task_exit(name, result, &shutdown_flag),
+                    Some(Err(error)) => Err(material_task_monitor_failure(&error)),
+                    None => Ok(()),
+                }
+            }
+            () = shutdown_signal(&shutdown_flag, &shutdown_notify) => {
+                info!("Material Assembler received shutdown signal");
+                Ok(())
+            }
         };
 
-        shutdown_flag.store(true, std::sync::atomic::Ordering::Release);
+        shutdown_flag.store(true, Ordering::Release);
         let cleanup_error = Self::wait_for_material_tasks(&mut tasks, Duration::from_secs(5)).await;
         match (result, cleanup_error) {
             (Ok(()), Some(error)) => Err(error),
@@ -770,7 +805,6 @@ impl MaterialAssembler {
         let deadline = tokio::time::sleep(timeout);
         tokio::pin!(deadline);
         let mut cleanup_error = None;
-        let mut timed_out = false;
 
         loop {
             tokio::select! {
@@ -803,17 +837,23 @@ impl MaterialAssembler {
                         break;
                     }
                 }
-                () = &mut deadline, if !timed_out => {
-                    timed_out = true;
+                () = &mut deadline => {
                     let remaining = tasks.len();
                     warn!(
-                        "Timed out waiting for {} material tasks after {:?}, continuing to drain shutdown work",
+                        "Timed out waiting for {} material tasks after {:?}, aborting remaining work",
                         remaining,
                         timeout
                     );
+                    tasks.abort_all();
+                    while let Some(result) = tasks.join_next().await {
+                        if let Err(error) = result {
+                            debug!(error = ?error, "Material task aborted during shutdown cleanup");
+                        }
+                    }
                     if cleanup_error.is_none() {
                         cleanup_error = Some(material_task_timeout(remaining, timeout));
                     }
+                    break;
                 }
             }
         }
@@ -845,16 +885,16 @@ impl MaterialAssembler {
     /// Periodically check for stale assemblies and clean them up
     async fn run_stale_assembly_cleanup(
         &self,
-        shutdown_flag: Arc<std::sync::atomic::AtomicBool>,
+        shutdown_flag: Arc<AtomicBool>,
+        shutdown_notify: Arc<Notify>,
     ) -> IngestdResult<()> {
         let mut interval = tokio::time::interval(STALE_ASSEMBLY_CHECK_INTERVAL);
 
         loop {
-            if shutdown_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                break;
+            tokio::select! {
+                _ = interval.tick() => {}
+                () = shutdown_signal(&shutdown_flag, &shutdown_notify) => break,
             }
-
-            interval.tick().await;
 
             // Compute buffer utilization metrics
             let active = self.assembler_state.len() as u32;
@@ -1236,8 +1276,8 @@ mod tests {
 
         assert!(error.to_string().contains("timed out waiting"));
         assert!(
-            completed.load(std::sync::atomic::Ordering::Acquire),
-            "timed out shutdown should still let the material task finish"
+            !completed.load(std::sync::atomic::Ordering::Acquire),
+            "timed out shutdown should abort lingering material tasks"
         );
         assert!(tasks.is_empty(), "timed out tasks should still be drained");
         Ok(())

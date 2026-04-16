@@ -186,8 +186,8 @@ async fn synthetic_event_projected_inline(ctx: TestContext) -> TestResult<()> {
     assert_eq!(row.scope_key.as_deref(), Some("test-scope"));
     assert_eq!(row.equivalence_key.as_deref(), Some("test-equiv"));
     assert_eq!(row.created_by_operation_id, Some(operation_id));
-    // DerivedNodeModel uses default PascalCase serde (no rename_all)
-    assert_eq!(row.node_model.as_deref(), Some("Windowed"));
+    // DerivedNodeModel uses snake_case serde in storage and query surfaces.
+    assert_eq!(row.node_model.as_deref(), Some("windowed"));
 
     Ok(())
 }

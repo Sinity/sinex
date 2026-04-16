@@ -14,7 +14,7 @@
 //! 1. `insert(e)` → `get_by_id(e.id)` returns exactly `e`
 //! 2. `count_all()` equals the size of the reference model at every step
 //! 3. `count_by_source(s)` matches the model's count for source `s`
-//! 4. `delete_by_source(s)` removes all events for `s` in both model and DB
+//! 4. `delete_by_source(s)` removes eligible test events for `s` in both model and DB
 //! 5. Re-inserting an event with the same ID (via `ON CONFLICT DO NOTHING`) is idempotent
 
 use std::collections::HashMap;
@@ -76,17 +76,17 @@ enum EventRepoOp {
 
 fn source_tag(idx: u8) -> &'static str {
     match idx % 3 {
-        0 => "model-source-alpha",
-        1 => "model-source-beta",
-        _ => "model-source-gamma",
+        0 => "test.model-source-alpha",
+        1 => "test.model-source-beta",
+        _ => "test.model-source-gamma",
     }
 }
 
 fn type_tag(idx: u8) -> &'static str {
     match idx % 3 {
-        0 => "model.event.created",
-        1 => "model.event.updated",
-        _ => "model.event.deleted",
+        0 => "test.model.event.created",
+        1 => "test.model.event.updated",
+        _ => "test.model.event.deleted",
     }
 }
 
@@ -114,6 +114,10 @@ async fn prop_event_repo_model_matches_reference(
 ) -> TestResult<()> {
     let pool = ctx.pool();
     let events = pool.events();
+    let baseline_count = events
+        .count_all()
+        .await
+        .map_err(|e| TestCaseError::fail(format!("baseline count_all failed: {e}")))?;
 
     // Create a single source material for this test run — all events derive from it.
     let material_id = ctx
@@ -173,8 +177,8 @@ async fn prop_event_repo_model_matches_reference(
 
                     let event = DynamicPayload::new(
                         source_str.clone(),
-                        "model.event.reinsertion",
-                        serde_json::json!({"step": step, "op": "re-insert"}),
+                        "test.model.event.reinsertion",
+                        serde_json::json!({"step": step, "op": "re-insert", "test": true}),
                     )
                     .from_material_at(material_id, anchor)
                     .build()
@@ -196,7 +200,7 @@ async fn prop_event_repo_model_matches_reference(
                     model.insert(
                         id_str.clone(),
                         source_str,
-                        "model.event.reinsertion".to_string(),
+                        "test.model.event.reinsertion".to_string(),
                     );
                     inserted_ids.push(id_str);
                     let after = model.count_all();
@@ -267,11 +271,11 @@ async fn prop_event_repo_model_matches_reference(
 
                 prop_assert_eq!(
                     db_count,
-                    model_count,
-                    "step {}: count_all mismatch: db={} model={}",
+                    baseline_count + model_count,
+                    "step {}: count_all mismatch: db={} expected_baseline_plus_model={}",
                     step,
                     db_count,
-                    model_count
+                    baseline_count + model_count
                 );
             }
         }
@@ -296,7 +300,7 @@ async fn prop_get_by_id_consistent_with_insert_and_delete(
     let pool = ctx.pool();
     let events = pool.events();
     let run_id = uuid::Uuid::now_v7().to_string().replace('-', "");
-    let source = format!("model-get-by-id-{run_id}");
+    let source = format!("test.model-get-by-id-{run_id}");
 
     let material_id = ctx
         .create_source_material(Some("model-get-by-id-test"))
@@ -309,8 +313,8 @@ async fn prop_get_by_id_consistent_with_insert_and_delete(
     for i in 0..count {
         let event = DynamicPayload::new(
             source.clone(),
-            "model.get.by.id",
-            serde_json::json!({"index": i}),
+            "test.model.get.by.id",
+            serde_json::json!({"index": i, "test": true}),
         )
         .from_material_at(material_id, i64::from(i))
         .build()

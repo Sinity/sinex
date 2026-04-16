@@ -18,8 +18,8 @@ mod affected;
 pub mod bench;
 pub mod cargo_diagnostics;
 pub mod cargo_runner;
-pub mod command_catalog;
 pub mod command;
+pub mod command_catalog;
 pub mod command_docs;
 pub mod commands;
 mod config;
@@ -264,7 +264,10 @@ enum Commands {
     // ─── Runtime ───────────────────────────────────────────────────
     #[command(hide = true)]
     Run(commands::RunCommand),
-    #[command(hide = true, about = "Manage local infrastructure (Postgres, NATS, VMs)")]
+    #[command(
+        hide = true,
+        about = "Manage local infrastructure (Postgres, NATS, VMs)"
+    )]
     Infra {
         #[command(subcommand)]
         cmd: commands::infra::InfraSubcommand,
@@ -306,6 +309,18 @@ enum Commands {
 }
 
 pub async fn run_cli() -> Result<()> {
+    fn test_subcommand_name(cmd: &commands::TestCommand) -> Option<&'static str> {
+        use commands::test::TestSubcommand;
+
+        match cmd.subcommand.as_ref()? {
+            TestSubcommand::Bench(_) => Some("bench"),
+            TestSubcommand::Fuzz(_) => Some("fuzz"),
+            TestSubcommand::Coverage(_) => Some("coverage"),
+            TestSubcommand::Mutants(_) => Some("mutants"),
+            TestSubcommand::Vm(_) => Some("vm"),
+        }
+    }
+
     // Use try_get_matches so we can intercept parse errors and route them
     // through the JSON formatter when --json is present, instead of letting
     // clap print human text to stderr and exit. This prevents JSON consumers
@@ -372,7 +387,12 @@ pub async fn run_cli() -> Result<()> {
     let (command_name, subcommand, profile, command_timeout) = match &command {
         Commands::Fix(cmd) => ("fix", None, None, cmd.metadata().timeout),
         Commands::Check(cmd) => ("check", None, None, cmd.metadata().timeout),
-        Commands::Test(cmd) => ("test", None, None, cmd.metadata().timeout),
+        Commands::Test(cmd) => (
+            "test",
+            test_subcommand_name(cmd),
+            None,
+            cmd.metadata().timeout,
+        ),
         Commands::Build(cmd) => ("build", None, None, cmd.metadata().timeout),
         Commands::Run(cmd) => ("run", None, None, cmd.metadata().timeout),
         Commands::Infra { .. } => ("infra", None, None, None),

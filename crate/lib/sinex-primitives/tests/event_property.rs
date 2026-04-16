@@ -139,7 +139,7 @@ fn arb_event_type_name() -> impl Strategy<Value = String> {
 
 /// Generate arbitrary hostnames
 fn arb_hostname() -> impl Strategy<Value = String> {
-    "[a-zA-Z0-9][a-zA-Z0-9-]{1,62}(\\.[a-zA-Z0-9][a-zA-Z0-9-]{1,62}){0,3}"
+    "([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9])(\\.([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9])){0,3}"
 }
 
 /// Generate arbitrary version strings

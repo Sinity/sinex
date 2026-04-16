@@ -1,11 +1,13 @@
 ---
 source: xtask/tests/cli_output_snapshots.rs
+assertion_line: 283
 expression: data
 ---
 {
   "avg_test_pass_rate": "[volatile]",
   "build_score": "[volatile]",
   "error_count": "[volatile]",
+  "fixable_count": "[volatile]",
   "packages": "[volatile]",
   "packages_with_errors": "[volatile]",
   "score": "[volatile]",

@@ -1,8 +1,7 @@
 //! `DerivedNodeAdapter` — shared runtime adapter for all derived node models.
 //!
-//! This replaces `AutomatonNodeAdapter`. It wraps any [`DerivedNodeImpl`] and
-//! implements the stream [`Node`] trait, handling checkpoints, health monitoring,
-//! shutdown, and event emission.
+//! Wraps any [`DerivedNodeImpl`] and implements the stream [`Node`] trait,
+//! handling checkpoints, health monitoring, shutdown, and event emission.
 
 use super::context::DerivedTriggerContext;
 use super::output::DerivedOutput;

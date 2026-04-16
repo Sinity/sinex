@@ -1,5 +1,6 @@
 ---
 source: xtask/tests/command_consistency.rs
+assertion_line: 27
 expression: json
 ---
 {
@@ -756,7 +757,56 @@ expression: json
             },
             {
               "global": false,
-              "help": "Additional test arguments",
+              "help": "Timeout per test in seconds",
+              "long": "timeout",
+              "name": "timeout",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Keep failed VM derivations for inspection",
+              "long": "keep-failed",
+              "name": "keep_failed",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "List exported VM checks instead of running them",
+              "long": "list",
+              "name": "list",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": "l",
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Validate VM scenario files without running them",
+              "long": "validate",
+              "name": "validate",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Specific exported VM checks to run",
               "long": null,
               "name": "args",
               "possible_values": [],

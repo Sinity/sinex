@@ -32,6 +32,6 @@ Coordination operations rely on NATS revision numbers to prevent race conditions
 
 ## Implementation Details
 
-The underlying implementation is found in `sinex-core::coordination::kv_client`. It is designed to be:
+The underlying implementation is found in `sinex_primitives::coordination::kv_client`. It is designed to be:
 - **Low Overhead**: Uses efficient JetStream binary protocols.
 - **Fail-Safe**: Relies on NATS-enforced TTLs for automatic cleanup of crashed instances.

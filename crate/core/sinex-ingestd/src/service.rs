@@ -417,7 +417,7 @@ impl IngestService {
                 }
             }
 
-            // Heartbeat emitter — replaces the manual 60s loop with health-aware heartbeat.
+            // Emit health-aware heartbeats on a fixed cadence.
             // Tracks error window for Healthy/Degraded/Failed status determination.
             // Counter handle is passed to JetStreamConsumer so batch counts feed health status.
             let emitter = HeartbeatEmitter::new(
@@ -623,6 +623,9 @@ impl IngestService {
                         }
                         None => break,
                     }
+                    if tasks.is_empty() {
+                        break;
+                    }
                 }
                 () = &mut deadline => {
                     let remaining = tasks.len();
@@ -803,6 +806,7 @@ impl IngestService {
         tokio::sync::oneshot::Receiver<()>,
     ) {
         let shutdown_flag = self.shutdown_flag.clone();
+        let shutdown_notify = self.shutdown_notify.clone();
         let observer = self.observer.clone();
         let annex_repo_path = self.config.annex_repo_path.clone();
         let assembler_state_dir = self.config.assembler_state_dir.clone();
@@ -860,7 +864,11 @@ impl IngestService {
             };
 
             let result = assembler
-                .run_with_shutdown_and_ready(shutdown_flag.clone(), Some(ready_tx))
+                .run_with_shutdown_signal_and_ready(
+                    shutdown_flag.clone(),
+                    shutdown_notify,
+                    Some(ready_tx),
+                )
                 .await;
             Self::handle_material_assembler_result(result, &shutdown_flag)
         });

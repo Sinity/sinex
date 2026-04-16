@@ -85,9 +85,11 @@ async fn test_service_container_invalid_database_url(_ctx: TestContext) -> TestR
     assert!(result.is_err(), "Should fail with invalid database URL");
     match result {
         Err(error) => {
+            let message = error.to_string();
             assert!(
-                error.to_string().contains("Failed to create database pool"),
-                "Error should mention database pool creation failure"
+                message.contains("failed to parse DATABASE_URL")
+                    || message.contains("DATABASE_URL"),
+                "Error should surface database URL validation failure, got: {message}"
             );
         }
         Ok(_) => panic!("Expected error but got success"),

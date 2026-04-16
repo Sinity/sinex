@@ -24,21 +24,17 @@ use tokio::time::{Duration, timeout};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
-/// Build a properly formatted Event<JsonValue> and serialize to bytes for `JetStream` publishing.
-/// Also pre-registers the source material in the DB for FK constraints.
-async fn build_test_event_bytes(
+async fn register_test_material(
     pool: &sinex_db::DbPool,
     source: &str,
-    event_type: &str,
-    payload: serde_json::Value,
-) -> TestResult<Vec<u8>> {
+) -> TestResult<Id<SourceMaterial>> {
     let material_id = Id::<SourceMaterial>::new();
     let identifier = format!("{source}-{material_id}");
     sqlx::query!(
         r#"
         INSERT INTO raw.source_material_registry
-            (id, material_kind, source_identifier, status, timing_info_type)
-        VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime')
+            (id, material_kind, source_identifier, status, timing_info_type, staged_at)
+        VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime', NOW())
         ON CONFLICT (id) DO NOTHING
         "#,
         material_id.to_uuid(),
@@ -47,6 +43,16 @@ async fn build_test_event_bytes(
     .execute(pool)
     .await?;
 
+    Ok(material_id)
+}
+
+/// Build a properly formatted `Event<JsonValue>` and serialize it for `JetStream`.
+fn build_test_event_bytes(
+    material_id: Id<SourceMaterial>,
+    source: &str,
+    event_type: &str,
+    payload: serde_json::Value,
+) -> TestResult<Vec<u8>> {
     let event = Event::<serde_json::Value> {
         id: Some(Id::new()),
         source: EventSource::new(source)?,
@@ -54,7 +60,7 @@ async fn build_test_event_bytes(
         payload,
         ts_orig: Some(sinex_primitives::Timestamp::now()),
         host: HostName::new("test-host")?,
-        node_run_id: Some(Uuid::now_v7()),
+        node_run_id: None,
         payload_schema_id: None,
         provenance: Provenance::Material {
             id: material_id,
@@ -80,22 +86,12 @@ async fn build_test_event_bytes(
 async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     let nats = ctx.nats_handle()?;
+    let nats_client = ctx.nats_client();
     let js = ctx.jetstream().await?;
     let env = ctx.env();
 
-    // nats_namespace MUST be set so MaterialReadySet is disabled.
-    // Without it, ingestd NAKs all events because test-registered materials
-    // aren't in the ready set (they were inserted directly, not via NATS).
     let namespace = format!("graceful-{}", uuid::Uuid::new_v4().simple());
-
-    let base_stream = env.nats_stream_name("SINEX_GRACEFUL_EVENTS");
     let consumer_name = "ingestd-graceful".to_string();
-    let topology = JetStreamTopology::new(
-        env,
-        base_stream.clone(),
-        consumer_name.clone(),
-        Some(&namespace),
-    );
 
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
@@ -104,6 +100,7 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
     let assembler_state_dir = work_dir_utf8.join("assembler_state");
     tokio::fs::create_dir_all(annex_path.as_std_path()).await?;
     tokio::fs::create_dir_all(assembler_state_dir.as_std_path()).await?;
+    let material_id = register_test_material(&ctx.pool, "graceful-source").await?;
 
     let mut config = IngestdConfig::builder()
         .database_url(ctx.database_url().to_string())
@@ -112,7 +109,7 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
                 .url(nats.client_url().to_string())
                 .build(),
         )
-        .nats_stream_name(base_stream)
+        .nats_stream_name(env.nats_stream_name("SINEX_GRACEFUL_EVENTS"))
         .nats_consumer_name(consumer_name)
         .nats_namespace(namespace)
         .consumer_fetch_max_messages(16)
@@ -125,6 +122,12 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
         .build();
 
     config.database_pool_size = 4;
+    let topology = JetStreamTopology::new(
+        env,
+        config.nats_stream_name.clone(),
+        config.nats_consumer_name.clone(),
+        config.nats_namespace.as_deref(),
+    );
 
     let mut service = IngestService::new(config.clone()).await?;
     let mut runner = service.clone();
@@ -147,18 +150,19 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
 
     // Publish events before shutdown directly to JetStream
     // Use the events_subject (e.g., "events.raw.>") not the stream name
-    let subject_prefix = topology.events_subject.trim_end_matches(".>");
-    let subject = format!("{subject_prefix}.graceful.event");
+    let subject =
+        env.nats_raw_event_subject_with_namespace(config.nats_namespace.as_deref(), "graceful-source", "graceful.event");
     for idx in 0..5 {
         let payload = build_test_event_bytes(
-            &ctx.pool,
+            material_id,
             "graceful-source",
             "graceful.event",
             json!({"seq": idx}),
         )
-        .await?;
-        js.publish(subject.clone(), payload.into()).await?.await?;
+        ?;
+        nats_client.publish(subject.clone(), payload.into()).await?;
     }
+    nats_client.flush().await?;
 
     // Wait for ingestd to persist at least one event before shutting down
     WaitHelpers::wait_for_event_count(&ctx.pool, 1, Timeouts::SHORT).await?;
@@ -192,17 +196,8 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
     let js = ctx.jetstream().await?;
     let env = ctx.env();
 
-    // nats_namespace MUST be set so MaterialReadySet is disabled.
     let namespace = format!("load-{}", uuid::Uuid::new_v4().simple());
-
-    let base_stream = env.nats_stream_name("SINEX_LOAD_EVENTS");
     let consumer_name = "ingestd-load".to_string();
-    let topology = JetStreamTopology::new(
-        env,
-        base_stream.clone(),
-        consumer_name.clone(),
-        Some(&namespace),
-    );
 
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
@@ -211,6 +206,7 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
     let assembler_state_dir = work_dir_utf8.join("assembler_state");
     tokio::fs::create_dir_all(annex_path.as_std_path()).await?;
     tokio::fs::create_dir_all(assembler_state_dir.as_std_path()).await?;
+    let material_id = register_test_material(&ctx.pool, "load-source").await?;
 
     let mut config = IngestdConfig::builder()
         .database_url(ctx.database_url().to_string())
@@ -219,7 +215,7 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
                 .url(nats.client_url().to_string())
                 .build(),
         )
-        .nats_stream_name(base_stream)
+        .nats_stream_name(env.nats_stream_name("SINEX_LOAD_EVENTS"))
         .nats_consumer_name(consumer_name)
         .nats_namespace(namespace)
         .consumer_fetch_max_messages(32)
@@ -232,6 +228,12 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
         .build();
 
     config.database_pool_size = 4;
+    let topology = JetStreamTopology::new(
+        env,
+        config.nats_stream_name.clone(),
+        config.nats_consumer_name.clone(),
+        config.nats_namespace.as_deref(),
+    );
 
     let mut service = IngestService::new(config.clone()).await?;
     let mut runner = service.clone();
@@ -251,32 +253,20 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
     )
     .await?;
 
-    // Pre-register source material for FK constraints (one material for all events in this test)
-    let material_id = Id::<SourceMaterial>::new();
-    let identifier = format!("load-source-{material_id}");
-    sqlx::query!(
-        r#"
-        INSERT INTO raw.source_material_registry
-            (id, material_kind, source_identifier, status, timing_info_type)
-        VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime')
-        ON CONFLICT (id) DO NOTHING
-        "#,
-        material_id.to_uuid(),
-        identifier,
-    )
-    .execute(&ctx.pool)
-    .await?;
-
     // Start continuous publisher
     let shutdown_flag = Arc::new(AtomicBool::new(false));
     let published_count = Arc::new(AtomicU32::new(0));
     let shutdown_flag_clone = shutdown_flag.clone();
     let published_count_clone = published_count.clone();
-    let js_clone = ctx.jetstream().await?;
-    let events_subject_prefix = topology.events_subject.trim_end_matches(".>").to_string();
+    let nats_client = ctx.nats_client();
+    let publisher_client = nats_client.clone();
+    let subject = env.nats_raw_event_subject_with_namespace(
+        config.nats_namespace.as_deref(),
+        "load-source",
+        "load.event",
+    );
 
     let publisher_handle = tokio::spawn(async move {
-        let subject = format!("{events_subject_prefix}.load.event");
         let mut idx = 0u64;
         while !shutdown_flag_clone.load(Ordering::SeqCst) {
             let event = Event::<serde_json::Value> {
@@ -286,7 +276,7 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
                 payload: json!({"seq": idx}),
                 ts_orig: Some(sinex_primitives::Timestamp::now()),
                 host: HostName::new("test-host").expect("valid host"),
-                node_run_id: Some(Uuid::now_v7()),
+                node_run_id: None,
                 payload_schema_id: None,
                 provenance: Provenance::Material {
                     id: material_id,
@@ -304,7 +294,8 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
                 node_model: None,
             };
             if let Ok(p) = serde_json::to_vec(&event) {
-                let _ = js_clone.publish(subject.clone(), p.into()).await;
+                let _ = publisher_client.publish(subject.clone(), p.into()).await;
+                let _ = publisher_client.flush().await;
             }
             published_count_clone.fetch_add(1, Ordering::SeqCst);
             idx += 1;
@@ -453,20 +444,12 @@ async fn test_concurrent_service_shutdown(ctx: TestContext) -> TestResult<()> {
 async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     let nats = ctx.nats_handle()?;
+    let nats_client = ctx.nats_client();
     let js = ctx.jetstream().await?;
     let env = ctx.env();
 
-    // nats_namespace MUST be set so MaterialReadySet is disabled.
     let namespace = format!("consistency-{}", uuid::Uuid::new_v4().simple());
-
-    let base_stream = env.nats_stream_name("SINEX_CONSISTENCY_EVENTS");
     let consumer_name = "ingestd-consistency".to_string();
-    let topology = JetStreamTopology::new(
-        env,
-        base_stream.clone(),
-        consumer_name.clone(),
-        Some(&namespace),
-    );
 
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
@@ -475,6 +458,7 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
     let assembler_state_dir = work_dir_utf8.join("assembler_state");
     tokio::fs::create_dir_all(annex_path.as_std_path()).await?;
     tokio::fs::create_dir_all(assembler_state_dir.as_std_path()).await?;
+    let material_id = register_test_material(&ctx.pool, "consistency-source").await?;
 
     let mut config = IngestdConfig::builder()
         .database_url(ctx.database_url().to_string())
@@ -483,7 +467,7 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
                 .url(nats.client_url().to_string())
                 .build(),
         )
-        .nats_stream_name(base_stream)
+        .nats_stream_name(env.nats_stream_name("SINEX_CONSISTENCY_EVENTS"))
         .nats_consumer_name(consumer_name)
         .nats_namespace(namespace)
         .consumer_fetch_max_messages(8)
@@ -496,6 +480,12 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
         .build();
 
     config.database_pool_size = 4;
+    let topology = JetStreamTopology::new(
+        env,
+        config.nats_stream_name.clone(),
+        config.nats_consumer_name.clone(),
+        config.nats_namespace.as_deref(),
+    );
 
     let mut service = IngestService::new(config.clone()).await?;
     let mut runner = service.clone();
@@ -516,11 +506,14 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
     .await?;
 
     // Publish events with structured data directly to JetStream
-    let subject_prefix = topology.events_subject.trim_end_matches(".>");
-    let subject = format!("{subject_prefix}.consistency.event");
+    let subject = env.nats_raw_event_subject_with_namespace(
+        config.nats_namespace.as_deref(),
+        "consistency-source",
+        "consistency.event",
+    );
     for idx in 0..10 {
         let payload = build_test_event_bytes(
-            &ctx.pool,
+            material_id,
             "consistency-source",
             "consistency.event",
             json!({
@@ -529,9 +522,10 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
                 "data": format!("data-{}", idx)
             }),
         )
-        .await?;
-        js.publish(subject.clone(), payload.into()).await?.await?;
+        ?;
+        nats_client.publish(subject.clone(), payload.into()).await?;
     }
+    nats_client.flush().await?;
 
     // Wait for at least one event to be persisted before shutting down
     WaitHelpers::wait_for_event_count(&ctx.pool, 1, Timeouts::SHORT).await?;

@@ -9,7 +9,6 @@
     };
     crane = {
       url = "github:ipetkov/crane";
-      inputs.nixpkgs.follows = "nixpkgs";
     };
     agenix = {
       url = "github:ryantm/agenix";
@@ -278,8 +277,44 @@
                   exit 1
                 fi
 
+                _sinex_xtask_needs_build() {
+                  local bin_path="$root_dir/.sinex/target/debug/xtask"
+                  local depfile_path="$root_dir/.sinex/target/debug/xtask.d"
+                  local extra_dep
+
+                  [ ! -x "$bin_path" ] && return 0
+                  [ ! -r "$depfile_path" ] && return 0
+
+                  for extra_dep in \
+                    "$root_dir/Cargo.toml" \
+                    "$root_dir/Cargo.lock" \
+                    "$root_dir/xtask/Cargo.toml" \
+                    "$root_dir/.cargo/config.toml"
+                  do
+                    if [ -e "$extra_dep" ] && [ "$extra_dep" -nt "$bin_path" ]; then
+                      return 0
+                    fi
+                  done
+
+                  while IFS= read -r dep_path; do
+                    [ -z "$dep_path" ] && continue
+                    if [ ! -e "$dep_path" ] || [ "$dep_path" -nt "$bin_path" ]; then
+                      return 0
+                    fi
+                  done < <(
+                    sed -e 's/^[^:]*: //' -e 's/\\$//' "$depfile_path" \
+                      | tr ' ' '\n' \
+                      | sed '/^$/d'
+                  )
+
+                  return 1
+                }
+
                 cd "$root_dir"
-                cargo build --quiet -p xtask
+                if _sinex_xtask_needs_build; then
+                  echo "ℹ  Rebuilding checkout-local xtask..." >&2
+                  cargo build --quiet -p xtask
+                fi
                 exec "$root_dir/.sinex/target/debug/xtask" "$@"
               '';
             in
@@ -368,10 +403,6 @@
                 export SINEX_GATEWAY_URL="https://127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
                 export SINEX_RPC_URL="$SINEX_GATEWAY_URL"
 
-                _sinex_interactive_shell=0
-                case "$-" in
-                  *i*) _sinex_interactive_shell=1 ;;
-                esac
                 # Dev TLS certs are generated lazily by preflight when needed.
                 # Set TLS env vars if dev certs exist — enables mTLS automatically.
                 if [ -f "$PWD/.sinex/tls/server.pem" ]; then
@@ -380,7 +411,7 @@
                   export SINEX_GATEWAY_TLS_CLIENT_CA="$PWD/.sinex/tls/ca.pem"
                 fi
                 xtask --format silent docs sync >/dev/null 2>&1
-                if [ "$_sinex_interactive_shell" -eq 1 ] && [ -t 1 ]; then
+                if [ -t 1 ]; then
                   # The plain `xtask` command is provided by the devShell and delegates
                   # to `cargo build -p xtask` plus the checkout-local binary.
                   # Set SINEX_NO_AUTO_INFRA=1 to skip (useful for remote DB or low-resource machines).

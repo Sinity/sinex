@@ -1,6 +1,6 @@
 # Infrastructure & Common Patterns
 
-The `sinex-core` data layer is built on a set of shared traits and utilities that ensure consistent behavior, error handling, and transaction management across all repositories.
+The `sinex-db` data layer is built on a set of shared traits and utilities that ensure consistent behavior, error handling, and transaction management across all repositories.
 
 ## Repository Traits
 

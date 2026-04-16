@@ -118,9 +118,10 @@ async fn test_provenance_trace_scenario(ctx: TestContext) -> ::xtask::sandbox::T
 // D11.4 — ingestd_runtime_health scenario
 // ============================================================================
 
-/// D11.4: `xtask status --summary --json` reports ingestd as down when the
-/// ingestd process is not running.  The summary line includes "ingestd:down"
-/// and lag / batch fields contain "-" (unavailable markers).
+/// D11.4: `xtask status --summary --json` reports ingestd as non-healthy when
+/// the checkout-local ingestd process is not running. The summary line should
+/// surface either a missing heartbeat (`ingestd:down`) or a stale heartbeat
+/// (`ingestd:stale`), and lag / batch fields should remain unavailable.
 #[sinex_test]
 async fn test_ingestd_runtime_health_when_down() -> ::xtask::sandbox::TestResult<()> {
     let output = Command::new("xtask")
@@ -140,21 +141,23 @@ async fn test_ingestd_runtime_health_when_down() -> ::xtask::sandbox::TestResult
         .as_str()
         .ok_or_else(|| color_eyre::eyre::eyre!("data.summary missing or not a string"))?;
 
-    // ingestd is not running in the test environment — summary must say so
+    // ingestd is not running in the test environment. Depending on whether the
+    // checkout-local runtime database still contains an old heartbeat row,
+    // status may surface the service as down or stale.
     assert!(
-        summary.contains("ingestd:down"),
-        "summary should contain 'ingestd:down' when ingestd is not running, got: {summary}"
+        summary.contains("ingestd:down") || summary.contains("ingestd:stale"),
+        "summary should contain 'ingestd:down' or 'ingestd:stale' when ingestd is not running, got: {summary}"
     );
 
-    // Lag and batch should be absent ("-") when ingestd is not running
+    // Lag and batch should be absent ("-") when ingestd is not healthy
     assert!(
         summary.contains("lag:-"),
-        "summary should contain 'lag:-' when ingestd is down, got: {summary}"
+        "summary should contain 'lag:-' when ingestd is not healthy, got: {summary}"
     );
 
     assert!(
         summary.contains("batch:-"),
-        "summary should contain 'batch:-' when ingestd is down, got: {summary}"
+        "summary should contain 'batch:-' when ingestd is not healthy, got: {summary}"
     );
 
     Ok(())
