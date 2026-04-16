@@ -20,6 +20,7 @@ use tracing::{error, info, warn};
 use crate::{IngestdResult, SinexError};
 
 const BATCH_PROCESSING_SEMAPHORE_PERMITS: usize = 4; // Allow up to 4 concurrent batches
+const MATERIAL_CONSUMER_BATCH_EXPIRES: std::time::Duration = std::time::Duration::from_secs(1);
 
 async fn ack_with_warning(
     message: &jetstream::Message,
@@ -155,6 +156,7 @@ pub(super) fn spawn_begin_consumer(
             let mut messages = consumer
                 .batch()
                 .max_messages(50)
+                .expires(MATERIAL_CONSUMER_BATCH_EXPIRES)
                 .messages()
                 .await
                 .map_err(|e| {
@@ -291,6 +293,7 @@ pub(super) fn spawn_slices_consumer(
             let mut messages = consumer
                 .batch()
                 .max_messages(200)
+                .expires(MATERIAL_CONSUMER_BATCH_EXPIRES)
                 .messages()
                 .await
                 .map_err(|e| {
@@ -457,6 +460,7 @@ pub(super) fn spawn_end_consumer(
             let mut messages = consumer
                 .batch()
                 .max_messages(50)
+                .expires(MATERIAL_CONSUMER_BATCH_EXPIRES)
                 .messages()
                 .await
                 .map_err(|e| SinexError::network("Failed to fetch end messages").with_source(e))?;

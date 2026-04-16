@@ -67,12 +67,12 @@ impl AutomatonNode for GitActivityDetector {
 
 **Step 3: Hot reload + real data**
 ```bash
-$ sx dev git-activity-detector --tether prod
+$ xtask dev git-activity-detector --tether prod
 
-[sx] Generated node from spec...
-[sx] Building...
-[sx] Running with production terminal events...
-[sx] Event: git.activity.detected { subcommand: "status", repo: "/home/user/sinex" }
+[xtask] Generated node from spec...
+[xtask] Building...
+[xtask] Running with production terminal events...
+[xtask] Event: git.activity.detected { subcommand: "status", repo: "/home/user/sinex" }
 ```
 
 **Step 4: Iterate until correct**
@@ -115,9 +115,9 @@ DEVELOPER ──> Edit Rust ──> [auto-rebuilds] ──> [state transfers] �
 
 ### The Three Pillars
 
-1. **Invisible Compilation** (`sx dev`): File watcher triggers rebuild, state serializes automatically, new binary resumes from checkpoint.
+1. **Invisible Compilation** (`xtask dev`): File watcher triggers rebuild, state serializes automatically, new binary resumes from checkpoint.
 
-2. **The Tether** (`sx dev --tether prod`): Connect to production event streams for testing with real data, writes go to local shadow DB.
+2. **The Tether** (`xtask dev --tether prod`): Connect to production event streams for testing with real data, writes go to local shadow DB.
 
 3. **State Continuity**: State survives code changes, crashes, restarts, and version upgrades through automatic checkpoint management.
 
@@ -129,7 +129,7 @@ DEVELOPER ──> Edit Rust ──> [auto-rebuilds] ──> [state transfers] �
 | **Erlang/OTP** | Hot code reload. Running system accepts new modules without restart. |
 | **Jupyter** | Interactive exploration with persistent state across cell executions. |
 
-All features below enable prompt-to-node development. AutomatonNode is the LLM-friendly API. The sx tool orchestrates the integrated experience. The Tether provides real data validation. Wasm plugins offer instant reload for non-Rust logic.
+All features below enable prompt-to-node development. AutomatonNode is the LLM-friendly API. xtask orchestrates the integrated experience. The Tether provides real data validation. Wasm plugins offer instant reload for non-Rust logic.
 
 ---
 
@@ -361,16 +361,16 @@ impl Aggregator for HealthAggregatorLogic {
 
 ---
 
-## 3. `sx` Integrated Developer Tool
+## 3. `xtask` Integrated Developer Tool
 
 **Goal:** Single binary that makes the compile/deploy cycle invisible.
 
-**Note:** This is distinct from `sinexctl` (production RPC client). `sx` is the integrated development orchestrator.
+**Note:** This is distinct from `sinexctl` (production RPC client). `xtask` is the integrated development orchestrator.
 
 ### Command Structure
 
 ```bash
-sx
+xtask
   # Development (core integrated experience)
   dev [node]               # Integrated dev environment
   dev --tether prod        # Live debugging against production
@@ -393,26 +393,26 @@ sx
 ### Integrated Development Environment
 
 ```bash
-$ sx dev analytics-automaton
+$ xtask dev analytics-automaton
 
 # Auto-detection:
-[sx] Detected: needs DB -> starting pg_tmp
-[sx] Detected: needs NATS -> starting ephemeral nats-server
-[sx] Detected: depends on terminal-node -> starting mock terminal
-[sx] Your automaton is running: http://localhost:9999
-[sx] NATS: nats://localhost:4222
-[sx] DB: postgresql:///sinex_dev?host=/tmp/pg_tmp_...
-[sx] Mock terminal emitting events every 5s
-[sx] Watching src/ for changes...
+[xtask] Detected: needs DB -> starting pg_tmp
+[xtask] Detected: needs NATS -> starting ephemeral nats-server
+[xtask] Detected: depends on terminal-node -> starting mock terminal
+[xtask] Your automaton is running: http://localhost:9999
+[xtask] NATS: nats://localhost:4222
+[xtask] DB: postgresql:///sinex_dev?host=/tmp/pg_tmp_...
+[xtask] Mock terminal emitting events every 5s
+[xtask] Watching src/ for changes...
 
 # Developer edits src/main.rs
 
-[sx] File changed: src/main.rs
-[sx] V1 graceful shutdown, serializing state...
-[sx] State saved: 47 events processed, checkpoint at uuid_xyz
-[sx] Building V2...
-[sx] V2 started, restored from checkpoint
-[sx] Continuing from event 48...
+[xtask] File changed: src/main.rs
+[xtask] V1 graceful shutdown, serializing state...
+[xtask] State saved: 47 events processed, checkpoint at uuid_xyz
+[xtask] Building V2...
+[xtask] V2 started, restored from checkpoint
+[xtask] Continuing from event 48...
 ```
 
 **What happens invisibly:**
@@ -420,7 +420,7 @@ $ sx dev analytics-automaton
 2. Current process receives graceful shutdown signal
 3. Process serializes CheckpointState + custom state to temp file
 4. `cargo build` runs in background
-5. New binary starts with `--restore-state /tmp/sx-state-xxx`
+5. New binary starts with `--restore-state /tmp/xtask-state-xxx`
 6. Processing continues from exact position
 
 ---
@@ -434,21 +434,21 @@ This is a major feature that enables debugging with actual production data patte
 ### How It Works
 
 ```bash
-$ sx dev --tether prod terminal-canonicalizer
+$ xtask dev --tether prod terminal-canonicalizer
 
 # Establishes mTLS tunnel to production
-[sx] Connecting to prod gateway: https://prod.example.com:9999
-[sx] Authenticating via mTLS...
-[sx] Connected ✓
+[xtask] Connecting to prod gateway: https://prod.example.com:9999
+[xtask] Authenticating via mTLS...
+[xtask] Connected ✓
 
 # Shadow consumer (fan-out, not steal)
-[sx] Creating shadow consumer: dev-sinity-20250117
-[sx] Subscribing to: sinex.events.terminal.* (read-only fan-out)
-[sx] Local writes → shadow DB only
+[xtask] Creating shadow consumer: dev-sinity-20250117
+[xtask] Subscribing to: sinex.events.terminal.* (read-only fan-out)
+[xtask] Local writes → shadow DB only
 
-[sx] Receiving production events...
-[sx] Event #1: terminal.command.executed (git status)
-[sx] Event #2: terminal.command.executed (cargo build)
+[xtask] Receiving production events...
+[xtask] Event #1: terminal.command.executed (git status)
+[xtask] Event #2: terminal.command.executed (cargo build)
 ...
 ```
 
@@ -457,7 +457,7 @@ $ sx dev --tether prod terminal-canonicalizer
 ```
 Production                          Development Machine
 ┌─────────────┐                    ┌─────────────────────────┐
-│ NATS Cluster│                    │  sx dev --tether prod   │
+│ NATS Cluster│                    │  xtask dev --tether prod│
 │             │                    │                         │
 │  terminal.* ├────────────────────┤  Shadow Consumer        │
 │  events     │   mTLS tunnel      │  (fan-out, not steal)   │
@@ -554,13 +554,13 @@ impl GatewayServer {
 ### Hot Reload
 
 ```bash
-$ sx plugin reload text-extractor
+$ xtask plugin reload text-extractor
 
-[sx] Stopping old plugin instance...
-[sx] Loading: ./plugins/text-extractor.wasm
-[sx] Validating exports: process()
-[sx] Starting new instance...
-[sx] Plugin ready: text-extractor v2.1.0
+[xtask] Stopping old plugin instance...
+[xtask] Loading: ./plugins/text-extractor.wasm
+[xtask] Validating exports: process()
+[xtask] Starting new instance...
+[xtask] Plugin ready: text-extractor v2.1.0
 ```
 
 ---
@@ -607,4 +607,4 @@ Update docs immediately when code changes. Prevents drift.
 | Process supervisor | Manages child process lifecycle, state handoff |
 | Shadow consumer API | Gateway endpoint to create read-only fan-out consumer |
 | Shadow DB routing | Redirect writes to local DB when tethered |
-| `sx` CLI scaffolding | Unified dev tool binary |
+| `xtask` CLI scaffolding | Unified dev tool binary |

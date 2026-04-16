@@ -1,6 +1,6 @@
 # Event Persistence Architecture
 
-The event persistence layer in `sinex-core` manages the storage of immutable system events in PostgreSQL. It is optimized for high-throughput ingestion while maintaining referential integrity.
+The event persistence layer in `sinex-db` manages the storage of immutable system events in PostgreSQL. It is optimized for high-throughput ingestion while maintaining referential integrity.
 
 ## Insertion Paths
 

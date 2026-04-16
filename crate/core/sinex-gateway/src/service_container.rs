@@ -296,7 +296,7 @@ impl ServiceContainer {
         let db_start = std::time::Instant::now();
         let (db_ok, db_latency_ms, db_detail) = match tokio::time::timeout(
             Duration::from_secs(5),
-            sqlx::query("SELECT 1").execute(self.pool()),
+            sqlx::query_scalar!("SELECT 1").fetch_one(self.pool()),
         )
         .await
         {

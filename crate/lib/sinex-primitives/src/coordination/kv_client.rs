@@ -561,9 +561,14 @@ mod tests {
     #[sinex_test(serial = true)]
     async fn coordination_timing_from_env_accepts_positive_overrides()
     -> ::xtask::sandbox::TestResult<()> {
-        let _heartbeat = EnvGuard::set_single("SINEX_COORDINATION_HEARTBEAT", "7");
-        let _timeout = EnvGuard::set_single("SINEX_COORDINATION_TIMEOUT", "31");
-        let _handoff = EnvGuard::set_single("SINEX_COORDINATION_HANDOFF", "11");
+        let mut env = EnvGuard::with_keys(&[
+            "SINEX_COORDINATION_HEARTBEAT",
+            "SINEX_COORDINATION_TIMEOUT",
+            "SINEX_COORDINATION_HANDOFF",
+        ]);
+        env.set("SINEX_COORDINATION_HEARTBEAT", "7");
+        env.set("SINEX_COORDINATION_TIMEOUT", "31");
+        env.set("SINEX_COORDINATION_HANDOFF", "11");
 
         let timing = CoordinationTiming::from_env();
 
@@ -576,9 +581,14 @@ mod tests {
     #[sinex_test(serial = true)]
     async fn coordination_timing_from_env_ignores_invalid_overrides()
     -> ::xtask::sandbox::TestResult<()> {
-        let _heartbeat = EnvGuard::set_single("SINEX_COORDINATION_HEARTBEAT", "oops");
-        let _timeout = EnvGuard::set_single("SINEX_COORDINATION_TIMEOUT", "0");
-        let _handoff = EnvGuard::set_single("SINEX_COORDINATION_HANDOFF", "-5");
+        let mut env = EnvGuard::with_keys(&[
+            "SINEX_COORDINATION_HEARTBEAT",
+            "SINEX_COORDINATION_TIMEOUT",
+            "SINEX_COORDINATION_HANDOFF",
+        ]);
+        env.set("SINEX_COORDINATION_HEARTBEAT", "oops");
+        env.set("SINEX_COORDINATION_TIMEOUT", "0");
+        env.set("SINEX_COORDINATION_HANDOFF", "-5");
 
         let timing = CoordinationTiming::from_env();
 

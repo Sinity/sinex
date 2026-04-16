@@ -45,43 +45,84 @@ pub(super) async fn clean_database(
         // (no migrations run between tests). Only re-check after quarantine/recreation.
         let skip_schema = slot.schema_verified.load(Ordering::Relaxed);
         if !skip_schema {
-            if let Some(reason) = schema_mismatch_reason(&working_pool).await? {
-                if schema_recreated {
-                    let err = eyre!(format!(
-                        "Database {db_name} schema mismatch after recreation: {reason}"
-                    ));
+            match schema_mismatch_reason(&working_pool).await {
+                Ok(Some(reason)) => {
+                    if schema_recreated {
+                        let err = eyre!(format!(
+                            "Database {db_name} schema mismatch after recreation: {reason}"
+                        ));
+                        slot.record_clean_result(Err(err.to_string()), residuals.clone());
+                        slot.quarantined.store(true, Ordering::SeqCst);
+                        slot.schema_verified.store(false, Ordering::SeqCst);
+                        return Err(err);
+                    }
+
+                    slog!(
+                        Level::Info,
+                        "schema_mismatch",
+                        slot = db_name,
+                        reason = reason
+                    );
+                    recreate_pool_database(db_name, db_url)
+                        .await
+                        .map_err(|recreate_err| {
+                            POOL_METRICS.record_cleanup_failure();
+                            eyre!(format!(
+                                "Schema mismatch recreate failed for {db_name}: {recreate_err}"
+                            ))
+                        })?;
+                    let fresh_pool =
+                        super::slot_pool_options(SLOT_MAX_CONNECTIONS, Duration::from_secs(5))
+                            .connect(db_url)
+                            .await?;
+                    working_pool = fresh_pool;
+                    schema_recreated = true;
+                    recreated = true;
+                    slot.schema_verified.store(false, Ordering::SeqCst);
+                    continue;
+                }
+                Ok(None) => {
+                    // Schema check passed — cache result for future cleanups on this slot
+                    slot.schema_verified.store(true, Ordering::Relaxed);
+                }
+                Err(error) => {
+                    let retryable = is_retryable_connection_report(&error)
+                        || is_timescaledb_missing_library_report(&error);
+                    if retryable && attempt < 3 {
+                        slog!(
+                            Level::Warn,
+                            "schema_check_retry",
+                            slot = db_name,
+                            error = error,
+                            attempt = attempt
+                        );
+                        recreate_pool_database(db_name, db_url)
+                            .await
+                            .map_err(|recreate_err| {
+                                POOL_METRICS.record_cleanup_failure();
+                                eyre!(format!(
+                                    "Schema check failed and recreate failed for {db_name}: {recreate_err}"
+                                ))
+                            })?;
+                        let fresh_pool =
+                            super::slot_pool_options(SLOT_MAX_CONNECTIONS, Duration::from_secs(5))
+                                .connect(db_url)
+                                .await?;
+                        working_pool = fresh_pool;
+                        schema_recreated = true;
+                        recreated = true;
+                        slot.schema_verified.store(false, Ordering::SeqCst);
+                        continue;
+                    }
+
+                    POOL_METRICS.record_cleanup_failure();
+                    let err = eyre!(format!("Database {db_name} schema check failed: {error}"));
                     slot.record_clean_result(Err(err.to_string()), residuals.clone());
                     slot.quarantined.store(true, Ordering::SeqCst);
                     slot.schema_verified.store(false, Ordering::SeqCst);
                     return Err(err);
                 }
-
-                slog!(
-                    Level::Info,
-                    "schema_mismatch",
-                    slot = db_name,
-                    reason = reason
-                );
-                recreate_pool_database(db_name, db_url)
-                    .await
-                    .map_err(|recreate_err| {
-                        POOL_METRICS.record_cleanup_failure();
-                        eyre!(format!(
-                            "Schema mismatch recreate failed for {db_name}: {recreate_err}"
-                        ))
-                    })?;
-                let fresh_pool =
-                    super::slot_pool_options(SLOT_MAX_CONNECTIONS, Duration::from_secs(5))
-                        .connect(db_url)
-                        .await?;
-                working_pool = fresh_pool;
-                schema_recreated = true;
-                recreated = true;
-                slot.schema_verified.store(false, Ordering::SeqCst);
-                continue;
             }
-            // Schema check passed — cache result for future cleanups on this slot
-            slot.schema_verified.store(true, Ordering::Relaxed);
         }
 
         phase_times.push(("schema_check", t.elapsed()));

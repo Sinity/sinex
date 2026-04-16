@@ -110,11 +110,6 @@ The system automatically emits `health.status` events when status changes:
 - **Failed** → **Degraded**: Error rate < 20%
 - **Degraded** → **Healthy**: Error rate < 5%
 
-## Future Enhancement: Auto-Integration
-
-Phase 3 will add automatic integration in `sinex-node-sdk` where health monitoring setup is
-centralized instead of being recreated inside each adapter.
-
 ## See Also
 
 - `crate/lib/sinex-node-sdk/src/health_reporter.rs` - Implementation

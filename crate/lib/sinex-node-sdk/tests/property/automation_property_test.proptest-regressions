@@ -6,4 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc 5f5a0136f6789a9ba450157fe6a5335e12d9563a707fb9db8947f4c9f878d285 # shrinks to malformed_payloads = [Null]
 cc 04a961b8a959bc3810ca76a8048f550c956bee1620a46b3ecb8fb853a51dffb5 # shrinks to event_count = 1, batch_size = 1
-cc 9b8ce772fd291aa95518661d0a742cbf3b4c3eff5ab0c76673e668718607e891 # shrinks to events = [("journald", "satellite.heartbeat", Object {"service_name": String("a")})]
+cc 9b8ce772fd291aa95518661d0a742cbf3b4c3eff5ab0c76673e668718607e891 # shrinks to events = [("journald", "node.heartbeat", Object {"service_name": String("a")})]

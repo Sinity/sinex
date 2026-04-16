@@ -1,14 +1,17 @@
 # Sinex Node SDK
 
-The Sinex Node SDK is the unified framework for building **Ingestors** (sensors that capture external data) and **Derived Nodes** (nodes that synthesize new insights from existing events). It implements a **Unified Node Architecture**, where all nodes are stateful stream nodes.
+The Sinex Node SDK is the framework for building Sinex **ingestors** and
+**derived nodes**. It provides the shared runtime pieces around lifecycle,
+checkpointing, confirmation handling, replay participation, coordination, and
+health/self-observation.
 
 ## 🧭 Navigation
 
 ### Core Architecture
-- [**Overview**](overview.md) – The Unified Node Architecture, distributed service architecture, and the three-phase startup pattern.
-- [**Stream Processing Runtime**](stream_runtime.md) – Deep dive into the derived-node traits (`TransducerNode`, `WindowedNode`, `ScopeReconcilerNode`) and `IngestorNode` abstractions (Gen2 patterns).
+- [**Overview**](overview.md) – Runtime shape, shared lifecycle phases, and how ingestors and derived nodes fit together.
+- [**Stream Processing Runtime**](stream_runtime.md) – Deep dive into the derived-node traits (`TransducerNode`, `WindowedNode`, `ScopeReconcilerNode`), `IngestorNode`, and their adapters.
 - [**Trait Selection**](trait-selection.md) – Decision flowchart for choosing the right node pattern.
-- [**Node Patterns**](patterns.md) – Distinguishing between "Edge" (Stream Nodes) and "Core" (Derived Nodes) deployment models.
+- [**Node Patterns**](patterns.md) – Higher-level runtime and deployment patterns.
 - [**Ingestion & Provenance**](provenance.md) – Rules for sensor/ingestor separation and Stage-as-You-Go patterns.
 
 ### Implementation Guides
@@ -28,7 +31,7 @@ The Sinex Node SDK is the unified framework for building **Ingestors** (sensors 
 
 - **Initialization**: `NodeInitContext::into_runtime()` yields a `NodeRuntimeState` with ergonomic accessors for acquisition, lifecycle, and coordination.
 - **Replay**: Replay is gateway-orchestrated. Nodes participate via `scan_historical()` / `NodeScanCommand` but don't own replay lifecycle.
-- **Testing**: Use `sinex_test_utils::TestRuntimeBuilder` to provision ephemeral NATS and `PostgreSQL` environments.
+- **Testing**: Use `xtask::sandbox::TestRuntimeBuilder` and related sandbox helpers to provision ephemeral NATS and `PostgreSQL` environments.
 
 ## 📐 Design Principles
 

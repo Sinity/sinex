@@ -14,18 +14,12 @@ use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     let nats = ctx.nats_handle()?;
+    let nats_client = ctx.nats_client();
     let js = ctx.jetstream().await?;
     let env = ctx.env();
 
     let namespace = ctx.pipeline_namespace().prefix().to_string();
-    let base_stream = env.nats_stream_name_with_namespace(Some(&namespace), "SINEX_RAW_EVENTS");
     let consumer_name = format!("ingestd-backlog-{namespace}");
-    let topology = JetStreamTopology::new(
-        env,
-        base_stream.clone(),
-        consumer_name.clone(),
-        Some(&namespace),
-    );
 
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
@@ -42,7 +36,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
                 .url(nats.client_url().to_string())
                 .build(),
         )
-        .nats_stream_name(base_stream)
+        .nats_stream_name("SINEX_RAW_EVENTS")
         .nats_consumer_name(consumer_name)
         .nats_namespace(namespace)
         .consumer_fetch_max_messages(32)
@@ -53,6 +47,12 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
         .annex_repo_path(annex_path)
         .assembler_state_dir(assembler_state_dir)
         .build();
+    let topology = JetStreamTopology::new(
+        env,
+        config.nats_stream_name.clone(),
+        config.nats_consumer_name.clone(),
+        config.nats_namespace.as_deref(),
+    );
 
     // Create the JetStream stream directly (instead of starting+stopping ingestd just for this)
     let stream_config = async_nats::jetstream::stream::Config {
@@ -63,8 +63,11 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
     js.get_or_create_stream(stream_config).await?;
 
     // Publish events to JetStream while ingestd is offline (the "backlog")
-    let subject_prefix = topology.events_subject.trim_end_matches(".>");
-    let subject = format!("{subject_prefix}.backlog.event");
+    let subject = env.nats_raw_event_subject_with_namespace(
+        config.nats_namespace.as_deref(),
+        "backlog-source",
+        "backlog.event",
+    );
 
     // Pre-register a source material for FK constraints
     let material_id = Id::<SourceMaterial>::new();
@@ -72,8 +75,8 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
     sqlx::query!(
         r#"
         INSERT INTO raw.source_material_registry
-            (id, material_kind, source_identifier, status, timing_info_type)
-        VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime')
+            (id, material_kind, source_identifier, status, timing_info_type, staged_at)
+        VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime', NOW())
         ON CONFLICT (id) DO NOTHING
         "#,
         material_id.to_uuid(),
@@ -90,7 +93,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
             payload: json!({"seq": idx}),
             ts_orig: Some(sinex_primitives::Timestamp::now()),
             host: HostName::new("test-host")?,
-            node_run_id: Some(Uuid::now_v7()),
+            node_run_id: None,
             payload_schema_id: None,
             provenance: Provenance::Material {
                 id: material_id,
@@ -108,8 +111,9 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
             node_model: None,
         };
         let payload = serde_json::to_vec(&event)?;
-        js.publish(subject.clone(), payload.into()).await?.await?;
+        nats_client.publish(subject.clone(), payload.into()).await?;
     }
+    nats_client.flush().await?;
 
     let mut service = IngestService::new(config).await?;
     let mut runner = service.clone();

@@ -37,6 +37,7 @@ async fn wait_for_port(port: u16, timeout: Duration) -> color_eyre::Result<()> {
 /// server, and dropping the temp files removes the TLS certificates.
 struct TestGateway {
     port: u16,
+    _env: xtask::sandbox::EnvGuard,
     _shutdown_tx: watch::Sender<bool>,
     handle: tokio::task::JoinHandle<()>,
     _cert_file: NamedTempFile,
@@ -53,34 +54,36 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
     tokio::fs::write(cert_file.path(), cert.cert.pem()).await?;
     tokio::fs::write(key_file.path(), cert.key_pair.serialize_pem()).await?;
 
-    unsafe {
-        std::env::set_var(
-            "SINEX_GATEWAY_TLS_CERT",
-            cert_file.path().to_string_lossy().to_string(),
-        );
-        std::env::set_var(
-            "SINEX_GATEWAY_TLS_KEY",
-            key_file.path().to_string_lossy().to_string(),
-        );
-        std::env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA");
-        std::env::set_var("SINEX_RPC_TOKEN", "test-token:admin");
-        std::env::set_var(
-            "SINEX_NATS_URL",
-            ctx.nats_handle()?.client_url().to_string(),
-        );
-    }
+    let mut env = xtask::sandbox::EnvGuard::with_keys(&[
+        "SINEX_GATEWAY_TLS_CERT",
+        "SINEX_GATEWAY_TLS_KEY",
+        "SINEX_GATEWAY_TLS_CLIENT_CA",
+        "SINEX_RPC_TOKEN",
+        "SINEX_NATS_URL",
+    ]);
+    env.set(
+        "SINEX_GATEWAY_TLS_CERT",
+        cert_file.path().to_string_lossy().to_string(),
+    );
+    env.set(
+        "SINEX_GATEWAY_TLS_KEY",
+        key_file.path().to_string_lossy().to_string(),
+    );
+    env.clear("SINEX_GATEWAY_TLS_CLIENT_CA");
+    env.set("SINEX_RPC_TOKEN", "test-token:admin");
+    env.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url().to_string());
 
     let port = reserve_port()?;
-    let tcp_listen = format!("127.0.0.1:{port}");
-    let config = sinex_gateway::config::GatewayConfig {
-        database_url: ctx.database_url().to_string(),
-        tcp_listen: tcp_listen.clone(),
-        ..Default::default()
-    };
+    let mut config = sinex_gateway::config::GatewayConfig::load_with_database_url(
+        ctx.database_url().to_string(),
+    )?;
+    config.tcp_listen = format!("127.0.0.1:{port}");
+    config.rpc_rate_limit_enabled = false;
     let services = ServiceContainer::new(&config).await?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let mut server_handle = tokio::spawn({
         let services = services.clone();
+        let config = config.clone();
         async move {
             if let Err(e) = rpc_server::run(&config, services, shutdown_rx).await {
                 eprintln!("Gateway startup failed: {e:#}");
@@ -110,6 +113,7 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
 
     Ok(TestGateway {
         port,
+        _env: env,
         _shutdown_tx: shutdown_tx,
         handle: server_handle,
         _cert_file: cert_file,

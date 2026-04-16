@@ -1622,6 +1622,15 @@ impl HistoryDb {
         Ok(())
     }
 
+    /// Update an invocation's semantic workload arguments.
+    pub fn update_invocation_args(&self, id: i64, args_json: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE invocations SET args_json = ?1 WHERE id = ?2",
+            params![args_json, id],
+        )?;
+        Ok(())
+    }
+
     /// Prune old invocations older than the given number of days.
     pub fn prune(&self, older_than_days: u32) -> Result<usize> {
         // If 0 days, don't prune anything (nothing is "older than right now")
