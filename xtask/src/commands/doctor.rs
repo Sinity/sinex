@@ -3280,7 +3280,7 @@ mod tests {
     -> ::xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
         env.clear("DATABASE_URL");
-        env.clear("SINEX_DEPLOYMENT_READINESS_CONFIG");
+        env.set("SINEX_DEPLOYMENT_READINESS_CONFIG", "");
         let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "doctor");
 
         let report = execute_runtime_check(&ctx).await?;

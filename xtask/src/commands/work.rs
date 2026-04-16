@@ -2,13 +2,14 @@
 //!
 //! Uses the workflow dependency graph in `coordinator::WorkflowGraph` to determine
 //! which steps must run before the target, then executes them in order. Steps that are
-//! already "fresh" (coordinator reports no changes since last successful run) are skipped.
+//! already "fresh" (coordinator reports no changes since the last matching canonical
+//! workspace run) are skipped.
 //!
 //! # Examples
 //!
 //! ```bash
-//! xtask work test   # runs: check → test  (skips check if already fresh)
-//! xtask work check  # runs: check
+//! xtask work test   # runs: canonical check → canonical test
+//! xtask work check  # runs: canonical check
 //! ```
 
 use clap::Args;
@@ -25,7 +26,7 @@ pub struct WorkCommand {
     /// Target operation to reach (check, test, build).
     ///
     /// Prerequisites are run first based on the workflow dependency graph.
-    /// Example: `xtask work test` runs `check` then `test`.
+    /// Example: `xtask work test` runs canonical `check` then canonical `test`.
     target: String,
 }
 
@@ -60,9 +61,9 @@ impl XtaskCommand for WorkCommand {
             }
 
             let step_result = match step.as_str() {
-                "check" => CheckCommand::default().execute(ctx).await?,
-                "test" => TestCommand::default().execute(ctx).await?,
-                "build" => BuildCommand::default().execute(ctx).await?,
+                "check" => canonical_check_command().execute(ctx).await?,
+                "test" => canonical_test_command().execute(ctx).await?,
+                "build" => canonical_build_command().execute(ctx).await?,
                 other => {
                     if ctx.is_human() {
                         eprintln!("  ⚠ unknown workflow step: {other}");
@@ -100,8 +101,30 @@ impl XtaskCommand for WorkCommand {
     }
 }
 
+fn canonical_check_command() -> CheckCommand {
+    CheckCommand {
+        all: true,
+        ..Default::default()
+    }
+}
+
+fn canonical_test_command() -> TestCommand {
+    TestCommand {
+        all: true,
+        ..Default::default()
+    }
+}
+
+fn canonical_build_command() -> BuildCommand {
+    BuildCommand {
+        all: true,
+        ..Default::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::{canonical_build_command, canonical_check_command, canonical_test_command};
     use crate::coordinator::WorkflowGraph;
 
     use crate::sandbox::sinex_test;
@@ -125,6 +148,24 @@ mod tests {
         // Unknown targets have no prerequisites but still appear in the sequence
         let seq = WorkflowGraph::sequence_to("nonexistent-xyz");
         assert!(seq.contains(&"nonexistent-xyz".to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_canonical_check_command_targets_workspace() -> TestResult<()> {
+        assert!(canonical_check_command().all);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_canonical_test_command_targets_workspace() -> TestResult<()> {
+        assert!(canonical_test_command().all);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_canonical_build_command_targets_workspace() -> TestResult<()> {
+        assert!(canonical_build_command().all);
         Ok(())
     }
 }

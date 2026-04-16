@@ -1,12 +1,14 @@
 //! Integration tests for deps commands
 
-use std::process::Command;
+mod support;
+
+use support::xtask_command;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 async fn test_deps_list_non_tty() -> ::xtask::sandbox::TestResult<()> {
     // Tests run in non-TTY → JSON is the natural output. Verify JSON structure.
-    let output = Command::new("xtask").arg("deps").arg("list").output()?;
+    let output = xtask_command()?.arg("deps").arg("list").output()?;
 
     assert!(
         output.status.success(),
@@ -31,7 +33,7 @@ async fn test_deps_list_non_tty() -> ::xtask::sandbox::TestResult<()> {
 
 #[sinex_test]
 async fn test_deps_list_json() -> ::xtask::sandbox::TestResult<()> {
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .arg("deps")
         .arg("list")
         .arg("--json")
@@ -58,7 +60,7 @@ async fn test_deps_list_json() -> ::xtask::sandbox::TestResult<()> {
 
 #[sinex_test]
 async fn test_deps_tree_no_package() -> ::xtask::sandbox::TestResult<()> {
-    let output = Command::new("xtask").arg("deps").arg("tree").output()?;
+    let output = xtask_command()?.arg("deps").arg("tree").output()?;
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -71,13 +73,16 @@ async fn test_deps_tree_no_package() -> ::xtask::sandbox::TestResult<()> {
         tree.contains("sinex-workspace"),
         "workspace tree should contain the synthetic workspace root"
     );
-    assert!(tree.contains("xtask"), "workspace tree should contain xtask");
+    assert!(
+        tree.contains("xtask"),
+        "workspace tree should contain xtask"
+    );
     Ok(())
 }
 
 #[sinex_test]
 async fn test_deps_tree_with_valid_package() -> ::xtask::sandbox::TestResult<()> {
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .arg("deps")
         .arg("tree")
         .arg("--package")
@@ -100,7 +105,7 @@ async fn test_deps_tree_with_valid_package() -> ::xtask::sandbox::TestResult<()>
 
 #[sinex_test]
 async fn test_deps_tree_with_invalid_package() -> ::xtask::sandbox::TestResult<()> {
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .arg("deps")
         .arg("tree")
         .arg("--package")
@@ -122,10 +127,7 @@ async fn test_deps_tree_with_invalid_package() -> ::xtask::sandbox::TestResult<(
 
 #[sinex_test]
 async fn test_deps_duplicates_default() -> ::xtask::sandbox::TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("duplicates")
-        .output()?;
+    let output = xtask_command()?.arg("deps").arg("duplicates").output()?;
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -135,7 +137,7 @@ async fn test_deps_duplicates_default() -> ::xtask::sandbox::TestResult<()> {
 
 #[sinex_test]
 async fn test_deps_duplicates_custom_threshold() -> ::xtask::sandbox::TestResult<()> {
-    let output = Command::new("xtask")
+    let output = xtask_command()?
         .arg("deps")
         .arg("duplicates")
         .arg("--threshold")

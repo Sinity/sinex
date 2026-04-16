@@ -57,6 +57,7 @@ impl XtaskCommand for FuzzCommand {
             timeout: Some(std::time::Duration::from_mins(10)), // 10 minutes default
             modifies_state: matches!(self.subcommand, FuzzSubcommand::Init { .. }),
             track_in_history: true,
+            history_access: crate::command::HistoryAccessMode::ReadWrite,
         }
     }
 }

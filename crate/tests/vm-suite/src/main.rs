@@ -39,9 +39,9 @@ async fn main() -> Result<()> {
         "smoke" => categories::smoke::run(&mut runner, &args.database_url).await?,
         "integration" | "all" => {
             categories::smoke::run(&mut runner, &args.database_url).await?;
-            categories::integration::run(&mut runner, &args.database_url).await?;
+            categories::integration::run(&mut runner, &args.database_url);
         }
-        "concurrency" => categories::concurrency::run(&mut runner)?,
+        "concurrency" => categories::concurrency::run(&mut runner),
         "chaos-network-partition" => {
             categories::chaos_network_partition::run(&mut runner, &args.database_url).await?;
         }

@@ -134,10 +134,17 @@ impl JobCoordinator {
     pub fn request(
         &self,
         command: &str,
-        args: &[String],
+        spawn_args: &[String],
+        scope_args: &[String],
         is_foreground: bool,
     ) -> Result<CoordinationResult> {
-        self.request_with_format(command, args, is_foreground, OutputFormat::Human)
+        self.request_with_format(
+            command,
+            spawn_args,
+            scope_args,
+            is_foreground,
+            OutputFormat::Human,
+        )
     }
 
     /// Core coordination with explicit output format propagation.
@@ -147,7 +154,8 @@ impl JobCoordinator {
     pub fn request_with_format(
         &self,
         command: &str,
-        args: &[String],
+        spawn_args: &[String],
+        scope_args: &[String],
         is_foreground: bool,
         output_format: OutputFormat,
     ) -> Result<CoordinationResult> {
@@ -166,8 +174,8 @@ impl JobCoordinator {
             .with_context(|| format!("failed to acquire lock: {}", lock_path.display()))?;
 
         // R1: Compute scoped fingerprint (per-package when -p is specified, whole-workspace otherwise)
-        let tree_fingerprint = scoped_tree_fingerprint(command, args)?;
-        let scope_key = scope_key(command, args);
+        let tree_fingerprint = scoped_tree_fingerprint(command, scope_args)?;
+        let scope_key = scope_key(command, scope_args);
 
         // Read current state (if any)
         let current_state = read_state(&state_path)?;
@@ -177,7 +185,7 @@ impl JobCoordinator {
             if is_process_alive(state.pid) {
                 self.handle_running_job(
                     command,
-                    args,
+                    spawn_args,
                     is_foreground,
                     output_format,
                     &tree_fingerprint,
@@ -193,7 +201,7 @@ impl JobCoordinator {
                 // was abandoned — the queue item runs after the 8h timeout cleans up.
                 self.queue_behind(
                     &state,
-                    args,
+                    spawn_args,
                     is_foreground,
                     output_format,
                     &tree_fingerprint,
@@ -208,7 +216,7 @@ impl JobCoordinator {
                 remove_state_file(&state_path, "remove stale coordinator state before restart")?;
                 self.start_new_job(
                     command,
-                    args,
+                    spawn_args,
                     is_foreground,
                     &tree_fingerprint,
                     &scope_key,
@@ -238,7 +246,7 @@ impl JobCoordinator {
             }
             self.start_new_job(
                 command,
-                args,
+                spawn_args,
                 is_foreground,
                 &tree_fingerprint,
                 &scope_key,
@@ -704,6 +712,18 @@ fn extract_explicit_packages(command: &str, args: &[String]) -> Vec<String> {
         return vec![];
     }
 
+    if let Some(marker) = args.iter().find(|arg| arg.starts_with("--scope=")) {
+        let raw = marker.trim_start_matches("--scope=");
+        if let Some(packages) = raw.strip_prefix("packages:") {
+            return packages
+                .split(',')
+                .filter(|entry| !entry.is_empty())
+                .map(ToOwned::to_owned)
+                .collect();
+        }
+        return vec![];
+    }
+
     let mut packages = Vec::new();
     let mut take_next = false;
 
@@ -795,6 +815,10 @@ fn scope_key(command: &str, args: &[String]) -> String {
 /// Handles the tricky case where `-p sinex-db` is two separate args:
 /// the flag `-p` and its value `sinex-db` are both captured.
 fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
+    if let Some(marker) = args.iter().find(|arg| arg.starts_with("--scope=")) {
+        return vec![marker.clone()];
+    }
+
     fn is_value_flag(command: &str, arg: &str) -> bool {
         // Flags that take a separate next-arg value
         match command {
@@ -1024,10 +1048,25 @@ pub fn coordinate_and_spawn(
     args: &[String],
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let coordinator = if JobCoordinator::should_coordinate(command, args) {
+    coordinate_and_spawn_with_scope(command, args, args, ctx)
+}
+
+pub fn coordinate_and_spawn_with_scope(
+    command: &str,
+    spawn_args: &[String],
+    coordination_args: &[String],
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let coordinator = if JobCoordinator::should_coordinate(command, spawn_args) {
         let coordinator = JobCoordinator::new()
             .with_context(|| format!("failed to initialize coordinator for `{command}`"))?;
-        match coordinator.request_with_format(command, args, false, ctx.writer().format()) {
+        match coordinator.request_with_format(
+            command,
+            spawn_args,
+            coordination_args,
+            false,
+            ctx.writer().format(),
+        ) {
             Ok(
                 result @ (CoordinationResult::Attached { .. }
                 | CoordinationResult::Fresh { .. }
@@ -1049,7 +1088,7 @@ pub fn coordinate_and_spawn(
         None
     };
 
-    let bg_result = match ctx.spawn_background(command, args) {
+    let bg_result = match ctx.spawn_background(command, spawn_args) {
         Ok(bg_result) => bg_result,
         Err(error) => {
             if let Some(coordinator) = coordinator.as_ref() {
@@ -1480,6 +1519,26 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_scope_key_uses_semantic_scope_marker() -> TestResult<()> {
+        let args1 = vec!["--scope=packages:sinex-db,xtask".into()];
+        let args2 = vec!["--scope=packages:sinex-gateway,xtask".into()];
+        assert_ne!(scope_key("test", &args1), scope_key("test", &args2));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_scope_key_prefers_semantic_scope_marker() -> TestResult<()> {
+        let args1 = vec![
+            "--scope=packages:sinex-db,xtask".into(),
+            "-p".into(),
+            "sinex-gateway".into(),
+        ];
+        let args2 = vec!["--scope=packages:sinex-db,xtask".into()];
+        assert_eq!(scope_key("test", &args1), scope_key("test", &args2));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_check_fresh_returns_none_when_history_db_is_unopenable() -> TestResult<()> {
         let tempdir = tempfile::tempdir()?;
         let _history_db_guard = env_set_path("XTASK_HISTORY_DB", tempdir.path());
@@ -1523,7 +1582,9 @@ mod tests {
 
     #[sinex_test]
     async fn test_tree_fingerprint_fails_outside_git_repo() -> TestResult<()> {
-        let dir = tempfile::tempdir()?;
+        let dir = tempfile::Builder::new()
+            .prefix("xtask-nongit-")
+            .tempdir_in("/tmp")?;
         let error = tree_fingerprint_in(dir.path()).expect_err("expected non-repo to fail");
         assert!(
             error
@@ -1535,7 +1596,9 @@ mod tests {
 
     #[sinex_test]
     async fn test_scoped_tree_fingerprint_fails_outside_git_repo() -> TestResult<()> {
-        let dir = tempfile::tempdir()?;
+        let dir = tempfile::Builder::new()
+            .prefix("xtask-nongit-")
+            .tempdir_in("/tmp")?;
         let args = vec!["-p".into(), "xtask".into()];
         let error = scoped_tree_fingerprint_in(dir.path(), "check", &args)
             .expect_err("expected non-repo to fail");
@@ -2172,7 +2235,7 @@ mod tests {
         read_only.set_mode(0o555);
         fs::set_permissions(&coordinator_dir, read_only)?;
 
-        let result = coordinator.request_with_format("check", &[], false, OutputFormat::Human);
+        let result = coordinator.request_with_format("check", &[], &[], false, OutputFormat::Human);
 
         let mut restore = fs::metadata(&coordinator_dir)?.permissions();
         restore.set_mode(original_mode);

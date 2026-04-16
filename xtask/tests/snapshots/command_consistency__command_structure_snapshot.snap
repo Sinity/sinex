@@ -1,6 +1,6 @@
 ---
 source: xtask/tests/command_consistency.rs
-assertion_line: 27
+assertion_line: 29
 expression: json
 ---
 {
@@ -1987,6 +1987,26 @@ expression: json
             },
             {
               "global": false,
+              "help": "Only show invocations with IDs greater than this selector (`latest`, `previous`, `current`, numeric, `inv:<id>`, `job:<id>`)",
+              "long": "after-invocation",
+              "name": "after_invocation",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Only show invocations with IDs less than this selector (`latest`, `previous`, `current`, numeric, `inv:<id>`, `job:<id>`)",
+              "long": "before-invocation",
+              "name": "before_invocation",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
               "help": "Sort field: started (default), duration, status",
               "long": "sort-by",
               "name": "sort_by",
@@ -2145,6 +2165,16 @@ expression: json
                   "required": false,
                   "short": null,
                   "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>`",
+                  "long": "invocation",
+                  "name": "invocation",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
                 }
               ],
               "name": "slowest",
@@ -2266,6 +2296,16 @@ expression: json
                   "required": false,
                   "short": null,
                   "takes_value": false
+                },
+                {
+                  "global": false,
+                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>`",
+                  "long": "invocation",
+                  "name": "invocation",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
                 }
               ],
               "name": "failures",
@@ -2273,7 +2313,18 @@ expression: json
             },
             {
               "about": "Comprehensive analysis of the most recent test run",
-              "args": [],
+              "args": [
+                {
+                  "global": false,
+                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>`",
+                  "long": "invocation",
+                  "name": "invocation",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
               "name": "analyze",
               "subcommands": []
             },
@@ -2287,6 +2338,16 @@ expression: json
                   "name": "pattern",
                   "possible_values": [],
                   "required": true,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>`",
+                  "long": "invocation",
+                  "name": "invocation",
+                  "possible_values": [],
+                  "required": false,
                   "short": null,
                   "takes_value": true
                 }
@@ -2322,6 +2383,16 @@ expression: json
                   "required": false,
                   "short": null,
                   "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>`",
+                  "long": "invocation",
+                  "name": "invocation",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
                 }
               ],
               "name": "grep",
@@ -2329,7 +2400,18 @@ expression: json
             },
             {
               "about": "Per-package pass rate, test count, avg duration, and flaky count (G7)",
-              "args": [],
+              "args": [
+                {
+                  "global": false,
+                  "help": "Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>`",
+                  "long": "invocation",
+                  "name": "invocation",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
               "name": "by-package",
               "subcommands": []
             },
@@ -2803,7 +2885,7 @@ expression: json
           "args": [
             {
               "global": false,
-              "help": "Invocation ID or 'latest'",
+              "help": "Invocation selector: `latest`, `previous`, `current`, invocation ID, `inv:<id>`, or `job:<id>`. Bare numeric IDs resolve as invocation IDs first; use `job:<id>` for unambiguous background-job lookup",
               "long": null,
               "name": "id",
               "possible_values": [],
@@ -2826,7 +2908,7 @@ expression: json
             },
             {
               "global": false,
-              "help": "Filter 'latest' resolution to a specific command",
+              "help": "Filter selector resolution to a specific command",
               "long": "command",
               "name": "command",
               "possible_values": [],
@@ -2870,9 +2952,9 @@ expression: json
           "args": [
             {
               "global": false,
-              "help": "Invocation ID to show progress for. Defaults to the most recent invocation",
-              "long": "invocation-id",
-              "name": "invocation_id",
+              "help": "Invocation selector: `current` (default), `latest`, `previous`, invocation ID, `inv:<id>`, or `job:<id>`. Bare numeric IDs resolve as invocation IDs first; use `job:<id>` for unambiguous background-job lookup",
+              "long": "invocation",
+              "name": "invocation",
               "possible_values": [],
               "required": false,
               "short": null,

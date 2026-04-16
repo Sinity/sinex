@@ -264,26 +264,18 @@ impl XtaskCommand for CheckCommand {
                 args.push(p.clone());
             }
 
-            return crate::coordinator::coordinate_and_spawn("check", &args, ctx);
+            let (_, workload_scope) = this.build_package_args(true, false)?;
+            let coordination_args = this.semantic_invocation_args(&workload_scope);
+            return crate::coordinator::coordinate_and_spawn_with_scope(
+                "check",
+                &args,
+                &coordination_args,
+                ctx,
+            );
         }
 
         // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)
         preflight::ensure_ready(ctx)?;
-
-        // Record fingerprint+scope for coordinator freshness detection.
-        // Check scope includes -p/--all flags so narrow checks don't
-        // satisfy broader scopes.
-        {
-            let mut scope_args = Vec::new();
-            for p in &this.packages {
-                scope_args.push("-p".to_string());
-                scope_args.push(p.clone());
-            }
-            if this.all {
-                scope_args.push("--all".to_string());
-            }
-            ctx.record_coordination_fingerprint("check", &scope_args);
-        }
 
         // Resource warning before heavy operation
         if ctx.is_human() {
@@ -314,7 +306,9 @@ impl XtaskCommand for CheckCommand {
         }
 
         let (package_args, workload_scope) = this.build_package_args(true, ctx.is_human())?;
-        ctx.record_invocation_args(&this.semantic_invocation_args(&workload_scope));
+        let coordination_args = this.semantic_invocation_args(&workload_scope);
+        ctx.record_coordination_fingerprint("check", &coordination_args);
+        ctx.record_invocation_args(&coordination_args);
 
         // 1. Formatting (optional, off by default)
         if this.fmt {
@@ -598,8 +592,11 @@ impl XtaskCommand for CheckCommand {
         // R3: Predictive prefetch — if check→test transition probability > 70%,
         // spawn `cargo test --no-run` in the background so the test binary is already
         // compiled when the developer types `xtask test`.
-        // Only in foreground mode: background checks run in CI where prefetch is wasteful.
-        if result.is_success() && !ctx.is_background() {
+        //
+        // Only interactive human runs may trigger this. JSON/compact/silent
+        // executions should remain observational and deterministic instead of
+        // consulting ambient workstation history to start helper subprocesses.
+        if result.is_success() && ctx.allows_ambient_optimizations() {
             trigger_compilation_prefetch(ctx);
         }
 
@@ -612,6 +609,10 @@ impl XtaskCommand for CheckCommand {
 }
 
 fn resolve_fixable_diagnostic_count(ctx: &CommandContext) -> (Option<usize>, Option<String>) {
+    if ctx.invocation_id().is_none() {
+        return (None, None);
+    }
+
     match ctx.try_with_history_db(|db| db.get_fixable_diagnostic_count()) {
         Some(Ok(count)) => (Some(count), None),
         Some(Err(error)) => (
@@ -620,11 +621,10 @@ fn resolve_fixable_diagnostic_count(ctx: &CommandContext) -> (Option<usize>, Opt
                 "Failed to query auto-fixable diagnostic count from history DB: {error:#}"
             )),
         ),
-        None if ctx.invocation_id().is_some() => (
+        None => (
             None,
             Some("Failed to open history DB for auto-fixable diagnostic count".to_string()),
         ),
-        None => (None, None),
     }
 }
 
@@ -861,7 +861,9 @@ mod tests {
     async fn test_execute_check_without_history_invocation_skips_fixable_probe_warning()
     -> ::xtask::sandbox::TestResult<()> {
         let runner = Arc::new(MockCargoRunner::clean());
-        let ctx = mock_ctx(runner);
+        let temp = tempfile::tempdir()?;
+        let db_path = temp.path().join("history.db");
+        let ctx = mock_ctx_with_history(runner, None, db_path.clone());
         let cmd = make_cmd(false, false, false, false);
         let result = cmd.execute(&ctx).await?;
         assert!(
@@ -875,6 +877,10 @@ mod tests {
                 .all(|warning| !warning.contains("auto-fixable diagnostic count")),
             "unexpected auto-fixable warning: {:?}",
             result.warnings
+        );
+        assert!(
+            !db_path.exists(),
+            "check without invocation_id should not even open the history DB"
         );
         Ok(())
     }
@@ -986,6 +992,31 @@ mod tests {
         // If the callback fires correctly, execute completes without panic.
         let result = cmd.execute(&ctx).await?;
         assert!(result.is_success());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ambient_optimizations_only_enabled_for_human_foreground()
+    -> ::xtask::sandbox::TestResult<()> {
+        let human =
+            CommandContext::new(OutputWriter::new(OutputFormat::Human), false, None, "check");
+        assert!(human.allows_ambient_optimizations());
+
+        let json = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "check");
+        assert!(!json.allows_ambient_optimizations());
+
+        let silent = CommandContext::new(
+            OutputWriter::new(OutputFormat::Silent),
+            false,
+            None,
+            "check",
+        );
+        assert!(!silent.allows_ambient_optimizations());
+
+        let background =
+            CommandContext::new(OutputWriter::new(OutputFormat::Human), true, None, "check");
+        assert!(!background.allows_ambient_optimizations());
+
         Ok(())
     }
 
