@@ -25,18 +25,15 @@ pkgs.testers.nixosTest {
 
     # Kitty-specific sinex configuration
     services.sinex = {
-      targetUser = "testuser";
-      satellite.eventSources = {
-        filesystem.enable = true;
-        terminal.enable = true;
-      };
+      users.target = lib.mkForce "testuser";
+      nodes.filesystem.enable = true;
+      nodes.terminal.enable = true;
 
       shell = {
         asciinema.autoRecord = false;
         kitty = {
           enable = true;
           autoConfigure = false;
-          userConfigPath = "/etc/kitty/kitty.conf";
         };
       };
     };
@@ -49,7 +46,7 @@ pkgs.testers.nixosTest {
       # For generating terminal activity
       coreutils
       findutils
-      grep
+      gnugrep
       tree
     ];
     
@@ -94,7 +91,7 @@ pkgs.testers.nixosTest {
     ];
     
     # Kitty service for testing (runs as test user)
-    systemd.services.kitty-test-daemon = {
+      systemd.services.kitty-test-daemon = {
       description = "Kitty terminal daemon for Sinex testing";
       wantedBy = [ "multi-user.target" ];
       after = [ "systemd-user-sessions.service" ];

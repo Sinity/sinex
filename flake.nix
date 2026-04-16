@@ -251,21 +251,11 @@
             pg_jsonschema = pkgs.postgresql18Packages.pg_jsonschema;
           };
 
-          limitedVmTests = pkgs.lib.filterAttrs
-            (
-              name: _:
-                pkgs.lib.elem name [
-                  "basic"
-                  "preflight"
-                ]
-            )
-            vmTests;
-
           vmCheckOutputs = pkgs.lib.mapAttrs'
             (
               name: value: pkgs.lib.nameValuePair "sinex-vm-${name}" value
             )
-            (pkgs.lib.filterAttrs (_: value: pkgs.lib.isDerivation value) limitedVmTests);
+            (pkgs.lib.filterAttrs (_: value: pkgs.lib.isDerivation value) vmTests);
 
         in
         rec {
@@ -279,6 +269,19 @@
             let
               stateDir = ".sinex";
               pgPort = 5432;
+              xtaskCommand = pkgs.writeShellScriptBin "xtask" ''
+                set -euo pipefail
+
+                root_dir="''${SINEX_DEV_ROOT:-}"
+                if [ -z "$root_dir" ]; then
+                  echo "xtask requires the sinex devShell (missing SINEX_DEV_ROOT)" >&2
+                  exit 1
+                fi
+
+                cd "$root_dir"
+                cargo build --quiet -p xtask
+                exec "$root_dir/.sinex/target/debug/xtask" "$@"
+              '';
             in
             pkgs.mkShell {
               packages = with pkgs; [
@@ -324,6 +327,7 @@
                 direnv
                 zstd
                 git
+                xtaskCommand
               ];
 
               PGUSER = "sinity";
@@ -332,12 +336,21 @@
               NATS_SERVER_BIN = "${pkgs.nats-server}/bin/nats-server";
 
               shellHook = ''
-                export PATH="$PWD/scripts:$PWD/${stateDir}/target/debug:$PATH"
+                _sinex_path_append_unique() {
+                  case ":$PATH:" in
+                    *":$1:"*) ;;
+                    *) PATH="''${PATH:+$PATH:}$1" ;;
+                  esac
+                }
+                _sinex_path_append_unique "$PWD/${stateDir}/target/debug"
+                export PATH
                 export LD_LIBRARY_PATH="${
                   pkgs.lib.makeLibraryPath [ pkgs.dbus ]
                 }''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
                 export CLIPPY_CONF_DIR="$PWD/.config"
+                export SINEX_DEV_ROOT="$PWD"
                 export SINEX_DEV_STATE_DIR="$PWD/${stateDir}"
+                export SINEX_DEV_TOOLCHAIN="${rustToolchain.name}"
                 export SINEX_STATE_DIR="$SINEX_DEV_STATE_DIR/state"
                 export SINEX_CACHE_DIR="$SINEX_DEV_STATE_DIR/cache"
                 export SINEX_TEST_RESULTS_DIR="$SINEX_CACHE_DIR/test-results"
@@ -355,60 +368,10 @@
                 export SINEX_GATEWAY_URL="https://127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
                 export SINEX_RPC_URL="$SINEX_GATEWAY_URL"
 
-                # xtask binary path — .sinex/target/debug is on PATH via the export above.
-                # Never block direnv: all slow work deferred to first sx/xt invocation.
-                _xtask_bin="$PWD/${stateDir}/target/debug/xtask"
-
-                sx() {
-                  if [ ! -x "$_xtask_bin" ]; then
-                    echo "sinex: building xtask..." >&2
-                    cargo build -p xtask </dev/null >&2 || { echo "sinex: xtask build failed" >&2; return 1; }
-                  fi
-                  "$_xtask_bin" "$@"
-                }
-                xt() { sx "$@"; }
-
-                # Proactive infra start if binary exists (fire-and-forget).
-                # On cold start (no binary), preflight handles it on first sx/xt command.
-                # Set SINEX_NO_AUTO_INFRA=1 to skip (useful for remote DB, CI, low-resource machines).
-                mkdir -p "$SINEX_DEV_STATE_DIR"
-                if [ -x "$_xtask_bin" ] && [ -z "''${SINEX_NO_AUTO_INFRA:-}" ]; then
-                  _pg_running=0
-                  _nats_running=0
-                  _sinex_infra_start_lock="$SINEX_DEV_STATE_DIR/infra-start.lock"
-                  _sinex_infra_start_log="$SINEX_DEV_STATE_DIR/infra-start.log"
-                  _sinex_infra_start_current_log="$SINEX_DEV_STATE_DIR/infra-start.current.log"
-
-                  pg_isready -q -h "$SINEX_DEV_STATE_DIR/run" -p "${toString pgPort}" 2>/dev/null && _pg_running=1
-                  (timeout 1 bash -c ">/dev/tcp/localhost/$SINEX_DEV_NATS_PORT") 2>/dev/null && _nats_running=1
-
-                  if [ "$_pg_running" -eq 1 ] && [ "$_nats_running" -eq 1 ]; then
-                    echo "✓  Infrastructure already running (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT)" >&2
-                  else
-                    if mkdir "$_sinex_infra_start_lock" 2>/dev/null; then
-                      # Detach from direnv and close inherited extra FDs so long-lived
-                      # daemons do not keep direnv's private pipes open.
-                      (
-                        trap 'if [ -f "$_sinex_infra_start_current_log" ]; then mv -f "$_sinex_infra_start_current_log" "$_sinex_infra_start_log" 2>/dev/null || cp "$_sinex_infra_start_current_log" "$_sinex_infra_start_log" 2>/dev/null || true; fi; rmdir "$_sinex_infra_start_lock"' EXIT
-                        : >"$_sinex_infra_start_current_log"
-                        exec </dev/null >>"$_sinex_infra_start_current_log" 2>&1
-                        for _fd_path in /proc/$$/fd/*; do
-                          _fd_num="''${_fd_path##*/}"
-                          [ "$_fd_num" -le 2 ] && continue
-                          eval "exec ''${_fd_num}>&-"
-                        done
-                        # This log is for operators inspecting shell-hook startup,
-                        # so keep it human-readable instead of JSON-fragment prone.
-                        setsid "$_xtask_bin" --format human infra start
-                      ) &
-                      _sinex_infra_starting=1
-                      echo "ℹ  Infrastructure starting... (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT — live log: $_sinex_infra_start_current_log)" >&2
-                    else
-                      _sinex_infra_starting=1
-                      echo "ℹ  Infrastructure already starting... (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT — live log: $_sinex_infra_start_current_log)" >&2
-                    fi
-                  fi
-                fi
+                _sinex_interactive_shell=0
+                case "$-" in
+                  *i*) _sinex_interactive_shell=1 ;;
+                esac
                 # Dev TLS certs are generated lazily by preflight when needed.
                 # Set TLS env vars if dev certs exist — enables mTLS automatically.
                 if [ -f "$PWD/.sinex/tls/server.pem" ]; then
@@ -416,10 +379,50 @@
                   export SINEX_GATEWAY_TLS_KEY="$PWD/.sinex/tls/server-key.pem"
                   export SINEX_GATEWAY_TLS_CLIENT_CA="$PWD/.sinex/tls/ca.pem"
                 fi
-                # MOTD: show workspace health on shell entry.
-                # If infra was just launched, poll for readiness before status
-                # so the MOTD reflects actual state instead of racing startup.
-                if [ -x "$_xtask_bin" ]; then
+                xtask --format silent docs sync >/dev/null 2>&1
+                if [ "$_sinex_interactive_shell" -eq 1 ] && [ -t 1 ]; then
+                  # The plain `xtask` command is provided by the devShell and delegates
+                  # to `cargo build -p xtask` plus the checkout-local binary.
+                  # Set SINEX_NO_AUTO_INFRA=1 to skip (useful for remote DB or low-resource machines).
+                  if [ -z "''${SINEX_NO_AUTO_INFRA:-}" ]; then
+                    _pg_running=0
+                    _nats_running=0
+                    _sinex_infra_start_lock="$SINEX_DEV_STATE_DIR/infra-start.lock"
+                    _sinex_infra_start_log="$SINEX_DEV_STATE_DIR/infra-start.log"
+                    _sinex_infra_start_current_log="$SINEX_DEV_STATE_DIR/infra-start.current.log"
+
+                    pg_isready -q -h "$SINEX_DEV_STATE_DIR/run" -p "${toString pgPort}" 2>/dev/null && _pg_running=1
+                    (timeout 1 bash -c ">/dev/tcp/localhost/$SINEX_DEV_NATS_PORT") 2>/dev/null && _nats_running=1
+
+                    if [ "$_pg_running" -eq 1 ] && [ "$_nats_running" -eq 1 ]; then
+                      echo "✓  Infrastructure already running (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT)" >&2
+                    else
+                      if mkdir "$_sinex_infra_start_lock" 2>/dev/null; then
+                        # Detach from direnv and close inherited extra FDs so long-lived
+                        # daemons do not keep direnv's private pipes open.
+                        (
+                          trap 'if [ -f "$_sinex_infra_start_current_log" ]; then mv -f "$_sinex_infra_start_current_log" "$_sinex_infra_start_log" 2>/dev/null || cp "$_sinex_infra_start_current_log" "$_sinex_infra_start_log" 2>/dev/null || true; fi; rmdir "$_sinex_infra_start_lock"' EXIT
+                          : >"$_sinex_infra_start_current_log"
+                          exec </dev/null >>"$_sinex_infra_start_current_log" 2>&1
+                          for _fd_path in /proc/$$/fd/*; do
+                            _fd_num="''${_fd_path##*/}"
+                            [ "$_fd_num" -le 2 ] && continue
+                            eval "exec ''${_fd_num}>&-"
+                          done
+                          # This log is for operators inspecting shell-hook startup,
+                          # so keep it human-readable instead of JSON-fragment prone.
+                          setsid xtask --format human infra start
+                        ) &
+                        _sinex_infra_starting=1
+                        echo "ℹ  Infrastructure starting... (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT — live log: $_sinex_infra_start_current_log)" >&2
+                      else
+                        _sinex_infra_starting=1
+                        echo "ℹ  Infrastructure already starting... (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT — live log: $_sinex_infra_start_current_log)" >&2
+                      fi
+                    fi
+                  fi
+                  # Show workspace health on shell entry. If infra was just launched,
+                  # poll for readiness before status so the summary reflects actual state.
                   if [ "''${_sinex_infra_starting:-0}" -eq 1 ]; then
                     _deadline=$((SECONDS + 8))
                     while [ $SECONDS -lt $_deadline ]; do
@@ -430,7 +433,7 @@
                       sleep 0.3
                     done
                   fi
-                  "$_xtask_bin" status --summary 2>/dev/null || true
+                  xtask status --summary || true
                 fi
               '';
             };
@@ -453,7 +456,7 @@
       };
 
       nixosConfigurations = {
-        example = nixpkgs.lib.nixosSystem {
+        workstation = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
             (
@@ -462,7 +465,7 @@
                 nixpkgs.overlays = [ self.overlays.default ];
               }
             )
-            ./nixos/example.nix
+            ./nixos/examples/workstation.nix
             (
               { lib, ... }:
               {
@@ -485,7 +488,7 @@
           ];
         };
 
-        exampleMonitoring = nixpkgs.lib.nixosSystem {
+        monitoring = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
             (
@@ -494,7 +497,7 @@
                 nixpkgs.overlays = [ self.overlays.default ];
               }
             )
-            ./nixos/example-monitoring.nix
+            ./nixos/examples/monitoring.nix
             (
               { lib, ... }:
               {
@@ -514,7 +517,7 @@
           ];
         };
 
-        exampleDevSandbox = nixpkgs.lib.nixosSystem {
+        devSandbox = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
             (
@@ -523,7 +526,7 @@
                 nixpkgs.overlays = [ self.overlays.default ];
               }
             )
-            ./nixos/example-dev-sandbox.nix
+            ./nixos/examples/dev-sandbox.nix
             (
               { lib, ... }:
               {
@@ -543,7 +546,7 @@
           ];
         };
 
-        exampleHeadless = nixpkgs.lib.nixosSystem {
+        headless = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
             (
@@ -552,7 +555,7 @@
                 nixpkgs.overlays = [ self.overlays.default ];
               }
             )
-            ./nixos/example-headless.nix
+            ./nixos/examples/headless.nix
             (
               { lib, ... }:
               {
@@ -572,7 +575,7 @@
           ];
         };
 
-        exampleRemoteNode = nixpkgs.lib.nixosSystem {
+        remoteNode = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
             (
@@ -581,7 +584,7 @@
                 nixpkgs.overlays = [ self.overlays.default ];
               }
             )
-            ./nixos/example-remote-node.nix
+            ./nixos/examples/remote-node.nix
             (
               { lib, ... }:
               {
@@ -601,7 +604,7 @@
           ];
         };
 
-        exampleCoordination = nixpkgs.lib.nixosSystem {
+        coordination = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
             (
@@ -610,7 +613,7 @@
                 nixpkgs.overlays = [ self.overlays.default ];
               }
             )
-            ./nixos/example-coordination.nix
+            ./nixos/examples/coordination.nix
             (
               { lib, ... }:
               {

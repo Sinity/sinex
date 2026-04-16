@@ -26,7 +26,7 @@ pkgs.testers.nixosTest {
     ];
 
     # Enable gateway (required for replay RPC)
-    services.sinex.gateway.enable = true;
+    services.sinex.core.gateway.enable = true;
 
     # Enable filesystem node to generate real events
     services.sinex.nodes = {

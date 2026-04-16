@@ -5,11 +5,13 @@ with lib;
 let
   systemdHardening = import ./lib/systemd-hardening.nix { inherit lib; };
   databaseRuntime = import ./lib/database-runtime.nix { inherit lib pkgs; };
+  secretResolution = import ./lib/secret-resolution.nix { inherit lib; };
   inherit (systemdHardening) mkHelperServiceConfig;
   inherit (databaseRuntime)
     mkDatabasePasswordExec
     renderDatabaseUrl
     ;
+  inherit (secretResolution) resolveNamedSecretPath;
   cfg = config.services.sinex;
   nodesCfg = cfg.nodes;
   lifecycle = cfg.lifecycle;
@@ -44,25 +46,27 @@ let
   databaseUrl = renderDatabaseUrl cfg.database;
   natsUrl = concatStringsSep "," nodesCfg.nats.servers;
   secretPaths = config.sinex.secrets.paths or {};
-  resolveSecretPath = explicit: names:
-    if explicit != null then explicit else
-    let
-      match = findFirst (name: builtins.hasAttr name secretPaths) null names;
-    in
-    if match == null then null else builtins.getAttr match secretPaths;
+  resolveSecretPath = resolveNamedSecretPath secretPaths;
+  effectiveDatabasePasswordFile = resolveSecretPath cfg.database.passwordFile [
+    "sinex-local-db"
+    "sinex-remote-db"
+  ];
   natsTlsCfg = nodesCfg.nats.tls;
   natsAuthCfg = nodesCfg.nats.auth;
   effectiveNatsCaCertFile = resolveSecretPath natsTlsCfg.caCertFile [
     "sinex-nats-ca"
     "nats-ca"
+    "sinex-remote-nats-ca"
   ];
   effectiveNatsClientCertFile = resolveSecretPath natsTlsCfg.clientCertFile [
     "sinex-nats-client-cert"
     "nats-client-cert"
+    "sinex-remote-nats-cert"
   ];
   effectiveNatsClientKeyFile = resolveSecretPath natsTlsCfg.clientKeyFile [
     "sinex-nats-client-key"
     "nats-client-key"
+    "sinex-remote-nats-key"
   ];
   effectiveNatsTokenFile = resolveSecretPath natsAuthCfg.tokenFile [
     "sinex-nats-token"
@@ -144,7 +148,7 @@ let
   preflightExec = mkDatabasePasswordExec {
     name = "preflight";
     command = runPreflightScript;
-    passwordFile = cfg.database.passwordFile;
+    passwordFile = effectiveDatabasePasswordFile;
   };
 
   schemaApplyScript = pkgs.writeShellScript "sinex-schema-apply" ''
@@ -286,7 +290,7 @@ in
           ExecStart = mkDatabasePasswordExec {
             name = "schema-apply";
             command = schemaApplyScript;
-            passwordFile = cfg.database.passwordFile;
+            passwordFile = effectiveDatabasePasswordFile;
           };
           TimeoutStartSec = preflight.schemaApplyTimeoutSec;
         } // mkHelperServiceConfig {

@@ -71,7 +71,7 @@ Template creation:
 - Runs all migrations
 - Records schema fingerprint (hash of migration files)
 - Tracks extension versions (TimescaleDB, etc.)
-- Stores metadata in `target/xtask sandbox/template_stamp.json`
+- Stores metadata transactionally in PostgreSQL (template comments / metadata tables)
 
 Later processes reuse the template if the fingerprint matches.
 
@@ -85,8 +85,6 @@ Pre-provision the pool before test runs:
 
 ```bash
 xtask test --prime
-# or
-cargo run -p xtask sandbox --bin db_prime
 ```
 
 ### 3. Test Acquisition
@@ -190,7 +188,6 @@ The template is rebuilt when:
 Manual cache invalidation (only for debugging):
 
 ```bash
-rm target/xtask sandbox/template_stamp.json
 xtask test --prime
 ```
 
@@ -330,7 +327,6 @@ psql -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname LI
 
 **Solution**: The harness auto-rebuilds; for manual reset:
 ```bash
-rm target/xtask sandbox/template_stamp.json
 xtask test --prime
 ```
 
@@ -347,4 +343,4 @@ ps aux | grep sqlx
 
 - `database_pool.rs` (~1800 lines) — Pool implementation
 - `db_common.rs` — Shared cleanup utilities
-- `target/xtask sandbox/template_stamp.json` — Template metadata cache
+- PostgreSQL template metadata — Schema fingerprint and template reuse bookkeeping

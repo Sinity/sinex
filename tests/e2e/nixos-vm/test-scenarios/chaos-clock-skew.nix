@@ -1,7 +1,5 @@
 # Chaos test: system clock skew during event processing — Rust-driven.
 #
-# Replaces Python testScript with the typed Rust `sinex-vm-test-suite` binary.
-#
 # Advances the system clock by 1 hour during active event ingestion and verifies:
 #   - UUIDv7 IDs remain monotonically ordered (ts_coided never decreases within a batch)
 #   - TimescaleDB hypertable chunking doesn't reject late-arriving or future-dated data

@@ -1,9 +1,51 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "TerminalType": {
+      "description": "Terminal/shell type",
+      "oneOf": [
+        {
+          "const": "kitty",
+          "description": "Kitty terminal",
+          "type": "string"
+        },
+        {
+          "const": "alacritty",
+          "description": "Alacritty terminal",
+          "type": "string"
+        },
+        {
+          "const": "foot",
+          "description": "Foot terminal",
+          "type": "string"
+        },
+        {
+          "const": "wezterm",
+          "description": "`WezTerm`",
+          "type": "string"
+        },
+        {
+          "const": "iterm2",
+          "description": "iTerm2",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Generic/unknown terminal",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "chunk_count": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": [
         "integer",
         "null"
@@ -44,12 +86,12 @@
     },
     "scrollback_lines": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "scrollback_size_bytes": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "scrollback_text": {
@@ -59,10 +101,10 @@
       ]
     },
     "terminal_type": {
-      "type": "string"
+      "$ref": "#/$defs/TerminalType"
     },
     "timestamp": {
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "window_id": {
       "type": "string"
@@ -72,17 +114,20 @@
     }
   },
   "required": [
+    "window_id",
+    "terminal_type",
     "cwd",
-    "has_ansi_codes",
-    "includes_screen",
-    "is_chunked",
+    "window_title",
     "scrollback_lines",
     "scrollback_size_bytes",
-    "terminal_type",
-    "timestamp",
-    "window_id",
-    "window_title"
+    "is_chunked",
+    "includes_screen",
+    "has_ansi_codes",
+    "timestamp"
   ],
   "title": "ShellOutputCapturedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "shell.output_captured",
+  "x-sinex-source": "shell.scrollback",
+  "x-sinex-version": "1.0.0"
 }

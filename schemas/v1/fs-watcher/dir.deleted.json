@@ -1,18 +1,31 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "properties": {
-    "deleted_at": {
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
       "format": "date-time",
       "type": "string"
     },
-    "path": {
+    "RecordedPath": {
+      "description": "A path recorded from observational data (filesystem events, shell CWDs). Preserved verbatim except null bytes.",
       "type": "string"
     }
   },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "deleted_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "path": {
+      "$ref": "#/$defs/RecordedPath"
+    }
+  },
   "required": [
-    "deleted_at",
-    "path"
+    "path",
+    "deleted_at"
   ],
   "title": "DirDeletedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "dir.deleted",
+  "x-sinex-source": "fs-watcher",
+  "x-sinex-version": "1.0.0"
 }

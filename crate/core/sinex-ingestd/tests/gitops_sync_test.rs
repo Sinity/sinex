@@ -4,6 +4,9 @@
 //! using the real database with isolated test slots.
 
 use sinex_ingestd::gitops::GitOpsSource;
+use sinex_primitives::rpc::gitops::{
+    DEFAULT_GITOPS_BRANCH, DEFAULT_GITOPS_PATH_PATTERN, DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES,
+};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Uuid, error::SinexError};
 use xtask::sandbox::prelude::*;
@@ -18,12 +21,12 @@ async fn test_needs_sync_null_last_sync_at() -> TestResult<()> {
     let source = GitOpsSource {
         id: Uuid::now_v7(),
         repository_url: "https://github.com/org/repo.git".to_string(),
-        branch: "main".to_string(),
-        path_pattern: "schemas/**/*.json".to_string(),
+        branch: DEFAULT_GITOPS_BRANCH.to_string(),
+        path_pattern: DEFAULT_GITOPS_PATH_PATTERN.to_string(),
         sync_enabled: true,
         last_sync_at: None,
         last_sync_commit: None,
-        sync_frequency_minutes: 60,
+        sync_frequency_minutes: DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES,
     };
 
     assert!(
@@ -39,12 +42,12 @@ async fn test_needs_sync_recent_last_sync_at_skips() -> TestResult<()> {
     let source = GitOpsSource {
         id: Uuid::now_v7(),
         repository_url: "https://github.com/org/repo.git".to_string(),
-        branch: "main".to_string(),
-        path_pattern: "schemas/**/*.json".to_string(),
+        branch: DEFAULT_GITOPS_BRANCH.to_string(),
+        path_pattern: DEFAULT_GITOPS_PATH_PATTERN.to_string(),
         sync_enabled: true,
         last_sync_at: Some(Timestamp::now()),
         last_sync_commit: Some("abc123".to_string()),
-        sync_frequency_minutes: 60,
+        sync_frequency_minutes: DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES,
     };
 
     assert!(
@@ -64,12 +67,12 @@ async fn test_needs_sync_expired_interval_triggers() -> TestResult<()> {
     let source = GitOpsSource {
         id: Uuid::now_v7(),
         repository_url: "https://github.com/org/repo.git".to_string(),
-        branch: "main".to_string(),
-        path_pattern: "schemas/**/*.json".to_string(),
+        branch: DEFAULT_GITOPS_BRANCH.to_string(),
+        path_pattern: DEFAULT_GITOPS_PATH_PATTERN.to_string(),
         sync_enabled: true,
         last_sync_at: Some(two_hours_ago),
         last_sync_commit: Some("abc123".to_string()),
-        sync_frequency_minutes: 60,
+        sync_frequency_minutes: DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES,
     };
 
     assert!(
@@ -85,8 +88,8 @@ async fn test_needs_sync_zero_frequency_always_triggers() -> TestResult<()> {
     let source = GitOpsSource {
         id: Uuid::now_v7(),
         repository_url: "https://github.com/org/repo.git".to_string(),
-        branch: "main".to_string(),
-        path_pattern: "schemas/**/*.json".to_string(),
+        branch: DEFAULT_GITOPS_BRANCH.to_string(),
+        path_pattern: DEFAULT_GITOPS_PATH_PATTERN.to_string(),
         sync_enabled: true,
         last_sync_at: Some(Timestamp::now()),
         last_sync_commit: Some("abc123".to_string()),
@@ -110,8 +113,8 @@ async fn test_needs_sync_boundary_exact() -> TestResult<()> {
     let source = GitOpsSource {
         id: Uuid::now_v7(),
         repository_url: "https://github.com/org/repo.git".to_string(),
-        branch: "main".to_string(),
-        path_pattern: "schemas/**/*.json".to_string(),
+        branch: DEFAULT_GITOPS_BRANCH.to_string(),
+        path_pattern: DEFAULT_GITOPS_PATH_PATTERN.to_string(),
         sync_enabled: true,
         last_sync_at: Some(exactly_30_min_ago),
         last_sync_commit: Some("abc123".to_string()),
@@ -190,7 +193,7 @@ async fn test_sync_state_update_on_unreachable_repo(ctx: TestContext) -> TestRes
     .bind(source_id)
     .bind("https://does-not-exist.example.com/nonexistent/repo.git")
     .bind("main")
-    .bind("schemas/**/*.json")
+    .bind(DEFAULT_GITOPS_PATH_PATTERN)
     .execute(&pool)
     .await
     .map_err(|e| SinexError::database(format!("Failed to insert test source: {e}")))?;
@@ -264,7 +267,7 @@ async fn test_sync_cycle_ignores_disabled_sources(ctx: TestContext) -> TestResul
     .bind(source_id)
     .bind("https://github.com/org/disabled-repo.git")
     .bind("main")
-    .bind("schemas/**/*.json")
+    .bind(DEFAULT_GITOPS_PATH_PATTERN)
     .execute(&pool)
     .await
     .map_err(|e| SinexError::database(format!("Failed to insert test source: {e}")))?;
@@ -307,7 +310,7 @@ async fn test_sync_cycle_skips_recently_synced_source(ctx: TestContext) -> TestR
     .bind(source_id)
     .bind("https://github.com/org/recently-synced.git")
     .bind("main")
-    .bind("schemas/**/*.json")
+    .bind(DEFAULT_GITOPS_PATH_PATTERN)
     .execute(&pool)
     .await
     .map_err(|e| SinexError::database(format!("Failed to insert test source: {e}")))?;

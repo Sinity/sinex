@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "automaton_name": {
       "type": "string"
@@ -26,5 +26,8 @@
     "error_message"
   ],
   "title": "AutomatonErrorPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "automaton.error",
+  "x-sinex-source": "sinex",
+  "x-sinex-version": "1.0.0"
 }

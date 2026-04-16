@@ -1,5 +1,12 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Content classification",
   "properties": {
     "analysis_type": {
@@ -17,12 +24,11 @@
     },
     "content_length": {
       "format": "uint",
-      "minimum": 0.0,
+      "minimum": 0,
       "type": "integer"
     },
     "generated_at": {
-      "format": "date-time",
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "source_event_id": {
       "type": [
@@ -39,5 +45,8 @@
     "generated_at"
   ],
   "title": "ContentClassifiedPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "content.classified",
+  "x-sinex-source": "content-automaton",
+  "x-sinex-version": "1.0.0"
 }

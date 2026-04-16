@@ -1,7 +1,5 @@
 # Chaos test: network partition between ingestd and NATS — Rust-driven.
 #
-# Replaces Python testScript with the typed Rust `sinex-vm-test-suite` binary.
-#
 # Injects a deterministic `tc netem` packet-drop rule between sinex-ingestd and
 # the NATS server, then removes it and verifies:
 #   - ingestd survives the partition without crashing

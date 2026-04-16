@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-# Pre-commit hook intentionally disabled.
-exit 0

@@ -2,6 +2,10 @@ use crate::Uuid;
 use crate::temporal::Timestamp;
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_GITOPS_BRANCH: &str = "main";
+pub const DEFAULT_GITOPS_PATH_PATTERN: &str = "schemas/**/*.json";
+pub const DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES: i32 = 60;
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct GitOpsListSourcesRequest {
     #[serde(default)]
@@ -37,15 +41,15 @@ pub struct GitOpsCreateSourceRequest {
 }
 
 fn default_branch() -> String {
-    "main".to_string()
+    DEFAULT_GITOPS_BRANCH.to_string()
 }
 
 fn default_path_pattern() -> String {
-    "schemas/**/*.json".to_string()
+    DEFAULT_GITOPS_PATH_PATTERN.to_string()
 }
 
 fn default_sync_frequency() -> i32 {
-    60
+    DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES
 }
 
 #[derive(Debug, Serialize, Deserialize)]

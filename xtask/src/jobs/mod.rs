@@ -391,16 +391,12 @@ impl JobManager {
         let stdout_file = File::create(&stdout_path)?;
         let stderr_file = File::create(&stderr_path)?;
 
-        // Spawn the process using tokio
-        // CARGO_NO_SLICE=1 bypasses the systemd-run wrapper (scripts/cargo) which would
-        // otherwise run cargo commands in a systemd scope, making process control (kill, etc.)
-        // unreliable. Background jobs need direct process control.
+        // Spawn the process using tokio.
         // XTASK_JOB_DIR tells the child --fg process to write exit_code on completion.
         // XTASK_BG_INVOCATION_ID: for the child to claim the invocation row.
         // XTASK_BG_JOB_ID: for the coordinator to track the job handle.
         let mut cmd = process::Command::new(command);
         cmd.args(args)
-            .env("CARGO_NO_SLICE", "1")
             .env("XTASK_JOB_DIR", &job_dir)
             .env("XTASK_BG_INVOCATION_ID", invocation_id.to_string())
             .env("XTASK_BG_JOB_ID", job_id.to_string())

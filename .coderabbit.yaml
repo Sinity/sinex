@@ -1,12 +1,6 @@
-# CodeRabbit config — tuned for large historical-rebuild PRs.
-# See https://docs.coderabbit.ai/reference/yaml-template for full schema.
-#
-# Design goals:
-# - Minimize per-review token cost so rate limits bite less often
-# - Aggressively path-filter noise so "too many files" PRs shrink
-# - Disable features that don't add value for a private solo repo
-# - Keep the useful core: high-level summary, file summary, walkthrough,
-#   effort estimate, linked-issue assessment, clippy, shellcheck
+# CodeRabbit config for Sinex.
+# Keep review cost low, filter generated/noisy surfaces aggressively, and retain
+# the high-signal summary/static-analysis pieces that still help on a solo repo.
 language: en-US
 
 reviews:
@@ -37,20 +31,13 @@ reviews:
   suggested_labels: false
   auto_apply_labels: false
 
-  # Don't abort on close — we want CodeRabbit to finish reviewing even if the
-  # PR ends up in a closed-but-not-merged state (which is the polylogue
-  # pattern: every PR stays "open" because master advances via an unrelated
-  # squash commit, but if GitHub ever flips one to closed we still want its
-  # review to land).
+  # Keep reviews running even if a PR is temporarily closed mid-iteration.
   abort_on_close: false
   disable_cache: false
 
   auto_review:
     enabled: true
     drafts: false
-    # Leave auto_incremental_review at default (true). Historical PRs are
-    # frozen snapshots so it's a no-op; if we ever do push a fixup to
-    # address a review comment, we want CodeRabbit to re-review it.
 
   # Path filters — everything here is either generated, binary, mechanical,
   # or not part of the reviewable surface. The shorter the file list reaches
@@ -109,6 +96,7 @@ reviews:
 
     # Secrets and local env state
     - "!.agent/**"
+    - "!AGENTS.md"
     - "!secret/**"
     - "!**/.envrc.local"
     - "!**/.env"
@@ -141,8 +129,8 @@ reviews:
     yamllint:
       enabled: true
 
-# Finishing touches — disable the LLM post-passes. Each is its own token
-# budget hit, and none are useful for frozen historical PRs.
+# Finishing touches — disable the extra post-passes; each one costs tokens and
+# does not add much value for this repo.
 finishing_touches:
   docstrings:
     enabled: false
@@ -151,9 +139,9 @@ finishing_touches:
   simplify:
     enabled: false
 
-# Knowledge base — opt out globally. This is a private repo; we don't want
-# the PRs contributing to a shared knowledge index, and we don't need
-# web_search firing on every review.
+# Knowledge base — opt out globally. This is a private repo; we do not want the
+# PRs contributing to a shared knowledge index, and we do not need web_search
+# firing on every review.
 knowledge_base:
   opt_out: true
   web_search:

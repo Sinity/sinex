@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Test event from source alpha — for multi-source routing tests.",
+  "properties": {
+    "value": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "value"
+  ],
+  "title": "TestAlphaPayload",
+  "type": "object",
+  "x-sinex-event-type": "test.alpha_event",
+  "x-sinex-source": "test.alpha",
+  "x-sinex-version": "1.0.0"
+}

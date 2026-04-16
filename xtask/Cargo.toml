@@ -26,6 +26,7 @@ serde = { workspace = true, features = [
     "derive",
 ] }
 serde_json = { workspace = true }
+serde_yaml = "0.9"
 
 rusqlite = { workspace = true }
 console = "0.15"
@@ -92,7 +93,7 @@ xtask-macros = { path = "./macros" }
 
 sysinfo = "0.38.0"
 
-# Shell scripting (replaces ProcessBuilder)
+# Shell-style command composition
 xshell = "0.2"
 
 # Pretty table output

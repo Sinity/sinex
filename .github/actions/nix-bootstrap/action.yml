@@ -1,5 +1,5 @@
 name: Setup Nix Environment
-description: Free disk space, install Nix, configure Cachix, and optionally install devenv
+description: Free disk space, install Nix, and configure Cachix
 inputs:
   cache-name:
     description: Cachix cache name to use
@@ -16,10 +16,6 @@ inputs:
     description: Extra nix configuration
     required: false
     default: ""
-  install-devenv:
-    description: Install devenv after Nix bootstrap
-    required: false
-    default: "true"
   clean-disk:
     description: Remove large preinstalled toolchains to free disk
     required: false
@@ -47,8 +43,3 @@ runs:
       with:
         name: ${{ inputs.cache-name }}
         authToken: ${{ inputs.cachix-auth-token }}
-
-    - if: inputs.install-devenv == 'true'
-      name: Install devenv
-      shell: bash
-      run: nix profile install nixpkgs#devenv

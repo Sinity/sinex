@@ -19,28 +19,22 @@ pkgs.testers.nixosTest {
     ];
 
     services.sinex = {
-      serviceManagement.serviceGroups = {
-        core = lib.mkDefault true;
-        maintenance = lib.mkForce true;
-        monitoring = lib.mkDefault false;
-      };
+      lifecycle.maintenance.enable = lib.mkForce true;
+      observability.monitoring.enable = lib.mkDefault false;
 
       nodes = {
-        coreServices.enable = lib.mkDefault true;
-        eventSources = {
-          filesystem = {
-            enable = lib.mkForce true;
-            instances = lib.mkDefault 2;
-            watchPaths = lib.mkDefault [ "/watched" ];
-          };
-          terminal = {
-            enable = lib.mkForce true;
-            instances = lib.mkDefault 1;
-          };
-          system = {
-            enable = lib.mkForce true;
-            instances = lib.mkDefault 1;
-          };
+        filesystem = {
+          enable = lib.mkForce true;
+          instances = lib.mkDefault 2;
+          watchPaths = lib.mkDefault [ "/watched" ];
+        };
+        terminal = {
+          enable = lib.mkForce true;
+          instances = lib.mkDefault 1;
+        };
+        system = {
+          enable = lib.mkForce true;
+          instances = lib.mkDefault 1;
         };
       };
     };

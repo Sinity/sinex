@@ -1,5 +1,107 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "Microseconds": {
+      "description": "Microsecond-count newtype for high-precision timing.",
+      "format": "int64",
+      "type": "integer"
+    },
+    "ProcessId": {
+      "description": "Unix process ID newtype.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "SyslogPriority": {
+      "description": "Syslog priority level (0-7).\n\n- 0: Emergency\n- 1: Alert\n- 2: Critical\n- 3: Error\n- 4: Warning\n- 5: Notice\n- 6: Informational\n- 7: Debug",
+      "format": "uint8",
+      "maximum": 255,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "SystemdUnitType": {
+      "description": "Systemd unit type",
+      "oneOf": [
+        {
+          "const": "service",
+          "description": "Service unit",
+          "type": "string"
+        },
+        {
+          "const": "socket",
+          "description": "Socket unit",
+          "type": "string"
+        },
+        {
+          "const": "target",
+          "description": "Target unit",
+          "type": "string"
+        },
+        {
+          "const": "device",
+          "description": "Device unit",
+          "type": "string"
+        },
+        {
+          "const": "mount",
+          "description": "Mount unit",
+          "type": "string"
+        },
+        {
+          "const": "automount",
+          "description": "Automount unit",
+          "type": "string"
+        },
+        {
+          "const": "timer",
+          "description": "Timer unit",
+          "type": "string"
+        },
+        {
+          "const": "swap",
+          "description": "Swap unit",
+          "type": "string"
+        },
+        {
+          "const": "path",
+          "description": "Path unit",
+          "type": "string"
+        },
+        {
+          "const": "slice",
+          "description": "Slice unit",
+          "type": "string"
+        },
+        {
+          "const": "scope",
+          "description": "Scope unit",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Other unit type",
+          "type": "string"
+        }
+      ]
+    },
+    "UnixGid": {
+      "description": "Unix group ID newtype.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "UnixUid": {
+      "description": "Unix user ID newtype.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Describes a journald entry flushed to disk.",
   "properties": {
     "cmdline": {
@@ -30,11 +132,13 @@
       "type": "object"
     },
     "gid": {
-      "format": "uint32",
-      "minimum": 0.0,
-      "type": [
-        "integer",
-        "null"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/UnixGid"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "hostname": {
@@ -47,19 +151,23 @@
       "type": "string"
     },
     "pid": {
-      "format": "uint32",
-      "minimum": 0.0,
-      "type": [
-        "integer",
-        "null"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProcessId"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "priority": {
-      "format": "uint8",
-      "minimum": 0.0,
-      "type": [
-        "integer",
-        "null"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SyslogPriority"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "syslog_identifier": {
@@ -69,18 +177,19 @@
       ]
     },
     "timestamp": {
-      "type": "string"
+      "$ref": "#/$defs/DateTime"
     },
     "timestamp_us": {
-      "format": "int64",
-      "type": "integer"
+      "$ref": "#/$defs/Microseconds"
     },
     "uid": {
-      "format": "uint32",
-      "minimum": 0.0,
-      "type": [
-        "integer",
-        "null"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/UnixUid"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "unit": {
@@ -90,19 +199,26 @@
       ]
     },
     "unit_type": {
-      "type": [
-        "string",
-        "null"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SystemdUnitType"
+        },
+        {
+          "type": "null"
+        }
       ]
     }
   },
   "required": [
     "cursor",
-    "fields",
-    "message",
+    "timestamp_us",
     "timestamp",
-    "timestamp_us"
+    "message",
+    "fields"
   ],
   "title": "JournalEntryWrittenPayload",
-  "type": "object"
+  "type": "object",
+  "x-sinex-event-type": "entry.written",
+  "x-sinex-source": "journald",
+  "x-sinex-version": "1.0.0"
 }

@@ -11,6 +11,7 @@ use sinex_gateway::handlers::gitops::{
     handle_gitops_trigger_sync,
 };
 use sinex_primitives::rpc::gitops::{
+    DEFAULT_GITOPS_PATH_PATTERN,
     GitOpsCreateSourceResponse, GitOpsListSourcesResponse, GitOpsTriggerSyncResponse,
 };
 use xtask::sandbox::prelude::*;
@@ -25,7 +26,7 @@ async fn gitops_create_list_delete_lifecycle(ctx: TestContext) -> TestResult<()>
     let create_params = json!({
         "repository_url": "https://github.com/example/schemas.git",
         "branch": "main",
-        "path_pattern": "schemas/**/*.json",
+        "path_pattern": DEFAULT_GITOPS_PATH_PATTERN,
         "sync_frequency_minutes": 30,
     });
     let create_result = handle_gitops_create_source(pool, create_params).await?;
@@ -35,7 +36,7 @@ async fn gitops_create_list_delete_lifecycle(ctx: TestContext) -> TestResult<()>
         "https://github.com/example/schemas.git"
     );
     assert_eq!(created.branch, "main");
-    assert_eq!(created.path_pattern, "schemas/**/*.json");
+    assert_eq!(created.path_pattern, DEFAULT_GITOPS_PATH_PATTERN);
 
     // 2. List sources and verify the created source is present
     let list_result = handle_gitops_list_sources(pool, json!({})).await?;
@@ -311,8 +312,10 @@ async fn gitops_create_source_uses_defaults(ctx: TestContext) -> TestResult<()> 
 
     assert_eq!(created.branch, "main", "Default branch should be 'main'");
     assert_eq!(
-        created.path_pattern, "schemas/**/*.json",
-        "Default path pattern should be 'schemas/**/*.json'"
+        created.path_pattern,
+        DEFAULT_GITOPS_PATH_PATTERN,
+        "Default path pattern should be '{}'",
+        DEFAULT_GITOPS_PATH_PATTERN
     );
 
     // Verify default sync frequency via list
