@@ -67,7 +67,13 @@ struct RegistryEntry {
 ///
 /// Maps method names to handler functions and required authorization roles.
 /// Keeps dispatch data-driven instead of embedding one large match tree.
+#[cfg(not(any(test, feature = "test-support")))]
 pub(crate) struct RpcRegistry {
+    methods: HashMap<&'static str, RegistryEntry>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub struct RpcRegistry {
     methods: HashMap<&'static str, RegistryEntry>,
 }
 
@@ -309,6 +315,15 @@ impl RpcRegistry {
         self
     }
 
+    /// Returns a map of method names to their required roles.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn method_roles(&self) -> HashMap<&'static str, Role> {
+        self.methods
+            .iter()
+            .map(|(&name, entry)| (name, entry.required_role))
+            .collect()
+    }
+
     /// Dispatch an RPC method call
     ///
     /// # Arguments
@@ -319,7 +334,7 @@ impl RpcRegistry {
     ///
     /// # Returns
     /// JSON result from the handler, or error if method not found or unauthorized
-    pub(crate) async fn dispatch(
+    pub async fn dispatch(
         &self,
         method: &str,
         params: JsonValue,
@@ -349,7 +364,7 @@ impl RpcRegistry {
 ///
 /// This function registers all RPC methods from the original dispatch table.
 /// Handler functions are imported from the handlers module.
-pub(crate) fn build_registry() -> RpcRegistry {
+pub fn build_registry() -> RpcRegistry {
     use crate::handlers::{
         handle_audit_get, handle_coordination_get_leader, handle_coordination_instance_health,
         handle_coordination_list_instances, handle_create_entities, handle_create_note,
