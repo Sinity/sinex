@@ -20,7 +20,7 @@ let
   natsEnabled = cfg.nats.enable || cfg.nats.autoSetup;
 
   sinexEnabled = cfg.enable;
-  schemaApplyEnabled = sinexEnabled && cfg.database.enable;
+  schemaApplyEnabled = cfg.database.enable && cfg.database.autoSetup;
   preflightEnabled = sinexEnabled && preflight.enable;
   updatesEnabled = sinexEnabled && updates.enable;
 
