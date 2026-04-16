@@ -15,6 +15,7 @@ fn all_contexts() -> Vec<ProcessingContext> {
     ]
 }
 
+#[allow(clippy::expect_used)]
 fn engine() -> &'static sinex_primitives::privacy::PrivacyEngine {
     privacy::engine().expect("privacy engine must initialize")
 }
@@ -184,6 +185,7 @@ sinex_proptest! {
         let input = serde_json::json!({ &key1: val1, &key2: val2 });
         let output = engine().process_json(&input, context);
         prop_assert!(output.is_object(), "Output should remain an object");
+        #[allow(clippy::expect_used)]
         let obj = output.as_object().expect("verified above");
         prop_assert!(obj.contains_key(&key1), "Key '{}' should be preserved", key1);
         prop_assert!(obj.contains_key(&key2), "Key '{}' should be preserved", key2);
