@@ -12,7 +12,7 @@ use crate::error_helpers::{env_bool_with_default, env_parse_with_default};
 use crate::processing::{ErrorAction, PersistedState};
 use crate::runtime::stream::{
     Checkpoint, EventEmitter, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType,
-    ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
+    ProcessingStats, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
 };
 use crate::shutdown::ShutdownConfig;
 use crate::{NodeResult, SinexError};
@@ -1866,7 +1866,7 @@ where
             supports_interactive: false,
             max_scan_size: None,
             supports_concurrent: false,
-            manages_own_continuous_loop: true,
+            manages_own_continuous_loop: false,
             ..NodeCapabilities::default()
         }
     }
@@ -1885,6 +1885,47 @@ where
             reporter.current_status()
                 == sinex_primitives::events::payloads::process::ProcessStatus::Healthy
         }))
+    }
+
+    async fn process_event_batch(
+        &mut self,
+        events: Vec<Event<JsonValue>>,
+    ) -> NodeResult<ProcessingStats> {
+        let input_type = self.node.input_event_type();
+        let matching: Vec<Event<JsonValue>> = if input_type == "*" {
+            events
+        } else {
+            events
+                .into_iter()
+                .filter(|e| e.event_type.as_ref() == input_type)
+                .collect()
+        };
+
+        if matching.is_empty() {
+            return Ok(ProcessingStats::default());
+        }
+
+        let batch_size = matching.len();
+        let start = std::time::Instant::now();
+        let outputs = self.process_batch(matching).await?;
+        let output_count = outputs.len();
+
+        if !outputs.is_empty() {
+            self.emit_output_events(outputs, "event bridge batch").await?;
+        }
+
+        debug!(
+            node = %self.node.name(),
+            input_count = batch_size,
+            output_count,
+            "Processed event batch via bridge"
+        );
+
+        Ok(ProcessingStats {
+            processed: batch_size,
+            duration: start.elapsed(),
+            ..ProcessingStats::default()
+        })
     }
 
     async fn shutdown(&mut self) -> NodeResult<()> {

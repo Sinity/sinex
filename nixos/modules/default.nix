@@ -941,7 +941,7 @@ in
                   description = "Batch override (null ⇒ inherit defaults).";
                 };
                 resources = mkOption {
-                  type = nullOr (resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; });
+                  type = nullOr (resourceModule { defaultMemory = "1G"; defaultCpu = "50%"; });
                   default = null;
                   description = "Resource override (null ⇒ inherit defaults).";
                 };

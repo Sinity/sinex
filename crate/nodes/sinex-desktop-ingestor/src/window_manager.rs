@@ -69,6 +69,12 @@ const HYPRLAND_SOCKET_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// provide a consistent baseline and to trigger stale window cleanup.
 const STATE_SNAPSHOT_INTERVAL: Duration = Duration::from_mins(5); // 5 minutes
 
+/// Timeout for ad-hoc Hyprland IPC queries (hyprctl clients/activewindow)
+///
+/// Used when resolving an unknown window address received via `activewindowv2`.
+/// Short timeout to avoid blocking the event loop during a race-condition fallback.
+const HYPRLAND_IPC_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
+
 type BackoffStrategy = Box<dyn Iterator<Item = Duration> + Send>;
 
 const ERROR_CLASS_UNSUPPORTED_WINDOW_MANAGER: &str = "desktop_platform_unsupported_window_manager";
@@ -601,6 +607,150 @@ impl WindowManagerWatcher {
             .into_owned())
     }
 
+    /// Query `hyprctl clients -j` and populate `self.windows` with fresh client state.
+    ///
+    /// Returns the `WindowInfo` for the requested address if found, or `None` if the
+    /// address is not present in the client list or the query fails.  Failures are
+    /// logged at `warn` level so the caller can decide whether to skip the event.
+    async fn query_hyprland_clients(
+        &mut self,
+        target_address: &str,
+    ) -> Option<WindowInfo> {
+        let output = match tokio::time::timeout(
+            HYPRLAND_IPC_QUERY_TIMEOUT,
+            tokio::process::Command::new("hyprctl")
+                .args(["clients", "-j"])
+                .output(),
+        )
+        .await
+        {
+            Ok(Ok(out)) => out,
+            Ok(Err(e)) => {
+                warn!(
+                    window_address = target_address,
+                    error = %e,
+                    "Failed to execute hyprctl clients for unknown activewindowv2 address"
+                );
+                return None;
+            }
+            Err(_) => {
+                warn!(
+                    window_address = target_address,
+                    timeout_secs = HYPRLAND_IPC_QUERY_TIMEOUT.as_secs(),
+                    "Timed out querying hyprctl clients for unknown activewindowv2 address"
+                );
+                return None;
+            }
+        };
+
+        if !output.status.success() {
+            warn!(
+                window_address = target_address,
+                "hyprctl clients returned non-zero exit status; skipping activewindowv2 event"
+            );
+            return None;
+        }
+
+        let clients: serde_json::Value =
+            match serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!(
+                        window_address = target_address,
+                        error = %e,
+                        "Failed to parse hyprctl clients JSON; skipping activewindowv2 event"
+                    );
+                    return None;
+                }
+            };
+
+        let Some(clients) = clients.as_array() else {
+            warn!(
+                window_address = target_address,
+                "hyprctl clients JSON is not an array; skipping activewindowv2 event"
+            );
+            return None;
+        };
+
+        let now = SystemTime::now();
+        let mut found: Option<WindowInfo> = None;
+
+        for client in clients {
+            let address = client
+                .get("address")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .trim_start_matches("0x");
+
+            let class = client
+                .get("class")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+
+            let title = client
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+
+            let workspace_id = client
+                .get("workspace")
+                .and_then(|ws| ws.get("id"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+                .to_string();
+
+            let floating = client
+                .get("floating")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            let fullscreen = client
+                .get("fullscreen")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            // Hyprland addresses in clients JSON use "0x…" prefix; event socket strips it.
+            // Normalise by stripping the prefix from both sides for comparison.
+            let canonical_addr = address.to_string();
+            let target_canonical = target_address.trim_start_matches("0x");
+
+            let info = WindowInfo {
+                address: canonical_addr.clone(),
+                class,
+                title,
+                workspace_id,
+                last_seen: now,
+                floating,
+                fullscreen,
+            };
+
+            self.windows
+                .entry(canonical_addr.clone())
+                .and_modify(|w| {
+                    w.class.clone_from(&info.class);
+                    w.title.clone_from(&info.title);
+                    w.workspace_id.clone_from(&info.workspace_id);
+                    w.last_seen = now;
+                })
+                .or_insert_with(|| info.clone());
+
+            if canonical_addr == target_canonical {
+                found = Some(info);
+            }
+        }
+
+        if found.is_none() {
+            warn!(
+                window_address = target_address,
+                "activewindowv2 address not found in hyprctl clients list; skipping focus event"
+            );
+        }
+
+        found
+    }
+
     /// Process Hyprland event line
     async fn process_hyprland_event(&mut self, line: &str) -> NodeResult<()> {
         if line.is_empty() {
@@ -905,12 +1055,21 @@ impl WindowManagerWatcher {
             self.current_workspace = Some(workspace_id.to_string());
         } else {
             let window_address = data.trim();
-            let window_info = self.windows.get(window_address).cloned().ok_or_else(|| {
-                sinex_node_sdk::SinexError::processing(format!(
-                    "activewindowv2 reported unknown window address: {window_address}"
-                ))
-                .with_context("window_address", window_address.to_string())
-            })?;
+            // Fast path: address already tracked.  Slow path: ask Hyprland for the client
+            // list and seed our map — this resolves startup races and windows that opened
+            // faster than the `openwindow` event was processed.
+            let window_info = match self.windows.get(window_address).cloned() {
+                Some(info) => info,
+                None => {
+                    match self.query_hyprland_clients(window_address).await {
+                        Some(info) => info,
+                        None => {
+                            // Already warned inside query_hyprland_clients; skip event.
+                            return Ok(());
+                        }
+                    }
+                }
+            };
             let window_class = window_info.class.clone();
             let window_title = window_info.title.clone();
             let workspace_id_raw = window_info.workspace_id.clone();
