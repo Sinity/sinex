@@ -9,9 +9,10 @@ use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
 use sinex_node_sdk::{
-    ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-    SourceState, SqliteHistoryRowOutcome, SqliteHistoryWarningDisposition,
-    import_sqlite_history_lenient, stage_material,
+    ActivityEntry, AppendOnlyFileChange, AppendOnlyFileState, CoverageAnalysis,
+    ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState, SqliteHistoryRowOutcome,
+    SqliteHistoryWarningDisposition, TailError, import_sqlite_history_lenient, poll_utf8_lines,
+    stage_material,
 };
 use sinex_node_sdk::{
     NodeResult, SinexError,
@@ -44,7 +45,7 @@ use std::{
 };
 use tokio::{
     fs,
-    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
+    io::AsyncWriteExt,
     sync::{Mutex, watch},
 };
 use tracing::{debug, info, warn};
@@ -196,6 +197,33 @@ struct HistoryState {
 struct TerminalHistoryCheckpoint {
     #[serde(default)]
     sources: HashMap<String, HistoryState>,
+}
+
+impl HistoryState {
+    fn file_state(&self) -> AppendOnlyFileState {
+        AppendOnlyFileState {
+            offset_bytes: self.offset_bytes,
+            #[cfg(unix)]
+            inode: self.inode,
+        }
+    }
+
+    fn from_text_progress(
+        file_state: &AppendOnlyFileState,
+        line_number: u64,
+        pending_timestamp: Option<Timestamp>,
+        recent_hashes: VecDeque<u64>,
+    ) -> Self {
+        Self {
+            offset_bytes: file_state.offset_bytes,
+            line_number,
+            pending_timestamp,
+            #[cfg(unix)]
+            inode: file_state.inode,
+            sqlite_row_id: None,
+            recent_hashes,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -646,6 +674,84 @@ impl HistoryWatcherContext {
 
     fn strict_warning(&self, detail: impl Into<String>) -> String {
         format!("{}: {}", self.checkpoint_key(), detail.into())
+    }
+
+    fn reconcile_text_file_change(
+        &self,
+        change: &AppendOnlyFileChange,
+        line_number: &mut u64,
+        pending_timestamp: &mut Option<Timestamp>,
+    ) -> Option<String> {
+        match change {
+            AppendOnlyFileChange::Unchanged => None,
+            AppendOnlyFileChange::Rotated { .. } => {
+                *line_number = 0;
+                *pending_timestamp = None;
+                Some(format!(
+                    "history file rotated at {}; restarting from the beginning",
+                    self.path
+                ))
+            }
+            AppendOnlyFileChange::TruncatedRestarted { .. } => {
+                *line_number = 0;
+                *pending_timestamp = None;
+                Some(format!(
+                    "history file truncated at {}; restarting from the beginning",
+                    self.path
+                ))
+            }
+            AppendOnlyFileChange::TruncatedAdvancedToEnd { .. } => {
+                *pending_timestamp = None;
+                Some(format!(
+                    "history file truncated at {}; advancing checkpoint to the new end",
+                    self.path
+                ))
+            }
+        }
+    }
+
+    async fn process_tailed_text_lines(
+        &self,
+        lines: Vec<String>,
+        line_number: &mut u64,
+        pending_timestamp: &mut Option<Timestamp>,
+        recent_hashes: &mut VecDeque<u64>,
+        warnings: Option<&mut Vec<String>>,
+    ) -> usize {
+        let mut processed = 0usize;
+        let mut warnings = warnings;
+
+        for line in lines {
+            match process_text_history_line(
+                self,
+                &line,
+                line_number,
+                pending_timestamp,
+                recent_hashes,
+            )
+            .await
+            {
+                Ok(true) => {
+                    processed += 1;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    let message =
+                        format!("failed to process history entry near line {line_number}: {error}");
+                    self.record_error("process_command", &message);
+                    if let Some(warnings) = warnings.as_deref_mut() {
+                        warnings.push(self.strict_warning(message));
+                    } else {
+                        warn!(
+                            "Failed to process history entry from {}: {}",
+                            self.path, error
+                        );
+                    }
+                }
+            }
+        }
+
+        processed
     }
 
     fn retryable_sqlite_warning(&self, detail: impl Into<String>) -> HistorySqliteWarning {
@@ -1241,169 +1347,77 @@ impl HistoryWatcherContext {
                         );
                     }
                 };
-                let mut offset_bytes = state.offset_bytes;
+                let mut file_state = state.file_state();
                 let mut line_number = state.line_number;
                 let mut pending_timestamp = state.pending_timestamp;
                 let mut recent_hashes = state.recent_hashes;
-                #[cfg(unix)]
-                let mut last_inode = state.inode;
 
                 let poll_started_at = Instant::now();
                 let mut file_size = 0u64;
-                let mut processed = 0usize;
                 let mut warnings = Vec::new();
 
-                match fs::metadata(&self.path).await {
-                    Ok(metadata) => {
-                        file_size = metadata.len();
-                        #[cfg(unix)]
-                        {
-                            use std::os::unix::fs::MetadataExt;
-
-                            let current_inode = metadata.ino();
-                            let inode_changed =
-                                last_inode.is_some_and(|prev| prev != current_inode);
-                            last_inode = Some(current_inode);
-
-                            if file_size < offset_bytes {
-                                if inode_changed {
-                                    warnings.push(self.strict_warning(format!(
-                                        "history file rotated at {}; restarting from the beginning",
-                                        self.path
-                                    )));
-                                    offset_bytes = 0;
-                                    line_number = 0;
-                                    pending_timestamp = None;
-                                } else {
-                                    warnings.push(self.strict_warning(format!(
-                                        "history file truncated at {}; advancing checkpoint to the new end",
-                                        self.path
-                                    )));
-                                    offset_bytes = file_size;
-                                    pending_timestamp = None;
-                                }
-                            }
+                match poll_utf8_lines(&self.path, file_state.clone()).await {
+                    Ok(polled) => {
+                        file_size = polled.file_size;
+                        file_state = polled.state;
+                        if let Some(message) = self.reconcile_text_file_change(
+                            &polled.change,
+                            &mut line_number,
+                            &mut pending_timestamp,
+                        ) {
+                            warnings.push(self.strict_warning(message));
                         }
-
-                        #[cfg(not(unix))]
-                        {
-                            if file_size < offset_bytes {
-                                warnings.push(self.strict_warning(format!(
-                                    "history file truncated at {}; restarting from the beginning",
-                                    self.path
-                                )));
-                                offset_bytes = 0;
-                                line_number = 0;
-                                pending_timestamp = None;
-                            }
-                        }
-
-                        if file_size == offset_bytes {
-                            self.record_poll(poll_started_at, file_size, processed);
-                            return self.success_outcome(
-                                processed,
-                                HistoryState {
-                                    offset_bytes,
-                                    line_number,
-                                    pending_timestamp,
-                                    #[cfg(unix)]
-                                    inode: last_inode,
-                                    sqlite_row_id: None,
-                                    recent_hashes,
-                                },
-                                warnings,
-                            );
-                        }
-
-                        match self.read_new_segment(offset_bytes).await {
-                            Ok(new_segment) => {
-                                if !new_segment.is_empty() {
-                                    let mut consumed_bytes = 0u64;
-                                    for line in new_segment.split_inclusive('\n') {
-                                        if !line.ends_with('\n') && new_segment.ends_with(line) {
-                                            break;
-                                        }
-                                        let trimmed = line.trim_end_matches('\n');
-                                        consumed_bytes += line.len() as u64;
-                                        if trimmed.is_empty() {
-                                            continue;
-                                        }
-                                        match process_text_history_line(
-                                            self,
-                                            trimmed,
-                                            &mut line_number,
-                                            &mut pending_timestamp,
-                                            &mut recent_hashes,
-                                        )
-                                        .await
-                                        {
-                                            Ok(true) => {
-                                                processed += 1;
-                                            }
-                                            Ok(false) => {}
-                                            Err(error) => {
-                                                let message = format!(
-                                                    "failed to process history entry near line {line_number}: {error}"
-                                                );
-                                                self.record_error("process_command", &message);
-                                                warnings.push(self.strict_warning(message));
-                                            }
-                                        }
-                                    }
-                                    if consumed_bytes > 0 {
-                                        offset_bytes = offset_bytes.saturating_add(consumed_bytes);
-                                    }
-                                }
-                                self.record_poll(poll_started_at, file_size, processed);
-                                self.success_outcome(
-                                    processed,
-                                    HistoryState {
-                                        offset_bytes,
-                                        line_number,
-                                        pending_timestamp,
-                                        #[cfg(unix)]
-                                        inode: last_inode,
-                                        sqlite_row_id: None,
-                                        recent_hashes,
-                                    },
-                                    warnings,
-                                )
-                            }
-                            Err(error) => {
-                                self.record_poll(poll_started_at, file_size, processed);
-                                self.failed_outcome(
-                                    "read_history_segment",
-                                    format!(
-                                        "failed to read terminal history from {}: {error}",
-                                        self.path
-                                    ),
-                                    HistoryState {
-                                        offset_bytes,
-                                        line_number,
-                                        pending_timestamp,
-                                        #[cfg(unix)]
-                                        inode: last_inode,
-                                        sqlite_row_id: None,
-                                        recent_hashes,
-                                    },
-                                )
-                            }
-                        }
-                    }
-                    Err(error) => {
+                        let processed = self
+                            .process_tailed_text_lines(
+                                polled.lines,
+                                &mut line_number,
+                                &mut pending_timestamp,
+                                &mut recent_hashes,
+                                Some(&mut warnings),
+                            )
+                            .await;
                         self.record_poll(poll_started_at, file_size, processed);
-                        self.failed_outcome(
-                            "stat_history_file",
-                            format!("failed to stat terminal history {}: {error}", self.path),
-                            HistoryState {
-                                offset_bytes,
+                        self.success_outcome(
+                            processed,
+                            HistoryState::from_text_progress(
+                                &file_state,
                                 line_number,
                                 pending_timestamp,
-                                #[cfg(unix)]
-                                inode: last_inode,
-                                sqlite_row_id: None,
                                 recent_hashes,
-                            },
+                            ),
+                            warnings,
+                        )
+                    }
+                    Err(TailError::FileNotFound(_)) => {
+                        self.record_poll(poll_started_at, file_size, 0);
+                        self.failed_outcome(
+                            "stat_history_file",
+                            format!(
+                                "failed to stat terminal history {}: file not found",
+                                self.path
+                            ),
+                            HistoryState::from_text_progress(
+                                &file_state,
+                                line_number,
+                                pending_timestamp,
+                                recent_hashes,
+                            ),
+                        )
+                    }
+                    Err(error) => {
+                        self.record_poll(poll_started_at, file_size, 0);
+                        self.failed_outcome(
+                            "read_history_segment",
+                            format!(
+                                "failed to read terminal history from {}: {error}",
+                                self.path
+                            ),
+                            HistoryState::from_text_progress(
+                                &file_state,
+                                line_number,
+                                pending_timestamp,
+                                recent_hashes,
+                            ),
                         )
                     }
                 }
@@ -1550,20 +1564,6 @@ impl HistoryWatcherContext {
         Ok(())
     }
 
-    async fn read_new_segment(&self, offset: u64) -> std::io::Result<String> {
-        use std::io::SeekFrom;
-
-        let mut file = tokio::fs::File::open(&self.path).await?;
-        file.seek(SeekFrom::Start(offset)).await?;
-
-        // Pre-allocate to reduce repeated growth; capped by max_capture_bytes.
-        let prealloc = self.max_capture_bytes.as_usize().min(32 * 1024);
-        let mut buffer = Vec::with_capacity(prealloc);
-        file.read_to_end(&mut buffer).await?;
-
-        Ok(String::from_utf8_lossy(&buffer).to_string())
-    }
-
     /// Poll history file for new content (Unix version with inode tracking)
     ///
     /// On Unix, tracks file inode to distinguish between:
@@ -1579,135 +1579,62 @@ impl HistoryWatcherContext {
         recent_hashes: &mut VecDeque<u64>,
         persist_state: bool,
     ) -> NodeResult<usize> {
-        use std::os::unix::fs::MetadataExt;
-
         let poll_started_at = Instant::now();
-        let mut processed = 0usize;
-        let mut file_size = 0u64;
-        match fs::metadata(&self.path).await {
-            Ok(metadata) => {
-                file_size = metadata.len();
-                let current_inode = metadata.ino();
+        let mut file_state = AppendOnlyFileState {
+            offset_bytes: *offset_bytes,
+            inode: *last_inode,
+        };
 
-                // Update inode tracking
-                let inode_changed = last_inode.is_some_and(|prev| prev != current_inode);
-                *last_inode = Some(current_inode);
-
-                if file_size < *offset_bytes {
-                    if inode_changed {
-                        // File rotation: new file with new inode, reset and re-process
-                        debug!(
-                            path = %self.path,
-                            previous_offset = *offset_bytes,
-                            new_size = file_size,
-                            old_inode = ?last_inode,
-                            new_inode = current_inode,
-                            "History file rotated (new inode); resetting to read new file"
-                        );
-                        *offset_bytes = 0;
-                        *line_number = 0;
-                        *pending_timestamp = None;
-                    } else {
-                        // Same inode but smaller: truncation, adjust offset without re-processing
-                        debug!(
-                            path = %self.path,
-                            previous_offset = *offset_bytes,
-                            new_size = file_size,
-                            inode = current_inode,
-                            "History file truncated (same inode); adjusting offset"
-                        );
-                        *offset_bytes = file_size;
-                        *pending_timestamp = None;
-                        // Keep line_number as-is; we don't know exactly where we are
-                    }
-                    if persist_state {
-                        self.persist_state(
-                            *offset_bytes,
-                            *line_number,
-                            *pending_timestamp,
-                            recent_hashes,
-                        )
-                        .await?;
-                    }
-                    self.record_poll(poll_started_at, file_size, processed);
-                    return Ok(processed);
+        let result = match poll_utf8_lines(&self.path, file_state.clone()).await {
+            Ok(polled) => {
+                file_state = polled.state;
+                if let Some(message) =
+                    self.reconcile_text_file_change(&polled.change, line_number, pending_timestamp)
+                {
+                    debug!(path = %self.path, "{message}");
                 }
-
-                if file_size == *offset_bytes {
-                    self.record_poll(poll_started_at, file_size, processed);
-                    return Ok(processed);
-                }
-
-                match self.read_new_segment(*offset_bytes).await {
-                    Ok(new_segment) => {
-                        if new_segment.is_empty() {
-                            return Ok(processed);
-                        }
-
-                        let mut consumed_bytes: u64 = 0;
-
-                        for line in new_segment.split_inclusive('\n') {
-                            if !line.ends_with('\n') && new_segment.ends_with(line) {
-                                break;
-                            }
-
-                            let trimmed = line.trim_end_matches('\n');
-                            consumed_bytes += line.len() as u64;
-
-                            if trimmed.is_empty() {
-                                continue;
-                            }
-
-                            match process_text_history_line(
-                                self,
-                                trimmed,
-                                line_number,
-                                pending_timestamp,
-                                recent_hashes,
-                            )
-                            .await
-                            {
-                                Ok(true) => {
-                                    processed += 1;
-                                }
-                                Ok(false) => {}
-                                Err(e) => {
-                                    self.record_error("process_command", &e.to_string());
-                                    warn!(
-                                        "Failed to process history entry from {}: {}",
-                                        self.path, e
-                                    );
-                                }
-                            }
-                        }
-
-                        if consumed_bytes > 0 {
-                            *offset_bytes = offset_bytes.saturating_add(consumed_bytes);
-                            if persist_state {
-                                self.persist_state(
-                                    *offset_bytes,
-                                    *line_number,
-                                    *pending_timestamp,
-                                    recent_hashes,
-                                )
-                                .await?;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        self.record_error("read_history_segment", &e.to_string());
-                        warn!("History watcher unable to read {}: {}", self.path, e);
-                    }
-                }
+                let processed = self
+                    .process_tailed_text_lines(
+                        polled.lines,
+                        line_number,
+                        pending_timestamp,
+                        recent_hashes,
+                        None,
+                    )
+                    .await;
+                self.record_poll(poll_started_at, polled.file_size, processed);
+                Ok(processed)
             }
-            Err(e) => {
-                self.record_error("stat_history_file", &e.to_string());
-                warn!("History watcher unable to stat {}: {}", self.path, e);
+            Err(TailError::FileNotFound(_)) => {
+                self.record_error("stat_history_file", "file not found");
+                warn!(
+                    "History watcher unable to stat {}: file not found",
+                    self.path
+                );
+                self.record_poll(poll_started_at, 0, 0);
+                Ok(0)
             }
+            Err(error) => {
+                self.record_error("read_history_segment", &error.to_string());
+                warn!("History watcher unable to read {}: {}", self.path, error);
+                self.record_poll(poll_started_at, 0, 0);
+                Ok(0)
+            }
+        };
+
+        *offset_bytes = file_state.offset_bytes;
+        *last_inode = file_state.inode;
+        if persist_state {
+            self.persist_state(
+                *offset_bytes,
+                *line_number,
+                *pending_timestamp,
+                recent_hashes,
+            )
+            .await?;
         }
 
-        self.record_poll(poll_started_at, file_size, processed);
-        Ok(processed)
+        result
     }
 
     /// Poll history file for new content (non-Unix version without inode tracking)
@@ -1721,110 +1648,59 @@ impl HistoryWatcherContext {
         persist_state: bool,
     ) -> NodeResult<usize> {
         let poll_started_at = Instant::now();
-        let mut processed = 0usize;
-        let mut file_size = 0u64;
-        match fs::metadata(&self.path).await {
-            Ok(metadata) => {
-                file_size = metadata.len();
+        let mut file_state = AppendOnlyFileState {
+            offset_bytes: *offset_bytes,
+        };
 
-                if file_size < *offset_bytes {
-                    debug!(
-                        path = %self.path,
-                        previous_offset = *offset_bytes,
-                        new_size = file_size,
-                        "History file truncated; resetting offsets"
-                    );
-                    *offset_bytes = 0;
-                    *line_number = 0;
-                    *pending_timestamp = None;
-                    if persist_state {
-                        self.persist_state(
-                            *offset_bytes,
-                            *line_number,
-                            *pending_timestamp,
-                            recent_hashes,
-                        )
-                        .await?;
-                    }
-                    self.record_poll(poll_started_at, file_size, processed);
-                    return Ok(processed);
+        let result = match poll_utf8_lines(&self.path, file_state.clone()).await {
+            Ok(polled) => {
+                file_state = polled.state;
+                if let Some(message) =
+                    self.reconcile_text_file_change(&polled.change, line_number, pending_timestamp)
+                {
+                    debug!(path = %self.path, "{message}");
                 }
-
-                if file_size == *offset_bytes {
-                    self.record_poll(poll_started_at, file_size, processed);
-                    return Ok(processed);
-                }
-
-                match self.read_new_segment(*offset_bytes).await {
-                    Ok(new_segment) => {
-                        if new_segment.is_empty() {
-                            return Ok(processed);
-                        }
-
-                        let mut consumed_bytes: u64 = 0;
-
-                        for line in new_segment.split_inclusive('\n') {
-                            if !line.ends_with('\n') && new_segment.ends_with(line) {
-                                break;
-                            }
-
-                            let trimmed = line.trim_end_matches('\n');
-                            consumed_bytes += line.len() as u64;
-
-                            if trimmed.is_empty() {
-                                continue;
-                            }
-
-                            match process_text_history_line(
-                                self,
-                                trimmed,
-                                line_number,
-                                pending_timestamp,
-                                recent_hashes,
-                            )
-                            .await
-                            {
-                                Ok(true) => {
-                                    processed += 1;
-                                }
-                                Ok(false) => {}
-                                Err(e) => {
-                                    self.record_error("process_command", &e.to_string());
-                                    warn!(
-                                        "Failed to process history entry from {}: {}",
-                                        self.path, e
-                                    );
-                                }
-                            };
-                        }
-
-                        if consumed_bytes > 0 {
-                            *offset_bytes = offset_bytes.saturating_add(consumed_bytes);
-                            if persist_state {
-                                self.persist_state(
-                                    *offset_bytes,
-                                    *line_number,
-                                    *pending_timestamp,
-                                    recent_hashes,
-                                )
-                                .await?;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        self.record_error("read_history_segment", &e.to_string());
-                        warn!("History watcher unable to read {}: {}", self.path, e);
-                    }
-                }
+                let processed = self
+                    .process_tailed_text_lines(
+                        polled.lines,
+                        line_number,
+                        pending_timestamp,
+                        recent_hashes,
+                        None,
+                    )
+                    .await;
+                self.record_poll(poll_started_at, polled.file_size, processed);
+                Ok(processed)
             }
-            Err(e) => {
-                self.record_error("stat_history_file", &e.to_string());
-                warn!("History watcher unable to stat {}: {}", self.path, e);
+            Err(TailError::FileNotFound(_)) => {
+                self.record_error("stat_history_file", "file not found");
+                warn!(
+                    "History watcher unable to stat {}: file not found",
+                    self.path
+                );
+                self.record_poll(poll_started_at, 0, 0);
+                Ok(0)
             }
+            Err(error) => {
+                self.record_error("read_history_segment", &error.to_string());
+                warn!("History watcher unable to read {}: {}", self.path, error);
+                self.record_poll(poll_started_at, 0, 0);
+                Ok(0)
+            }
+        };
+
+        *offset_bytes = file_state.offset_bytes;
+        if persist_state {
+            self.persist_state(
+                *offset_bytes,
+                *line_number,
+                *pending_timestamp,
+                recent_hashes,
+            )
+            .await?;
         }
 
-        self.record_poll(poll_started_at, file_size, processed);
-        Ok(processed)
+        result
     }
 
     async fn poll_fish_history_once(
@@ -6459,6 +6335,7 @@ mod tests {
         commands: Arc<Mutex<Vec<String>>>,
         history_path: std::path::PathBuf,
         _temp_dir: tempfile::TempDir,
+        _event_drain: tokio::task::JoinHandle<()>,
         _ingest_handle: xtask::sandbox::TestIngestdHandle,
     }
 
@@ -6467,10 +6344,15 @@ mod tests {
         test_name: &str,
         max_capture_bytes: u64,
     ) -> TestResult<WatcherFixture> {
-        let TestRuntime { runtime, nats, .. } = TestRuntimeBuilder::new(test_ctx, test_name)
+        let TestRuntime {
+            runtime,
+            mut event_rx,
+            nats,
+        } = TestRuntimeBuilder::new(test_ctx, test_name)
             .with_dry_run(false)
             .build()
             .await?;
+        let event_drain = tokio::spawn(async move { while event_rx.recv().await.is_some() {} });
 
         let ingest_config = TestIngestdConfig {
             nats: nats.connection_config(),
@@ -6523,6 +6405,7 @@ mod tests {
             commands,
             history_path,
             _temp_dir: temp_dir,
+            _event_drain: event_drain,
             _ingest_handle: ingest_handle,
         })
     }
@@ -6636,7 +6519,7 @@ mod tests {
                 1_700_000_000_000_000_000_i64,
                 "echo broken",
                 "/tmp",
-                0_i64,
+                i64::MAX,
                 -1_i64,
                 "test-host",
                 "session-1",
@@ -6668,7 +6551,7 @@ mod tests {
             .ctx
             .scan_history_once_from_state(Some(fix.ctx.empty_state()), None)
             .await;
-        assert_eq!(outcome.processed, 0);
+        assert_eq!(outcome.processed, 1);
         assert!(
             outcome
                 .warnings
@@ -6678,14 +6561,14 @@ mod tests {
             outcome.warnings
         );
         assert!(
-            outcome
+            !outcome
                 .warnings
                 .iter()
                 .any(|warning| warning.contains("failed to process Atuin row 2")),
-            "expected retryable row warning, got {:?}",
+            "valid rows after a permanently invalid one should be processed, got {:?}",
             outcome.warnings
         );
-        assert_eq!(outcome.state.sqlite_row_id, Some(1));
+        assert_eq!(outcome.state.sqlite_row_id, Some(2));
         assert!(
             fix.commands
                 .lock()
@@ -6731,7 +6614,7 @@ mod tests {
                 1_700_000_000_000_000_000_i64,
                 "echo broken",
                 "/tmp",
-                0_i64,
+                i64::MAX,
                 -1_i64,
                 "test-host",
                 "session-1",
@@ -6766,8 +6649,8 @@ mod tests {
             .poll_atuin_history_once(&mut sqlite_row_id, &mut recent_hashes, false)
             .await?;
 
-        assert_eq!(processed, 0);
-        assert_eq!(sqlite_row_id, 1);
+        assert_eq!(processed, 1);
+        assert_eq!(sqlite_row_id, 2);
         assert!(
             fix.commands
                 .lock()

@@ -142,6 +142,9 @@ pub use event_node::{EventBatcher, EventBatcherConfig, EventTransport, spawn_eve
 pub use exploration::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, MissingItem, SourceState,
 };
+pub use file_tailer::{
+    AppendOnlyFileChange, AppendOnlyFilePollResult, AppendOnlyFileState, TailError, poll_utf8_lines,
+};
 #[cfg(feature = "messaging")]
 pub use health_reporter::{HealthMetrics, HealthReporter, HealthThresholds};
 #[cfg(feature = "messaging")]
