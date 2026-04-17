@@ -1132,7 +1132,6 @@ in
                   type = submodule {
                     options = {
                       enable = mkOption { type = bool; default = true; description = "Enable canonical command synthesizer."; };
-                      subjects = mkOption { type = strList; default = [ "events.terminal.*" ]; description = "Subject filters to consume."; };
                       profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
                       env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
                     };
@@ -1145,7 +1144,6 @@ in
                   type = submodule {
                     options = {
                       enable = mkOption { type = bool; default = true; description = "Enable health aggregator automaton."; };
-                      subjects = mkOption { type = strList; default = [ "events.system.*" ]; description = "Subject filters to consume."; };
                       profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
                       env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
                     };
@@ -1154,11 +1152,22 @@ in
                   description = "Health aggregator automaton.";
                 };
 
+                analyticsAutomaton = mkOption {
+                  type = submodule {
+                    options = {
+                      enable = mkOption { type = bool; default = true; description = "Enable analytics automaton."; };
+                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                      env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
+                    };
+                  };
+                  default = {};
+                  description = "Analytics automaton. Emits sliding-window `analytics.insight` summaries from raw events.";
+                };
+
                 sessionDetector = mkOption {
                   type = submodule {
                     options = {
-                      enable = mkOption { type = bool; default = false; description = "Enable session detector automaton. Groups events by temporal proximity into session boundaries."; };
-                      subjects = mkOption { type = strList; default = [ "events.raw.>" ]; description = "Subject filters to consume (all events by default for cross-source session detection)."; };
+                      enable = mkOption { type = bool; default = true; description = "Enable session detector automaton. Groups events by temporal proximity into session boundaries."; };
                       profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
                       env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
                     };

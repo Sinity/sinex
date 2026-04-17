@@ -4,7 +4,6 @@
 , sinex-gateway ? null
 , pg_jsonschema ? null
 , sinex ? null
-, sinexVmFsRuntime ? null
 , sinexCli ? null
 , xtask ? null
 , sinexVmTestSuite ? null
@@ -13,13 +12,11 @@
 {
   # Basic operational test
   basic = import ./test-scenarios/basic-flow.nix {
-    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinexCli sinexVmTestSuite;
-    sinex = if sinexVmFsRuntime != null then sinexVmFsRuntime else sinex;
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli sinexVmTestSuite;
   };
 
   "replay-smoke" = import ./test-scenarios/replay-smoke.nix {
-    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinexCli;
-    sinex = if sinexVmFsRuntime != null then sinexVmFsRuntime else sinex;
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
   };
 
   preflight = import ./preflight_deployment_test.nix {

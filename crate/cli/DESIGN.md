@@ -22,7 +22,7 @@ Global options are layered with runtime env and local preferences:
 ## Command Families
 
 - Gateway/system: `gateway`, `core`
-- Query/inspection: `query`, `status`, `recent`, `errors`, `watch`, `tui`
+- Query/inspection: `query`, `verify` (passive trust checks plus optional active deployment smoke), `status`, `recent`, `errors`, `watch`, `tui`
 - Operations: `ops`, `audit`, `node`, `replay`, `dlq`, `lifecycle`, `gitops`
 - Local tooling: `config`, `completions`
 

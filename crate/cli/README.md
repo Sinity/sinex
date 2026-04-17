@@ -15,6 +15,9 @@ sinexctl query -s 1h --token "$SINEX_RPC_TOKEN"
 sinexctl node list --token "$SINEX_RPC_TOKEN"
 sinexctl replay list --token "$SINEX_RPC_TOKEN"
 
+# Run trust verification, including active deployment-proof surfaces
+sinexctl verify --gateway-smoke --automata-smoke --historical-proof --token "$SINEX_RPC_TOKEN"
+
 # Inspect DLQ state
 sinexctl dlq list --token "$SINEX_RPC_TOKEN"
 ```
@@ -24,6 +27,7 @@ sinexctl dlq list --token "$SINEX_RPC_TOKEN"
 - `gateway`: connectivity/version checks
 - `core`: system health
 - `query`: event search and filtering
+- `verify`: trust/proof checks for pipeline, gateway reachability, automata deployment smoke, and historical backfill
 - `node`: list/status/drain/resume/horizon
 - `replay`: plan/submit/watch/list
 - `dlq`: list/peek/requeue/purge

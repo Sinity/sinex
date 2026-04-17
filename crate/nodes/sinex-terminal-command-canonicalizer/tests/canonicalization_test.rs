@@ -7,6 +7,8 @@ use sinex_node_sdk::TransducerNode;
 use sinex_node_sdk::derived_node::DerivedTriggerContext;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
+use sinex_primitives::events::EventPayload;
+use sinex_primitives::events::payloads::CanonicalCommandPayload;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Id, JsonValue};
 use sinex_terminal_command_canonicalizer::TerminalCommandCanonicalizer;
@@ -55,6 +57,16 @@ async fn test_accepts_shell_kitty_source() -> TestResult<()> {
 
     assert!(result.is_some(), "shell.kitty should be accepted");
     assert_eq!(result.unwrap().payload.command, "ls -la");
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_emits_payload_declared_source() -> TestResult<()> {
+    let canon = TerminalCommandCanonicalizer::new();
+    assert_eq!(
+        canon.output_event_source(),
+        CanonicalCommandPayload::SOURCE.as_static_str()
+    );
     Ok(())
 }
 

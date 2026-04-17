@@ -50,7 +50,9 @@ let
       0
     else
       (if cfg.nodes.automata.canonicalizer.enable then 1 else 0)
-      + (if cfg.nodes.automata.healthAggregator.enable then 1 else 0);
+      + (if cfg.nodes.automata.healthAggregator.enable then 1 else 0)
+      + (if cfg.nodes.automata.analyticsAutomaton.enable then 1 else 0)
+      + (if cfg.nodes.automata.sessionDetector.enable then 1 else 0);
 
   coreServiceCount = (if ingestEnabled then 1 else 0) + (if gatewayEnabled then 1 else 0);
 

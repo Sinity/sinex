@@ -30,6 +30,13 @@ pkgs.testers.nixosTest {
       terminal.enable = false;
       desktop.enable = false;
       system.enable = false;
+      automata = {
+        enable = true;
+        canonicalizer.enable = true;
+        healthAggregator.enable = true;
+        analyticsAutomaton.enable = true;
+        sessionDetector.enable = true;
+      };
     };
   };
 
@@ -37,12 +44,22 @@ pkgs.testers.nixosTest {
     start_all()
     machine.wait_for_unit("multi-user.target")
     machine.wait_for_unit("postgresql.service", timeout=60)
+    machine.wait_for_unit("sinex-gateway.service", timeout=60)
     machine.wait_for_unit("sinex-ingestd.service", timeout=60)
     machine.wait_for_unit("sinex-filesystem-1.service", timeout=60)
+    machine.wait_for_unit("sinex-canonicalizer.service", timeout=60)
+    machine.wait_for_unit("sinex-health-automaton.service", timeout=60)
+    machine.wait_for_unit("sinex-analytics-automaton.service", timeout=60)
+    machine.wait_for_unit("sinex-session-detector.service", timeout=60)
 
     with subtest("Rust-driven smoke suite"):
       machine.succeed(
         "${sinexVmTestSuite}/bin/run-suite --category smoke"
+      )
+
+    with subtest("Deployment proof via sinexctl verify"):
+      machine.succeed(
+        "sinexctl --insecure verify --gateway-smoke --automata-smoke"
       )
   '';
 }
