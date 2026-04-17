@@ -9,10 +9,7 @@
 //! - Structured events are emitted through `StageAsYouGoContext`, referencing
 //!   the captured material for provenance.
 
-use notify::{
-    Config as NotifyConfig, Event, EventKind, PollWatcher, RecommendedWatcher, RecursiveMode,
-    Watcher, event::RenameMode,
-};
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, event::RenameMode};
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::error_helpers::NodeErrorExt;
 use sinex_node_sdk::{
@@ -67,22 +64,74 @@ use validator::ValidationError;
 
 const DEFAULT_MAX_CAPTURE_BYTES: Bytes = Bytes::from_mebibytes(10); // 10MB
 const DEFAULT_MAX_DEPTH: usize = 10; // Maximum directory traversal depth
-const DEFAULT_MAX_WATCHES: usize = 65_536; // Inotify watch limit (well under typical Linux max)
+const DEFAULT_MAX_WATCHES: usize = 524_288; // Align with the documented/recommended Linux inotify limit
 const DEFAULT_POLL_INTERVAL_SECS: Seconds = Seconds::from_secs(5);
 const FS_WATCH_CHANNEL_SIZE: usize = 10_000; // Buffer size for filesystem event channel (high-volume burst protection)
 const FS_CAPTURE_CHUNK_SIZE: usize = 64 * 1024;
 const FS_READ_RETRY_ATTEMPTS: u32 = 3; // Number of retry attempts for transient file read errors
 const FS_READ_RETRY_BASE_DELAY_MS: u64 = 100; // Base delay for exponential backoff (100ms, 500ms, 1s)
 const FS_MAX_CONCURRENT_CAPTURES: usize = 64; // Cap concurrent file reads across all watchers to avoid FD exhaustion
+const DEFAULT_IGNORED_DIRECTORY_NAMES: &[&str] = &[".git", ".direnv", "node_modules", "target"];
+const INOTIFY_MAX_USER_WATCHES_PATH: &str = "/proc/sys/fs/inotify/max_user_watches";
 const MATERIAL_REASON_CREATED: &str = "fs-watcher:file-created";
 const MATERIAL_REASON_MODIFIED: &str = "fs-watcher:file-modified";
 const MATERIAL_REASON_DELETED: &str = "fs-watcher:file-deleted";
 const MATERIAL_REASON_MOVED: &str = "fs-watcher:file-moved";
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct WatchTreeEstimate {
-    watch_count: usize,
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct WatchTreeSurvey {
+    accessible_watch_count: usize,
+    filtered_watch_count: usize,
     unreadable_directories: usize,
+    ignored_directories: usize,
+    filtered_targets: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum WatchStrategy {
+    NativeRecursive,
+    NativeFiltered { filtered_targets: Vec<PathBuf> },
+}
+
+impl WatchStrategy {
+    fn mode_name(&self) -> &'static str {
+        match self {
+            Self::NativeRecursive => "native-recursive",
+            Self::NativeFiltered { .. } => "native-filtered",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WatchBudget {
+    configured_max_watches: usize,
+    effective_max_watches: usize,
+    kernel_max_watches: Option<usize>,
+}
+
+impl WatchBudget {
+    fn detect(configured_max_watches: usize) -> Self {
+        let kernel_max_watches = read_kernel_inotify_watch_limit();
+        let effective_max_watches = kernel_max_watches
+            .map(|limit| limit.min(configured_max_watches))
+            .unwrap_or(configured_max_watches);
+
+        Self {
+            configured_max_watches,
+            effective_max_watches,
+            kernel_max_watches,
+        }
+    }
+}
+
+enum ActiveWatcher {
+    NativeRecursive {
+        _watcher: RecommendedWatcher,
+    },
+    NativeFiltered {
+        watcher: RecommendedWatcher,
+        watched_targets: HashSet<PathBuf>,
+    },
 }
 
 /// Filesystem monitoring configuration.
@@ -104,9 +153,13 @@ pub struct FilesystemConfig {
     #[serde(default = "default_max_watches")]
     pub max_watches: usize,
 
-    /// Poll interval used when the native watcher budget would be exceeded
+    /// Poll interval retained for backwards config compatibility; poll fallback is no longer automatic
     #[serde(default = "default_poll_interval_secs")]
     pub poll_interval_secs: Seconds,
+
+    /// Directory names that should be excluded from recursive watch planning and historical scans
+    #[serde(default = "default_ignored_directory_names")]
+    pub ignored_directory_names: Vec<String>,
 }
 
 fn default_max_watches() -> usize {
@@ -115,6 +168,13 @@ fn default_max_watches() -> usize {
 
 fn default_poll_interval_secs() -> Seconds {
     DEFAULT_POLL_INTERVAL_SECS
+}
+
+fn default_ignored_directory_names() -> Vec<String> {
+    DEFAULT_IGNORED_DIRECTORY_NAMES
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect()
 }
 
 impl Default for FilesystemConfig {
@@ -126,6 +186,7 @@ impl Default for FilesystemConfig {
             max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
             max_watches: DEFAULT_MAX_WATCHES,
             poll_interval_secs: DEFAULT_POLL_INTERVAL_SECS,
+            ignored_directory_names: default_ignored_directory_names(),
         }
     }
 }
@@ -161,6 +222,16 @@ impl FilesystemConfig {
         if !(1..=3600).contains(&self.poll_interval_secs.as_secs()) {
             return Err(SinexError::configuration(
                 "Poll interval must be between 1 and 3600 seconds".to_string(),
+            ));
+        }
+
+        if self
+            .ignored_directory_names
+            .iter()
+            .any(|name| name.is_empty() || name.contains(std::path::MAIN_SEPARATOR))
+        {
+            return Err(SinexError::configuration(
+                "Ignored directory names must be non-empty path component names".to_string(),
             ));
         }
 
@@ -299,10 +370,11 @@ struct WatchContext {
     max_capture_bytes: Bytes,
     max_watches: usize,
     max_depth: Option<usize>,
+    follow_symlinks: bool,
     security_policy: FileWatchingSecurityPolicy,
     dropped_events: Arc<AtomicU64>,
     metrics: Arc<EventMetrics>,
-    poll_interval: std::time::Duration,
+    ignored_directory_names: Arc<HashSet<String>>,
     cancel_token: CancellationToken,
     /// Semaphore limiting concurrent file reads across all watchers to prevent FD exhaustion
     capture_semaphore: Arc<tokio::sync::Semaphore>,
@@ -316,7 +388,7 @@ pub struct FilesystemNode {
     runtime: Option<NodeRuntimeState>,
     config: FilesystemConfig,
     stage_context: Option<StageAsYouGoContext>,
-    watch_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+    watch_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<NodeResult<()>>>>>,
     dropped_events: Arc<AtomicU64>,
     metrics: Arc<EventMetrics>,
     cancel_token: CancellationToken,
@@ -377,16 +449,17 @@ impl FilesystemNode {
 
     fn watcher_shutdown_result(
         index: usize,
-        result: Result<(), tokio::task::JoinError>,
+        result: Result<NodeResult<()>, tokio::task::JoinError>,
     ) -> NodeResult<()> {
         match result {
-            Ok(()) => {
+            Ok(Ok(())) => {
                 debug!(
                     watcher_index = index,
                     "Filesystem watcher task finished before shutdown"
                 );
                 Ok(())
             }
+            Ok(Err(error)) => Err(error.with_context("watcher_index", index.to_string())),
             Err(error) if error.is_cancelled() => {
                 debug!(
                     watcher_index = index,
@@ -400,6 +473,31 @@ impl FilesystemNode {
             .with_context("watcher_index", index.to_string())
             .with_source(error)),
         }
+    }
+
+    async fn join_finished_watchers(&self) -> NodeResult<()> {
+        let finished = {
+            let mut guard = self.watch_handles.lock().await;
+            let mut pending = Vec::with_capacity(guard.len());
+            let mut finished = Vec::new();
+
+            for handle in guard.drain(..) {
+                if handle.is_finished() {
+                    finished.push(handle);
+                } else {
+                    pending.push(handle);
+                }
+            }
+
+            *guard = pending;
+            finished
+        };
+
+        for (index, handle) in finished.into_iter().enumerate() {
+            Self::watcher_shutdown_result(index, handle.await)?;
+        }
+
+        Ok(())
     }
 
     fn runtime(&self) -> NodeResult<&NodeRuntimeState> {
@@ -438,6 +536,7 @@ impl FilesystemNode {
                     max_capture_bytes: self.config.max_capture_bytes,
                     max_watches: self.config.max_watches,
                     max_depth: self.config.max_depth,
+                    follow_symlinks: self.config.follow_symlinks,
                     security_policy: if self.config.follow_symlinks {
                         FileWatchingSecurityPolicy::permissive()
                     } else {
@@ -445,8 +544,12 @@ impl FilesystemNode {
                     },
                     dropped_events: Arc::clone(&self.dropped_events),
                     metrics: Arc::clone(&self.metrics),
-                    poll_interval: std::time::Duration::from_secs(
-                        self.config.poll_interval_secs.as_secs(),
+                    ignored_directory_names: Arc::new(
+                        self.config
+                            .ignored_directory_names
+                            .iter()
+                            .cloned()
+                            .collect(),
                     ),
                     cancel_token: self.cancel_token.clone(),
                     capture_semaphore: Arc::clone(&self.capture_semaphore),
@@ -457,7 +560,7 @@ impl FilesystemNode {
         Ok(contexts)
     }
 
-    fn spawn_watchers(&self) -> NodeResult<Vec<tokio::task::JoinHandle<()>>> {
+    fn spawn_watchers(&self) -> NodeResult<Vec<tokio::task::JoinHandle<NodeResult<()>>>> {
         let contexts = self.build_watch_contexts()?;
 
         let mut handles = Vec::with_capacity(contexts.len());
@@ -473,19 +576,19 @@ impl FilesystemNode {
                 loop {
                     match watch_path(root_path.clone(), watch_ctx.clone()).await {
                         Ok(()) => {
-                            warn!("Watcher for {} terminated normally (unexpected)", root_path);
-                            break;
+                            debug!("Watcher for {} terminated normally", root_path);
+                            return Ok(());
                         }
-                        Err(e) => {
+                        Err(error) => {
                             attempt += 1;
                             if attempt >= MAX_INIT_ATTEMPTS {
                                 error!(
                                     path = %root_path,
                                     attempts = attempt,
                                     "Failed to initialize watcher after {} attempts: {}",
-                                    MAX_INIT_ATTEMPTS, e
+                                    MAX_INIT_ATTEMPTS, error
                                 );
-                                break;
+                                return Err(error.with_context("watch_root", root_path.clone()));
                             }
 
                             let delay_ms =
@@ -494,7 +597,8 @@ impl FilesystemNode {
                                 path = %root_path,
                                 attempt = attempt,
                                 delay_ms = delay_ms,
-                                "Watcher initialization failed, retrying: {}", e
+                                "Watcher initialization failed, retrying: {}",
+                                error
                             );
                             tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
                         }
@@ -696,9 +800,11 @@ impl IngestorNode for FilesystemNode {
 
             let files = collect_historical_files(
                 &target_path,
+                Path::new(root),
                 0,
                 ctx.max_depth,
-                self.config.follow_symlinks,
+                ctx.follow_symlinks,
+                &ctx.ignored_directory_names,
                 &mut warnings,
             )?;
 
@@ -766,10 +872,21 @@ impl IngestorNode for FilesystemNode {
             guard.extend(handles);
         }
 
-        // Wait for shutdown signal instead of awaiting pending
         let mut shutdown_rx = shutdown_rx;
-        if !wait_for_shutdown_signal(&mut shutdown_rx).await {
-            warn!("Filesystem watcher shutdown channel dropped before explicit shutdown");
+        let mut watcher_health_check = tokio::time::interval(std::time::Duration::from_secs(1));
+
+        loop {
+            tokio::select! {
+                _ = watcher_health_check.tick() => {
+                    self.join_finished_watchers().await?;
+                }
+                signaled = wait_for_shutdown_signal(&mut shutdown_rx) => {
+                    if !signaled {
+                        warn!("Filesystem watcher shutdown channel dropped before explicit shutdown");
+                    }
+                    break;
+                }
+            }
         }
 
         Ok(ScanReport {
@@ -886,212 +1003,425 @@ impl ExplorationProvider for FilesystemNode {
     }
 }
 
-/// Estimate the number of inotify watches needed for a directory tree.
-/// Each subdirectory requires one watch when using `RecursiveMode::Recursive`.
-fn inspect_watch_tree(path: &Path, max_depth: Option<usize>) -> NodeResult<WatchTreeEstimate> {
+fn path_component_is_ignored(path: &Path, ignored_directory_names: &HashSet<String>) -> bool {
+    path.file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|name| ignored_directory_names.contains(name))
+}
+
+fn path_contains_ignored_descendant(
+    root: &Path,
+    path: &Path,
+    ignored_directory_names: &HashSet<String>,
+) -> bool {
+    path.strip_prefix(root).ok().is_some_and(|relative| {
+        relative.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::Normal(name)
+                    if name
+                        .to_str()
+                        .is_some_and(|name| ignored_directory_names.contains(name))
+            )
+        })
+    })
+}
+
+fn relative_depth(root: &Path, path: &Path) -> Option<usize> {
+    path.strip_prefix(root).ok().map(|relative| {
+        relative
+            .components()
+            .filter(|component| matches!(component, std::path::Component::Normal(_)))
+            .count()
+    })
+}
+
+fn metadata_is_directory(
+    metadata: &StdMetadata,
+    follow_symlinks: bool,
+    path: &Path,
+) -> NodeResult<bool> {
+    if metadata.is_dir() {
+        return Ok(true);
+    }
+
+    if follow_symlinks && metadata.file_type().is_symlink() {
+        return std::fs::metadata(path)
+            .map(|resolved| resolved.is_dir())
+            .map_err(|error| {
+                SinexError::io("Failed to follow filesystem watch symlink")
+                    .with_std_error(&error)
+                    .with_path(path.display())
+            });
+    }
+
+    Ok(false)
+}
+
+/// Survey a watch target once at startup so the node can choose a bounded native strategy.
+fn survey_watch_tree(
+    path: &Path,
+    depth: usize,
+    max_depth: Option<usize>,
+    follow_symlinks: bool,
+    ignored_directory_names: &HashSet<String>,
+) -> NodeResult<WatchTreeSurvey> {
     fn is_permission_denied(error: &std::io::Error) -> bool {
         error.kind() == std::io::ErrorKind::PermissionDenied
     }
 
-    fn inspect_dirs(
-        dir: &Path,
+    fn inspect_path(
+        path: &Path,
         depth: usize,
         max_depth: Option<usize>,
-    ) -> NodeResult<WatchTreeEstimate> {
-        if max_depth.is_some_and(|m| depth >= m) {
-            return Ok(WatchTreeEstimate::default());
-        }
-
-        let entries = match std::fs::read_dir(dir) {
-            Ok(entries) => entries,
+        follow_symlinks: bool,
+        ignored_directory_names: &HashSet<String>,
+    ) -> NodeResult<WatchTreeSurvey> {
+        let metadata = match std::fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
             Err(error) if depth > 0 && is_permission_denied(&error) => {
                 warn!(
-                    path = %dir.display(),
-                    "Skipping unreadable directory while estimating watch budget"
+                    path = %path.display(),
+                    "Skipping unreadable directory while surveying watch strategy"
                 );
-                return Ok(WatchTreeEstimate {
+                return Ok(WatchTreeSurvey {
+                    accessible_watch_count: 1,
                     unreadable_directories: 1,
-                    ..WatchTreeEstimate::default()
+                    ..WatchTreeSurvey::default()
                 });
             }
             Err(error) => {
                 return Err(SinexError::io(
-                    "Failed to enumerate watch directory while estimating watch budget",
+                    "Failed to inspect watch target while surveying watch strategy",
                 )
                 .with_std_error(&error)
-                .with_path(dir.display()));
+                .with_path(path.display()));
             }
         };
 
-        let mut estimate = WatchTreeEstimate::default();
+        if !metadata_is_directory(&metadata, follow_symlinks, path)? {
+            return Ok(WatchTreeSurvey {
+                accessible_watch_count: 1,
+                filtered_watch_count: 1,
+                filtered_targets: vec![path.to_path_buf()],
+                ..WatchTreeSurvey::default()
+            });
+        }
+
+        let mut survey = WatchTreeSurvey {
+            accessible_watch_count: 1,
+            filtered_watch_count: 1,
+            filtered_targets: vec![path.to_path_buf()],
+            ..WatchTreeSurvey::default()
+        };
+
+        if max_depth.is_some_and(|m| depth >= m) {
+            return Ok(survey);
+        }
+
+        let entries = match std::fs::read_dir(path) {
+            Ok(entries) => entries,
+            Err(error) if depth > 0 && is_permission_denied(&error) => {
+                warn!(
+                    path = %path.display(),
+                    "Skipping unreadable directory while surveying watch strategy"
+                );
+                return Ok(WatchTreeSurvey {
+                    accessible_watch_count: 1,
+                    unreadable_directories: 1,
+                    ..WatchTreeSurvey::default()
+                });
+            }
+            Err(error) => {
+                return Err(SinexError::io(
+                    "Failed to enumerate watch directory while surveying watch strategy",
+                )
+                .with_std_error(&error)
+                .with_path(path.display()));
+            }
+        };
+
         for entry in entries {
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(error) if depth > 0 && is_permission_denied(&error) => {
                     warn!(
-                        path = %dir.display(),
-                        "Skipping unreadable directory entry while estimating watch budget"
+                        path = %path.display(),
+                        "Skipping unreadable directory entry while surveying watch strategy"
                     );
                     continue;
                 }
                 Err(error) => {
                     return Err(SinexError::io(
-                        "Failed to read watch directory entry while estimating watch budget",
+                        "Failed to read watch directory entry while surveying watch strategy",
                     )
                     .with_std_error(&error)
-                    .with_path(dir.display()));
+                    .with_path(path.display()));
                 }
             };
             let entry_path = entry.path();
-            let file_type = match entry.file_type() {
-                Ok(file_type) => file_type,
+            let metadata = match std::fs::symlink_metadata(&entry_path) {
+                Ok(metadata) => metadata,
                 Err(error) if depth > 0 && is_permission_denied(&error) => {
                     warn!(
                         path = %entry_path.display(),
-                        "Skipping unreadable watch directory entry while estimating watch budget"
+                        "Skipping unreadable watch directory entry while surveying watch strategy"
                     );
                     continue;
                 }
                 Err(error) => {
                     return Err(SinexError::io(
-                        "Failed to inspect watch directory entry while estimating watch budget",
+                        "Failed to inspect watch directory entry while surveying watch strategy",
                     )
                     .with_std_error(&error)
                     .with_path(entry_path.display()));
                 }
             };
-            if file_type.is_dir() {
-                let child_estimate = inspect_dirs(&entry_path, depth + 1, max_depth)?;
-                estimate.watch_count += 1 + child_estimate.watch_count;
-                estimate.unreadable_directories += child_estimate.unreadable_directories;
+
+            if metadata_is_directory(&metadata, follow_symlinks, &entry_path)? {
+                if path_component_is_ignored(&entry_path, ignored_directory_names) {
+                    survey.accessible_watch_count += 1;
+                    survey.ignored_directories += 1;
+                    continue;
+                }
+                let child_survey = inspect_path(
+                    &entry_path,
+                    depth + 1,
+                    max_depth,
+                    follow_symlinks,
+                    ignored_directory_names,
+                )?;
+                survey.accessible_watch_count += child_survey.accessible_watch_count;
+                survey.filtered_watch_count += child_survey.filtered_watch_count;
+                survey.unreadable_directories += child_survey.unreadable_directories;
+                survey.ignored_directories += child_survey.ignored_directories;
+                survey
+                    .filtered_targets
+                    .extend(child_survey.filtered_targets);
             }
         }
-        Ok(estimate)
+
+        Ok(survey)
     }
 
-    let child_estimate = inspect_dirs(path, 0, max_depth)?;
-    Ok(WatchTreeEstimate {
-        watch_count: 1 + child_estimate.watch_count,
-        unreadable_directories: child_estimate.unreadable_directories,
-    })
+    inspect_path(
+        path,
+        depth,
+        max_depth,
+        follow_symlinks,
+        ignored_directory_names,
+    )
+}
+
+fn choose_watch_strategy(
+    survey: &WatchTreeSurvey,
+    budget: WatchBudget,
+) -> NodeResult<WatchStrategy> {
+    let needs_filtered_plan = survey.accessible_watch_count > budget.effective_max_watches
+        || survey.unreadable_directories > 0
+        || survey.ignored_directories > 0;
+
+    if !needs_filtered_plan {
+        return Ok(WatchStrategy::NativeRecursive);
+    }
+
+    if survey.filtered_watch_count <= budget.effective_max_watches {
+        return Ok(WatchStrategy::NativeFiltered {
+            filtered_targets: survey.filtered_targets.clone(),
+        });
+    }
+
+    let mut error = SinexError::configuration(
+        "Filesystem watch budget exceeded even after applying filtered native watch planning",
+    )
+    .with_context(
+        "configured_max_watches",
+        budget.configured_max_watches.to_string(),
+    )
+    .with_context(
+        "effective_max_watches",
+        budget.effective_max_watches.to_string(),
+    )
+    .with_context(
+        "accessible_watch_count",
+        survey.accessible_watch_count.to_string(),
+    )
+    .with_context(
+        "filtered_watch_count",
+        survey.filtered_watch_count.to_string(),
+    )
+    .with_context(
+        "unreadable_directories",
+        survey.unreadable_directories.to_string(),
+    )
+    .with_context(
+        "ignored_directories",
+        survey.ignored_directories.to_string(),
+    );
+
+    if let Some(kernel_max_watches) = budget.kernel_max_watches {
+        error = error.with_context("kernel_max_user_watches", kernel_max_watches.to_string());
+    }
+
+    Err(error)
+}
+
+fn add_filtered_watch_targets(
+    watcher: &mut RecommendedWatcher,
+    watched_targets: &mut HashSet<PathBuf>,
+    targets: impl IntoIterator<Item = PathBuf>,
+) -> NodeResult<()> {
+    for target in targets {
+        if watched_targets.insert(target.clone()) {
+            watcher
+                .watch(&target, RecursiveMode::NonRecursive)
+                .map_err(|error| {
+                    SinexError::lifecycle("Failed to register filtered native watcher target")
+                        .with_source(error)
+                        .with_path(target.display())
+                })?;
+        }
+    }
+
+    Ok(())
+}
+
+fn remove_filtered_watch_targets(
+    watcher: &mut RecommendedWatcher,
+    watched_targets: &mut HashSet<PathBuf>,
+    path: &Path,
+) -> NodeResult<()> {
+    let to_remove: Vec<_> = watched_targets
+        .iter()
+        .filter(|watched| watched.starts_with(path))
+        .cloned()
+        .collect();
+
+    for target in to_remove {
+        watcher.unwatch(&target).map_err(|error| {
+            SinexError::lifecycle("Failed to remove filtered native watcher target")
+                .with_source(error)
+                .with_path(target.display())
+        })?;
+        watched_targets.remove(&target);
+    }
+
+    Ok(())
+}
+
+fn add_filtered_subtree_watch(
+    watcher: &mut RecommendedWatcher,
+    watched_targets: &mut HashSet<PathBuf>,
+    root: &Path,
+    path: &Path,
+    ctx: &WatchContext,
+) -> NodeResult<()> {
+    if path_contains_ignored_descendant(root, path, &ctx.ignored_directory_names) {
+        return Ok(());
+    }
+
+    let Some(depth) = relative_depth(root, path) else {
+        return Ok(());
+    };
+
+    if ctx.max_depth.is_some_and(|limit| depth > limit) {
+        return Ok(());
+    }
+
+    let survey = survey_watch_tree(
+        path,
+        depth,
+        ctx.max_depth,
+        ctx.follow_symlinks,
+        &ctx.ignored_directory_names,
+    )?;
+    add_filtered_watch_targets(watcher, watched_targets, survey.filtered_targets)
+}
+
+fn reconcile_filtered_watch_targets(
+    watcher: &mut RecommendedWatcher,
+    watched_targets: &mut HashSet<PathBuf>,
+    root: &Path,
+    event: &Event,
+    ctx: &WatchContext,
+) -> NodeResult<()> {
+    match &event.kind {
+        EventKind::Create(_) => {
+            for path in &event.paths {
+                if let Ok(metadata) = std::fs::symlink_metadata(path)
+                    && metadata_is_directory(&metadata, ctx.follow_symlinks, path)?
+                {
+                    add_filtered_subtree_watch(watcher, watched_targets, root, path, ctx)?;
+                }
+            }
+        }
+        EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
+            if event.paths.len() == 2 {
+                remove_filtered_watch_targets(watcher, watched_targets, &event.paths[0])?;
+                if let Ok(metadata) = std::fs::symlink_metadata(&event.paths[1])
+                    && metadata_is_directory(&metadata, ctx.follow_symlinks, &event.paths[1])?
+                {
+                    add_filtered_subtree_watch(
+                        watcher,
+                        watched_targets,
+                        root,
+                        &event.paths[1],
+                        ctx,
+                    )?;
+                }
+            }
+        }
+        EventKind::Remove(_) => {
+            for path in &event.paths {
+                remove_filtered_watch_targets(watcher, watched_targets, path)?;
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
 }
 
 async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
-    let normalized = validate_watch_path(&root, &ctx.security_policy)
-        .map_err(|e| SinexError::validation(e.to_string()))?;
-
-    // SYMLINK-001: Canonicalize to resolve symlinks and detect loops
-    let canonical = std::fs::canonicalize(normalized.as_str()).map_err(|e| {
-        SinexError::validation(format!("Failed to canonicalize watch path '{root}'")).with_source(e)
-    })?;
-
-    // RESOURCE-001: Estimate watch count before committing kernel resources
-    let tree_estimate = inspect_watch_tree(&canonical, ctx.max_depth)?;
-    let estimated = tree_estimate.watch_count;
-    let use_poll_watcher = estimated > ctx.max_watches || tree_estimate.unreadable_directories > 0;
-    let watcher_mode = if use_poll_watcher { "poll" } else { "native" };
-    if estimated > ctx.max_watches {
-        warn!(
-            path = %canonical.display(),
-            estimated_watches = estimated,
-            max_watches = ctx.max_watches,
-            poll_interval_secs = ctx.poll_interval.as_secs(),
-            "Watch budget exceeded; falling back to poll watcher"
-        );
-    }
-    if tree_estimate.unreadable_directories > 0 {
-        warn!(
-            path = %canonical.display(),
-            unreadable_directories = tree_estimate.unreadable_directories,
-            poll_interval_secs = ctx.poll_interval.as_secs_f64(),
-            "Unreadable descendants detected; falling back to poll watcher"
-        );
-    }
-    info!(
-        path = %canonical.display(),
-        estimated_watches = estimated,
-        watcher_mode,
-        "Watching path"
-    );
+    let (canonical, canonical_root, survey, watch_strategy, budget) =
+        prepare_watch_root(&root, &ctx)?;
+    let watcher_mode = watch_strategy.mode_name();
+    log_watch_strategy(&canonical, &survey, budget, watcher_mode);
 
     let (tx, mut rx) = mpsc::channel::<Event>(FS_WATCH_CHANNEL_SIZE);
     let drop_counter = Arc::clone(&ctx.dropped_events);
-    let watcher_error_counter = Arc::new(AtomicU64::new(0));
-    let error_counter = Arc::clone(&watcher_error_counter);
-    let event_handler = move |res: Result<Event, notify::Error>| match res {
-        Ok(event) => match tx.try_send(event) {
-            Ok(()) => {}
-            Err(TrySendError::Full(_)) => {
-                let dropped = drop_counter.fetch_add(1, Ordering::Relaxed) + 1;
-                if dropped == 1 || dropped.is_multiple_of(100) {
-                    warn!(
-                        dropped_events = dropped,
-                        "Filesystem watcher channel full; dropping events"
-                    );
-                }
-            }
-            Err(TrySendError::Closed(_)) => {
-                let dropped = drop_counter.fetch_add(1, Ordering::Relaxed) + 1;
-                if dropped == 1 || dropped.is_multiple_of(100) {
-                    warn!(
-                        dropped_events = dropped,
-                        "Filesystem watcher channel closed; dropping events"
-                    );
-                }
-            }
-        },
-        Err(err) => {
-            if watcher_mode == "poll" {
-                let error_count = error_counter.fetch_add(1, Ordering::Relaxed) + 1;
-                if error_count == 1 || error_count.is_multiple_of(100) {
-                    warn!(
-                        watcher_errors = error_count,
-                        error = %err,
-                        watcher_mode,
-                        "Filesystem poll watcher reported transient error"
-                    );
-                }
-            } else {
-                error!(error = %err, watcher_mode, "Filesystem watcher reported error");
-            }
+    let error_counter = Arc::new(AtomicU64::new(0));
+    let event_handler = {
+        let tx = tx.clone();
+        let drop_counter = Arc::clone(&drop_counter);
+        let error_counter = Arc::clone(&error_counter);
+        move |result: Result<Event, notify::Error>| {
+            handle_watcher_callback(result, &tx, &drop_counter, &error_counter, watcher_mode);
         }
     };
-    enum ActiveWatcher {
-        Native(RecommendedWatcher),
-        Poll(PollWatcher),
-    }
-
-    let mut watcher = if use_poll_watcher {
-        let config = NotifyConfig::default().with_poll_interval(ctx.poll_interval);
-        ActiveWatcher::Poll(
-            PollWatcher::new(event_handler, config).map_err(|e| {
-                SinexError::lifecycle("Failed to create poll watcher").with_source(e)
-            })?,
-        )
-    } else {
-        ActiveWatcher::Native(
-            notify::recommended_watcher(event_handler)
-                .map_err(|e| SinexError::lifecycle("Failed to create watcher").with_source(e))?,
-        )
-    };
-
-    match &mut watcher {
-        ActiveWatcher::Native(inner) => inner.watch(&canonical, RecursiveMode::Recursive),
-        ActiveWatcher::Poll(inner) => inner.watch(&canonical, RecursiveMode::Recursive),
-    }
-    .map_err(|e| {
-        SinexError::lifecycle(format!(
-            "Failed to watch path '{root}' using {watcher_mode} watcher"
-        ))
-        .with_source(e)
-    })?;
+    let mut watcher = build_active_watcher(
+        &canonical,
+        &root,
+        watcher_mode,
+        watch_strategy,
+        event_handler,
+    )?;
 
     loop {
         tokio::select! {
             event = rx.recv() => {
                 match event {
                     Some(event) => {
-                        if let Err(e) = handle_event(&ctx, &root, event).await {
+                        if let ActiveWatcher::NativeFiltered { watcher, watched_targets } = &mut watcher {
+                            reconcile_filtered_watch_targets(
+                                watcher,
+                                watched_targets,
+                                &canonical,
+                                &event,
+                                &ctx,
+                            )?;
+                        }
+                        if let Err(e) = handle_event(&ctx, &canonical_root, event).await {
                             ctx.metrics.record_error();
                             warn!("Failed to process filesystem event: {}", e);
                         }
@@ -1108,7 +1438,7 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
         // Keep the watcher live across the select! await points. Dropping the watcher
         // tears down the kernel watch registrations even if the task itself remains alive.
         match &watcher {
-            ActiveWatcher::Native(_) | ActiveWatcher::Poll(_) => {}
+            ActiveWatcher::NativeRecursive { .. } | ActiveWatcher::NativeFiltered { .. } => {}
         }
     }
 
@@ -1117,11 +1447,17 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
 
 #[instrument(skip(ctx, event))]
 async fn handle_event(ctx: &WatchContext, root: &str, event: Event) -> NodeResult<()> {
+    let root_path = Path::new(root);
+
     // Filter out sensitive paths (credentials, private keys, etc.)
     let paths: Vec<_> = event
         .paths
         .into_iter()
         .filter(|p| {
+            if path_contains_ignored_descendant(root_path, p, &ctx.ignored_directory_names) {
+                debug!(path = %p.display(), "Skipping ignored filesystem path");
+                return false;
+            }
             if let Some(s) = p.to_str() {
                 let utf8 = camino::Utf8Path::new(s);
                 if let Some(reason) = check_sensitive_path(utf8) {
@@ -1568,6 +1904,164 @@ fn file_created_at(
     )
 }
 
+fn log_watch_strategy(
+    path: &Path,
+    survey: &WatchTreeSurvey,
+    budget: WatchBudget,
+    watcher_mode: &str,
+) {
+    if let Some(kernel_max_watches) = budget.kernel_max_watches
+        && kernel_max_watches < budget.configured_max_watches
+    {
+        warn!(
+            path = %path.display(),
+            configured_max_watches = budget.configured_max_watches,
+            kernel_max_user_watches = kernel_max_watches,
+            effective_max_watches = budget.effective_max_watches,
+            "Filesystem watch budget exceeds the current kernel inotify limit; the effective limit is clamped by the host"
+        );
+    }
+    if survey.accessible_watch_count > budget.effective_max_watches {
+        warn!(
+            path = %path.display(),
+            accessible_watch_count = survey.accessible_watch_count,
+            filtered_watch_count = survey.filtered_watch_count,
+            effective_max_watches = budget.effective_max_watches,
+            "Watch budget exceeded for native recursive mode; switching to filtered native watch plan"
+        );
+    }
+    if survey.unreadable_directories > 0 {
+        warn!(
+            path = %path.display(),
+            unreadable_directories = survey.unreadable_directories,
+            "Unreadable descendants detected; switching to filtered native watch plan"
+        );
+    }
+    if survey.ignored_directories > 0 {
+        info!(
+            path = %path.display(),
+            ignored_directories = survey.ignored_directories,
+            "Ignored descendants removed from filesystem watch plan"
+        );
+    }
+    info!(
+        path = %path.display(),
+        accessible_watch_count = survey.accessible_watch_count,
+        filtered_watch_count = survey.filtered_watch_count,
+        configured_max_watches = budget.configured_max_watches,
+        effective_max_watches = budget.effective_max_watches,
+        watcher_mode,
+        "Watching path"
+    );
+}
+
+fn read_kernel_inotify_watch_limit() -> Option<usize> {
+    std::fs::read_to_string(INOTIFY_MAX_USER_WATCHES_PATH)
+        .ok()?
+        .trim()
+        .parse::<usize>()
+        .ok()
+}
+
+fn handle_watcher_callback(
+    result: Result<Event, notify::Error>,
+    tx: &mpsc::Sender<Event>,
+    drop_counter: &AtomicU64,
+    error_counter: &AtomicU64,
+    watcher_mode: &'static str,
+) {
+    match result {
+        Ok(event) => match tx.try_send(event) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) | Err(TrySendError::Closed(_)) => {
+                let dropped = drop_counter.fetch_add(1, Ordering::Relaxed) + 1;
+                if dropped == 1 || dropped.is_multiple_of(100) {
+                    warn!(
+                        dropped_events = dropped,
+                        "Filesystem watcher channel unavailable; dropping events"
+                    );
+                }
+            }
+        },
+        Err(error) => {
+            let error_count = error_counter.fetch_add(1, Ordering::Relaxed) + 1;
+            if error_count == 1 || error_count.is_multiple_of(100) {
+                error!(
+                    watcher_errors = error_count,
+                    error = %error,
+                    watcher_mode,
+                    "Filesystem watcher reported error"
+                );
+            }
+        }
+    }
+}
+
+fn build_active_watcher<F>(
+    canonical: &Path,
+    root: &str,
+    watcher_mode: &'static str,
+    strategy: WatchStrategy,
+    event_handler: F,
+) -> NodeResult<ActiveWatcher>
+where
+    F: FnMut(Result<Event, notify::Error>) + Send + 'static,
+{
+    match strategy {
+        WatchStrategy::NativeRecursive => {
+            let mut watcher = notify::recommended_watcher(event_handler).map_err(|error| {
+                SinexError::lifecycle("Failed to create watcher").with_source(error)
+            })?;
+            watcher
+                .watch(canonical, RecursiveMode::Recursive)
+                .map_err(|error| {
+                    SinexError::lifecycle(format!(
+                        "Failed to watch path '{root}' using {watcher_mode} watcher"
+                    ))
+                    .with_source(error)
+                })?;
+            Ok(ActiveWatcher::NativeRecursive { _watcher: watcher })
+        }
+        WatchStrategy::NativeFiltered { filtered_targets } => {
+            let mut watcher = notify::recommended_watcher(event_handler).map_err(|error| {
+                SinexError::lifecycle("Failed to create watcher").with_source(error)
+            })?;
+            let mut watched_targets = HashSet::new();
+            add_filtered_watch_targets(&mut watcher, &mut watched_targets, filtered_targets)?;
+            Ok(ActiveWatcher::NativeFiltered {
+                watcher,
+                watched_targets,
+            })
+        }
+    }
+}
+
+fn prepare_watch_root(
+    root: &str,
+    ctx: &WatchContext,
+) -> NodeResult<(PathBuf, String, WatchTreeSurvey, WatchStrategy, WatchBudget)> {
+    let normalized = validate_watch_path(root, &ctx.security_policy)
+        .map_err(|error| SinexError::validation(error.to_string()))?;
+    let canonical = std::fs::canonicalize(normalized.as_str()).map_err(|error| {
+        SinexError::validation(format!("Failed to canonicalize watch path '{root}'"))
+            .with_source(error)
+    })?;
+    let canonical_root = canonical.to_str().map(str::to_owned).ok_or_else(|| {
+        SinexError::validation("filesystem watcher root resolved to non-utf8 path")
+            .with_context("path_debug", canonical.display().to_string())
+    })?;
+    let survey = survey_watch_tree(
+        &canonical,
+        0,
+        ctx.max_depth,
+        ctx.follow_symlinks,
+        &ctx.ignored_directory_names,
+    )?;
+    let budget = WatchBudget::detect(ctx.max_watches);
+    let strategy = choose_watch_strategy(&survey, budget)?;
+    Ok((canonical, canonical_root, survey, strategy, budget))
+}
+
 fn file_modified_at(
     metadata: &StdMetadata,
     path: &Path,
@@ -1637,11 +2131,21 @@ fn watch_context_for_target<'a>(
 
 fn collect_historical_files(
     path: &Path,
+    root: &Path,
     depth: usize,
     max_depth: Option<usize>,
     follow_symlinks: bool,
+    ignored_directory_names: &HashSet<String>,
     warnings: &mut Vec<String>,
 ) -> NodeResult<Vec<PathBuf>> {
+    if path_contains_ignored_descendant(root, path, ignored_directory_names) {
+        warnings.push(format!(
+            "skipping ignored filesystem historical target {}",
+            path.display()
+        ));
+        return Ok(Vec::new());
+    }
+
     if let Some(path_str) = path.to_str() {
         let utf8 = camino::Utf8Path::new(path_str);
         if let Some(reason) = check_sensitive_path(utf8) {
@@ -1752,9 +2256,11 @@ fn collect_historical_files(
 
         files.extend(collect_historical_files(
             &entry.path(),
+            root,
             depth + 1,
             max_depth,
             follow_symlinks,
+            ignored_directory_names,
             warnings,
         )?);
     }
@@ -1879,8 +2385,9 @@ mod tests {
             let mut guard = node.watch_handles.lock().await;
             guard.push(tokio::spawn(async {
                 tokio::time::sleep(Duration::from_mins(1)).await;
+                Ok(())
             }));
-            guard.push(tokio::spawn(async {}));
+            guard.push(tokio::spawn(async { Ok(()) }));
         }
         tokio::task::yield_now().await;
 
@@ -1949,22 +2456,23 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn estimate_watch_count_counts_nested_directories() -> TestResult<()> {
+    async fn survey_watch_tree_counts_nested_directories() -> TestResult<()> {
         let temp_root = tempdir()?;
         std::fs::create_dir_all(temp_root.path().join("a/b"))?;
         std::fs::create_dir_all(temp_root.path().join("c"))?;
 
-        let count = inspect_watch_tree(temp_root.path(), None)?.watch_count;
+        let survey = survey_watch_tree(temp_root.path(), 0, None, false, &HashSet::new())?;
         assert_eq!(
-            count, 4,
+            survey.accessible_watch_count, 4,
             "root + three nested directories should need four watches"
         );
+        assert_eq!(survey.filtered_watch_count, 4);
         Ok(())
     }
 
     #[cfg(unix)]
     #[sinex_test]
-    async fn estimate_watch_count_skips_unreadable_subdirectories() -> TestResult<()> {
+    async fn survey_watch_tree_skips_unreadable_subdirectories() -> TestResult<()> {
         let temp_root = tempdir()?;
         let unreadable = temp_root.path().join("private");
         let nested = unreadable.join("nested");
@@ -1976,24 +2484,113 @@ mod tests {
         restricted_permissions.set_mode(0o000);
         std::fs::set_permissions(&unreadable, restricted_permissions)?;
 
-        let count = inspect_watch_tree(temp_root.path(), None)?.watch_count;
+        let survey = survey_watch_tree(temp_root.path(), 0, None, false, &HashSet::new())?;
 
         std::fs::set_permissions(&unreadable, original_permissions)?;
 
         assert!(
-            count >= 2,
-            "root and unreadable directory should still count toward watch budget: {count}"
+            survey.accessible_watch_count >= 2,
+            "root and unreadable directory should still count toward watch budget: {}",
+            survey.accessible_watch_count
         );
         assert_eq!(
-            count, 2,
+            survey.accessible_watch_count, 2,
             "nested descendants under an unreadable subtree should be skipped conservatively"
         );
+        assert_eq!(survey.filtered_watch_count, 1);
+        assert_eq!(survey.unreadable_directories, 1);
         Ok(())
+    }
+
+    #[sinex_test]
+    async fn survey_watch_tree_skips_ignored_directories() -> TestResult<()> {
+        let temp_root = tempdir()?;
+        std::fs::create_dir_all(temp_root.path().join(".direnv/profile/bin"))?;
+        std::fs::create_dir_all(temp_root.path().join("notes/daily"))?;
+
+        let ignored = HashSet::from([".direnv".to_string()]);
+        let survey = survey_watch_tree(temp_root.path(), 0, None, false, &ignored)?;
+
+        assert_eq!(survey.accessible_watch_count, 4);
+        assert_eq!(survey.filtered_watch_count, 3);
+        assert_eq!(survey.ignored_directories, 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn choose_watch_strategy_uses_effective_watch_budget() -> TestResult<()> {
+        let survey = WatchTreeSurvey {
+            accessible_watch_count: 6,
+            filtered_watch_count: 4,
+            filtered_targets: vec![PathBuf::from("/tmp"), PathBuf::from("/tmp/notes")],
+            ..WatchTreeSurvey::default()
+        };
+        let budget = WatchBudget {
+            configured_max_watches: 8,
+            effective_max_watches: 4,
+            kernel_max_watches: Some(4),
+        };
+
+        let strategy = choose_watch_strategy(&survey, budget)?;
+        assert!(matches!(strategy, WatchStrategy::NativeFiltered { .. }));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn choose_watch_strategy_reports_kernel_limit_when_filtered_plan_still_too_large()
+    -> TestResult<()> {
+        let survey = WatchTreeSurvey {
+            accessible_watch_count: 8,
+            filtered_watch_count: 5,
+            ..WatchTreeSurvey::default()
+        };
+        let budget = WatchBudget {
+            configured_max_watches: 8,
+            effective_max_watches: 4,
+            kernel_max_watches: Some(4),
+        };
+
+        let error = choose_watch_strategy(&survey, budget)
+            .expect_err("oversized filtered plan should fail honestly");
+        let message = error.to_string();
+        assert!(message.contains("kernel_max_user_watches"));
+        assert!(message.contains("effective_max_watches"));
+        Ok(())
+    }
+
+    fn test_watch_context(
+        acquisition: Arc<AcquisitionManager>,
+        stage_context: StageAsYouGoContext,
+        cancel_token: CancellationToken,
+    ) -> WatchContext {
+        WatchContext {
+            acquisition,
+            stage_context,
+            max_capture_bytes: Bytes::from_mebibytes(1),
+            max_watches: DEFAULT_MAX_WATCHES,
+            max_depth: Some(DEFAULT_MAX_DEPTH),
+            follow_symlinks: true,
+            security_policy: FileWatchingSecurityPolicy::permissive(),
+            dropped_events: Arc::new(AtomicU64::new(0)),
+            metrics: EventMetrics::new(),
+            ignored_directory_names: Arc::new(
+                [
+                    ".git".to_string(),
+                    ".direnv".to_string(),
+                    "node_modules".to_string(),
+                    "target".to_string(),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            cancel_token,
+            capture_semaphore: Arc::new(tokio::sync::Semaphore::new(FS_MAX_CONCURRENT_CAPTURES)),
+        }
     }
 
     #[cfg(unix)]
     #[sinex_test(timeout = 30)]
-    async fn watch_path_falls_back_to_poll_watcher_for_unreadable_descendant(
+    async fn watch_path_skips_unreadable_descendant_with_filtered_native_plan(
         ctx: TestContext,
     ) -> TestResult<()> {
         use std::os::unix::fs::PermissionsExt;
@@ -2018,19 +2615,7 @@ mod tests {
         restricted_permissions.set_mode(0o000);
         std::fs::set_permissions(&unreadable, restricted_permissions)?;
 
-        let watch_ctx = WatchContext {
-            acquisition,
-            stage_context,
-            max_capture_bytes: Bytes::from_mebibytes(1),
-            max_watches: DEFAULT_MAX_WATCHES,
-            max_depth: Some(DEFAULT_MAX_DEPTH),
-            security_policy: FileWatchingSecurityPolicy::permissive(),
-            dropped_events: Arc::new(AtomicU64::new(0)),
-            metrics: EventMetrics::new(),
-            poll_interval: Duration::from_millis(100),
-            cancel_token: cancel_token.clone(),
-            capture_semaphore: Arc::new(tokio::sync::Semaphore::new(FS_MAX_CONCURRENT_CAPTURES)),
-        };
+        let watch_ctx = test_watch_context(acquisition, stage_context, cancel_token.clone());
 
         let watch_path_root = temp_root
             .path()
@@ -2042,12 +2627,14 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(350)).await;
 
-        let created_path = temp_root.path().join("poll-created.txt");
-        tokio::fs::write(&created_path, b"watch me with polling").await?;
+        let created_path = temp_root.path().join("readable-created.txt");
+        tokio::fs::write(&created_path, b"watch me").await?;
 
         let event = timeout(Duration::from_secs(15), event_rx.recv())
             .await?
-            .ok_or_else(|| color_eyre::eyre::eyre!("filesystem poll fallback emitted no event"))?;
+            .ok_or_else(|| {
+                color_eyre::eyre::eyre!("filesystem filtered native watcher emitted no event")
+            })?;
 
         assert_eq!(
             event.event_type.as_str(),
@@ -2060,8 +2647,8 @@ mod tests {
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| color_eyre::eyre::eyre!("filesystem event missing path payload"))?;
         assert!(
-            event_path.ends_with("poll-created.txt"),
-            "unexpected filesystem event path after poll fallback: {event_path}"
+            event_path.ends_with("readable-created.txt"),
+            "unexpected filesystem event path after filtered native watch planning: {event_path}"
         );
 
         cancel_token.cancel();
@@ -2070,9 +2657,78 @@ mod tests {
         Ok(())
     }
 
+    #[sinex_test(timeout = 30)]
+    async fn watch_path_ignores_configured_heavy_descendants(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let nats_client = ctx.nats_client();
+
+        AcquisitionManager::bootstrap_streams(&nats_client).await?;
+
+        let acquisition = Arc::new(AcquisitionManager::with_defaults(nats_client, "filesystem"));
+        let (event_tx, mut event_rx) =
+            mpsc::channel::<SinexEvent>(sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE);
+        let cancel_token = CancellationToken::new();
+        let stage_context =
+            StageAsYouGoContext::from_sender(Arc::clone(&acquisition), event_tx, false);
+
+        let temp_root = tempdir()?;
+        std::fs::create_dir_all(temp_root.path().join(".direnv/profile/bin"))?;
+        std::fs::create_dir_all(temp_root.path().join("notes"))?;
+
+        let mut watch_ctx = test_watch_context(acquisition, stage_context, cancel_token.clone());
+        watch_ctx.max_watches = 2;
+
+        let watch_path_root = temp_root
+            .path()
+            .to_str()
+            .ok_or_else(|| color_eyre::eyre::eyre!("temp root path not utf8"))?
+            .to_string();
+
+        let watcher_task = tokio::spawn(watch_path(watch_path_root, watch_ctx));
+        tokio::time::sleep(Duration::from_millis(350)).await;
+
+        tokio::fs::write(temp_root.path().join("notes/kept.txt"), b"keep").await?;
+        let kept_event = timeout(Duration::from_secs(10), event_rx.recv())
+            .await?
+            .ok_or_else(|| {
+                color_eyre::eyre::eyre!("filtered native watcher emitted no kept event")
+            })?;
+        let kept_path = kept_event
+            .payload
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| color_eyre::eyre::eyre!("filesystem event missing kept path payload"))?;
+        assert!(kept_path.ends_with("notes/kept.txt"));
+
+        tokio::fs::write(
+            temp_root.path().join(".direnv/profile/bin/ignored.txt"),
+            b"ignore",
+        )
+        .await?;
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(800);
+        while tokio::time::Instant::now() < deadline {
+            let Ok(Some(event)) = timeout(Duration::from_millis(100), event_rx.recv()).await else {
+                continue;
+            };
+            let path = event
+                .payload
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| color_eyre::eyre::eyre!("filesystem event missing path payload"))?;
+            assert!(
+                !path.ends_with(".direnv/profile/bin/ignored.txt"),
+                "ignored heavy descendants should not emit filesystem events"
+            );
+        }
+
+        cancel_token.cancel();
+        watcher_task.await??;
+        Ok(())
+    }
+
     #[sinex_test]
     async fn filesystem_watcher_shutdown_result_accepts_clean_exit() -> TestResult<()> {
-        let handle = tokio::spawn(async {});
+        let handle = tokio::spawn(async { Ok(()) });
         FilesystemNode::watcher_shutdown_result(0, handle.await)?;
         Ok(())
     }
@@ -2081,6 +2737,7 @@ mod tests {
     async fn filesystem_watcher_shutdown_result_accepts_cancelled_task() -> TestResult<()> {
         let handle = tokio::spawn(async {
             tokio::time::sleep(Duration::from_secs(30)).await;
+            Ok(())
         });
         handle.abort();
         FilesystemNode::watcher_shutdown_result(1, handle.await)?;
@@ -2091,6 +2748,8 @@ mod tests {
     async fn filesystem_watcher_shutdown_result_rejects_panicked_task() -> TestResult<()> {
         let handle = tokio::spawn(async {
             panic!("filesystem watcher panic");
+            #[allow(unreachable_code)]
+            Ok(())
         });
         let error = FilesystemNode::watcher_shutdown_result(2, handle.await)
             .expect_err("panicked watcher should fail shutdown honestly");
@@ -2103,6 +2762,19 @@ mod tests {
             message.contains("watcher_index"),
             "watcher index should be preserved in shutdown failure context: {message}"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_watcher_shutdown_result_rejects_task_error() -> TestResult<()> {
+        let handle = tokio::spawn(async {
+            Err(SinexError::lifecycle(
+                "watcher failed before shutdown".to_string(),
+            ))
+        });
+        let error = FilesystemNode::watcher_shutdown_result(3, handle.await)
+            .expect_err("watcher task errors must surface honestly");
+        assert!(error.to_string().contains("watcher failed before shutdown"));
         Ok(())
     }
 
@@ -2232,19 +2904,7 @@ mod tests {
         let stage_context =
             StageAsYouGoContext::from_sender(Arc::clone(&acquisition), event_tx, false);
 
-        let watch_ctx = WatchContext {
-            acquisition,
-            stage_context,
-            max_capture_bytes: Bytes::from_mebibytes(1),
-            max_watches: DEFAULT_MAX_WATCHES,
-            max_depth: Some(DEFAULT_MAX_DEPTH),
-            security_policy: FileWatchingSecurityPolicy::permissive(),
-            dropped_events: Arc::new(AtomicU64::new(0)),
-            metrics: EventMetrics::new(),
-            poll_interval: Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS.as_secs()),
-            cancel_token: CancellationToken::new(),
-            capture_semaphore: Arc::new(tokio::sync::Semaphore::new(FS_MAX_CONCURRENT_CAPTURES)),
-        };
+        let watch_ctx = test_watch_context(acquisition, stage_context, CancellationToken::new());
 
         let temp_root = tempdir()?;
         let file_path = temp_root.path().join("example.txt");
@@ -2314,19 +2974,7 @@ mod tests {
         let stage_context =
             StageAsYouGoContext::from_sender(Arc::clone(&acquisition), event_tx, false);
 
-        let watch_ctx = WatchContext {
-            acquisition,
-            stage_context,
-            max_capture_bytes: Bytes::from_mebibytes(1),
-            max_watches: DEFAULT_MAX_WATCHES,
-            max_depth: Some(DEFAULT_MAX_DEPTH),
-            security_policy: FileWatchingSecurityPolicy::permissive(),
-            dropped_events: Arc::new(AtomicU64::new(0)),
-            metrics: EventMetrics::new(),
-            poll_interval: Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS.as_secs()),
-            cancel_token: cancel_token.clone(),
-            capture_semaphore: Arc::new(tokio::sync::Semaphore::new(FS_MAX_CONCURRENT_CAPTURES)),
-        };
+        let watch_ctx = test_watch_context(acquisition, stage_context, cancel_token.clone());
 
         let temp_root = tempdir()?;
         let watch_path_root = temp_root

@@ -4435,7 +4435,9 @@ mod tests {
         drop(db);
 
         let Err(error) = HistoryDb::open(&db_path) else {
-            return Err(color_eyre::eyre::eyre!("stale pid query failures should surface"));
+            return Err(color_eyre::eyre::eyre!(
+                "stale pid query failures should surface"
+            ));
         };
         let message = format!("{error:#}");
         assert!(message.contains("failed to clean up stale invocations"));

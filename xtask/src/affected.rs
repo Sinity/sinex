@@ -467,8 +467,7 @@ mod tests {
                 "git {:?} failed: {}",
                 args,
                 String::from_utf8_lossy(&output.stderr).trim()
-            )
-            );
+            ));
         }
         Ok(())
     }
