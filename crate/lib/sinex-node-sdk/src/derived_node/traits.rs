@@ -15,6 +15,7 @@ use crate::processing::{ErrorAction, NodeLogicError};
 use serde::{Serialize, de::DeserializeOwned};
 use sinex_primitives::JsonValue;
 use sinex_primitives::domain::DerivedNodeModel;
+use sinex_primitives::events::Event;
 use sinex_primitives::privacy::ProcessingContext;
 use std::collections::HashMap;
 
@@ -67,6 +68,42 @@ fn serialize_outputs<T: Serialize>(
     outputs.into_iter().map(serialize_output).collect()
 }
 
+/// Which provenance class a derived node consumes from its input stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputProvenanceFilter {
+    /// Accept both material and synthesized events.
+    Any,
+    /// Accept only first-order material events.
+    MaterialOnly,
+    /// Accept only synthesized events.
+    SynthesizedOnly,
+}
+
+impl InputProvenanceFilter {
+    #[must_use]
+    pub fn matches_event<T>(self, event: &Event<T>) -> bool {
+        self.matches_lineage(event.is_synthesized_event())
+    }
+
+    #[must_use]
+    pub fn matches_lineage(self, has_lineage: bool) -> bool {
+        match self {
+            Self::Any => true,
+            Self::MaterialOnly => !has_lineage,
+            Self::SynthesizedOnly => has_lineage,
+        }
+    }
+
+    #[must_use]
+    pub fn query_has_lineage(self) -> Option<bool> {
+        match self {
+            Self::Any => None,
+            Self::MaterialOnly => Some(false),
+            Self::SynthesizedOnly => Some(true),
+        }
+    }
+}
+
 // ── TransducerNode ─────────────────────────────────────────────────────
 
 /// A 1:1 event transducer: one input event produces zero or one output event.
@@ -93,6 +130,9 @@ pub trait TransducerNode: Send + Sync + 'static {
         self.name()
     }
     fn output_privacy_context(&self) -> ProcessingContext;
+    fn input_provenance_filter(&self) -> InputProvenanceFilter {
+        InputProvenanceFilter::Any
+    }
     fn node_model(&self) -> DerivedNodeModel {
         DerivedNodeModel::Transducer
     }
@@ -150,6 +190,9 @@ pub trait WindowedNode: Send + Sync + 'static {
         self.name()
     }
     fn output_privacy_context(&self) -> ProcessingContext;
+    fn input_provenance_filter(&self) -> InputProvenanceFilter {
+        InputProvenanceFilter::Any
+    }
     fn node_model(&self) -> DerivedNodeModel {
         DerivedNodeModel::Windowed
     }
@@ -248,6 +291,9 @@ pub trait ScopeReconcilerNode: Send + Sync + 'static {
         self.name()
     }
     fn output_privacy_context(&self) -> ProcessingContext;
+    fn input_provenance_filter(&self) -> InputProvenanceFilter {
+        InputProvenanceFilter::Any
+    }
     fn node_model(&self) -> DerivedNodeModel {
         DerivedNodeModel::ScopeReconciler
     }
@@ -331,6 +377,7 @@ pub trait DerivedNodeImpl: Send + Sync + 'static {
 
     fn name(&self) -> &'static str;
     fn input_event_type(&self) -> &'static str;
+    fn input_provenance_filter(&self) -> InputProvenanceFilter;
     fn output_event_type(&self) -> &'static str;
     fn output_event_source(&self) -> &'static str;
     fn output_privacy_context(&self) -> ProcessingContext;
@@ -392,6 +439,9 @@ impl<N: TransducerNode> DerivedNodeImpl for TransducerWrapper<N> {
     }
     fn input_event_type(&self) -> &'static str {
         self.0.input_event_type()
+    }
+    fn input_provenance_filter(&self) -> InputProvenanceFilter {
+        self.0.input_provenance_filter()
     }
     fn output_event_type(&self) -> &'static str {
         self.0.output_event_type()
@@ -463,6 +513,9 @@ impl<N: WindowedNode> DerivedNodeImpl for WindowedWrapper<N> {
     }
     fn input_event_type(&self) -> &'static str {
         self.0.input_event_type()
+    }
+    fn input_provenance_filter(&self) -> InputProvenanceFilter {
+        self.0.input_provenance_filter()
     }
     fn output_event_type(&self) -> &'static str {
         self.0.output_event_type()
@@ -569,6 +622,9 @@ where
     }
     fn input_event_type(&self) -> &'static str {
         self.0.input_event_type()
+    }
+    fn input_provenance_filter(&self) -> InputProvenanceFilter {
+        self.0.input_provenance_filter()
     }
     fn output_event_type(&self) -> &'static str {
         self.0.output_event_type()

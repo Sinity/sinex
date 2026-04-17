@@ -11,7 +11,7 @@ use sinex_db::{DbPool, repositories::DbPoolExt};
 use sinex_gateway::{ServiceContainer, config::GatewayConfig, rpc_server};
 use sinex_node_sdk::{Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ScanReport};
 use sinex_primitives::rpc::methods;
-use sinex_primitives::{DynamicPayload, temporal::Timestamp};
+use sinex_primitives::{DynamicPayload, Id, temporal::Timestamp};
 use std::collections::HashMap;
 use std::net::TcpListener;
 use std::time::Duration;
@@ -122,63 +122,6 @@ impl LiveGateway {
     }
 }
 
-async fn spawn_fake_scan_node(
-    nats: async_nats::Client,
-    env: sinex_primitives::environment::SinexEnvironment,
-    node_name: &str,
-    events_processed: u64,
-) -> TestResult<tokio::task::JoinHandle<()>> {
-    let node_name = node_name.to_string();
-    let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
-    let mut sub = nats.subscribe(subject).await?;
-    nats.flush().await?;
-
-    let handle = tokio::spawn(async move {
-        let Some(msg) = sub.next().await else { return };
-        let Ok(command) = serde_json::from_slice::<NodeScanCommand>(&msg.payload) else {
-            return;
-        };
-        let operation_id = command.operation_id;
-        let progress_subject =
-            env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
-
-        if let Some(reply) = msg.reply {
-            let ack = NodeScanAck {
-                operation_id,
-                node_name: node_name.clone(),
-                accepted: true,
-                error: None,
-            };
-            if let Ok(bytes) = serde_json::to_vec(&ack) {
-                let _ = nats.publish(reply, bytes.into()).await;
-            }
-        }
-
-        let progress = NodeScanProgress {
-            operation_id,
-            node_name: node_name.clone(),
-            events_processed,
-            events_emitted: events_processed,
-            final_report: Some(ScanReport {
-                events_processed,
-                duration: Duration::from_millis(5),
-                final_checkpoint: Checkpoint::None,
-                time_range: None,
-                node_stats: HashMap::from([("events_emitted".into(), events_processed)]),
-                successful_targets: vec![node_name.clone()],
-                failed_targets: Vec::new(),
-                warnings: Vec::new(),
-            }),
-            error: None,
-        };
-        if let Ok(bytes) = serde_json::to_vec(&progress) {
-            let _ = nats.publish(progress_subject, bytes.into()).await;
-        }
-    });
-
-    Ok(handle)
-}
-
 async fn spawn_fake_reemitting_scan_node(
     pool: DbPool,
     nats: async_nats::Client,
@@ -219,10 +162,13 @@ async fn spawn_fake_reemitting_scan_node(
                 "file.created",
                 json!({ "path": format!("/tmp/{node_name}-replay-{operation_id}-{i}.txt") }),
             )
-            .from_material(Id::from(material_id))
+            .from_material(Id::from_uuid(material_id))
             .build() else {
                 return;
             };
+
+            let mut event = event;
+            event.created_by_operation_id = Some(command.operation_id);
 
             if pool.events().insert(event).await.is_err() {
                 return;
@@ -348,7 +294,15 @@ async fn material_replay_archives_preserve_content(ctx: TestContext) -> TestResu
     // Spawn fake scan node
     let nats = ctx.nats_client();
     let env = sinex_primitives::environment::environment();
-    let scan_handle = spawn_fake_scan_node(nats.clone(), env, "det-node", 3).await?;
+    let scan_handle = spawn_fake_reemitting_scan_node(
+        ctx.pool.clone(),
+        nats.clone(),
+        env,
+        "det-node",
+        *material_id.as_uuid(),
+        3,
+    )
+    .await?;
 
     let ts = Timestamp::now();
     let scope_start = ts - time::Duration::seconds(60);

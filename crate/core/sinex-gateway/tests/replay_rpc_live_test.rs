@@ -8,11 +8,11 @@
 use color_eyre::eyre::bail;
 use futures::StreamExt;
 use serde_json::json;
-use sinex_db::repositories::DbPoolExt;
+use sinex_db::{DbPool, repositories::DbPoolExt};
 use sinex_gateway::{ServiceContainer, config::GatewayConfig, rpc_server};
 use sinex_node_sdk::{Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ScanReport};
 use sinex_primitives::rpc::methods;
-use sinex_primitives::{DynamicPayload, temporal::Timestamp};
+use sinex_primitives::{DynamicPayload, Id, temporal::Timestamp};
 use std::collections::HashMap;
 use std::net::TcpListener;
 use std::time::Duration;
@@ -154,9 +154,12 @@ impl LiveGateway {
 
 /// Spawn a fake scan node on NATS that accepts the scan command and reports success.
 async fn spawn_fake_scan_node(
+    pool: DbPool,
     nats: async_nats::Client,
     env: sinex_primitives::environment::SinexEnvironment,
     node_name: &str,
+    source: &'static str,
+    event_type: &'static str,
     events_processed: u64,
 ) -> TestResult<tokio::task::JoinHandle<()>> {
     let node_name = node_name.to_string();
@@ -182,6 +185,36 @@ async fn spawn_fake_scan_node(
             };
             if let Ok(bytes) = serde_json::to_vec(&ack) {
                 let _ = nats.publish(reply, bytes.into()).await;
+            }
+        }
+
+        let material_id = command
+            .args
+            .replay
+            .as_ref()
+            .and_then(|replay| replay.materials.first())
+            .map(|material| material.source_material_id);
+
+        let Some(material_id) = material_id else {
+            return;
+        };
+
+        for i in 0..events_processed {
+            let Ok(event) = DynamicPayload::new(
+                source,
+                event_type,
+                json!({ "path": format!("/tmp/{node_name}-replay-{operation_id}-{i}.txt") }),
+            )
+            .from_material(Id::from_uuid(material_id))
+            .build() else {
+                return;
+            };
+
+            let mut event = event;
+            event.created_by_operation_id = Some(operation_id);
+
+            if pool.events().insert(event).await.is_err() {
+                return;
             }
         }
 
@@ -242,7 +275,16 @@ async fn replay_full_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<()>
     // message races where the second server's error reply may beat the first.
     let nats = ctx.nats_client();
     let env = sinex_primitives::environment::environment();
-    let scan_handle = spawn_fake_scan_node(nats.clone(), env, "test-node", 1).await?;
+    let scan_handle = spawn_fake_scan_node(
+        ctx.pool.clone(),
+        nats.clone(),
+        env,
+        "test-node",
+        "test-node",
+        "file.created",
+        1,
+    )
+    .await?;
 
     let scope_start = ts - time::Duration::seconds(1);
     let scope_end = ts + time::Duration::seconds(1);

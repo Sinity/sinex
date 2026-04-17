@@ -12,7 +12,7 @@
 //! upgraded to `ScopeReconcilerNode` with `scope_keys()` derived from `session_id`.
 
 use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, TransducerNodeAdapter};
-use sinex_node_sdk::{NodeLogicError, TransducerNode};
+use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, TransducerNode};
 use sinex_primitives::JsonValue;
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::EventPayload;
@@ -48,6 +48,14 @@ impl TransducerNode for TerminalCommandCanonicalizer {
 
     fn output_event_type(&self) -> &'static str {
         CanonicalCommandPayload::EVENT_TYPE.as_static_str()
+    }
+
+    fn output_event_source(&self) -> &'static str {
+        CanonicalCommandPayload::SOURCE.as_static_str()
+    }
+
+    fn input_provenance_filter(&self) -> InputProvenanceFilter {
+        InputProvenanceFilter::MaterialOnly
     }
 
     fn output_privacy_context(&self) -> ProcessingContext {

@@ -10,7 +10,8 @@
 
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::derived_node::{
-    DerivedOutput, DerivedScopeInvalidation, DerivedTriggerContext, ScopeReconcilerWrapper,
+    DerivedOutput, DerivedScopeInvalidation, DerivedTriggerContext, InputProvenanceFilter,
+    ScopeReconcilerWrapper,
 };
 use sinex_node_sdk::runtime::stream::{
     EventEmitter, Node, NodeHandles, NodeInitContext, ServiceInfo,
@@ -63,6 +64,7 @@ async fn invalidation_signal_construction() -> TestResult<()> {
     assert_eq!(inv.affected_event_ids.len(), 2);
     assert_eq!(inv.event_source.as_str(), "fs-watcher");
     assert_eq!(inv.event_type.as_str(), "file.created");
+    assert_eq!(inv.has_lineage, None);
     assert!(inv.operation_id.is_none());
     assert!(inv.affected_scope_keys.is_empty());
 
@@ -93,11 +95,14 @@ async fn invalidation_matches_input_filter() -> TestResult<()> {
         vec![Uuid::now_v7()],
         EventSource::from_static("analytics"),
         EventType::from_static("analytics.summary"),
-    );
+    )
+    .with_has_lineage(false);
 
-    assert!(inv.matches_input("analytics.summary"));
-    assert!(!inv.matches_input("file.created"));
-    assert!(!inv.matches_input("analytics.trend"));
+    assert!(inv.matches_input("analytics.summary", InputProvenanceFilter::MaterialOnly));
+    assert!(inv.matches_input("*", InputProvenanceFilter::MaterialOnly));
+    assert!(!inv.matches_input("file.created", InputProvenanceFilter::MaterialOnly));
+    assert!(!inv.matches_input("analytics.summary", InputProvenanceFilter::SynthesizedOnly));
+    assert!(!inv.matches_input("analytics.trend", InputProvenanceFilter::MaterialOnly));
 
     Ok(())
 }

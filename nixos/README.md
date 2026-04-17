@@ -342,6 +342,8 @@ services.sinex = {
     automata = {
       canonicalizer.enable = true;     # Command processing
       healthAggregator.enable = true;  # Health monitoring
+      analyticsAutomaton.enable = true;  # Sliding-window analytics summaries
+      sessionDetector.enable = true;     # Cross-source session boundaries
     };
   };
 
@@ -379,6 +381,8 @@ services.sinex = {
     desktop.enable = false;      # No GUI
     system.enable = true;
     automata.healthAggregator.enable = true;
+    automata.analyticsAutomaton.enable = true;
+    automata.sessionDetector.enable = true;
   };
   
   database.autoSetup = true;
@@ -670,6 +674,9 @@ systemctl show sinex-ingestd --property=Type,NotifyAccess,WatchdogUSec
 
 # Run full preflight check
 sudo -u sinex /run/current-system/sw/bin/sinex-preflight verify
+
+# Prove gateway round-trip plus deployable automata output surfaces
+sinexctl --insecure verify --gateway-smoke --automata-smoke
 ```
 
 **Service health endpoints:**

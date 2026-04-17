@@ -918,6 +918,7 @@ struct ScopeInvalidationBucket {
     event_ids: Vec<Uuid>,
     event_source: String,
     event_type: String,
+    has_lineage: bool,
     scope_keys: Vec<String>,
 }
 
@@ -1835,7 +1836,9 @@ impl ReplayExecutionEngine {
         // Query scope metadata for cascade events that have scope_keys so invalidations
         // stay bucketed by the archived event source + type pair.
         let rows = sqlx::query!(
-            "SELECT id, source, event_type, scope_key FROM core.events \
+            "SELECT id, source, event_type, scope_key, \
+                    (source_event_ids IS NOT NULL) AS \"has_lineage!: bool\" \
+             FROM core.events \
              WHERE id = ANY($1::uuid[]) AND scope_key IS NOT NULL",
             cascade_ids,
         )
@@ -1843,15 +1846,16 @@ impl ReplayExecutionEngine {
         .await
         .map_err(|e| eyre!("Failed to collect cascade scope metadata: {e}"))?;
 
-        let mut grouped: HashMap<(String, String), ScopeInvalidationBucket> = HashMap::new();
+        let mut grouped: HashMap<(String, String, bool), ScopeInvalidationBucket> = HashMap::new();
         for row in rows {
             if let Some(sk) = row.scope_key {
                 let bucket = grouped
-                    .entry((row.source.clone(), row.event_type.clone()))
+                    .entry((row.source.clone(), row.event_type.clone(), row.has_lineage))
                     .or_insert_with(|| ScopeInvalidationBucket {
                         event_ids: Vec::new(),
                         event_source: row.source.clone(),
                         event_type: row.event_type.clone(),
+                        has_lineage: row.has_lineage,
                         scope_keys: Vec::new(),
                     });
                 bucket.event_ids.push(row.id);
@@ -1909,6 +1913,7 @@ impl ReplayExecutionEngine {
                 event_source.clone(),
                 event_type.clone(),
             )
+            .with_has_lineage(bucket.has_lineage)
             .with_operation(operation_id)
             .with_scope_keys(bucket.scope_keys.clone());
 
@@ -4809,6 +4814,7 @@ mod tests {
             scope_metadata[0].event_type,
             FileCreatedPayload::EVENT_TYPE.as_static_str()
         );
+        assert!(!scope_metadata[0].has_lineage);
         assert_eq!(scope_metadata[0].event_ids, vec![event_id.to_uuid()]);
 
         ctx.pool
