@@ -947,6 +947,10 @@ async fn test_gateway_client_successful_health() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_gateway_client_replay_submit_previews_before_execute() -> TestResult<()> {
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "json! macro copies the value"
+    )]
     fn replay_operation_json(
         state: &str,
         preview_summary: Option<serde_json::Value>,

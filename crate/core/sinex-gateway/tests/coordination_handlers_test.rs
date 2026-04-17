@@ -8,12 +8,9 @@ use sinex_primitives::coordination::{CoordinationKvClient, InstanceMetadata};
 use sinex_primitives::temporal;
 use xtask::sandbox::prelude::*;
 
-fn build_coordination_client(
-    ctx: &TestContext,
-    service_name: &str,
-) -> TestResult<CoordinationKvClient> {
+fn build_coordination_client(ctx: &TestContext, service_name: &str) -> CoordinationKvClient {
     let js = jetstream::new(ctx.nats_client());
-    Ok(CoordinationKvClient::new(js, service_name.to_string()))
+    CoordinationKvClient::new(js, service_name.to_string())
 }
 
 #[sinex_test]
@@ -25,7 +22,7 @@ async fn coordination_instance_health_uses_configured_stale_timeout(
     env.set("SINEX_COORDINATION_HEARTBEAT", "5");
     env.set("SINEX_COORDINATION_TIMEOUT", "120");
 
-    let kv_client = build_coordination_client(&ctx, "gateway-health-threshold")?;
+    let kv_client = build_coordination_client(&ctx, "gateway-health-threshold");
     let now = temporal::now().unix_timestamp();
     let metadata = InstanceMetadata {
         instance_id: "instance-a".to_string(),
@@ -54,7 +51,7 @@ async fn coordination_instance_health_uses_configured_stale_timeout(
 #[sinex_test]
 async fn coordination_instance_health_rejects_missing_instance(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
-    let kv_client = build_coordination_client(&ctx, "gateway-health-missing")?;
+    let kv_client = build_coordination_client(&ctx, "gateway-health-missing");
 
     let error =
         handle_coordination_instance_health(&kv_client, json!({ "instance_id": "missing" }))
@@ -68,7 +65,7 @@ async fn coordination_instance_health_rejects_missing_instance(ctx: TestContext)
 #[sinex_test]
 async fn coordination_list_instances_marks_current_leader(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
-    let kv_client = build_coordination_client(&ctx, "gateway-coordination-list")?;
+    let kv_client = build_coordination_client(&ctx, "gateway-coordination-list");
     let now = temporal::now().unix_timestamp();
 
     let leader = InstanceMetadata {
@@ -125,7 +122,7 @@ async fn coordination_list_instances_without_leader_marks_all_non_leader(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
-    let kv_client = build_coordination_client(&ctx, "gateway-coordination-no-leader")?;
+    let kv_client = build_coordination_client(&ctx, "gateway-coordination-no-leader");
     let now = temporal::now().unix_timestamp();
 
     kv_client
@@ -168,7 +165,7 @@ async fn coordination_list_instances_rejects_invalid_hostname_metadata(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
-    let kv_client = build_coordination_client(&ctx, "gateway-coordination-invalid-hostname")?;
+    let kv_client = build_coordination_client(&ctx, "gateway-coordination-invalid-hostname");
     let now = temporal::now().unix_timestamp();
 
     kv_client
@@ -194,7 +191,7 @@ async fn coordination_instance_health_rejects_invalid_hostname_metadata(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
-    let kv_client = build_coordination_client(&ctx, "gateway-health-invalid-hostname")?;
+    let kv_client = build_coordination_client(&ctx, "gateway-health-invalid-hostname");
     let now = temporal::now().unix_timestamp();
     let metadata = InstanceMetadata {
         instance_id: "instance-a".to_string(),
@@ -221,7 +218,7 @@ async fn coordination_get_leader_rejects_missing_leader_metadata(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
-    let kv_client = build_coordination_client(&ctx, "gateway-coordination-leader-missing")?;
+    let kv_client = build_coordination_client(&ctx, "gateway-coordination-leader-missing");
 
     assert!(kv_client.acquire_leadership("leader-a").await?);
 

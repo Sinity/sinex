@@ -240,7 +240,7 @@ async fn test_basic_operations(
     messages.push("✓ Transaction handling verified".to_string());
 
     // Test connection pool health
-    let pool_info = test_connection_pool_health(pool).await?;
+    let pool_info = test_connection_pool_health(pool);
     details.insert("connection_pool", json!(pool_info));
     messages.push("✓ Connection pool health verified".to_string());
 
@@ -652,16 +652,16 @@ async fn check_table_exists(pool: &PgPool, table_name: &str) -> NodeResult<bool>
     table_exists(pool, schema, table).await
 }
 
-async fn test_connection_pool_health(pool: &PgPool) -> NodeResult<Value> {
+fn test_connection_pool_health(pool: &PgPool) -> Value {
     // Test connection pool metrics
     let pool_options = pool.options();
 
-    Ok(json!({
+    json!({
         "max_connections": pool_options.get_max_connections(),
         "min_connections": pool_options.get_min_connections(),
         "current_connections": pool.size(),
         "idle_connections": pool.num_idle(),
-    }))
+    })
 }
 
 /// Redact password from database URL for logging

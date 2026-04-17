@@ -395,28 +395,28 @@ impl Drop for TestCoreStack<'_> {
         if gateway.is_some() || ingestd.is_some() {
             if let Ok(handle) = Handle::try_current() {
                 handle.spawn(async move {
-                    if let Some(mut gw) = gateway {
-                        if let Err(error) = gw.stop().await {
-                            warn!(error = %error, "Failed to stop sandbox gateway during drop cleanup");
-                        }
+                    if let Some(mut gw) = gateway
+                        && let Err(error) = gw.stop().await
+                    {
+                        warn!(error = %error, "Failed to stop sandbox gateway during drop cleanup");
                     }
-                    if let Some(mut ing) = ingestd {
-                        if let Err(error) = ing.stop().await {
-                            warn!(error = %error, "Failed to stop sandbox ingestd during drop cleanup");
-                        }
+                    if let Some(mut ing) = ingestd
+                        && let Err(error) = ing.stop().await
+                    {
+                        warn!(error = %error, "Failed to stop sandbox ingestd during drop cleanup");
                     }
                 });
             } else {
                 // Fallback: sync cleanup
-                if let Some(mut gw) = gateway {
-                    if let Err(error) = futures::executor::block_on(gw.stop()) {
-                        warn!(error = %error, "Failed to stop sandbox gateway during sync drop cleanup");
-                    }
+                if let Some(mut gw) = gateway
+                    && let Err(error) = futures::executor::block_on(gw.stop())
+                {
+                    warn!(error = %error, "Failed to stop sandbox gateway during sync drop cleanup");
                 }
-                if let Some(mut ing) = ingestd {
-                    if let Err(error) = futures::executor::block_on(ing.stop()) {
-                        warn!(error = %error, "Failed to stop sandbox ingestd during sync drop cleanup");
-                    }
+                if let Some(mut ing) = ingestd
+                    && let Err(error) = futures::executor::block_on(ing.stop())
+                {
+                    warn!(error = %error, "Failed to stop sandbox ingestd during sync drop cleanup");
                 }
             }
         }

@@ -2,23 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::{debug, info};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ApiPollerState {
     pub cursor: Option<String>,
     pub last_poll_at: Option<String>,
     pub total_items_fetched: u64,
     pub consecutive_empty_polls: u32,
-}
-
-impl Default for ApiPollerState {
-    fn default() -> Self {
-        Self {
-            cursor: None,
-            last_poll_at: None,
-            total_items_fetched: 0,
-            consecutive_empty_polls: 0,
-        }
-    }
 }
 
 impl ApiPollerState {
@@ -69,7 +58,11 @@ impl ApiPollerConfig {
         }
     }
 
-    pub fn with_auth(mut self, header_name: impl Into<String>, header_value: impl Into<String>) -> Self {
+    pub fn with_auth(
+        mut self,
+        header_name: impl Into<String>,
+        header_value: impl Into<String>,
+    ) -> Self {
         self.auth_header = Some((header_name.into(), header_value.into()));
         self
     }
@@ -108,18 +101,19 @@ impl<T> PollResult<T> {
 pub fn should_poll(state: &ApiPollerState, config: &ApiPollerConfig) -> bool {
     let interval = state.backoff_duration(config.poll_interval);
 
-    if let Some(last_poll) = &state.last_poll_at {
-        if let Ok(last) = time::OffsetDateTime::parse(last_poll, &time::format_description::well_known::Rfc3339) {
-            let elapsed = time::OffsetDateTime::now_utc() - last;
-            let needed = time::Duration::new(interval.as_secs() as i64, 0);
-            if elapsed < needed {
-                debug!(
-                    next_poll_in_secs = (needed - elapsed).whole_seconds(),
-                    consecutive_empty = state.consecutive_empty_polls,
-                    "Skipping poll (backoff active)"
-                );
-                return false;
-            }
+    if let Some(last_poll) = &state.last_poll_at
+        && let Ok(last) =
+            time::OffsetDateTime::parse(last_poll, &time::format_description::well_known::Rfc3339)
+    {
+        let elapsed = time::OffsetDateTime::now_utc() - last;
+        let needed = time::Duration::new(interval.as_secs() as i64, 0);
+        if elapsed < needed {
+            debug!(
+                next_poll_in_secs = (needed - elapsed).whole_seconds(),
+                consecutive_empty = state.consecutive_empty_polls,
+                "Skipping poll (backoff active)"
+            );
+            return false;
         }
     }
 

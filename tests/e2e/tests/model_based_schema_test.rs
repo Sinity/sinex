@@ -260,7 +260,7 @@ async fn verify_repository_matches_model(
                     }
                 }
                 None => {
-                    if !actual.is_err() {
+                    if actual.is_ok() {
                         bail!(
                             "expected no active schema for {source}/{event_type}, got {:?}",
                             actual.ok().map(|schema| schema.content_hash)
@@ -344,7 +344,7 @@ async fn prop_schema_repo_model_matches_reference(
                         }
                     }
                     Err(()) => {
-                        if !actual.is_err() {
+                        if actual.is_ok() {
                             bail!("same-version different-content registration should fail");
                         }
                     }
@@ -385,7 +385,7 @@ async fn prop_schema_repo_model_matches_reference(
                         }
                     }
                     None => {
-                        if !actual.is_err() {
+                        if actual.is_ok() {
                             bail!("expected no active schema for {source}/{event_type}");
                         }
                     }

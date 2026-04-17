@@ -161,7 +161,7 @@ fn forwarder_join_result(
             let error = if err.is_panic() {
                 SinexError::processing("system forwarder task failed")
                     .with_context("task", task_name.to_string())
-                    .with_context("panic", panic_payload_message(err.into_panic()))
+                    .with_context("panic", panic_payload_message(&err.into_panic()))
             } else {
                 SinexError::processing("system forwarder task failed")
                     .with_context("task", task_name.to_string())
@@ -187,7 +187,7 @@ fn collapse_forwarder_errors(mut errors: Vec<SinexError>) -> NodeResult<()> {
     Err(error)
 }
 
-fn panic_payload_message(payload: Box<dyn std::any::Any + Send>) -> String {
+fn panic_payload_message(payload: &Box<dyn std::any::Any + Send>) -> String {
     if let Some(message) = payload.downcast_ref::<String>() {
         message.clone()
     } else if let Some(message) = payload.downcast_ref::<&'static str>() {
@@ -527,7 +527,7 @@ impl SystemNode {
     }
 
     /// Initialize watcher metadata (actual streaming starts during continuous scans).
-    async fn initialize_watchers(&mut self) -> NodeResult<()> {
+    fn initialize_watchers(&mut self) {
         if self.config.dbus_enabled {
             if self.dbus_watcher.is_none() {
                 info!(
@@ -560,27 +560,25 @@ impl SystemNode {
         } else {
             self.udev_watcher = None;
         }
-
-        Ok(())
     }
 
     /// Abort and drop any active watcher handles.
     async fn shutdown_watchers(&mut self) -> NodeResult<()> {
         let mut shutdown_errors = Vec::new();
-        if let Some(handle) = self.dbus_watcher.take() {
-            if let Err(error) = self.finalize_watcher_handle(handle).await {
-                shutdown_errors.push(("dbus watcher".to_string(), error));
-            }
+        if let Some(handle) = self.dbus_watcher.take()
+            && let Err(error) = self.finalize_watcher_handle(handle).await
+        {
+            shutdown_errors.push(("dbus watcher".to_string(), error));
         }
-        if let Some(handle) = self.unified_journal_watcher.take() {
-            if let Err(error) = self.finalize_watcher_handle(handle).await {
-                shutdown_errors.push(("unified journal watcher".to_string(), error));
-            }
+        if let Some(handle) = self.unified_journal_watcher.take()
+            && let Err(error) = self.finalize_watcher_handle(handle).await
+        {
+            shutdown_errors.push(("unified journal watcher".to_string(), error));
         }
-        if let Some(handle) = self.udev_watcher.take() {
-            if let Err(error) = self.finalize_watcher_handle(handle).await {
-                shutdown_errors.push(("udev watcher".to_string(), error));
-            }
+        if let Some(handle) = self.udev_watcher.take()
+            && let Err(error) = self.finalize_watcher_handle(handle).await
+        {
+            shutdown_errors.push(("udev watcher".to_string(), error));
         }
 
         if let Some(material) = self.node_material.take()
@@ -990,7 +988,7 @@ impl IngestorNode for SystemNode {
             "System node configuration"
         );
 
-        self.initialize_watchers().await?;
+        self.initialize_watchers();
 
         Ok(())
     }

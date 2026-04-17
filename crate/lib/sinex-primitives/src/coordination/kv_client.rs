@@ -12,6 +12,10 @@ const DEFAULT_LEADERSHIP_TIMEOUT_SECS: Seconds = Seconds::from_secs(30);
 const DEFAULT_HANDOFF_TIMEOUT_SECS: Seconds = Seconds::from_secs(10);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(
+    clippy::struct_field_names,
+    reason = "The `_secs` postfix names the concrete timing role; the shared `Seconds` type does not convey which interval is which"
+)]
 struct CoordinationTiming {
     heartbeat_secs: Seconds,
     leadership_timeout_secs: Seconds,

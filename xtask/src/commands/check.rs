@@ -136,7 +136,8 @@ impl CheckCommand {
                 args.push(p.clone());
             }
             return Ok((args, WorkloadScope::Packages(packages)));
-        } else if !self.all {
+        }
+        if !self.all {
             // Affected mode is default ON, --all disables it
             let mut affected_pkgs = crate::affected::affected_packages()?;
             if affected_pkgs.is_empty() {
@@ -145,36 +146,34 @@ impl CheckCommand {
                 }
                 args.push("--workspace".to_string());
                 return Ok((args, WorkloadScope::Workspace));
-            } else {
-                affected_pkgs.sort();
-                affected_pkgs.dedup();
-                // H6: Narrate which packages were selected and why
-                if is_human {
-                    let pkg_list = if affected_pkgs.len() <= 4 {
-                        affected_pkgs.join(", ")
-                    } else {
-                        format!(
-                            "{}, …+{}",
-                            affected_pkgs[..3].join(", "),
-                            affected_pkgs.len() - 3
-                        )
-                    };
-                    eprintln!(
-                        "  ℹ Affected mode: {} package{} ({pkg_list})",
-                        affected_pkgs.len(),
-                        if affected_pkgs.len() == 1 { "" } else { "s" }
-                    );
-                }
-                for p in &affected_pkgs {
-                    args.push("-p".to_string());
-                    args.push(p.clone());
-                }
-                return Ok((args, WorkloadScope::Affected(affected_pkgs)));
             }
-        } else {
-            args.push("--workspace".to_string());
-            return Ok((args, WorkloadScope::Workspace));
+            affected_pkgs.sort();
+            affected_pkgs.dedup();
+            // H6: Narrate which packages were selected and why
+            if is_human {
+                let pkg_list = if affected_pkgs.len() <= 4 {
+                    affected_pkgs.join(", ")
+                } else {
+                    format!(
+                        "{}, …+{}",
+                        affected_pkgs[..3].join(", "),
+                        affected_pkgs.len() - 3
+                    )
+                };
+                eprintln!(
+                    "  ℹ Affected mode: {} package{} ({pkg_list})",
+                    affected_pkgs.len(),
+                    if affected_pkgs.len() == 1 { "" } else { "s" }
+                );
+            }
+            for p in &affected_pkgs {
+                args.push("-p".to_string());
+                args.push(p.clone());
+            }
+            return Ok((args, WorkloadScope::Affected(affected_pkgs)));
         }
+        args.push("--workspace".to_string());
+        Ok((args, WorkloadScope::Workspace))
     }
 
     /// Record diagnostics and compiled packages to history, add summary to result
@@ -613,7 +612,7 @@ fn resolve_fixable_diagnostic_count(ctx: &CommandContext) -> (Option<usize>, Opt
         return (None, None);
     }
 
-    match ctx.try_with_history_db(|db| db.get_fixable_diagnostic_count()) {
+    match ctx.try_with_history_db(crate::history::HistoryDb::get_fixable_diagnostic_count) {
         Some(Ok(count)) => (Some(count), None),
         Some(Err(error)) => (
             None,
@@ -692,12 +691,20 @@ mod tests {
     use crate::sandbox::sinex_test;
     use std::sync::Arc;
 
-    fn make_cmd(lint: bool, fmt: bool, forbidden: bool, full: bool) -> CheckCommand {
+    #[derive(Default, Clone, Copy)]
+    struct CheckFlags {
+        lint: bool,
+        fmt: bool,
+        forbidden: bool,
+        full: bool,
+    }
+
+    fn make_cmd(flags: CheckFlags) -> CheckCommand {
         CheckCommand {
-            lint,
-            fmt,
-            forbidden,
-            full,
+            lint: flags.lint,
+            fmt: flags.fmt,
+            forbidden: flags.forbidden,
+            full: flags.full,
             fix: false,
             heavy: false,
             all: false,
@@ -711,7 +718,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_check_command_metadata() -> ::xtask::sandbox::TestResult<()> {
-        let cmd = make_cmd(false, false, false, false);
+        let cmd = make_cmd(CheckFlags::default());
         let metadata = cmd.metadata();
         assert_eq!(metadata.category, Some("check"));
         assert!(metadata.timeout.is_some());
@@ -720,14 +727,17 @@ mod tests {
 
     #[sinex_test]
     async fn test_check_command_name() -> ::xtask::sandbox::TestResult<()> {
-        let cmd = make_cmd(false, false, false, false);
+        let cmd = make_cmd(CheckFlags::default());
         assert_eq!(cmd.name(), "check");
         Ok(())
     }
 
     #[sinex_test]
     async fn test_full_flag_resolves() -> ::xtask::sandbox::TestResult<()> {
-        let mut cmd = make_cmd(false, false, false, true);
+        let mut cmd = make_cmd(CheckFlags {
+            full: true,
+            ..CheckFlags::default()
+        });
         cmd.resolve_flags();
         assert!(cmd.lint);
         assert!(cmd.fmt);
@@ -740,7 +750,7 @@ mod tests {
     async fn test_fix_flag_implies_full() -> ::xtask::sandbox::TestResult<()> {
         let mut cmd = CheckCommand {
             fix: true,
-            ..make_cmd(false, false, false, false)
+            ..make_cmd(CheckFlags::default())
         };
         cmd.resolve_flags();
         assert!(cmd.lint, "--fix should imply --full → --lint");
@@ -751,7 +761,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_defaults_are_compile_only() -> ::xtask::sandbox::TestResult<()> {
-        let cmd = make_cmd(false, false, false, false);
+        let cmd = make_cmd(CheckFlags::default());
         assert!(!cmd.lint);
         assert!(!cmd.fmt);
         assert!(!cmd.forbidden);
@@ -796,7 +806,7 @@ mod tests {
                 ..Default::default()
             }],
             success: false,
-            compiled_packages: Default::default(),
+            compiled_packages: std::collections::HashSet::default(),
         }
     }
 
@@ -822,7 +832,7 @@ mod tests {
     async fn test_execute_clean_compile_succeeds() -> ::xtask::sandbox::TestResult<()> {
         let runner = Arc::new(MockCargoRunner::clean());
         let ctx = mock_ctx(runner);
-        let cmd = make_cmd(false, false, false, false);
+        let cmd = make_cmd(CheckFlags::default());
         let result = cmd.execute(&ctx).await?;
         assert!(
             result.is_success(),
@@ -837,7 +847,7 @@ mod tests {
         let runner = Arc::new(MockCargoRunner::clean());
         let temp = tempfile::tempdir()?;
         let ctx = mock_ctx_with_history(runner, Some(42), temp.path().to_path_buf());
-        let cmd = make_cmd(false, false, false, false);
+        let cmd = make_cmd(CheckFlags::default());
         let result = cmd.execute(&ctx).await?;
         let data = result
             .data
@@ -864,7 +874,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let db_path = temp.path().join("history.db");
         let ctx = mock_ctx_with_history(runner, None, db_path.clone());
-        let cmd = make_cmd(false, false, false, false);
+        let cmd = make_cmd(CheckFlags::default());
         let result = cmd.execute(&ctx).await?;
         assert!(
             result.is_success(),
@@ -889,7 +899,7 @@ mod tests {
     async fn test_execute_check_errors_yield_failure() -> ::xtask::sandbox::TestResult<()> {
         let runner = Arc::new(MockCargoRunner::clean().with_check(error_summary()));
         let ctx = mock_ctx(runner);
-        let cmd = make_cmd(false, false, false, false);
+        let cmd = make_cmd(CheckFlags::default());
         let result = cmd.execute(&ctx).await?;
         assert!(!result.is_success(), "check with errors should fail");
         assert!(
@@ -904,7 +914,10 @@ mod tests {
     async fn test_execute_lint_routes_to_clippy_not_check() -> ::xtask::sandbox::TestResult<()> {
         let runner = Arc::new(MockCargoRunner::clean());
         let ctx = mock_ctx(runner.clone());
-        let cmd = make_cmd(true, false, false, false); // --lint
+        let cmd = make_cmd(CheckFlags {
+            lint: true,
+            ..CheckFlags::default()
+        }); // --lint
         cmd.execute(&ctx).await?;
         let calls = runner.calls();
         assert_eq!(calls.clippy, 1, "clippy should have been called once");
@@ -920,7 +933,7 @@ mod tests {
     -> ::xtask::sandbox::TestResult<()> {
         let runner = Arc::new(MockCargoRunner::clean());
         let ctx = mock_ctx(runner.clone());
-        let cmd = make_cmd(false, false, false, false); // default: compile-only
+        let cmd = make_cmd(CheckFlags::default()); // default: compile-only
         cmd.execute(&ctx).await?;
         let calls = runner.calls();
         assert_eq!(calls.check, 1, "cargo check should have been called once");
@@ -932,7 +945,10 @@ mod tests {
     async fn test_execute_clippy_errors_yield_failure() -> ::xtask::sandbox::TestResult<()> {
         let runner = Arc::new(MockCargoRunner::clean().with_clippy(error_summary()));
         let ctx = mock_ctx(runner);
-        let cmd = make_cmd(true, false, false, false); // --lint
+        let cmd = make_cmd(CheckFlags {
+            lint: true,
+            ..CheckFlags::default()
+        }); // --lint
         let result = cmd.execute(&ctx).await?;
         assert!(
             !result.is_success(),
@@ -952,7 +968,10 @@ mod tests {
         // --fmt with a formatting violation should bail before running cargo check.
         let runner = Arc::new(MockCargoRunner::clean().with_fmt_fail());
         let ctx = mock_ctx(runner.clone());
-        let cmd = make_cmd(false, true, false, false); // --fmt
+        let cmd = make_cmd(CheckFlags {
+            fmt: true,
+            ..CheckFlags::default()
+        }); // --fmt
         let result = cmd.execute(&ctx).await;
         // fmt failure surfaces as Err (propagated via `?` in execute)
         assert!(result.is_err(), "fmt failure should propagate as Err");
@@ -967,7 +986,7 @@ mod tests {
         // Warnings don't fail the check, but they appear in result.warnings.
         let runner = Arc::new(MockCargoRunner::clean().with_check(warning_summary(3)));
         let ctx = mock_ctx(runner);
-        let cmd = make_cmd(false, false, false, false);
+        let cmd = make_cmd(CheckFlags::default());
         let result = cmd.execute(&ctx).await?;
         assert!(
             result.is_success(),
@@ -988,7 +1007,7 @@ mod tests {
         // MockCargoRunner fires on_package_done N times for N compiled_packages.
         let runner = Arc::new(MockCargoRunner::clean().with_check(warning_summary(5)));
         let ctx = mock_ctx(runner);
-        let cmd = make_cmd(false, false, false, false);
+        let cmd = make_cmd(CheckFlags::default());
         // If the callback fires correctly, execute completes without panic.
         let result = cmd.execute(&ctx).await?;
         assert!(result.is_success());

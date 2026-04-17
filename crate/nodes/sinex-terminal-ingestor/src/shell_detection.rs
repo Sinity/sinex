@@ -286,7 +286,7 @@ fn get_shell_version_impl(shell_type: &ShellType) -> std::io::Result<String> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let detail = if !stderr.is_empty() { stderr } else { stdout };
+        let detail = if stderr.is_empty() { stdout } else { stderr };
         let message = if detail.is_empty() {
             format!(
                 "failed to determine {} version: command exited with {}",
@@ -350,16 +350,15 @@ pub(crate) fn utf8_home_dir(context: &'static str) -> Option<Utf8PathBuf> {
 
 fn utf8_home_dir_from(path: Option<PathBuf>, context: &'static str) -> Option<Utf8PathBuf> {
     let path = path?;
-    match Utf8PathBuf::from_path_buf(path.clone()) {
-        Ok(path) => Some(path),
-        Err(_) => {
-            warn!(
-                path = %path.display(),
-                context,
-                "Home directory path is not valid UTF-8; shell defaults are unavailable"
-            );
-            None
-        }
+    if let Ok(path) = Utf8PathBuf::from_path_buf(path.clone()) {
+        Some(path)
+    } else {
+        warn!(
+            path = %path.display(),
+            context,
+            "Home directory path is not valid UTF-8; shell defaults are unavailable"
+        );
+        None
     }
 }
 

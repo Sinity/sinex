@@ -383,8 +383,7 @@ impl TestCommand {
         self.threads.or_else(|| {
             if self.heavy && !self.debug {
                 let cpu_count = std::thread::available_parallelism()
-                    .map(|parallelism| parallelism.get())
-                    .unwrap_or(HEAVY_TEST_THREAD_CAP);
+                    .map_or(HEAVY_TEST_THREAD_CAP, std::num::NonZeroUsize::get);
                 Some(default_heavy_test_threads(cpu_count))
             } else {
                 None
@@ -512,6 +511,10 @@ fn default_heavy_test_threads(cpu_count: usize) -> usize {
     cpu_count.clamp(1, HEAVY_TEST_THREAD_CAP)
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "inferred packages computed from args"
+)]
 fn resolve_nextest_execution_plan(
     explicit_packages: &[String],
     inferred_packages: Vec<String>,
@@ -567,7 +570,7 @@ impl XtaskCommand for TestCommand {
                     args.push(format!("--profile={}", bench.profile));
                     args.push(format!("--runs={}", bench.runs));
                     let threads_str: Vec<String> =
-                        bench.threads.iter().map(|t| t.to_string()).collect();
+                        bench.threads.iter().map(ToString::to_string).collect();
                     args.push(format!("--threads={}", threads_str.join(",")));
                     args.push(format!("--target={}", bench.target));
                     if bench.contracts {
@@ -736,7 +739,7 @@ impl XtaskCommand for TestCommand {
                 TestSubcommand::Bench(bench) => execute_bench(bench, ctx),
                 TestSubcommand::Fuzz(fuzz) => execute_fuzz(fuzz, ctx).await,
                 TestSubcommand::Coverage(cov) => execute_coverage(cov, ctx).await,
-                TestSubcommand::Mutants(m) => execute_mutants(m, ctx).await,
+                TestSubcommand::Mutants(m) => execute_mutants(m, ctx),
                 TestSubcommand::Vm(vm) => execute_vm(vm, ctx).await,
             };
         }
@@ -1540,7 +1543,7 @@ async fn execute_coverage(cov: &CoverageArgs, ctx: &CommandContext) -> Result<Co
         .await
 }
 
-async fn execute_mutants(m: &MutantsArgs, _ctx: &CommandContext) -> Result<CommandResult> {
+fn execute_mutants(m: &MutantsArgs, _ctx: &CommandContext) -> Result<CommandResult> {
     use color_eyre::eyre::eyre;
 
     // Guard: mutants invokes cargo-mutants which needs target/ lock
@@ -1637,7 +1640,7 @@ fn check_disk_space_gb(min_gb: u64) -> DiskSpaceStatus {
     #[cfg(unix)]
     {
         use nix::sys::statvfs::statvfs;
-        return classify_disk_space_probe_result(
+        classify_disk_space_probe_result(
             statvfs(".")
                 .map(|stat| {
                     let available_bytes = stat.blocks_available() * stat.fragment_size();
@@ -1645,7 +1648,7 @@ fn check_disk_space_gb(min_gb: u64) -> DiskSpaceStatus {
                 })
                 .map_err(|error| error.to_string()),
             min_gb,
-        );
+        )
     }
     #[cfg(not(unix))]
     {

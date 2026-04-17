@@ -157,16 +157,16 @@ pub(super) async fn prepare_nextest_lazy_pool(
     }
 
     let locked_state = lock_preparation_state(&config().state_dir, &run_id)?;
-    if let Some(mut cached) = load_cached_preparation(&locked_state.state_path)? {
-        if cached.matches_request(&slot_names, &expected_fingerprint) {
-            if cached.has_deferred_stale_slots() {
-                let prune_summary = retry_deferred_stale_slots(admin_url, &mut cached).await?;
-                store_cached_preparation(&locked_state.state_path, &cached)?;
-                return Ok(cached.into_preparation(prune_summary));
-            }
-
-            return Ok(cached.into_preparation(LazySlotPruneSummary::default()));
+    if let Some(mut cached) = load_cached_preparation(&locked_state.state_path)?
+        && cached.matches_request(&slot_names, &expected_fingerprint)
+    {
+        if cached.has_deferred_stale_slots() {
+            let prune_summary = retry_deferred_stale_slots(admin_url, &mut cached).await?;
+            store_cached_preparation(&locked_state.state_path, &cached)?;
+            return Ok(cached.into_preparation(prune_summary));
         }
+
+        return Ok(cached.into_preparation(LazySlotPruneSummary::default()));
     }
 
     let prepared = prepare_without_cache(
@@ -492,12 +492,12 @@ mod tests {
             .connect(&slot_url)
             .await?;
         sqlx::query(
-            r#"
+            r"
             ALTER TABLE raw.source_material_registry
                 DROP CONSTRAINT IF EXISTS source_material_registry_status_check,
                 ADD CONSTRAINT source_material_registry_status_check
                 CHECK (status IN ('sensing', 'completed', 'recovered_partial', 'failed'))
-            "#,
+            ",
         )
         .execute(&slot_pool)
         .await?;

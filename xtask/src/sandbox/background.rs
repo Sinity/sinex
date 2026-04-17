@@ -84,29 +84,39 @@ impl BackgroundRegistry {
         }
     }
 
+    fn log_task_join_result(label: &str, result: Result<(), tokio::task::JoinError>) {
+        if let Err(join_err) = result {
+            warn!(%label, error = %join_err, "Background task join failed");
+        }
+    }
+
+    async fn abort_task(label: &str, handle: &mut JoinHandle<()>) {
+        warn!(%label, "Background task did not finish within timeout; aborting");
+        handle.abort();
+        if let Err(join_err) = handle.await {
+            warn!(
+                %label,
+                error = %join_err,
+                "Background task join failed after abort"
+            );
+        }
+    }
+
+    async fn wait_for_task(label: String, mut handle: JoinHandle<()>, timeout_secs: u64) {
+        let timeout_sleep = tokio::time::sleep(Duration::from_secs(timeout_secs));
+        tokio::pin!(timeout_sleep);
+
+        tokio::select! {
+            result = &mut handle => Self::log_task_join_result(&label, result),
+            () = &mut timeout_sleep => Self::abort_task(&label, &mut handle).await,
+        }
+    }
+
     async fn wait_for_tasks(&mut self, timeout_secs: u64) {
         // Wait for tracked background tasks to finish, aborting on timeout.
         let tasks = std::mem::take(&mut self.tasks);
         for (label, handle) in tasks {
-            let mut handle = handle;
-            let timeout_sleep = tokio::time::sleep(Duration::from_secs(timeout_secs));
-            tokio::pin!(timeout_sleep);
-
-            tokio::select! {
-                result = &mut handle => {
-                    match result {
-                        Ok(()) => {}
-                        Err(join_err) => warn!(%label, error = %join_err, "Background task join failed"),
-                    }
-                }
-                () = &mut timeout_sleep => {
-                    warn!(%label, "Background task did not finish within timeout; aborting");
-                    handle.abort();
-                    if let Err(join_err) = handle.await {
-                        warn!(%label, error = %join_err, "Background task join failed after abort");
-                    }
-                }
-            };
+            Self::wait_for_task(label, handle, timeout_secs).await;
         }
     }
 

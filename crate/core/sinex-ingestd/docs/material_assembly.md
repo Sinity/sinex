@@ -12,7 +12,7 @@ Assembly is managed by a per-material state machine that handles out-of-order de
    - **Out-of-Order Handling**: Slices arriving out of sequence are buffered in temporary slice files and tracked in a \``BTreeMap`\`. When the missing gap is filled, the buffered chain is automatically flushed to the main assembly file.
 3. **Finalization (\`MaterialEnd\`)**: Upon receiving the \`MaterialEnd\` message, the system verifies the total size and BLAKE3 hash of the assembled content.
 4. **Blob Storage**: Verified content is imported into **git-annex**. The resulting annex key is registered in the \`core.blobs\` table.
-5. **Registry Update**: The original source material record is updated with the \`blob_id\` and marked as \`completed\`.
+5. **Registry Update**: The original source material record is updated with the \``blob_id`\` and marked as \`completed\`.
 
 ## Crash Recovery (WAL)
 

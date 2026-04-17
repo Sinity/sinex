@@ -453,7 +453,6 @@ impl DistributedRateLimiter {
                         debug!(attempt, "CAS failure/conflict reserving tokens; retrying");
                         tokio::time::sleep(backoff).await;
                         backoff = std::cmp::min(backoff * 2, Duration::from_millis(100));
-                        continue;
                     }
                     Err(ReservationAttemptError::BackendUnavailable) => return false,
                 }

@@ -453,7 +453,7 @@ async fn maybe_start_schema_listener(
                 async move {
                     if let Some(listener_ready_tx) = listener_ready_tx
                         .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .take()
                     {
                         let _ = listener_ready_tx.send(());
@@ -817,6 +817,10 @@ impl<T: Node + 'static> NodeRunner<T> {
         true
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "watch::Sender must be moved to send"
+    )]
     fn signal_watch_shutdown(shutdown_tx: watch::Sender<bool>, task_name: &str) -> bool {
         if shutdown_tx.send(true).is_err() {
             warn!(
@@ -1183,9 +1187,10 @@ impl<T: Node + 'static> NodeRunner<T> {
         let host = sinex_primitives::events::builder::get_hostname();
         let consumer_name = format!("{host}-{}", std::process::id());
         let instance_id = Self::build_instance_id(host.as_str());
-        let version = crate::version::node_version()
-            .map(|value| value.to_string())
-            .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
+        let version = crate::version::node_version().map_or_else(
+            |_| env!("CARGO_PKG_VERSION").to_string(),
+            |value| value.to_string(),
+        );
         let transport_for_context = transport.clone();
         let transport_clone_for_runner = transport.clone();
 
@@ -2506,10 +2511,9 @@ impl<T: Node + 'static> NodeRunner<T> {
             }
 
             // Periodic checkpoint save: every N events or M seconds
-            if events_since_checkpoint >= CHECKPOINT_EVENT_INTERVAL
-                || last_checkpoint_time.elapsed() >= CHECKPOINT_TIME_INTERVAL
-            {
-                if let Some(revision) = Self::try_save_checkpoint(
+            if (events_since_checkpoint >= CHECKPOINT_EVENT_INTERVAL
+                || last_checkpoint_time.elapsed() >= CHECKPOINT_TIME_INTERVAL)
+                && let Some(revision) = Self::try_save_checkpoint(
                     &checkpoint_manager,
                     &mut checkpoint_state,
                     last_event_id,
@@ -2517,11 +2521,10 @@ impl<T: Node + 'static> NodeRunner<T> {
                     &mut consecutive_checkpoint_failures,
                 )
                 .await?
-                {
-                    checkpoint_state.revision = revision;
-                    events_since_checkpoint = 0;
-                    last_checkpoint_time = std::time::Instant::now();
-                }
+            {
+                checkpoint_state.revision = revision;
+                events_since_checkpoint = 0;
+                last_checkpoint_time = std::time::Instant::now();
             }
         }
 
@@ -2838,10 +2841,10 @@ impl<T: Node + 'static> NodeRunner<T> {
                                 .with_context("node", node_name.clone())
                                 .with_context(
                                     "event_id",
-                                    event_id
-                                        .as_ref()
-                                        .map(std::string::ToString::to_string)
-                                        .unwrap_or_else(|| "missing".to_string()),
+                                    event_id.as_ref().map_or_else(
+                                        || "missing".to_string(),
+                                        std::string::ToString::to_string,
+                                    ),
                                 )
                                 .with_context("source", event.source.as_str().to_string())
                                 .with_context("event_type", event.event_type.as_str().to_string())
@@ -3017,17 +3020,16 @@ impl<T: Node + 'static> NodeRunner<T> {
             Self::signal_watch_shutdown(shutdown_tx, name);
         }
         if let Some(mut h) = handle.take() {
-            match tokio::time::timeout(TASK_SHUTDOWN_GRACE_PERIOD, &mut h).await {
-                Ok(result) => Self::shutdown_join_result(name, result),
-                Err(_) => {
-                    debug!(
-                        task = name,
-                        grace_period_ms = TASK_SHUTDOWN_GRACE_PERIOD.as_millis(),
-                        "Task did not exit within shutdown grace period; aborting"
-                    );
-                    h.abort();
-                    Self::shutdown_join_result(name, h.await)
-                }
+            if let Ok(result) = tokio::time::timeout(TASK_SHUTDOWN_GRACE_PERIOD, &mut h).await {
+                Self::shutdown_join_result(name, result)
+            } else {
+                debug!(
+                    task = name,
+                    grace_period_ms = TASK_SHUTDOWN_GRACE_PERIOD.as_millis(),
+                    "Task did not exit within shutdown grace period; aborting"
+                );
+                h.abort();
+                Self::shutdown_join_result(name, h.await)
             }
         } else {
             Ok(())
@@ -3142,7 +3144,7 @@ mod tests {
             })
         }
 
-        fn node_name(&self) -> &str {
+        fn node_name(&self) -> &'static str {
             "runtime-test-node"
         }
 
@@ -3180,7 +3182,7 @@ mod tests {
             })
         }
 
-        fn node_name(&self) -> &str {
+        fn node_name(&self) -> &'static str {
             "failing-shutdown-node"
         }
 
@@ -3222,7 +3224,7 @@ mod tests {
             })
         }
 
-        fn node_name(&self) -> &str {
+        fn node_name(&self) -> &'static str {
             "runtime-failing-batch-node"
         }
 
@@ -3280,7 +3282,7 @@ mod tests {
             })
         }
 
-        fn node_name(&self) -> &str {
+        fn node_name(&self) -> &'static str {
             "startup-sequence-test-node"
         }
 
@@ -3466,18 +3468,15 @@ mod tests {
             received_at: Timestamp::now(),
         };
 
-        let error = match NodeRunner::<RuntimeTestNode>::resolve_provisionals_to_events(
+        let Err(error) = NodeRunner::<RuntimeTestNode>::resolve_provisionals_to_events(
             &[provisional],
             &Some(ctx.pool().clone()),
         )
         .await
-        {
-            Ok(_) => {
-                return Err(
-                    color_eyre::eyre::eyre!("missing confirmed events must fail honestly").into(),
-                );
-            }
-            Err(error) => error,
+        else {
+            return Err(color_eyre::eyre::eyre!(
+                "missing confirmed events must fail honestly"
+            ));
         };
 
         let message = format!("{error:#}");
@@ -3579,19 +3578,13 @@ mod tests {
             received_at: Timestamp::now(),
         };
 
-        let error = match NodeRunner::<RuntimeTestNode>::resolve_provisionals_to_events(
-            &[provisional],
-            &None,
-        )
-        .await
-        {
-            Ok(_) => {
-                return Err(color_eyre::eyre::eyre!(
-                    "invalid provisional payloads must fail honestly when no db pool is available"
-                )
-                .into());
-            }
-            Err(error) => error,
+        let Err(error) =
+            NodeRunner::<RuntimeTestNode>::resolve_provisionals_to_events(&[provisional], &None)
+                .await
+        else {
+            return Err(color_eyre::eyre::eyre!(
+                "invalid provisional payloads must fail honestly when no db pool is available"
+            ));
         };
 
         let message = format!("{error:#}");
@@ -3669,7 +3662,7 @@ mod tests {
         let key = futures::TryStreamExt::try_next(&mut keys)
             .await?
             .expect("checkpoint key should exist");
-        kv.put(&key, br#"{ definitely not valid json"#.as_slice().into())
+        kv.put(&key, b"{ definitely not valid json".as_slice().into())
             .await?;
 
         let error = NodeRunner::<RuntimeTestNode>::load_bridge_checkpoint_state(&manager)
@@ -3877,7 +3870,7 @@ mod tests {
                     let handled_subscriptions = handled_subscriptions.clone();
                     async move {
                         let handled = handled_subscriptions.fetch_add(1, Ordering::SeqCst);
-                        if handled == 0 { true } else { false }
+                        handled == 0
                     }
                 }
             },

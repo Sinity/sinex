@@ -249,6 +249,109 @@ impl QaManifest {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Validation engine
+// ═══════════════════════════════════════════════════════════════════════════════
+
+impl Validation {
+    pub fn check(&self, output: &StepOutput) -> std::result::Result<(), String> {
+        use super::builders::{json_path, parse_last_json};
+        match self {
+            Validation::JsonValid => parse_last_json(&output.stdout).map(|_| ()),
+
+            Validation::JsonHasFields(fields) => {
+                let val = parse_last_json(&output.stdout)?;
+                for field in fields {
+                    if json_path(&val, field).is_none() {
+                        return Err(format!("missing JSON field: {field}"));
+                    }
+                }
+                Ok(())
+            }
+
+            Validation::JsonFieldEquals { path, expected } => {
+                let val = parse_last_json(&output.stdout)?;
+                match json_path(&val, path) {
+                    Some(actual) if actual == expected => Ok(()),
+                    Some(actual) => Err(format!("JSON {path}: expected {expected}, got {actual}")),
+                    None => Err(format!("JSON field not found: {path}")),
+                }
+            }
+
+            Validation::JsonFieldOneOf { path, values } => {
+                let val = parse_last_json(&output.stdout)?;
+                match json_path(&val, path) {
+                    Some(actual) if values.contains(actual) => Ok(()),
+                    Some(actual) => Err(format!("JSON {path}: {actual} not in {values:?}")),
+                    None => Err(format!("JSON field not found: {path}")),
+                }
+            }
+
+            Validation::JsonArrayMinLen { path, min } => {
+                let val = parse_last_json(&output.stdout)?;
+                match json_path(&val, path) {
+                    Some(serde_json::Value::Array(arr)) if arr.len() >= *min => Ok(()),
+                    Some(serde_json::Value::Array(arr)) => {
+                        Err(format!("JSON {path}: array length {} < {min}", arr.len()))
+                    }
+                    Some(_) => Err(format!("JSON {path}: not an array")),
+                    None => Err(format!("JSON field not found: {path}")),
+                }
+            }
+
+            Validation::StdoutContains(s) => {
+                if output.stdout.contains(s.as_str()) {
+                    Ok(())
+                } else {
+                    Err(format!("stdout does not contain '{s}'"))
+                }
+            }
+
+            Validation::StdoutNotContains(s) => {
+                if output.stdout.contains(s.as_str()) {
+                    Err(format!("stdout unexpectedly contains '{s}'"))
+                } else {
+                    Ok(())
+                }
+            }
+
+            Validation::StderrContains(s) => {
+                if output.stderr.contains(s.as_str()) {
+                    Ok(())
+                } else {
+                    Err(format!("stderr does not contain '{s}'"))
+                }
+            }
+
+            Validation::StdoutEmpty => {
+                if output.stdout.trim().is_empty() {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "expected empty stdout, got {} bytes",
+                        output.stdout.len()
+                    ))
+                }
+            }
+
+            Validation::StdoutLineCount { min, max } => {
+                let count = output.stdout.lines().count();
+                if let Some(min_val) = min
+                    && count < *min_val
+                {
+                    return Err(format!("stdout has {count} lines, expected >= {min_val}"));
+                }
+                if let Some(max_val) = max
+                    && count > *max_val
+                {
+                    return Err(format!("stdout has {count} lines, expected <= {max_val}"));
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // QaManifest unit tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -363,108 +466,5 @@ mod manifest_tests {
         assert!(roundtripped.exercises[0].passed);
         assert_eq!(roundtripped.exercises[1].id, "t2.y");
         assert!(!roundtripped.exercises[1].passed);
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Validation engine
-// ═══════════════════════════════════════════════════════════════════════════════
-
-impl Validation {
-    pub fn check(&self, output: &StepOutput) -> std::result::Result<(), String> {
-        use super::builders::{json_path, parse_last_json};
-        match self {
-            Validation::JsonValid => parse_last_json(&output.stdout).map(|_| ()),
-
-            Validation::JsonHasFields(fields) => {
-                let val = parse_last_json(&output.stdout)?;
-                for field in fields {
-                    if json_path(&val, field).is_none() {
-                        return Err(format!("missing JSON field: {field}"));
-                    }
-                }
-                Ok(())
-            }
-
-            Validation::JsonFieldEquals { path, expected } => {
-                let val = parse_last_json(&output.stdout)?;
-                match json_path(&val, path) {
-                    Some(actual) if actual == expected => Ok(()),
-                    Some(actual) => Err(format!("JSON {path}: expected {expected}, got {actual}")),
-                    None => Err(format!("JSON field not found: {path}")),
-                }
-            }
-
-            Validation::JsonFieldOneOf { path, values } => {
-                let val = parse_last_json(&output.stdout)?;
-                match json_path(&val, path) {
-                    Some(actual) if values.contains(actual) => Ok(()),
-                    Some(actual) => Err(format!("JSON {path}: {actual} not in {values:?}")),
-                    None => Err(format!("JSON field not found: {path}")),
-                }
-            }
-
-            Validation::JsonArrayMinLen { path, min } => {
-                let val = parse_last_json(&output.stdout)?;
-                match json_path(&val, path) {
-                    Some(serde_json::Value::Array(arr)) if arr.len() >= *min => Ok(()),
-                    Some(serde_json::Value::Array(arr)) => {
-                        Err(format!("JSON {path}: array length {} < {min}", arr.len()))
-                    }
-                    Some(_) => Err(format!("JSON {path}: not an array")),
-                    None => Err(format!("JSON field not found: {path}")),
-                }
-            }
-
-            Validation::StdoutContains(s) => {
-                if output.stdout.contains(s.as_str()) {
-                    Ok(())
-                } else {
-                    Err(format!("stdout does not contain '{s}'"))
-                }
-            }
-
-            Validation::StdoutNotContains(s) => {
-                if output.stdout.contains(s.as_str()) {
-                    Err(format!("stdout unexpectedly contains '{s}'"))
-                } else {
-                    Ok(())
-                }
-            }
-
-            Validation::StderrContains(s) => {
-                if output.stderr.contains(s.as_str()) {
-                    Ok(())
-                } else {
-                    Err(format!("stderr does not contain '{s}'"))
-                }
-            }
-
-            Validation::StdoutEmpty => {
-                if output.stdout.trim().is_empty() {
-                    Ok(())
-                } else {
-                    Err(format!(
-                        "expected empty stdout, got {} bytes",
-                        output.stdout.len()
-                    ))
-                }
-            }
-
-            Validation::StdoutLineCount { min, max } => {
-                let count = output.stdout.lines().count();
-                if let Some(min_val) = min
-                    && count < *min_val
-                {
-                    return Err(format!("stdout has {count} lines, expected >= {min_val}"));
-                }
-                if let Some(max_val) = max
-                    && count > *max_val
-                {
-                    return Err(format!("stdout has {count} lines, expected <= {max_val}"));
-                }
-                Ok(())
-            }
-        }
     }
 }

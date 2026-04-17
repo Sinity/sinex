@@ -16,7 +16,7 @@ pub const EXPONENTIAL_BASE: f64 = 2.0;
 pub use crate::db_error;
 
 fn rollback_failure(
-    original_error: SinexError,
+    original_error: &SinexError,
     rollback_error: impl std::fmt::Display,
     operation: &'static str,
 ) -> SinexError {
@@ -105,7 +105,7 @@ where
             Err(e) if is_retryable_db_error(&e) && attempts < config.max_attempts => {
                 if let Err(rollback_err) = tx.rollback().await {
                     return Err(rollback_failure(
-                        e,
+                        &e,
                         rollback_err,
                         "with_retry_transaction_idempotent",
                     ));
@@ -121,7 +121,7 @@ where
                 return Err(match tx.rollback().await {
                     Ok(()) => e,
                     Err(rollback_err) => {
-                        rollback_failure(e, rollback_err, "with_retry_transaction_idempotent")
+                        rollback_failure(&e, rollback_err, "with_retry_transaction_idempotent")
                     }
                 });
             }
@@ -169,7 +169,7 @@ where
         }
         Err(e) => Err(match tx.rollback().await {
             Ok(()) => e,
-            Err(rollback_err) => rollback_failure(e, rollback_err, "with_transaction"),
+            Err(rollback_err) => rollback_failure(&e, rollback_err, "with_transaction"),
         }),
     }
 }
@@ -213,7 +213,7 @@ mod tests {
     #[sinex_test]
     async fn rollback_failure_preserves_original_error_context() -> TestResult<()> {
         let error = rollback_failure(
-            sinex_primitives::SinexError::validation("original failure"),
+            &sinex_primitives::SinexError::validation("original failure"),
             "rollback broke too",
             "with_transaction",
         );

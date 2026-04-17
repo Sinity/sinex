@@ -181,7 +181,7 @@ impl SelfObserver {
             && !labels.is_empty()
         {
             let mut entries: Vec<_> = labels.iter().collect();
-            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            entries.sort_by_key(|(left, _)| *left);
             let labels = entries
                 .into_iter()
                 .map(|(key, value)| {
@@ -235,7 +235,7 @@ impl SelfObserver {
             .to_json_event()
             .map_err(|e| SelfObservationError::Serialization(e.to_string()))?;
 
-        let metric_key = Self::metric_identity_key(&event.event_type.to_string(), &event.payload);
+        let metric_key = Self::metric_identity_key(event.event_type.as_str(), &event.payload);
         if !self.reserve_metric_slot(&metric_key).await {
             return Ok(());
         }

@@ -178,7 +178,7 @@ impl DevJournal {
 fn spawn_output_handlers(
     streams: Vec<(String, Option<ChildStdout>, Option<ChildStderr>, u32)>,
     show_prefix: bool,
-    journal: Option<DevJournal>,
+    journal: &Option<DevJournal>,
 ) {
     // Color cycle: cyan, yellow, magenta, blue, green (wraps for >5 processes)
     let colors: &[fn(&str) -> console::StyledObject<String>] = &[
@@ -309,12 +309,12 @@ async fn wait_for_any_child_exit(
 }
 
 async fn stop_bundle_child(name: &str, child: &mut Child) -> Result<()> {
-    match child
+    if child
         .try_wait()
         .with_context(|| format!("failed to poll {name} before bundle shutdown"))?
+        .is_some()
     {
-        Some(_) => return Ok(()),
-        None => {}
+        return Ok(());
     }
 
     match child.kill().await {
@@ -929,7 +929,7 @@ impl RunCommand {
             } else {
                 None
             };
-            spawn_output_handlers(log_streams, self.logs, journal);
+            spawn_output_handlers(log_streams, self.logs, &journal);
         }
 
         self.maybe_spawn_metrics_overlay(ctx);
@@ -942,13 +942,13 @@ impl RunCommand {
         }
         let mut shutdown_failures = Vec::new();
         for (name, child) in &mut children {
-            if Some(&name.clone()) != exited_name.as_ref() {
-                if let Err(error) = stop_bundle_child(name, child).await {
-                    if ctx.is_human() {
-                        eprintln!("Error stopping {name}: {error:#}");
-                    }
-                    shutdown_failures.push(format!("{name}: {error:#}"));
+            if Some(name) != exited_name.as_ref()
+                && let Err(error) = stop_bundle_child(name, child).await
+            {
+                if ctx.is_human() {
+                    eprintln!("Error stopping {name}: {error:#}");
                 }
+                shutdown_failures.push(format!("{name}: {error:#}"));
             }
         }
         if !shutdown_failures.is_empty() {
@@ -1072,8 +1072,7 @@ impl RunCommand {
         let short_name = BINARIES
             .iter()
             .find(|(_, pkg, _)| *pkg == package)
-            .map(|(n, _, _)| *n)
-            .unwrap_or(binary);
+            .map_or(binary, |(n, _, _)| *n);
 
         let journal_path = self
             .dev_journal
@@ -1098,7 +1097,7 @@ impl RunCommand {
                 pid,
             )],
             self.logs,
-            journal,
+            &journal,
         );
 
         self.maybe_spawn_metrics_overlay(ctx);
@@ -1179,7 +1178,7 @@ impl RunCommand {
         }
 
         let workspace_root = crate::config::workspace_root();
-        let workspace_utf8 = camino::Utf8PathBuf::from_path_buf(workspace_root.to_path_buf())
+        let workspace_utf8 = camino::Utf8PathBuf::from_path_buf(workspace_root.clone())
             .map_err(|p| eyre!("workspace root is not valid UTF-8: {}", p.display()))?;
 
         // Build extra args for this binary type

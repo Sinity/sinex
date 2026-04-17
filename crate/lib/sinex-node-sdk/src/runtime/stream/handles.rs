@@ -218,9 +218,7 @@ impl EventEmitter {
 mod tests {
     use super::EventEmitter;
     use sinex_primitives::events::{Event, Provenance};
-    use sinex_primitives::{
-        EventSource, EventType, HostName, Id, JsonValue, OffsetKind, Timestamp, Uuid,
-    };
+    use sinex_primitives::{EventSource, EventType, HostName, Id, OffsetKind, Timestamp, Uuid};
     use xtask::sandbox::sinex_test;
 
     #[cfg(feature = "messaging")]
@@ -233,7 +231,7 @@ mod tests {
             schema_id,
             "runtime-test-source",
             "runtime.test",
-            serde_json::json!({
+            &serde_json::json!({
                 "type": "object",
                 "required": ["ok"],
                 "properties": {
@@ -248,7 +246,7 @@ mod tests {
             id: Some(Id::new()),
             source: EventSource::new("runtime-test-source")?,
             event_type: EventType::new("runtime.test")?,
-            payload: JsonValue::from(serde_json::json!({"ok": true})),
+            payload: serde_json::json!({"ok": true}),
             ts_orig: Some(Timestamp::now()),
             host: HostName::from_static("runtime-test-host"),
             node_run_id: None,
@@ -288,7 +286,7 @@ mod tests {
             cached_schema_id,
             "runtime-test-source",
             "runtime.test",
-            serde_json::json!({
+            &serde_json::json!({
                 "type": "object",
                 "required": ["ok"],
                 "properties": {
@@ -304,7 +302,7 @@ mod tests {
             id: Some(Id::new()),
             source: EventSource::new("runtime-test-source")?,
             event_type: EventType::new("runtime.test")?,
-            payload: JsonValue::from(serde_json::json!({"ok": true})),
+            payload: serde_json::json!({"ok": true}),
             ts_orig: Some(Timestamp::now()),
             host: HostName::from_static("runtime-test-host"),
             node_run_id: None,
@@ -343,7 +341,7 @@ mod tests {
             id: None,
             source: EventSource::new("runtime-test-source")?,
             event_type: EventType::new("runtime.test")?,
-            payload: JsonValue::from(serde_json::json!({"ok": true})),
+            payload: serde_json::json!({"ok": true}),
             ts_orig: Some(Timestamp::now()),
             host: HostName::from_static("runtime-test-host"),
             node_run_id: None,
@@ -384,7 +382,7 @@ mod tests {
             id: Some(Id::new()),
             source: EventSource::new("runtime-test-source")?,
             event_type: EventType::new("runtime.test")?,
-            payload: JsonValue::from(serde_json::json!({"ok": true})),
+            payload: serde_json::json!({"ok": true}),
             ts_orig: Some(Timestamp::now()),
             host: HostName::from_static("runtime-test-host"),
             node_run_id: None,

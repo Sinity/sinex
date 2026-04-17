@@ -55,7 +55,6 @@ pub fn read_token_from_env() -> eyre::Result<Option<String>> {
     read_token_from_env_inner()
 }
 
-#[must_use]
 pub fn rpc_server_limits_snapshot() -> eyre::Result<RpcServerLimitsSnapshot> {
     let config =
         GatewayConfig::load().wrap_err("gateway config should load for rpc server tests")?;

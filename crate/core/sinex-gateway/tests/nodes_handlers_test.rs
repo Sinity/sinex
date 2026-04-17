@@ -143,7 +143,7 @@ async fn nodes_list_surfaces_invalid_state_json(ctx: TestContext) -> TestResult<
     .await?;
     kv.put(
         "broken-node",
-        br#"{ definitely not valid json"#.as_slice().into(),
+        br"{ definitely not valid json".as_slice().into(),
     )
     .await?;
 

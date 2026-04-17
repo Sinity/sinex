@@ -96,10 +96,7 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
     );
     env.clear("SINEX_GATEWAY_TLS_CLIENT_CA");
     env.set("SINEX_RPC_TOKEN", "test-token:admin");
-    env.set(
-        "SINEX_NATS_URL",
-        ctx.nats_handle()?.client_url().to_string(),
-    );
+    env.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
 
     let port = reserve_port()?;
     let mut config = sinex_gateway::config::GatewayConfig::load_with_database_url(

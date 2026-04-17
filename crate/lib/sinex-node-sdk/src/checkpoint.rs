@@ -888,6 +888,10 @@ fn checkpoint_cleanup_cutoff(
 /// A `JoinHandle` for the background task. The task can be cancelled
 /// by aborting the handle.
 #[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "Public API: caller convenience"
+)]
 pub fn spawn_checkpoint_cleanup_task(
     kv: async_nats::jetstream::kv::Store,
     config: CheckpointCleanupConfig,

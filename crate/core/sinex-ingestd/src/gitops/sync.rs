@@ -96,10 +96,10 @@ impl GitOpsSyncService {
             match self.sync_source(&source).await {
                 Ok(source_stats) => {
                     stats.sources_synced += 1;
-                    stats.schemas_discovered += source_stats.schemas_discovered;
-                    stats.schemas_created += source_stats.schemas_created;
-                    stats.schemas_updated += source_stats.schemas_updated;
-                    stats.schemas_unchanged += source_stats.schemas_unchanged;
+                    stats.schemas_discovered += source_stats.discovered;
+                    stats.schemas_created += source_stats.created;
+                    stats.schemas_updated += source_stats.updated;
+                    stats.schemas_unchanged += source_stats.unchanged;
                 }
                 Err(e) => {
                     let msg = format!(
@@ -178,10 +178,10 @@ impl GitOpsSyncService {
         );
 
         Ok(SourceSyncResult {
-            schemas_discovered,
-            schemas_created: sync_result.created,
-            schemas_updated: sync_result.updated,
-            schemas_unchanged: sync_result.unchanged,
+            discovered: schemas_discovered,
+            created: sync_result.created,
+            updated: sync_result.updated,
+            unchanged: sync_result.unchanged,
         })
     }
 
@@ -221,10 +221,10 @@ impl GitOpsSyncService {
 /// Per-source sync statistics.
 #[derive(Debug, Default)]
 struct SourceSyncResult {
-    schemas_discovered: usize,
-    schemas_created: usize,
-    schemas_updated: usize,
-    schemas_unchanged: usize,
+    discovered: usize,
+    created: usize,
+    updated: usize,
+    unchanged: usize,
 }
 
 /// Helper function to create a shutdown signal future.

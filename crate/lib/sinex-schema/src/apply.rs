@@ -254,12 +254,12 @@ async fn converge_operations_log_constraints(pool: &PgPool) -> Result<(), ApplyE
 
     execute_sql(
         pool,
-        r#"
+        r"
         ALTER TABLE core.operations_log
             DROP CONSTRAINT IF EXISTS operations_log_operation_type_check,
             ADD CONSTRAINT operations_log_operation_type_check
             CHECK (operation_type ~ '^[a-z][a-z0-9_.-]*$')
-        "#,
+        ",
     )
     .await?;
 
@@ -270,7 +270,7 @@ async fn operations_log_operation_type_constraint_is_current(
     pool: &PgPool,
 ) -> Result<bool, ApplyError> {
     let definition = sqlx::query_scalar::<_, String>(
-        r#"
+        r"
         SELECT pg_get_constraintdef(c.oid)
         FROM pg_constraint c
         JOIN pg_class r ON c.conrelid = r.oid
@@ -278,7 +278,7 @@ async fn operations_log_operation_type_constraint_is_current(
         WHERE n.nspname = 'core'
           AND r.relname = 'operations_log'
           AND c.conname = 'operations_log_operation_type_check'
-        "#,
+        ",
     )
     .fetch_optional(pool)
     .await?;
@@ -302,12 +302,12 @@ async fn converge_source_material_registry_constraints(pool: &PgPool) -> Result<
 
     execute_sql(
         pool,
-        r#"
+        r"
         ALTER TABLE raw.source_material_registry
             DROP CONSTRAINT IF EXISTS source_material_registry_status_check,
             ADD CONSTRAINT source_material_registry_status_check
             CHECK (status IN ('sensing', 'completed', 'cancelled', 'recovered_partial', 'failed'))
-        "#,
+        ",
     )
     .await?;
 
@@ -318,7 +318,7 @@ async fn source_material_registry_status_constraint_is_current(
     pool: &PgPool,
 ) -> Result<bool, ApplyError> {
     let definition = sqlx::query_scalar::<_, String>(
-        r#"
+        r"
         SELECT pg_get_constraintdef(c.oid)
         FROM pg_constraint c
         JOIN pg_class r ON c.conrelid = r.oid
@@ -326,7 +326,7 @@ async fn source_material_registry_status_constraint_is_current(
         WHERE n.nspname = 'raw'
           AND r.relname = 'source_material_registry'
           AND c.conname = 'source_material_registry_status_check'
-        "#,
+        ",
     )
     .fetch_optional(pool)
     .await?;
@@ -373,28 +373,28 @@ async fn ensure_required_extensions(pool: &PgPool) -> Result<(), ApplyError> {
 
 async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
     let table_sql = vec![
-        render_table(Blobs::create_table_statement()),
-        render_table(EventPayloadSchemas::create_table_statement()),
-        render_table(EmbeddingModels::create_table_statement()),
-        render_table(EventClusters::create_table_statement()),
-        render_table(OperationsLog::create_table_statement()),
-        render_table(Tags::create_table_statement()),
-        render_table(SourceMaterialRegistry::create_table_statement()),
-        render_table(NodeManifests::create_table_statement()),
-        render_table(NodeRuns::create_table_statement()),
-        render_table(Events::create_table_statement()),
-        render_table(GitopsSchemaSources::create_table_statement()),
-        render_table(ValidationCache::create_table_statement()),
-        render_table(TemporalLedger::create_table_statement()),
-        render_table(Entities::create_table_statement()),
-        render_table(EntityRelations::create_table_statement()),
-        render_table(TaggedItems::create_table_statement()),
-        render_table(EventAnnotations::create_table_statement()),
-        render_table(EmbeddingCache::create_table_statement()),
-        render_table(EventEmbeddings::create_table_statement()),
-        render_table(EventClusterMembers::create_table_statement()),
-        render_table(EventTombstones::create_table_statement()),
-        render_table(EventReplacements::create_table_statement()),
+        render_table(&Blobs::create_table_statement()),
+        render_table(&EventPayloadSchemas::create_table_statement()),
+        render_table(&EmbeddingModels::create_table_statement()),
+        render_table(&EventClusters::create_table_statement()),
+        render_table(&OperationsLog::create_table_statement()),
+        render_table(&Tags::create_table_statement()),
+        render_table(&SourceMaterialRegistry::create_table_statement()),
+        render_table(&NodeManifests::create_table_statement()),
+        render_table(&NodeRuns::create_table_statement()),
+        render_table(&Events::create_table_statement()),
+        render_table(&GitopsSchemaSources::create_table_statement()),
+        render_table(&ValidationCache::create_table_statement()),
+        render_table(&TemporalLedger::create_table_statement()),
+        render_table(&Entities::create_table_statement()),
+        render_table(&EntityRelations::create_table_statement()),
+        render_table(&TaggedItems::create_table_statement()),
+        render_table(&EventAnnotations::create_table_statement()),
+        render_table(&EmbeddingCache::create_table_statement()),
+        render_table(&EventEmbeddings::create_table_statement()),
+        render_table(&EventClusterMembers::create_table_statement()),
+        render_table(&EventTombstones::create_table_statement()),
+        render_table(&EventReplacements::create_table_statement()),
     ];
 
     for sql in table_sql {
@@ -554,7 +554,7 @@ async fn recreate_telemetry_read_models(pool: &PgPool) -> Result<(), ApplyError>
     .await
 }
 
-fn render_table(stmt: TableCreateStatement) -> String {
+fn render_table(stmt: &TableCreateStatement) -> String {
     stmt.to_string(PostgresQueryBuilder)
 }
 
@@ -580,11 +580,11 @@ pub(crate) async fn relation_exists(
 
 async fn relation_kind(pool: &PgPool, qualified_name: &str) -> Result<Option<char>, ApplyError> {
     let relation_kind = sqlx::query_scalar::<_, Option<String>>(
-        r#"
+        r"
         SELECT c.relkind::text
         FROM pg_class c
         WHERE c.oid = to_regclass($1)
-        "#,
+        ",
     )
     .bind(qualified_name)
     .fetch_optional(pool)
@@ -599,14 +599,14 @@ async fn continuous_aggregate_exists(
     relation: &str,
 ) -> Result<bool, ApplyError> {
     let exists = sqlx::query_scalar::<_, bool>(
-        r#"
+        r"
         SELECT EXISTS (
             SELECT 1
             FROM timescaledb_information.continuous_aggregates
             WHERE view_schema = $1
               AND view_name = $2
         )
-        "#,
+        ",
     )
     .bind(schema)
     .bind(relation)

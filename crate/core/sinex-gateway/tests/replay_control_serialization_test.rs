@@ -1,6 +1,7 @@
 use sinex_gateway::replay_control::{
     ReplayControlRequest, ReplayControlResponse, ReplayControlStatus, ReplayScope,
 };
+use std::collections::HashMap;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -9,7 +10,7 @@ async fn replay_control_request_round_trip() -> TestResult<()> {
         node_id: "fs-test".to_string(),
         time_window: None,
         material_filter: None,
-        filters: Default::default(),
+        filters: HashMap::default(),
     };
 
     let request = ReplayControlRequest::Plan {

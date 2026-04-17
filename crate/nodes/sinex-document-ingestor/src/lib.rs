@@ -161,13 +161,11 @@ impl DocumentNode {
         }
     }
 
-    fn is_allowed_path(&self, target: &str) -> NodeResult<bool> {
-        for root in &self.config.allowed_roots {
-            if validate_path_within_root(target, root).is_ok() {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+    fn is_allowed_path(&self, target: &str) -> bool {
+        self.config
+            .allowed_roots
+            .iter()
+            .any(|root| validate_path_within_root(target, root).is_ok())
     }
 
     async fn ingest_targets(&self, targets: &[String]) -> NodeResult<ScanReport> {
@@ -223,7 +221,7 @@ impl DocumentNode {
         let sanitized_path = SanitizedPath::from_str_validated(utf8_path.as_str())
             .map_err(|e| SinexError::processing("Invalid document path").with_source(e))?;
 
-        if !self.is_allowed_path(utf8_path.as_str())? {
+        if !self.is_allowed_path(utf8_path.as_str()) {
             return Err(SinexError::processing(format!(
                 "Document path is outside allowed roots: {target}"
             )));

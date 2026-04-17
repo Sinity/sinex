@@ -58,7 +58,7 @@ pub enum AnalyticsSubcommand {
 }
 
 impl XtaskCommand for AnalyticsCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "analytics"
     }
 
@@ -160,11 +160,9 @@ fn render_health_report(report: &WorkspaceHealthReport, breakdown: bool) {
                 &pkg.diagnostic_count.to_string(),
                 &pkg.fixable_count.to_string(),
                 &pkg.test_pass_rate
-                    .map(|r| format!("{:.0}%", r * 100.0))
-                    .unwrap_or_else(|| "-".into()),
+                    .map_or_else(|| "-".into(), |r| format!("{:.0}%", r * 100.0)),
                 &pkg.avg_build_time_secs
-                    .map(|s| format!("{s:.1}s"))
-                    .unwrap_or_else(|| "-".into()),
+                    .map_or_else(|| "-".into(), |s| format!("{s:.1}s")),
             ]);
         }
         let mut table = builder.build();
@@ -325,16 +323,13 @@ fn execute_velocity(analysis: &HistoryAnalysis<'_>, ctx: &CommandContext) -> Res
             let target = t.display_label();
             let recent = t
                 .recent_avg_secs
-                .map(|s| format!("{s:.1}s"))
-                .unwrap_or_else(|| "-".into());
+                .map_or_else(|| "-".into(), |s| format!("{s:.1}s"));
             let older = t
                 .older_avg_secs
-                .map(|s| format!("{s:.1}s"))
-                .unwrap_or_else(|| "-".into());
+                .map_or_else(|| "-".into(), |s| format!("{s:.1}s"));
             let delta = t
                 .delta_pct
-                .map(|d| format!("{:+.1}%", d))
-                .unwrap_or_else(|| "-".into());
+                .map_or_else(|| "-".into(), |d| format!("{d:+.1}%"));
             let trend_colored = match t.trend.as_str() {
                 "faster" => style("↓ faster").green().to_string(),
                 "slower" => style("↑ slower").red().to_string(),
@@ -432,14 +427,11 @@ fn execute_resources(
             &r.command,
             &r.started_at,
             &r.duration_secs
-                .map(|d| format!("{d:.1}s"))
-                .unwrap_or_else(|| "-".into()),
+                .map_or_else(|| "-".into(), |d| format!("{d:.1}s")),
             &r.cpu_usage_avg
-                .map(|c| format!("{c:.1}"))
-                .unwrap_or_else(|| "-".into()),
+                .map_or_else(|| "-".into(), |c| format!("{c:.1}")),
             &r.memory_usage_max_mb
-                .map(|m| format!("{m:.0}"))
-                .unwrap_or_else(|| "-".into()),
+                .map_or_else(|| "-".into(), |m| format!("{m:.0}")),
         ]);
     }
     let mut table = builder.build();
@@ -517,10 +509,8 @@ fn render_package_health_row(pkg: &PackageHealth) -> [String; 5] {
         pkg.diagnostic_count.to_string(),
         pkg.fixable_count.to_string(),
         pkg.test_pass_rate
-            .map(|r| format!("{:.0}%", r * 100.0))
-            .unwrap_or_else(|| "-".into()),
+            .map_or_else(|| "-".into(), |r| format!("{:.0}%", r * 100.0)),
         pkg.avg_build_time_secs
-            .map(|s| format!("{s:.1}s"))
-            .unwrap_or_else(|| "-".into()),
+            .map_or_else(|| "-".into(), |s| format!("{s:.1}s")),
     ]
 }

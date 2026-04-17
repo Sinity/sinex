@@ -29,6 +29,10 @@ use std::sync::Arc;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "watch::Sender must be moved to send"
+)]
 fn signal_shutdown_channel(tx: watch::Sender<bool>, node_name: &str) -> bool {
     if tx.send(true).is_err() {
         warn!(
@@ -433,13 +437,13 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
     }
 
     async fn shutdown(&mut self) -> NodeResult<()> {
-        if let Some(tx) = self.shutdown_tx.take() {
-            if !signal_shutdown_channel(tx, self.ingestor.name()) {
-                warn!(
-                    node = self.ingestor.name(),
-                    "Skipping graceful continuous-loop shutdown confirmation because the receiver is gone"
-                );
-            }
+        if let Some(tx) = self.shutdown_tx.take()
+            && !signal_shutdown_channel(tx, self.ingestor.name())
+        {
+            warn!(
+                node = self.ingestor.name(),
+                "Skipping graceful continuous-loop shutdown confirmation because the receiver is gone"
+            );
         }
         self.ingestor.shutdown(&self.state.user_state).await?;
         self.save_state(true).await?;
@@ -517,10 +521,12 @@ mod tests {
         type Config = ();
         type State = TestState;
 
-        fn name(&self) -> &str {
+        #[allow(clippy::unused_self)]
+        fn name(&self) -> &'static str {
             "ingestor-adapter-test"
         }
 
+        #[allow(clippy::unused_self)]
         fn capabilities(&self) -> NodeCapabilities {
             NodeCapabilities::default()
         }

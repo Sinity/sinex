@@ -324,16 +324,18 @@ impl IngestService {
         };
 
         if let Some(set) = ready_set.clone() {
-            let handle = self.start_material_ready_set_maintenance_task(set).await;
+            let handle = self.start_material_ready_set_maintenance_task(set);
             self.track_task(handle).await;
         }
 
         // Start JetStream and MaterialAssembler tasks (critical - failure stops service)
         let (mut js_handle, mut js_ready_rx) = match (&self.nats_client, &self.db_pool) {
             (Some(nats), Some(pool)) => {
-                let (h, rx) = self
-                    .start_jetstream_consumer_task(nats.clone(), pool.clone(), ready_set.clone())
-                    .await;
+                let (h, rx) = self.start_jetstream_consumer_task(
+                    nats.clone(),
+                    pool.clone(),
+                    ready_set.clone(),
+                );
                 (Some(h), Some(rx))
             }
             _ => (None, None),
@@ -341,25 +343,25 @@ impl IngestService {
 
         let (mut ma_handle, mut ma_ready_rx) = match (&self.nats_client, &self.db_pool) {
             (Some(nats), Some(pool)) => {
-                let (h, rx) = self
-                    .start_material_assembler_task(nats.clone(), pool.clone(), ready_set.clone())
-                    .await;
+                let (h, rx) = self.start_material_assembler_task(
+                    nats.clone(),
+                    pool.clone(),
+                    ready_set.clone(),
+                );
                 (Some(h), Some(rx))
             }
             _ => (None, None),
         };
 
         if let Some(ref pool) = self.db_pool {
-            let handle = self
-                .start_schema_reload_task(pool.clone(), self.nats_client.clone())
-                .await;
+            let handle = self.start_schema_reload_task(pool.clone(), self.nats_client.clone());
             self.track_task(handle).await;
         }
 
         // Start GitOps sync service if enabled
         if self.config.gitops_enabled {
             if let Some(ref pool) = self.db_pool {
-                let handle = self.start_gitops_sync_task(pool.clone()).await;
+                let handle = self.start_gitops_sync_task(pool.clone());
                 self.track_task(handle).await;
                 info!("GitOps schema sync service started");
             } else {
@@ -644,7 +646,7 @@ impl IngestService {
     ) -> IngestdResult<()> {
         match result {
             Ok(res) => Self::handle_join_success(name, res, shutdown_flag, shutdown_notify),
-            Err(e) => Self::handle_join_error(name, e, shutdown_flag, shutdown_notify),
+            Err(e) => Self::handle_join_error(name, &e, shutdown_flag, shutdown_notify),
         }
     }
 
@@ -674,7 +676,7 @@ impl IngestService {
 
     fn handle_join_error(
         name: &str,
-        err: tokio::task::JoinError,
+        err: &tokio::task::JoinError,
         shutdown_flag: &Arc<AtomicBool>,
         shutdown_notify: &Arc<tokio::sync::Notify>,
     ) -> IngestdResult<()> {
@@ -707,7 +709,7 @@ impl IngestService {
     ///
     /// The receiver fires after the durable `JetStream` consumer has been created and the pull
     /// loop is about to start. Await it before emitting `sd_notify(READY)`.
-    async fn start_jetstream_consumer_task(
+    fn start_jetstream_consumer_task(
         &self,
         nats_client: NatsClient,
         pool: PgPool,
@@ -780,7 +782,7 @@ impl IngestService {
     ///
     /// The receiver fires after stream bootstrap and WAL restore complete, just before
     /// the consumer sub-tasks start. Await it before emitting `sd_notify(READY)`.
-    async fn start_material_assembler_task(
+    fn start_material_assembler_task(
         &self,
         nats_client: NatsClient,
         pool: PgPool,
@@ -860,7 +862,7 @@ impl IngestService {
     }
 
     /// Start schema reload task
-    async fn start_schema_reload_task(
+    fn start_schema_reload_task(
         &self,
         pool: PgPool,
         nats_client: Option<NatsClient>,
@@ -915,7 +917,7 @@ impl IngestService {
     }
 
     /// Start the `GitOps` schema sync background task
-    async fn start_gitops_sync_task(&self, pool: PgPool) -> JoinHandle<()> {
+    fn start_gitops_sync_task(&self, pool: PgPool) -> JoinHandle<()> {
         let shutdown_flag = self.shutdown_flag.clone();
         let work_dir = self.config.gitops_work_dir.clone().into_std_path_buf();
 
@@ -925,7 +927,7 @@ impl IngestService {
         })
     }
 
-    async fn start_material_ready_set_maintenance_task(
+    fn start_material_ready_set_maintenance_task(
         &self,
         ready_set: MaterialReadySet,
     ) -> JoinHandle<()> {
@@ -1002,7 +1004,11 @@ impl IngestService {
                     error = %error,
                     "Background task exited unexpectedly during forced shutdown"
                 );
-                Some(task_shutdown_error("background", &index.to_string(), &error))
+                Some(task_shutdown_error(
+                    "background",
+                    &index.to_string(),
+                    &error,
+                ))
             }
         }
     }
@@ -1041,30 +1047,26 @@ impl IngestService {
             shutdown_errors
         };
 
-        match tokio::time::timeout(timeout, wait_task).await {
-            Ok(shutdown_errors) => {
-                info!("All background tasks finished");
-                Self::collapse_background_shutdown_errors(shutdown_errors)
+        if let Ok(shutdown_errors) = tokio::time::timeout(timeout, wait_task).await {
+            info!("All background tasks finished");
+            Self::collapse_background_shutdown_errors(shutdown_errors)
+        } else {
+            warn!(
+                "Timed out waiting for background tasks after {:?}, aborting {} remaining",
+                timeout,
+                handles.len()
+            );
+            for handle in &handles {
+                handle.abort();
             }
-            Err(_) => {
-                warn!(
-                    "Timed out waiting for background tasks after {:?}, aborting {} remaining",
-                    timeout,
-                    handles.len()
-                );
-                for handle in &handles {
-                    handle.abort();
+            let mut shutdown_errors = vec![background_task_timeout(handles.len(), timeout)];
+            // Await aborted handles so their destructors run before we return.
+            for (index, handle) in handles.into_iter().enumerate() {
+                if let Some(error) = Self::log_aborted_task_shutdown_result(index, handle.await) {
+                    shutdown_errors.push(error);
                 }
-                let mut shutdown_errors = vec![background_task_timeout(handles.len(), timeout)];
-                // Await aborted handles so their destructors run before we return.
-                for (index, handle) in handles.into_iter().enumerate() {
-                    if let Some(error) = Self::log_aborted_task_shutdown_result(index, handle.await)
-                    {
-                        shutdown_errors.push(error);
-                    }
-                }
-                Self::collapse_background_shutdown_errors(shutdown_errors)
             }
+            Self::collapse_background_shutdown_errors(shutdown_errors)
         }
     }
 
@@ -1114,9 +1116,9 @@ struct SchemaBroadcastEntry {
 }
 
 impl IngestService {
-    fn parse_schema_broadcast_entries<'a>(
-        entries: &'a [SchemaBroadcastEntry],
-    ) -> IngestdResult<Vec<(uuid::Uuid, &'a SchemaBroadcastEntry)>> {
+    fn parse_schema_broadcast_entries(
+        entries: &[SchemaBroadcastEntry],
+    ) -> IngestdResult<Vec<(uuid::Uuid, &SchemaBroadcastEntry)>> {
         entries
             .iter()
             .map(|entry| {
@@ -1605,9 +1607,7 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(15)).await;
 
-        let handle = service
-            .start_material_ready_set_maintenance_task(ready_set.clone())
-            .await;
+        let handle = service.start_material_ready_set_maintenance_task(ready_set.clone());
         service.task_handles.lock().await.push(handle);
 
         WaitHelpers::wait_for_condition(
@@ -1627,10 +1627,8 @@ mod tests {
     async fn material_ready_set_maintenance_stops_promptly_on_shutdown()
     -> xtask::sandbox::TestResult<()> {
         let mut service = test_service();
-        let ready_set = MaterialReadySet::with_policy_for_tests(Duration::from_secs(60), u64::MAX);
-        let handle = service
-            .start_material_ready_set_maintenance_task(ready_set)
-            .await;
+        let ready_set = MaterialReadySet::with_policy_for_tests(Duration::from_mins(1), u64::MAX);
+        let handle = service.start_material_ready_set_maintenance_task(ready_set);
         service.task_handles.lock().await.push(handle);
 
         tokio::time::timeout(Duration::from_millis(200), service.shutdown())
