@@ -22,6 +22,6 @@ pub use context::DerivedTriggerContext;
 pub use invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
 pub use output::DerivedOutput;
 pub use traits::{
-    DerivedNodeConfig, DerivedNodeImpl, ScopeReconcilerNode, ScopeReconcilerWrapper,
-    TransducerNode, TransducerWrapper, WindowedNode, WindowedWrapper,
+    DerivedNodeConfig, DerivedNodeImpl, InputProvenanceFilter, ScopeReconcilerNode,
+    ScopeReconcilerWrapper, TransducerNode, TransducerWrapper, WindowedNode, WindowedWrapper,
 };

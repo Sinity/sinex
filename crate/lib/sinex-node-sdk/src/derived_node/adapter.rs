@@ -5,7 +5,7 @@
 
 use super::context::DerivedTriggerContext;
 use super::output::DerivedOutput;
-use super::traits::{DerivedNodeConfig, DerivedNodeImpl};
+use super::traits::{DerivedNodeConfig, DerivedNodeImpl, InputProvenanceFilter};
 
 use crate::checkpoint::{CheckpointManager, CheckpointState, decode_checkpoint_data};
 use crate::error_helpers::{env_bool_with_default, env_parse_with_default};
@@ -133,6 +133,39 @@ impl<N> DerivedNodeAdapter<N>
 where
     N: DerivedNodeImpl,
 {
+    fn input_event_type_matches(&self, event: &Event<JsonValue>) -> bool {
+        let input_type = self.node.input_event_type();
+        input_type == "*" || event.event_type.as_ref() == input_type
+    }
+
+    fn input_provenance_filter(&self) -> InputProvenanceFilter {
+        self.node.input_provenance_filter()
+    }
+
+    fn input_query_has_lineage(&self) -> Option<bool> {
+        self.input_provenance_filter().query_has_lineage()
+    }
+
+    fn input_query_event_types(&self) -> Result<Vec<EventType>, SinexError> {
+        let input_type = self.node.input_event_type();
+        if input_type == "*" {
+            Ok(Vec::new())
+        } else {
+            Ok(vec![EventType::new(input_type)?])
+        }
+    }
+
+    fn event_matches_input(&self, event: &Event<JsonValue>) -> bool {
+        self.input_event_type_matches(event) && self.input_provenance_filter().matches_event(event)
+    }
+
+    fn filter_matching_events(&self, events: Vec<Event<JsonValue>>) -> Vec<Event<JsonValue>> {
+        events
+            .into_iter()
+            .filter(|event| self.event_matches_input(event))
+            .collect()
+    }
+
     /// Create a new adapter wrapping the given node implementation.
     pub fn with_node(node: N) -> Self {
         Self {
@@ -779,8 +812,11 @@ where
         use sinex_db::repositories::DbPoolExt;
         use sinex_primitives::prelude::*;
 
-        // Only process invalidations for our input type
-        if !invalidation.matches_input(self.node.input_event_type()) {
+        // Only process invalidations for our declared input type/provenance contract.
+        if !invalidation.matches_input(
+            self.node.input_event_type(),
+            self.node.input_provenance_filter(),
+        ) {
             return Ok(PreparedInvalidation {
                 outputs: Vec::new(),
                 scopes: Vec::new(),
@@ -887,7 +923,8 @@ where
 
             // ── Step 2: Load working set (input events for this scope) ──
             let query = EventQuery {
-                event_types: vec![EventType::new(self.node.input_event_type())?],
+                event_types: self.input_query_event_types()?,
+                has_lineage: self.input_query_has_lineage(),
                 scope_key: Some(scope_key.clone()),
                 direction: SortDirection::Asc,
                 limit: INVALIDATION_QUERY_PAGE_SIZE,
@@ -899,6 +936,7 @@ where
                 .await?
                 .into_iter()
                 .map(|qe| qe.event)
+                .filter(|event| self.event_matches_input(event))
                 .collect::<Vec<_>>();
 
             // Build context for invalidation processing
@@ -1489,10 +1527,12 @@ where
         };
 
         let input_event_type = self.node.input_event_type();
+        let input_provenance_filter = self.input_provenance_filter();
         info!(
             node = %self.node.name(),
             model = %self.node.node_model(),
             input_type = %input_event_type,
+            input_provenance = ?input_provenance_filter,
             end_time = %end_time,
             replay = args.replay.is_some(),
             "Starting derived node historical replay"
@@ -1510,7 +1550,8 @@ where
 
         loop {
             let query = EventQuery {
-                event_types: vec![EventType::new(input_event_type)?],
+                event_types: self.input_query_event_types()?,
+                has_lineage: self.input_query_has_lineage(),
                 time_range: Some(time_range),
                 cursor: cursor.clone(),
                 limit: batch_size,
@@ -1535,7 +1576,22 @@ where
                 break;
             }
 
-            for query_event in &events {
+            let matching_events = events
+                .into_iter()
+                .filter(|query_event| self.event_matches_input(&query_event.event))
+                .collect::<Vec<_>>();
+
+            if matching_events.is_empty() {
+                match next_cursor {
+                    Some(c) => {
+                        cursor = Some(c);
+                        continue;
+                    }
+                    None => break,
+                }
+            }
+
+            for query_event in &matching_events {
                 let ctx = DerivedTriggerContext::historical(&query_event.event, operation_id)?;
                 let trigger_event_id = ctx.trigger_event_id;
 
@@ -1888,15 +1944,7 @@ where
         &mut self,
         events: Vec<Event<JsonValue>>,
     ) -> NodeResult<ProcessingStats> {
-        let input_type = self.node.input_event_type();
-        let matching: Vec<Event<JsonValue>> = if input_type == "*" {
-            events
-        } else {
-            events
-                .into_iter()
-                .filter(|e| e.event_type.as_ref() == input_type)
-                .collect()
-        };
+        let matching = self.filter_matching_events(events);
 
         if matching.is_empty() {
             return Ok(ProcessingStats::default());
@@ -2074,14 +2122,14 @@ mod tests {
     use super::signal_shutdown_channel;
     use super::{DerivedNodeAdapter, stale_output_ids_or_fail_scope};
     use crate::derived_node::{
-        DerivedNodeConfig, DerivedOutput, DerivedTriggerContext, ScopeReconcilerWrapper,
-        TransducerWrapper,
+        DerivedNodeConfig, DerivedOutput, DerivedTriggerContext, InputProvenanceFilter,
+        ScopeReconcilerWrapper, TransducerWrapper,
     };
     use crate::exploration::ExplorationProvider;
     #[cfg(feature = "messaging")]
     use crate::health_reporter::{HealthReporter, HealthThresholds};
     use crate::runtime::stream::{
-        Checkpoint, EventEmitter, NodeHandles, NodeRuntimeState, ScanArgs, ServiceInfo,
+        Checkpoint, EventEmitter, Node, NodeHandles, NodeRuntimeState, ScanArgs, ServiceInfo,
     };
     #[cfg(feature = "messaging")]
     use crate::self_observation::{SelfObservationError, SelfObserver, SelfObserverConfig};
@@ -2112,6 +2160,11 @@ mod tests {
     #[derive(Debug, Default, Serialize, Deserialize)]
     struct TestDerivedState;
 
+    #[derive(Debug, Default, Serialize, Deserialize)]
+    struct WildcardMaterialOnlyState {
+        processed: usize,
+    }
+
     struct TestDerivedNode;
 
     impl TransducerNode for TestDerivedNode {
@@ -2141,6 +2194,44 @@ mod tests {
             _input: Self::Input,
             _context: &DerivedTriggerContext,
         ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
+            Ok(None)
+        }
+    }
+
+    struct WildcardMaterialOnlyNode;
+
+    impl TransducerNode for WildcardMaterialOnlyNode {
+        type State = WildcardMaterialOnlyState;
+        type Input = JsonValue;
+        type Output = JsonValue;
+
+        fn name(&self) -> &'static str {
+            "wildcard-material-only"
+        }
+
+        fn input_event_type(&self) -> &'static str {
+            "*"
+        }
+
+        fn input_provenance_filter(&self) -> InputProvenanceFilter {
+            InputProvenanceFilter::MaterialOnly
+        }
+
+        fn output_event_type(&self) -> &'static str {
+            "ignored.output"
+        }
+
+        fn output_privacy_context(&self) -> ProcessingContext {
+            ProcessingContext::Metadata
+        }
+
+        async fn process(
+            &mut self,
+            state: &mut Self::State,
+            _input: Self::Input,
+            _context: &DerivedTriggerContext,
+        ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
+            state.processed += 1;
             Ok(None)
         }
     }
@@ -2451,6 +2542,17 @@ mod tests {
     fn make_input_event(value: &str) -> std::result::Result<Event<JsonValue>, SinexError> {
         let mut event = DynamicPayload::new("test.source", "test.input", json!({ "value": value }))
             .from_parents([Id::<Event<JsonValue>>::new()])?
+            .build()?;
+        event.id = Some(event.id.unwrap_or_else(Id::new));
+        Ok(event)
+    }
+
+    fn make_material_input_event(
+        event_type: &str,
+        value: &str,
+    ) -> std::result::Result<Event<JsonValue>, SinexError> {
+        let mut event = DynamicPayload::new("test.source", event_type, json!({ "value": value }))
+            .from_material(Uuid::now_v7())
             .build()?;
         event.id = Some(event.id.unwrap_or_else(Id::new));
         Ok(event)
@@ -3298,6 +3400,65 @@ mod tests {
             report.final_checkpoint,
             Checkpoint::internal(*third_id.as_uuid(), 1)
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn process_event_batch_filters_wildcard_material_only_inputs() -> TestResult<()> {
+        let material_event = make_material_input_event("file.created", "material")?;
+        let synthesized_event = make_input_event("synthesized")?;
+        let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(WildcardMaterialOnlyNode));
+
+        let stats = adapter
+            .process_event_batch(vec![material_event, synthesized_event])
+            .await?;
+
+        assert_eq!(stats.processed, 1);
+        assert_eq!(adapter.persisted_state.state.processed, 1);
+        assert_eq!(adapter.persisted_state.events_processed, 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn historical_replay_filters_wildcard_material_only_inputs(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let material_id = ctx
+            .create_source_material(Some("wildcard-material-only-history"))
+            .await?;
+
+        let mut material_event = DynamicPayload::new(
+            "test.source",
+            "file.created",
+            json!({ "value": "material" }),
+        )
+        .from_material(material_id)
+        .build()?;
+        material_event.id = Some(material_event.id.unwrap_or_else(Id::new));
+
+        let synthesized_event = make_input_event("synthesized-history")?;
+
+        ctx.pool()
+            .events()
+            .insert_batch(vec![material_event, synthesized_event])
+            .await?;
+
+        let (runtime, _event_receiver) =
+            make_runtime_state_with_db(&ctx, "wildcard-material-only", None).await?;
+        let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(WildcardMaterialOnlyNode));
+        adapter.checkpoint_manager = Some(runtime.checkpoint_manager());
+        adapter.event_emitter = Some(runtime.event_emitter().clone());
+        adapter.host = runtime.service_info().host().to_string();
+        adapter.runtime = Some(runtime);
+
+        let report = adapter
+            .run_historical(Checkpoint::None, Timestamp::now(), ScanArgs::default())
+            .await?;
+
+        assert_eq!(report.events_processed, 1);
+        assert_eq!(adapter.persisted_state.state.processed, 1);
+        assert_eq!(adapter.persisted_state.events_processed, 1);
         Ok(())
     }
 

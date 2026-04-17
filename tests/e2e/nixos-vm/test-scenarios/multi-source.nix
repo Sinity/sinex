@@ -247,6 +247,8 @@ pkgs.testers.nixosTest {
           automata = {
             canonicalizer.enable = true;
             healthAggregator.enable = true;
+            analyticsAutomaton.enable = true;
+            sessionDetector.enable = true;
           };
         };
       };
@@ -473,7 +475,9 @@ EOF
         "sinex-desktop-1.service",
         "sinex-system-1.service",
         "sinex-canonicalizer.service",
-        "sinex-health-aggregator.service",
+        "sinex-health-automaton.service",
+        "sinex-analytics-automaton.service",
+        "sinex-session-detector.service",
     ]
     for unit in node_units:
         machine.wait_for_unit(unit)

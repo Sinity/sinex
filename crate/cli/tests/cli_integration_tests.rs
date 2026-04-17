@@ -156,6 +156,21 @@ mod help_tests {
             .stdout(predicate::str::contains("--apply"));
         Ok(())
     }
+
+    #[sinex_test]
+    async fn test_verify_help_exposes_proof_flags() -> TestResult<()> {
+        sinexctl()
+            .args(["verify", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(
+                "Verify trustworthiness invariants",
+            ))
+            .stdout(predicate::str::contains("--gateway-smoke"))
+            .stdout(predicate::str::contains("--automata-smoke"))
+            .stdout(predicate::str::contains("--historical-proof"));
+        Ok(())
+    }
 }
 
 mod version_tests {

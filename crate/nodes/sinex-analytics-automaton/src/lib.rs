@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, WindowedNodeAdapter};
-use sinex_node_sdk::{NodeLogicError, WindowedNode};
+use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, WindowedNode};
 use sinex_primitives::JsonValue;
 use sinex_primitives::Uuid;
 use sinex_primitives::privacy::ProcessingContext;
@@ -44,6 +44,10 @@ impl WindowedNode for AnalyticsAutomaton {
     }
     fn output_event_type(&self) -> &'static str {
         "analytics.insight"
+    }
+
+    fn input_provenance_filter(&self) -> InputProvenanceFilter {
+        InputProvenanceFilter::MaterialOnly
     }
 
     fn output_privacy_context(&self) -> ProcessingContext {

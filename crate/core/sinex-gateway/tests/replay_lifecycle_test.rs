@@ -1,17 +1,20 @@
 use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy, pull::Config as ConsumerConfig};
 use futures::StreamExt;
-use sinex_db::repositories::DbPoolExt;
+use sinex_db::{DbPool, repositories::DbPoolExt};
 use sinex_gateway::ServiceContainer;
 use sinex_node_sdk::{Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ScanReport};
-use sinex_primitives::{DynamicPayload, Uuid, temporal::Timestamp};
+use sinex_primitives::{DynamicPayload, Id, Uuid, temporal::Timestamp};
 use std::time::Duration;
 use tokio::time::sleep;
 use xtask::sandbox::prelude::*;
 
 async fn spawn_fake_scan_node(
+    pool: DbPool,
     nats: async_nats::Client,
     env: sinex_primitives::environment::SinexEnvironment,
     node_name: &str,
+    source: &'static str,
+    event_type: &'static str,
     events_processed: u64,
 ) -> TestResult<(
     tokio::sync::oneshot::Receiver<NodeScanCommand>,
@@ -44,6 +47,38 @@ async fn spawn_fake_scan_node(
             };
             if let Ok(bytes) = serde_json::to_vec(&ack) {
                 let _ = nats.publish(reply, bytes.into()).await;
+            }
+        }
+
+        let material_id = command
+            .args
+            .replay
+            .as_ref()
+            .and_then(|replay| replay.materials.first())
+            .map(|material| material.source_material_id);
+
+        let Some(material_id) = material_id else {
+            return;
+        };
+
+        for i in 0..events_processed {
+            let Ok(event) = DynamicPayload::new(
+                source,
+                event_type,
+                serde_json::json!({
+                    "path": format!("/tmp/{node_name}-replay-{operation_id}-{i}.txt")
+                }),
+            )
+            .from_material(Id::from_uuid(material_id))
+            .build() else {
+                return;
+            };
+
+            let mut event = event;
+            event.created_by_operation_id = Some(operation_id);
+
+            if pool.events().insert(event).await.is_err() {
+                return;
             }
         }
 
@@ -100,8 +135,16 @@ async fn replay_lifecycle_enforces_reexecution_invariants(ctx: TestContext) -> T
         ..Default::default()
     })
     .await?;
-    let (scan_command_rx, scan_handle) =
-        spawn_fake_scan_node(nats.clone(), env.clone(), "test-node", 1).await?;
+    let (scan_command_rx, scan_handle) = spawn_fake_scan_node(
+        ctx.pool.clone(),
+        nats.clone(),
+        env.clone(),
+        "test-node",
+        "test-node",
+        "file.created",
+        1,
+    )
+    .await?;
 
     let replay_material = ctx
         .create_source_material(Some("replay-lifecycle-match"))

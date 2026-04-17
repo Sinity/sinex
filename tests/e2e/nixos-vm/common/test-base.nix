@@ -50,6 +50,8 @@ let
         enable = lib.mkDefault false;
         canonicalizer.enable = lib.mkDefault false;
         healthAggregator.enable = lib.mkDefault false;
+        analyticsAutomaton.enable = lib.mkDefault false;
+        sessionDetector.enable = lib.mkDefault false;
       };
     };
 
