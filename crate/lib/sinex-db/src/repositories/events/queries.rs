@@ -152,7 +152,7 @@ impl EventRepository<'_> {
         .await
         .map_err(|e| db_error(e, "estimate event count by source"))?;
 
-        Ok(extract_plan_rows(plan.0))
+        Ok(extract_plan_rows(&plan.0))
     }
 
     #[instrument(skip(self), fields(event_type = %event_type))]
@@ -200,7 +200,7 @@ impl EventRepository<'_> {
         .await
         .map_err(|e| db_error(e, "estimate event count by type"))?;
 
-        Ok(extract_plan_rows(plan.0))
+        Ok(extract_plan_rows(&plan.0))
     }
 
     #[instrument(
@@ -256,7 +256,7 @@ impl EventRepository<'_> {
         .await
         .map_err(|e| db_error(e, "estimate event count by time range"))?;
 
-        Ok(extract_plan_rows(plan.0))
+        Ok(extract_plan_rows(&plan.0))
     }
 
     pub async fn get_process_heartbeats(
@@ -622,7 +622,7 @@ impl EventRepository<'_> {
     }
 }
 
-pub(crate) fn extract_plan_rows(plan: serde_json::Value) -> i64 {
+pub(crate) fn extract_plan_rows(plan: &serde_json::Value) -> i64 {
     plan.get(0)
         .and_then(|entry| entry.get("Plan"))
         .and_then(|entry| entry.get("Plan Rows"))
@@ -638,7 +638,7 @@ mod tests {
     #[sinex_test]
     async fn extract_plan_rows_reads_estimate() -> TestResult<()> {
         let plan = serde_json::json!([{"Plan": {"Plan Rows": 42}}]);
-        assert_eq!(extract_plan_rows(plan), 42);
+        assert_eq!(extract_plan_rows(&plan), 42);
         Ok(())
     }
 }

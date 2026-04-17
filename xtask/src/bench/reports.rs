@@ -373,11 +373,12 @@ fn build_probe_issues_html(env: &Environment) -> String {
         return String::new();
     }
 
-    let items = env
-        .probe_issues
-        .iter()
-        .map(|issue| format!("<li>{}</li>", html_escape(issue)))
-        .collect::<String>();
+    let mut items = String::new();
+    for issue in &env.probe_issues {
+        items.push_str("<li>");
+        items.push_str(&html_escape(issue));
+        items.push_str("</li>");
+    }
     format!(
         r#"<div class="card">
         <h2>Probe issues</h2>
@@ -391,57 +392,6 @@ fn html_escape(input: &str) -> String {
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{build_probe_issues_html, build_probe_issues_markdown};
-    use crate::bench::environment::Environment;
-    use crate::sandbox::sinex_test;
-
-    fn sample_env() -> Environment {
-        Environment {
-            timestamp: "2026-03-27T00:00:00Z".to_string(),
-            hostname: "host".to_string(),
-            uname: "uname".to_string(),
-            kernel: "kernel".to_string(),
-            arch: "x86_64".to_string(),
-            os: "NixOS".to_string(),
-            cpu_model: "cpu".to_string(),
-            cpu_cores: 1,
-            cpu_threads: 1,
-            memory_total_kb: 1024,
-            memory_available_kb: 512,
-            load_avg: "0.0".to_string(),
-            rustc_version: "rustc".to_string(),
-            cargo_version: "cargo".to_string(),
-            rustup_toolchain: "toolchain".to_string(),
-            postgres_version: "psql".to_string(),
-            database_url_masked: "postgres://***@db/sinex".to_string(),
-            nats_url: "nats://127.0.0.1:4222".to_string(),
-            git_sha: "abc".to_string(),
-            git_sha_short: "abc".to_string(),
-            git_branch: "master".to_string(),
-            git_dirty: false,
-            probe_issues: vec!["git_sha: boom <bad>".to_string()],
-        }
-    }
-
-    #[sinex_test]
-    async fn markdown_probe_section_renders_issues() -> crate::sandbox::TestResult<()> {
-        let markdown = build_probe_issues_markdown(&sample_env());
-        assert!(markdown.contains("### Probe issues"));
-        assert!(markdown.contains("git_sha: boom <bad>"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn html_probe_section_escapes_issues() -> crate::sandbox::TestResult<()> {
-        let html = build_probe_issues_html(&sample_env());
-        assert!(html.contains("&lt;bad&gt;"));
-        assert!(!html.contains("<bad>"));
-        Ok(())
-    }
 }
 
 fn generate_chart_data(results: &[ScenarioResult]) -> String {
@@ -515,4 +465,55 @@ fn build_history_section(report: &HistoryReport) -> String {
 
     html.push_str("</div>");
     html
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_probe_issues_html, build_probe_issues_markdown};
+    use crate::bench::environment::Environment;
+    use crate::sandbox::sinex_test;
+
+    fn sample_env() -> Environment {
+        Environment {
+            timestamp: "2026-03-27T00:00:00Z".to_string(),
+            hostname: "host".to_string(),
+            uname: "uname".to_string(),
+            kernel: "kernel".to_string(),
+            arch: "x86_64".to_string(),
+            os: "NixOS".to_string(),
+            cpu_model: "cpu".to_string(),
+            cpu_cores: 1,
+            cpu_threads: 1,
+            memory_total_kb: 1024,
+            memory_available_kb: 512,
+            load_avg: "0.0".to_string(),
+            rustc_version: "rustc".to_string(),
+            cargo_version: "cargo".to_string(),
+            rustup_toolchain: "toolchain".to_string(),
+            postgres_version: "psql".to_string(),
+            database_url_masked: "postgres://***@db/sinex".to_string(),
+            nats_url: "nats://127.0.0.1:4222".to_string(),
+            git_sha: "abc".to_string(),
+            git_sha_short: "abc".to_string(),
+            git_branch: "master".to_string(),
+            git_dirty: false,
+            probe_issues: vec!["git_sha: boom <bad>".to_string()],
+        }
+    }
+
+    #[sinex_test]
+    async fn markdown_probe_section_renders_issues() -> crate::sandbox::TestResult<()> {
+        let markdown = build_probe_issues_markdown(&sample_env());
+        assert!(markdown.contains("### Probe issues"));
+        assert!(markdown.contains("git_sha: boom <bad>"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn html_probe_section_escapes_issues() -> crate::sandbox::TestResult<()> {
+        let html = build_probe_issues_html(&sample_env());
+        assert!(html.contains("&lt;bad&gt;"));
+        assert!(!html.contains("<bad>"));
+        Ok(())
+    }
 }

@@ -1314,8 +1314,9 @@ exit 2
             format!("{}:{original_path}", bin_dir.path().display()),
         );
 
-        let error =
-            runner::GitStateGuard::new().expect_err("git state guard should fail when stash fails");
+        let error = runner::GitStateGuard::new()
+            .err()
+            .expect("git state guard should fail when stash fails");
         let message = format!("{error:#}");
         assert!(message.contains("stash failed"));
         Ok(())

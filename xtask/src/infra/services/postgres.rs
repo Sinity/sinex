@@ -873,7 +873,9 @@ mod tests {
 
     #[sinex_test]
     async fn test_postgres_worker_process_budget_leaves_headroom() -> TestResult<()> {
-        assert!(POSTGRES_MAX_WORKER_PROCESSES > TIMESCALEDB_MAX_BACKGROUND_WORKERS);
+        const {
+            assert!(POSTGRES_MAX_WORKER_PROCESSES > TIMESCALEDB_MAX_BACKGROUND_WORKERS);
+        }
         assert_eq!(
             POSTGRES_MAX_WORKER_PROCESSES - TIMESCALEDB_MAX_BACKGROUND_WORKERS,
             POSTGRES_WORKER_PROCESS_HEADROOM

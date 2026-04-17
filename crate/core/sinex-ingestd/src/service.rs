@@ -646,7 +646,7 @@ impl IngestService {
     ) -> IngestdResult<()> {
         match result {
             Ok(res) => Self::handle_join_success(name, res, shutdown_flag, shutdown_notify),
-            Err(e) => Self::handle_join_error(name, e, shutdown_flag, shutdown_notify),
+            Err(e) => Self::handle_join_error(name, &e, shutdown_flag, shutdown_notify),
         }
     }
 
@@ -676,7 +676,7 @@ impl IngestService {
 
     fn handle_join_error(
         name: &str,
-        err: tokio::task::JoinError,
+        err: &tokio::task::JoinError,
         shutdown_flag: &Arc<AtomicBool>,
         shutdown_notify: &Arc<tokio::sync::Notify>,
     ) -> IngestdResult<()> {
@@ -1628,9 +1628,7 @@ mod tests {
     -> xtask::sandbox::TestResult<()> {
         let mut service = test_service();
         let ready_set = MaterialReadySet::with_policy_for_tests(Duration::from_mins(1), u64::MAX);
-        let handle = service
-            .start_material_ready_set_maintenance_task(ready_set)
-            .await;
+        let handle = service.start_material_ready_set_maintenance_task(ready_set);
         service.task_handles.lock().await.push(handle);
 
         tokio::time::timeout(Duration::from_millis(200), service.shutdown())

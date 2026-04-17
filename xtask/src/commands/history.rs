@@ -1401,6 +1401,10 @@ fn format_source_short(command: &Option<String>, time: &Option<String>) -> Strin
 }
 
 /// Render diagnostics table with mode-specific columns.
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "DiagnosticsDisplayMode is Copy"
+)]
 fn render_diagnostics_table(
     diagnostics: &[crate::history::StoredDiagnostic],
     mode: DiagnosticsDisplayMode,

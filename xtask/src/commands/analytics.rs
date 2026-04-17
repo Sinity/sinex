@@ -58,7 +58,7 @@ pub enum AnalyticsSubcommand {
 }
 
 impl XtaskCommand for AnalyticsCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "analytics"
     }
 

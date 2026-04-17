@@ -196,7 +196,7 @@ impl EventRepository<'_> {
             .await
             .map_err(|e| db_error(e, "composable query: estimate count"))?;
 
-        Ok(extract_plan_rows(row.0))
+        Ok(extract_plan_rows(&row.0))
     }
 }
 

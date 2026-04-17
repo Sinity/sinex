@@ -107,11 +107,19 @@ impl ErrorDetails {
         }
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "Builder API: allows callers to pass owning strings without explicit borrow"
+    )]
     pub fn with_context(mut self, key: impl Into<String>, value: impl ToString) -> Self {
         self.context.insert(key.into(), value.to_string());
         self
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "Builder API: allows callers to pass owning strings without explicit borrow"
+    )]
     pub fn with_source(mut self, source: impl ToString) -> Self {
         self.sources.push(source.to_string());
         self
@@ -335,6 +343,10 @@ impl SinexError {
     }
 
     #[must_use]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "Builder API: allows callers to pass owning strings without explicit borrow"
+    )]
     pub fn with_context(mut self, key: impl Into<String>, value: impl ToString) -> Self {
         self.details_mut()
             .context
@@ -343,6 +355,10 @@ impl SinexError {
     }
 
     #[must_use]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "Builder API: allows callers to pass owning strings without explicit borrow"
+    )]
     pub fn with_source(mut self, source: impl ToString) -> Self {
         self.details_mut().sources.push(source.to_string());
         self
@@ -361,16 +377,28 @@ impl SinexError {
     }
 
     #[must_use]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "Builder API: allows callers to pass owning types without explicit borrow"
+    )]
     pub fn with_operation(self, operation: impl Into<String>) -> Self {
         self.with_context("operation", operation.into())
     }
 
     #[must_use]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "Builder API: allows callers to pass owning strings without explicit borrow"
+    )]
     pub fn with_path(self, path: impl ToString) -> Self {
         self.with_context("path", path.to_string())
     }
 
     #[must_use]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "Builder API: allows callers to pass owning types without explicit borrow"
+    )]
     pub fn with_id(self, key: impl Into<String>, id: impl ToString) -> Self {
         self.with_context(key, id.to_string())
     }

@@ -453,22 +453,20 @@ pub async fn run_cli() -> Result<()> {
                 );
             }
             Some(bg_id)
-        } else {
-            if let Some(db) = history_db_write.as_ref() {
-                match db.start_invocation(command_name, subcommand, profile, None) {
-                    Ok(id) => Some(id),
-                    Err(error) => {
-                        eprintln!("⚠️  Failed to start invocation history row: {error}");
-                        None
-                    }
+        } else if let Some(db) = history_db_write.as_ref() {
+            match db.start_invocation(command_name, subcommand, profile, None) {
+                Ok(id) => Some(id),
+                Err(error) => {
+                    eprintln!("⚠️  Failed to start invocation history row: {error}");
+                    None
                 }
-            } else {
-                let error = history_db_open_error
-                    .as_deref()
-                    .unwrap_or("unknown history DB open failure");
-                eprintln!("⚠️  Failed to open history DB to start invocation: {error}");
-                None
             }
+        } else {
+            let error = history_db_open_error
+                .as_deref()
+                .unwrap_or("unknown history DB open failure");
+            eprintln!("⚠️  Failed to open history DB to start invocation: {error}");
+            None
         }
     } else {
         None
@@ -872,9 +870,8 @@ mod tests {
 
         let _query = open_history_db(HistoryAccessMode::Query)?;
         let _write = open_history_db(HistoryAccessMode::ReadWrite)?;
-        let error = match open_history_db(HistoryAccessMode::None) {
-            Ok(_) => bail!("commands with no declared history access must not open the DB"),
-            Err(error) => error,
+        let Err(error) = open_history_db(HistoryAccessMode::None) else {
+            bail!("commands with no declared history access must not open the DB");
         };
         assert!(format!("{error:#}").contains("declared no history access"));
         Ok(())

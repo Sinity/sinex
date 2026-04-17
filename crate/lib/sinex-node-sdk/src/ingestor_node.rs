@@ -29,6 +29,10 @@ use std::sync::Arc;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "watch::Sender must be moved to send"
+)]
 fn signal_shutdown_channel(tx: watch::Sender<bool>, node_name: &str) -> bool {
     if tx.send(true).is_err() {
         warn!(
@@ -518,7 +522,7 @@ mod tests {
         type State = TestState;
 
         #[allow(clippy::unused_self)]
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "ingestor-adapter-test"
         }
 

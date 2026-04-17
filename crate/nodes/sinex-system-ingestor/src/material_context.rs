@@ -62,6 +62,10 @@ async fn material_writer_task(
     let mut bytes_written: i64 = 0;
 
     while let Some(req) = rx.recv().await {
+        #[allow(
+            clippy::single_match_else,
+            reason = "Two-arm match makes the append/finalize dichotomy visible; the finalize arm returns"
+        )]
         match req.payload {
             // ── normal append ────────────────────────────────────────────
             Some(payload_bytes) => {

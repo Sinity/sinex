@@ -373,6 +373,10 @@ impl JobLifecycleStatus {
     }
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "called from rusqlite with String"
+)]
 pub(crate) fn parse_stored_invocation_status(
     status_str: String,
 ) -> rusqlite::Result<InvocationStatus> {
@@ -4371,9 +4375,10 @@ mod tests {
         restore.set_mode(original_mode);
         std::fs::set_permissions(dir.path(), restore)?;
 
-        let error = match result {
-            Ok(_) => panic!("empty history DB cleanup failure must surface"),
-            Err(error) => error,
+        let Err(error) = result else {
+            return Err(color_eyre::eyre::eyre!(
+                "empty history DB cleanup failure must surface"
+            ));
         };
         let message = format!("{error:#}");
         assert!(message.contains("failed to remove empty history database before recreation"));
@@ -4429,7 +4434,9 @@ mod tests {
         )?;
         drop(db);
 
-        let error = HistoryDb::open(&db_path).expect_err("stale pid query failures should surface");
+        let Err(error) = HistoryDb::open(&db_path) else {
+            return Err(color_eyre::eyre::eyre!("stale pid query failures should surface"));
+        };
         let message = format!("{error:#}");
         assert!(message.contains("failed to clean up stale invocations"));
         assert!(message.contains("failed to prepare stale invocation candidate query"));
@@ -4486,7 +4493,11 @@ mod tests {
         )?;
         drop(db);
 
-        let error = HistoryDb::open(&db_path).expect_err("stale update failures should surface");
+        let Err(error) = HistoryDb::open(&db_path) else {
+            return Err(color_eyre::eyre::eyre!(
+                "stale update failures should surface"
+            ));
+        };
         let message = format!("{error:#}");
         assert!(message.contains("failed to clean up stale invocations"));
         assert!(message.contains("failed to mark stale invocations as cancelled"));

@@ -413,6 +413,10 @@ fn classify_runtime_summary_impact(metrics: &RuntimeMetrics) -> SummaryRuntimeIm
     }
 }
 
+#[allow(
+    clippy::fn_params_excessive_bools,
+    reason = "Each bool names a distinct health signal sourced from a different probe; bundling into a struct would only indirect the call sites"
+)]
 fn classify_summary_health(
     pg_ready: bool,
     nats_ready: bool,

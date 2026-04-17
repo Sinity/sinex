@@ -161,7 +161,7 @@ fn forwarder_join_result(
             let error = if err.is_panic() {
                 SinexError::processing("system forwarder task failed")
                     .with_context("task", task_name.to_string())
-                    .with_context("panic", panic_payload_message(err.into_panic()))
+                    .with_context("panic", panic_payload_message(&err.into_panic()))
             } else {
                 SinexError::processing("system forwarder task failed")
                     .with_context("task", task_name.to_string())
@@ -187,7 +187,7 @@ fn collapse_forwarder_errors(mut errors: Vec<SinexError>) -> NodeResult<()> {
     Err(error)
 }
 
-fn panic_payload_message(payload: Box<dyn std::any::Any + Send>) -> String {
+fn panic_payload_message(payload: &Box<dyn std::any::Any + Send>) -> String {
     if let Some(message) = payload.downcast_ref::<String>() {
         message.clone()
     } else if let Some(message) = payload.downcast_ref::<&'static str>() {
@@ -527,7 +527,7 @@ impl SystemNode {
     }
 
     /// Initialize watcher metadata (actual streaming starts during continuous scans).
-    fn initialize_watchers(&mut self) -> NodeResult<()> {
+    fn initialize_watchers(&mut self) {
         if self.config.dbus_enabled {
             if self.dbus_watcher.is_none() {
                 info!(
@@ -560,8 +560,6 @@ impl SystemNode {
         } else {
             self.udev_watcher = None;
         }
-
-        Ok(())
     }
 
     /// Abort and drop any active watcher handles.
@@ -990,7 +988,7 @@ impl IngestorNode for SystemNode {
             "System node configuration"
         );
 
-        self.initialize_watchers()?;
+        self.initialize_watchers();
 
         Ok(())
     }

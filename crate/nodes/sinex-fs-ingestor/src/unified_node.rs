@@ -1445,12 +1445,12 @@ async fn capture_material_from_file_inner(
     // 4. Cumulative tracking during streaming prevents growing file issues
     let mut file = fs::File::open(path)
         .await
-        .map_err(|e| capture_file_io_error(path, "open", e))?;
+        .map_err(|e| capture_file_io_error(path, "open", &e))?;
 
     let metadata = file
         .metadata()
         .await
-        .map_err(|e| capture_file_io_error(path, "metadata", e))?;
+        .map_err(|e| capture_file_io_error(path, "metadata", &e))?;
 
     let file_size = metadata.len();
 
@@ -1469,7 +1469,7 @@ async fn capture_material_from_file_inner(
         let read = file
             .read(&mut buffer)
             .await
-            .map_err(|e| capture_file_io_error(path, "read", e))?;
+            .map_err(|e| capture_file_io_error(path, "read", &e))?;
 
         if read == 0 {
             break;
@@ -1499,9 +1499,9 @@ async fn capture_material_from_file_inner(
     Ok(material_id)
 }
 
-fn capture_file_io_error(path: &Path, operation: &str, err: std::io::Error) -> SinexError {
+fn capture_file_io_error(path: &Path, operation: &str, err: &std::io::Error) -> SinexError {
     SinexError::io(format!("Failed to {operation} file during capture"))
-        .with_std_error(&err)
+        .with_std_error(err)
         .with_path(path.display())
         .with_context("io_kind", format!("{:?}", err.kind()))
 }

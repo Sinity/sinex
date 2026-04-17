@@ -2658,6 +2658,10 @@ impl TerminalNode {
         Ok(())
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "watch Receiver needs to be cloned by callers"
+    )]
     fn build_history_contexts(
         &self,
         shutdown_rx: watch::Receiver<bool>,
@@ -2966,7 +2970,7 @@ impl IngestorNode for TerminalNode {
     ) -> NodeResult<ScanReport> {
         let started_at = Instant::now();
         let (_, shutdown_rx) = watch::channel(false);
-        let contexts = self.build_history_contexts(shutdown_rx)?;
+        let contexts = self.build_history_contexts(shutdown_rx.clone())?;
         let mut events_processed = 0u64;
         let mut checkpoint_states = HashMap::new();
         let mut successful_targets = Vec::new();

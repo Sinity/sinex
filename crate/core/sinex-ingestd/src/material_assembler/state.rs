@@ -329,8 +329,8 @@ pub(super) async fn handle_begin(
         }
 
         let mut state = assembler.create_placeholder_state(material_id).await?;
-        state.material_kind = material_kind.clone();
-        state.source_identifier = source_identifier.clone();
+        state.material_kind.clone_from(&material_kind);
+        state.source_identifier.clone_from(&source_identifier);
         state.metadata = metadata.clone();
         state.started_at = started_at;
         state.phase = AssemblyPhase::Accumulating;

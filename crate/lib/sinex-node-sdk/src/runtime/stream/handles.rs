@@ -218,9 +218,7 @@ impl EventEmitter {
 mod tests {
     use super::EventEmitter;
     use sinex_primitives::events::{Event, Provenance};
-    use sinex_primitives::{
-        EventSource, EventType, HostName, Id, JsonValue, OffsetKind, Timestamp, Uuid,
-    };
+    use sinex_primitives::{EventSource, EventType, HostName, Id, OffsetKind, Timestamp, Uuid};
     use xtask::sandbox::sinex_test;
 
     #[cfg(feature = "messaging")]
@@ -233,7 +231,7 @@ mod tests {
             schema_id,
             "runtime-test-source",
             "runtime.test",
-            serde_json::json!({
+            &serde_json::json!({
                 "type": "object",
                 "required": ["ok"],
                 "properties": {
@@ -288,7 +286,7 @@ mod tests {
             cached_schema_id,
             "runtime-test-source",
             "runtime.test",
-            serde_json::json!({
+            &serde_json::json!({
                 "type": "object",
                 "required": ["ok"],
                 "properties": {

@@ -364,7 +364,10 @@ impl PrivacyEngine {
     // ── Internal ──
 
     /// Check if a matcher has any hit in the input (without replacement).
-    #[allow(clippy::only_used_in_recursion)]
+    #[allow(
+        clippy::self_only_used_in_recursion,
+        reason = "Recursive matcher traversal: `&self` keeps the call symmetric with sibling methods that do use engine state"
+    )]
     fn matcher_hits(&self, matcher: &CompiledMatcher, input: &str) -> bool {
         match matcher {
             CompiledMatcher::Regex(re) => re.is_match(input),

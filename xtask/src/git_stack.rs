@@ -250,6 +250,10 @@ impl Drop for WorktreeHandle {
     }
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "option structs used as part of command dispatch"
+)]
 pub fn execute_plan(opts: PlanOptions) -> Result<CommandResult> {
     let started_at = Instant::now();
     let repo_root = resolve_repo_root(opts.repo_root.as_deref())?;
@@ -305,6 +309,10 @@ pub fn execute_plan(opts: PlanOptions) -> Result<CommandResult> {
     Ok(result)
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "option structs used as part of command dispatch"
+)]
 pub fn execute_materialize(opts: MaterializeOptions) -> Result<CommandResult> {
     let started_at = Instant::now();
     let plan_path = opts.plan_path.canonicalize().with_context(|| {
@@ -357,6 +365,10 @@ pub fn execute_materialize(opts: MaterializeOptions) -> Result<CommandResult> {
         .with_duration(started_at.elapsed()))
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "option structs used as part of command dispatch"
+)]
 pub fn execute_split(opts: SplitOptions) -> Result<CommandResult> {
     let started_at = Instant::now();
     let repo_root = resolve_repo_root(opts.plan.repo_root.as_deref())?;
@@ -407,6 +419,10 @@ pub fn execute_split(opts: SplitOptions) -> Result<CommandResult> {
         .with_duration(started_at.elapsed()))
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "option structs used as part of command dispatch"
+)]
 pub fn execute_publish(opts: PublishOptions) -> Result<CommandResult> {
     let started_at = Instant::now();
     let plan_path = opts.plan_path.canonicalize().with_context(|| {
@@ -456,6 +472,10 @@ pub fn execute_publish(opts: PublishOptions) -> Result<CommandResult> {
         .with_duration(started_at.elapsed()))
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "branch prefix normalized from opts struct"
+)]
 fn build_plan(
     repo_root: &Path,
     base_ref: &str,
@@ -1116,6 +1136,10 @@ fn target_slice_count(commit_count: usize) -> usize {
     commit_count.div_ceil(4).max(1)
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "group accumulator consumed for building slice"
+)]
 fn finalize_slice(
     repo_root: &Path,
     index: usize,

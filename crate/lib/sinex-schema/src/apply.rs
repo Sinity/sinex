@@ -373,28 +373,28 @@ async fn ensure_required_extensions(pool: &PgPool) -> Result<(), ApplyError> {
 
 async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
     let table_sql = vec![
-        render_table(Blobs::create_table_statement()),
-        render_table(EventPayloadSchemas::create_table_statement()),
-        render_table(EmbeddingModels::create_table_statement()),
-        render_table(EventClusters::create_table_statement()),
-        render_table(OperationsLog::create_table_statement()),
-        render_table(Tags::create_table_statement()),
-        render_table(SourceMaterialRegistry::create_table_statement()),
-        render_table(NodeManifests::create_table_statement()),
-        render_table(NodeRuns::create_table_statement()),
-        render_table(Events::create_table_statement()),
-        render_table(GitopsSchemaSources::create_table_statement()),
-        render_table(ValidationCache::create_table_statement()),
-        render_table(TemporalLedger::create_table_statement()),
-        render_table(Entities::create_table_statement()),
-        render_table(EntityRelations::create_table_statement()),
-        render_table(TaggedItems::create_table_statement()),
-        render_table(EventAnnotations::create_table_statement()),
-        render_table(EmbeddingCache::create_table_statement()),
-        render_table(EventEmbeddings::create_table_statement()),
-        render_table(EventClusterMembers::create_table_statement()),
-        render_table(EventTombstones::create_table_statement()),
-        render_table(EventReplacements::create_table_statement()),
+        render_table(&Blobs::create_table_statement()),
+        render_table(&EventPayloadSchemas::create_table_statement()),
+        render_table(&EmbeddingModels::create_table_statement()),
+        render_table(&EventClusters::create_table_statement()),
+        render_table(&OperationsLog::create_table_statement()),
+        render_table(&Tags::create_table_statement()),
+        render_table(&SourceMaterialRegistry::create_table_statement()),
+        render_table(&NodeManifests::create_table_statement()),
+        render_table(&NodeRuns::create_table_statement()),
+        render_table(&Events::create_table_statement()),
+        render_table(&GitopsSchemaSources::create_table_statement()),
+        render_table(&ValidationCache::create_table_statement()),
+        render_table(&TemporalLedger::create_table_statement()),
+        render_table(&Entities::create_table_statement()),
+        render_table(&EntityRelations::create_table_statement()),
+        render_table(&TaggedItems::create_table_statement()),
+        render_table(&EventAnnotations::create_table_statement()),
+        render_table(&EmbeddingCache::create_table_statement()),
+        render_table(&EventEmbeddings::create_table_statement()),
+        render_table(&EventClusterMembers::create_table_statement()),
+        render_table(&EventTombstones::create_table_statement()),
+        render_table(&EventReplacements::create_table_statement()),
     ];
 
     for sql in table_sql {
@@ -554,7 +554,7 @@ async fn recreate_telemetry_read_models(pool: &PgPool) -> Result<(), ApplyError>
     .await
 }
 
-fn render_table(stmt: TableCreateStatement) -> String {
+fn render_table(stmt: &TableCreateStatement) -> String {
     stmt.to_string(PostgresQueryBuilder)
 }
 

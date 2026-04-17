@@ -316,18 +316,12 @@ pub async fn spawn_replay_control(
     let executor = ReplayExecutionEngine::new(replay.clone(), client.clone());
     ReplayTelemetry::new(replay.clone()).spawn();
 
-    ReplayControlServer::new(
-        env.clone(),
-        client.clone(),
-        replay,
-        executor,
-        Arc::clone(&health),
-    )
-    .spawn()
-    .await?;
+    ReplayControlServer::new(&env, client.clone(), replay, executor, Arc::clone(&health))
+        .spawn()
+        .await?;
 
     Ok(ReplayControlClient::new(
-        env,
+        &env,
         client,
         request_timeout,
         health,
@@ -345,7 +339,7 @@ pub struct ReplayControlClient {
 
 impl ReplayControlClient {
     fn new(
-        env: SinexEnvironment,
+        env: &SinexEnvironment,
         client: Client,
         request_timeout: Duration,
         health: Arc<Mutex<ReplayControlHealthState>>,
@@ -603,7 +597,7 @@ struct ReplayControlServer {
 
 impl ReplayControlServer {
     fn new(
-        env: SinexEnvironment,
+        env: &SinexEnvironment,
         client: Client,
         replay: Arc<ReplayStateMachine>,
         executor: ReplayExecutionEngine,
@@ -3129,7 +3123,7 @@ mod tests {
         let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
 
         let server_task = ReplayControlServer::new(
-            env.clone(),
+            &env,
             nats_client.clone(),
             replay,
             executor,
@@ -3138,7 +3132,7 @@ mod tests {
         .spawn()
         .await?;
         let client = ReplayControlClient::new(
-            env,
+            &env,
             nats_client,
             Duration::from_secs(30),
             Arc::clone(&health),
@@ -3170,7 +3164,7 @@ mod tests {
         let ctx = ctx.with_nats().dedicated().await?;
         let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
         let client = ReplayControlClient::new(
-            sinex_primitives::environment::environment(),
+            &sinex_primitives::environment::environment(),
             ctx.nats_client(),
             Duration::from_secs(30),
             Arc::clone(&health),
@@ -3862,7 +3856,7 @@ mod tests {
         ReplayTelemetry::new(replay.clone()).spawn();
         let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
         ReplayControlServer::new(
-            env.clone(),
+            &env,
             nats_client.clone(),
             replay.clone(),
             executor,
@@ -3870,8 +3864,7 @@ mod tests {
         )
         .spawn()
         .await?;
-        let client =
-            ReplayControlClient::new(env.clone(), nats_client, Duration::from_secs(30), health);
+        let client = ReplayControlClient::new(&env, nats_client, Duration::from_secs(30), health);
 
         let mut scope = sample_scope();
         scope.node_id = "timeout-test".to_string();
@@ -4221,7 +4214,7 @@ mod tests {
         ReplayTelemetry::new(replay.clone()).spawn();
         let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
         ReplayControlServer::new(
-            env.clone(),
+            &env,
             nats_client.clone(),
             replay.clone(),
             executor,
@@ -4229,7 +4222,7 @@ mod tests {
         )
         .spawn()
         .await?;
-        let client = ReplayControlClient::new(env, nats_client, Duration::from_secs(30), health);
+        let client = ReplayControlClient::new(&env, nats_client, Duration::from_secs(30), health);
 
         let mut scope = sample_scope();
         scope.node_id = "pre-ack-test".to_string();
@@ -4988,7 +4981,7 @@ mod tests {
             .with_scan_completion_timeout(Duration::from_secs(5));
         let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
         ReplayControlServer::new(
-            env.clone(),
+            &env,
             nats_client.clone(),
             replay.clone(),
             executor,
@@ -4998,13 +4991,13 @@ mod tests {
         .await?;
 
         let execute_client = ReplayControlClient::new(
-            env.clone(),
+            &env,
             async_nats::connect(&nats_url).await?,
             Duration::from_secs(30),
             Arc::clone(&health),
         );
         let control_client = ReplayControlClient::new(
-            env.clone(),
+            &env,
             async_nats::connect(&nats_url).await?,
             Duration::from_secs(30),
             health,
@@ -5131,7 +5124,7 @@ mod tests {
             .with_scan_completion_timeout(Duration::from_millis(200));
         let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
         ReplayControlServer::new(
-            env.clone(),
+            &env,
             nats_client.clone(),
             replay.clone(),
             executor,
@@ -5141,13 +5134,13 @@ mod tests {
         .await?;
 
         let control_client = ReplayControlClient::new(
-            env.clone(),
+            &env,
             async_nats::connect(&nats_url).await?,
             Duration::from_secs(30),
             Arc::clone(&health),
         );
         let execute_client = ReplayControlClient::new(
-            env.clone(),
+            &env,
             async_nats::connect(&nats_url).await?,
             Duration::from_secs(30),
             health,
@@ -5230,7 +5223,7 @@ mod tests {
             .with_scan_completion_timeout(Duration::from_secs(5));
         let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
         ReplayControlServer::new(
-            env.clone(),
+            &env,
             nats_client.clone(),
             replay.clone(),
             executor,
@@ -5240,13 +5233,13 @@ mod tests {
         .await?;
 
         let execute_client = ReplayControlClient::new(
-            env.clone(),
+            &env,
             async_nats::connect(&nats_url).await?,
             Duration::from_secs(30),
             Arc::clone(&health),
         );
         let control_client = ReplayControlClient::new(
-            env.clone(),
+            &env,
             async_nats::connect(&nats_url).await?,
             Duration::from_secs(30),
             health,

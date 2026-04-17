@@ -511,6 +511,10 @@ fn default_heavy_test_threads(cpu_count: usize) -> usize {
     cpu_count.clamp(1, HEAVY_TEST_THREAD_CAP)
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "inferred packages computed from args"
+)]
 fn resolve_nextest_execution_plan(
     explicit_packages: &[String],
     inferred_packages: Vec<String>,

@@ -31,7 +31,7 @@ pub struct WorkCommand {
 }
 
 impl XtaskCommand for WorkCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "work"
     }
 

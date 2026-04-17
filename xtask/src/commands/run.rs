@@ -178,7 +178,7 @@ impl DevJournal {
 fn spawn_output_handlers(
     streams: Vec<(String, Option<ChildStdout>, Option<ChildStderr>, u32)>,
     show_prefix: bool,
-    journal: Option<DevJournal>,
+    journal: &Option<DevJournal>,
 ) {
     // Color cycle: cyan, yellow, magenta, blue, green (wraps for >5 processes)
     let colors: &[fn(&str) -> console::StyledObject<String>] = &[
@@ -929,7 +929,7 @@ impl RunCommand {
             } else {
                 None
             };
-            spawn_output_handlers(log_streams, self.logs, journal);
+            spawn_output_handlers(log_streams, self.logs, &journal);
         }
 
         self.maybe_spawn_metrics_overlay(ctx);
@@ -1097,7 +1097,7 @@ impl RunCommand {
                 pid,
             )],
             self.logs,
-            journal,
+            &journal,
         );
 
         self.maybe_spawn_metrics_overlay(ctx);

@@ -355,35 +355,22 @@ impl XtaskCommand for DoctorCommand {
 fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult> {
     let mut all_ok = true;
 
-    // Check Postgres
     let pg_probe = probe_postgres();
-    let pg_msg = if pg_probe.ready() {
-        None
-    } else {
-        all_ok = false;
-        Some(
-            pg_probe
-                .message
-                .clone()
-                .unwrap_or_else(|| "Postgres is not ready".to_string()),
-        )
-    };
+    let pg_msg = service_readiness_message(
+        pg_probe.ready(),
+        pg_probe.message.as_deref(),
+        || "Postgres is not ready".to_string(),
+        &mut all_ok,
+    );
 
-    // Check NATS
     let nats_probe = probe_nats();
-    let nats_msg = if nats_probe.ready() {
-        None
-    } else {
-        all_ok = false;
-        Some(
-            nats_probe
-                .message
-                .clone()
-                .unwrap_or_else(|| format!("Cannot connect to NATS on port {}", nats_probe.port)),
-        )
-    };
+    let nats_msg = service_readiness_message(
+        nats_probe.ready(),
+        nats_probe.message.as_deref(),
+        || format!("Cannot connect to NATS on port {}", nats_probe.port),
+        &mut all_ok,
+    );
 
-    // Check required tools
     let tools_to_check = [
         "rustc",
         "ast-grep",
@@ -391,14 +378,7 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         "cargo-machete",
         "cargo-nextest",
     ];
-    let mut tool_checks = Vec::new();
-    for tool in tools_to_check {
-        let tool_check = build_tool_check(tool, ToolManager::check_tool(tool));
-        if !tool_check.available {
-            all_ok = false;
-        }
-        tool_checks.push(tool_check);
-    }
+    let tool_checks = collect_tool_checks(&tools_to_check, &mut all_ok);
 
     // Batch validation summary for missing tools
     let missing = ToolManager::check_required_tools(&tools_to_check);
@@ -425,23 +405,7 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         all_ok = false;
     }
 
-    let pipeline_smoke = if pipelines {
-        match run_pipeline_smoke_test() {
-            Ok(()) => Some(DoctorServiceCheck {
-                available: true,
-                message: None,
-            }),
-            Err(error) => {
-                all_ok = false;
-                Some(DoctorServiceCheck {
-                    available: false,
-                    message: Some(format!("{error:#}")),
-                })
-            }
-        }
-    } else {
-        None
-    };
+    let pipeline_smoke = pipeline_smoke_check(pipelines, &mut all_ok);
 
     // Collect environment configuration
     let cfg = config();
@@ -664,6 +628,51 @@ fn tool_check_detail(tool: &ToolCheck) -> Option<String> {
         (Some(version), None) => Some(version.to_string()),
         (None, Some(message)) => Some(message.to_string()),
         (None, None) => None,
+    }
+}
+
+fn service_readiness_message(
+    ready: bool,
+    message: Option<&str>,
+    fallback: impl FnOnce() -> String,
+    all_ok: &mut bool,
+) -> Option<String> {
+    if ready {
+        return None;
+    }
+    *all_ok = false;
+    Some(message.map_or_else(fallback, str::to_owned))
+}
+
+fn collect_tool_checks(tools_to_check: &[&str], all_ok: &mut bool) -> Vec<ToolCheck> {
+    let mut tool_checks = Vec::with_capacity(tools_to_check.len());
+    for tool in tools_to_check {
+        let tool_check = build_tool_check(tool, ToolManager::check_tool(tool));
+        if !tool_check.available {
+            *all_ok = false;
+        }
+        tool_checks.push(tool_check);
+    }
+    tool_checks
+}
+
+fn pipeline_smoke_check(pipelines: bool, all_ok: &mut bool) -> Option<DoctorServiceCheck> {
+    if !pipelines {
+        return None;
+    }
+
+    match run_pipeline_smoke_test() {
+        Ok(()) => Some(DoctorServiceCheck {
+            available: true,
+            message: None,
+        }),
+        Err(error) => {
+            *all_ok = false;
+            Some(DoctorServiceCheck {
+                available: false,
+                message: Some(format!("{error:#}")),
+            })
+        }
     }
 }
 
@@ -2140,6 +2149,53 @@ async fn check_nats_streams(
     }
 }
 
+fn record_secret_file(
+    label: &str,
+    path: &Path,
+    present: &mut Vec<String>,
+    missing: &mut Vec<String>,
+) {
+    if path.is_file() {
+        present.push(format!("{label}={}", path.display()));
+    } else {
+        missing.push(format!("{label} unreadable: {}", path.display()));
+    }
+}
+
+fn record_secret_pair(
+    label: &str,
+    first: Option<&PathBuf>,
+    first_label: &str,
+    second: Option<&PathBuf>,
+    second_label: &str,
+    present: &mut Vec<String>,
+    missing: &mut Vec<String>,
+) {
+    match (first, second) {
+        (Some(first), Some(second)) if first.is_file() && second.is_file() => {
+            present.push(format!("{label}={}/{}", first.display(), second.display()));
+        }
+        (Some(first), Some(second)) => missing.push(format!(
+            "{label} unreadable: {first_label}={} {second_label}={}",
+            first.display(),
+            second.display()
+        )),
+        (Some(first), None) => {
+            missing.push(format!(
+                "{label} missing {second_label} for {first_label} {}",
+                first.display()
+            ));
+        }
+        (None, Some(second)) => {
+            missing.push(format!(
+                "{label} missing {first_label} for {second_label} {}",
+                second.display()
+            ));
+        }
+        (None, None) => {}
+    }
+}
+
 fn check_secret_materials(
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
@@ -2235,14 +2291,7 @@ fn check_secret_materials(
     let mut present = Vec::new();
 
     if let Some(path) = admin_token {
-        if path.is_file() {
-            present.push(format!("gateway-admin-token={}", path.display()));
-        } else {
-            missing.push(format!(
-                "gateway-admin-token unreadable: {}",
-                path.display()
-            ));
-        }
+        record_secret_file("gateway-admin-token", &path, &mut present, &mut missing);
     } else if !descriptor_present {
         missing.push(
             "gateway-admin-token missing (set SINEX_GATEWAY_ADMIN_TOKEN_FILE or provide /run/agenix/sinex-gateway-admin-token)"
@@ -2251,11 +2300,7 @@ fn check_secret_materials(
     }
 
     if let Some(path) = db_password {
-        if path.is_file() {
-            present.push(format!("database-password={}", path.display()));
-        } else {
-            missing.push(format!("database-password unreadable: {}", path.display()));
-        }
+        record_secret_file("database-password", &path, &mut present, &mut missing);
     } else if database_password_expected {
         missing.push(
             "database-password missing (set SINEX_DATABASE_PASSWORD_FILE or provide /run/agenix/sinex-local-db)"
@@ -2263,45 +2308,25 @@ fn check_secret_materials(
         );
     }
 
-    match (gateway_cert.as_ref(), gateway_key.as_ref()) {
-        (Some(cert), Some(key)) if cert.is_file() && key.is_file() => {
-            present.push(format!("gateway-tls={}/{}", cert.display(), key.display()));
-        }
-        (Some(cert), Some(key)) => missing.push(format!(
-            "gateway-tls unreadable: cert={} key={}",
-            cert.display(),
-            key.display()
-        )),
-        (Some(cert), None) => {
-            missing.push(format!(
-                "gateway-tls missing key for cert {}",
-                cert.display()
-            ));
-        }
-        (None, Some(key)) => {
-            missing.push(format!(
-                "gateway-tls missing cert for key {}",
-                key.display()
-            ));
-        }
-        (None, None) => {
-            if !descriptor_present {
-                missing.push(
-                    "gateway-tls missing (set SINEX_GATEWAY_TLS_CERT/SINEX_GATEWAY_TLS_KEY or provide .sinex/tls/server.pem + server-key.pem)"
-                        .to_string(),
-                );
-            }
-        }
+    record_secret_pair(
+        "gateway-tls",
+        gateway_cert.as_ref(),
+        "cert",
+        gateway_key.as_ref(),
+        "key",
+        &mut present,
+        &mut missing,
+    );
+    if gateway_cert.is_none() && gateway_key.is_none() && !descriptor_present {
+        missing.push(
+            "gateway-tls missing (set SINEX_GATEWAY_TLS_CERT/SINEX_GATEWAY_TLS_KEY or provide .sinex/tls/server.pem + server-key.pem)"
+                .to_string(),
+        );
     }
 
     if mtls_expected {
         match gateway_client_ca {
-            Some(path) if path.is_file() => {
-                present.push(format!("gateway-client-ca={}", path.display()));
-            }
-            Some(path) => {
-                missing.push(format!("gateway-client-ca unreadable: {}", path.display()));
-            }
+            Some(path) => record_secret_file("gateway-client-ca", &path, &mut present, &mut missing),
             None => missing.push(
                 "gateway-client-ca missing (set SINEX_GATEWAY_TLS_CLIENT_CA or provide .sinex/tls/ca.pem)"
                     .to_string(),
@@ -2312,51 +2337,22 @@ fn check_secret_materials(
     if let Some(path) = gateway_trust_anchor
         && gateway_cert.as_ref() != Some(&path)
     {
-        if path.is_file() {
-            present.push(format!("gateway-trust-anchor={}", path.display()));
-        } else {
-            missing.push(format!(
-                "gateway-trust-anchor unreadable: {}",
-                path.display()
-            ));
-        }
+        record_secret_file("gateway-trust-anchor", &path, &mut present, &mut missing);
     }
 
     if let Some(path) = nats_ca {
-        if path.is_file() {
-            present.push(format!("nats-ca={}", path.display()));
-        } else {
-            missing.push(format!("nats-ca unreadable: {}", path.display()));
-        }
+        record_secret_file("nats-ca", &path, &mut present, &mut missing);
     }
 
-    match (nats_client_cert.as_ref(), nats_client_key.as_ref()) {
-        (Some(cert), Some(key)) if cert.is_file() && key.is_file() => {
-            present.push(format!(
-                "nats-client-mtls={}/{}",
-                cert.display(),
-                key.display()
-            ));
-        }
-        (Some(cert), Some(key)) => missing.push(format!(
-            "nats-client-mtls unreadable: cert={} key={}",
-            cert.display(),
-            key.display()
-        )),
-        (Some(cert), None) => {
-            missing.push(format!(
-                "nats-client-mtls missing key for cert {}",
-                cert.display()
-            ));
-        }
-        (None, Some(key)) => {
-            missing.push(format!(
-                "nats-client-mtls missing cert for key {}",
-                key.display()
-            ));
-        }
-        (None, None) => {}
-    }
+    record_secret_pair(
+        "nats-client-mtls",
+        nats_client_cert.as_ref(),
+        "cert",
+        nats_client_key.as_ref(),
+        "key",
+        &mut present,
+        &mut missing,
+    );
 
     let nats_auth_candidates = [nats_token, nats_creds, nats_nkey];
     let declared_nats_auth = nats_auth_candidates
@@ -2373,11 +2369,7 @@ fn check_secret_materials(
             ("nats-nkey", nats_auth_candidates[2].as_ref()),
         ] {
             if let Some(path) = path {
-                if path.is_file() {
-                    present.push(format!("{label}={}", path.display()));
-                } else {
-                    missing.push(format!("{label} unreadable: {}", path.display()));
-                }
+                record_secret_file(label, path, &mut present, &mut missing);
             }
         }
     }

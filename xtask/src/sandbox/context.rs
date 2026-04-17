@@ -1040,6 +1040,136 @@ impl Sandbox {
     }
 }
 
+fn looks_like_error_log(log: &str) -> bool {
+    let lower = log.to_ascii_lowercase();
+    lower.starts_with("error")
+        || lower.contains("[error]")
+        || lower.contains(" level=error")
+        || lower.contains("level=\"error\"")
+        || lower.contains(" error:")
+}
+
+/// Cleanup implementation for Sandbox
+impl Drop for Sandbox {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            let snapshot = self.failure_snapshot();
+            snapshot_helper::persist_failure(
+                self.test_name(),
+                "Sandbox dropped during panic",
+                FailureContext::Snapshot(snapshot),
+            );
+        }
+        // Ensure any registered background work is flushed before returning the database.
+        let registry = self.background.clone();
+        let quiesce_fut = async move {
+            let _ = tokio::time::timeout(Duration::from_secs(BACKGROUND_TIMEOUT_SECS), async {
+                registry.lock().await.quiesce().await;
+            })
+            .await;
+        };
+        // Avoid block_in_place on current-thread runtimes; instead enter the runtime if available
+        // so Tokio timers and tasks can make progress while we wait for background shutdown.
+        match Handle::try_current() {
+            Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(|| {
+                    let _guard = handle.enter();
+                    futures::executor::block_on(quiesce_fut);
+                });
+            }
+            Ok(_handle) => {
+                // For current-thread runtimes, move cleanup onto a dedicated thread with its own runtime
+                // to avoid deadlocking the executor.
+                let (tx, rx) = mpsc::channel();
+                thread::spawn(move || {
+                    if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
+                        rt.block_on(quiesce_fut);
+                    } else {
+                        futures::executor::block_on(quiesce_fut);
+                    }
+                    let _ = tx.send(());
+                });
+                let _ = rx.recv_timeout(Duration::from_secs(CLEANUP_AWAIT_SECS));
+            }
+            Err(_) => {
+                // Issue 116: No runtime available, spawn blocking thread with its own runtime
+                let (tx, rx) = mpsc::channel();
+                thread::spawn(move || {
+                    if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
+                        rt.block_on(quiesce_fut);
+                    } else {
+                        // Last resort: try futures executor, but this may fail
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            futures::executor::block_on(quiesce_fut);
+                        }));
+                    }
+                    let _ = tx.send(());
+                });
+                let _ = rx.recv_timeout(Duration::from_secs(CLEANUP_AWAIT_SECS));
+            }
+        }
+
+        let pool = self.pool.clone();
+        let records = {
+            let mut guard = self.created_events.lock();
+            guard.drain(..).collect::<Vec<_>>()
+        };
+
+        if !records.is_empty() {
+            if let Ok(handle) = Handle::try_current() {
+                let cleanup_pool = pool;
+                let cleanup_records = records;
+                let join_handle = handle.spawn(async move {
+                    if let Err(err) = cleanup_created_records(cleanup_pool, cleanup_records).await {
+                        warn!("Sandbox cleanup failed: {}", err);
+                    }
+                });
+
+                // Uses a synchronous mutex, so cleanup registration does not depend on a runtime.
+                CLEANUP_HANDLES.lock().push(join_handle);
+            } else {
+                // Issue 116: No runtime available, spawn blocking thread with its own runtime
+                let (tx, rx) = mpsc::channel();
+                thread::spawn(move || {
+                    if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
+                        if let Err(err) = rt.block_on(cleanup_created_records(pool, records)) {
+                            warn!("Sandbox cleanup failed: {}", err);
+                        }
+                    } else {
+                        // Last resort: try futures executor, but catch any panic
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            if let Err(err) =
+                                futures::executor::block_on(cleanup_created_records(pool, records))
+                            {
+                                warn!("Sandbox cleanup failed without runtime: {}", err);
+                            }
+                        }));
+                    }
+                    let _ = tx.send(());
+                });
+                let _ = rx.recv_timeout(Duration::from_secs(20));
+            }
+        }
+
+        let duration = self.start_time.elapsed();
+        if duration > Duration::from_secs(5) {
+            eprintln!(
+                "Test '{}' took {:?} to complete (including cleanup)",
+                self.test_name, duration
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     // Inline because these helpers are private to sandbox context initialization/parsing.
@@ -1188,135 +1318,5 @@ mod tests {
                 busy: false,
             }
         );
-    }
-}
-
-fn looks_like_error_log(log: &str) -> bool {
-    let lower = log.to_ascii_lowercase();
-    lower.starts_with("error")
-        || lower.contains("[error]")
-        || lower.contains(" level=error")
-        || lower.contains("level=\"error\"")
-        || lower.contains(" error:")
-}
-
-/// Cleanup implementation for Sandbox
-impl Drop for Sandbox {
-    fn drop(&mut self) {
-        if std::thread::panicking() {
-            let snapshot = self.failure_snapshot();
-            snapshot_helper::persist_failure(
-                self.test_name(),
-                "Sandbox dropped during panic",
-                FailureContext::Snapshot(snapshot),
-            );
-        }
-        // Ensure any registered background work is flushed before returning the database.
-        let registry = self.background.clone();
-        let quiesce_fut = async move {
-            let _ = tokio::time::timeout(Duration::from_secs(BACKGROUND_TIMEOUT_SECS), async {
-                registry.lock().await.quiesce().await;
-            })
-            .await;
-        };
-        // Avoid block_in_place on current-thread runtimes; instead enter the runtime if available
-        // so Tokio timers and tasks can make progress while we wait for background shutdown.
-        match Handle::try_current() {
-            Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::MultiThread => {
-                tokio::task::block_in_place(|| {
-                    let _guard = handle.enter();
-                    futures::executor::block_on(quiesce_fut);
-                });
-            }
-            Ok(_handle) => {
-                // For current-thread runtimes, move cleanup onto a dedicated thread with its own runtime
-                // to avoid deadlocking the executor.
-                let (tx, rx) = mpsc::channel();
-                thread::spawn(move || {
-                    if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                    {
-                        rt.block_on(quiesce_fut);
-                    } else {
-                        futures::executor::block_on(quiesce_fut);
-                    }
-                    let _ = tx.send(());
-                });
-                let _ = rx.recv_timeout(Duration::from_secs(CLEANUP_AWAIT_SECS));
-            }
-            Err(_) => {
-                // Issue 116: No runtime available, spawn blocking thread with its own runtime
-                let (tx, rx) = mpsc::channel();
-                thread::spawn(move || {
-                    if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                    {
-                        rt.block_on(quiesce_fut);
-                    } else {
-                        // Last resort: try futures executor, but this may fail
-                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            futures::executor::block_on(quiesce_fut);
-                        }));
-                    }
-                    let _ = tx.send(());
-                });
-                let _ = rx.recv_timeout(Duration::from_secs(CLEANUP_AWAIT_SECS));
-            }
-        }
-
-        let pool = self.pool.clone();
-        let records = {
-            let mut guard = self.created_events.lock();
-            guard.drain(..).collect::<Vec<_>>()
-        };
-
-        if !records.is_empty() {
-            if let Ok(handle) = Handle::try_current() {
-                let cleanup_pool = pool;
-                let cleanup_records = records;
-                let join_handle = handle.spawn(async move {
-                    if let Err(err) = cleanup_created_records(cleanup_pool, cleanup_records).await {
-                        warn!("Sandbox cleanup failed: {}", err);
-                    }
-                });
-
-                // Uses a synchronous mutex, so cleanup registration does not depend on a runtime.
-                CLEANUP_HANDLES.lock().push(join_handle);
-            } else {
-                // Issue 116: No runtime available, spawn blocking thread with its own runtime
-                let (tx, rx) = mpsc::channel();
-                thread::spawn(move || {
-                    if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                    {
-                        if let Err(err) = rt.block_on(cleanup_created_records(pool, records)) {
-                            warn!("Sandbox cleanup failed: {}", err);
-                        }
-                    } else {
-                        // Last resort: try futures executor, but catch any panic
-                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            if let Err(err) =
-                                futures::executor::block_on(cleanup_created_records(pool, records))
-                            {
-                                warn!("Sandbox cleanup failed without runtime: {}", err);
-                            }
-                        }));
-                    }
-                    let _ = tx.send(());
-                });
-                let _ = rx.recv_timeout(Duration::from_secs(20));
-            }
-        }
-
-        let duration = self.start_time.elapsed();
-        if duration > Duration::from_secs(5) {
-            eprintln!(
-                "Test '{}' took {:?} to complete (including cleanup)",
-                self.test_name, duration
-            );
-        }
     }
 }

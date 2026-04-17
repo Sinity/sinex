@@ -733,6 +733,10 @@ impl<'db> HistoryAnalysis<'db> {
         )
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "counts fields extracted immediately"
+    )]
     fn build_workspace_health_report_from_scalars(
         &self,
         counts: DiagnosticCounts,
@@ -740,7 +744,7 @@ impl<'db> HistoryAnalysis<'db> {
         avg_test_pass_rate: Option<f64>,
         packages_with_errors: usize,
         test_packages: usize,
-        packages: Vec<PackageHealth>,
+        #[allow(clippy::needless_pass_by_value)] packages: Vec<PackageHealth>,
     ) -> WorkspaceHealthReport {
         let error_count = counts.errors;
         let warning_count = counts.warnings;

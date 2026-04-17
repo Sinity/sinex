@@ -1,4 +1,5 @@
 //! Template database management — creation, schema apply, fingerprinting.
+#![allow(clippy::items_after_test_module)]
 
 use crate::config::config;
 use crate::sandbox::prelude::*;
@@ -369,6 +370,7 @@ pub fn schema_fingerprint() -> TestResult<String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     // Small inline test is justified here because it verifies the private
     // fingerprint source list directly.

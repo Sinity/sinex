@@ -468,7 +468,7 @@ mod tests {
                 args,
                 String::from_utf8_lossy(&output.stderr).trim()
             )
-            .into());
+            );
         }
         Ok(())
     }

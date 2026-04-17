@@ -499,11 +499,8 @@ fn execute_sync(ctx: &CommandContext) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surfaces = generated_surfaces(&workspace)?;
     let outcomes = sync_generated_surfaces(&surfaces, false, ctx)?;
-    let schema_bundle = sync_schema_bundle(
-        generated_schema_bundle(&workspace, &workspace.join("schemas"))?,
-        false,
-        ctx,
-    )?;
+    let schema_bundle_result = generated_schema_bundle(&workspace, &workspace.join("schemas"))?;
+    let schema_bundle = sync_schema_bundle(&schema_bundle_result, false, ctx)?;
 
     Ok(CommandResult::success()
         .with_message("Generated repo surfaces synchronized")
@@ -518,11 +515,8 @@ fn execute_check(ctx: &CommandContext) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surfaces = generated_surfaces(&workspace)?;
     let outcomes = sync_generated_surfaces(&surfaces, true, ctx)?;
-    let schema_bundle = sync_schema_bundle(
-        generated_schema_bundle(&workspace, &workspace.join("schemas"))?,
-        true,
-        ctx,
-    )?;
+    let schema_bundle_result = generated_schema_bundle(&workspace, &workspace.join("schemas"))?;
+    let schema_bundle = sync_schema_bundle(&schema_bundle_result, true, ctx)?;
     let changed = outcomes.iter().any(|outcome| outcome.changed) || schema_bundle.changed;
 
     let result = if changed {
@@ -687,7 +681,8 @@ fn execute_schema_bundle(
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let root = output_dir.map_or_else(|| workspace.join("schemas"), std::path::Path::to_path_buf);
-    let outcome = sync_schema_bundle(generated_schema_bundle(&workspace, &root)?, check_only, ctx)?;
+    let schema_bundle_result = generated_schema_bundle(&workspace, &root)?;
+    let outcome = sync_schema_bundle(&schema_bundle_result, check_only, ctx)?;
 
     let result = if check_only && outcome.changed {
         CommandResult::failure(crate::output::StructuredError {
@@ -967,7 +962,7 @@ fn sync_generated_surfaces(
 }
 
 fn sync_schema_bundle(
-    bundle: SchemaBundle,
+    bundle: &SchemaBundle,
     check_only: bool,
     ctx: &CommandContext,
 ) -> Result<SchemaBundleOutcome> {

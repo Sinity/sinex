@@ -483,7 +483,11 @@ async fn run_single_vm_test(
 }
 
 /// Execute `xtask test vm`.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::fn_params_excessive_bools,
+    reason = "CLI argument passthrough: each bool flag maps directly to a user-visible --flag"
+)]
 async fn execute_test(
     category: Option<&str>,
     parallel: bool,

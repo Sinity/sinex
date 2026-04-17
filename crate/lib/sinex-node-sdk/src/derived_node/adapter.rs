@@ -2568,7 +2568,7 @@ mod tests {
             schema_id,
             node_name,
             "test.output",
-            json!({
+            &json!({
                 "type": "object",
                 "properties": {
                     "ok": { "type": "boolean" }

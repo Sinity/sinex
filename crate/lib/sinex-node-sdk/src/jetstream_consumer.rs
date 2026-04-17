@@ -79,6 +79,10 @@ impl JetStreamEventConsumer {
         }
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "Internal helper: impl trait simplifies use"
+    )]
     fn message_settlement_error(
         operation: &'static str,
         msg: &jetstream::Message,

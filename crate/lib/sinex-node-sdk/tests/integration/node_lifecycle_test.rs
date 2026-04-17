@@ -45,8 +45,7 @@ async fn test_node_complete_lifecycle(ctx: TestContext) -> color_eyre::Result<()
             "lifecycle-{}",
             sinex_node_sdk::Uuid::now_v7().to_string().to_lowercase()
         ),
-    )
-    .await?;
+    )?;
 
     // Phase 1: Initial state should be standby
     info!("Phase 1: Node initialization");
@@ -171,8 +170,7 @@ async fn test_node_error_recovery(ctx: TestContext) -> color_eyre::Result<()> {
             "recovery-{}",
             sinex_node_sdk::Uuid::now_v7().to_string().to_lowercase()
         ),
-    )
-    .await?;
+    )?;
 
     let error_count = Arc::new(AtomicU32::new(0));
     let recovery_count = Arc::new(AtomicU32::new(0));
@@ -239,8 +237,7 @@ async fn test_node_state_transitions(ctx: TestContext) -> color_eyre::Result<()>
             "states-{}",
             sinex_node_sdk::Uuid::now_v7().to_string().to_lowercase()
         ),
-    )
-    .await?;
+    )?;
 
     // Initial state should be Standby
     assert_eq!(coordination.current_mode(), InstanceMode::Standby);
@@ -328,8 +325,7 @@ async fn test_node_configuration_lifecycle(ctx: TestContext) -> color_eyre::Resu
                 "config-{i}-{}",
                 sinex_node_sdk::Uuid::now_v7().to_string().to_lowercase()
             ),
-        )
-        .await?;
+        )?;
 
         // Verify coordination uses configuration correctly
         assert_eq!(coordination.current_mode(), InstanceMode::Standby);
@@ -363,8 +359,7 @@ async fn test_node_graceful_shutdown(ctx: TestContext) -> color_eyre::Result<()>
             "shutdown-{}",
             sinex_node_sdk::Uuid::now_v7().to_string().to_lowercase()
         ),
-    )
-    .await?;
+    )?;
 
     // Track shutdown process
     let operations_completed = Arc::new(AtomicU32::new(0));
@@ -459,8 +454,7 @@ async fn test_node_concurrent_lifecycle(_ctx: TestContext) -> color_eyre::Result
                     "concurrent-{i}-{}",
                     sinex_node_sdk::Uuid::now_v7().to_string().to_lowercase()
                 ),
-            )
-            .await?;
+            )?;
 
             timeout(
                 COORDINATION_TIMEOUT,

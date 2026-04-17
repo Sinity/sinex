@@ -179,7 +179,7 @@ async fn run_complete_verification(
 ) -> NodeResult<VerificationStatus> {
     let report = build_verification_report(timeout_secs, skip_phases).await?;
     let overall_status = report.overall_status;
-    output_report(&report, output_format)?;
+    output_report(&report, &output_format)?;
     Ok(overall_status)
 }
 
@@ -347,8 +347,8 @@ fn get_available_disk_space() -> NodeResult<f64> {
     Ok(available_bytes as f64 / 1024.0 / 1024.0 / 1024.0)
 }
 
-fn output_report(report: &VerificationReport, format: OutputFormat) -> NodeResult<()> {
-    match format {
+fn output_report(report: &VerificationReport, format: &OutputFormat) -> NodeResult<()> {
+    match *format {
         OutputFormat::Json => {
             println!(
                 "{}",
@@ -407,7 +407,7 @@ fn output_report(report: &VerificationReport, format: OutputFormat) -> NodeResul
     Ok(())
 }
 
-fn output_report_summary(report: &VerificationReport, format: OutputFormat) -> NodeResult<()> {
+fn output_report_summary(report: &VerificationReport, format: &OutputFormat) -> NodeResult<()> {
     let phases: Vec<_> = report
         .phases
         .iter()
@@ -420,7 +420,7 @@ fn output_report_summary(report: &VerificationReport, format: OutputFormat) -> N
         })
         .collect();
 
-    match format {
+    match *format {
         OutputFormat::Json => {
             let summary = serde_json::json!({
                 "overall_status": report.overall_status,
@@ -553,9 +553,9 @@ async fn generate_verification_report(
     let overall_status = report.overall_status;
 
     if detailed {
-        output_report(&report, output_format)?;
+        output_report(&report, &output_format)?;
     } else {
-        output_report_summary(&report, output_format)?;
+        output_report_summary(&report, &output_format)?;
     }
 
     Ok(overall_status)

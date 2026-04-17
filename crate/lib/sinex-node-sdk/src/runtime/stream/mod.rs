@@ -817,6 +817,10 @@ impl<T: Node + 'static> NodeRunner<T> {
         true
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "watch::Sender must be moved to send"
+    )]
     fn signal_watch_shutdown(shutdown_tx: watch::Sender<bool>, task_name: &str) -> bool {
         if shutdown_tx.send(true).is_err() {
             warn!(
@@ -3140,7 +3144,7 @@ mod tests {
             })
         }
 
-        fn node_name(&self) -> &str {
+        fn node_name(&self) -> &'static str {
             "runtime-test-node"
         }
 
@@ -3178,7 +3182,7 @@ mod tests {
             })
         }
 
-        fn node_name(&self) -> &str {
+        fn node_name(&self) -> &'static str {
             "failing-shutdown-node"
         }
 
@@ -3220,7 +3224,7 @@ mod tests {
             })
         }
 
-        fn node_name(&self) -> &str {
+        fn node_name(&self) -> &'static str {
             "runtime-failing-batch-node"
         }
 
@@ -3278,7 +3282,7 @@ mod tests {
             })
         }
 
-        fn node_name(&self) -> &str {
+        fn node_name(&self) -> &'static str {
             "startup-sequence-test-node"
         }
 

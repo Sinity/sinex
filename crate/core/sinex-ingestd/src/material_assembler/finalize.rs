@@ -41,6 +41,10 @@ fn finalization_commit_outcome_unknown(error: &SinexError) -> bool {
         .is_some_and(|value| value == "unknown")
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "Internal error helper: error chain context"
+)]
 fn rollback_finalization_failure(
     original_error: SinexError,
     rollback_error: impl std::fmt::Display,

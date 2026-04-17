@@ -954,6 +954,10 @@ impl NodeCoordination {
         );
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "Public API: callers commonly pass owned Strings"
+    )]
     pub fn new(
         service_name: String,
         instance_id: String,

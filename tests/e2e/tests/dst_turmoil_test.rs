@@ -153,11 +153,10 @@ fn dst_turmoil_connect_retry_until_server_available() {
                     "expected 3-8 connection attempts before success, got {attempts}"
                 );
                 break;
-            } else {
-                let delay = backoff.next();
-                tokio::time::sleep(delay).await;
-                assert!(backoff.attempt() <= 15, "too many retries: {attempts}");
             }
+            let delay = backoff.next();
+            tokio::time::sleep(delay).await;
+            assert!(backoff.attempt() <= 15, "too many retries: {attempts}");
         }
 
         Ok(())

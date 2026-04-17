@@ -1296,7 +1296,8 @@ mod tests {
             3_600,
             90,
         )
-        .expect_err("oversized material limits must fail honestly");
+        .err()
+        .expect("oversized material limits must fail honestly");
 
         assert!(
             error
@@ -1324,12 +1325,16 @@ mod tests {
         tokio::task::yield_now().await;
 
         let replacement_state = assembler.create_placeholder_state(material_id).await?;
+        let assembler_clone = assembler.clone_for_task();
         tokio::time::timeout(
             Duration::from_millis(200),
-            assembler.insert_state_handle(material_id, replacement_state),
+            tokio::task::spawn_blocking(move || {
+                assembler_clone.insert_state_handle(material_id, replacement_state);
+            }),
         )
         .await
-        .expect("stale scan should not block insert_state_handle on dashmap shard locks");
+        .expect("stale scan should not block insert_state_handle on dashmap shard locks")
+        .expect("spawn_blocking join should not panic");
 
         drop(locked_state);
         let stale_materials = scan_task.await?;

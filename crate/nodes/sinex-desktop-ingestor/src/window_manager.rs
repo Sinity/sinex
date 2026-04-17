@@ -422,6 +422,10 @@ impl WindowManagerWatcher {
             .await
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "metadata cloned in json! macro"
+    )]
     fn build_material_payload(
         &self,
         event_type: &str,
@@ -1741,7 +1745,7 @@ impl WindowManagerWatcher {
         }
     }
 
-    async fn test_watcher(stage_context: StageAsYouGoContext) -> NodeResult<Self> {
+    fn test_watcher(stage_context: StageAsYouGoContext) -> NodeResult<Self> {
         let mut watcher = Self::stub(WindowManagerType::Hyprland);
         watcher.stage_context = Some(stage_context);
         Ok(watcher)
@@ -2011,7 +2015,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let (stage_context, _ctx, mut event_rx) = build_stage_context(ctx).await?;
-        let mut watcher = WindowManagerWatcher::test_watcher(stage_context).await?;
+        let mut watcher = WindowManagerWatcher::test_watcher(stage_context)?;
         watcher.current_workspace = Some("7".to_string());
         watcher.windows.insert(
             "0xabc".to_string(),
@@ -2060,7 +2064,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let (stage_context, _ctx, mut event_rx) = build_stage_context(ctx).await?;
-        let mut watcher = WindowManagerWatcher::test_watcher(stage_context).await?;
+        let mut watcher = WindowManagerWatcher::test_watcher(stage_context)?;
         watcher.windows.insert(
             "0xabc".to_string(),
             WindowInfo {

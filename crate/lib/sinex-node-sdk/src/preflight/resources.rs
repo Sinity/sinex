@@ -155,15 +155,7 @@ pub async fn verify_system_resources() -> NodeResult<(VerificationStatus, Value,
     }
 
     // Network connectivity verification
-    match verify_network_connectivity(&mut messages) {
-        Ok(network_info) => {
-            details.insert("network", network_info);
-        }
-        Err(e) => {
-            messages.push(format!("⚠ Network verification warning: {e}"));
-            has_warnings = true;
-        }
-    }
+    details.insert("network", verify_network_connectivity(&mut messages));
 
     details.insert("process_limits", verify_process_limits(&mut messages));
 
@@ -531,7 +523,7 @@ async fn check_directory_permissions(dir_path: &str) -> NodeResult<Value> {
     }
 }
 
-fn verify_network_connectivity(messages: &mut Vec<String>) -> NodeResult<Value> {
+fn verify_network_connectivity(messages: &mut Vec<String>) -> Value {
     let mut network_info = HashMap::new();
 
     match test_loopback_resolution() {
@@ -613,7 +605,7 @@ fn verify_network_connectivity(messages: &mut Vec<String>) -> NodeResult<Value> 
         network_info.insert("configured_hostname_resolution", Value::Object(results));
     }
 
-    Ok(json!(network_info))
+    json!(network_info)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

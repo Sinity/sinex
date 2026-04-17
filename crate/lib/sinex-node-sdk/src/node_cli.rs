@@ -596,8 +596,7 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
             // Create coordination with generated instance ID
             let instance_id = Uuid::new_v4().to_string();
 
-            let mut coordination =
-                NodeCoordination::from_runtime(&runtime_snapshot, instance_id)?;
+            let mut coordination = NodeCoordination::from_runtime(&runtime_snapshot, instance_id)?;
 
             // Wrap runner in Arc<Mutex<>> for sharing
             let runner = Arc::new(Mutex::new(runner));
@@ -774,6 +773,10 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
         Ok(())
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "Generic parameter moved into method calls"
+    )]
     fn handle_explore_command(
         &self,
         node: T,
@@ -953,6 +956,10 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::items_after_test_module,
+    reason = "The node_entrypoint! macro sits below the tests and cannot be reordered without breaking downstream re-exports"
+)]
 mod tests {
     use super::{
         NatsArgs, NodeCli, NodeCommand, edge_mode_enabled, handle_export_result, parse_checkpoint,

@@ -1172,9 +1172,9 @@ mod tests {
         fs::remove_dir_all(&jobs_dir)?;
         fs::write(&jobs_dir, "occupied")?;
 
-        let error = manager
-            .list_recent(10)
-            .expect_err("list_recent should surface prune failures");
+        let Err(error) = manager.list_recent(10) else {
+            return Err(eyre!("list_recent should surface prune failures"));
+        };
         let message = format!("{error:#}");
         assert!(message.contains("failed to prune completed background jobs"));
         assert!(message.contains("failed to read jobs directory"));
@@ -1196,9 +1196,9 @@ mod tests {
         fs::remove_dir_all(&jobs_dir)?;
         fs::write(&jobs_dir, "occupied")?;
 
-        let error = manager
-            .list_active()
-            .expect_err("list_active should surface prune failures");
+        let Err(error) = manager.list_active() else {
+            return Err(eyre!("list_active should surface prune failures"));
+        };
         let message = format!("{error:#}");
         assert!(message.contains("failed to prune completed background jobs"));
         assert!(message.contains("failed to read jobs directory"));
@@ -1427,9 +1427,11 @@ mod tests {
         fs::create_dir_all(&job_dir)?;
         fs::write(job_dir.join("exit_code"), "bogus\n")?;
 
-        let error = manager
-            .get(job_id)
-            .expect_err("malformed stale exit code should surface during reaping");
+        let Err(error) = manager.get(job_id) else {
+            return Err(eyre!(
+                "malformed stale exit code should surface during reaping"
+            ));
+        };
         let message = format!("{error:#}");
         assert!(message.contains("failed to parse stale background job exit code"));
         assert!(message.contains("exit_code"));
