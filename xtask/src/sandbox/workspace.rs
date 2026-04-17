@@ -44,6 +44,10 @@ pub const DEFAULT_CRATE: &str = "ws-lib";
 /// An isolated Cargo workspace in a temporary directory.
 ///
 /// On drop, the temp directories are automatically cleaned up.
+#[allow(
+    clippy::struct_field_names,
+    reason = "Each `_dir` distinguishes which concrete TempDir it owns; dropping the postfix would obscure the role"
+)]
 pub struct EphemeralWorkspace {
     /// Root of the ephemeral Cargo workspace (set as `current_dir` for subprocesses).
     workspace_dir: TempDir,
@@ -281,9 +285,8 @@ mod tests {
         std::fs::remove_file(&lib_rs)?;
         std::fs::create_dir(&lib_rs)?;
 
-        let error = match workspace.inject_compile_error(DEFAULT_CRATE) {
-            Ok(_) => panic!("directory lib.rs should surface"),
-            Err(error) => error,
+        let Err(error) = workspace.inject_compile_error(DEFAULT_CRATE) else {
+            return Err(color_eyre::eyre::eyre!("directory lib.rs should surface"));
         };
         let message = format!("{error:#}");
         assert!(message.contains("inject_compile_error: read existing"));
@@ -298,9 +301,10 @@ mod tests {
         std::fs::remove_file(&cargo_toml)?;
         std::fs::create_dir(&cargo_toml)?;
 
-        let error = match workspace.inject_unused_dep(DEFAULT_CRATE, "serde_json", "1") {
-            Ok(_) => panic!("directory Cargo.toml should surface"),
-            Err(error) => error,
+        let Err(error) = workspace.inject_unused_dep(DEFAULT_CRATE, "serde_json", "1") else {
+            return Err(color_eyre::eyre::eyre!(
+                "directory Cargo.toml should surface"
+            ));
         };
         let message = format!("{error:#}");
         assert!(message.contains("inject_unused_dep: read existing"));

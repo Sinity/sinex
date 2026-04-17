@@ -457,7 +457,7 @@ impl FilesystemNode {
         Ok(contexts)
     }
 
-    async fn spawn_watchers(&self) -> NodeResult<Vec<tokio::task::JoinHandle<()>>> {
+    fn spawn_watchers(&self) -> NodeResult<Vec<tokio::task::JoinHandle<()>>> {
         let contexts = self.build_watch_contexts()?;
 
         let mut handles = Vec::with_capacity(contexts.len());
@@ -760,7 +760,7 @@ impl IngestorNode for FilesystemNode {
         from: Checkpoint,
         shutdown_rx: tokio::sync::watch::Receiver<bool>,
     ) -> NodeResult<ScanReport> {
-        let handles = self.spawn_watchers().await?;
+        let handles = self.spawn_watchers()?;
         {
             let mut guard = self.watch_handles.lock().await;
             guard.extend(handles);
@@ -1445,12 +1445,12 @@ async fn capture_material_from_file_inner(
     // 4. Cumulative tracking during streaming prevents growing file issues
     let mut file = fs::File::open(path)
         .await
-        .map_err(|e| capture_file_io_error(path, "open", e))?;
+        .map_err(|e| capture_file_io_error(path, "open", &e))?;
 
     let metadata = file
         .metadata()
         .await
-        .map_err(|e| capture_file_io_error(path, "metadata", e))?;
+        .map_err(|e| capture_file_io_error(path, "metadata", &e))?;
 
     let file_size = metadata.len();
 
@@ -1469,7 +1469,7 @@ async fn capture_material_from_file_inner(
         let read = file
             .read(&mut buffer)
             .await
-            .map_err(|e| capture_file_io_error(path, "read", e))?;
+            .map_err(|e| capture_file_io_error(path, "read", &e))?;
 
         if read == 0 {
             break;
@@ -1499,9 +1499,9 @@ async fn capture_material_from_file_inner(
     Ok(material_id)
 }
 
-fn capture_file_io_error(path: &Path, operation: &str, err: std::io::Error) -> SinexError {
+fn capture_file_io_error(path: &Path, operation: &str, err: &std::io::Error) -> SinexError {
     SinexError::io(format!("Failed to {operation} file during capture"))
-        .with_std_error(&err)
+        .with_std_error(err)
         .with_path(path.display())
         .with_context("io_kind", format!("{:?}", err.kind()))
 }
@@ -1523,10 +1523,14 @@ fn sanitize_path(path: &Path) -> NodeResult<RecordedPath> {
 fn observed_path_string(path: &Path) -> NodeResult<String> {
     path.to_str().map(str::to_owned).ok_or_else(|| {
         SinexError::validation("filesystem watcher observed non-utf8 path")
-            .with_context("path_debug", format!("{path:?}"))
+            .with_context("path_debug", path.display().to_string())
     })
 }
 
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "Returns None under #[cfg(not(unix))]; Option shape is forced by the cross-platform split"
+)]
 fn file_permissions(metadata: &StdMetadata) -> Option<u32> {
     #[cfg(unix)]
     {
@@ -1874,7 +1878,7 @@ mod tests {
         {
             let mut guard = node.watch_handles.lock().await;
             guard.push(tokio::spawn(async {
-                tokio::time::sleep(Duration::from_secs(60)).await;
+                tokio::time::sleep(Duration::from_mins(1)).await;
             }));
             guard.push(tokio::spawn(async {}));
         }

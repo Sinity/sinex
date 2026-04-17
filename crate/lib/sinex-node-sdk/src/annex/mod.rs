@@ -114,7 +114,7 @@ struct BatchAddProcess {
 }
 
 impl BatchAddProcess {
-    async fn spawn(repo_path: &Utf8Path) -> NodeResult<Self> {
+    fn spawn(repo_path: &Utf8Path) -> NodeResult<Self> {
         let mut cmd = AsyncCommand::new("git-annex");
         cmd.arg("add")
             .arg("--json")
@@ -184,7 +184,7 @@ impl BatchAddState {
         }
 
         if self.process.is_none() {
-            self.process = Some(BatchAddProcess::spawn(repo_path).await?);
+            self.process = Some(BatchAddProcess::spawn(repo_path)?);
         }
 
         let _guard = annex_process_lock().lock().await;

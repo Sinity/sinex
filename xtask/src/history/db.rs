@@ -155,8 +155,7 @@ fn history_integrity_check_interval() -> Duration {
         Ok(raw) => raw
             .trim()
             .parse::<u64>()
-            .map(Duration::from_secs)
-            .unwrap_or(HISTORY_DB_INTEGRITY_CHECK_INTERVAL),
+            .map_or(HISTORY_DB_INTEGRITY_CHECK_INTERVAL, Duration::from_secs),
         Err(_) => HISTORY_DB_INTEGRITY_CHECK_INTERVAL,
     }
 }
@@ -289,10 +288,7 @@ where
     }
 
     Err(last_lock_error.expect("lock retry should preserve last error")).wrap_err_with(|| {
-        format!(
-            "failed to {action} after {} lock retries",
-            SQLITE_LOCK_RETRY_ATTEMPTS
-        )
+        format!("failed to {action} after {SQLITE_LOCK_RETRY_ATTEMPTS} lock retries")
     })
 }
 
@@ -377,6 +373,10 @@ impl JobLifecycleStatus {
     }
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "called from rusqlite with String"
+)]
 pub(crate) fn parse_stored_invocation_status(
     status_str: String,
 ) -> rusqlite::Result<InvocationStatus> {
@@ -3435,8 +3435,7 @@ impl HistoryDb {
 
         for row in &rows {
             let gap_exceeded = prev_started
-                .map(|prev| (row.started_at_ts - prev).whole_seconds() > gap_secs)
-                .unwrap_or(true);
+                .is_none_or(|prev| (row.started_at_ts - prev).whole_seconds() > gap_secs);
 
             if gap_exceeded {
                 if let Some(s) = current.take() {
@@ -3498,9 +3497,8 @@ impl HistoryDb {
             .optional()
             .context("failed to fetch invocation")?;
 
-        let inv = match inv {
-            Some(i) => i,
-            None => return Ok(None),
+        let Some(inv) = inv else {
+            return Ok(None);
         };
 
         let stages = self.get_stage_timings_for_invocation(id)?;
@@ -3561,8 +3559,7 @@ impl HistoryDb {
                         rusqlite::types::Value::Null => serde_json::Value::Null,
                         rusqlite::types::Value::Integer(n) => serde_json::Value::Number(n.into()),
                         rusqlite::types::Value::Real(f) => serde_json::Number::from_f64(f)
-                            .map(serde_json::Value::Number)
-                            .unwrap_or(serde_json::Value::Null),
+                            .map_or(serde_json::Value::Null, serde_json::Value::Number),
                         rusqlite::types::Value::Text(s) => serde_json::Value::String(s),
                         rusqlite::types::Value::Blob(_) => {
                             serde_json::Value::String("<blob>".to_string())
@@ -4378,13 +4375,14 @@ mod tests {
         restore.set_mode(original_mode);
         std::fs::set_permissions(dir.path(), restore)?;
 
-        let error = match result {
-            Ok(_) => panic!("empty history DB cleanup failure must surface"),
-            Err(error) => error,
+        let Err(error) = result else {
+            return Err(color_eyre::eyre::eyre!(
+                "empty history DB cleanup failure must surface"
+            ));
         };
         let message = format!("{error:#}");
         assert!(message.contains("failed to remove empty history database before recreation"));
-        assert!(message.contains(db_path.display().to_string().as_str()));
+        assert!(message.contains(&db_path.display().to_string()));
         Ok(())
     }
 
@@ -4436,9 +4434,8 @@ mod tests {
         )?;
         drop(db);
 
-        let error = match HistoryDb::open(&db_path) {
-            Ok(_) => panic!("stale pid query failures should surface"),
-            Err(error) => error,
+        let Err(error) = HistoryDb::open(&db_path) else {
+            return Err(color_eyre::eyre::eyre!("stale pid query failures should surface"));
         };
         let message = format!("{error:#}");
         assert!(message.contains("failed to clean up stale invocations"));
@@ -4496,9 +4493,10 @@ mod tests {
         )?;
         drop(db);
 
-        let error = match HistoryDb::open(&db_path) {
-            Ok(_) => panic!("stale update failures should surface"),
-            Err(error) => error,
+        let Err(error) = HistoryDb::open(&db_path) else {
+            return Err(color_eyre::eyre::eyre!(
+                "stale update failures should surface"
+            ));
         };
         let message = format!("{error:#}");
         assert!(message.contains("failed to clean up stale invocations"));
@@ -4581,7 +4579,12 @@ mod tests {
                 invocation_id, command, pid, job_status, started_at
             ) VALUES (?1, ?2, ?3, 'running', ?4)
             ",
-            params![invocation_id, "check", 999_999_999_i64, "2000-01-01T00:00:00Z"],
+            params![
+                invocation_id,
+                "check",
+                999_999_999_i64,
+                "2000-01-01T00:00:00Z"
+            ],
         )?;
         drop(db);
 

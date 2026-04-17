@@ -475,8 +475,7 @@ mod tests {
         EventBatcher::store_dead_letter_events(&[event], &dead_letter_path).await?;
         assert!(
             dead_letter_path.exists(),
-            "expected DLQ file at {:?}",
-            dead_letter_path
+            "expected DLQ file at {dead_letter_path:?}"
         );
         Ok(())
     }

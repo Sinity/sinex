@@ -79,6 +79,10 @@ impl JetStreamEventConsumer {
         }
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "Internal helper: impl trait simplifies use"
+    )]
     fn message_settlement_error(
         operation: &'static str,
         msg: &jetstream::Message,
@@ -88,7 +92,7 @@ impl JetStreamEventConsumer {
         crate::error_helpers::nats_settlement_error(
             operation,
             msg.subject.as_str(),
-            event_id.as_ref().map(|id| id.to_string()).as_deref(),
+            event_id.as_ref().map(ToString::to_string).as_deref(),
             error,
         )
     }
@@ -234,27 +238,27 @@ impl JetStreamEventConsumer {
         tokio::select! {
             result = provisional_task => {
                 let stop_requested = !*self.running.read().await;
-                error!("Provisional events task stopped: {:?}", result);
+                error!("Provisional events task stopped: {result:?}");
                 // Abort remaining tasks
                 confirmation_abort.abort();
                 timeout_abort.abort();
-                Self::background_task_exit_result("provisional events task", result, stop_requested)?
+                Self::background_task_exit_result("provisional events task", result, stop_requested)?;
             }
             result = confirmation_task => {
                 let stop_requested = !*self.running.read().await;
-                error!("Confirmation task stopped: {:?}", result);
+                error!("Confirmation task stopped: {result:?}");
                 // Abort remaining tasks
                 provisional_abort.abort();
                 timeout_abort.abort();
-                Self::background_task_exit_result("confirmation task", result, stop_requested)?
+                Self::background_task_exit_result("confirmation task", result, stop_requested)?;
             }
             result = timeout_task => {
                 let stop_requested = !*self.running.read().await;
-                error!("Timeout check task stopped: {:?}", result);
+                error!("Timeout check task stopped: {result:?}");
                 // Abort remaining tasks
                 provisional_abort.abort();
                 confirmation_abort.abort();
-                Self::background_task_exit_result("timeout check task", result, stop_requested)?
+                Self::background_task_exit_result("timeout check task", result, stop_requested)?;
             }
         }
 
@@ -311,7 +315,7 @@ impl JetStreamEventConsumer {
         let event = match Self::parse_provisional_event(&msg) {
             Ok(event) => event,
             Err(e) => {
-                error!("Failed to parse provisional event: {}", e);
+                error!("Failed to parse provisional event: {e}");
                 msg.ack().await.map_err(|ack_err| {
                     Self::message_settlement_error(
                         "failed to ack bad provisional message",
@@ -349,7 +353,7 @@ impl JetStreamEventConsumer {
             && let Some(handler) = provisional_handler
             && let Err(e) = handler.handle_provisional(&event).await
         {
-            warn!("Provisional handler failed: {}", e);
+            warn!("Provisional handler failed: {e}");
             handler_success = false;
         }
 
@@ -413,7 +417,7 @@ impl JetStreamEventConsumer {
         let confirmation = match Self::parse_confirmation(&msg) {
             Ok(c) => c,
             Err(e) => {
-                error!("Failed to parse confirmation: {}", e);
+                error!("Failed to parse confirmation: {e}");
                 msg.ack().await.map_err(|ack_err| {
                     Self::message_settlement_error(
                         "failed to ack bad confirmation",
@@ -457,7 +461,7 @@ impl JetStreamEventConsumer {
             let handler_success = match confirmed_handler.handle_confirmed(&event).await {
                 Ok(()) => true,
                 Err(e) => {
-                    error!("Confirmed handler failed: {}", e);
+                    error!("Confirmed handler failed: {e}");
                     false
                 }
             };
@@ -531,7 +535,7 @@ impl JetStreamEventConsumer {
                     if let Some(handler) = provisional_handler.as_ref()
                         && let Err(e) = handler.rollback_provisional(event_id).await
                     {
-                        error!("Failed to rollback provisional event {}: {}", event_id, e);
+                        error!("Failed to rollback provisional event {event_id}: {e}");
                     }
                 }
             }

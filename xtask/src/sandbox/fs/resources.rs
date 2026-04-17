@@ -30,11 +30,7 @@ pub fn prepare_test_temp_env(test_name: &str) -> TestResult<TestTempEnv> {
     let dir = tempfile::Builder::new()
         .prefix(&short_test_temp_prefix(test_name))
         .tempdir_in(temp_root.as_std_path())
-        .map_err(|e| {
-            eyre!(format!(
-                "Failed to create workspace-backed temp directory: {e}"
-            ))
-        })?;
+        .map_err(|e| eyre!("Failed to create workspace-backed temp directory: {e}"))?;
 
     // Nextest executes each test case in its own process, so we can redirect the
     // temp-directory variables for the full test lifetime without holding the
@@ -76,7 +72,7 @@ impl Drop for TestTempEnv {
 /// This function creates a temporary directory using the system's temporary
 /// directory with proper validation and cleanup.
 pub fn temp_dir() -> TestResult<TempDir> {
-    tempfile::tempdir().map_err(|e| eyre!(format!("Failed to create temporary directory: {e}")))
+    tempfile::tempdir().map_err(|e| eyre!("Failed to create temporary directory: {e}"))
 }
 
 /// Create a test file with validated path and content
@@ -102,8 +98,7 @@ pub fn create_test_file(
     validate_test_path(file_path.as_str())?;
 
     // Write the content to the file
-    std::fs::write(&file_path, content)
-        .map_err(|e| eyre!(format!("Failed to write test file: {e}")))?;
+    std::fs::write(&file_path, content).map_err(|e| eyre!("Failed to write test file: {e}"))?;
 
     Ok(file_path)
 }
@@ -127,7 +122,7 @@ pub fn create_temp_test_file(test_name: &str, content: &str) -> TestResult<Utf8P
 
     // Write the content
     std::fs::write(&file_path, content)
-        .map_err(|e| eyre!(format!("Failed to write temporary test file: {e}")))?;
+        .map_err(|e| eyre!("Failed to write temporary test file: {e}"))?;
 
     Ok(file_path)
 }
@@ -155,7 +150,7 @@ pub fn create_test_binary_file(
 
     // Write the binary content to the file
     std::fs::write(&file_path, content)
-        .map_err(|e| eyre!(format!("Failed to write test binary file: {e}")))?;
+        .map_err(|e| eyre!("Failed to write test binary file: {e}"))?;
 
     Ok(file_path)
 }
@@ -174,12 +169,8 @@ fn workspace_test_temp_root() -> TestResult<Utf8PathBuf> {
         .parent()
         .ok_or_else(|| eyre!("xtask manifest directory has no workspace parent"))?;
     let temp_root = workspace_root.join(".sinex/test-tmp");
-    std::fs::create_dir_all(temp_root.as_std_path()).map_err(|e| {
-        eyre!(format!(
-            "Failed to create workspace-backed test temp root {}: {e}",
-            temp_root
-        ))
-    })?;
+    std::fs::create_dir_all(temp_root.as_std_path())
+        .map_err(|e| eyre!("Failed to create workspace-backed test temp root {temp_root}: {e}"))?;
     Ok(temp_root)
 }
 
@@ -202,7 +193,7 @@ fn short_test_temp_prefix(test_name: &str) -> String {
     let digest = hasher.finish();
     let slug = sanitize_filename(test_name)
         .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
+        .filter(char::is_ascii_alphanumeric)
         .take(12)
         .collect::<String>();
     if slug.is_empty() {

@@ -25,6 +25,7 @@ fn require_git_annex() -> TestResult<()> {
     Ok(())
 }
 
+#[allow(clippy::unused_async)]
 async fn content_service_fixture(ctx: &TestContext) -> TestResult<(ContentService, TempDir)> {
     require_git_annex()?;
     let temp_dir = TempDir::new()?;

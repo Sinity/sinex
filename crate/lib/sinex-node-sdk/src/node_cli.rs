@@ -265,10 +265,7 @@ fn parse_checkpoint_stream(checkpoint_str: &str) -> Checkpoint {
 }
 
 fn checkpoint_looks_like_json(checkpoint_str: &str) -> bool {
-    matches!(
-        checkpoint_str.chars().next(),
-        Some('{') | Some('[') | Some('"')
-    )
+    matches!(checkpoint_str.chars().next(), Some('{' | '[' | '"'))
 }
 
 fn checkpoint_looks_like_rfc3339(checkpoint_str: &str) -> bool {
@@ -513,17 +510,14 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
                 coverage_analysis,
                 limit,
                 ref export_to,
-            } => {
-                self.handle_explore_command(
-                    node,
-                    source_state,
-                    ingestion_history,
-                    coverage_analysis,
-                    limit,
-                    export_to.as_ref(),
-                )
-                .await
-            }
+            } => self.handle_explore_command(
+                node,
+                source_state,
+                ingestion_history,
+                coverage_analysis,
+                limit,
+                export_to.as_ref(),
+            ),
         }
     }
 
@@ -602,14 +596,13 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
             // Create coordination with generated instance ID
             let instance_id = Uuid::new_v4().to_string();
 
-            let coordination = NodeCoordination::from_runtime(&runtime_snapshot, instance_id);
+            let mut coordination = NodeCoordination::from_runtime(&runtime_snapshot, instance_id)?;
 
             // Wrap runner in Arc<Mutex<>> for sharing
             let runner = Arc::new(Mutex::new(runner));
 
             // Run with coordination (hot standby pattern)
             coordination
-                .await?
                 .run_coordination_loop(move || {
                     let runner = runner.clone();
                     async move {
@@ -780,7 +773,11 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
         Ok(())
     }
 
-    async fn handle_explore_command(
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "Generic parameter moved into method calls"
+    )]
+    fn handle_explore_command(
         &self,
         node: T,
         source_state: bool,
@@ -959,6 +956,10 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::items_after_test_module,
+    reason = "The node_entrypoint! macro sits below the tests and cannot be reordered without breaking downstream re-exports"
+)]
 mod tests {
     use super::{
         NatsArgs, NodeCli, NodeCommand, edge_mode_enabled, handle_export_result, parse_checkpoint,

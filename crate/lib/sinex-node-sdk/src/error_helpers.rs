@@ -18,22 +18,22 @@ use tracing::warn;
 /// use sinex_node_sdk::error_helpers::io_error_with_context;
 ///
 /// let result = std::fs::read("nonexistent.txt")
-///     .map_err(|e| io_error_with_context(e, "Failed to read config file"));
+///     .map_err(|e| io_error_with_context(&e, "Failed to read config file"));
 /// ```
 #[must_use]
-pub fn io_error_with_context(error: io::Error, context: &str) -> SinexError {
+pub fn io_error_with_context(error: &io::Error, context: &str) -> SinexError {
     SinexError::io(format!("{context}: {error}"))
 }
 
 /// Convert UTF-8 conversion errors to `SinexError` with context
 #[must_use]
-pub fn utf8_error_with_context(error: std::string::FromUtf8Error, context: &str) -> SinexError {
+pub fn utf8_error_with_context(error: &std::string::FromUtf8Error, context: &str) -> SinexError {
     SinexError::processing(format!("{context}: {error}"))
 }
 
 /// Convert `serde_json` errors to `SinexError` with context
 #[must_use]
-pub fn json_error_with_context(error: serde_json::Error, context: &str) -> SinexError {
+pub fn json_error_with_context(error: &serde_json::Error, context: &str) -> SinexError {
     SinexError::processing(format!("{context}: {error}"))
 }
 
@@ -87,7 +87,7 @@ pub fn parse_config_value<T: serde::de::DeserializeOwned, S: ConfigAccessor>(
         .map(Some)
         .map_err(|error| {
             json_error_with_context(
-                error,
+                &error,
                 &format!(
                     "Invalid configuration value for key `{key}` as {}",
                     std::any::type_name::<T>()
@@ -123,7 +123,7 @@ pub fn parse_typed_config<T: serde::de::DeserializeOwned, S: ConfigAccessor>(
         .map(Some)
         .map_err(|error| {
             json_error_with_context(
-                error,
+                &error,
                 &format!(
                     "Invalid configuration section `{config_key}` as {}",
                     std::any::type_name::<T>()
@@ -134,7 +134,7 @@ pub fn parse_typed_config<T: serde::de::DeserializeOwned, S: ConfigAccessor>(
 
 /// Construct a NATS message settlement error with consistent context.
 ///
-/// Used by JetStream consumers and DLQ retry handlers when ack/nak operations fail.
+/// Used by `JetStream` consumers and DLQ retry handlers when `ack`/`nak` operations fail.
 pub fn nats_settlement_error(
     operation: &str,
     subject: &str,

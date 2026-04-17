@@ -153,53 +153,6 @@ pub async fn handle_dlq_peek(services: &ServiceContainer, params: Value) -> Resu
     Ok(serde_json::to_value(response)?)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{parse_retry_count_header, payload_preview, require_stream_sequence};
-    use xtask::sandbox::sinex_test;
-
-    #[sinex_test]
-    async fn parse_retry_count_header_defaults_when_missing() -> TestResult<()> {
-        assert_eq!(parse_retry_count_header(None)?, 0);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn parse_retry_count_header_rejects_invalid_value() -> TestResult<()> {
-        let mut headers = async_nats::HeaderMap::new();
-        headers.insert("Retry-Count", "not-a-number");
-
-        let error = parse_retry_count_header(Some(&headers))
-            .expect_err("invalid Retry-Count header should fail honestly");
-
-        assert!(error.to_string().contains("Retry-Count header is invalid"));
-        assert!(error.to_string().contains("not-a-number"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn require_stream_sequence_rejects_missing_metadata() -> TestResult<()> {
-        let error = require_stream_sequence(Err("missing reply metadata".to_string()))
-            .expect_err("missing message metadata must fail honestly");
-        assert!(
-            error
-                .to_string()
-                .contains("Failed to inspect DLQ message sequence")
-        );
-        assert!(error.to_string().contains("missing reply metadata"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn payload_preview_truncates_without_breaking_unicode() -> TestResult<()> {
-        let payload = "żółw".repeat(80);
-        let preview = payload_preview(&payload, 200);
-        assert!(preview.ends_with("..."));
-        assert_eq!(preview.chars().count(), 203);
-        Ok(())
-    }
-}
-
 /// Handle DLQ requeue request - move messages back to main stream
 ///
 /// # Authorization
@@ -320,4 +273,51 @@ pub async fn handle_dlq_purge(
         purged_count: messages_before,
     };
     Ok(serde_json::to_value(response)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_retry_count_header, payload_preview, require_stream_sequence};
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn parse_retry_count_header_defaults_when_missing() -> TestResult<()> {
+        assert_eq!(parse_retry_count_header(None)?, 0);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_retry_count_header_rejects_invalid_value() -> TestResult<()> {
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert("Retry-Count", "not-a-number");
+
+        let error = parse_retry_count_header(Some(&headers))
+            .expect_err("invalid Retry-Count header should fail honestly");
+
+        assert!(error.to_string().contains("Retry-Count header is invalid"));
+        assert!(error.to_string().contains("not-a-number"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn require_stream_sequence_rejects_missing_metadata() -> TestResult<()> {
+        let error = require_stream_sequence(Err("missing reply metadata".to_string()))
+            .expect_err("missing message metadata must fail honestly");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to inspect DLQ message sequence")
+        );
+        assert!(error.to_string().contains("missing reply metadata"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn payload_preview_truncates_without_breaking_unicode() -> TestResult<()> {
+        let payload = "żółw".repeat(80);
+        let preview = payload_preview(&payload, 200);
+        assert!(preview.ends_with("..."));
+        assert_eq!(preview.chars().count(), 203);
+        Ok(())
+    }
 }

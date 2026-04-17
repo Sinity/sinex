@@ -312,7 +312,7 @@ where
 
 /// Stage source material bytes through the normal acquisition pipeline.
 ///
-/// Each call creates a fresh source material with a UUIDv7 ID — every observation
+/// Each call creates a fresh source material with a `UUIDv7` ID — every observation
 /// is a distinct material, even if the underlying source content is identical.
 #[cfg(feature = "messaging")]
 pub async fn stage_material(

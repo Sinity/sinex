@@ -531,15 +531,12 @@ mod concurrent_tests {
                 std::collections::HashMap::new();
 
             for event in events {
-                if let Value::Object(ref map) = event.payload {
-                    if let (Some(Value::Number(worker_id)), Some(Value::Number(op_id))) =
+                if let Value::Object(ref map) = event.payload
+                    && let (Some(Value::Number(worker_id)), Some(Value::Number(op_id))) =
                         (map.get("worker_id"), map.get("operation_id"))
-                    {
-                        if let (Some(worker), Some(op)) = (worker_id.as_u64(), op_id.as_u64()) {
+                        && let (Some(worker), Some(op)) = (worker_id.as_u64(), op_id.as_u64()) {
                             by_worker.entry(worker as usize).or_default().push(op);
                         }
-                    }
-                }
             }
 
             // Each worker's operations should be in order
@@ -614,7 +611,7 @@ mod performance_tests {
             let result = validate_event(&event);
 
             if let Err(error) = result {
-                let error_string = error.to_string();
+                let error_string = error.clone();
 
                 // Error should contain contextual information
                 prop_assert!(!error_string.is_empty(), "Error message should not be empty");

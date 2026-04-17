@@ -318,8 +318,7 @@ fn format_command_frequency_table(entries: &[CommandFrequencyEntry]) -> String {
             e.successful_executions.to_string(),
             e.failed_executions.to_string(),
             e.avg_duration_ms
-                .map(|value| format!("{value:.1}"))
-                .unwrap_or_else(|| "—".to_string()),
+                .map_or_else(|| "—".to_string(), |value| format!("{value:.1}")),
         ]);
     }
     let mut table = builder.build();
@@ -376,23 +375,17 @@ fn format_system_state_table(buckets: &[SystemStateBucket]) -> String {
         builder.push_record([
             style(b.bucket.as_str()).dim().to_string(),
             b.avg_cpu_percent
-                .map(|v| format!("{v:.1}"))
-                .unwrap_or_else(|| "—".to_string()),
+                .map_or_else(|| "—".to_string(), |v| format!("{v:.1}")),
             b.max_cpu_percent
-                .map(|v| format!("{v:.1}"))
-                .unwrap_or_else(|| "—".to_string()),
+                .map_or_else(|| "—".to_string(), |v| format!("{v:.1}")),
             b.avg_memory_percent
-                .map(|v| format!("{v:.1}"))
-                .unwrap_or_else(|| "—".to_string()),
+                .map_or_else(|| "—".to_string(), |v| format!("{v:.1}")),
             b.max_memory_percent
-                .map(|v| format!("{v:.1}"))
-                .unwrap_or_else(|| "—".to_string()),
+                .map_or_else(|| "—".to_string(), |v| format!("{v:.1}")),
             b.avg_disk_percent
-                .map(|v| format!("{v:.1}"))
-                .unwrap_or_else(|| "—".to_string()),
+                .map_or_else(|| "—".to_string(), |v| format!("{v:.1}")),
             b.current_active_units
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "—".to_string()),
+                .map_or_else(|| "—".to_string(), |value| value.to_string()),
             b.sample_count.to_string(),
         ]);
     }

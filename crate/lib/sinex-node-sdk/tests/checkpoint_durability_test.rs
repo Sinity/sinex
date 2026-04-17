@@ -42,9 +42,9 @@ async fn checkpoint_survives_simulated_crash(ctx: TestContext) -> TestResult<()>
     match &recovered.checkpoint {
         Checkpoint::Timestamp { .. } => {}
         other => {
-            return Err(
-                color_eyre::eyre::eyre!("Expected Timestamp checkpoint, got: {other:?}"),
-            );
+            return Err(color_eyre::eyre::eyre!(
+                "Expected Timestamp checkpoint, got: {other:?}"
+            ));
         }
     }
 

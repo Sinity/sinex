@@ -1,6 +1,6 @@
+use serde_json::Value;
 use sinex_primitives::domain::RecordedPath;
 use sinex_primitives::events::payloads::shell::AtuinCommandExecutedPayload;
-use serde_json::Value;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]

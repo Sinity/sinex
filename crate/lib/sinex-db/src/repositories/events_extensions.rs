@@ -182,6 +182,6 @@ impl EventRepository<'_> {
         .await
         .map_err(|e| db_error(e, "estimate events by source and time range"))?;
 
-        Ok(extract_plan_rows(plan.0))
+        Ok(extract_plan_rows(&plan.0))
     }
 }

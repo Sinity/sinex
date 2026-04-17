@@ -47,7 +47,7 @@ const REPLAY_CONTROL_CONNECT_BACKOFF_BASE: Duration = Duration::from_millis(100)
 const REPLAY_CONTROL_CONNECT_BACKOFF_MAX: Duration = Duration::from_secs(1);
 
 async fn recover_stale_replay_operations(replay: &ReplayStateMachine) -> Result<()> {
-    const STALE_EXECUTING_THRESHOLD: Duration = Duration::from_secs(10 * 60);
+    const STALE_EXECUTING_THRESHOLD: Duration = Duration::from_mins(10);
 
     match replay
         .recover_stale_executing(STALE_EXECUTING_THRESHOLD)

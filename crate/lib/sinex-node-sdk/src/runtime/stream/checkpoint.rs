@@ -2,8 +2,9 @@ use serde::{Deserialize, Serialize};
 use sinex_primitives::temporal::Timestamp;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub enum Checkpoint {
+    #[default]
     None,
     External {
         position: serde_json::Value,
@@ -21,12 +22,6 @@ pub enum Checkpoint {
         timestamp: Timestamp,
         metadata: Option<serde_json::Value>,
     },
-}
-
-impl Default for Checkpoint {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl Checkpoint {

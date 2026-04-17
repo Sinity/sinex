@@ -250,6 +250,10 @@ impl Drop for WorktreeHandle {
     }
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "option structs used as part of command dispatch"
+)]
 pub fn execute_plan(opts: PlanOptions) -> Result<CommandResult> {
     let started_at = Instant::now();
     let repo_root = resolve_repo_root(opts.repo_root.as_deref())?;
@@ -305,6 +309,10 @@ pub fn execute_plan(opts: PlanOptions) -> Result<CommandResult> {
     Ok(result)
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "option structs used as part of command dispatch"
+)]
 pub fn execute_materialize(opts: MaterializeOptions) -> Result<CommandResult> {
     let started_at = Instant::now();
     let plan_path = opts.plan_path.canonicalize().with_context(|| {
@@ -357,6 +365,10 @@ pub fn execute_materialize(opts: MaterializeOptions) -> Result<CommandResult> {
         .with_duration(started_at.elapsed()))
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "option structs used as part of command dispatch"
+)]
 pub fn execute_split(opts: SplitOptions) -> Result<CommandResult> {
     let started_at = Instant::now();
     let repo_root = resolve_repo_root(opts.plan.repo_root.as_deref())?;
@@ -378,9 +390,10 @@ pub fn execute_split(opts: SplitOptions) -> Result<CommandResult> {
 
     if !opts.allow_blockers && !plan.loose_ends.blockers.is_empty() {
         return Ok(CommandResult::partial()
-            .with_message(format!(
+            .with_message(
                 "Generated git stack plan with blockers; branches were not materialized"
-            ))
+                    .to_string(),
+            )
             .with_details(render_plan_details(&plan, &bundle))
             .with_warnings(plan.loose_ends.blockers.clone())
             .with_data(json!({
@@ -406,6 +419,10 @@ pub fn execute_split(opts: SplitOptions) -> Result<CommandResult> {
         .with_duration(started_at.elapsed()))
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "option structs used as part of command dispatch"
+)]
 pub fn execute_publish(opts: PublishOptions) -> Result<CommandResult> {
     let started_at = Instant::now();
     let plan_path = opts.plan_path.canonicalize().with_context(|| {
@@ -455,6 +472,10 @@ pub fn execute_publish(opts: PublishOptions) -> Result<CommandResult> {
         .with_duration(started_at.elapsed()))
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "branch prefix normalized from opts struct"
+)]
 fn build_plan(
     repo_root: &Path,
     base_ref: &str,
@@ -539,7 +560,7 @@ fn build_plan(
             &boundary_base,
             group,
         )?;
-        boundary_base = slice.original_tip_commit.clone();
+        slice.original_tip_commit.clone_into(&mut boundary_base);
         previous_branch = Some(slice.branch.clone());
         slices.push(slice);
     }
@@ -872,8 +893,7 @@ fn read_loose_ends(repo_root: &Path) -> Result<GitLooseEnds> {
 fn extract_status_path(rest: &str) -> String {
     rest.rsplit(" -> ")
         .next()
-        .map(str::trim)
-        .unwrap_or(rest)
+        .map_or(rest, str::trim)
         .to_string()
 }
 
@@ -1116,6 +1136,10 @@ fn target_slice_count(commit_count: usize) -> usize {
     commit_count.div_ceil(4).max(1)
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "group accumulator consumed for building slice"
+)]
 fn finalize_slice(
     repo_root: &Path,
     index: usize,
@@ -1127,12 +1151,7 @@ fn finalize_slice(
 ) -> Result<GitStackSlice> {
     let anchor = select_anchor_commit(&group.commits);
     let title = anchor.subject.clone();
-    let slug = slugify(
-        title
-            .split_once(':')
-            .map(|(_, summary)| summary)
-            .unwrap_or(&title),
-    );
+    let slug = slugify(title.split_once(':').map_or(&title, |(_, summary)| summary));
     let branch = if branch_prefix.is_empty() {
         format!("{:02}-{slug}", index + 1)
     } else {
@@ -1778,13 +1797,13 @@ impl EmptyDefault for String {
 
 fn parse_subject(subject: &str) -> CommitSubjectParts {
     if let Some((prefix, _summary)) = subject.split_once(':') {
-        if let Some((kind, scope)) = prefix.split_once('(') {
-            if let Some(scope) = scope.strip_suffix(')') {
-                return CommitSubjectParts {
-                    kind: kind.trim().to_string(),
-                    scope: Some(scope.trim().to_string()),
-                };
-            }
+        if let Some((kind, scope)) = prefix.split_once('(')
+            && let Some(scope) = scope.strip_suffix(')')
+        {
+            return CommitSubjectParts {
+                kind: kind.trim().to_string(),
+                scope: Some(scope.trim().to_string()),
+            };
         }
         return CommitSubjectParts {
             kind: prefix.trim().to_string(),
@@ -1834,7 +1853,7 @@ fn intersection_count(left: &BTreeSet<String>, right: &BTreeSet<String>) -> usiz
 fn slugify(input: &str) -> String {
     let mut slug = String::new();
     let mut last_dash = false;
-    for ch in input.chars().flat_map(|ch| ch.to_lowercase()) {
+    for ch in input.chars().flat_map(char::to_lowercase) {
         if ch.is_ascii_alphanumeric() {
             slug.push(ch);
             last_dash = false;

@@ -7,6 +7,7 @@ pub struct EmbeddingRepository<'a> {
 }
 
 impl<'a> EmbeddingRepository<'a> {
+    #[must_use]
     pub fn new(pool: &'a PgPool) -> Self {
         Self { pool }
     }
@@ -186,26 +187,23 @@ impl<'a> EmbeddingRepository<'a> {
                 embedded_text: r.get("embedded_text"),
                 rrf_score: r.get("rrf_score"),
                 vector_similarity: r.get("vector_similarity"),
-                fts_score: r.get::<f32, _>("fts_score") as f64,
+                fts_score: f64::from(r.get::<f32, _>("fts_score")),
             })
             .collect())
     }
 
     pub async fn count_embeddings(&self) -> DbResult<i64> {
-        let count: (i64,) = sqlx::query_as(
-            "SELECT count(*) FROM core.event_embeddings",
-        )
-        .fetch_one(self.pool)
-        .await?;
+        let count: (i64,) = sqlx::query_as("SELECT count(*) FROM core.event_embeddings")
+            .fetch_one(self.pool)
+            .await?;
         Ok(count.0)
     }
 
     pub async fn count_models(&self) -> DbResult<i64> {
-        let count: (i64,) = sqlx::query_as(
-            "SELECT count(*) FROM core.embedding_models WHERE is_active = true",
-        )
-        .fetch_one(self.pool)
-        .await?;
+        let count: (i64,) =
+            sqlx::query_as("SELECT count(*) FROM core.embedding_models WHERE is_active = true")
+                .fetch_one(self.pool)
+                .await?;
         Ok(count.0)
     }
 
@@ -266,7 +264,7 @@ fn format_vector(values: &[f32]) -> String {
         "[{}]",
         values
             .iter()
-            .map(|f| f.to_string())
+            .map(std::string::ToString::to_string)
             .collect::<Vec<_>>()
             .join(",")
     )

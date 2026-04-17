@@ -600,7 +600,7 @@ mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
     #[cfg(unix)]
-    use std::ffi::OsString;
+    use std::ffi::{OsStr, OsString};
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
 
@@ -880,7 +880,7 @@ LISTEN 0      4096   malformed-listener   0.0.0.0:*    users:(("nats-server",pid
         let args: Vec<OsString> = manager
             .nats_server_command()
             .get_args()
-            .map(|arg| arg.to_os_string())
+            .map(OsStr::to_os_string)
             .collect();
         assert!(args.iter().any(|arg| arg == config_file.as_os_str()));
         Ok(())

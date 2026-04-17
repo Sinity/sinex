@@ -1031,7 +1031,7 @@ const TCP_LISTEN_BACKLOG: i32 = 128;
 /// - Both can accept connections (kernel load balances)
 /// - Coordination/handoff mechanism ensures only one is the leader
 /// - Old instance exits gracefully after handoff
-async fn bind_with_reuseport(addr: &str) -> std::io::Result<tokio::net::TcpListener> {
+fn bind_with_reuseport(addr: &str) -> std::io::Result<tokio::net::TcpListener> {
     use socket2::{Domain, Protocol, Socket, Type};
     use std::net::SocketAddr;
 
@@ -1204,7 +1204,7 @@ fn warn_if_remote_bind(bind_address: &BindAddress) {
     }
 }
 
-fn request_id_for_span<'a, B>(request: &'a Request<B>) -> Cow<'a, str> {
+fn request_id_for_span<B>(request: &Request<B>) -> Cow<'_, str> {
     match request.headers().get("x-request-id") {
         Some(value) => match value.to_str() {
             Ok(request_id) => Cow::Borrowed(request_id),
@@ -1318,6 +1318,7 @@ fn rpc_layer_error_response(status: StatusCode, code: i32, message: String) -> i
 /// The `cors_origins` parameter controls allowed origins:
 /// - Empty: Only localhost origins allowed (<http://localhost>:*, <http://127.0.0.1>:*)
 /// - Non-empty: Only the specified origins allowed
+///
 /// Spawn the RPC server in a background task, returning the bound address and task handle.
 ///
 /// This is used for integration testing (binding to port 0) and by the main `run` entry point.
@@ -1385,7 +1386,6 @@ pub async fn spawn(
 
     let app = RpcServer::build_app(&limits, &config.cors_origins_list(), state);
     let listener = bind_with_reuseport(&addr_str)
-        .await
         .wrap_err_with(|| format!("Failed to bind TCP listener to {addr_str}"))?;
 
     let local_addr = listener.local_addr()?;

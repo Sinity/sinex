@@ -19,7 +19,7 @@ async fn io_error_with_context_includes_message() -> TestResult<()> {
 
     for (kind, context) in cases {
         let err = std::io::Error::new(kind, "original error message");
-        match io_error_with_context(err, context) {
+        match io_error_with_context(&err, context) {
             SinexError::Io(details) => {
                 let message = details.message();
                 assert!(message.contains(context));
@@ -35,7 +35,7 @@ async fn io_error_with_context_includes_message() -> TestResult<()> {
 #[sinex_test]
 async fn io_error_with_empty_context_still_includes_source() -> TestResult<()> {
     let err = std::io::Error::new(ErrorKind::NotFound, "test error");
-    match io_error_with_context(err, "") {
+    match io_error_with_context(&err, "") {
         SinexError::Io(details) => assert!(details.message().contains("test error")),
         other => panic!("Expected Io error, got {other:?}"),
     }
@@ -46,7 +46,7 @@ async fn io_error_with_empty_context_still_includes_source() -> TestResult<()> {
 async fn utf8_error_context_describes_failure() -> TestResult<()> {
     let bad_bytes = vec![0xFF, 0xFE, 0xFD];
     let utf8_error = String::from_utf8(bad_bytes).unwrap_err();
-    match utf8_error_with_context(utf8_error, "Failed to decode response") {
+    match utf8_error_with_context(&utf8_error, "Failed to decode response") {
         SinexError::Processing(details) => {
             let message = details.message();
             assert!(message.contains("Failed to decode response"));
@@ -69,7 +69,7 @@ async fn json_error_context_preserves_details() -> TestResult<()> {
 
     for (json_str, desc) in invalid_cases {
         let json_error = serde_json::from_str::<serde_json::Value>(json_str).unwrap_err();
-        match json_error_with_context(json_error, "Config parsing failed") {
+        match json_error_with_context(&json_error, "Config parsing failed") {
             SinexError::Processing(details) => {
                 let message = details.message();
                 assert!(message.contains("Config parsing failed"), "Case: {desc}");
@@ -106,7 +106,7 @@ async fn processing_error_helpers_round_trip_messages() -> TestResult<()> {
 #[sinex_test]
 async fn error_chain_context_is_preserved() -> TestResult<()> {
     let original = std::io::Error::new(ErrorKind::NotFound, "file.txt");
-    let error_string = io_error_with_context(original, "Config loading").to_string();
+    let error_string = io_error_with_context(&original, "Config loading").to_string();
     assert!(error_string.contains("Config loading"));
     assert!(error_string.contains("file.txt"));
     Ok(())
@@ -115,7 +115,7 @@ async fn error_chain_context_is_preserved() -> TestResult<()> {
 #[sinex_test]
 async fn error_helpers_handle_empty_json() -> TestResult<()> {
     let json_error = serde_json::from_str::<serde_json::Value>("").unwrap_err();
-    match json_error_with_context(json_error, "Empty config") {
+    match json_error_with_context(&json_error, "Empty config") {
         SinexError::Processing(details) => {
             let message = details.message();
             assert!(message.contains("Empty config"));

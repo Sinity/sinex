@@ -169,7 +169,7 @@ fn format_ops_list_table(operations: &[OpsOperation]) -> String {
         output.push_str(&format!("Status: {}\n", op.result_status));
         output.push_str(&format!("Operator: {}\n", op.operator));
         if let Some(duration_ms) = op.duration_ms {
-            output.push_str(&format!("Duration: {} ms\n", duration_ms));
+            output.push_str(&format!("Duration: {duration_ms} ms\n"));
         }
         if let Some(message) = op.result_message.as_deref() {
             output.push_str(&format!("Message: {message}\n"));
@@ -188,7 +188,7 @@ fn format_ops_get_table(operation: &OpsOperation) -> String {
     output.push_str(&format!("  Status: {}\n", operation.result_status));
     output.push_str(&format!("  Operator: {}\n", operation.operator));
     if let Some(duration_ms) = operation.duration_ms {
-        output.push_str(&format!("  Duration: {} ms\n", duration_ms));
+        output.push_str(&format!("  Duration: {duration_ms} ms\n"));
     }
     if let Some(message) = operation.result_message.as_deref() {
         output.push_str(&format!("  Message: {message}\n"));

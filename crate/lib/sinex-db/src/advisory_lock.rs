@@ -60,14 +60,14 @@ impl AdvisoryLock {
     async fn connection_holds_any_advisory_lock(
         connection: &mut PoolConnection<Postgres>,
     ) -> CoreResult<bool> {
-        let sql = r#"
+        let sql = r"
             SELECT EXISTS (
                 SELECT 1
                 FROM pg_locks
                 WHERE pid = pg_backend_pid()
                   AND locktype = 'advisory'
             )
-        "#;
+        ";
 
         sqlx::query_scalar::<_, bool>(sql)
             .fetch_one(&mut **connection)
@@ -79,7 +79,7 @@ impl AdvisoryLock {
         connection: &mut PoolConnection<Postgres>,
         lock_id: i64,
     ) -> CoreResult<bool> {
-        let sql = r#"
+        let sql = r"
             SELECT EXISTS (
                 SELECT 1
                 FROM pg_locks
@@ -87,7 +87,7 @@ impl AdvisoryLock {
                   AND classid = (($1::bigint >> 32) & 4294967295::bigint)::oid
                   AND objid = ($1::bigint & 4294967295::bigint)::oid
             )
-        "#;
+        ";
 
         sqlx::query_scalar::<_, bool>(sql)
             .bind(lock_id)

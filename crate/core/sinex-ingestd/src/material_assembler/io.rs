@@ -89,7 +89,7 @@ pub(super) async fn restore_state(assembler: &MaterialAssembler) -> IngestdResul
 
         match restore_state_params(assembler, material_id, &path).await {
             Ok(Some(state)) => {
-                assembler.insert_state_handle(material_id, state).await;
+                assembler.insert_state_handle(material_id, state);
                 info!(material_id = %material_id, "Restored in-flight material state from WAL");
             }
             Ok(None) => {}
@@ -118,8 +118,8 @@ fn parse_material_state_folder(path: &std::path::Path) -> IngestdResult<Uuid> {
 
     let folder_name = folder_name.to_str().ok_or_else(|| {
         SinexError::invalid_state(format!(
-            "Assembler state folder {:?} is not valid UTF-8",
-            path
+            "Assembler state folder {} is not valid UTF-8",
+            path.display()
         ))
     })?;
 
@@ -393,7 +393,7 @@ fn parse_wal_envelope_line(line: &str) -> Result<WalEntryEnvelope, String> {
 
 /// Extract the raw JSON bytes of the "entry" field from a WAL line without
 /// re-serializing. This preserves the original byte sequence for CRC verification,
-/// avoiding sensitivity to serde_json key-ordering changes across versions.
+/// avoiding sensitivity to `serde_json` key-ordering changes across versions.
 fn extract_raw_entry_bytes(line: &str) -> Option<&str> {
     // The envelope format is: {"seq":N,"crc":C,"entry":{...}}
     // Find the "entry": key and extract everything from the opening { to the matching }.
@@ -862,7 +862,7 @@ pub(super) async fn handle_slice(
     offset: i64,
     data: Vec<u8>,
 ) -> IngestdResult<()> {
-    let state_handle = if let Some(existing) = assembler.get_state_handle(&material_id).await {
+    let state_handle = if let Some(existing) = assembler.get_state_handle(&material_id) {
         existing
     } else {
         if assembler.material_is_terminal(material_id).await? {
@@ -874,9 +874,7 @@ pub(super) async fn handle_slice(
             return Ok(());
         }
         let placeholder = assembler.create_placeholder_state(material_id).await?;
-        assembler
-            .insert_state_handle(material_id, placeholder)
-            .await
+        assembler.insert_state_handle(material_id, placeholder)
     };
 
     let acquire_start = std::time::Instant::now();
@@ -1440,7 +1438,6 @@ mod tests {
 
         let state = assembler
             .get_state_handle(&material_id)
-            .await
             .ok_or_else(|| color_eyre::eyre::eyre!("missing assembler state"))?;
         let state = state.lock().await;
         assert_eq!(state.buffered_slices.len(), 1);
@@ -1485,7 +1482,7 @@ mod tests {
         handle_slice(&assembler, material_id, 5, b"6789".to_vec()).await?;
 
         assert!(
-            assembler.get_state_handle(&material_id).await.is_none(),
+            assembler.get_state_handle(&material_id).is_none(),
             "oversized material should be failed and cleaned up"
         );
         Ok(())
@@ -1539,7 +1536,7 @@ mod tests {
         assert_eq!(payload["context"]["buffered_count"], 1);
 
         assert!(
-            assembler.get_state_handle(&material_id).await.is_none(),
+            assembler.get_state_handle(&material_id).is_none(),
             "buffered slice overflow should fail the material instead of leaving retry state behind"
         );
         Ok(())
@@ -1623,7 +1620,6 @@ mod tests {
 
         let state = assembler
             .get_state_handle(&material_id)
-            .await
             .expect("valid WAL state must restore");
         assert_eq!(state.lock().await.last_slice_received, wal_modified);
         Ok(())
@@ -1641,7 +1637,7 @@ mod tests {
         tokio::fs::write(material_dir.join(TEMP_FILE_NAME), &[]).await?;
 
         let persisted_last_slice_received = Timestamp::now();
-        let stale_wal_mtime = std::time::SystemTime::now() - std::time::Duration::from_secs(120);
+        let stale_wal_mtime = std::time::SystemTime::now() - std::time::Duration::from_mins(2);
         write_wal_entry(
             &material_dir.join(WAL_FILE_NAME),
             WalEntry::Checkpoint(PersistedState {
@@ -1668,7 +1664,6 @@ mod tests {
 
         let state = assembler
             .get_state_handle(&material_id)
-            .await
             .expect("checkpoint-backed WAL state must restore");
         assert_eq!(
             state.lock().await.last_slice_received,
@@ -1712,7 +1707,6 @@ mod tests {
 
         let state = assembler
             .get_state_handle(&material_id)
-            .await
             .expect("fully staged pending write should restore as committed");
         let state = state.lock().await;
         assert_eq!(state.expected_offset, 4);
@@ -1778,7 +1772,7 @@ mod tests {
             "terminal materials must not be resurrected from persisted pending_end state"
         );
         assert!(
-            assembler.get_state_handle(&material_id).await.is_none(),
+            assembler.get_state_handle(&material_id).is_none(),
             "terminal materials must not occupy the active assembler set after restore"
         );
         Ok(())

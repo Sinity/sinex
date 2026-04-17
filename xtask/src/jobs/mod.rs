@@ -787,14 +787,13 @@ impl JobManager {
                 // Grace period then SIGKILL if still alive (X10 fix)
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(5));
-                    if job_process_is_alive(pid) {
-                        if let Err(error) = send_job_signal(pid, nix::sys::signal::Signal::SIGKILL)
-                        {
-                            eprintln!(
-                                "Warning: failed to send SIGKILL to cancelled background job pid {}: {error}",
-                                pid.as_raw()
-                            );
-                        }
+                    if job_process_is_alive(pid)
+                        && let Err(error) = send_job_signal(pid, nix::sys::signal::Signal::SIGKILL)
+                    {
+                        eprintln!(
+                            "Warning: failed to send SIGKILL to cancelled background job pid {}: {error}",
+                            pid.as_raw()
+                        );
                     }
                 });
             }
@@ -918,13 +917,13 @@ fn send_job_signal(
 ) -> Result<SignalDelivery> {
     match nix::sys::signal::killpg(pid, signal) {
         Ok(()) => Ok(SignalDelivery::Delivered),
-        Err(nix::errno::Errno::ESRCH)
-        | Err(nix::errno::Errno::EPERM)
-        | Err(nix::errno::Errno::EINVAL) => match nix::sys::signal::kill(pid, signal) {
-            Ok(()) => Ok(SignalDelivery::Delivered),
-            Err(nix::errno::Errno::ESRCH) => Ok(SignalDelivery::Missing),
-            Err(error) => Err(eyre!("failed to send {signal:?} to job pid {pid}: {error}")),
-        },
+        Err(nix::errno::Errno::ESRCH | nix::errno::Errno::EPERM | nix::errno::Errno::EINVAL) => {
+            match nix::sys::signal::kill(pid, signal) {
+                Ok(()) => Ok(SignalDelivery::Delivered),
+                Err(nix::errno::Errno::ESRCH) => Ok(SignalDelivery::Missing),
+                Err(error) => Err(eyre!("failed to send {signal:?} to job pid {pid}: {error}")),
+            }
+        }
         Err(error) => match nix::sys::signal::kill(pid, signal) {
             Ok(()) => Ok(SignalDelivery::Delivered),
             Err(nix::errno::Errno::ESRCH) => Ok(SignalDelivery::Missing),
@@ -1173,9 +1172,8 @@ mod tests {
         fs::remove_dir_all(&jobs_dir)?;
         fs::write(&jobs_dir, "occupied")?;
 
-        let error = match manager.list_recent(10) {
-            Ok(_) => panic!("list_recent should surface prune failures"),
-            Err(error) => error,
+        let Err(error) = manager.list_recent(10) else {
+            return Err(eyre!("list_recent should surface prune failures"));
         };
         let message = format!("{error:#}");
         assert!(message.contains("failed to prune completed background jobs"));
@@ -1198,9 +1196,8 @@ mod tests {
         fs::remove_dir_all(&jobs_dir)?;
         fs::write(&jobs_dir, "occupied")?;
 
-        let error = match manager.list_active() {
-            Ok(_) => panic!("list_active should surface prune failures"),
-            Err(error) => error,
+        let Err(error) = manager.list_active() else {
+            return Err(eyre!("list_active should surface prune failures"));
         };
         let message = format!("{error:#}");
         assert!(message.contains("failed to prune completed background jobs"));
@@ -1430,9 +1427,10 @@ mod tests {
         fs::create_dir_all(&job_dir)?;
         fs::write(job_dir.join("exit_code"), "bogus\n")?;
 
-        let error = match manager.get(job_id) {
-            Ok(_) => panic!("malformed stale exit code should surface during reaping"),
-            Err(error) => error,
+        let Err(error) = manager.get(job_id) else {
+            return Err(eyre!(
+                "malformed stale exit code should surface during reaping"
+            ));
         };
         let message = format!("{error:#}");
         assert!(message.contains("failed to parse stale background job exit code"));

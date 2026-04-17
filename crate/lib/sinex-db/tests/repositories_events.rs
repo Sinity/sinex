@@ -919,7 +919,7 @@ async fn batch_insert_rolls_back_all_chunks_on_late_failure(ctx: TestContext) ->
     let duplicate_id = Some(Id::<Event<serde_json::Value>>::new());
 
     let mut events = Vec::new();
-    for index in 0..(COPY_BATCH_THRESHOLD + 1) {
+    for index in 0..=COPY_BATCH_THRESHOLD {
         let mut event = DynamicPayload::new(
             source.clone(),
             event_type.clone(),

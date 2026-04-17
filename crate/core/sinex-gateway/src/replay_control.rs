@@ -316,18 +316,12 @@ pub async fn spawn_replay_control(
     let executor = ReplayExecutionEngine::new(replay.clone(), client.clone());
     ReplayTelemetry::new(replay.clone()).spawn();
 
-    ReplayControlServer::new(
-        env.clone(),
-        client.clone(),
-        replay,
-        executor,
-        Arc::clone(&health),
-    )
-    .spawn()
-    .await?;
+    ReplayControlServer::new(&env, client.clone(), replay, executor, Arc::clone(&health))
+        .spawn()
+        .await?;
 
     Ok(ReplayControlClient::new(
-        env,
+        &env,
         client,
         request_timeout,
         health,
@@ -345,7 +339,7 @@ pub struct ReplayControlClient {
 
 impl ReplayControlClient {
     fn new(
-        env: SinexEnvironment,
+        env: &SinexEnvironment,
         client: Client,
         request_timeout: Duration,
         health: Arc<Mutex<ReplayControlHealthState>>,
@@ -603,7 +597,7 @@ struct ReplayControlServer {
 
 impl ReplayControlServer {
     fn new(
-        env: SinexEnvironment,
+        env: &SinexEnvironment,
         client: Client,
         replay: Arc<ReplayStateMachine>,
         executor: ReplayExecutionEngine,
@@ -852,10 +846,9 @@ impl ReplayControlServer {
                     return Err(eyre!(
                         "Replay execute does not support dry-run semantics; use preview before approval instead"
                     ));
-                } else {
-                    let updated = executor.execute(operation_id, actor).await?;
-                    ReplayControlResponse::success(Some(updated), None, None)
                 }
+                let updated = executor.execute(operation_id, actor).await?;
+                ReplayControlResponse::success(Some(updated), None, None)
             }
             ReplayControlRequest::Cancel {
                 operation_id,
@@ -1415,6 +1408,10 @@ impl ReplayExecutionEngine {
     }
 
     #[cfg(not(test))]
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "Shape must match the #[cfg(test)] fault-injection variant, which returns Err"
+    )]
     fn maybe_fail_checkpoint_persist(&self) -> Result<()> {
         Ok(())
     }
@@ -1448,6 +1445,10 @@ impl ReplayExecutionEngine {
     }
 
     #[cfg(not(test))]
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "Shape must match the #[cfg(test)] fault-injection variant, which returns Err"
+    )]
     fn maybe_fail_scope_metadata_collection(&self) -> Result<()> {
         Ok(())
     }
@@ -1467,6 +1468,10 @@ impl ReplayExecutionEngine {
     }
 
     #[cfg(not(test))]
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "Shape must match the #[cfg(test)] fault-injection variant, which returns Err"
+    )]
     fn maybe_fail_scope_invalidation_publish(&self) -> Result<()> {
         Ok(())
     }
@@ -1486,6 +1491,10 @@ impl ReplayExecutionEngine {
     }
 
     #[cfg(not(test))]
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "Shape must match the #[cfg(test)] fault-injection variant, which returns Err"
+    )]
     fn maybe_fail_replacement_recording(&self) -> Result<()> {
         Ok(())
     }
@@ -1623,7 +1632,7 @@ impl ReplayExecutionEngine {
         expected: &ExpectedReplayOutputs,
     ) -> Result<i64> {
         sqlx::query_scalar::<_, i64>(
-            r#"
+            r"
             SELECT COUNT(*)::bigint
             FROM core.events
             INNER JOIN raw.source_material_registry smr
@@ -1635,7 +1644,7 @@ impl ReplayExecutionEngine {
                     smr.metadata->>'logical_source_identifier',
                     split_part(smr.source_identifier, '#material=', 1)
                   ) = ANY($4::text[])
-            "#,
+            ",
         )
         .bind(operation_id)
         .bind(&expected.sources)
@@ -1916,14 +1925,13 @@ impl ReplayExecutionEngine {
                             event_type,
                             bucket.scope_keys.len()
                         ));
-                    } else {
-                        debug!(
-                            operation_id = %operation_id,
-                            event_type = %event_type,
-                            scope_count = bucket.scope_keys.len(),
-                            "Published scope invalidation"
-                        );
                     }
+                    debug!(
+                        operation_id = %operation_id,
+                        event_type = %event_type,
+                        scope_count = bucket.scope_keys.len(),
+                        "Published scope invalidation"
+                    );
                 }
                 Err(e) => {
                     return Err(eyre!(
@@ -2201,12 +2209,12 @@ impl ReplayExecutionEngine {
         );
 
         // Publish scope invalidation signals for archived derived events
-        if !scope_metadata.is_empty() {
-            if let Err(invalidation_error) = self
+        if !scope_metadata.is_empty()
+            && let Err(invalidation_error) = self
                 .publish_scope_invalidations(&scope_metadata, operation_id)
                 .await
-            {
-                return self
+        {
+            return self
                     .abort_before_scan_ack(
                         pool,
                         &cascade_ids,
@@ -2217,7 +2225,6 @@ impl ReplayExecutionEngine {
                         ),
                     )
                     .await;
-            }
         }
 
         checkpoint.total_events = material_roots.len() as u64;
@@ -2431,7 +2438,7 @@ impl ReplayExecutionEngine {
                             }
                         }
                     }
-                    _ = tokio::time::sleep(Self::EXECUTION_STATE_POLL_INTERVAL) => {
+                    () = tokio::time::sleep(Self::EXECUTION_STATE_POLL_INTERVAL) => {
                         match replay.load_operation(operation_id).await {
                             Ok(operation) if operation.state == ReplayState::Executing => {}
                             Ok(operation)
@@ -2442,8 +2449,7 @@ impl ReplayExecutionEngine {
                             {
                                 return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
                                     error: SinexError::cancelled(format!(
-                                        "Replay operation {} was cancelled during execution",
-                                        operation_id
+                                        "Replay operation {operation_id} was cancelled during execution"
                                     ))
                                     .into(),
                                     emitted_count: events_emitted,
@@ -2513,27 +2519,25 @@ impl ReplayExecutionEngine {
                     restore_archived_cascade = failure.restore_archived_cascade,
                     "Replay scan failed"
                 );
-                if failure.restore_archived_cascade {
-                    if let Err(restore_error) =
+                if failure.restore_archived_cascade
+                    && let Err(restore_error) =
                         self.restore_cascade(pool, &cascade_ids, operation_id).await
-                    {
-                        return Err(failure.error.wrap_err(format!(
+                {
+                    return Err(failure.error.wrap_err(format!(
                             "Replay scan failed before emitting replacement events, and restoring the archived cascade also failed: {restore_error}"
                         )));
-                    }
                 }
                 // Publish compensating scope invalidations when either:
                 // - we restored the cascade (so automata reconcile against restored events)
                 // - events were emitted before failure (so automata reconcile the mixed state)
-                if failure.restore_archived_cascade || failure.emitted_count > 0 {
-                    if let Err(invalidation_error) = self
+                if (failure.restore_archived_cascade || failure.emitted_count > 0)
+                    && let Err(invalidation_error) = self
                         .publish_scope_invalidations(&scope_metadata, operation_id)
                         .await
-                    {
-                        return Err(failure.error.wrap_err(format!(
+                {
+                    return Err(failure.error.wrap_err(format!(
                             "Replay scan failed and compensating scope invalidation also failed: {invalidation_error}"
                         )));
-                    }
                 }
                 Err(failure.error).wrap_err(if failure.restore_archived_cascade {
                     "Replay scan failed before emitting replacement events; restored archived cascade and published compensating scope invalidations"
@@ -2928,13 +2932,12 @@ mod tests {
                 .replay
                 .as_ref()
                 .and_then(|replay| replay.materials.first())
-                .map(ReplayExecutionEngine::logical_source_identifier)
-                .unwrap_or(path)
+                .map_or(path, ReplayExecutionEngine::logical_source_identifier)
                 .to_string();
             let material_id = Uuid::now_v7();
             let source_identifier = format!("{logical_source_identifier}#material={material_id}");
             sqlx::query(
-                r#"
+                r"
                 INSERT INTO raw.source_material_registry (
                     id,
                     material_kind,
@@ -2944,7 +2947,7 @@ mod tests {
                     metadata
                 )
                 VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime', $3::jsonb)
-                "#,
+                ",
             )
             .bind(material_id)
             .bind(&source_identifier)
@@ -3120,7 +3123,7 @@ mod tests {
         let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
 
         let server_task = ReplayControlServer::new(
-            env.clone(),
+            &env,
             nats_client.clone(),
             replay,
             executor,
@@ -3129,7 +3132,7 @@ mod tests {
         .spawn()
         .await?;
         let client = ReplayControlClient::new(
-            env,
+            &env,
             nats_client,
             Duration::from_secs(30),
             Arc::clone(&health),
@@ -3161,7 +3164,7 @@ mod tests {
         let ctx = ctx.with_nats().dedicated().await?;
         let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
         let client = ReplayControlClient::new(
-            sinex_primitives::environment::environment(),
+            &sinex_primitives::environment::environment(),
             ctx.nats_client(),
             Duration::from_secs(30),
             Arc::clone(&health),
@@ -3806,9 +3809,9 @@ mod tests {
         assert_eq!(live_target_count, 0);
         assert_eq!(archived_target_count, 1);
 
-        let dispatched_command = scan_command_rx
-            .await
-            .map_err(|_| eyre!("fake visibility-timeout-test node did not receive a scan command"))?;
+        let dispatched_command = scan_command_rx.await.map_err(|_| {
+            eyre!("fake visibility-timeout-test node did not receive a scan command")
+        })?;
         assert_eq!(dispatched_command.operation_id, planned.operation_id);
 
         scan_handle
@@ -3853,7 +3856,7 @@ mod tests {
         ReplayTelemetry::new(replay.clone()).spawn();
         let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
         ReplayControlServer::new(
-            env.clone(),
+            &env,
             nats_client.clone(),
             replay.clone(),
             executor,
@@ -3861,8 +3864,7 @@ mod tests {
         )
         .spawn()
         .await?;
-        let client =
-            ReplayControlClient::new(env.clone(), nats_client, Duration::from_secs(30), health);
+        let client = ReplayControlClient::new(&env, nats_client, Duration::from_secs(30), health);
 
         let mut scope = sample_scope();
         scope.node_id = "timeout-test".to_string();
@@ -4141,13 +4143,12 @@ mod tests {
         .bind(target_id)
         .fetch_one(&ctx.pool)
         .await?;
-        let live_replacement_count: i64 =
-            sqlx::query_scalar(
-                "SELECT COUNT(*)::bigint FROM core.events WHERE created_by_operation_id = $1::uuid",
-            )
-                .bind(replay_command.operation_id)
-                .fetch_one(&ctx.pool)
-                .await?;
+        let live_replacement_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM core.events WHERE created_by_operation_id = $1::uuid",
+        )
+        .bind(replay_command.operation_id)
+        .fetch_one(&ctx.pool)
+        .await?;
         assert_eq!(
             live_target_count, 0,
             "replacement-record failure occurs after the original event has already been archived"
@@ -4213,7 +4214,7 @@ mod tests {
         ReplayTelemetry::new(replay.clone()).spawn();
         let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
         ReplayControlServer::new(
-            env.clone(),
+            &env,
             nats_client.clone(),
             replay.clone(),
             executor,
@@ -4221,7 +4222,7 @@ mod tests {
         )
         .spawn()
         .await?;
-        let client = ReplayControlClient::new(env, nats_client, Duration::from_secs(30), health);
+        let client = ReplayControlClient::new(&env, nats_client, Duration::from_secs(30), health);
 
         let mut scope = sample_scope();
         scope.node_id = "pre-ack-test".to_string();
@@ -4980,7 +4981,7 @@ mod tests {
             .with_scan_completion_timeout(Duration::from_secs(5));
         let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
         ReplayControlServer::new(
-            env.clone(),
+            &env,
             nats_client.clone(),
             replay.clone(),
             executor,
@@ -4990,13 +4991,13 @@ mod tests {
         .await?;
 
         let execute_client = ReplayControlClient::new(
-            env.clone(),
+            &env,
             async_nats::connect(&nats_url).await?,
             Duration::from_secs(30),
             Arc::clone(&health),
         );
         let control_client = ReplayControlClient::new(
-            env.clone(),
+            &env,
             async_nats::connect(&nats_url).await?,
             Duration::from_secs(30),
             health,
@@ -5123,7 +5124,7 @@ mod tests {
             .with_scan_completion_timeout(Duration::from_millis(200));
         let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
         ReplayControlServer::new(
-            env.clone(),
+            &env,
             nats_client.clone(),
             replay.clone(),
             executor,
@@ -5133,13 +5134,13 @@ mod tests {
         .await?;
 
         let control_client = ReplayControlClient::new(
-            env.clone(),
+            &env,
             async_nats::connect(&nats_url).await?,
             Duration::from_secs(30),
             Arc::clone(&health),
         );
         let execute_client = ReplayControlClient::new(
-            env.clone(),
+            &env,
             async_nats::connect(&nats_url).await?,
             Duration::from_secs(30),
             health,
@@ -5222,7 +5223,7 @@ mod tests {
             .with_scan_completion_timeout(Duration::from_secs(5));
         let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
         ReplayControlServer::new(
-            env.clone(),
+            &env,
             nats_client.clone(),
             replay.clone(),
             executor,
@@ -5232,13 +5233,13 @@ mod tests {
         .await?;
 
         let execute_client = ReplayControlClient::new(
-            env.clone(),
+            &env,
             async_nats::connect(&nats_url).await?,
             Duration::from_secs(30),
             Arc::clone(&health),
         );
         let control_client = ReplayControlClient::new(
-            env.clone(),
+            &env,
             async_nats::connect(&nats_url).await?,
             Duration::from_secs(30),
             health,

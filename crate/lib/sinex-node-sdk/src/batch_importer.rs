@@ -90,9 +90,7 @@ pub fn scan_for_new_files(
         };
 
         if !extensions.is_empty() {
-            let matches_extension = extensions
-                .iter()
-                .any(|ext| filename.ends_with(ext));
+            let matches_extension = extensions.iter().any(|ext| filename.ends_with(ext));
             if !matches_extension {
                 continue;
             }
@@ -102,7 +100,7 @@ pub fn scan_for_new_files(
             continue;
         }
 
-        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        let size = entry.metadata().map_or(0, |m| m.len());
         let utf8_path = Utf8PathBuf::from_path_buf(path)
             .unwrap_or_else(|p| Utf8PathBuf::from(p.to_string_lossy().to_string()));
 
@@ -226,7 +224,10 @@ mod tests {
             size: 17,
         };
         let content = read_file_content(&file).unwrap();
-        assert_eq!(std::str::from_utf8(&content).unwrap(), r#"{"hello":"world"}"#);
+        assert_eq!(
+            std::str::from_utf8(&content).unwrap(),
+            r#"{"hello":"world"}"#
+        );
     }
 
     #[test]

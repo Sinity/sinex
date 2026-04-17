@@ -89,7 +89,7 @@ pub async fn handle_link_entities(service: &PkmService, params: Value) -> Result
         .link_entities(
             request.from_entity_id,
             request.to_entity_id,
-            &request.relation_type.to_string(),
+            request.relation_type.as_ref(),
             properties,
             request.source_material_id.map(|id| *id.as_uuid()),
         )

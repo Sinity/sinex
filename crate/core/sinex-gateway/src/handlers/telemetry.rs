@@ -135,7 +135,7 @@ pub async fn handle_telemetry_window_focus(pool: &PgPool, params: Value) -> Resu
     let limit = resolve_positive_limit(req.limit)?;
 
     let rows = sqlx::query_as::<_, WindowFocusRow>(
-        r#"
+        r"
         SELECT
             bucket,
             workspace,
@@ -149,7 +149,7 @@ pub async fn handle_telemetry_window_focus(pool: &PgPool, params: Value) -> Resu
           AND bucket <= $2
         ORDER BY bucket DESC
         LIMIT $3
-        "#,
+        ",
     )
     .bind(from)
     .bind(to)
@@ -192,7 +192,7 @@ pub async fn handle_telemetry_command_frequency(pool: &PgPool, params: Value) ->
     let limit = resolve_positive_limit(req.limit)?;
 
     let rows = sqlx::query_as::<_, CommandFrequencyRow>(
-        r#"
+        r"
         SELECT
             command,
             shell,
@@ -206,7 +206,7 @@ pub async fn handle_telemetry_command_frequency(pool: &PgPool, params: Value) ->
         GROUP BY command, shell
         ORDER BY total_executions DESC, command ASC
         LIMIT $3
-        "#,
+        ",
     )
     .bind(from)
     .bind(to)
@@ -248,7 +248,7 @@ pub async fn handle_telemetry_file_activity(pool: &PgPool, params: Value) -> Res
     let limit = resolve_positive_limit(req.limit)?;
 
     let rows = sqlx::query_as::<_, FileActivityRow>(
-        r#"
+        r"
         SELECT
             bucket,
             directory,
@@ -260,7 +260,7 @@ pub async fn handle_telemetry_file_activity(pool: &PgPool, params: Value) -> Res
           AND bucket <= $2
         ORDER BY bucket DESC, total_events DESC, event_type ASC
         LIMIT $3
-        "#,
+        ",
     )
     .bind(from)
     .bind(to)
@@ -296,7 +296,7 @@ pub async fn handle_telemetry_recent_activity(pool: &PgPool, params: Value) -> R
     let limit = resolve_positive_limit(req.limit)?;
 
     let rows = sqlx::query_as::<_, RecentActivityRow>(
-        r#"
+        r"
         SELECT
             activity_type,
             context,
@@ -305,7 +305,7 @@ pub async fn handle_telemetry_recent_activity(pool: &PgPool, params: Value) -> R
         FROM sinex_telemetry.recent_activity_summary
         ORDER BY timestamp DESC
         LIMIT $1
-        "#,
+        ",
     )
     .bind(limit)
     .fetch_all(pool)
@@ -343,7 +343,7 @@ pub async fn handle_telemetry_system_state(pool: &PgPool, params: Value) -> Resu
     let limit = resolve_positive_limit(req.limit)?;
 
     let rows = sqlx::query_as::<_, SystemStateRow>(
-        r#"
+        r"
         SELECT
             bucket,
             avg_cpu_percent,
@@ -358,7 +358,7 @@ pub async fn handle_telemetry_system_state(pool: &PgPool, params: Value) -> Resu
           AND bucket <= $2
         ORDER BY bucket DESC
         LIMIT $3
-        "#,
+        ",
     )
     .bind(from)
     .bind(to)

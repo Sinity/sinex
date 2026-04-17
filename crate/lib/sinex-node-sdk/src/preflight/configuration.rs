@@ -30,7 +30,7 @@ pub async fn verify_configuration_generation()
     info!("Verifying configuration generation and validation");
 
     // Environment variable validation
-    match verify_environment_variables(&mut messages).await {
+    match verify_environment_variables(&mut messages) {
         Ok(env_info) => {
             details.insert("environment", env_info);
         }
@@ -41,18 +41,13 @@ pub async fn verify_configuration_generation()
     }
 
     // Runtime configuration contract validation
-    match verify_runtime_configuration_contract(&mut messages).await {
-        Ok(config_info) => {
-            details.insert("runtime_config_contract", config_info);
-        }
-        Err(e) => {
-            messages.push(format!("⚠ Runtime configuration contract warning: {e}"));
-            has_warnings = true;
-        }
-    }
+    details.insert(
+        "runtime_config_contract",
+        verify_runtime_configuration_contract(&mut messages),
+    );
 
     // Event source configuration validation
-    match verify_event_source_configuration(&mut messages).await {
+    match verify_event_source_configuration(&mut messages) {
         Ok(event_config) => {
             if !event_config
                 .get("deployment_descriptor_loaded")
@@ -113,7 +108,7 @@ pub async fn verify_configuration_generation()
     Ok((status, json!(details), messages))
 }
 
-async fn verify_environment_variables(messages: &mut Vec<String>) -> NodeResult<Value> {
+fn verify_environment_variables(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut env_vars = HashMap::new();
     let mut missing_vars = Vec::new();
     let mut has_issues = false;
@@ -232,20 +227,20 @@ async fn verify_environment_variables(messages: &mut Vec<String>) -> NodeResult<
     }))
 }
 
-async fn verify_runtime_configuration_contract(messages: &mut Vec<String>) -> NodeResult<Value> {
+fn verify_runtime_configuration_contract(messages: &mut Vec<String>) -> Value {
     messages.push(
         "✓ Runtime configuration contract is env-first and NixOS-managed for deployed systems"
             .to_string(),
     );
 
-    Ok(json!({
+    json!({
         "deployment_surface": "nixos_modules",
         "runtime_transport": "environment_variables",
         "runtime_loader_model": "env_first_typed_config",
-    }))
+    })
 }
 
-async fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeResult<Value> {
+fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut event_sources = HashMap::new();
     let descriptor = deployment_descriptor_result("preflight configuration checks")?;
     let mut configured_unavailable = Vec::new();
@@ -795,6 +790,10 @@ fn probe_atuin_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> Eve
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::items_after_test_module,
+    reason = "Further private helpers sit below tests and keep related probe code grouped"
+)]
 mod tests {
     // Small inline tests are justified here because they exercise private
     // helper behavior without widening the preflight API surface.

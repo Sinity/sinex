@@ -27,14 +27,13 @@ async fn ci_setup_grants_all_schemas(
 
     // Verify we have USAGE on all schemas
     for schema in schema_registry::SINEX_SCHEMAS {
-        let has_usage: bool = sqlx::query(&format!(
-            "SELECT has_schema_privilege($1, $2, 'USAGE') as has_usage"
-        ))
-        .bind(&current_user)
-        .bind(schema.name)
-        .fetch_one(pool)
-        .await?
-        .get("has_usage");
+        let has_usage: bool =
+            sqlx::query("SELECT has_schema_privilege($1, $2, 'USAGE') as has_usage")
+                .bind(&current_user)
+                .bind(schema.name)
+                .fetch_one(pool)
+                .await?
+                .get("has_usage");
 
         assert!(
             has_usage,

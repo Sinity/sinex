@@ -172,8 +172,7 @@ fn write_state_file_atomically(path: &std::path::Path, contents: &str) -> Result
     let unique_suffix = std::process::id();
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |duration| duration.as_nanos());
     let tmp = path
         .parent()
         .unwrap_or_else(|| Path::new("."))

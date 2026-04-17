@@ -1,8 +1,9 @@
 # Clippy configuration for sinex
 # See: https://doc.rust-lang.org/clippy/lint_configuration.html
 
-# Allow unwrap/expect/dbg/print in test code
+# Allow unwrap/expect/dbg/print/panic in test code
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-dbg-in-tests = true
 allow-print-in-tests = true
+allow-panic-in-tests = true

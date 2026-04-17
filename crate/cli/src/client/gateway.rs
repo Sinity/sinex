@@ -306,6 +306,7 @@ impl GatewayClient {
         Ok(())
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn expect_string_result(method: &str, result: Value) -> Result<String> {
         result.as_str().map(ToOwned::to_owned).ok_or_else(|| {
             GatewayRpcError::ProtocolViolation(format!(

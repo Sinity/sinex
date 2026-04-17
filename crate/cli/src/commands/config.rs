@@ -51,7 +51,7 @@ pub enum ConfigCommands {
 }
 
 impl ConfigCommands {
-    pub async fn execute(&self) -> Result<()> {
+    pub fn execute(&self) -> Result<()> {
         match self {
             Self::Init { force } => config_init(*force),
             Self::Show { format } => config_show(*format),

@@ -120,8 +120,7 @@ impl XtaskCommand for JobsCommand {
 }
 
 fn format_job_pid(pid: Option<u32>) -> String {
-    pid.map(|pid| pid.to_string())
-        .unwrap_or_else(|| "<unavailable>".to_string())
+    pid.map_or_else(|| "<unavailable>".to_string(), |pid| pid.to_string())
 }
 
 fn execute_list(

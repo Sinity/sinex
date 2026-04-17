@@ -554,7 +554,7 @@ impl<'db> HistoryAnalysis<'db> {
         for pkg in &packages {
             results.push(self.package_health(pkg)?);
         }
-        results.sort_by(|a, b| b.diagnostic_count.cmp(&a.diagnostic_count));
+        results.sort_by_key(|p| std::cmp::Reverse(p.diagnostic_count));
         Ok(results)
     }
 
@@ -662,14 +662,7 @@ impl<'db> HistoryAnalysis<'db> {
         Ok(self.build_workspace_health_report(packages, counts, &baseline_velocity))
     }
 
-    pub fn analytics_snapshot(
-        &self,
-    ) -> Result<(
-        WorkspaceHealthReport,
-        Vec<VelocityTrend>,
-        Vec<VelocityTrend>,
-        Vec<Recommendation>,
-    )> {
+    pub fn analytics_snapshot(&self) -> Result<AnalyticsSnapshot> {
         let packages = self.all_packages_health()?;
         let counts = self.db.get_current_diagnostic_counts()?;
         let loop_velocity = self.loop_velocity_trends()?;
@@ -677,17 +670,15 @@ impl<'db> HistoryAnalysis<'db> {
         let health = self.build_workspace_health_report(packages, counts, &baseline_velocity);
         let recommendations =
             self.build_recommendations(&health, &baseline_velocity, &loop_velocity)?;
-        Ok((health, loop_velocity, baseline_velocity, recommendations))
+        Ok(AnalyticsSnapshot {
+            health,
+            loop_velocity,
+            baseline_velocity,
+            recommendations,
+        })
     }
 
-    pub fn status_summary_snapshot(
-        &self,
-    ) -> Result<(
-        WorkspaceHealthReport,
-        Vec<VelocityTrend>,
-        Vec<VelocityTrend>,
-        Vec<Recommendation>,
-    )> {
+    pub fn status_summary_snapshot(&self) -> Result<AnalyticsSnapshot> {
         let counts = self.db.get_current_diagnostic_counts()?;
         let loop_velocity = self.loop_velocity_trends()?;
         let baseline_velocity = self.workspace_baseline_velocity_trends()?;
@@ -702,7 +693,12 @@ impl<'db> HistoryAnalysis<'db> {
         );
         let recommendations =
             self.build_status_recommendations(&health, &baseline_velocity, &loop_velocity);
-        Ok((health, loop_velocity, baseline_velocity, recommendations))
+        Ok(AnalyticsSnapshot {
+            health,
+            loop_velocity,
+            baseline_velocity,
+            recommendations,
+        })
     }
 
     fn build_workspace_health_report(
@@ -737,6 +733,10 @@ impl<'db> HistoryAnalysis<'db> {
         )
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "counts fields extracted immediately"
+    )]
     fn build_workspace_health_report_from_scalars(
         &self,
         counts: DiagnosticCounts,
@@ -744,7 +744,7 @@ impl<'db> HistoryAnalysis<'db> {
         avg_test_pass_rate: Option<f64>,
         packages_with_errors: usize,
         test_packages: usize,
-        packages: Vec<PackageHealth>,
+        #[allow(clippy::needless_pass_by_value)] packages: Vec<PackageHealth>,
     ) -> WorkspaceHealthReport {
         let error_count = counts.errors;
         let warning_count = counts.warnings;
@@ -752,9 +752,7 @@ impl<'db> HistoryAnalysis<'db> {
 
         let build_score = ((100i32 - (error_count as i32 * 10) - (warning_count as i32 / 5))
             .clamp(0, 100)) as u32;
-        let test_score = avg_test_pass_rate
-            .map(|avg| (avg * 100.0).round() as u32)
-            .unwrap_or(75);
+        let test_score = avg_test_pass_rate.map_or(75, |avg| (avg * 100.0).round() as u32);
         let velocity_score = Self::compute_velocity_score(velocity_trends);
         let score =
             (build_score as f64 * 0.5 + test_score as f64 * 0.3 + velocity_score as f64 * 0.2)
@@ -1162,7 +1160,7 @@ impl<'db> HistoryAnalysis<'db> {
                 },
             })
             .collect();
-        hotspots.sort_by(|a, b| b.occurrences.cmp(&a.occurrences));
+        hotspots.sort_by_key(|h| std::cmp::Reverse(h.occurrences));
         hotspots.truncate(limit);
         Ok(hotspots)
     }
@@ -1173,7 +1171,7 @@ impl<'db> HistoryAnalysis<'db> {
         let flaky_tests = self.db.get_flaky_tests(200)?;
 
         let mut results = Vec::new();
-        for pkg in packages.iter() {
+        for pkg in &packages {
             let total_7d = TestResultQuery::new().package(pkg).days(7).count(self.db)?;
             if total_7d == 0 {
                 continue;
@@ -1244,8 +1242,7 @@ impl<'db> HistoryAnalysis<'db> {
     /// Each recommendation includes the exact `xtask` command to run next.
     /// Sorted: critical → warning → info.
     pub fn recommendations(&self) -> Result<Vec<Recommendation>> {
-        let (_, _, _, recommendations) = self.analytics_snapshot()?;
-        Ok(recommendations)
+        Ok(self.analytics_snapshot()?.recommendations)
     }
 
     fn build_recommendations(
@@ -1280,7 +1277,7 @@ impl<'db> HistoryAnalysis<'db> {
         let failing_pkgs: Vec<_> = health
             .packages
             .iter()
-            .filter(|p| p.test_pass_rate.map(|r| r < 0.9).unwrap_or(false))
+            .filter(|p| p.test_pass_rate.is_some_and(|r| r < 0.9))
             .collect();
 
         let packages_with_tests = health
@@ -1377,8 +1374,7 @@ impl<'db> HistoryAnalysis<'db> {
                 severity: "info".to_string(),
                 category: "build".to_string(),
                 description: format!(
-                    "{} chronic diagnostic(s) have persisted across 3+ builds",
-                    chronic_count
+                    "{chronic_count} chronic diagnostic(s) have persisted across 3+ builds"
                 ),
                 action: "xtask history diagnostics --lifecycle --lifecycle-status chronic"
                     .to_string(),
@@ -1492,6 +1488,19 @@ impl<'db> HistoryAnalysis<'db> {
 }
 
 // ─── Analytics output types ──────────────────────────────────────────────────
+
+/// Snapshot of workspace analytics: health, recent/baseline velocity, and derived recommendations.
+///
+/// Returned by `HistoryAnalysis::analytics_snapshot` and `status_summary_snapshot`. The two
+/// methods compute the same shape via different paths: `analytics_snapshot` is the full fan-out
+/// that walks every package; `status_summary_snapshot` is the fast path used by `xtask status`.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyticsSnapshot {
+    pub health: WorkspaceHealthReport,
+    pub loop_velocity: Vec<VelocityTrend>,
+    pub baseline_velocity: Vec<VelocityTrend>,
+    pub recommendations: Vec<Recommendation>,
+}
 
 /// Composite workspace health report.
 #[derive(Debug, Clone, Serialize)]
@@ -1751,8 +1760,10 @@ impl HistoryDb {
         bound_params.push(Box::new(q.offset as i64));
 
         let mut stmt = conn.prepare(&sql)?;
-        let param_refs: Vec<&dyn rusqlite::ToSql> =
-            bound_params.iter().map(|value| value.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = bound_params
+            .iter()
+            .map(std::convert::AsRef::as_ref)
+            .collect();
         let rows = stmt.query_map(rusqlite::params_from_iter(param_refs), row_to_invocation)?;
 
         let mut results = Vec::new();
@@ -2023,13 +2034,12 @@ mod tests {
         )?;
 
         let analysis = HistoryAnalysis::new(&db);
-        let (health, _loop_velocity, _baseline_velocity, recommendations) =
-            analysis.status_summary_snapshot()?;
+        let snapshot = analysis.status_summary_snapshot()?;
 
-        assert!(health.packages.is_empty());
-        assert_eq!(health.avg_test_pass_rate, Some(1.0));
-        assert!(health.score > 0);
-        assert!(recommendations.is_empty());
+        assert!(snapshot.health.packages.is_empty());
+        assert_eq!(snapshot.health.avg_test_pass_rate, Some(1.0));
+        assert!(snapshot.health.score > 0);
+        assert!(snapshot.recommendations.is_empty());
         Ok(())
     }
 }

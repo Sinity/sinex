@@ -39,7 +39,7 @@ sinex_proptest! {
         ctx in arbitrary_context()
     ) -> TestResult<()> {
         let io_error = std::io::Error::new(kind, msg.clone());
-        let node_error = io_error_with_context(io_error, &ctx);
+        let node_error = io_error_with_context(&io_error, &ctx);
 
         if let SinexError::Io(details) = node_error {
             let rendered = details.message();
@@ -67,7 +67,7 @@ sinex_proptest! {
     ) -> TestResult<()> {
         if let Err(_err) = std::str::from_utf8(&bytes) {
             let node_error = utf8_error_with_context(
-                String::from_utf8(bytes).unwrap_err(),
+                &String::from_utf8(bytes).unwrap_err(),
                 &ctx
             );
             if let SinexError::Processing(details) = node_error {
@@ -88,7 +88,7 @@ sinex_proptest! {
     ) -> TestResult<()> {
         let malformed = "{\"key\":}";
         let err = serde_json::from_str::<serde_json::Value>(malformed).unwrap_err();
-        let node_error = json_error_with_context(err, &ctx);
+        let node_error = json_error_with_context(&err, &ctx);
         if let SinexError::Processing(details) = node_error {
             let rendered = details.message();
             if !ctx.is_empty() {

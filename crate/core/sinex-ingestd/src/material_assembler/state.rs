@@ -317,7 +317,7 @@ pub(super) async fn handle_begin(
     let material_kind = begin.material_kind;
     let source_identifier = begin.source_identifier;
 
-    let state_handle = if let Some(existing) = assembler.get_state_handle(&material_id).await {
+    let state_handle = if let Some(existing) = assembler.get_state_handle(&material_id) {
         existing
     } else {
         if assembler.material_is_terminal(material_id).await? {
@@ -329,13 +329,13 @@ pub(super) async fn handle_begin(
         }
 
         let mut state = assembler.create_placeholder_state(material_id).await?;
-        state.material_kind = material_kind.clone();
-        state.source_identifier = source_identifier.clone();
+        state.material_kind.clone_from(&material_kind);
+        state.source_identifier.clone_from(&source_identifier);
         state.metadata = metadata.clone();
         state.started_at = started_at;
         state.phase = AssemblyPhase::Accumulating;
         assembler.stats_inc_started(); // Track new assembly start
-        assembler.insert_state_handle(material_id, state).await
+        assembler.insert_state_handle(material_id, state)
     };
 
     let merged_metadata = {

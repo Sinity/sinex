@@ -74,7 +74,7 @@ pub fn read_activitywatch_history(
     fn skip_row(
         path: &Utf8PathBuf,
         row_id: i64,
-        error: rusqlite::Error,
+        error: &rusqlite::Error,
     ) -> Option<ActivityWatchHistoryEntry> {
         warn!(
             path = %path,
@@ -92,24 +92,24 @@ pub fn read_activitywatch_history(
         let row_id: i64 = row.get(0)?;
         let bucket_id: String = match row.get(1) {
             Ok(value) => value,
-            Err(error) => return Ok(skip_row(path, row_id, error)),
+            Err(error) => return Ok(skip_row(path, row_id, &error)),
         };
         let (kind, host) = classify_bucket(&bucket_id);
         let start_ns: i64 = match row.get(2) {
             Ok(value) => value,
-            Err(error) => return Ok(skip_row(path, row_id, error)),
+            Err(error) => return Ok(skip_row(path, row_id, &error)),
         };
         let end_ns: i64 = match row.get(3) {
             Ok(value) => value,
-            Err(error) => return Ok(skip_row(path, row_id, error)),
+            Err(error) => return Ok(skip_row(path, row_id, &error)),
         };
         let started_at = match parse_timestamp_ns(row_id, "starttime", 2, start_ns) {
             Ok(value) => value,
-            Err(error) => return Ok(skip_row(path, row_id, error)),
+            Err(error) => return Ok(skip_row(path, row_id, &error)),
         };
         let ended_at = match parse_timestamp_ns(row_id, "endtime", 3, end_ns) {
             Ok(value) => value,
-            Err(error) => return Ok(skip_row(path, row_id, error)),
+            Err(error) => return Ok(skip_row(path, row_id, &error)),
         };
         let duration_ns = (i128::from(end_ns) - i128::from(start_ns)).max(0);
         let duration_ms = (duration_ns / 1_000_000) as u64;
@@ -118,7 +118,7 @@ pub fn read_activitywatch_history(
         let payload = match raw_payload {
             Some(value) => match parse_activitywatch_payload(row_id, &value) {
                 Ok(payload) => payload,
-                Err(error) => return Ok(skip_row(path, row_id, error)),
+                Err(error) => return Ok(skip_row(path, row_id, &error)),
             },
             None => JsonValue::Null,
         };

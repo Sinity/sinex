@@ -4,6 +4,10 @@ pub type DbResult<T> = Result<T, SinexError>;
 
 /// Convert a `SQLx` error into a `SinexError` with full error chain preserved
 #[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "sqlx::Error needs to be owned for with_std_error"
+)]
 pub fn db_error(e: sqlx::Error, context_msg: impl ToString) -> SinexError {
     let context_msg = context_msg.to_string();
     let mut err = match &e {

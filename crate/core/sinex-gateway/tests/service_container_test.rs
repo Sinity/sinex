@@ -19,10 +19,7 @@ fn configure_gateway_env(
     ctx: &TestContext,
     annex_path: &std::path::Path,
 ) -> TestResult<()> {
-    env.set(
-        "SINEX_NATS_URL",
-        &ctx.nats_handle()?.client_url().to_string(),
-    );
+    env.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
     set_annex_path(env, annex_path);
     Ok(())
 }
@@ -149,10 +146,7 @@ async fn test_service_container_clone(ctx: TestContext) -> TestResult<()> {
 async fn test_service_container_annex_path_config(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let mut env = EnvGuard::new();
-    env.set(
-        "SINEX_NATS_URL",
-        &ctx.nats_handle()?.client_url().to_string(),
-    );
+    env.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
 
     // Test with custom annex path
     let custom_dir = TempDir::new()?;

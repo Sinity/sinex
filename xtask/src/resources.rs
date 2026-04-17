@@ -73,8 +73,7 @@ impl ResourceStatus {
             && available_gb < required_gb as f64
         {
             warnings.push(format!(
-                "Low memory: {:.1}GB available, {}GB recommended",
-                available_gb, required_gb
+                "Low memory: {available_gb:.1}GB available, {required_gb}GB recommended",
             ));
         }
 
@@ -82,8 +81,8 @@ impl ResourceStatus {
             && !self.load_acceptable()
         {
             warnings.push(format!(
-                "High system load: {:.1} (1min avg) on {} CPUs",
-                load_1min, self.cpu_count
+                "High system load: {load_1min:.1} (1min avg) on {} CPUs",
+                self.cpu_count
             ));
         }
 
@@ -101,10 +100,10 @@ impl ResourceStatus {
             (Some(available), Some(total)) => format!("{available:.1}/{total:.1}GB free"),
             _ => "unavailable".to_string(),
         };
-        let load = self
-            .load_1min
-            .map(|load_1min| format!("{load_1min:.2}"))
-            .unwrap_or_else(|| "unavailable".to_string());
+        let load = self.load_1min.map_or_else(
+            || "unavailable".to_string(),
+            |load_1min| format!("{load_1min:.2}"),
+        );
         format!("Memory: {memory}, Load: {load} ({} CPUs)", self.cpu_count)
     }
 }

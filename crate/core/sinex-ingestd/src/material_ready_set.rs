@@ -40,12 +40,12 @@ use crate::{IngestdResult, SinexError};
 const SEED_WINDOW_HOURS: f64 = 1.0;
 /// Retain ready material IDs for long enough to cover cross-stream lag and short restarts,
 /// then evict them so the coordination set does not grow forever.
-const READY_RETENTION: Duration = Duration::from_secs(6 * 60 * 60);
+const READY_RETENTION: Duration = Duration::from_hours(6);
 /// Opportunistic sweep cadence. Eviction is O(n), so keep it infrequent.
 const SWEEP_INTERVAL: u64 = 1024;
 /// Background maintenance cadence used by ingestd to keep the ready-set bounded
 /// even when the process goes quiet after a burst.
-const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const MAINTENANCE_INTERVAL: Duration = Duration::from_mins(5);
 
 /// Shared set tracking which source materials have been registered in the database.
 ///
@@ -203,7 +203,7 @@ impl MaterialReadySet {
 
     fn maybe_evict_stale(&self) {
         let count = self.sweep_counter.fetch_add(1, Ordering::Relaxed) + 1;
-        if count % self.sweep_interval == 0 {
+        if count.is_multiple_of(self.sweep_interval) {
             let removed = self.purge_stale();
             if removed > 0 {
                 debug!(
@@ -216,6 +216,7 @@ impl MaterialReadySet {
     }
 
     /// Remove all expired entries immediately.
+    #[must_use]
     pub fn purge_stale(&self) -> usize {
         let now = Instant::now();
         let expired: Vec<Uuid> = self

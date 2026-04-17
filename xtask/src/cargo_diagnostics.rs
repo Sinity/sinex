@@ -291,19 +291,17 @@ fn progress_target_packages(package_args: &[&str]) -> Option<std::collections::H
 
     if workspace_mode {
         // Use cargo metadata to count workspace packages (no rustc involved)
-        let output = match cargo_command()
+        let Ok(output) = cargo_command()
             .args(["metadata", "--no-deps", "--format-version", "1"])
             .output()
-        {
-            Ok(o) => o,
-            Err(_) => return None,
+        else {
+            return None;
         };
         if !output.status.success() {
             return None;
         }
-        let text = match std::str::from_utf8(&output.stdout) {
-            Ok(s) => s,
-            Err(_) => return None,
+        let Ok(text) = std::str::from_utf8(&output.stdout) else {
+            return None;
         };
         let json: serde_json::Value = match serde_json::from_str(text) {
             Ok(v) => v,
@@ -582,7 +580,7 @@ pub fn parse_cargo_json_output(
             {
                 // Attach package attribution from the outer JSON envelope
                 if diag.package.is_none() {
-                    diag.package = package.clone();
+                    diag.package.clone_from(&package);
                 }
                 diagnostics.push(diag);
             }
@@ -684,8 +682,7 @@ fn parse_diagnostic_message(msg: &serde_json::Value) -> Option<CompilerDiagnosti
     };
 
     // Extract suggestion text and machine-applicable fix metadata from children
-    let (suggestion, fix_replacement, fix_applicability, fix_byte_start, fix_byte_end) =
-        extract_fix_from_children(msg);
+    let fix = extract_fix_from_children(msg);
 
     Some(CompilerDiagnostic {
         level: level.to_string(),
@@ -695,13 +692,23 @@ fn parse_diagnostic_message(msg: &serde_json::Value) -> Option<CompilerDiagnosti
         line,
         column,
         rendered,
-        suggestion,
+        suggestion: fix.suggestion,
         package: None, // Set by caller from outer JSON envelope
-        fix_replacement,
-        fix_applicability,
-        fix_byte_start,
-        fix_byte_end,
+        fix_replacement: fix.replacement,
+        fix_applicability: fix.applicability,
+        fix_byte_start: fix.byte_start,
+        fix_byte_end: fix.byte_end,
     })
+}
+
+/// Suggestion and machine-applicable fix metadata extracted from a diagnostic's `children`.
+#[derive(Default)]
+struct FixSuggestion {
+    suggestion: Option<String>,
+    replacement: Option<String>,
+    applicability: Option<String>,
+    byte_start: Option<u32>,
+    byte_end: Option<u32>,
 }
 
 /// Extract suggestion text and machine-applicable fix metadata from diagnostic children.
@@ -712,18 +719,9 @@ fn parse_diagnostic_message(msg: &serde_json::Value) -> Option<CompilerDiagnosti
 /// - `byte_start` / `byte_end`: byte offsets in the source file
 ///
 /// We prefer `MachineApplicable` suggestions when available, falling back to any help message.
-fn extract_fix_from_children(
-    msg: &serde_json::Value,
-) -> (
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<u32>,
-    Option<u32>,
-) {
-    let children = match msg.get("children").and_then(|c| c.as_array()) {
-        Some(c) => c,
-        None => return (None, None, None, None, None),
+fn extract_fix_from_children(msg: &serde_json::Value) -> FixSuggestion {
+    let Some(children) = msg.get("children").and_then(|c| c.as_array()) else {
+        return FixSuggestion::default();
     };
 
     let mut suggestion_text: Option<String> = None;
@@ -779,14 +777,17 @@ fn extract_fix_from_children(
     }
 
     match best_fix {
-        Some((replacement, applicability, byte_start, byte_end)) => (
-            suggestion_text,
-            Some(replacement),
-            Some(applicability),
+        Some((replacement, applicability, byte_start, byte_end)) => FixSuggestion {
+            suggestion: suggestion_text,
+            replacement: Some(replacement),
+            applicability: Some(applicability),
             byte_start,
             byte_end,
-        ),
-        None => (suggestion_text, None, None, None, None),
+        },
+        None => FixSuggestion {
+            suggestion: suggestion_text,
+            ..FixSuggestion::default()
+        },
     }
 }
 

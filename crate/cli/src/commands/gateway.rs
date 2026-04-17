@@ -22,7 +22,7 @@ pub enum GatewayCommands {
     /// Publish a single event through the gateway (end-to-end smoke test)
     ///
     /// Sends the event via the events.ingest RPC endpoint, which publishes it
-    /// directly to NATS JetStream for ingestd to pick up and write to the DB.
+    /// directly to NATS `JetStream` for ingestd to pick up and write to the DB.
     Ingest {
         /// Event source identifier (e.g. "fs-watcher" or "test")
         #[arg(long)]

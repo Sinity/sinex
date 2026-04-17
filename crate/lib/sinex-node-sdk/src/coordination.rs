@@ -183,7 +183,7 @@ mod tests {
     async fn coordination_failure_counter_increments(ctx: TestContext) -> TestResult<()> {
         let harness = build_runtime(&ctx, "coordination-test").await?;
         let coordination =
-            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string())?;
 
         let before = coordination.leadership_failures.get();
         coordination.record_coordination_failure("test", "simulated");
@@ -197,7 +197,7 @@ mod tests {
     async fn current_metadata_refreshes_last_heartbeat(ctx: TestContext) -> TestResult<()> {
         let harness = build_runtime(&ctx, "coordination-heartbeat").await?;
         let coordination =
-            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string())?;
 
         let first = coordination.current_metadata();
         tokio::time::sleep(Duration::from_millis(1100)).await;
@@ -274,7 +274,7 @@ mod tests {
     async fn list_instances_filters_stale_metadata(ctx: TestContext) -> TestResult<()> {
         let harness = build_runtime(&ctx, "coordination-filter").await?;
         let coordination =
-            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string())?;
         let fresh = coordination.current_metadata();
         coordination.kv_client.register_instance(&fresh).await?;
 
@@ -317,7 +317,7 @@ mod tests {
     ) -> TestResult<()> {
         let harness = build_runtime(&ctx, "coordination-handoff-filter").await?;
         let coordination =
-            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string())?;
         let fresh = coordination.current_metadata();
 
         coordination
@@ -348,7 +348,7 @@ mod tests {
     ) -> TestResult<()> {
         let harness = build_runtime(&ctx, "coordination-leader-only-handoff").await?;
         let coordination =
-            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string())?;
         let fresh = coordination.current_metadata();
         coordination.kv_client.register_instance(&fresh).await?;
         coordination
@@ -379,7 +379,7 @@ mod tests {
     ) -> TestResult<()> {
         let harness = build_runtime(&ctx, "coordination-handoff-payload").await?;
         let coordination =
-            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string())?;
         let subject = format!(
             "sinex.coordination.{}.handoff",
             coordination.instance.service_name
@@ -408,7 +408,7 @@ mod tests {
     async fn wait_for_handoff_ready_ignores_unrelated_messages(ctx: TestContext) -> TestResult<()> {
         let harness = build_runtime(&ctx, "coordination-handoff-ready-filter").await?;
         let coordination =
-            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string())?;
         let service = coordination.instance.service_name.clone();
         let requester = coordination.instance.instance_id.clone();
         let requester_version = coordination.instance.version.clone();
@@ -477,7 +477,7 @@ mod tests {
     async fn wait_for_handoff_ready_times_out_honestly(ctx: TestContext) -> TestResult<()> {
         let harness = build_runtime(&ctx, "coordination-handoff-timeout").await?;
         let coordination =
-            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string())?;
         let mut sub = coordination.subscribe_handoff_ready().await?;
         let target_version = "0.0.1".parse().expect("valid version");
 
@@ -504,7 +504,7 @@ mod tests {
     ) -> TestResult<()> {
         let harness = build_runtime(&ctx, "coordination-handoff-roundtrip").await?;
         let coordination =
-            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string())?;
         let self_metadata = coordination.current_metadata();
         coordination
             .kv_client
@@ -569,7 +569,7 @@ mod tests {
     ) -> TestResult<()> {
         let harness = build_runtime(&ctx, "coordination-leader-heartbeat").await?;
         let mut coordination =
-            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string())?;
         let initial_last_heartbeat = coordination.current_metadata().last_heartbeat;
         let instance_id = coordination.instance.instance_id.clone();
         let kv_client = coordination.kv_client.clone();
@@ -606,7 +606,7 @@ mod tests {
     ) -> TestResult<()> {
         let harness = build_runtime(&ctx, "coordination-single-process-future").await?;
         let mut coordination =
-            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string())?;
         let starts = Arc::new(AtomicUsize::new(0));
         let starts_for_task = starts.clone();
 
@@ -643,7 +643,7 @@ mod tests {
     ) -> TestResult<()> {
         let harness = build_runtime(&ctx, "coordination-clean-exit").await?;
         let mut coordination =
-            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string())?;
         let instance_id = coordination.instance.instance_id.clone();
         let kv_client = coordination.kv_client.clone();
 
@@ -664,7 +664,7 @@ mod tests {
     ) -> TestResult<()> {
         let harness = build_runtime(&ctx, "coordination-fatal-exit").await?;
         let mut coordination =
-            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
+            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string())?;
         let instance_id = coordination.instance.instance_id.clone();
         let kv_client = coordination.kv_client.clone();
 
@@ -954,7 +954,11 @@ impl NodeCoordination {
         );
     }
 
-    pub async fn new(
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "Public API: callers commonly pass owned Strings"
+    )]
+    pub fn new(
         service_name: String,
         instance_id: String,
         nats_client: async_nats::Client,
@@ -982,7 +986,7 @@ impl NodeCoordination {
         })
     }
 
-    pub async fn from_runtime(
+    pub fn from_runtime(
         runtime: &NodeRuntimeState,
         instance_id: String,
     ) -> crate::NodeResult<Self> {
@@ -997,7 +1001,6 @@ impl NodeCoordination {
             nats_client,
             runtime,
         )
-        .await
     }
 
     /// Run the coordination loop - main entry point
@@ -1249,22 +1252,18 @@ impl NodeCoordination {
 
                // Handoffs
                request = handoff_rx.recv() => {
-                   match request {
-                       Some(request) => {
-                           info!("Received handoff request");
-                           self.handle_graceful_handoff(request).await?;
-                           return Ok(LeaderLoopOutcome::Exit); // Exit after handoff
-                       }
-                       None => {
-                           warn!(service = %self.instance.service_name,
-                               instance_id = %self.instance.instance_id,
-                               "Handoff monitor terminated unexpectedly; cannot receive handoff requests"
-                           );
-                           return Err(SinexError::channel_receive(
-                               "Handoff monitor channel closed while leader is running",
-                           ));
-                       }
+                   if let Some(request) = request {
+                       info!("Received handoff request");
+                       self.handle_graceful_handoff(request).await?;
+                       return Ok(LeaderLoopOutcome::Exit); // Exit after handoff
                    }
+                   warn!(service = %self.instance.service_name,
+                       instance_id = %self.instance.instance_id,
+                       "Handoff monitor terminated unexpectedly; cannot receive handoff requests"
+                   );
+                   return Err(SinexError::channel_receive(
+                       "Handoff monitor channel closed while leader is running",
+                   ));
                }
             }
         }
@@ -1555,7 +1554,7 @@ impl NodeCoordination {
     ///
     /// # Example
     /// ```ignore
-    /// let coordinator = NodeCoordination::from_runtime(&runtime, instance_id).await?;
+    /// let coordinator = NodeCoordination::from_runtime(&runtime, instance_id)?;
     /// if coordinator.maybe_initiate_handoff().await? {
     ///     info!("Handoff completed, proceeding with startup");
     /// }

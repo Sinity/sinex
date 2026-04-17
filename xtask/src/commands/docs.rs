@@ -384,9 +384,9 @@ fn resolve_transclusions(
             let raw_path = &trimmed[1..]; // strip leading @
 
             // Expand ~ to $HOME
-            let expanded = if raw_path.starts_with('~') {
+            let expanded = if let Some(stripped) = raw_path.strip_prefix('~') {
                 let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
-                format!("{home}{}", &raw_path[1..])
+                format!("{home}{stripped}")
             } else {
                 raw_path.to_string()
             };
@@ -441,9 +441,7 @@ fn execute_agents(
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surface = generated_agents_surface(&workspace)?;
-    let dest = output
-        .map(|path| path.to_path_buf())
-        .unwrap_or(surface.path);
+    let dest = output.map_or(surface.path, std::path::Path::to_path_buf);
     write_generated_output(
         &dest,
         &surface.content,
@@ -463,9 +461,7 @@ fn execute_command_guide(
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surface = generated_command_guide_surface(&workspace);
-    let dest = output
-        .map(|path| path.to_path_buf())
-        .unwrap_or(surface.path);
+    let dest = output.map_or(surface.path, std::path::Path::to_path_buf);
 
     write_generated_output(
         &dest,
@@ -486,9 +482,7 @@ fn execute_command_reference(
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surface = generated_command_reference_surface(&workspace);
-    let dest = output
-        .map(|path| path.to_path_buf())
-        .unwrap_or(surface.path);
+    let dest = output.map_or(surface.path, std::path::Path::to_path_buf);
 
     write_generated_output(
         &dest,
@@ -505,11 +499,8 @@ fn execute_sync(ctx: &CommandContext) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surfaces = generated_surfaces(&workspace)?;
     let outcomes = sync_generated_surfaces(&surfaces, false, ctx)?;
-    let schema_bundle = sync_schema_bundle(
-        generated_schema_bundle(&workspace, &workspace.join("schemas"))?,
-        false,
-        ctx,
-    )?;
+    let schema_bundle_result = generated_schema_bundle(&workspace, &workspace.join("schemas"))?;
+    let schema_bundle = sync_schema_bundle(&schema_bundle_result, false, ctx)?;
 
     Ok(CommandResult::success()
         .with_message("Generated repo surfaces synchronized")
@@ -524,11 +515,8 @@ fn execute_check(ctx: &CommandContext) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surfaces = generated_surfaces(&workspace)?;
     let outcomes = sync_generated_surfaces(&surfaces, true, ctx)?;
-    let schema_bundle = sync_schema_bundle(
-        generated_schema_bundle(&workspace, &workspace.join("schemas"))?,
-        true,
-        ctx,
-    )?;
+    let schema_bundle_result = generated_schema_bundle(&workspace, &workspace.join("schemas"))?;
+    let schema_bundle = sync_schema_bundle(&schema_bundle_result, true, ctx)?;
     let changed = outcomes.iter().any(|outcome| outcome.changed) || schema_bundle.changed;
 
     let result = if changed {
@@ -673,9 +661,7 @@ fn execute_ast_grep_catalog(
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surface = generated_ast_grep_catalog_surface(&workspace)?;
-    let dest = output
-        .map(|path| path.to_path_buf())
-        .unwrap_or(surface.path);
+    let dest = output.map_or(surface.path, std::path::Path::to_path_buf);
 
     write_generated_output(
         &dest,
@@ -694,10 +680,9 @@ fn execute_schema_bundle(
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
-    let root = output_dir
-        .map(std::path::Path::to_path_buf)
-        .unwrap_or_else(|| workspace.join("schemas"));
-    let outcome = sync_schema_bundle(generated_schema_bundle(&workspace, &root)?, check_only, ctx)?;
+    let root = output_dir.map_or_else(|| workspace.join("schemas"), std::path::Path::to_path_buf);
+    let schema_bundle_result = generated_schema_bundle(&workspace, &root)?;
+    let outcome = sync_schema_bundle(&schema_bundle_result, check_only, ctx)?;
 
     let result = if check_only && outcome.changed {
         CommandResult::failure(crate::output::StructuredError {
@@ -886,9 +871,7 @@ fn load_ast_grep_rules(rules_dir: &std::path::Path) -> Result<Vec<AstGrepRuleCat
             .wrap_err_with(|| format!("Failed to read {}", path.display()))?;
         let mut rule: AstGrepRuleCatalogEntry = serde_yaml::from_str(&content)
             .wrap_err_with(|| format!("Failed to parse {}", path.display()))?;
-        rule.ignores
-            .get_or_insert_with(Vec::new)
-            .sort_by(|left, right| left.cmp(right));
+        rule.ignores.get_or_insert_with(Vec::new).sort();
         rules.push(rule);
     }
 
@@ -979,7 +962,7 @@ fn sync_generated_surfaces(
 }
 
 fn sync_schema_bundle(
-    bundle: SchemaBundle,
+    bundle: &SchemaBundle,
     check_only: bool,
     ctx: &CommandContext,
 ) -> Result<SchemaBundleOutcome> {

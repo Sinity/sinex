@@ -53,6 +53,7 @@ struct MaterialWriteRequest {
 /// Serializes all NATS I/O through a single task so callers never hold a lock
 /// across an async NATS write.  The task exits (and finalizes the handle) when
 /// it receives a finalize sentinel (`payload == None`).
+#[allow(clippy::needless_pass_by_value)]
 async fn material_writer_task(
     acquisition: Arc<AcquisitionManager>,
     mut handle: SourceMaterialHandle,
@@ -61,6 +62,10 @@ async fn material_writer_task(
     let mut bytes_written: i64 = 0;
 
     while let Some(req) = rx.recv().await {
+        #[allow(
+            clippy::single_match_else,
+            reason = "Two-arm match makes the append/finalize dichotomy visible; the finalize arm returns"
+        )]
         match req.payload {
             // ── normal append ────────────────────────────────────────────
             Some(payload_bytes) => {

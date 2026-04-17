@@ -110,6 +110,80 @@ impl EphemeralNatsBuilder {
 }
 
 impl EphemeralNatsBuilder {
+    fn client_url(&self, port: u16) -> String {
+        if self.tls.is_some() {
+            format!("tls://127.0.0.1:{port}")
+        } else {
+            format!("127.0.0.1:{port}")
+        }
+    }
+
+    fn command_for_port(
+        &self,
+        binary: &Path,
+        store_dir: &Path,
+        port: u16,
+        log_file: &std::fs::File,
+        log_err: &std::fs::File,
+    ) -> Result<Command> {
+        let mut cmd = Command::new(binary);
+        // Auto-kill the nats-server when the parent test process exits.
+        // Without this, shared NATS instances (held in a static registry)
+        // become orphans because Rust doesn't guarantee static destructors.
+        #[cfg(target_os = "linux")]
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+                Ok(())
+            });
+        }
+        cmd.arg("--jetstream")
+            .arg("--store_dir")
+            .arg(store_dir)
+            .arg("--port")
+            .arg(port.to_string())
+            .arg("--http_port")
+            .arg("0")
+            .stdout(std::process::Stdio::from(log_file.try_clone()?))
+            .stderr(std::process::Stdio::from(log_err.try_clone()?));
+
+        if let Some(cfg) = &self.config_file {
+            cmd.arg("--config").arg(cfg);
+        }
+
+        if let Some(tls) = &self.tls {
+            cmd.arg("--tls")
+                .arg("--tlscert")
+                .arg(&tls.server_cert)
+                .arg("--tlskey")
+                .arg(&tls.server_key)
+                .arg("--tlscacert")
+                .arg(&tls.ca_cert)
+                .arg("--tlsverify");
+        }
+
+        if let Some(token) = &self.token {
+            cmd.arg("--auth").arg(token);
+        }
+
+        Ok(cmd)
+    }
+
+    async fn cleanup_failed_child(child: &mut Child) {
+        if let Err(error) = child.start_kill() {
+            warn!(error = %error, "Failed to start-kill NATS child after readiness failure");
+        }
+        match timeout(Duration::from_secs(1), child.wait()).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                warn!(error = %error, "Failed waiting for NATS child after readiness failure");
+            }
+            Err(_) => {
+                warn!("Timed out waiting for NATS child after readiness failure");
+            }
+        }
+    }
+
     pub async fn start(self) -> Result<EphemeralNats> {
         let binary = EphemeralNats::resolve_binary()?;
 
@@ -127,73 +201,16 @@ impl EphemeralNatsBuilder {
             loop {
                 attempt += 1;
                 let port = EphemeralNats::reserve_port()?;
-                // If TLS is enabled, we might need a different scheme,
-                // but for raw TCP connection checks "127.0.0.1:port" is usually fine.
-                // However, the client URL exposed to tests needs to match scheme.
-                let url = if self.tls.is_some() {
-                    format!("tls://127.0.0.1:{port}")
-                } else {
-                    format!("127.0.0.1:{port}")
-                };
-
-                let mut cmd = Command::new(&binary);
-                // Auto-kill the nats-server when the parent test process exits.
-                // Without this, shared NATS instances (held in a static registry)
-                // become orphans because Rust doesn't guarantee static destructors.
-                #[cfg(target_os = "linux")]
-                unsafe {
-                    cmd.pre_exec(|| {
-                        libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
-                        Ok(())
-                    });
-                }
-                cmd.arg("--jetstream")
-                    .arg("--store_dir")
-                    .arg(store_dir.path())
-                    .arg("--port")
-                    .arg(port.to_string())
-                    .arg("--http_port")
-                    .arg("0")
-                    .stdout(std::process::Stdio::from(log_file.try_clone()?))
-                    .stderr(std::process::Stdio::from(log_err.try_clone()?));
-
-                if let Some(cfg) = &self.config_file {
-                    cmd.arg("--config").arg(cfg);
-                }
-
-                if let Some(tls) = &self.tls {
-                    cmd.arg("--tls")
-                        .arg("--tlscert")
-                        .arg(&tls.server_cert)
-                        .arg("--tlskey")
-                        .arg(&tls.server_key)
-                        .arg("--tlscacert")
-                        .arg(&tls.ca_cert)
-                        .arg("--tlsverify");
-                }
-
-                if let Some(token) = &self.token {
-                    cmd.arg("--auth").arg(token);
-                }
-
+                let url = self.client_url(port);
+                let mut cmd =
+                    self.command_for_port(&binary, store_dir.path(), port, &log_file, &log_err)?;
                 let mut child = cmd.spawn()?;
 
                 // We pass the raw port for the connectivity check.
                 match EphemeralNats::wait_for_ready(port, &mut child).await {
                     Ok(()) => break (url, child),
                     Err(err) => {
-                        if let Err(error) = child.start_kill() {
-                            warn!(error = %error, "Failed to start-kill NATS child after readiness failure");
-                        }
-                        match timeout(Duration::from_secs(1), child.wait()).await {
-                            Ok(Ok(_)) => {}
-                            Ok(Err(error)) => {
-                                warn!(error = %error, "Failed waiting for NATS child after readiness failure");
-                            }
-                            Err(_) => {
-                                warn!("Timed out waiting for NATS child after readiness failure");
-                            }
-                        }
+                        Self::cleanup_failed_child(&mut child).await;
 
                         if attempt >= MAX_ATTEMPTS {
                             return Err(err);
@@ -276,6 +293,18 @@ impl EphemeralNats {
         self.process.clone()
     }
 
+    async fn wait_for_shutdown(child: &mut Child) {
+        match timeout(Duration::from_secs(2), child.wait()).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                warn!(error = %error, "Failed waiting for ephemeral NATS child during shutdown");
+            }
+            Err(_) => {
+                warn!("Timed out waiting for ephemeral NATS child during shutdown");
+            }
+        }
+    }
+
     /// Stop the underlying NATS process (best-effort).
     pub async fn shutdown(&self) -> Result<()> {
         let mut guard = self.process.lock().await;
@@ -283,15 +312,7 @@ impl EphemeralNats {
             if let Err(error) = child.start_kill() {
                 warn!(error = %error, "Failed to start-kill ephemeral NATS child during shutdown");
             }
-            match timeout(Duration::from_secs(2), child.wait()).await {
-                Ok(Ok(_)) => {}
-                Ok(Err(error)) => {
-                    warn!(error = %error, "Failed waiting for ephemeral NATS child during shutdown");
-                }
-                Err(_) => {
-                    warn!("Timed out waiting for ephemeral NATS child during shutdown");
-                }
-            }
+            Self::wait_for_shutdown(&mut child).await;
         }
         Ok(())
     }
