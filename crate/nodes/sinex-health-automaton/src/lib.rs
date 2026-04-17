@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sinex_node_sdk::derived_node::{
     DerivedOutput, DerivedTriggerContext, ScopeReconcilerNodeAdapter,
 };
-use sinex_node_sdk::{NodeLogicError, ScopeReconcilerNode};
+use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconcilerNode};
 use sinex_primitives::JsonValue;
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::SyntheticTemporalPolicy;
@@ -244,6 +244,10 @@ impl ScopeReconcilerNode for HealthAggregator {
     }
     fn output_event_type(&self) -> &'static str {
         "health.aggregated_report"
+    }
+
+    fn input_provenance_filter(&self) -> InputProvenanceFilter {
+        InputProvenanceFilter::MaterialOnly
     }
 
     fn output_privacy_context(&self) -> ProcessingContext {

@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EventSource, EventType, InvalidationAction};
 
+use super::traits::InputProvenanceFilter;
+
 /// A typed invalidation signal for derived nodes.
 ///
 /// Carries enough data for a derived node to decide:
@@ -43,6 +45,13 @@ pub struct DerivedScopeInvalidation {
     /// Type of the affected events (for node filtering).
     pub event_type: EventType,
 
+    /// Whether the affected events carried lineage (`source_event_ids IS NOT NULL`).
+    ///
+    /// When omitted, nodes must treat provenance as unknown and may choose to
+    /// recompute conservatively.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_lineage: Option<bool>,
+
     /// Pre-computed scope keys that are affected (if known from the archived events).
     ///
     /// May be empty — in which case the node must derive scope keys from the
@@ -63,6 +72,7 @@ impl DerivedScopeInvalidation {
             operation_id: None,
             event_source,
             event_type,
+            has_lineage: None,
             affected_scope_keys: Vec::new(),
         }
     }
@@ -79,6 +89,7 @@ impl DerivedScopeInvalidation {
             operation_id: None,
             event_source,
             event_type,
+            has_lineage: None,
             affected_scope_keys: Vec::new(),
         }
     }
@@ -95,6 +106,7 @@ impl DerivedScopeInvalidation {
             operation_id: None,
             event_source,
             event_type,
+            has_lineage: None,
             affected_scope_keys: Vec::new(),
         }
     }
@@ -113,10 +125,25 @@ impl DerivedScopeInvalidation {
         self
     }
 
+    /// Set whether the affected events carried lineage.
+    #[must_use]
+    pub fn with_has_lineage(mut self, has_lineage: bool) -> Self {
+        self.has_lineage = Some(has_lineage);
+        self
+    }
+
     /// Whether this invalidation is relevant to a node that consumes the given event type.
     #[must_use]
-    pub fn matches_input(&self, input_event_type: &str) -> bool {
-        self.event_type.as_str() == input_event_type
+    pub fn matches_input(
+        &self,
+        input_event_type: &str,
+        input_provenance_filter: InputProvenanceFilter,
+    ) -> bool {
+        let type_matches = input_event_type == "*" || self.event_type.as_str() == input_event_type;
+        let provenance_matches = self
+            .has_lineage
+            .is_none_or(|has_lineage| input_provenance_filter.matches_lineage(has_lineage));
+        type_matches && provenance_matches
     }
 }
 

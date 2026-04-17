@@ -46,6 +46,8 @@ pkgs.testers.nixosTest {
         automata = {
           canonicalizer.enable = lib.mkForce true;
           healthAggregator.enable = lib.mkForce true;
+          analyticsAutomaton.enable = lib.mkForce true;
+          sessionDetector.enable = lib.mkForce true;
         };
       };
     };
@@ -76,7 +78,9 @@ pkgs.testers.nixosTest {
     # Automata
     automata = [
         "sinex-canonicalizer.service",
-        "sinex-health-aggregator.service"
+        "sinex-health-automaton.service",
+        "sinex-analytics-automaton.service",
+        "sinex-session-detector.service"
     ]
     for unit in automata:
         machine.wait_for_unit(unit)

@@ -1038,6 +1038,7 @@ let
       let
         canon = nodesCfg.automata.canonicalizer;
         health = nodesCfg.automata.healthAggregator;
+        analytics = nodesCfg.automata.analyticsAutomaton;
         session = nodesCfg.automata.sessionDetector;
         canonicalizerUnit =
           if !canon.enable then {} else {
@@ -1045,7 +1046,6 @@ let
               binary = "terminal-command-canonicalizer";
               description = "Sinex canonical command synthesizer";
               profile = canon.profile;
-              subjects = canon.subjects;
               env = canon.env;
               extraArgs = [];
             };
@@ -1056,8 +1056,17 @@ let
               binary = "health-automaton";
               description = "Sinex health automaton";
               profile = health.profile;
-              subjects = health.subjects;
               env = health.env;
+              extraArgs = [];
+            };
+          };
+        analyticsUnit =
+          if !analytics.enable then {} else {
+            "sinex-analytics-automaton" = mkAutomataUnit {
+              binary = "analytics-automaton";
+              description = "Sinex analytics automaton";
+              profile = analytics.profile;
+              env = analytics.env;
               extraArgs = [];
             };
           };
@@ -1067,13 +1076,12 @@ let
               binary = "session-detector";
               description = "Sinex session detector";
               profile = session.profile;
-              subjects = session.subjects;
               env = session.env;
               extraArgs = [];
             };
           };
       in
-      canonicalizerUnit // healthUnit // sessionUnit;
+      canonicalizerUnit // healthUnit // analyticsUnit // sessionUnit;
 
   nodeservices =
     if !nodesEnabled then {} else

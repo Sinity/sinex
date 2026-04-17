@@ -322,6 +322,8 @@ pkgs.testers.nixosTest {
             enable = lib.mkForce false;
             canonicalizer.enable = lib.mkForce false;
             healthAggregator.enable = lib.mkForce false;
+            analyticsAutomaton.enable = lib.mkForce false;
+            sessionDetector.enable = lib.mkForce false;
           };
         };
 
@@ -355,8 +357,12 @@ host    all             all             ::1/128                 trust
       systemd.services.sinex-system-1.wantedBy = lib.mkForce [ ];
       systemd.services.sinex-canonicalizer.enable = lib.mkForce false;
       systemd.services.sinex-canonicalizer.wantedBy = lib.mkForce [ ];
-      systemd.services.sinex-health-aggregator.enable = lib.mkForce false;
-      systemd.services.sinex-health-aggregator.wantedBy = lib.mkForce [ ];
+      systemd.services.sinex-health-automaton.enable = lib.mkForce false;
+      systemd.services.sinex-health-automaton.wantedBy = lib.mkForce [ ];
+      systemd.services.sinex-analytics-automaton.enable = lib.mkForce false;
+      systemd.services.sinex-analytics-automaton.wantedBy = lib.mkForce [ ];
+      systemd.services.sinex-session-detector.enable = lib.mkForce false;
+      systemd.services.sinex-session-detector.wantedBy = lib.mkForce [ ];
       
       services.dbus.enable = true;
       

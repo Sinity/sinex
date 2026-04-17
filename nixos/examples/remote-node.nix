@@ -62,6 +62,8 @@
         enable = false;
         canonicalizer.enable = false;
         healthAggregator.enable = false;
+        analyticsAutomaton.enable = false;
+        sessionDetector.enable = false;
       };
     };
 

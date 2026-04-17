@@ -201,6 +201,7 @@
             sinex-terminal-command-canonicalizer = mkPackage "sinex-terminal-command-canonicalizer";
             sinex-health-automaton = mkPackage "sinex-health-automaton";
             sinex-analytics-automaton = mkPackage "sinex-analytics-automaton";
+            sinex-session-detector = mkPackage "sinex-session-detector";
 
             # Node SDK binaries (sinex-preflight lives here)
             sinex-node-sdk = mkPackage "sinex-node-sdk";
@@ -210,18 +211,6 @@
 
             # NixOS VM test suite (Rust binary replacing Python testScript assertions)
             sinex-vm-test-suite = mkPackage "sinex-vm-test-suite";
-
-            # Minimal runtime bundle for VM scenarios that only exercise the
-            # core services and the filesystem ingestor.
-            "sinex-vm-fs-runtime" = pkgs.symlinkJoin {
-              name = "sinex-vm-fs-runtime";
-              paths = [
-                sinexPackages.sinex-ingestd
-                sinexPackages.sinex-gateway
-                sinexPackages.sinex-fs-ingestor
-                sinexPackages.xtask
-              ];
-            };
 
             # Aggregated suite with all binaries
             sinex = pkgs.symlinkJoin {
@@ -238,6 +227,7 @@
                 sinexPackages.sinex-terminal-command-canonicalizer
                 sinexPackages.sinex-health-automaton
                 sinexPackages.sinex-analytics-automaton
+                sinexPackages.sinex-session-detector
                 sinexPackages.sinex-node-sdk
                 sinexPackages.xtask
               ];
@@ -256,7 +246,6 @@
             sinex-ingestd = sinexPackages.sinex-ingestd;
             sinex-gateway = sinexPackages.sinex-gateway;
             sinex = sinexPackages.sinex;
-            sinexVmFsRuntime = sinexPackages."sinex-vm-fs-runtime";
             sinexCli = sinexPackages.sinexctl;
             xtask = sinexPackages.xtask;
             sinexVmTestSuite = sinexPackages.sinex-vm-test-suite;
@@ -718,6 +707,7 @@
             sinex-terminal-command-canonicalizer
             sinex-health-automaton
             sinex-analytics-automaton
+            sinex-session-detector
             sinex-node-sdk
             ;
         }
