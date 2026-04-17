@@ -21,10 +21,10 @@ async fn checkpoint_survives_simulated_crash(ctx: TestContext) -> TestResult<()>
         metadata: None,
     };
     state.processed_count = 500;
-    mgr.save_checkpoint(&state).await?;
+    state.revision = mgr.save_checkpoint(&state).await?;
 
     state.processed_count = 1000;
-    mgr.save_checkpoint(&state).await?;
+    state.revision = mgr.save_checkpoint(&state).await?;
 
     drop(mgr);
 
@@ -32,7 +32,7 @@ async fn checkpoint_survives_simulated_crash(ctx: TestContext) -> TestResult<()>
         kv,
         node_name,
         "default".to_string(),
-        "instance-2".to_string(),
+        "instance-1".to_string(),
     );
     let recovered = recovered_mgr.load_checkpoint().await?;
 
@@ -64,14 +64,16 @@ async fn checkpoint_last_save_wins_after_rapid_updates(ctx: TestContext) -> Test
         "instance-1".to_string(),
     );
 
+    let mut revision = 0;
     for i in 0..50 {
         let mut state = CheckpointState::default();
+        state.revision = revision;
         state.processed_count = i;
         state.checkpoint = Checkpoint::Timestamp {
             timestamp: sinex_primitives::temporal::Timestamp::now(),
             metadata: Some(serde_json::json!({"iteration": i})),
         };
-        mgr.save_checkpoint(&state).await?;
+        revision = mgr.save_checkpoint(&state).await?;
     }
 
     drop(mgr);
@@ -80,7 +82,7 @@ async fn checkpoint_last_save_wins_after_rapid_updates(ctx: TestContext) -> Test
         kv,
         node_name,
         "default".to_string(),
-        "instance-new".to_string(),
+        "instance-1".to_string(),
     );
     let recovered = recovered_mgr.load_checkpoint().await?;
 

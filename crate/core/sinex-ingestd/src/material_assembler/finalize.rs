@@ -41,6 +41,27 @@ fn finalization_commit_outcome_unknown(error: &SinexError) -> bool {
         .is_some_and(|value| value == "unknown")
 }
 
+fn finalization_unknown_commit_error(
+    commit_error: SinexError,
+    reconcile_error: &SinexError,
+    material_id: Uuid,
+    annex_key: &AnnexKey,
+    final_status: &str,
+) -> SinexError {
+    commit_error
+        .with_context("commit_outcome", "unknown")
+        .with_context(
+            "recovery",
+            "finalization retry is safe once database reachability is restored",
+        )
+        .with_context("retry_state_preserved", "true")
+        .with_context("terminal_failure_routed", "false")
+        .with_context("material_id", material_id.to_string())
+        .with_context("annex_key", annex_key.key.clone())
+        .with_context("final_status", final_status.to_string())
+        .with_context("reconcile_error", reconcile_error.to_string())
+}
+
 #[allow(
     clippy::needless_pass_by_value,
     reason = "Internal error helper: error chain context"
@@ -557,12 +578,13 @@ impl MaterialAssembler {
                             error = %reconcile_error,
                             "Failed to reconcile material finalization after commit error"
                         );
-                        Err(commit_error
-                            .with_context("commit_outcome", "unknown")
-                            .with_context(
-                                "recovery",
-                                "finalization retry is safe once database reachability is restored",
-                            ))
+                        Err(finalization_unknown_commit_error(
+                            commit_error,
+                            &reconcile_error,
+                            final_state.material_id,
+                            annex_key,
+                            final_status,
+                        ))
                     }
                 }
             }
@@ -2020,6 +2042,55 @@ mod tests {
         assert!(rendered.contains("rollback broke too"));
         assert!(rendered.contains("original finalize failure"));
         assert!(rendered.contains("record_ledger_entry"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn finalization_unknown_commit_error_preserves_retry_context() -> TestResult<()> {
+        let annex_key = AnnexKey {
+            key: "SHA256E-s4--retry".to_string(),
+            backend: "SHA256E".to_string(),
+            size: 4,
+            hash: "retry".to_string(),
+        };
+        let error = finalization_unknown_commit_error(
+            SinexError::database("commit failed"),
+            &SinexError::database("reconcile failed"),
+            Uuid::now_v7(),
+            &annex_key,
+            status::COMPLETED,
+        );
+
+        assert!(finalization_commit_outcome_unknown(&error));
+        assert_eq!(
+            error.context_map().get("retry_state_preserved"),
+            Some(&"true".to_string())
+        );
+        assert_eq!(
+            error.context_map().get("terminal_failure_routed"),
+            Some(&"false".to_string())
+        );
+        assert_eq!(
+            error.context_map().get("final_status"),
+            Some(&status::COMPLETED.to_string())
+        );
+        assert_eq!(error.context_map().get("annex_key"), Some(&annex_key.key),);
+        assert!(
+            error
+                .context_map()
+                .get("reconcile_error")
+                .is_some_and(|value| value.contains("reconcile failed"))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn finalization_commit_outcome_unknown_ignores_unflagged_errors() -> TestResult<()> {
+        let error = SinexError::database("ordinary failure");
+        assert!(
+            !finalization_commit_outcome_unknown(&error),
+            "only explicitly flagged commit-reconciliation failures should preserve retry state"
+        );
         Ok(())
     }
 }

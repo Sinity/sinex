@@ -152,6 +152,41 @@ async fn heartbeat_alert_uses_window_error_count() -> color_eyre::Result<()> {
 }
 
 #[sinex_test]
+async fn heartbeat_alert_payload_is_structured_and_non_empty() -> color_eyre::Result<()> {
+    let (emitter, sink) = emitter_with_sink("structured-payload-service");
+
+    for _ in 0..11 {
+        emitter.record_error("temporary failure");
+    }
+
+    emitter.emit_heartbeat(None).await;
+
+    let entries = sink.entries.lock();
+    let degraded_entry = entries
+        .iter()
+        .find(|entry| entry["fields"]["event_type"] == "process.degraded")
+        .expect("degraded transition alert should be emitted");
+    let payload = degraded_entry["fields"]["payload"]
+        .as_object()
+        .expect("alert payload should stay structured");
+
+    assert!(
+        !payload.is_empty(),
+        "alert payload must not collapse to an empty object"
+    );
+    assert_eq!(
+        payload.get("process_name"),
+        Some(&serde_json::json!("structured-payload-service"))
+    );
+    assert_eq!(
+        payload.get("errors_in_window"),
+        Some(&serde_json::json!(11)),
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn heartbeat_emits_failed_alert_only_on_transition() -> color_eyre::Result<()> {
     let (emitter, sink) = emitter_with_sink("failed-service");
 
