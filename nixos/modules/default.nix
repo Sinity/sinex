@@ -922,17 +922,30 @@ in
                 };
                 maxWatches = mkOption {
                   type = positive;
-                  default = 65536;
+                  default = 524288;
                   description = ''
                     Filesystem watch-budget threshold passed to the node config.
-                    When the estimated directory count exceeds this value, the node
-                    falls back to poll mode instead of native recursive watches.
+                    When the recursive tree exceeds this value, the node now tries a
+                    filtered native watch plan before failing honestly instead of
+                    switching to recursive poll mode.
+                  '';
+                };
+                ignoredDirectoryNames = mkOption {
+                  type = strList;
+                  default = [ ".git" ".direnv" "node_modules" "target" ];
+                  description = ''
+                    Directory names excluded from recursive filesystem watch planning
+                    and historical scans. This trims heavy local tooling trees that
+                    otherwise consume watch budget without adding useful user signal.
                   '';
                 };
                 pollIntervalSec = mkOption {
                   type = positive;
                   default = 5;
-                  description = "Poll interval, in seconds, used when the filesystem node falls back to poll mode.";
+                  description = ''
+                    Legacy compatibility field for older filesystem node configs.
+                    Automatic recursive poll fallback is no longer used.
+                  '';
                 };
                 instances = mkOption { type = nullOr positive; default = null; description = "Instance override (null ⇒ inherit defaults)."; };
                 batch = mkOption {

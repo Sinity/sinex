@@ -509,6 +509,7 @@ let
         follow_symlinks = false;
         max_capture_bytes = 10485760;
         max_watches = sat.maxWatches;
+        ignored_directory_names = sat.ignoredDirectoryNames;
         poll_interval_secs = sat.pollIntervalSec;
       };
       derivedArgs = [ "--node-config ${escapeShellArg nodeConfig}" ];
