@@ -10,7 +10,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 use std::time::Duration;
-use tokio::io::{self, AsyncWriteExt};
+use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
@@ -137,7 +137,8 @@ impl EventBatcher {
 
     /// Check for leftover local DLQ files from a previous run and emit a warn-level log.
     ///
-    /// This is intentionally informational only — no automatic retry is attempted.
+    /// Automatic replay happens in `run()` before the main batching loop starts; this warning keeps
+    /// leftover state visible even when replay cannot fully recover it.
     fn warn_leftover_dlq_files(&self) {
         let dlq_path = self.dlq_path();
         match std::fs::metadata(&dlq_path) {
@@ -175,6 +176,7 @@ impl EventBatcher {
             batch_timeout_ms = self.config.batch_timeout_ms,
             "Starting event batcher"
         );
+        self.recover_dead_letter_events().await?;
 
         let mut batch = Vec::with_capacity(self.config.batch_size);
         let mut ticker = interval(Duration::from_millis(self.config.batch_timeout_ms));
@@ -233,6 +235,85 @@ impl EventBatcher {
         }
 
         info!("Event batcher stopped");
+        Ok(())
+    }
+
+    async fn recover_dead_letter_events(&self) -> NodeResult<()> {
+        let dlq_path = self.dlq_path();
+        let file = match tokio::fs::File::open(&dlq_path).await {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                warn!(
+                    path = ?dlq_path,
+                    error = %error,
+                    "Could not open leftover local DLQ file for recovery"
+                );
+                return Ok(());
+            }
+        };
+
+        let mut lines = BufReader::new(file).lines();
+        let mut remaining_lines = Vec::new();
+        let mut recovered = 0_u64;
+        let mut malformed = 0_u64;
+
+        while let Some(line) = lines.next_line().await? {
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let event = match serde_json::from_str::<Event<JsonValue>>(&line) {
+                Ok(event) => event,
+                Err(error) => {
+                    malformed += 1;
+                    warn!(
+                        path = ?dlq_path,
+                        error = %error,
+                        "Preserving malformed local DLQ entry during recovery"
+                    );
+                    remaining_lines.push(line);
+                    continue;
+                }
+            };
+
+            let publish_result = match &self.transport {
+                EventTransport::Nats(publisher) => publisher.publish(&event).await,
+            };
+
+            if let Err(error) = publish_result {
+                warn!(
+                    path = ?dlq_path,
+                    event_id = ?event.id,
+                    error = %error,
+                    "Preserving local DLQ entry after replay publish failure"
+                );
+                remaining_lines.push(line);
+                continue;
+            }
+
+            recovered += 1;
+        }
+
+        if remaining_lines.is_empty() {
+            tokio::fs::remove_file(&dlq_path).await?;
+            info!(
+                path = ?dlq_path,
+                recovered,
+                malformed,
+                "Recovered and removed leftover local DLQ file"
+            );
+            return Ok(());
+        }
+
+        Self::rewrite_dead_letter_file(&remaining_lines, &dlq_path).await?;
+        warn!(
+            path = ?dlq_path,
+            recovered,
+            malformed,
+            remaining = remaining_lines.len(),
+            "Recovered local DLQ file partially; unreadable or unpublished entries were preserved"
+        );
         Ok(())
     }
 
@@ -349,6 +430,28 @@ impl EventBatcher {
         Ok(())
     }
 
+    async fn rewrite_dead_letter_file(lines: &[String], dead_letter_path: &Path) -> NodeResult<()> {
+        let parent_dir = dead_letter_path.parent().unwrap_or_else(|| Path::new("."));
+        tokio::fs::create_dir_all(parent_dir).await?;
+        let temp_path =
+            parent_dir.join(format!(".sinex_dead_letter_events.{}.tmp", Uuid::now_v7()));
+        let mut file = tokio::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp_path)
+            .await?;
+
+        for line in lines {
+            file.write_all(line.as_bytes()).await?;
+            file.write_all(b"\n").await?;
+        }
+
+        file.flush().await?;
+        file.sync_all().await?;
+        tokio::fs::rename(&temp_path, dead_letter_path).await?;
+        Ok(())
+    }
+
     /// Send batch via NATS `JetStream`
     async fn send_batch_nats(
         publisher: &NatsPublisher,
@@ -410,11 +513,20 @@ pub fn spawn_event_batcher(
 
 #[cfg(test)]
 mod tests {
-    use super::EventBatcher;
-    use sinex_primitives::{DynamicPayload, Provenance, Uuid, events::EventId};
+    use super::{EventBatcher, EventBatcherConfig, EventTransport};
+    use crate::nats_publisher::NatsPublisher;
+    use async_nats::jetstream;
+    use futures::StreamExt;
+    use sinex_primitives::{
+        DynamicPayload, Id, JsonValue, Provenance, Uuid,
+        events::{Event, EventId},
+    };
     use std::fs;
     use std::path::Path;
+    use std::sync::Arc;
+    use std::time::Duration;
     use tempfile::tempdir;
+    use tokio::sync::{mpsc, oneshot};
     use xtask::sandbox::{TestResult, sinex_test};
 
     async fn remove_if_exists(path: &Path) -> TestResult<()> {
@@ -423,6 +535,32 @@ mod tests {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error.into()),
         }
+    }
+
+    async fn ensure_events_stream(
+        client: &async_nats::Client,
+        env: &sinex_primitives::environment::SinexEnvironment,
+    ) -> TestResult<()> {
+        jetstream::new(client.clone())
+            .get_or_create_stream(jetstream::stream::Config {
+                name: env.nats_stream_name("EVENTS"),
+                subjects: vec![env.nats_subject("events.raw.>")],
+                storage: jetstream::stream::StorageType::Memory,
+                ..Default::default()
+            })
+            .await?;
+        Ok(())
+    }
+
+    fn test_event(name: &str, ok: bool) -> sinex_primitives::Result<Event<JsonValue>> {
+        let mut event = DynamicPayload::new("dlq.test", name, serde_json::json!({ "ok": ok }))
+            .with_provenance(Provenance::from_synthesis_safe(
+                EventId::from_uuid(Uuid::now_v7()),
+                Vec::new(),
+            ))
+            .build()?;
+        event.id = Some(Id::new());
+        Ok(event)
     }
 
     #[sinex_test]
@@ -476,6 +614,88 @@ mod tests {
         assert!(
             dead_letter_path.exists(),
             "expected DLQ file at {dead_letter_path:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn leftover_local_dlq_events_are_republished_on_startup(
+        ctx: xtask::sandbox::TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        ensure_events_stream(&ctx.nats_client(), ctx.env()).await?;
+
+        let work_dir = tempdir()?;
+        let dead_letter_path = work_dir.path().join("sinex_dead_letter_events.json");
+        let event = test_event("dead_letter.recovered", true)?;
+        let subject = ctx.env().nats_raw_event_subject_with_namespace(
+            None,
+            event.source.as_str(),
+            event.event_type.as_str(),
+        );
+        let mut subscription = ctx.nats_client().subscribe(subject).await?;
+
+        EventBatcher::store_dead_letter_events_at_path(&[event], &dead_letter_path).await?;
+
+        let (_sender, receiver) = mpsc::channel(1);
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        let batcher = EventBatcher::new(
+            EventTransport::Nats(Arc::new(NatsPublisher::new(ctx.nats_client()))),
+            EventBatcherConfig::default(),
+            receiver,
+            shutdown_rx,
+            work_dir.path().to_path_buf(),
+        );
+        batcher.recover_dead_letter_events().await?;
+
+        let message = tokio::time::timeout(Duration::from_secs(5), subscription.next())
+            .await?
+            .expect("replayed local DLQ event should be published");
+        let payload: JsonValue = serde_json::from_slice(&message.payload)?;
+        assert_eq!(payload["event_type"], "dead_letter.recovered");
+        assert!(
+            tokio::fs::metadata(&dead_letter_path).await.is_err(),
+            "fully recovered local DLQ file should be removed"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn malformed_local_dlq_entries_are_preserved_during_recovery(
+        ctx: xtask::sandbox::TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        ensure_events_stream(&ctx.nats_client(), ctx.env()).await?;
+
+        let work_dir = tempdir()?;
+        let dead_letter_path = work_dir.path().join("sinex_dead_letter_events.json");
+        let event = test_event("dead_letter.partial_recovery", true)?;
+        let valid_line = serde_json::to_string(&event)?;
+        EventBatcher::rewrite_dead_letter_file(
+            &[valid_line, "{not-json".to_string()],
+            &dead_letter_path,
+        )
+        .await?;
+
+        let (_sender, receiver) = mpsc::channel(1);
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        let batcher = EventBatcher::new(
+            EventTransport::Nats(Arc::new(NatsPublisher::new(ctx.nats_client()))),
+            EventBatcherConfig::default(),
+            receiver,
+            shutdown_rx,
+            work_dir.path().to_path_buf(),
+        );
+        batcher.recover_dead_letter_events().await?;
+
+        let contents = tokio::fs::read_to_string(&dead_letter_path).await?;
+        assert!(
+            contents.contains("{not-json"),
+            "malformed local DLQ entry should remain for manual inspection"
+        );
+        assert!(
+            !contents.contains("dead_letter.partial_recovery"),
+            "successfully replayed entries should be removed from the preserved DLQ file"
         );
         Ok(())
     }

@@ -1788,7 +1788,7 @@ where
                 if health_enabled {
                     let config = SelfObserverConfig {
                         component: self.node.name().to_string(),
-                        subject_prefix: "sinex.telemetry".to_string(),
+                        subject_prefix: "events.raw".to_string(),
                         enabled: true,
                         min_emission_interval: Duration::from_secs(1),
                     };
@@ -2698,7 +2698,7 @@ mod tests {
             ctx.nats_client(),
             SelfObserverConfig {
                 component: "derived-source-state".to_string(),
-                subject_prefix: "sinex.telemetry".to_string(),
+                subject_prefix: "events.raw".to_string(),
                 enabled: true,
                 min_emission_interval: Duration::from_millis(10),
             },
@@ -2743,7 +2743,7 @@ mod tests {
             ctx.nats_client(),
             SelfObserverConfig {
                 component: "derived-health-check".to_string(),
-                subject_prefix: "sinex.telemetry".to_string(),
+                subject_prefix: "events.raw".to_string(),
                 enabled: true,
                 min_emission_interval: Duration::from_millis(10),
             },

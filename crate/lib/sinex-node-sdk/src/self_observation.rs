@@ -32,7 +32,9 @@
 
 use crate::error_helpers::{env_bool_with_default, env_parse_with_default};
 use async_nats::Client as NatsClient;
+use sinex_primitives::Id;
 use sinex_primitives::JsonValue;
+use sinex_primitives::environment::environment;
 use sinex_primitives::events::payloads::{
     AssemblyStatsPayload, GatewayRequestStatsPayload, HealthStatusPayload,
     IngestdBatchStatsPayload, MetricCounterPayload, MetricGaugePayload, MetricHistogramPayload,
@@ -71,7 +73,7 @@ pub struct SelfObserver {
 pub struct SelfObserverConfig {
     /// Component name (e.g., "sinex-gateway", "sinex-ingestd")
     pub component: String,
-    /// NATS subject prefix (default: "sinex.telemetry")
+    /// Raw-event subject prefix (default: "events.raw")
     pub subject_prefix: String,
     /// Enable self-observation
     pub enabled: bool,
@@ -83,7 +85,7 @@ impl Default for SelfObserverConfig {
     fn default() -> Self {
         Self {
             component: "sinex-unknown".to_string(),
-            subject_prefix: "sinex.telemetry".to_string(),
+            subject_prefix: "events.raw".to_string(),
             enabled: true,
             min_emission_interval: Duration::from_secs(1),
         }
@@ -104,7 +106,7 @@ impl SelfObserverConfig {
 
         Self {
             component: component.to_string(),
-            subject_prefix: "sinex.telemetry".to_string(),
+            subject_prefix: "events.raw".to_string(),
             enabled,
             min_emission_interval: Duration::from_secs(min_interval_secs),
         }
@@ -131,7 +133,7 @@ impl SelfObserver {
         Self {
             nats_client: None,
             component: "disabled".to_string(),
-            subject_prefix: "sinex.telemetry".to_string(),
+            subject_prefix: "events.raw".to_string(),
             enabled: false,
             metric_emissions: Arc::new(RwLock::new(HashMap::new())),
             min_interval: Duration::from_secs(1),
@@ -231,16 +233,29 @@ impl SelfObserver {
             return Ok(());
         }
 
-        let event = Event::new(payload, self.self_provenance())
+        let mut event = Event::new(payload, self.self_provenance())
             .to_json_event()
             .map_err(|e| SelfObservationError::Serialization(e.to_string()))?;
+        event.id = Some(Id::new());
 
         let metric_key = Self::metric_identity_key(event.event_type.as_str(), &event.payload);
         if !self.reserve_metric_slot(&metric_key).await {
             return Ok(());
         }
 
-        let subject = format!("{}.{}", self.subject_prefix, self.component);
+        let subject = environment().nats_subject_with_namespace(
+            None,
+            &format!(
+                "{}.{}.{}",
+                self.subject_prefix,
+                sinex_primitives::environment::SinexEnvironment::nats_subject_token(
+                    event.source.as_str()
+                ),
+                sinex_primitives::environment::SinexEnvironment::nats_subject_token(
+                    event.event_type.as_str()
+                )
+            ),
+        );
         let data = serde_json::to_vec(&event)
             .map_err(|e| SelfObservationError::Serialization(e.to_string()))?;
 
@@ -648,7 +663,7 @@ mod tests {
         SelfObserver {
             nats_client: None,
             component: "test-component".to_string(),
-            subject_prefix: "sinex.telemetry".to_string(),
+            subject_prefix: "events.raw".to_string(),
             enabled: true,
             metric_emissions: Arc::new(RwLock::new(HashMap::new())),
             min_interval: Duration::from_secs(1),
