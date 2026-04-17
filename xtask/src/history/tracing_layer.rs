@@ -241,6 +241,10 @@ impl FieldExtractor {
     }
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "thread::spawn requires ownership"
+)]
 fn writer_loop(db_path: PathBuf, rx: std::sync::mpsc::Receiver<TraceRecord>) {
     // X11: Use HistoryDb::open() instead of Connection::open() so the full schema
     // (including the `invocations` table that trace_events FK-references) is

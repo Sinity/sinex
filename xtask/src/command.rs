@@ -956,7 +956,7 @@ impl CommandContext {
         let Some(inv_id) = self.invocation_id else {
             return;
         };
-        let summary = terminal_summary.or_else(|| {
+        let summary = terminal_summary.or({
             // Auto-compute if items counts are available
             None
         });
@@ -980,6 +980,10 @@ impl CommandContext {
     /// Finish a pipeline stage, recording timing to the history DB and clearing live stage.
     ///
     /// No-op (DB writes) if there is no active invocation ID.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "StageHandle does not implement Deref; keeping by value simplifies API"
+    )]
     pub fn finish_stage(&self, handle: StageHandle, success: bool) {
         let duration = handle.start.elapsed().as_secs_f64();
         tracing::debug!(

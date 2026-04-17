@@ -21,7 +21,7 @@ pub fn enhance_rpc_error(method: &str, err: Report) -> Report {
     }
 
     if is_not_found_error(&err) {
-        return enhance_not_found_error(method, err);
+        return enhance_not_found_error(method, &err);
     }
 
     if is_timeout_error(&err) {
@@ -100,7 +100,7 @@ fn extract_status_code(err: &Report) -> Option<StatusCode> {
 }
 
 /// Enhance not found errors with suggestions
-fn enhance_not_found_error(method: &str, err: Report) -> Report {
+fn enhance_not_found_error(method: &str, err: &Report) -> Report {
     let help_text = match method {
         methods::NODES_LIST
         | methods::NODES_DRAIN

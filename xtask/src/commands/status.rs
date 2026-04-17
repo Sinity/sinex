@@ -202,18 +202,20 @@ async fn collect_core_service_statuses(
     runtime_metrics: Option<&RuntimeMetrics>,
     active_jobs: &[crate::jobs::Job],
 ) -> Vec<ServiceStatus> {
-    let ingestd = active_job_for_service("sinex-ingestd", active_jobs)
-        .map(|job| service_status_from_active_job("sinex-ingestd", job))
-        .unwrap_or_else(|| ingestd_service_status_from_runtime_metrics(runtime_metrics));
-    let gateway_process = active_job_for_service("sinex-gateway", active_jobs)
-        .map(|job| service_status_from_active_job("sinex-gateway", job))
-        .unwrap_or_else(|| ServiceStatus {
+    let ingestd = active_job_for_service("sinex-ingestd", active_jobs).map_or_else(
+        || ingestd_service_status_from_runtime_metrics(runtime_metrics),
+        |job| service_status_from_active_job("sinex-ingestd", job),
+    );
+    let gateway_process = active_job_for_service("sinex-gateway", active_jobs).map_or_else(
+        || ServiceStatus {
             name: "sinex-gateway".to_string(),
             status: ServiceRunStatus::Stopped,
             probe: "checkout_local",
             pid: None,
             message: Some("no active checkout-local gateway job is tracked".to_string()),
-        });
+        },
+        |job| service_status_from_active_job("sinex-gateway", job),
+    );
     let gateway_force_probe = matches!(gateway_process.status, ServiceRunStatus::Running);
 
     vec![
@@ -411,6 +413,10 @@ fn classify_runtime_summary_impact(metrics: &RuntimeMetrics) -> SummaryRuntimeIm
     }
 }
 
+#[allow(
+    clippy::fn_params_excessive_bools,
+    reason = "Each bool names a distinct health signal sourced from a different probe; bundling into a struct would only indirect the call sites"
+)]
 fn classify_summary_health(
     pg_ready: bool,
     nats_ready: bool,
@@ -708,28 +714,25 @@ fn probe_git_state(cwd: &Path) -> GitState {
         });
 
     let now_unix_ts = current_unix_timestamp_secs();
-    let last_age = commit
-        .as_ref()
-        .and_then(|(_, _, commit_unix_ts)| match now_unix_ts {
-            Some(now_unix_ts) => {
-                parse_git_commit_age_mins(commit_unix_ts, now_unix_ts).or_else(|| {
-                    record_git_probe_issue(
-                        &mut probe_issues,
-                        &["log", "-1", "--format=%h\t%s\t%ct"],
-                        format!("unexpected commit timestamp: {commit_unix_ts}"),
-                    );
-                    None
-                })
-            }
-            None => {
+    let last_age = commit.as_ref().and_then(|(_, _, commit_unix_ts)| {
+        if let Some(now_unix_ts) = now_unix_ts {
+            parse_git_commit_age_mins(commit_unix_ts, now_unix_ts).or_else(|| {
                 record_git_probe_issue(
                     &mut probe_issues,
                     &["log", "-1", "--format=%h\t%s\t%ct"],
-                    "system clock is before the Unix epoch".to_string(),
+                    format!("unexpected commit timestamp: {commit_unix_ts}"),
                 );
                 None
-            }
-        });
+            })
+        } else {
+            record_git_probe_issue(
+                &mut probe_issues,
+                &["log", "-1", "--format=%h\t%s\t%ct"],
+                "system clock is before the Unix epoch".to_string(),
+            );
+            None
+        }
+    });
     let last_hash = commit.as_ref().map(|(hash, _, _)| hash.clone());
     let last_msg = commit.as_ref().map(|(_, message, _)| message.clone());
 
@@ -877,16 +880,16 @@ fn collect_history_snapshot_from_db(
         let analysis = HistoryAnalysis::new(db);
         let analytics_started_at = Instant::now();
         match analysis.status_summary_snapshot() {
-            Ok((report, velocity, baseline_velocity, recommendations)) => {
+            Ok(analytics) => {
                 snapshot.diag_counts = DiagnosticCounts {
-                    errors: report.error_count,
-                    warnings: report.warning_count,
-                    fixable: report.fixable_count,
+                    errors: analytics.health.error_count,
+                    warnings: analytics.health.warning_count,
+                    fixable: analytics.health.fixable_count,
                 };
-                snapshot.health_report = Some(report);
-                snapshot.velocity = velocity;
-                snapshot.baseline_velocity = baseline_velocity;
-                snapshot.recommendations = recommendations;
+                snapshot.health_report = Some(analytics.health);
+                snapshot.velocity = analytics.loop_velocity;
+                snapshot.baseline_velocity = analytics.baseline_velocity;
+                snapshot.recommendations = analytics.recommendations;
             }
             Err(error) => snapshot.issues.push(format!(
                 "Failed to compute workspace analytics snapshot: {error}"
@@ -943,19 +946,21 @@ fn collect_history_and_jobs_snapshot(
             &jobs_dir,
             jobs_recent_limit,
         )
-        .map(|(active, recent)| JobsSnapshot {
-            active,
-            recent,
-            issues: Vec::new(),
-        })
-        .unwrap_or_else(|error| JobsSnapshot {
-            active: Vec::new(),
-            recent: Vec::new(),
-            issues: vec![format!(
-                "Failed to read background jobs from {}: {error}",
-                ctx.history_db_path().display()
-            )],
-        });
+        .map_or_else(
+            |error| JobsSnapshot {
+                active: Vec::new(),
+                recent: Vec::new(),
+                issues: vec![format!(
+                    "Failed to read background jobs from {}: {error}",
+                    ctx.history_db_path().display()
+                )],
+            },
+            |(active, recent)| JobsSnapshot {
+                active,
+                recent,
+                issues: Vec::new(),
+            },
+        );
         emit_status_profile("jobs.read_snapshot", jobs_started_at);
         Ok((history, jobs))
     }) else {
@@ -1627,7 +1632,7 @@ impl<'a> MotdRenderer<'a> {
             ));
         }
 
-        let right = format!("{}   {}{}  ", score_part, branch_part, ab_part);
+        let right = format!("{score_part}   {branch_part}{ab_part}  ");
         let right_vis = console::measure_text_width(&right);
 
         let padding = inner.saturating_sub(left_vis + right_vis);
@@ -1715,8 +1720,7 @@ impl<'a> MotdRenderer<'a> {
                 let age = format_age(info.age_mins);
                 let dur = info
                     .duration_secs
-                    .map(|duration| format!("{duration:.1}s"))
-                    .unwrap_or_else(|| "?".to_string());
+                    .map_or_else(|| "?".to_string(), |duration| format!("{duration:.1}s"));
                 parts.push(format!(
                     "{} {} {} {}",
                     name,
@@ -1838,7 +1842,7 @@ impl<'a> MotdRenderer<'a> {
                 let avg = format!("~{:.1}s", v.recent_avg_secs.unwrap_or(0.0));
                 let delta = match v.delta_pct {
                     Some(d) if d < -5.0 => style(format!("↓{:.0}%", d.abs())).green().to_string(),
-                    Some(d) if d > 5.0 => style(format!("↑{:.0}%", d)).red().to_string(),
+                    Some(d) if d > 5.0 => style(format!("↑{d:.0}%")).red().to_string(),
                     _ => style("→").dim().to_string(),
                 };
                 let label = match v.scope_label.as_deref() {
@@ -1881,7 +1885,7 @@ impl<'a> MotdRenderer<'a> {
             let label = if i == 0 {
                 style(label_text).dim().to_string()
             } else {
-                " ".repeat(label_text.len()).to_string()
+                " ".repeat(label_text.len())
             };
 
             let icon = if rec.severity == "critical" {
@@ -1988,7 +1992,7 @@ impl<'a> MotdRenderer<'a> {
         let heartbeat = metrics
             .last_heartbeat_age_secs
             .map(|secs| {
-                let s = format!("heartbeat {}s ago", secs);
+                let s = format!("heartbeat {secs}s ago");
                 if matches!(metrics.ingestd_status, IngestdStatus::Healthy) {
                     style(s).green().to_string()
                 } else if matches!(metrics.ingestd_status, IngestdStatus::Stale) {
@@ -2551,10 +2555,10 @@ async fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<
                     "  {:<15} {:<10} ({})",
                     entry.command,
                     status_style,
-                    entry
-                        .duration_secs
-                        .map(|duration| format!("{duration:.1}s"))
-                        .unwrap_or_else(|| "unknown".to_string())
+                    entry.duration_secs.map_or_else(
+                        || "unknown".to_string(),
+                        |duration| format!("{duration:.1}s")
+                    )
                 );
             }
         }
@@ -2617,16 +2621,13 @@ async fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<
 
 /// Full status (default mode)
 async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<CommandResult> {
-    if !watch {
-        if let Some(result) = render_status_tick(ctx, false).await? {
-            return Ok(result);
-        }
+    if !watch && let Some(result) = render_status_tick(ctx, false).await? {
+        return Ok(result);
     }
 
     let term = console::Term::stdout();
     WatchLoop::with_interval_secs(3)
         .run(|first| {
-            let ctx = ctx;
             let term = &term;
             async move {
                 if !first {

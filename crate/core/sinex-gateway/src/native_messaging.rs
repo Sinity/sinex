@@ -177,11 +177,11 @@ impl NativeMessagingConfig {
     /// Load configuration from environment variables.
     pub fn from_env() -> Result<Self> {
         Ok(Self::from_raw(
-            env_var_optional(TRUSTED_EXTENSION_ENV)?,
-            env_var_optional(TRUSTED_HOSTS_ENV)?,
-            env_var_optional(PROTOCOL_VERSION_ENV)?,
-            env_var_optional(CAPABILITIES_ENV)?,
-            env_var_optional(EXTENSION_ROLES_ENV)?,
+            env_var_optional(TRUSTED_EXTENSION_ENV)?.as_ref(),
+            env_var_optional(TRUSTED_HOSTS_ENV)?.as_ref(),
+            env_var_optional(PROTOCOL_VERSION_ENV)?.as_ref(),
+            env_var_optional(CAPABILITIES_ENV)?.as_ref(),
+            env_var_optional(EXTENSION_ROLES_ENV)?.as_ref(),
             env_positive_usize_with_default(MAX_MESSAGE_SIZE_ENV, DEFAULT_MAX_MESSAGE_SIZE_BYTES),
             std::time::Duration::from_secs(env_positive_u64_with_default(
                 READ_TIMEOUT_ENV,
@@ -193,30 +193,31 @@ impl NativeMessagingConfig {
     #[must_use]
     pub fn from_gateway_config(config: &GatewayConfig) -> Self {
         Self::from_raw(
-            config.native_messaging_trusted_extensions.clone(),
-            config.native_messaging_trusted_hosts.clone(),
-            config.native_messaging_protocol_version.clone(),
-            config.native_messaging_capabilities.clone(),
-            config.native_messaging_extension_roles.clone(),
+            config.native_messaging_trusted_extensions.as_ref(),
+            config.native_messaging_trusted_hosts.as_ref(),
+            config.native_messaging_protocol_version.as_ref(),
+            config.native_messaging_capabilities.as_ref(),
+            config.native_messaging_extension_roles.as_ref(),
             config.native_messaging_max_size_bytes,
             std::time::Duration::from_secs(config.native_messaging_read_timeout_secs),
         )
     }
 
     fn from_raw(
-        trusted_extensions_raw: Option<String>,
-        trusted_hosts_raw: Option<String>,
-        expected_protocol_version_raw: Option<String>,
-        capabilities_raw: Option<String>,
-        extension_roles_raw: Option<String>,
+        trusted_extensions_raw: Option<&String>,
+        trusted_hosts_raw: Option<&String>,
+        expected_protocol_version_raw: Option<&String>,
+        capabilities_raw: Option<&String>,
+        extension_roles_raw: Option<&String>,
         max_message_size: usize,
         read_timeout: std::time::Duration,
     ) -> Self {
-        let parsed_trusted_extensions = parse_trusted_entries(trusted_extensions_raw.as_deref());
-        let parsed_trusted_hosts = parse_csv_entries(trusted_hosts_raw.as_deref());
+        let parsed_trusted_extensions =
+            parse_trusted_entries(trusted_extensions_raw.map(String::as_str));
+        let parsed_trusted_hosts = parse_csv_entries(trusted_hosts_raw.map(String::as_str));
         let expected_protocol_version =
-            expected_protocol_version_raw.and_then(|raw| normalize_optional_string(&raw));
-        let parsed_capabilities = parse_capabilities(capabilities_raw.as_deref());
+            expected_protocol_version_raw.and_then(|raw| normalize_optional_string(raw));
+        let parsed_capabilities = parse_capabilities(capabilities_raw.map(String::as_str));
         let rate_limiter = if parsed_capabilities
             .values
             .values()
@@ -226,7 +227,7 @@ impl NativeMessagingConfig {
         } else {
             None
         };
-        let parsed_extension_roles = parse_extension_roles(extension_roles_raw.as_deref());
+        let parsed_extension_roles = parse_extension_roles(extension_roles_raw.map(String::as_str));
 
         Self {
             trusted_extensions: parsed_trusted_extensions.values,

@@ -48,9 +48,8 @@ pub(super) async fn clean_database(
             match schema_mismatch_reason(&working_pool).await {
                 Ok(Some(reason)) => {
                     if schema_recreated {
-                        let err = eyre!(format!(
-                            "Database {db_name} schema mismatch after recreation: {reason}"
-                        ));
+                        let err =
+                            eyre!("Database {db_name} schema mismatch after recreation: {reason}");
                         slot.record_clean_result(Err(err.to_string()), residuals.clone());
                         slot.quarantined.store(true, Ordering::SeqCst);
                         slot.schema_verified.store(false, Ordering::SeqCst);
@@ -67,9 +66,7 @@ pub(super) async fn clean_database(
                         .await
                         .map_err(|recreate_err| {
                             POOL_METRICS.record_cleanup_failure();
-                            eyre!(format!(
-                                "Schema mismatch recreate failed for {db_name}: {recreate_err}"
-                            ))
+                            eyre!("Schema mismatch recreate failed for {db_name}: {recreate_err}")
                         })?;
                     let fresh_pool =
                         super::slot_pool_options(SLOT_MAX_CONNECTIONS, Duration::from_secs(5))
@@ -100,9 +97,9 @@ pub(super) async fn clean_database(
                             .await
                             .map_err(|recreate_err| {
                                 POOL_METRICS.record_cleanup_failure();
-                                eyre!(format!(
+                                eyre!(
                                     "Schema check failed and recreate failed for {db_name}: {recreate_err}"
-                                ))
+                                )
                             })?;
                         let fresh_pool =
                             super::slot_pool_options(SLOT_MAX_CONNECTIONS, Duration::from_secs(5))
@@ -116,7 +113,7 @@ pub(super) async fn clean_database(
                     }
 
                     POOL_METRICS.record_cleanup_failure();
-                    let err = eyre!(format!("Database {db_name} schema check failed: {error}"));
+                    let err = eyre!("Database {db_name} schema check failed: {error}");
                     slot.record_clean_result(Err(err.to_string()), residuals.clone());
                     slot.quarantined.store(true, Ordering::SeqCst);
                     slot.schema_verified.store(false, Ordering::SeqCst);
@@ -146,9 +143,9 @@ pub(super) async fn clean_database(
                             .err()
                             .map(|error| format!("; residual row probe failed: {error}"))
                             .unwrap_or_default();
-                        let err = eyre!(format!(
+                        let err = eyre!(
                             "Database {db_name} cleanup failed: {verify_err}{residual_probe_suffix}"
-                        ));
+                        );
                         slot.record_clean_result(Err(err.to_string()), residuals.clone());
                         slot.quarantined.store(true, Ordering::SeqCst);
                         slot.schema_verified.store(false, Ordering::SeqCst);
@@ -213,9 +210,9 @@ pub(super) async fn clean_database(
                         .await
                         .map_err(|recreate_err| {
                             POOL_METRICS.record_cleanup_failure();
-                            eyre!(format!(
+                            eyre!(
                                 "Cleanup failed and recreate failed for {db_name}: {recreate_err}"
-                            ))
+                            )
                         })?;
                     // Fresh pool for the recreated database
                     let fresh_pool =
@@ -243,9 +240,9 @@ pub(super) async fn clean_database(
 
                 // Attempt one last forced cleanup focusing on stubborn event/material rows.
                 if let Err(force_err) = force_event_material_cleanup(&working_pool).await {
-                    let err = eyre!(format!(
+                    let err = eyre!(
                         "Database {db_name} cleanup failed: {e}{residual_probe_suffix}; forced cleanup also failed: {force_err}"
-                    ));
+                    );
                     slot.record_clean_result(Err(err.to_string()), residuals.clone());
                     slot.quarantined.store(true, Ordering::SeqCst);
                     slot.schema_verified.store(false, Ordering::SeqCst);
@@ -255,9 +252,9 @@ pub(super) async fn clean_database(
                 if let Err(verify_err) =
                     crate::sandbox::db::pool::verify_clean_state(&working_pool).await
                 {
-                    let err = eyre!(format!(
+                    let err = eyre!(
                         "Database {db_name} cleanup failed after forced cleanup: {verify_err}"
-                    ));
+                    );
                     slot.record_clean_result(Err(err.to_string()), residuals.clone());
                     slot.quarantined.store(true, Ordering::SeqCst);
                     slot.schema_verified.store(false, Ordering::SeqCst);
@@ -625,9 +622,9 @@ async fn force_event_material_cleanup_with_tables(
             }
 
             if last_events != 0 || last_materials > 1 {
-                return Err(eyre!(format!(
+                return Err(eyre!(
                     "Force cleanup left {last_events} events and {last_materials} materials"
-                )));
+                ));
             }
 
             Ok(())

@@ -232,7 +232,7 @@ pub async fn handle_lifecycle_archive(
         request.dry_run,
     );
     let mut scope = json!({
-        "source": request.source.as_ref().map(|source| source.to_string()),
+        "source": request.source.as_ref().map(std::string::ToString::to_string),
         "before": request.before.clone(),
         "requested_event_ids": Value::Null,
         "limit": limit,
@@ -584,17 +584,17 @@ fn tombstone_preview_summary(
     })
 }
 
-fn merge_preview_summary(preview_summary: Option<Value>, extra: Value) -> Option<Value> {
+fn merge_preview_summary(preview_summary: Option<Value>, extra: Value) -> Value {
     match (preview_summary, extra) {
         (Some(mut summary @ Value::Object(_)), Value::Object(extra_fields)) => {
             let Value::Object(summary_fields) = &mut summary else {
                 unreachable!();
             };
             summary_fields.extend(extra_fields);
-            Some(summary)
+            summary
         }
-        (Some(summary), _) => Some(summary),
-        (None, extra) => Some(extra),
+        (Some(summary), _) => summary,
+        (None, extra) => extra,
     }
 }
 
@@ -670,12 +670,12 @@ async fn reconcile_tombstone_expiry(
                 operation_id,
                 phase_to_result_status(operation.phase),
                 scope,
-                merge_preview_summary(
+                Some(merge_preview_summary(
                     preview_summary,
                     json!({
                         "message": "Tombstone operation expired",
                     }),
-                ),
+                )),
                 Some("Tombstone operation expired"),
                 duration_ms,
             )
@@ -936,12 +936,12 @@ pub async fn handle_tombstone_approve(
                 &request.operation_id,
                 phase_to_result_status(operation.phase),
                 scope,
-                merge_preview_summary(
+                Some(merge_preview_summary(
                     preview_summary.clone(),
                     json!({
                         "message": "Tombstone preview is no longer valid",
                     }),
-                ),
+                )),
                 Some("Tombstone preview is no longer valid"),
                 None,
             )
@@ -1006,13 +1006,13 @@ pub async fn handle_tombstone_approve(
                     &request.operation_id,
                     phase_to_result_status(operation.phase),
                     scope,
-                    merge_preview_summary(
+                    Some(merge_preview_summary(
                         preview_summary.clone(),
                         json!({
                             "message": "Failed to execute tombstone",
                             "error": e.to_string(),
                         }),
-                    ),
+                    )),
                     Some("Failed to execute tombstone"),
                     None,
                 )
@@ -1044,13 +1044,13 @@ pub async fn handle_tombstone_approve(
             &request.operation_id,
             phase_to_result_status(operation.phase),
             scope,
-            merge_preview_summary(
+            Some(merge_preview_summary(
                 preview_summary,
                 json!({
                     "message": "Tombstone operation completed",
                     "tombstoned_count": tombstoned_count,
                 }),
-            ),
+            )),
             Some("Tombstone operation completed"),
             Some(duration_ms),
         )

@@ -11,6 +11,7 @@ use xtask::sandbox::prelude::*;
 
 const TEST_BYTES: &[u8] = b"sinex-blob-manager-integration";
 
+#[allow(clippy::unused_async)]
 async fn blob_manager_fixture(ctx: &TestContext) -> color_eyre::Result<(BlobManager, TempDir)> {
     system_test_preflight()?;
     let temp_dir = TempDir::new()?;

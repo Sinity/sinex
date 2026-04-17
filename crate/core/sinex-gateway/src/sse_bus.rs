@@ -224,6 +224,12 @@ pub struct SubscriptionBus {
     active_subscriptions: AtomicUsize,
 }
 
+impl Default for SubscriptionBus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SubscriptionBus {
     /// Create a new subscription bus.
     #[must_use]
@@ -367,7 +373,7 @@ impl SubscriptionBus {
                             break 'outer;
                         }
                     }
-                    _ = tokio::time::sleep(SUBSCRIBE_RETRY_DELAY) => {}
+                    () = tokio::time::sleep(SUBSCRIBE_RETRY_DELAY) => {}
                 }
             };
 
@@ -646,7 +652,7 @@ mod tests {
 
     #[sinex_test]
     async fn payload_preview_truncates_long_payloads() -> TestResult<()> {
-        let preview = SubscriptionBus::payload_preview(&vec![b'a'; 200]);
+        let preview = SubscriptionBus::payload_preview(&[b'a'; 200]);
         assert!(preview.ends_with('…'));
         assert_eq!(preview.chars().count(), 161);
         Ok(())

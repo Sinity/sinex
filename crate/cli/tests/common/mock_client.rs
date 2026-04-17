@@ -1,6 +1,6 @@
 //! Mock `GatewayClient` for testing sinex-cli commands
 
-#![allow(dead_code, clippy::expect_used)]
+#![allow(dead_code, clippy::expect_used, clippy::unused_async)]
 
 use serde_json::Value;
 use sinex_primitives::domain::HealthStatus;

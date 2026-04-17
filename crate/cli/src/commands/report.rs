@@ -72,7 +72,7 @@ impl ReportCommands {
 
 // ─── Time range helpers ───────────────────────────────────────────────────────
 
-/// Returns (today_midnight, now).
+/// Returns (`today_midnight`, now).
 fn today_range() -> (Timestamp, Timestamp) {
     let now = OffsetDateTime::now_utc();
     #[allow(clippy::expect_used)]
@@ -85,7 +85,7 @@ fn today_range() -> (Timestamp, Timestamp) {
     (midnight, Timestamp::now())
 }
 
-/// Returns (yesterday_midnight, today_midnight).
+/// Returns (`yesterday_midnight`, `today_midnight`).
 fn yesterday_range() -> (Timestamp, Timestamp) {
     let now = OffsetDateTime::now_utc();
     let today = now.date();
@@ -170,17 +170,16 @@ async fn print_report(client: &GatewayClient, time_range: TimeRange, label: &str
     };
 
     if let Ok(EventQueryResult::GroupedCounts { groups }) = client.query_events(sources_query).await
+        && !groups.is_empty()
     {
-        if !groups.is_empty() {
-            println!();
-            println!("{}", style("Top Sources:").bold());
-            for g in &groups {
-                println!(
-                    "  {:<28}  {}",
-                    style(&g.key).cyan(),
-                    style(format!("{} events", format_count(g.count))).dim()
-                );
-            }
+        println!();
+        println!("{}", style("Top Sources:").bold());
+        for g in &groups {
+            println!(
+                "  {:<28}  {}",
+                style(&g.key).cyan(),
+                style(format!("{} events", format_count(g.count))).dim()
+            );
         }
     }
 
@@ -195,17 +194,17 @@ async fn print_report(client: &GatewayClient, time_range: TimeRange, label: &str
         ..Default::default()
     };
 
-    if let Ok(EventQueryResult::GroupedCounts { groups }) = client.query_events(types_query).await {
-        if !groups.is_empty() {
-            println!();
-            println!("{}", style("Top Event Types:").bold());
-            for g in &groups {
-                println!(
-                    "  {:<28}  {}",
-                    style(&g.key).yellow(),
-                    style(format!("{} events", format_count(g.count))).dim()
-                );
-            }
+    if let Ok(EventQueryResult::GroupedCounts { groups }) = client.query_events(types_query).await
+        && !groups.is_empty()
+    {
+        println!();
+        println!("{}", style("Top Event Types:").bold());
+        for g in &groups {
+            println!(
+                "  {:<28}  {}",
+                style(&g.key).yellow(),
+                style(format!("{} events", format_count(g.count))).dim()
+            );
         }
     }
 
@@ -219,25 +218,25 @@ async fn print_report(client: &GatewayClient, time_range: TimeRange, label: &str
         ..Default::default()
     };
 
-    if let Ok(EventQueryResult::TimeSeries { buckets }) = client.query_events(heatmap_query).await {
-        if !buckets.is_empty() {
-            println!();
-            println!("{}", style("Hourly Activity:").bold());
-            let max_count = buckets.iter().map(|b| b.count).max().unwrap_or(1).max(1);
-            for b in &buckets {
-                let hour_str = b
-                    .bucket
-                    .inner()
-                    .format(time::macros::format_description!("[hour]:[minute]"))
-                    .unwrap_or_else(|_| "??:??".to_string());
-                let bar = render_bar(b.count, max_count, 10);
-                println!(
-                    "  {}  {}  {}",
-                    style(&hour_str).dim(),
-                    bar,
-                    style(format!("{:>5}", b.count)).dim()
-                );
-            }
+    if let Ok(EventQueryResult::TimeSeries { buckets }) = client.query_events(heatmap_query).await
+        && !buckets.is_empty()
+    {
+        println!();
+        println!("{}", style("Hourly Activity:").bold());
+        let max_count = buckets.iter().map(|b| b.count).max().unwrap_or(1).max(1);
+        for b in &buckets {
+            let hour_str = b
+                .bucket
+                .inner()
+                .format(time::macros::format_description!("[hour]:[minute]"))
+                .unwrap_or_else(|_| "??:??".to_string());
+            let bar = render_bar(b.count, max_count, 10);
+            println!(
+                "  {}  {}  {}",
+                style(&hour_str).dim(),
+                bar,
+                style(format!("{:>5}", b.count)).dim()
+            );
         }
     }
 
@@ -271,11 +270,8 @@ async fn print_calendar(client: &GatewayClient, days: u32, offset: u32) -> Resul
     for i in 0..days {
         let date = start_date + time::Duration::days(i64::from(i));
         #[allow(clippy::expect_used)]
-        let day_start = Timestamp::new(
-            date.with_hms(0, 0, 0)
-                .expect("midnight valid")
-                .assume_utc(),
-        );
+        let day_start =
+            Timestamp::new(date.with_hms(0, 0, 0).expect("midnight valid").assume_utc());
         let next_date = date + time::Duration::days(1);
         #[allow(clippy::expect_used)]
         let day_end = Timestamp::new(
@@ -285,8 +281,7 @@ async fn print_calendar(client: &GatewayClient, days: u32, offset: u32) -> Resul
                 .assume_utc(),
         );
 
-        let time_range = TimeRange::new(Some(day_start), Some(day_end))
-            .expect("day range valid");
+        let time_range = TimeRange::new(Some(day_start), Some(day_end)).expect("day range valid");
 
         let count_query = EventQuery {
             time_range: Some(time_range),

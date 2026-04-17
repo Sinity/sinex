@@ -619,7 +619,7 @@ impl KnowledgeGraphRepository<'_> {
 
         let (merged_aliases, aliases_added) = merge_aliases(&target, &source);
         let (merged_properties, conflicts) =
-            merge_json_values(target.properties.clone(), source.properties.clone());
+            merge_json_values(target.properties.clone(), &source.properties);
         let (merged_source_event_ids, source_event_ids_added) =
             merge_source_event_ids(&target, &source);
         let merged_confidence = target.confidence_score.max(source.confidence_score);
@@ -1191,10 +1191,9 @@ fn merge_aliases(target: &EntityRecord, source: &EntityRecord) -> (Vec<String>, 
     (merged, added)
 }
 
-fn merge_source_event_ids(
-    target: &EntityRecord,
-    source: &EntityRecord,
-) -> (Vec<Id<Event<JsonValue>>>, Vec<Id<Event<JsonValue>>>) {
+type MergedEventIds = (Vec<Id<Event<JsonValue>>>, Vec<Id<Event<JsonValue>>>);
+
+fn merge_source_event_ids(target: &EntityRecord, source: &EntityRecord) -> MergedEventIds {
     let mut merged = Vec::new();
     let mut added = Vec::new();
     let mut seen = HashSet::new();
@@ -1216,10 +1215,10 @@ fn merge_source_event_ids(
 
 fn merge_json_values(
     mut target: serde_json::Value,
-    source: serde_json::Value,
+    source: &serde_json::Value,
 ) -> (serde_json::Value, Vec<serde_json::Value>) {
     let mut conflicts = Vec::new();
-    merge_json_value_in_place(&mut target, &source, "", &mut conflicts);
+    merge_json_value_in_place(&mut target, source, "", &mut conflicts);
     (target, conflicts)
 }
 

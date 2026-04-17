@@ -156,10 +156,10 @@ fn resolve_hyprland_runtime_dir() -> NodeResult<PathBuf> {
 }
 
 fn derive_hyprland_command_socket(event_socket: &str) -> String {
-    Path::new(event_socket)
-        .parent()
-        .map(|parent| parent.join(".socket.sock").to_string_lossy().into_owned())
-        .unwrap_or_else(|| event_socket.replacen(".socket2.sock", ".socket.sock", 1))
+    Path::new(event_socket).parent().map_or_else(
+        || event_socket.replacen(".socket2.sock", ".socket.sock", 1),
+        |parent| parent.join(".socket.sock").to_string_lossy().into_owned(),
+    )
 }
 
 fn parse_hyprland_numeric_id(raw: &str, context: &str) -> NodeResult<i32> {
@@ -422,6 +422,10 @@ impl WindowManagerWatcher {
             .await
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "metadata cloned in json! macro"
+    )]
     fn build_material_payload(
         &self,
         event_type: &str,
@@ -612,10 +616,7 @@ impl WindowManagerWatcher {
     /// Returns the `WindowInfo` for the requested address if found, or `None` if the
     /// address is not present in the client list or the query fails.  Failures are
     /// logged at `warn` level so the caller can decide whether to skip the event.
-    async fn query_hyprland_clients(
-        &mut self,
-        target_address: &str,
-    ) -> Option<WindowInfo> {
+    async fn query_hyprland_clients(&mut self, target_address: &str) -> Option<WindowInfo> {
         let output = match tokio::time::timeout(
             HYPRLAND_IPC_QUERY_TIMEOUT,
             tokio::process::Command::new("hyprctl")
@@ -697,18 +698,18 @@ impl WindowManagerWatcher {
             let workspace_id = client
                 .get("workspace")
                 .and_then(|ws| ws.get("id"))
-                .and_then(|v| v.as_i64())
+                .and_then(serde_json::Value::as_i64)
                 .unwrap_or(0)
                 .to_string();
 
             let floating = client
                 .get("floating")
-                .and_then(|v| v.as_bool())
+                .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
 
             let fullscreen = client
                 .get("fullscreen")
-                .and_then(|v| v.as_bool())
+                .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
 
             // Hyprland addresses in clients JSON use "0x…" prefix; event socket strips it.
@@ -923,9 +924,7 @@ impl WindowManagerWatcher {
             .from_material(material_id)
             .with_offset_start(0)
             .map_err(|e| {
-                sinex_node_sdk::SinexError::processing(format!(
-                    "Failed to set offset_start: {e}"
-                ))
+                sinex_node_sdk::SinexError::processing(format!("Failed to set offset_start: {e}"))
             })?
             .with_offset_end(payload_bytes.len() as i64)
             .map_err(|e| {
@@ -950,13 +949,13 @@ impl WindowManagerWatcher {
         self.windows
             .entry(window_address.to_string())
             .and_modify(|window| {
-                window.title = window_title.clone();
+                window.title.clone_from(&window_title);
                 window.last_seen = now;
                 if !stored_class.is_empty() {
-                    window.class = stored_class.clone();
+                    window.class.clone_from(&stored_class);
                 }
                 if !stored_workspace.is_empty() {
-                    window.workspace_id = stored_workspace.clone();
+                    window.workspace_id.clone_from(&stored_workspace);
                 }
             })
             .or_insert_with(|| WindowInfo {
@@ -1380,12 +1379,10 @@ impl WindowManagerWatcher {
 
     /// Handle workspace changed event
     async fn handle_workspace_changed(&mut self, event_type: &str, data: &str) -> NodeResult<()> {
-        let (workspace_id_raw, workspace_name) = data
-            .split_once(',')
-            .map(|(workspace_id, workspace_name)| {
-                (workspace_id.trim(), Some(workspace_name.trim()))
-            })
-            .unwrap_or_else(|| (data.trim(), None));
+        let (workspace_id_raw, workspace_name) = data.split_once(',').map_or_else(
+            || (data.trim(), None),
+            |(workspace_id, workspace_name)| (workspace_id.trim(), Some(workspace_name.trim())),
+        );
         if workspace_id_raw.is_empty() {
             return Ok(());
         }
@@ -1748,7 +1745,7 @@ impl WindowManagerWatcher {
         }
     }
 
-    async fn test_watcher(stage_context: StageAsYouGoContext) -> NodeResult<Self> {
+    fn test_watcher(stage_context: StageAsYouGoContext) -> NodeResult<Self> {
         let mut watcher = Self::stub(WindowManagerType::Hyprland);
         watcher.stage_context = Some(stage_context);
         Ok(watcher)
@@ -1759,9 +1756,9 @@ impl WindowManagerWatcher {
 mod tests {
     use super::*;
     use sinex_node_sdk::acquisition_manager::AcquisitionManager;
-    use sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
     use sinex_primitives::Event;
     use sinex_primitives::Uuid;
+    use sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
     #[cfg(unix)]
     use std::ffi::OsString;
     #[cfg(unix)]
@@ -2018,7 +2015,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let (stage_context, _ctx, mut event_rx) = build_stage_context(ctx).await?;
-        let mut watcher = WindowManagerWatcher::test_watcher(stage_context).await?;
+        let mut watcher = WindowManagerWatcher::test_watcher(stage_context)?;
         watcher.current_workspace = Some("7".to_string());
         watcher.windows.insert(
             "0xabc".to_string(),
@@ -2043,7 +2040,10 @@ mod tests {
         assert_eq!(event.source.as_ref(), "wm.hyprland");
         assert_eq!(event.event_type.as_ref(), "window.title_changed");
         assert_eq!(event.payload["window_id"], serde_json::json!("0xabc"));
-        assert_eq!(event.payload["window_title"], serde_json::json!("new title"));
+        assert_eq!(
+            event.payload["window_title"],
+            serde_json::json!("new title")
+        );
         assert_eq!(
             event.payload["previous_window_title"],
             serde_json::json!("old title")
@@ -2051,7 +2051,10 @@ mod tests {
         assert_eq!(event.payload["window_class"], serde_json::json!("kitty"));
         assert_eq!(event.payload["workspace_id"], serde_json::json!(7));
 
-        let tracked = watcher.windows.get("0xabc").expect("tracked window updated");
+        let tracked = watcher
+            .windows
+            .get("0xabc")
+            .expect("tracked window updated");
         assert_eq!(tracked.title, "new title");
         Ok(())
     }
@@ -2061,7 +2064,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let (stage_context, _ctx, mut event_rx) = build_stage_context(ctx).await?;
-        let mut watcher = WindowManagerWatcher::test_watcher(stage_context).await?;
+        let mut watcher = WindowManagerWatcher::test_watcher(stage_context)?;
         watcher.windows.insert(
             "0xabc".to_string(),
             WindowInfo {
@@ -2084,7 +2087,10 @@ mod tests {
             "address-only title hints should not emit duplicate semantic events"
         );
 
-        let tracked = watcher.windows.get("0xabc").expect("tracked window retained");
+        let tracked = watcher
+            .windows
+            .get("0xabc")
+            .expect("tracked window retained");
         assert_eq!(tracked.title, "stable title");
         assert!(tracked.last_seen > SystemTime::UNIX_EPOCH);
         Ok(())

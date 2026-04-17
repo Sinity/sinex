@@ -120,13 +120,13 @@ async fn test_cursor_forward_pagination(ctx: TestContext) -> TestResult<()> {
         })
         .await?;
 
-    let (page1_events, next_cursor) = match page1 {
-        EventQueryResult::Events {
-            events,
-            next_cursor,
-            ..
-        } => (events, next_cursor),
-        _ => panic!("Expected Events result"),
+    let EventQueryResult::Events {
+        events: page1_events,
+        next_cursor,
+        ..
+    } = page1
+    else {
+        panic!("Expected Events result")
     };
 
     assert_eq!(page1_events.len(), 5);
@@ -147,9 +147,12 @@ async fn test_cursor_forward_pagination(ctx: TestContext) -> TestResult<()> {
         })
         .await?;
 
-    let page2_events = match page2 {
-        EventQueryResult::Events { events, .. } => events,
-        _ => panic!("Expected Events result"),
+    let EventQueryResult::Events {
+        events: page2_events,
+        ..
+    } = page2
+    else {
+        panic!("Expected Events result")
     };
 
     assert_eq!(page2_events.len(), 5);
@@ -198,9 +201,8 @@ async fn test_cursor_ascending_direction(ctx: TestContext) -> TestResult<()> {
         })
         .await?;
 
-    let events = match result {
-        EventQueryResult::Events { events, .. } => events,
-        _ => panic!("Expected Events result"),
+    let EventQueryResult::Events { events, .. } = result else {
+        panic!("Expected Events result")
     };
 
     // Verify ascending order (earlier UUIDv7 IDs first)
@@ -268,9 +270,8 @@ async fn test_text_search_with_relevance(ctx: TestContext) -> TestResult<()> {
         })
         .await?;
 
-    let events = match result {
-        EventQueryResult::Events { events, .. } => events,
-        _ => panic!("Expected Events result"),
+    let EventQueryResult::Events { events, .. } = result else {
+        panic!("Expected Events result")
     };
 
     assert_eq!(
@@ -349,13 +350,13 @@ async fn test_text_search_cursor_preserves_relevance_ordering(ctx: TestContext) 
         })
         .await?;
 
-    let (page1_events, next_cursor) = match page1 {
-        EventQueryResult::Events {
-            events,
-            next_cursor,
-            ..
-        } => (events, next_cursor),
-        _ => panic!("Expected Events result"),
+    let EventQueryResult::Events {
+        events: page1_events,
+        next_cursor,
+        ..
+    } = page1
+    else {
+        panic!("Expected Events result")
     };
 
     assert_eq!(page1_events.len(), 2);
@@ -376,9 +377,12 @@ async fn test_text_search_cursor_preserves_relevance_ordering(ctx: TestContext) 
         })
         .await?;
 
-    let page2_events = match page2 {
-        EventQueryResult::Events { events, .. } => events,
-        _ => panic!("Expected Events result"),
+    let EventQueryResult::Events {
+        events: page2_events,
+        ..
+    } = page2
+    else {
+        panic!("Expected Events result")
     };
 
     assert_eq!(page2_events.len(), 1);
@@ -431,9 +435,8 @@ async fn test_nested_text_search_populates_relevance_and_snippet(
         })
         .await?;
 
-    let events = match result {
-        EventQueryResult::Events { events, .. } => events,
-        _ => panic!("Expected Events result"),
+    let EventQueryResult::Events { events, .. } = result else {
+        panic!("Expected Events result")
     };
 
     assert_eq!(events.len(), 1);
@@ -543,9 +546,8 @@ async fn test_payload_filter_contains(ctx: TestContext) -> TestResult<()> {
         })
         .await?;
 
-    let events = match result {
-        EventQueryResult::Events { events, .. } => events,
-        _ => panic!("Expected Events result"),
+    let EventQueryResult::Events { events, .. } = result else {
+        panic!("Expected Events result")
     };
 
     assert_eq!(events.len(), 1);
@@ -602,9 +604,8 @@ async fn test_payload_filter_has_key(ctx: TestContext) -> TestResult<()> {
         })
         .await?;
 
-    let events = match result {
-        EventQueryResult::Events { events, .. } => events,
-        _ => panic!("Expected Events result"),
+    let EventQueryResult::Events { events, .. } = result else {
+        panic!("Expected Events result")
     };
 
     assert_eq!(events.len(), 1);
@@ -654,9 +655,8 @@ async fn test_payload_filter_path_gt(ctx: TestContext) -> TestResult<()> {
         })
         .await?;
 
-    let events = match result {
-        EventQueryResult::Events { events, .. } => events,
-        _ => panic!("Expected Events result"),
+    let EventQueryResult::Events { events, .. } = result else {
+        panic!("Expected Events result")
     };
 
     assert_eq!(events.len(), 1);
@@ -707,9 +707,8 @@ async fn test_payload_filter_path_gt_ignores_non_numeric_values(
         })
         .await?;
 
-    let events = match result {
-        EventQueryResult::Events { events, .. } => events,
-        _ => panic!("Expected Events result"),
+    let EventQueryResult::Events { events, .. } = result else {
+        panic!("Expected Events result")
     };
 
     assert_eq!(events.len(), 1);
@@ -793,9 +792,11 @@ async fn test_payload_filter_composition(ctx: TestContext) -> TestResult<()> {
         })
         .await?;
 
-    let and_events = match result_and {
-        EventQueryResult::Events { events, .. } => events,
-        _ => panic!("Expected Events result"),
+    let EventQueryResult::Events {
+        events: and_events, ..
+    } = result_and
+    else {
+        panic!("Expected Events result")
     };
 
     assert_eq!(
@@ -825,9 +826,11 @@ async fn test_payload_filter_composition(ctx: TestContext) -> TestResult<()> {
         })
         .await?;
 
-    let or_events = match result_or {
-        EventQueryResult::Events { events, .. } => events,
-        _ => panic!("Expected Events result"),
+    let EventQueryResult::Events {
+        events: or_events, ..
+    } = result_or
+    else {
+        panic!("Expected Events result")
     };
 
     assert_eq!(
@@ -851,9 +854,11 @@ async fn test_payload_filter_composition(ctx: TestContext) -> TestResult<()> {
         })
         .await?;
 
-    let not_events = match result_not {
-        EventQueryResult::Events { events, .. } => events,
-        _ => panic!("Expected Events result"),
+    let EventQueryResult::Events {
+        events: not_events, ..
+    } = result_not
+    else {
+        panic!("Expected Events result")
     };
 
     assert_eq!(not_events.len(), 2, "Should exclude beta event");
@@ -1355,9 +1360,8 @@ async fn test_default_query_descending(ctx: TestContext) -> TestResult<()> {
         })
         .await?;
 
-    let events = match result {
-        EventQueryResult::Events { events, .. } => events,
-        _ => panic!("Expected Events result"),
+    let EventQueryResult::Events { events, .. } = result else {
+        panic!("Expected Events result")
     };
 
     assert!(!events.is_empty());

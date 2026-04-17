@@ -233,6 +233,7 @@ impl CoordinationPrimitive {
     /// Atomically read and reset to zero. Returns the value before reset.
     /// Prevents the race window between separate `get()` + `reset()` calls
     /// where increments between the two operations would be silently lost.
+    #[must_use]
     pub fn swap_reset(&self) -> usize {
         self.state.swap(0, Ordering::AcqRel)
     }

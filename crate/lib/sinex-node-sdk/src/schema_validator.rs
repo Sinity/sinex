@@ -366,9 +366,9 @@ impl NodeSchemaValidator {
         schema_id: Uuid,
         source: &str,
         event_type: &str,
-        schema_json: JsonValue,
+        schema_json: &JsonValue,
     ) -> NodeResult<()> {
-        let validator = jsonschema::validator_for(&schema_json).map_err(|error| {
+        let validator = jsonschema::validator_for(schema_json).map_err(|error| {
             crate::SinexError::validation(format!(
                 "Failed to compile test schema for {source}.{event_type}: {error}"
             ))

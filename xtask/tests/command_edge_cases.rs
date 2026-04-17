@@ -312,9 +312,15 @@ async fn test_command_result_partial_status() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
+#[allow(
+    clippy::type_complexity,
+    reason = "Inline test-case table: the tuple names what each position means via the preceding comment"
+)]
 async fn test_command_metadata_factories() -> TestResult<()> {
     // (factory_fn_result, expected_category, timeout_is_some, modifies_state, track_in_history)
-    let cases: &[(CommandMetadata, Option<&str>, bool, bool, Option<bool>)] = &[
+    type MetadataCase = (CommandMetadata, Option<&'static str>, bool, bool, Option<bool>);
+
+    let cases: &[MetadataCase] = &[
         (CommandMetadata::default(), None, false, false, Some(true)),
         (
             CommandMetadata::build(),

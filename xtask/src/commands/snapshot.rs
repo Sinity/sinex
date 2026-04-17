@@ -386,7 +386,7 @@ fn push_context_field(lines: &mut Vec<String>, name: &str, field: SnapshotContex
     if let Some(issue) = field.issue {
         lines.push(format!(
             "{name}_issue: {}",
-            serde_json::Value::String(issue).to_string()
+            serde_json::Value::String(issue)
         ));
     }
 }
@@ -436,10 +436,7 @@ fn format_active_diagnostics(ctx: &CommandContext) -> SnapshotContextField {
             .take(10)
             .map(|d| {
                 let file = d.file_path.as_deref().unwrap_or("?");
-                let line = d
-                    .line
-                    .map(|l| l.to_string())
-                    .unwrap_or_else(|| "?".to_string());
+                let line = d.line.map_or_else(|| "?".to_string(), |l| l.to_string());
                 let msg = d.message.chars().take(60).collect::<String>();
                 format!("{{file:\"{file}\", line:{line}, msg:\"{msg}\"}}")
             })
@@ -506,7 +503,7 @@ fn format_coordinator_state() -> SnapshotContextField {
 }
 
 fn format_active_jobs(ctx: &CommandContext) -> SnapshotContextField {
-    match ctx.try_with_history_db_query(|db| db.get_active_background_jobs()) {
+    match ctx.try_with_history_db_query(crate::history::HistoryDb::get_active_background_jobs) {
         Some(Ok(active)) => {
             let items: Vec<String> = active
                 .iter()
@@ -696,10 +693,10 @@ fn collect_transitive_workspace_deps(
 
         if result.insert(package.name.clone()) {
             for dependency in &package.dependencies {
-                if let Some(dep_id) = workspace_id_by_name.get(dependency.name.as_str()) {
-                    if !result.contains(dependency.name.as_str()) {
-                        queue.push_back(dep_id);
-                    }
+                if let Some(dep_id) = workspace_id_by_name.get(dependency.name.as_str())
+                    && !result.contains(dependency.name.as_str())
+                {
+                    queue.push_back(dep_id);
                 }
             }
         }
@@ -813,10 +810,10 @@ mod tests {
         fs::create_dir_all(&bin_dir)?;
         write_executable_script(
             &bin_dir.join("git"),
-            r#"#!/bin/sh
+            r"#!/bin/sh
 printf 'fatal: synthetic git failure\n' >&2
 exit 128
-"#,
+",
         )?;
 
         let mut env = EnvGuard::new();
@@ -891,10 +888,10 @@ exit 1
         fs::create_dir_all(&bin_dir)?;
         write_executable_script(
             &bin_dir.join("cargo"),
-            r#"#!/bin/sh
+            r"#!/bin/sh
 printf 'cargo metadata exploded\n' >&2
 exit 101
-"#,
+",
         )?;
 
         let mut env = EnvGuard::new();

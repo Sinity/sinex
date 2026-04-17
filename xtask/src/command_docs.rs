@@ -302,7 +302,7 @@ pub fn render_commands_help(commands: &[CommandInfo]) -> String {
         for path in category.command_paths {
             let command = lookup_command(commands, path);
             let summary = command_summary(command, "No summary available");
-            out.push_str(&format!("    {:<12}{}\n", path, summary));
+            out.push_str(&format!("    {path:<12}{summary}\n"));
         }
     }
 
@@ -464,6 +464,10 @@ fn invocation(path: &str) -> String {
     format!("xtask {path}")
 }
 
+#[allow(
+    clippy::panic,
+    reason = "Doc-build fatal: a documented command path that isn't registered is a build-config bug"
+)]
 fn lookup_command<'a>(commands: &'a [CommandInfo], path: &str) -> &'a CommandInfo {
     find_command(commands, path)
         .unwrap_or_else(|| panic!("documented command path missing: {path}"))

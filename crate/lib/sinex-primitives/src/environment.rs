@@ -692,7 +692,7 @@ mod tests {
             std::env::set_var(
                 "SINEX_ENVIRONMENT",
                 OsString::from_vec(vec![0x64, 0x65, 0x80]),
-            )
+            );
         };
 
         let error =

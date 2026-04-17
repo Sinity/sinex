@@ -79,9 +79,7 @@ pub async fn handle_ops_list(
     use tracing::debug;
 
     let request: OpsListRequest = super::parse_default_on_null(params)?;
-    let limit = if request.limit == default_ops_limit() {
-        request.limit
-    } else if request.limit > 0 {
+    let limit = if request.limit == default_ops_limit() || request.limit > 0 {
         request.limit
     } else {
         return Err(SinexError::validation(format!(

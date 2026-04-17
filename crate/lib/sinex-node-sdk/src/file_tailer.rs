@@ -55,10 +55,7 @@ impl std::fmt::Display for TailError {
                 old_inode,
                 new_inode,
                 path,
-            } => write!(
-                f,
-                "file rotated: {path} (inode {old_inode} -> {new_inode})"
-            ),
+            } => write!(f, "file rotated: {path} (inode {old_inode} -> {new_inode})"),
             Self::FileTruncated {
                 old_offset,
                 new_size,
@@ -88,9 +85,7 @@ pub struct TailResult {
 #[cfg(target_os = "linux")]
 fn file_inode(path: &Utf8Path) -> Option<u64> {
     use std::os::unix::fs::MetadataExt;
-    std::fs::metadata(path.as_std_path())
-        .ok()
-        .map(|m| m.ino())
+    std::fs::metadata(path.as_std_path()).ok().map(|m| m.ino())
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -107,17 +102,17 @@ pub fn tail_lines(state: &mut FileTailerState, max_lines: usize) -> Result<TailR
 
     let current_inode = file_inode(path);
 
-    if let (Some(old), Some(new)) = (state.inode, current_inode) {
-        if old != new {
-            let rotated = TailError::FileRotated {
-                old_inode: old,
-                new_inode: new,
-                path: path.clone(),
-            };
-            warn!(%rotated, "File rotated, resetting to beginning");
-            state.byte_offset = 0;
-            state.inode = current_inode;
-        }
+    if let (Some(old), Some(new)) = (state.inode, current_inode)
+        && old != new
+    {
+        let rotated = TailError::FileRotated {
+            old_inode: old,
+            new_inode: new,
+            path: path.clone(),
+        };
+        warn!(%rotated, "File rotated, resetting to beginning");
+        state.byte_offset = 0;
+        state.inode = current_inode;
     }
 
     let file = std::fs::File::open(path.as_std_path())?;

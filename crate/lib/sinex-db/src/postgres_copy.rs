@@ -198,7 +198,7 @@ const EVENT_COPY_COLUMNS: [EventCopyColumn; 22] = [
 static EVENT_COPY_CONTRACT_CHECK: OnceLock<()> = OnceLock::new();
 
 fn copy_columns() -> &'static [EventCopyColumn] {
-    EVENT_COPY_CONTRACT_CHECK.get_or_init(|| verify_event_copy_contract());
+    EVENT_COPY_CONTRACT_CHECK.get_or_init(verify_event_copy_contract);
     &EVENT_COPY_COLUMNS
 }
 
@@ -208,6 +208,10 @@ struct AuthoritativeEventColumn {
     not_null: bool,
 }
 
+#[allow(
+    clippy::panic,
+    reason = "Schema-authority drift detector: panic if the declared schema lacks a type for a core.events column"
+)]
 fn authoritative_copy_columns() -> BTreeMap<String, AuthoritativeEventColumn> {
     Events::create_table_statement()
         .get_columns()
@@ -240,6 +244,10 @@ fn column_is_not_null(column: &sea_query::ColumnDef) -> bool {
         .any(|spec| matches!(spec, ColumnSpec::NotNull))
 }
 
+#[allow(
+    clippy::panic,
+    reason = "COPY contract drift detector: panic at startup if COPY columns drift from schema authority"
+)]
 pub fn verify_event_copy_contract() {
     let authoritative_columns = authoritative_copy_columns();
 
@@ -252,15 +260,14 @@ pub fn verify_event_copy_contract() {
         }
     }
 
-    if !duplicate_contract_names.is_empty() {
-        panic!(
-            "COPY contract duplicates core.events columns: {}",
-            duplicate_contract_names
-                .into_iter()
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-    }
+    assert!(
+        duplicate_contract_names.is_empty(),
+        "COPY contract duplicates core.events columns: {}",
+        duplicate_contract_names
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 
     let authoritative_names: BTreeSet<String> = authoritative_columns.keys().cloned().collect();
     if contract_names != authoritative_names {
@@ -327,6 +334,10 @@ pub(crate) fn event_copy_column_list_sql() -> String {
         .join(", ")
 }
 
+#[allow(
+    clippy::panic,
+    reason = "Staging SQL builder: panic if authoritative schema lacks a COPY-listed column (drift)"
+)]
 pub(crate) fn event_copy_staging_columns_sql() -> String {
     let authoritative = authoritative_copy_columns();
     copy_columns()

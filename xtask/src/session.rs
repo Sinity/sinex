@@ -42,12 +42,12 @@ impl WatchLoop {
     /// `tick_fn(first_tick)` receives `true` on the very first call so callers
     /// can skip setup work on subsequent ticks. Returns `Ok(())` on clean stop
     /// (Ctrl+C or `WatchAction::Stop`).
-    pub async fn run<F, Fut>(&self, mut tick_fn: F) -> Result<()>
+    pub async fn run<F, Fut>(&self, tick_fn: F) -> Result<()>
     where
         F: FnMut(bool) -> Fut,
         Fut: std::future::Future<Output = Result<WatchAction>>,
     {
-        self.run_with_shutdown_signal(tokio::signal::ctrl_c(), move |first| tick_fn(first))
+        self.run_with_shutdown_signal(tokio::signal::ctrl_c(), tick_fn)
             .await
     }
 

@@ -519,8 +519,8 @@ fn validated_path_override(raw: &str, context: &str) -> IngestdResult<Utf8PathBu
 }
 
 fn default_path_base_dir() -> Utf8PathBuf {
-    match dirs::cache_dir() {
-        Some(path) => match Utf8PathBuf::from_path_buf(path) {
+    if let Some(path) = dirs::cache_dir() {
+        match Utf8PathBuf::from_path_buf(path) {
             Ok(path) => path,
             Err(path) => {
                 warn!(
@@ -529,16 +529,15 @@ fn default_path_base_dir() -> Utf8PathBuf {
                 );
                 Utf8PathBuf::from("/tmp")
             }
-        },
-        None => {
-            warn!("Cache directory unavailable; falling back to /tmp");
-            Utf8PathBuf::from("/tmp")
         }
+    } else {
+        warn!("Cache directory unavailable; falling back to /tmp");
+        Utf8PathBuf::from("/tmp")
     }
 }
 
 fn validated_path_or_fallback(
-    candidate: Utf8PathBuf,
+    candidate: &Utf8PathBuf,
     fallback: Utf8PathBuf,
     context: &str,
 ) -> Utf8PathBuf {
@@ -645,7 +644,7 @@ fn default_work_dir() -> Utf8PathBuf {
             );
             Utf8PathBuf::from("/tmp/sinex/ingestd")
         });
-    validated_path_or_fallback(work_dir, fallback, "ingestd work dir")
+    validated_path_or_fallback(&work_dir, fallback, "ingestd work dir")
 }
 
 fn default_pool_acquire_timeout_secs() -> u64 {
@@ -769,7 +768,7 @@ fn default_annex_repo_path() -> Utf8PathBuf {
 
     let annex = default_work_dir().join("annex");
     validated_path_or_fallback(
-        annex,
+        &annex,
         Utf8PathBuf::from("/tmp/sinex/ingestd/annex"),
         "annex repository path",
     )
@@ -784,7 +783,7 @@ fn default_assembler_state_dir() -> Utf8PathBuf {
 
     let state_dir = default_work_dir().join("assembler_state");
     validated_path_or_fallback(
-        state_dir,
+        &state_dir,
         Utf8PathBuf::from("/tmp/sinex/ingestd/assembler_state"),
         "assembler state directory",
     )
@@ -914,7 +913,7 @@ fn default_gitops_work_dir() -> Utf8PathBuf {
 
     let gitops = default_work_dir().join("gitops");
     validated_path_or_fallback(
-        gitops,
+        &gitops,
         Utf8PathBuf::from("/tmp/sinex/ingestd/gitops"),
         "gitops work directory",
     )

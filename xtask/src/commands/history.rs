@@ -405,12 +405,12 @@ impl XtaskCommand for HistoryCommand {
                     with_tests,
                 } => {
                     if *first {
-                        execute_last(&db, command.as_deref().unwrap_or(""), ctx)
+                        execute_last(db, command.as_deref().unwrap_or(""), ctx)
                     } else if *no_limit {
-                        execute_export(&db, usize::MAX, ctx)
+                        execute_export(db, usize::MAX, ctx)
                     } else {
                         execute_list(
-                            &db,
+                            db,
                             *limit,
                             *offset,
                             command.as_deref(),
@@ -433,12 +433,12 @@ impl XtaskCommand for HistoryCommand {
                     all_commands,
                 } => {
                     if *all_packages {
-                        execute_stats_all_packages(&db, ctx)
+                        execute_stats_all_packages(db, ctx)
                     } else if *all_commands {
-                        execute_stats_all_commands(&db, *days, ctx)
+                        execute_stats_all_commands(db, *days, ctx)
                     } else {
                         execute_stats(
-                            &db,
+                            db,
                             command.as_deref().unwrap_or(""),
                             *days,
                             package.as_deref(),
@@ -446,8 +446,8 @@ impl XtaskCommand for HistoryCommand {
                         )
                     }
                 }
-                HistorySubcommand::Prune { older_than } => execute_prune(&db, *older_than, ctx),
-                HistorySubcommand::Tests { tests_cmd } => execute_tests(tests_cmd, &db, ctx),
+                HistorySubcommand::Prune { older_than } => execute_prune(db, *older_than, ctx),
+                HistorySubcommand::Tests { tests_cmd } => execute_tests(tests_cmd, db, ctx),
                 HistorySubcommand::Diagnostics {
                     level,
                     file,
@@ -468,11 +468,11 @@ impl XtaskCommand for HistoryCommand {
                     lifecycle_status,
                 } => {
                     if *trend {
-                        return execute_diagnostics_trend(&db, *window, ctx);
+                        return execute_diagnostics_trend(db, *window, ctx);
                     }
                     if *lifecycle {
                         return execute_diagnostics_lifecycle(
-                            &db,
+                            db,
                             package.as_deref(),
                             code.as_deref(),
                             level.as_deref(),
@@ -482,7 +482,7 @@ impl XtaskCommand for HistoryCommand {
                     }
                     if *delta {
                         return execute_diagnostics_delta(
-                            &db,
+                            db,
                             *delta_from,
                             *delta_to,
                             level.as_deref(),
@@ -497,7 +497,7 @@ impl XtaskCommand for HistoryCommand {
                     }
                     if *by_code {
                         return execute_diagnostics_by_code(
-                            &db,
+                            db,
                             level.as_deref(),
                             file.as_deref(),
                             command.as_deref(),
@@ -510,7 +510,7 @@ impl XtaskCommand for HistoryCommand {
 
                     match scope.as_deref() {
                         Some("all") => execute_diagnostics_all(
-                            &db,
+                            db,
                             *limit,
                             level.as_deref(),
                             file.as_deref(),
@@ -522,7 +522,7 @@ impl XtaskCommand for HistoryCommand {
                             ctx,
                         ),
                         Some(inv) => execute_diagnostics_invocation(
-                            &db,
+                            db,
                             inv,
                             command.as_deref(),
                             level.as_deref(),
@@ -534,7 +534,7 @@ impl XtaskCommand for HistoryCommand {
                             ctx,
                         ),
                         None => execute_diagnostics_current(
-                            &db,
+                            db,
                             level.as_deref(),
                             file.as_deref(),
                             command.as_deref(),
@@ -553,7 +553,7 @@ impl XtaskCommand for HistoryCommand {
                     trend,
                     window,
                 } => execute_stages(
-                    &db,
+                    db,
                     command.as_deref(),
                     *invocation,
                     *slowest,
@@ -564,38 +564,38 @@ impl XtaskCommand for HistoryCommand {
                 HistorySubcommand::Fix {
                     sessions,
                     effectiveness,
-                } => execute_fix_sessions(&db, *sessions, *effectiveness, ctx),
-                HistorySubcommand::View { name } => execute_view(&db, name.as_deref(), ctx),
-                HistorySubcommand::Query { sql } => execute_query(&db, sql, ctx),
-                HistorySubcommand::Shell => execute_shell(&db, ctx),
-                HistorySubcommand::Schema => execute_schema(&db, ctx),
+                } => execute_fix_sessions(db, *sessions, *effectiveness, ctx),
+                HistorySubcommand::View { name } => execute_view(db, name.as_deref(), ctx),
+                HistorySubcommand::Query { sql } => execute_query(db, sql, ctx),
+                HistorySubcommand::Shell => execute_shell(db, ctx),
+                HistorySubcommand::Schema => execute_schema(db, ctx),
                 HistorySubcommand::Timeline {
                     command,
                     days,
                     limit,
-                } => execute_timeline(&db, command.as_deref(), *days, *limit, ctx),
+                } => execute_timeline(db, command.as_deref(), *days, *limit, ctx),
                 HistorySubcommand::Diff { from, to, command } => {
-                    execute_diff(&db, *from, *to, command.as_deref(), ctx)
+                    execute_diff(db, *from, *to, command.as_deref(), ctx)
                 }
                 HistorySubcommand::Sessions { limit, gap_minutes } => {
-                    execute_sessions(&db, *limit, *gap_minutes, ctx)
+                    execute_sessions(db, *limit, *gap_minutes, ctx)
                 }
                 HistorySubcommand::Invocation { id, full, command } => {
-                    execute_invocation(&db, id, *full, command.as_deref(), ctx)
+                    execute_invocation(db, id, *full, command.as_deref(), ctx)
                 }
                 HistorySubcommand::Seed { days, invocations } => {
-                    execute_seed(&db, *days, *invocations, ctx)
+                    execute_seed(db, *days, *invocations, ctx)
                 }
                 HistorySubcommand::Progress { invocation } => {
-                    execute_progress(&db, invocation.as_deref(), ctx)
+                    execute_progress(db, invocation.as_deref(), ctx)
                 }
                 HistorySubcommand::Eta {
                     command,
                     phase,
                     window,
-                } => execute_eta(&db, command, phase.as_deref(), *window, ctx),
+                } => execute_eta(db, command, phase.as_deref(), *window, ctx),
                 HistorySubcommand::Exercise { limit, verbose } => {
-                    execute_exercise_history(&db, *limit, *verbose, ctx)
+                    execute_exercise_history(db, *limit, *verbose, ctx)
                 }
             }
         })
@@ -1401,6 +1401,10 @@ fn format_source_short(command: &Option<String>, time: &Option<String>) -> Strin
 }
 
 /// Render diagnostics table with mode-specific columns.
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "DiagnosticsDisplayMode is Copy"
+)]
 fn render_diagnostics_table(
     diagnostics: &[crate::history::StoredDiagnostic],
     mode: DiagnosticsDisplayMode,
@@ -2395,7 +2399,7 @@ fn execute_diagnostics_delta(
         // Find the invocation before `to_id` for the same command
         let inv = db.get_recent(50, None)?;
         inv.into_iter()
-            .filter(|i| {
+            .find(|i| {
                 i.id < to_id
                     && command.is_none_or(|cmd| i.command == cmd)
                     && matches!(
@@ -2403,7 +2407,6 @@ fn execute_diagnostics_delta(
                         InvocationStatus::Success | InvocationStatus::Failed
                     )
             })
-            .next()
             .map(|i| i.id)
             .ok_or_else(|| {
                 color_eyre::eyre::eyre!("No previous invocation found to compare against")
@@ -3077,7 +3080,7 @@ fn execute_query(db: &HistoryDb, sql: &str, ctx: &CommandContext) -> Result<Comm
             println!("(no rows)");
         } else {
             // Extract column names from first row
-            let cols: Vec<&str> = rows[0].keys().map(|k| k.as_str()).collect();
+            let cols: Vec<&str> = rows[0].keys().map(String::as_str).collect();
             let mut builder = Builder::new();
             builder.push_record(cols.clone());
             for row in &rows {
@@ -3127,15 +3130,13 @@ fn execute_shell(_db: &HistoryDb, ctx: &CommandContext) -> Result<CommandResult>
     }
 
     let status = std::process::Command::new("sqlite3")
-        .arg(&db_path)
+        .arg(db_path)
         .status()
         .wrap_err("failed to launch sqlite3")?;
 
+    let exit_code = status.code().unwrap_or(-1);
     Ok(CommandResult::success()
-        .with_message(format!(
-            "sqlite3 exited with code {}",
-            status.code().unwrap_or(-1)
-        ))
+        .with_message(format!("sqlite3 exited with code {exit_code}"))
         .with_duration(ctx.elapsed()))
 }
 
@@ -3226,12 +3227,14 @@ fn render_timeline_table(entries: &[InvocationTimelineEntry]) {
         let duration = e
             .duration_secs
             .map_or_else(|| "-".into(), |d| format!("{d:.1}s"));
-        let delta = if e.diagnostic_delta == 0 {
-            "—".to_string()
-        } else if e.diagnostic_delta > 0 {
-            style(format!("+{}", e.diagnostic_delta)).red().to_string()
-        } else {
-            style(format!("{}", e.diagnostic_delta)).green().to_string()
+        let delta = match e.diagnostic_delta.cmp(&0) {
+            std::cmp::Ordering::Equal => "—".to_string(),
+            std::cmp::Ordering::Greater => {
+                style(format!("+{}", e.diagnostic_delta)).red().to_string()
+            }
+            std::cmp::Ordering::Less => {
+                style(format!("{}", e.diagnostic_delta)).green().to_string()
+            }
         };
         builder.push_record([
             e.id.to_string(),
@@ -3846,7 +3849,7 @@ fn test_summary_probe_from_result(
 ) -> HistoryListEnrichmentProbe {
     match result {
         Ok((passed, failed, _)) if passed > 0 || failed > 0 => HistoryListEnrichmentProbe {
-            fragment: format!("tests:{}p{}f", passed, failed),
+            fragment: format!("tests:{passed}p{failed}f"),
             issue: None,
         },
         Ok(_) => HistoryListEnrichmentProbe {

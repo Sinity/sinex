@@ -104,7 +104,7 @@ fn list_run_targets() -> Vec<String> {
         "all-automatons",
     ];
     targets.sort_unstable();
-    targets.iter().map(|s| s.to_string()).collect()
+    targets.iter().map(ToString::to_string).collect()
 }
 
 /// Post-process a generated zsh completion script to inject dynamic package and run-target
@@ -126,12 +126,10 @@ fn postprocess_zsh(script: &str) -> String {
 
     // The run node NAME arg shows as :NAME:_default in the generated completions.
     // Replace it with dynamic run-target completion.
-    let script = script.replace(
+    script.replace(
         "':NAME:_default'",
         "':NAME:($(xtask completions list-run-targets 2>/dev/null))'",
-    );
-
-    script
+    )
 }
 
 impl CompletionsCommand {

@@ -1224,13 +1224,20 @@ async fn jetstream_consumer_stamps_retryable_dlq_headers(ctx: TestContext) -> Te
         Some(setup.namespace.as_str()),
         "events.raw.dlq_headers.db_failure",
     );
-    assert_eq!(headers.get("Retry-Count").map(|v| v.as_str()), Some("0"));
     assert_eq!(
-        headers.get("Event-Id").map(|v| v.as_str()),
+        headers
+            .get("Retry-Count")
+            .map(async_nats::HeaderValue::as_str),
+        Some("0")
+    );
+    assert_eq!(
+        headers.get("Event-Id").map(async_nats::HeaderValue::as_str),
         Some(expected_event_id.as_str())
     );
     assert_eq!(
-        headers.get("Original-Subject").map(|v| v.as_str()),
+        headers
+            .get("Original-Subject")
+            .map(async_nats::HeaderValue::as_str),
         Some(expected_subject.as_str())
     );
 

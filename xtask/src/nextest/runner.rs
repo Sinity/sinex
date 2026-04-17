@@ -85,7 +85,7 @@ fn render_invocation_scoped_nextest_config(
         .ok_or_else(|| eyre!("nextest profile `{profile}` is missing"))?;
     let junit_table = profile_table
         .entry("junit")
-        .or_insert_with(|| toml::Value::Table(Default::default()))
+        .or_insert(toml::Value::Table(toml::map::Map::default()))
         .as_table_mut()
         .ok_or_else(|| eyre!("nextest profile `{profile}` junit config must be a table"))?;
     junit_table.insert(
@@ -100,16 +100,21 @@ fn prepare_invocation_scoped_nextest_config(
     profile: &str,
     history_invocation_id: Option<i64>,
 ) -> Result<InvocationScopedNextestConfig> {
-    let scope = history_invocation_id
-        .map(|id| format!("invocation-{id}"))
-        .unwrap_or_else(|| format!("pid-{}-{:016x}", std::process::id(), rand::random::<u64>()));
+    let scope = history_invocation_id.map_or_else(
+        || format!("pid-{}-{:016x}", std::process::id(), rand::random::<u64>()),
+        |id| format!("invocation-{id}"),
+    );
     let run_dir = crate::config::workspace_state_root()
         .join("nextest")
         .join(profile)
         .join("runs")
         .join(scope);
-    fs::create_dir_all(&run_dir)
-        .with_context(|| format!("failed to create nextest run directory {}", run_dir.display()))?;
+    fs::create_dir_all(&run_dir).with_context(|| {
+        format!(
+            "failed to create nextest run directory {}",
+            run_dir.display()
+        )
+    })?;
 
     let junit_path = run_dir.join("junit.xml");
     let config_path = run_dir.join("nextest.toml");
@@ -318,7 +323,10 @@ store-success-output = true
             parsed["profile"]["default"]["junit"]["path"].as_str(),
             Some("/tmp/custom-junit.xml")
         );
-        assert_eq!(parsed["profile"]["default"]["retries"].as_integer(), Some(2));
+        assert_eq!(
+            parsed["profile"]["default"]["retries"].as_integer(),
+            Some(2)
+        );
         assert_eq!(
             parsed["profile"]["default"]["junit"]["store-success-output"].as_bool(),
             Some(true)

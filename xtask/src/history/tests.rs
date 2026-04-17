@@ -52,6 +52,10 @@ impl TestStatus {
     }
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "called from rusqlite with String"
+)]
 pub(crate) fn parse_stored_test_status(status_str: String) -> rusqlite::Result<TestStatus> {
     TestStatus::try_from_str(&status_str).map_err(|_| {
         rusqlite::Error::FromSqlConversionFailure(

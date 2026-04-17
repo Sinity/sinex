@@ -14,10 +14,10 @@
 use futures::StreamExt;
 use serde_json::json;
 use sinex_node_sdk::{Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ScanReport};
-use sinex_primitives::{DynamicPayload, Id, Uuid};
 use sinex_primitives::rpc::methods;
 use sinex_primitives::temporal::Duration as TemporalDuration;
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::{DynamicPayload, Id, Uuid};
 use std::collections::HashMap;
 use std::time::Duration;
 use xtask::sandbox::prelude::*;
@@ -87,12 +87,11 @@ async fn spawn_fake_scan_node(
                 .event_types
                 .as_ref()
                 .and_then(|types| types.first())
-                .map(String::as_str)
-                .unwrap_or("file.created");
+                .map_or("file.created", String::as_str);
             let material_id = Uuid::now_v7();
             let source_identifier = format!("{logical_source_identifier}#material={material_id}");
             if let Err(error) = sqlx::query(
-                r#"
+                r"
                 INSERT INTO raw.source_material_registry (
                     id,
                     material_kind,
@@ -102,7 +101,7 @@ async fn spawn_fake_scan_node(
                     metadata
                 )
                 VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime', $3::jsonb)
-                "#,
+                ",
             )
             .bind(material_id)
             .bind(&source_identifier)

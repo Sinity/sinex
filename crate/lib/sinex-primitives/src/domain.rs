@@ -448,6 +448,10 @@ impl EventSource {
 
     /// Compile-time validation for event source strings.
     /// Panics at compile time if the string is invalid.
+    #[allow(
+        clippy::panic,
+        reason = "const-fn validator: panic is the only error channel available"
+    )]
     const fn const_validate_source(s: &str) {
         let bytes = s.as_bytes();
         assert!(!bytes.is_empty(), "EventSource cannot be empty");
@@ -510,7 +514,10 @@ impl From<String> for EventSource {
     /// Used by `sqlx::query_as!` and `.into()` conversions from trusted sources (DB rows).
     /// If the string is invalid, this indicates data corruption — panic is appropriate.
     /// For untrusted input, use [`EventSource::new`] which returns `Result`.
-    #[allow(clippy::expect_used)] // Intentional: invalid DB data = corruption = panic
+    #[allow(
+        clippy::panic,
+        reason = "Invalid DB data = corruption; panic is the intended surface"
+    )]
     fn from(s: String) -> Self {
         Self::new(&s).unwrap_or_else(|_| panic!("invalid EventSource value: {s:?}"))
     }
@@ -520,7 +527,10 @@ impl From<&str> for EventSource {
     /// Convert a `&str` to `EventSource`, panicking if invalid.
     ///
     /// For untrusted input, use [`EventSource::new`] which returns `Result`.
-    #[allow(clippy::expect_used)] // Intentional: invalid literal = programmer error = panic
+    #[allow(
+        clippy::panic,
+        reason = "Invalid literal = programmer error; panic is the intended surface"
+    )]
     fn from(s: &str) -> Self {
         Self::new(s).unwrap_or_else(|_| panic!("invalid EventSource value: {s:?}"))
     }
@@ -615,6 +625,10 @@ impl EventType {
 
     /// Compile-time validation for event type strings.
     /// Panics at compile time if the string is invalid.
+    #[allow(
+        clippy::panic,
+        reason = "const-fn validator: panic is the only error channel available"
+    )]
     const fn const_validate_event_type(s: &str) {
         let bytes = s.as_bytes();
         assert!(!bytes.is_empty(), "EventType cannot be empty");
@@ -703,7 +717,10 @@ impl From<String> for EventType {
     /// Used by `sqlx::query_as!` and `.into()` conversions from trusted sources (DB rows).
     /// If the string is invalid, this indicates data corruption — panic is appropriate.
     /// For untrusted input, use [`EventType::new`] which returns `Result`.
-    #[allow(clippy::expect_used)] // Intentional: invalid DB data = corruption = panic
+    #[allow(
+        clippy::panic,
+        reason = "Invalid DB data = corruption; panic is the intended surface"
+    )]
     fn from(s: String) -> Self {
         Self::new(&s).unwrap_or_else(|_| panic!("invalid EventType value: {s:?}"))
     }
@@ -713,7 +730,10 @@ impl From<&str> for EventType {
     /// Convert a `&str` to `EventType`, panicking if invalid.
     ///
     /// For untrusted input, use [`EventType::new`] which returns `Result`.
-    #[allow(clippy::expect_used)] // Intentional: invalid literal = programmer error = panic
+    #[allow(
+        clippy::panic,
+        reason = "Invalid literal = programmer error; panic is the intended surface"
+    )]
     fn from(s: &str) -> Self {
         Self::new(s).unwrap_or_else(|_| panic!("invalid EventType value: {s:?}"))
     }
@@ -893,14 +913,20 @@ impl FromStr for HostName {
 }
 
 impl From<String> for HostName {
-    #[allow(clippy::expect_used)] // Intentional: invalid trusted value = programmer error
+    #[allow(
+        clippy::panic,
+        reason = "Invalid trusted value = programmer error; panic is the intended surface"
+    )]
     fn from(s: String) -> Self {
         Self::new(s.clone()).unwrap_or_else(|_| panic!("invalid HostName value: {s:?}"))
     }
 }
 
 impl From<&str> for HostName {
-    #[allow(clippy::expect_used)] // Intentional: invalid literal = programmer error
+    #[allow(
+        clippy::panic,
+        reason = "Invalid literal = programmer error; panic is the intended surface"
+    )]
     fn from(s: &str) -> Self {
         Self::new(s).unwrap_or_else(|_| panic!("invalid HostName value: {s:?}"))
     }
@@ -1124,6 +1150,10 @@ impl NatsSubject {
     /// Validates: non-empty, no leading/trailing/consecutive dots, valid segment chars
     /// (alphanumeric, hyphen, underscore, `*`, `>`).
     #[must_use]
+    #[allow(
+        clippy::panic,
+        reason = "const-fn validator: panic is the only error channel available"
+    )]
     pub const fn from_static(s: &'static str) -> Self {
         let bytes = s.as_bytes();
         assert!(!bytes.is_empty(), "NatsSubject cannot be empty");

@@ -818,12 +818,13 @@ impl DatabasePool {
 
         // Fail if PostgreSQL max_connections can't support even one pool slot
         if budget < min_required {
-            return Err(eyre!(format!(
+            return Err(eyre!(
                 "PostgreSQL max_connections budget ({budget}) is too low for test pool. \
                  Minimum required: {min_required} (admin: {}, per slot: {}). \
                  Increase max_connections in postgresql.conf or reduce pool requirements.",
-                config.admin_max_connections, per_slot
-            )));
+                config.admin_max_connections,
+                per_slot
+            ));
         }
 
         config.apply_connection_budget(budget);
@@ -1911,12 +1912,12 @@ mod tests {
             .connect(&slot_url)
             .await?;
         sqlx::query(
-            r#"
+            r"
             ALTER TABLE raw.source_material_registry
                 DROP CONSTRAINT IF EXISTS source_material_registry_status_check,
                 ADD CONSTRAINT source_material_registry_status_check
                 CHECK (status IN ('sensing', 'completed', 'recovered_partial', 'failed'))
-            "#,
+            ",
         )
         .execute(&slot_pool)
         .await?;
@@ -1976,12 +1977,12 @@ mod tests {
             .connect(&slot_url)
             .await?;
         sqlx::query(
-            r#"
+            r"
             ALTER TABLE raw.source_material_registry
                 DROP CONSTRAINT IF EXISTS source_material_registry_status_check,
                 ADD CONSTRAINT source_material_registry_status_check
                 CHECK (status IN ('sensing', 'completed', 'recovered_partial', 'failed'))
-            "#,
+            ",
         )
         .execute(&slot_pool)
         .await?;

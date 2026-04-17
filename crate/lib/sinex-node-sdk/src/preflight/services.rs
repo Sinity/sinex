@@ -481,7 +481,7 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value
                     let is_available = service_data.is_loaded();
                     let load_state = service_data.load_state.as_str();
                     let contract_violations = service_data.notify_contract_violations();
-                    service_info.insert(service_name.to_string(), service_json);
+                    service_info.insert(service_name.clone(), service_json);
 
                     if service_name.starts_with("sinex-") && is_available {
                         if contract_violations.is_empty() {
@@ -521,7 +521,7 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value
                 }
                 Err(e) => {
                     service_info.insert(
-                        service_name.to_string(),
+                        service_name.clone(),
                         json!({
                             "available": false,
                             "error": e.to_string()
@@ -849,12 +849,11 @@ async fn discover_unit_files_in_path(unit_path: &str) -> NodeResult<Vec<String>>
                     SinexError::processing(format!(
                         "Failed to decode systemd unit entry name as UTF-8 in '{unit_path}'"
                     ))
-                    .with_context("entry", format!("{file_name:?}"))
+                    .with_context("entry", file_name.to_string_lossy().into_owned())
                 })?;
                 let file_type = entry.file_type().await.map_err(|error| {
                     SinexError::processing(format!(
-                        "Failed to inspect file type for systemd unit entry '{}/{}': {error}",
-                        unit_path, file_name_str
+                        "Failed to inspect file type for systemd unit entry '{unit_path}/{file_name_str}': {error}"
                     ))
                 })?;
                 if file_type.is_file()

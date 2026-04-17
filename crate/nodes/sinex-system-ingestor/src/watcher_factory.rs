@@ -91,7 +91,7 @@ impl WatcherFactory for RealWatcherFactory {
         &self,
         config: crate::payloads::DbusConfig,
     ) -> NodeResult<Box<dyn SystemWatcher>> {
-        let w = DbusWatcher::new(config).await?;
+        let w = DbusWatcher::new(config)?;
         Ok(Box::new(RealDbusWatcher(w)))
     }
 
@@ -109,7 +109,7 @@ impl WatcherFactory for RealWatcherFactory {
         &self,
         polling_fallback: bool,
     ) -> NodeResult<Box<dyn SystemWatcher>> {
-        let w = UdevWatcher::new(polling_fallback).await?;
+        let w = UdevWatcher::new(polling_fallback)?;
         Ok(Box::new(RealUdevWatcher(w)))
     }
 }

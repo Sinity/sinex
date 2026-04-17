@@ -176,9 +176,7 @@ impl DiskSpaceMonitor {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
 
-        let path_cstr = if let Ok(p) = CString::new(self.state_root.as_os_str().as_bytes()) {
-            p
-        } else {
+        let Ok(path_cstr) = CString::new(self.state_root.as_os_str().as_bytes()) else {
             warn!("Failed to convert path to CString for disk space check");
             return true; // Fail open
         };
@@ -487,14 +485,14 @@ impl MaterialAssembler {
     }
 
     /// Fetch a handle to an existing assembler state for a material.
-    async fn get_state_handle(&self, material_id: &Uuid) -> Option<Arc<Mutex<AssemblerState>>> {
+    fn get_state_handle(&self, material_id: &Uuid) -> Option<Arc<Mutex<AssemblerState>>> {
         self.assembler_state
             .get(material_id)
             .map(|entry| entry.value().clone())
     }
 
     /// Insert a new assembler state if one does not already exist.
-    async fn insert_state_handle(
+    fn insert_state_handle(
         &self,
         material_id: Uuid,
         state: AssemblerState,
@@ -1284,7 +1282,7 @@ mod tests {
         })?);
         let state_dir = tempfile::tempdir()?;
 
-        let error = match MaterialAssembler::new(
+        let error = MaterialAssembler::new(
             ctx.nats_client(),
             ctx.pool.clone(),
             annex,
@@ -1297,10 +1295,9 @@ mod tests {
             300,
             3_600,
             90,
-        ) {
-            Ok(_) => panic!("oversized material limits must fail honestly"),
-            Err(error) => error,
-        };
+        )
+        .err()
+        .expect("oversized material limits must fail honestly");
 
         assert!(
             error
@@ -1320,7 +1317,7 @@ mod tests {
 
         let mut state = assembler.create_placeholder_state(material_id).await?;
         state.last_slice_received = Timestamp::now() - time::Duration::minutes(10);
-        let state_handle = assembler.insert_state_handle(material_id, state).await;
+        let state_handle = assembler.insert_state_handle(material_id, state);
 
         let locked_state = state_handle.lock().await;
         let scan_assembler = assembler.clone_for_task();
@@ -1328,12 +1325,16 @@ mod tests {
         tokio::task::yield_now().await;
 
         let replacement_state = assembler.create_placeholder_state(material_id).await?;
+        let assembler_clone = assembler.clone_for_task();
         tokio::time::timeout(
             Duration::from_millis(200),
-            assembler.insert_state_handle(material_id, replacement_state),
+            tokio::task::spawn_blocking(move || {
+                assembler_clone.insert_state_handle(material_id, replacement_state);
+            }),
         )
         .await
-        .expect("stale scan should not block insert_state_handle on dashmap shard locks");
+        .expect("stale scan should not block insert_state_handle on dashmap shard locks")
+        .expect("spawn_blocking join should not panic");
 
         drop(locked_state);
         let stale_materials = scan_task.await?;

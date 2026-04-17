@@ -313,8 +313,7 @@ async fn gitops_create_source_uses_defaults(ctx: TestContext) -> TestResult<()> 
     assert_eq!(created.branch, "main", "Default branch should be 'main'");
     assert_eq!(
         created.path_pattern, DEFAULT_GITOPS_PATH_PATTERN,
-        "Default path pattern should be '{}'",
-        DEFAULT_GITOPS_PATH_PATTERN
+        "Default path pattern should be '{DEFAULT_GITOPS_PATH_PATTERN}'"
     );
 
     // Verify default sync frequency via list

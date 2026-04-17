@@ -3,7 +3,9 @@ use color_eyre::Result;
 use console::style;
 
 use crate::client::GatewayClient;
-use sinex_primitives::query::{AggregationMode, EventQuery, EventQueryResult, GroupByField, SortDirection};
+use sinex_primitives::query::{
+    AggregationMode, EventQuery, EventQueryResult, GroupByField, SortDirection,
+};
 
 #[derive(Debug, Args)]
 pub struct VerifyCommand;
@@ -11,7 +13,10 @@ pub struct VerifyCommand;
 impl VerifyCommand {
     pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
         println!();
-        println!("{}", style("Sinex Trustworthiness Verification").bold().cyan());
+        println!(
+            "{}",
+            style("Sinex Trustworthiness Verification").bold().cyan()
+        );
         println!("{}", style("═".repeat(50)).dim());
         println!();
 
@@ -22,7 +27,11 @@ impl VerifyCommand {
         // 1. Event count sanity
         let total_events = count_events(client).await?;
         if total_events > 0 {
-            println!("{} Event store has {} events", style("✓").green(), total_events);
+            println!(
+                "{} Event store has {} events",
+                style("✓").green(),
+                total_events
+            );
             pass += 1;
         } else {
             println!("{} Event store is empty", style("⚠").yellow());
@@ -45,10 +54,17 @@ impl VerifyCommand {
         // 3. Derived events present (automata working)
         let derived = count_derived_events(client).await?;
         if derived > 0 {
-            println!("{} {} derived events (automata producing output)", style("✓").green(), derived);
+            println!(
+                "{} {} derived events (automata producing output)",
+                style("✓").green(),
+                derived
+            );
             pass += 1;
         } else {
-            println!("{} No derived events — automata may not be processing", style("⚠").yellow());
+            println!(
+                "{} No derived events — automata may not be processing",
+                style("⚠").yellow()
+            );
             warn += 1;
         }
 
@@ -59,8 +75,11 @@ impl VerifyCommand {
                     println!("{} Gateway healthy (DB: ok, NATS: ok)", style("✓").green());
                     pass += 1;
                 } else {
-                    println!("{} Gateway degraded: {}", style("⚠").yellow(),
-                        health.degradation_reasons.join(", "));
+                    println!(
+                        "{} Gateway degraded: {}",
+                        style("⚠").yellow(),
+                        health.degradation_reasons.join(", ")
+                    );
                     warn += 1;
                 }
             }
@@ -73,10 +92,17 @@ impl VerifyCommand {
         // 5. Recent activity (events in last hour)
         let recent = count_recent_events(client).await?;
         if recent > 0 {
-            println!("{} {} events in the last hour (pipeline flowing)", style("✓").green(), recent);
+            println!(
+                "{} {} events in the last hour (pipeline flowing)",
+                style("✓").green(),
+                recent
+            );
             pass += 1;
         } else {
-            println!("{} No events in the last hour — pipeline may be stalled", style("⚠").yellow());
+            println!(
+                "{} No events in the last hour — pipeline may be stalled",
+                style("⚠").yellow()
+            );
             warn += 1;
         }
 
@@ -92,7 +118,12 @@ impl VerifyCommand {
 
         if fail > 0 {
             println!();
-            println!("{}", style("Verification FAILED — investigate failures above").red().bold());
+            println!(
+                "{}",
+                style("Verification FAILED — investigate failures above")
+                    .red()
+                    .bold()
+            );
             std::process::exit(1);
         } else if warn > 0 {
             println!();
@@ -146,9 +177,8 @@ async fn count_derived_events(client: &GatewayClient) -> Result<i64> {
 
 async fn count_recent_events(client: &GatewayClient) -> Result<i64> {
     let now = sinex_primitives::temporal::Timestamp::now();
-    let one_hour_ago = sinex_primitives::temporal::Timestamp::new(
-        now.inner() - time::Duration::hours(1),
-    );
+    let one_hour_ago =
+        sinex_primitives::temporal::Timestamp::new(now.inner() - time::Duration::hours(1));
     let time_range = sinex_primitives::query::TimeRange::new(Some(one_hour_ago), Some(now))?;
 
     let query = EventQuery {

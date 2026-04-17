@@ -307,15 +307,13 @@ async fn start_test_gateway_inner(
         child,
     };
 
-    if wait_ready {
-        if let Err(e) = wait_for_gateway_tcp(&actual_addr).await {
-            if let Err(stop_error) = handle.stop().await {
-                return Err(e).wrap_err(format!(
-                    "Gateway failed to become ready and cleanup failed: {stop_error:#}"
-                ));
-            }
-            return Err(e).wrap_err("Gateway failed to become ready");
+    if wait_ready && let Err(e) = wait_for_gateway_tcp(&actual_addr).await {
+        if let Err(stop_error) = handle.stop().await {
+            return Err(e).wrap_err(format!(
+                "Gateway failed to become ready and cleanup failed: {stop_error:#}"
+            ));
         }
+        return Err(e).wrap_err("Gateway failed to become ready");
     }
 
     Ok(handle)

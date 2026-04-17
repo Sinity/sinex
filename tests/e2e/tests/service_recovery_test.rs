@@ -191,7 +191,12 @@ async fn test_pipeline_scope_restart_isolation(ctx: TestContext) -> TestResult<(
         .await?;
     let phase1_markers: Vec<_> = all_events
         .iter()
-        .filter_map(|event| event.payload.get("phase").and_then(|value| value.as_i64()))
+        .filter_map(|event| {
+            event
+                .payload
+                .get("phase")
+                .and_then(sinex_primitives::JsonValue::as_i64)
+        })
         .filter(|phase| *phase == 1)
         .collect();
     assert!(

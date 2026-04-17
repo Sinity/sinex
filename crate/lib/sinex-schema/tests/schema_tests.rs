@@ -389,7 +389,9 @@ mod index_tests {
         }
 
         let payloads: Vec<_> = (0..40)
-            .map(|i| DynamicPayload::new("test-source", "test-event", serde_json::json!({"index": i})))
+            .map(|i| {
+                DynamicPayload::new("test-source", "test-event", serde_json::json!({"index": i}))
+            })
             .collect();
         let events = ctx.publish_many(payloads).await?;
         assert_eq!(events.len(), 40);

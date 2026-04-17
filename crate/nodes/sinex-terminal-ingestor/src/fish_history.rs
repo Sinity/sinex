@@ -1,4 +1,4 @@
-//! Fish SQLite history reader.
+//! Fish `SQLite` history reader.
 //!
 //! Native Fish history is a YAML-like text file at `~/.local/share/fish/fish_history`.
 //! This module only handles explicitly SQLite-backed Fish history sources.
@@ -13,7 +13,7 @@ use sinex_primitives::Timestamp;
 /// Represents a single command from Fish history
 #[derive(Debug, Clone)]
 pub struct FishHistoryEntry {
-    /// Stable SQLite row identifier for idempotent historical replay.
+    /// Stable `SQLite` row identifier for idempotent historical replay.
     pub row_id: i64,
     /// The command text
     pub command: String,

@@ -1581,12 +1581,13 @@ impl ReplayStateMachine {
                     .with_operation("recover_stale_executing")
             })?;
 
-            let staleness_desc = staleness
-                .map(|d| {
+            let staleness_desc = staleness.map_or_else(
+                || "unknown".to_string(),
+                |d| {
                     let total_secs = d.whole_seconds().unsigned_abs();
                     format!("{}m{}s", total_secs / 60, total_secs % 60)
-                })
-                .unwrap_or_else(|| "unknown".to_string());
+                },
+            );
 
             warn!(
                 operation_id = %operation_id,

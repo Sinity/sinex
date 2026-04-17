@@ -110,13 +110,12 @@ fn parse_sinex_test_attrs_tokens(
         for meta in parsed {
             match meta {
                 Meta::NameValue(MetaNameValue { path, value, .. }) if path.is_ident("timeout") => {
-                    let lit = match &value {
-                        Expr::Lit(ExprLit { lit, .. }) => lit,
-                        _ => {
-                            let error =
-                                Error::new(value.span(), "`timeout` must be an integer literal");
-                            return Err(error);
-                        }
+                    let lit = if let Expr::Lit(ExprLit { lit, .. }) = &value {
+                        lit
+                    } else {
+                        let error =
+                            Error::new(value.span(), "`timeout` must be an integer literal");
+                        return Err(error);
                     };
                     match parse_u64_lit(lit, "timeout") {
                         Ok(timeout) => {
@@ -126,13 +125,11 @@ fn parse_sinex_test_attrs_tokens(
                     }
                 }
                 Meta::NameValue(MetaNameValue { path, value, .. }) if path.is_ident("trace") => {
-                    let lit = match &value {
-                        Expr::Lit(ExprLit { lit, .. }) => lit,
-                        _ => {
-                            let error =
-                                Error::new(value.span(), "`trace` must be a boolean literal");
-                            return Err(error);
-                        }
+                    let lit = if let Expr::Lit(ExprLit { lit, .. }) = &value {
+                        lit
+                    } else {
+                        let error = Error::new(value.span(), "`trace` must be a boolean literal");
+                        return Err(error);
                     };
                     match parse_bool_lit(lit, "trace") {
                         Ok(trace) => {
@@ -142,13 +139,11 @@ fn parse_sinex_test_attrs_tokens(
                     }
                 }
                 Meta::NameValue(MetaNameValue { path, value, .. }) if path.is_ident("serial") => {
-                    let lit = match &value {
-                        Expr::Lit(ExprLit { lit, .. }) => lit,
-                        _ => {
-                            let error =
-                                Error::new(value.span(), "`serial` must be a boolean literal");
-                            return Err(error);
-                        }
+                    let lit = if let Expr::Lit(ExprLit { lit, .. }) = &value {
+                        lit
+                    } else {
+                        let error = Error::new(value.span(), "`serial` must be a boolean literal");
+                        return Err(error);
                     };
                     match parse_bool_lit(lit, "serial") {
                         Ok(serial) => {
@@ -165,13 +160,11 @@ fn parse_sinex_test_attrs_tokens(
                     }
                 }
                 Meta::NameValue(MetaNameValue { path, value, .. }) if path.is_ident("scope") => {
-                    let lit = match &value {
-                        Expr::Lit(ExprLit { lit, .. }) => lit,
-                        _ => {
-                            let error =
-                                Error::new(value.span(), "`scope` must be a string literal");
-                            return Err(error);
-                        }
+                    let lit = if let Expr::Lit(ExprLit { lit, .. }) = &value {
+                        lit
+                    } else {
+                        let error = Error::new(value.span(), "`scope` must be a string literal");
+                        return Err(error);
                     };
                     match parse_serial_scope_lit(lit, "scope") {
                         Ok(scope) => {

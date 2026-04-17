@@ -1293,13 +1293,13 @@ impl UnifiedJournalWatcher {
             sinex_node_sdk::SinexError::processing(format!(
                 "Journal entry {cursor} has out-of-range microsecond timestamp"
             ))
-            .with_context("cursor", cursor.to_string())
+            .with_context("cursor", cursor.clone())
             .with_context("timestamp_us", timestamp_us.to_string())
             .with_source(error)
         })?;
 
         let payload = JournalEntryPayload {
-            cursor: cursor.to_string(),
+            cursor: cursor.clone(),
             timestamp_us: timestamp_us_i64,
             timestamp,
             hostname,
@@ -1434,8 +1434,8 @@ impl UnifiedJournalWatcher {
                 let e = Event::new(
                     SystemdUnitFailedPayload {
                         unit_name: unit_name.to_string(),
-                        message: message.to_string(),
-                        cursor: cursor.to_string(),
+                        message: message.clone(),
+                        cursor: cursor.clone(),
                         pid: entry["_PID"].as_str().map(String::from),
                         uid: entry["_UID"].as_str().map(String::from),
                         timestamp: ts_orig,
@@ -1449,8 +1449,8 @@ impl UnifiedJournalWatcher {
                 let e = Event::new(
                     SystemdUnitReloadedPayload {
                         unit_name: Some(unit_name.to_string()),
-                        message: message.to_string(),
-                        cursor: cursor.to_string(),
+                        message: message.clone(),
+                        cursor: cursor.clone(),
                         pid: entry["_PID"].as_str().map(String::from),
                         uid: entry["_UID"].as_str().map(String::from),
                         timestamp: ts_orig,
@@ -1464,8 +1464,8 @@ impl UnifiedJournalWatcher {
                 let e = Event::new(
                     SystemdTimerTriggeredPayload {
                         unit_name: Some(unit_name.to_string()),
-                        message: message.to_string(),
-                        cursor: cursor.to_string(),
+                        message: message.clone(),
+                        cursor: cursor.clone(),
                         pid: entry["_PID"].as_str().map(String::from),
                         uid: entry["_UID"].as_str().map(String::from),
                         timestamp: ts_orig,
@@ -1553,8 +1553,7 @@ impl UnifiedJournalWatcher {
             if let Some(parent) = camino::Utf8Path::new(cursor_file).parent() {
                 tokio::fs::create_dir_all(parent).await.map_err(|error| {
                     sinex_node_sdk::SinexError::processing(format!(
-                        "Failed to create cursor directory {}",
-                        parent
+                        "Failed to create cursor directory {parent}"
                     ))
                     .with_source(error)
                 })?;
@@ -1810,7 +1809,7 @@ mod tests {
                 .to_string()
                 .contains("SINEX_JOURNAL_MAX_LINE_BYTES must be a positive integer")
         );
-        assert!(error.to_string().contains("0"));
+        assert!(error.to_string().contains('0'));
         Ok(())
     }
 

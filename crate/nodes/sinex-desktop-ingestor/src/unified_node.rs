@@ -269,7 +269,7 @@ impl DesktopNode {
         Ok(state)
     }
 
-    async fn initialize_watcher_handles(&mut self) -> NodeResult<()> {
+    fn initialize_watcher_handles(&mut self) {
         if self.config.clipboard_enabled && self.clipboard_watcher.is_none() {
             // Create initialized handle
             let handle = WatcherHandle::initialized("clipboard");
@@ -280,7 +280,6 @@ impl DesktopNode {
             let handle = WatcherHandle::initialized("window_manager");
             self.window_manager_watcher = Some(handle);
         }
-        Ok(())
     }
 
     fn configured_activitywatch_db_path(&self) -> Option<&Utf8PathBuf> {
@@ -735,7 +734,7 @@ impl IngestorNode for DesktopNode {
         self.stage_context = Some(stage_context);
         self.acquisition = Some(acquisition);
 
-        self.initialize_watcher_handles().await?;
+        self.initialize_watcher_handles();
 
         Ok(())
     }
@@ -876,7 +875,7 @@ impl IngestorNode for DesktopNode {
         let mut warnings = Vec::new();
 
         // Ensure handles are initialized
-        self.initialize_watcher_handles().await?;
+        self.initialize_watcher_handles();
 
         let stage_context = self
             .stage_context
@@ -895,9 +894,7 @@ impl IngestorNode for DesktopNode {
                 self.config.clipboard_poll_interval_secs,
                 stage_context.clone(),
                 watcher_shutdown_rx,
-            )
-            .await
-            {
+            ) {
                 Ok(mut watcher) => {
                     *handle = WatcherHandle::initialized("clipboard");
                     let health = handle.health_tracker();
@@ -988,15 +985,15 @@ impl IngestorNode for DesktopNode {
 
     async fn shutdown(&mut self, _state: &Self::State) -> NodeResult<()> {
         let mut shutdown_errors = Vec::new();
-        if let Some(handle) = self.clipboard_watcher.take() {
-            if let Err(error) = handle.shutdown().await {
-                shutdown_errors.push(("clipboard watcher", error));
-            }
+        if let Some(handle) = self.clipboard_watcher.take()
+            && let Err(error) = handle.shutdown().await
+        {
+            shutdown_errors.push(("clipboard watcher", error));
         }
-        if let Some(handle) = self.window_manager_watcher.take() {
-            if let Err(error) = handle.shutdown().await {
-                shutdown_errors.push(("window manager watcher", error));
-            }
+        if let Some(handle) = self.window_manager_watcher.take()
+            && let Err(error) = handle.shutdown().await
+        {
+            shutdown_errors.push(("window manager watcher", error));
         }
         Self::collapse_shutdown_errors(shutdown_errors)
     }

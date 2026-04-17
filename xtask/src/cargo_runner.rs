@@ -110,17 +110,17 @@ impl MockCargoRunner {
                 warnings: 0,
                 diagnostics: vec![],
                 success: true,
-                compiled_packages: Default::default(),
+                compiled_packages: std::collections::HashSet::default(),
             },
             clippy_response: DiagnosticSummary {
                 errors: 0,
                 warnings: 0,
                 diagnostics: vec![],
                 success: true,
-                compiled_packages: Default::default(),
+                compiled_packages: std::collections::HashSet::default(),
             },
             fmt_ok: true,
-            calls: Default::default(),
+            calls: Mutex::default(),
         }
     }
 

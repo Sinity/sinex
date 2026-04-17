@@ -1,11 +1,11 @@
-use sinex_gateway::{auth::Role, rpc_registry, rpc_server::RpcAuthContext, ServiceContainer};
+use sinex_gateway::{ServiceContainer, auth::Role, rpc_registry, rpc_server::RpcAuthContext};
 use sinex_primitives::temporal::Timestamp;
 use xtask::sandbox::prelude::*;
 
 fn auth_with_role(role: Role) -> RpcAuthContext {
     RpcAuthContext {
         token_prefix: "test-tok".to_string(),
-        actor_id: format!("token:test-tok"),
+        actor_id: "token:test-tok".to_string(),
         authenticated_at: Timestamp::now(),
         role,
     }
@@ -20,9 +20,7 @@ fn roles_below(required: Role) -> Vec<Role> {
 }
 
 #[sinex_test]
-async fn registry_rejects_insufficient_roles_for_every_method(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn registry_rejects_insufficient_roles_for_every_method(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let nats_url = ctx.nats_handle()?.client_url().to_string();
     let mut env_guard = EnvGuard::new();
@@ -78,14 +76,26 @@ async fn registry_has_expected_role_distribution(_ctx: TestContext) -> TestResul
     let registry = rpc_registry::build_registry();
     let method_roles = registry.method_roles();
 
-    let readonly_count = method_roles.values().filter(|r| **r == Role::ReadOnly).count();
+    let readonly_count = method_roles
+        .values()
+        .filter(|r| **r == Role::ReadOnly)
+        .count();
     let write_count = method_roles.values().filter(|r| **r == Role::Write).count();
     let admin_count = method_roles.values().filter(|r| **r == Role::Admin).count();
     let total = method_roles.len();
 
-    assert!(readonly_count >= 15, "Expected 15+ ReadOnly methods, got {readonly_count}");
-    assert!(write_count >= 5, "Expected 5+ Write methods, got {write_count}");
-    assert!(admin_count >= 10, "Expected 10+ Admin methods, got {admin_count}");
+    assert!(
+        readonly_count >= 15,
+        "Expected 15+ ReadOnly methods, got {readonly_count}"
+    );
+    assert!(
+        write_count >= 5,
+        "Expected 5+ Write methods, got {write_count}"
+    );
+    assert!(
+        admin_count >= 10,
+        "Expected 10+ Admin methods, got {admin_count}"
+    );
     assert!(total >= 40, "Expected 40+ total methods, got {total}");
 
     Ok(())

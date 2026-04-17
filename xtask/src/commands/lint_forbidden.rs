@@ -295,9 +295,8 @@ fn is_tests_path(path: &str) -> bool {
 }
 
 fn file_has_inline_cfg_test_module(path: &str) -> bool {
-    let contents = match std::fs::read_to_string(path) {
-        Ok(contents) => contents,
-        Err(_) => return false,
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return false;
     };
     contents.contains("#[cfg(test)]") && contents.contains("mod tests")
 }

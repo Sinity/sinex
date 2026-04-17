@@ -255,10 +255,10 @@ fn append_stream_task_output(
 }
 
 fn detect_nix_system(workspace_root: &Path) -> Result<String> {
-    if let Ok(system) = std::env::var("NIX_SYSTEM") {
-        if !system.trim().is_empty() {
-            return Ok(system);
-        }
+    if let Ok(system) = std::env::var("NIX_SYSTEM")
+        && !system.trim().is_empty()
+    {
+        return Ok(system);
     }
 
     let output = Command::new("nix")
@@ -304,10 +304,7 @@ fn available_vm_tests(workspace_root: &Path, system: &str) -> Result<Vec<String>
         .wrap_err("Failed to parse exported VM check list")?;
     Ok(exported
         .into_iter()
-        .filter_map(|name| {
-            name.strip_prefix("sinex-vm-")
-                .map(|short| short.to_string())
-        })
+        .filter_map(|name| name.strip_prefix("sinex-vm-").map(str::to_string))
         .collect())
 }
 
@@ -486,7 +483,11 @@ async fn run_single_vm_test(
 }
 
 /// Execute `xtask test vm`.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::fn_params_excessive_bools,
+    reason = "CLI argument passthrough: each bool flag maps directly to a user-visible --flag"
+)]
 async fn execute_test(
     category: Option<&str>,
     parallel: bool,
@@ -660,7 +661,7 @@ async fn execute_test(
         } else {
             InvocationStatus::Failed
         };
-        let exit_code = if failed.is_empty() { 0 } else { 1 };
+        let exit_code = i32::from(!failed.is_empty());
         ctx.with_history_db(|db| {
             db.finish_invocation(inv_id, final_status, Some(exit_code), suite_duration)
         });
@@ -848,8 +849,7 @@ fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
     if ctx.is_human() {
         println!();
         println!(
-            "  {} valid, {} missing, {} failed, {} probe failures",
-            valid, missing, failed, probe_failures
+            "  {valid} valid, {missing} missing, {failed} failed, {probe_failures} probe failures",
         );
         if failed == 0 && probe_failures == 0 {
             println!("  VM test infrastructure is ready.");
@@ -867,9 +867,10 @@ fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
 }
 
 fn display_vm_test_label(file: &Path) -> String {
-    file.file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| file.display().to_string())
+    file.file_name().map_or_else(
+        || file.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
 }
 
 fn discover_vm_test_files(workspace_root: &Path) -> Result<Vec<PathBuf>> {

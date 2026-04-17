@@ -63,7 +63,7 @@ pub type ValidationResult = std::result::Result<(), ValidationError>;
 pub enum SchemaValidationOutcome {
     /// Payload passed validation; carries the schema UUID that matched.
     Valid { schema_id: Uuid },
-    /// No schema registered for this source/event_type pair.
+    /// No schema registered for this `source/event_type` pair.
     NoSchema,
     /// A schema ID was registered but the compiled schema is missing from the cache.
     SchemaNotFound { schema_id: Uuid },

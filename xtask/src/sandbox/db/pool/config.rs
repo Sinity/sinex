@@ -230,10 +230,10 @@ mod tests {
     #[sinex_test]
     async fn test_nextest_test_threads_from_config_ignores_missing_profile() -> Result<()> {
         let config: Value = toml::from_str(
-            r#"
+            r"
             [profile.ci]
             test-threads = 8
-            "#,
+            ",
         )?;
         assert_eq!(
             nextest_test_threads_from_config(&config, "default", 24)?,

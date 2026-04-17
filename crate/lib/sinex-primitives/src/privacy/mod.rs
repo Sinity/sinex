@@ -47,10 +47,10 @@ pub fn engine() -> Result<&'static PrivacyEngine, &'static PrivacyError> {
 }
 
 /// Process text with the global privacy engine.
-pub fn process<'a>(
-    text: &'a str,
+pub fn process(
+    text: &str,
     context: ProcessingContext,
-) -> Result<Processed<'a>, &'static PrivacyError> {
+) -> Result<Processed<'_>, &'static PrivacyError> {
     Ok(engine()?.process(text, context))
 }
 
@@ -317,9 +317,8 @@ mod tests {
 
         restore_var("SINEX_PRIVACY_EXTRA_RULES", old_extra_rules);
 
-        let err = match result {
-            Ok(_) => panic!("invalid privacy env override should fail honestly"),
-            Err(err) => err,
+        let Err(err) = result else {
+            panic!("invalid privacy env override should fail honestly")
         };
         assert!(matches!(err, PrivacyError::Config(_)));
         assert!(

@@ -259,7 +259,7 @@ fn configured_config_path() -> Result<Option<PathBuf>, PrivacyConfigError> {
         let explicit = explicit.into_string().map_err(|value| {
             invalid_env(
                 "SINEX_PRIVACY_CONFIG",
-                format!("contains a non-unicode path: {value:?}"),
+                format!("contains a non-unicode path: {}", value.to_string_lossy()),
             )
         })?;
         return Ok(Some(PathBuf::from(explicit)));
@@ -268,7 +268,7 @@ fn configured_config_path() -> Result<Option<PathBuf>, PrivacyConfigError> {
         let state_dir = state_dir.into_string().map_err(|value| {
             invalid_env(
                 "SINEX_STATE_DIR",
-                format!("contains a non-unicode path: {value:?}"),
+                format!("contains a non-unicode path: {}", value.to_string_lossy()),
             )
         })?;
         let path = PathBuf::from(state_dir).join("privacy.toml");

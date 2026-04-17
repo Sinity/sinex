@@ -56,7 +56,7 @@ pub struct DemoCommand {
 
 type PayloadFn = fn(&mut SmallRng, usize) -> serde_json::Value;
 
-static EVENT_TYPES: &[(&'static str, PayloadFn)] = &[
+static EVENT_TYPES: &[(&str, PayloadFn)] = &[
     ("file.created", gen_file_created),
     ("window.focused", gen_window_focused),
     ("shell.command", gen_shell_command),
@@ -121,7 +121,7 @@ impl DemoCommand {
                     ts_orig: Timestamp::now(),
                     host: host.clone(),
                     payload,
-                    source_material_id: Some(material_id.clone()),
+                    source_material_id: Some(material_id),
                     anchor_byte: Some(i as i64),
                     offset_start: Some(i as i64),
                     offset_end: Some((i + 1) as i64),
