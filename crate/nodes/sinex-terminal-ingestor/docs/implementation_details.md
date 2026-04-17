@@ -4,7 +4,7 @@ The Terminal Ingestor captures shell command history from multiple sources, prov
 
 ## History Tailing
 
-- **Incremental Parsing**: Monitors text-based history files (e.g., `.bash_history`, `.zsh_history`) and tracks the byte offset and line count to ensure only new commands are processed.
+- **Incremental Parsing**: Monitors text-based history files (e.g., `.bash_history`, `.zsh_history`) through the shared `sinex_node_sdk::file_tailer` append-only adapter, so offset tracking, partial-line withholding, and rotation/truncation handling stay consistent with future log-style ingestors.
 - **Fish SQLite Support**: includes a specialized parser for the Fish shell's SQLite-based history format, using ROWID for reliable incremental reading.
 - **Checkpoint Persistence**: Last-read positions are persisted to disk using an atomic write pattern (temp file + rename) to ensure resumption after restarts.
 
