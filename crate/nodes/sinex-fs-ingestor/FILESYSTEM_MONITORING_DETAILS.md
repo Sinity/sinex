@@ -105,6 +105,13 @@ fs.inotify.max_queued_events=32768
 4. **Async I/O**: Use tokio for non-blocking event handling
 5. **Connection Pooling**: Reuse database connections for event processing
 
+## Current Stability Rules
+
+- The fs ingestor now defaults to a `524288` watch budget to match the documented Linux recommendation.
+- Automatic recursive poll fallback is no longer used for oversized or partially unreadable trees.
+- When a tree is too large or contains unreadable descendants, the ingestor first builds a filtered native watch plan and skips ignored heavy descendants such as `.git`, `.direnv`, `node_modules`, and `target`.
+- If the filtered native plan still exceeds the configured watch budget, the node fails honestly during initialization instead of recursively polling the whole tree.
+
 ## Unimplemented Features
 
 The following features are documented but not yet implemented:

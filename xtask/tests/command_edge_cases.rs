@@ -318,7 +318,13 @@ async fn test_command_result_partial_status() -> TestResult<()> {
 )]
 async fn test_command_metadata_factories() -> TestResult<()> {
     // (factory_fn_result, expected_category, timeout_is_some, modifies_state, track_in_history)
-    type MetadataCase = (CommandMetadata, Option<&'static str>, bool, bool, Option<bool>);
+    type MetadataCase = (
+        CommandMetadata,
+        Option<&'static str>,
+        bool,
+        bool,
+        Option<bool>,
+    );
 
     let cases: &[MetadataCase] = &[
         (CommandMetadata::default(), None, false, false, Some(true)),
