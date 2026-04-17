@@ -36,7 +36,7 @@ async fn create_test_reporter(
 
     let config = SelfObserverConfig {
         component: "test-component".to_string(),
-        subject_prefix: "sinex.telemetry".to_string(),
+        subject_prefix: "events.raw".to_string(),
         enabled: true,
         min_emission_interval: Duration::ZERO,
     };
@@ -264,7 +264,7 @@ async fn health_reporter_with_custom_thresholds(ctx: TestContext) -> TestResult<
 
     let config = SelfObserverConfig {
         component: "test-strict".to_string(),
-        subject_prefix: "sinex.telemetry".to_string(),
+        subject_prefix: "events.raw".to_string(),
         enabled: true,
         min_emission_interval: Duration::from_millis(100),
     };
