@@ -156,6 +156,9 @@ let
 
     for db_name in ${concatStringsSep " " (map escapeShellArg allDatabases)}; do
       echo "$(date): applying Sinex schema to $db_name"
+      export SINEX_DB_MAX_CONNECTIONS=${toString cfg.database.connectionPool.maxConnections}
+      export SINEX_DB_MIN_CONNECTIONS=${toString cfg.database.connectionPool.minConnections}
+      export SINEX_DB_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}
       ${cfg.package}/bin/xtask infra schema-apply \
         --database-url "postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/$db_name"
     done
