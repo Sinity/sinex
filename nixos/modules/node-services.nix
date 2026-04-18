@@ -913,6 +913,7 @@ let
               echo "WAYLAND_DISPLAY=$WAYLAND_DISPLAY_NAME"
             fi
             if [ -n "$HYPRLAND_SIGNATURE" ]; then
+              echo "HYPRLAND_INSTANCE_SIGNATURE=$HYPRLAND_SIGNATURE"
               echo "SINEX_HYPRLAND_INSTANCE_SIGNATURE=$HYPRLAND_SIGNATURE"
             fi
             if [ -n "$CONFIGURED_ACTIVITYWATCH_DB" ]; then
@@ -936,6 +937,7 @@ let
       inherit instances batch resources;
       extraArgs = sat.extraArgs;
       env = clipboardEnv ++ sessionEnv ++ [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
+      path = [ pkgs.hyprland ];
       serviceConfig = {
         ProtectHome = lib.mkForce "read-only";
         ReadWritePaths = readWritePaths ++ accessWritePaths;
@@ -953,14 +955,20 @@ let
       instances = resolveInstances sat.instances;
       batch = resolveBatch sat.batch;
       resources = resolveResources sat.resources;
+      nodeConfig = builtins.toJSON {
+        dbus_buses = "system";
+      };
     in
     mkNodeUnits {
       name = "system";
       binary = "system-ingestor";
       description = "System node";
       inherit instances batch resources;
-      extraArgs = sat.extraArgs;
+      extraArgs = [ "--node-config ${escapeShellArg nodeConfig}" ] ++ sat.extraArgs;
       env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
+      serviceConfig = {
+        SupplementaryGroups = [ "systemd-journal" ];
+      };
     };
 
   mkNodeUnits = params:
@@ -969,6 +977,7 @@ let
       resources = params.resources;
       extraArgs = params.extraArgs or [];
       envExtras = params.env or [];
+      unitPath = params.path or [];
       serviceConfigOverrides = params.serviceConfig or {};
       afterUnits = schemaApplyUnits ++ optionals coreEnabled [ "sinex-ingestd.service" ];
       requireUnits = schemaApplyUnits;
@@ -987,6 +996,7 @@ let
         requires = requireUnits;
         wants = wantsUnits;
         unitConfig = restartRateLimits // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
+        path = unitPath;
         serviceConfig = mkBaseServiceConfig resources env ({
           ExecStart = mkDatabasePasswordExec {
             name = "${params.name}-${toString instance}";
