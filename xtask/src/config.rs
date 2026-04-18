@@ -172,11 +172,23 @@ pub fn workspace_target_dir() -> PathBuf {
 }
 
 /// Global configuration singleton.
+#[cfg(not(test))]
 static CONFIG: std::sync::LazyLock<Config> = std::sync::LazyLock::new(Config::from_env);
 
-/// Get the global configuration.
+/// Get the current xtask configuration.
+///
+/// Production xtask processes treat environment-derived configuration as
+/// immutable for the process lifetime. Unit tests intentionally mutate
+/// environment variables between cases, so they must resolve configuration from
+/// the live environment instead of a shared singleton.
+#[cfg(not(test))]
 pub fn config() -> &'static Config {
     &CONFIG
+}
+
+#[cfg(test)]
+pub fn config() -> Config {
+    Config::from_env()
 }
 
 /// Load `UserPreferences` from `~/.config/xtask/preferences.toml`.
