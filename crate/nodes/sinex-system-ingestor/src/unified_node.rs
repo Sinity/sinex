@@ -1118,6 +1118,7 @@ impl IngestorNode for SystemNode {
             max_scan_size: Some(10000),
             supports_concurrent: false,
             manages_own_continuous_loop: true, // we run our own loop in run_continuous
+            manages_own_checkpoints: true,
         }
     }
 

@@ -33,7 +33,7 @@ pub struct DeploymentReadinessDescriptor {
     #[serde(default)]
     pub document: DocumentDeploymentSurface,
     #[serde(default)]
-    pub automata: DeploymentSurface,
+    pub automata: AutomataDeploymentSurface,
     #[serde(default)]
     pub expectations: DeploymentExpectations,
     #[serde(default)]
@@ -148,6 +148,20 @@ pub struct DocumentDeploymentSurface {
     pub schedule: Option<String>,
     #[serde(default)]
     pub run_on_boot: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct AutomataDeploymentSurface {
+    #[serde(flatten)]
+    pub surface: DeploymentSurface,
+    #[serde(default)]
+    pub canonicalizer: bool,
+    #[serde(default)]
+    pub health_aggregator: bool,
+    #[serde(default)]
+    pub analytics_automaton: bool,
+    #[serde(default)]
+    pub session_detector: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]

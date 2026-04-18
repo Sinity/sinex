@@ -63,16 +63,9 @@ pkgs.testers.nixosTest {
       )
 
     with subtest("Deployment proof via sinexctl verify"):
+      machine.succeed("su - test -c 'echo basic-flow > /var/lib/sinex/watched/basic-flow.txt'")
       machine.succeed(
-        "sinexctl --insecure verify --gateway-smoke --automata-smoke"
-      )
-
-    with subtest("Document snapshot scan proof"):
-      machine.succeed("printf '# vm proof\\n' > /home/test/Documents/smoke.md")
-      machine.succeed("chown test:users /home/test/Documents/smoke.md")
-      machine.succeed("systemctl start sinex-document-scan.service")
-      machine.wait_until_succeeds(
-        "su - postgres -c \"psql -d sinex_dev -tAc \\\"SELECT COUNT(*) FROM core.events WHERE event_type = 'document.ingested'\\\"\" | grep -Eq '^[1-9][0-9]*$'"
+        "sinexctl --insecure verify --gateway-smoke --automata-smoke --document-smoke --source-proof"
       )
   '';
 }

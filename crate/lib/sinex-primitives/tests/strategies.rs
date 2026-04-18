@@ -113,10 +113,10 @@ pub fn arb_node_name() -> impl Strategy<Value = String> {
     prop_oneof![
         Just("command-canonicalizer".to_string()),
         Just("health-aggregator".to_string()),
-        Just("pkm-automaton".to_string()),
         Just("analytics-automaton".to_string()),
-        Just("content-automaton".to_string()),
-        Just("search-automaton".to_string()),
+        Just("session-detector".to_string()),
+        Just("document-ingestor".to_string()),
+        Just("fs-watcher".to_string()),
         Just("test-automaton".to_string()),
         "[a-z][a-z0-9-]{4,30}".prop_map(|s| format!("{s}-automaton")),
     ]

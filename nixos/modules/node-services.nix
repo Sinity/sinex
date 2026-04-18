@@ -965,6 +965,9 @@ let
       inherit instances batch resources;
       extraArgs = sat.extraArgs;
       env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
+      serviceConfig = {
+        SupplementaryGroups = [ "systemd-journal" ];
+      };
     };
 
   mkDocumentUnits =

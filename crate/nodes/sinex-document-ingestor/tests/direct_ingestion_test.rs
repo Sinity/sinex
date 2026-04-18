@@ -265,7 +265,9 @@ async fn document_node_skipped_targets_are_not_reported_as_success(
         report
             .warnings
             .iter()
-            .any(|warning| warning.contains("Skipped target"))
+            .any(|warning| warning.contains("larger than the configured size limit")),
+        "expected oversized-document warning, got {:?}",
+        report.warnings
     );
     assert!(
         timeout(Duration::from_millis(200), runtime.event_rx.recv())

@@ -84,6 +84,21 @@ It follows the scenario registry in `tests/e2e/nixos-vm/default.nix`.
 
 - `xtask test vm --validate` is the cheap way to keep the scenario tree honest
   when you touch scenario files or shared VM helper modules.
+- `basic` is the fast proof that gateway ingress, automata, and the managed
+  document scan surface all function on a booted VM.
+- `node-matrix` is the deployment-honesty proof: every long-running
+  node/automaton unit must start, the managed document surface must actually
+  ingest, and `sinexctl verify --gateway-smoke --automata-smoke --document-smoke --source-proof --historical-proof`
+  must pass on the booted VM.
+- `multi-source` is the broad runtime exercise scenario; it now drives the
+  managed document scan surface alongside filesystem, terminal, desktop,
+  system, and automata traffic, then proves those enabled collector surfaces
+  and implemented historical backfill surfaces through `sinexctl verify --source-proof --historical-proof`.
+  The collector proof distinguishes recent emission from merely historical
+  persisted evidence so stale rows cannot masquerade as a live surface.
+- `xtask test vm` gives `basic`, `node-matrix`, and `multi-source` the extended
+  60-minute timeout budget because they build and boot the widened full-runtime
+  closure rather than a minimal smoke VM.
 - Default CI still does not exercise the VM suite automatically; treat these
   scenarios as explicit deployment-path coverage that must be invoked on purpose.
 

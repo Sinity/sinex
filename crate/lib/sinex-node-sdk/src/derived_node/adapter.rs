@@ -1920,6 +1920,7 @@ where
             max_scan_size: None,
             supports_concurrent: false,
             manages_own_continuous_loop: false,
+            manages_own_checkpoints: true,
             ..NodeCapabilities::default()
         }
     }

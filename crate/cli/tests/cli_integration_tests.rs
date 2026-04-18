@@ -168,6 +168,8 @@ mod help_tests {
             ))
             .stdout(predicate::str::contains("--gateway-smoke"))
             .stdout(predicate::str::contains("--automata-smoke"))
+            .stdout(predicate::str::contains("--document-smoke"))
+            .stdout(predicate::str::contains("--source-proof"))
             .stdout(predicate::str::contains("--historical-proof"));
         Ok(())
     }

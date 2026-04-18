@@ -52,12 +52,15 @@ const CHAOS_TESTS: &[&str] = &[
 
 /// Default timeout per test in seconds (15 minutes).
 pub const DEFAULT_TIMEOUT_SECS: u64 = 900;
-/// Extended timeout for slow tests (maintenance, performance): 30 minutes.
-const EXTENDED_TIMEOUT_SECS: u64 = 1800;
+/// Extended timeout for closure-heavy deployment/runtime scenarios: 60 minutes.
+const EXTENDED_TIMEOUT_SECS: u64 = 3600;
 
 /// Tests that require the extended timeout.
 const EXTENDED_TIMEOUT_TESTS: &[&str] = &[
+    "basic",
     "maintenance",
+    "node-matrix",
+    "multi-source",
     "performance",
     "production-scale",
     "migration-stress",
@@ -93,7 +96,7 @@ pub enum VmSubcommand {
         /// Run tests in parallel
         #[arg(long)]
         parallel: bool,
-        /// Timeout per test in seconds (default: 900, maintenance/performance: 1800)
+        /// Timeout per test in seconds (default: 900, closure-heavy scenarios: 3600)
         #[arg(long, short, default_value = "900")]
         timeout: u64,
         /// Keep VM state after test failure for debugging
