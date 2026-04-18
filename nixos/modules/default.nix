@@ -1123,6 +1123,87 @@ in
             description = "System node.";
           };
 
+          document = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption {
+                  type = bool;
+                  default = true;
+                  description = ''
+                    Enable managed document snapshot ingestion. This node runs as a
+                    scheduled scan service rather than a long-running daemon.
+                  '';
+                };
+                allowedRoots = mkOption {
+                  type = pathList;
+                  default = [];
+                  description = ''
+                    Root directories scanned by the managed document-ingestion service.
+                    When left empty and <option>services.sinex.users.target</option> is
+                    set, the module derives a default root of <literal>$HOME/Documents</literal>.
+                  '';
+                };
+                supportedMimeTypes = mkOption {
+                  type = strList;
+                  default = [
+                    "text/plain"
+                    "text/markdown"
+                    "application/pdf"
+                    "application/json"
+                    "text/html"
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  ];
+                  description = "MIME types accepted by the document ingestor.";
+                };
+                maxDocumentSize = mkOption {
+                  type = unsigned;
+                  default = 25 * 1024 * 1024;
+                  description = "Maximum document size in bytes.";
+                };
+                runOnBoot = mkOption {
+                  type = bool;
+                  default = true;
+                  description = "Run a full document snapshot once during boot.";
+                };
+                schedule = mkOption {
+                  type = nullOr str;
+                  default = "hourly";
+                  description = ''
+                    Optional <literal>systemd.timer</literal> OnCalendar schedule for
+                    recurring document scans. Set to <literal>null</literal> to disable
+                    the timer while keeping the boot scan.
+                  '';
+                };
+                persistentTimer = mkOption {
+                  type = bool;
+                  default = true;
+                  description = "Set <literal>Persistent=true</literal> on the document scan timer.";
+                };
+                resources = mkOption {
+                  type = nullOr (resourceModule {
+                    defaultMemory = "512M";
+                    defaultCpu = "100%";
+                    defaultShutdownSec = 600;
+                  });
+                  default = null;
+                  description = "Resource limits for managed document snapshot scans.";
+                };
+                env = mkOption {
+                  type = envModule;
+                  default = {};
+                  description = "Extra environment variables.";
+                };
+                extraArgs = mkOption {
+                  type = strList;
+                  default = [];
+                  description = "Extra CLI args.";
+                };
+              };
+            };
+            default = {};
+            description = "Managed document snapshot ingestion.";
+          };
+
           automata = mkOption {
             type = submodule {
               options = {
@@ -1546,6 +1627,10 @@ in
       targetUid =
         if targetUser == null then null
         else lib.attrByPath [ "users" "users" targetUser "uid" ] null config;
+      effectiveDocumentRoots =
+        if cfg.nodes.document.allowedRoots != [] then cfg.nodes.document.allowedRoots
+        else if targetHome == null then []
+        else [ "${targetHome}/Documents" ];
       dbUser = cfg.database.user;
       dbCfg = cfg.database;
       databaseUrl = renderDatabaseUrl dbCfg;
@@ -1669,6 +1754,22 @@ in
             hyprland_command_socket = cfg.nodes.desktop.session.hyprlandCommandSocket;
           };
         system = mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.system.enable) cfg.nodes.system.instances;
+        document = {
+          surface = mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.document.enable) null;
+          allowed_roots = effectiveDocumentRoots;
+          scan_service_unit =
+            if cfg.nodes.enable && cfg.nodes.document.enable then
+              "sinex-document-scan.service"
+            else
+              null;
+          timer_unit =
+            if cfg.nodes.enable && cfg.nodes.document.enable && cfg.nodes.document.schedule != null then
+              "sinex-document-scan.timer"
+            else
+              null;
+          schedule = cfg.nodes.document.schedule;
+          run_on_boot = cfg.nodes.document.runOnBoot;
+        };
         automata = mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.automata.enable) null;
         expectations = {
           schema_apply = cfg.database.enable && cfg.database.autoSetup;
@@ -1787,6 +1888,26 @@ in
               || (!cfg.nats.tls.verifyClients && !cfg.nats.tls.verifyAndMap)
               || (effectiveNatsClientCertFile != null && effectiveNatsClientKeyFile != null);
             message = "Managed NATS client-certificate verification requires services.sinex.nodes.nats.tls.clientCertFile/clientKeyFile or matching agenix secrets named sinex-nats-client-cert and sinex-nats-client-key.";
+          }
+          {
+            assertion =
+              (!cfg.nodes.enable || !cfg.nodes.document.enable)
+              || effectiveDocumentRoots != [];
+            message = ''
+              Document ingestion is enabled but no allowed roots resolved. Set
+              services.sinex.nodes.document.allowedRoots explicitly or configure
+              services.sinex.users.target so the module can derive $HOME/Documents.
+            '';
+          }
+          {
+            assertion =
+              (!cfg.nodes.enable || !cfg.nodes.document.enable)
+              || cfg.nodes.document.runOnBoot
+              || cfg.nodes.document.schedule != null;
+            message = ''
+              Document ingestion is enabled but neither runOnBoot nor schedule is set.
+              Enable at least one so the managed document scan surface actually runs.
+            '';
           }
         ];
         environment.systemPackages = mkAfter (

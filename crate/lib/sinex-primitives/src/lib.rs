@@ -55,7 +55,7 @@ pub use deployment_readiness::{
     DeploymentDatabaseRuntime, DeploymentExpectations, DeploymentGatewayRuntime,
     DeploymentNatsRuntime, DeploymentReadinessDescriptor, DeploymentReadinessMode,
     DeploymentSecrets, DeploymentSurface, DeploymentTarget, DesktopDeploymentSurface,
-    TerminalDeploymentSurface, TerminalHistorySource,
+    DocumentDeploymentSurface, TerminalDeploymentSurface, TerminalHistorySource,
 };
 pub use domain::{EventSource, EventType, HostName, RecordedPath, SanitizedPath};
 pub use env::strict_env_filter_source;
