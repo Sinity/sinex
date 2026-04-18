@@ -310,10 +310,17 @@ fn available_vm_tests(workspace_root: &Path, system: &str) -> Result<Vec<String>
 
 #[cfg(unix)]
 fn configure_process_group_leader(command: &mut tokio::process::Command) {
+    use std::os::unix::process::CommandExt;
+
     // SAFETY: `setpgid(0, 0)` is async-signal-safe per POSIX and runs in the child
     // between fork and exec so the spawned process becomes the leader of its own group.
+    // We also arm parent-death handling so an orphaned foreground xtask cannot
+    // leave a runaway `nix build` behind.
     unsafe {
         command.pre_exec(|| {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
             if libc::setpgid(0, 0) != 0 {
                 return Err(std::io::Error::last_os_error());
             }
