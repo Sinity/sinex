@@ -31,6 +31,8 @@ pub struct DeploymentReadinessDescriptor {
     #[serde(default)]
     pub system: DeploymentSurface,
     #[serde(default)]
+    pub document: DocumentDeploymentSurface,
+    #[serde(default)]
     pub automata: DeploymentSurface,
     #[serde(default)]
     pub expectations: DeploymentExpectations,
@@ -130,6 +132,22 @@ pub struct DesktopDeploymentSurface {
     pub hyprland_event_socket: Option<PathBuf>,
     #[serde(default)]
     pub hyprland_command_socket: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct DocumentDeploymentSurface {
+    #[serde(flatten)]
+    pub surface: DeploymentSurface,
+    #[serde(default)]
+    pub allowed_roots: Vec<PathBuf>,
+    #[serde(default)]
+    pub scan_service_unit: Option<String>,
+    #[serde(default)]
+    pub timer_unit: Option<String>,
+    #[serde(default)]
+    pub schedule: Option<String>,
+    #[serde(default)]
+    pub run_on_boot: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]

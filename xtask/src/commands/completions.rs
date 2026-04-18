@@ -81,32 +81,6 @@ fn workspace_packages_from_metadata_output(output: &std::process::Output) -> Res
     Ok(names)
 }
 
-/// Run target names from the static BINARIES table in run.rs + bundle names
-fn list_run_targets() -> Vec<String> {
-    // These match the static BINARIES table + bundles defined in run.rs
-    let mut targets = vec![
-        "ingestd",
-        "gateway",
-        "fs-ingestor",
-        "terminal-ingestor",
-        "desktop-ingestor",
-        "system-ingestor",
-        "document-ingestor",
-        "analytics-automaton",
-        "search-automaton",
-        "pkm-automaton",
-        "content-automaton",
-        "health-automaton",
-        "terminal-canonicalizer",
-        // Bundles
-        "core",
-        "all-ingestors",
-        "all-automatons",
-    ];
-    targets.sort_unstable();
-    targets.iter().map(ToString::to_string).collect()
-}
-
 /// Post-process a generated zsh completion script to inject dynamic package and run-target
 /// completions.
 ///
@@ -161,7 +135,7 @@ impl CompletionsCommand {
                 }
             }
             CompletionsSubcommand::ListRunTargets => {
-                for target in list_run_targets() {
+                for target in crate::commands::run::list_run_targets() {
                     println!("{target}");
                 }
             }
@@ -234,7 +208,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_list_run_targets_non_empty() -> ::xtask::sandbox::TestResult<()> {
-        let targets = list_run_targets();
+        let targets = crate::commands::run::list_run_targets();
         assert!(!targets.is_empty(), "run targets should not be empty");
         assert!(targets.contains(&"ingestd".to_string()));
         assert!(targets.contains(&"core".to_string()));

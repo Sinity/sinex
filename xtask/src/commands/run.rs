@@ -361,31 +361,11 @@ static BINARIES: &[(&str, &str, &str)] = &[
         "sinex-system-ingestor",
         "sinex-system-ingestor",
     ),
-    (
-        "document-ingestor",
-        "sinex-document-ingestor",
-        "sinex-document-ingestor",
-    ),
     // Automatons
     (
         "analytics-automaton",
         "sinex-analytics-automaton",
         "sinex-analytics-automaton",
-    ),
-    (
-        "search-automaton",
-        "sinex-search-automaton",
-        "sinex-search-automaton",
-    ),
-    (
-        "pkm-automaton",
-        "sinex-pkm-automaton",
-        "sinex-pkm-automaton",
-    ),
-    (
-        "content-automaton",
-        "sinex-content-automaton",
-        "sinex-content-automaton",
     ),
     (
         "health-automaton",
@@ -404,6 +384,38 @@ static BINARIES: &[(&str, &str, &str)] = &[
         "sinex-terminal-command-canonicalizer",
     ),
 ];
+
+const CORE_TARGETS: &[&str] = &["ingestd", "gateway"];
+const INGESTOR_TARGETS: &[&str] = &[
+    "fs-ingestor",
+    "terminal-ingestor",
+    "desktop-ingestor",
+    "system-ingestor",
+];
+const AUTOMATON_TARGETS: &[&str] = &[
+    "analytics-automaton",
+    "health-automaton",
+    "session-detector",
+    "terminal-canonicalizer",
+];
+
+fn lookup_binary(name: &str) -> Option<&'static (&'static str, &'static str, &'static str)> {
+    BINARIES.iter().find(|(candidate, _, _)| *candidate == name)
+}
+
+pub(crate) fn list_run_targets() -> Vec<String> {
+    let mut targets: Vec<String> = BINARIES
+        .iter()
+        .map(|(name, _, _)| (*name).to_string())
+        .collect();
+    targets.extend(
+        ["core", "all-ingestors", "all-automatons"]
+            .into_iter()
+            .map(str::to_string),
+    );
+    targets.sort_unstable();
+    targets
+}
 
 /// Run subcommand variants
 #[derive(Debug, Clone, clap::Subcommand)]
@@ -555,24 +567,16 @@ impl XtaskCommand for RunCommand {
                 self.run_binary(name, instance_id.clone(), ctx).await
             }
             RunSubcommand::Core { instance_id } => {
-                self.run_bundle(&["ingestd", "gateway"], instance_id.clone(), ctx)
+                self.run_bundle(CORE_TARGETS, instance_id.clone(), ctx)
                     .await
             }
             RunSubcommand::AllIngestors { instance_id } => {
-                let ingestors: Vec<&str> = BINARIES
-                    .iter()
-                    .filter(|(name, _, _)| name.contains("ingestor"))
-                    .map(|(name, _, _)| *name)
-                    .collect();
-                self.run_bundle(&ingestors, instance_id.clone(), ctx).await
+                self.run_bundle(INGESTOR_TARGETS, instance_id.clone(), ctx)
+                    .await
             }
             RunSubcommand::AllAutomatons { instance_id } => {
-                let automatons: Vec<&str> = BINARIES
-                    .iter()
-                    .filter(|(name, _, _)| name.contains("automaton"))
-                    .map(|(name, _, _)| *name)
-                    .collect();
-                self.run_bundle(&automatons, instance_id.clone(), ctx).await
+                self.run_bundle(AUTOMATON_TARGETS, instance_id.clone(), ctx)
+                    .await
             }
             RunSubcommand::Tether {
                 target,
@@ -1211,37 +1215,40 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
     if ctx.is_human() {
         println!("Available binaries:\n");
         println!("Core Services:");
-        for (name, package, _) in BINARIES.iter().take(2) {
+        for name in CORE_TARGETS {
+            let (_, package, _) = lookup_binary(name).expect("core target must exist");
             println!("  {name:<25} ({package})");
         }
 
         println!("\nIngestors:");
-        for (name, package, _) in BINARIES.iter().filter(|(n, _, _)| n.contains("ingestor")) {
+        for name in INGESTOR_TARGETS {
+            let (_, package, _) = lookup_binary(name).expect("ingestor target must exist");
             println!("  {name:<25} ({package})");
         }
 
         println!("\nAutomatons:");
-        for (name, package, _) in BINARIES.iter().filter(|(n, _, _)| n.contains("automaton")) {
-            println!("  {name:<25} ({package})");
-        }
-
-        println!("\nProcessors:");
-        for (name, package, _) in BINARIES
-            .iter()
-            .filter(|(n, _, _)| n.contains("canonicalizer"))
-        {
+        for name in AUTOMATON_TARGETS {
+            let (_, package, _) = lookup_binary(name).expect("automaton target must exist");
             println!("  {name:<25} ({package})");
         }
 
         println!("\nBundles:");
-        println!("  {:<25} ingestd + gateway", "core");
-        println!("  {:<25} all *-ingestor binaries", "all-ingestors");
-        println!("  {:<25} all *-automaton binaries", "all-automatons");
+        println!("  {:<25} {}", "core", CORE_TARGETS.join(", "));
+        println!("  {:<25} {}", "all-ingestors", INGESTOR_TARGETS.join(", "));
+        println!(
+            "  {:<25} {}",
+            "all-automatons",
+            AUTOMATON_TARGETS.join(", ")
+        );
 
         println!("\nSpecial:");
         println!(
             "  {:<25} Connect to remote NATS via The Tether",
             "tether <target>"
+        );
+        println!(
+            "  {:<25} Managed oneshot scan surface (use systemd / NixOS, not xtask run)",
+            "document-scan"
         );
     }
 
@@ -1257,7 +1264,7 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
         .with_data(serde_json::json!({
             "binaries": binaries,
             "bundles": ["core", "all-ingestors", "all-automatons"],
-            "special": ["tether"]
+            "special": ["tether", "document-scan"]
         }))
         .with_duration(ctx.elapsed())
 }
@@ -1389,7 +1396,7 @@ mod tests {
     async fn test_binary_lookup() -> ::xtask::sandbox::TestResult<()> {
         // All binaries should be findable
         for (name, package, _) in BINARIES {
-            let found = BINARIES.iter().find(|(n, _, _)| n == name);
+            let found = lookup_binary(name);
             assert!(found.is_some(), "Binary {name} not found");
             assert_eq!(found.unwrap().1, *package);
         }
@@ -1472,28 +1479,45 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_ingestor_filter() -> ::xtask::sandbox::TestResult<()> {
-        let ingestors: Vec<_> = BINARIES
-            .iter()
-            .filter(|(name, _, _)| name.contains("ingestor"))
-            .collect();
-        assert!(!ingestors.is_empty());
-        for (name, _, _) in ingestors {
-            assert!(name.contains("ingestor"));
-        }
+    async fn test_ingestor_bundle_contains_only_real_runtime_ingestors()
+    -> ::xtask::sandbox::TestResult<()> {
+        assert_eq!(
+            INGESTOR_TARGETS,
+            &[
+                "fs-ingestor",
+                "terminal-ingestor",
+                "desktop-ingestor",
+                "system-ingestor",
+            ]
+        );
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_automaton_filter() -> ::xtask::sandbox::TestResult<()> {
-        let automatons: Vec<_> = BINARIES
-            .iter()
-            .filter(|(name, _, _)| name.contains("automaton"))
-            .collect();
-        assert!(!automatons.is_empty());
-        for (name, _, _) in automatons {
-            assert!(name.contains("automaton"));
-        }
+    async fn test_automaton_bundle_includes_non_suffix_derived_nodes()
+    -> ::xtask::sandbox::TestResult<()> {
+        assert_eq!(
+            AUTOMATON_TARGETS,
+            &[
+                "analytics-automaton",
+                "health-automaton",
+                "session-detector",
+                "terminal-canonicalizer",
+            ]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_list_run_targets_drops_ghosts_and_oneshot_scan_surface()
+    -> ::xtask::sandbox::TestResult<()> {
+        let targets = list_run_targets();
+        assert!(targets.contains(&"session-detector".to_string()));
+        assert!(targets.contains(&"terminal-canonicalizer".to_string()));
+        assert!(!targets.contains(&"document-ingestor".to_string()));
+        assert!(!targets.contains(&"search-automaton".to_string()));
+        assert!(!targets.contains(&"pkm-automaton".to_string()));
+        assert!(!targets.contains(&"content-automaton".to_string()));
         Ok(())
     }
 

@@ -12,7 +12,7 @@ use serde_json::Value as JsonValue;
 use sinex_node_sdk::preflight::configuration::{
     validate_activitywatch_db, validate_terminal_history_source,
 };
-use sinex_node_sdk::preflight::services::inspect_systemd_service;
+use sinex_node_sdk::preflight::services::{SystemdServiceDetails, inspect_systemd_service};
 use sinex_primitives::{
     DeploymentDatabaseRuntime, DeploymentReadinessDescriptor, DeploymentReadinessMode,
     environment::SinexEnvironment, nats::NatsConnectionConfig, rpc::system::SystemHealthResponse,
@@ -1914,6 +1914,229 @@ fn check_inotify_limit(
     }
 }
 
+fn validate_document_root_path(path: &Path) -> Result<()> {
+    let metadata = std::fs::metadata(path)
+        .wrap_err_with(|| format!("failed to inspect document root {}", path.display()))?;
+
+    if metadata.is_dir() {
+        std::fs::read_dir(path)
+            .map(|_| ())
+            .wrap_err_with(|| format!("failed to enumerate document root {}", path.display()))
+    } else if metadata.is_file() {
+        std::fs::File::open(path)
+            .map(|_| ())
+            .wrap_err_with(|| format!("failed to read document root {}", path.display()))
+    } else {
+        Err(eyre!(
+            "document root {} is neither a file nor a directory",
+            path.display()
+        ))
+    }
+}
+
+fn check_document_roots(
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> DeploymentReadinessItem {
+    let Some(descriptor) = descriptor else {
+        return DeploymentReadinessItem::skip(
+            "document-roots",
+            "No deployment descriptor available for document root validation",
+        );
+    };
+
+    if !descriptor.document.surface.enabled {
+        return DeploymentReadinessItem::skip(
+            "document-roots",
+            "Document ingestion is disabled in the deployment descriptor",
+        );
+    }
+
+    if descriptor.document.allowed_roots.is_empty() {
+        return DeploymentReadinessItem::fail(
+            "document-roots",
+            "Document ingestion is enabled but no allowed roots are declared",
+        );
+    }
+
+    let mut readable = Vec::new();
+    let mut unreadable = Vec::new();
+    for path in &descriptor.document.allowed_roots {
+        match validate_document_root_path(path) {
+            Ok(()) => readable.push(path.display().to_string()),
+            Err(error) => unreadable.push(format!("{} ({error:#})", path.display())),
+        }
+    }
+
+    if !unreadable.is_empty() {
+        DeploymentReadinessItem::fail(
+            "document-roots",
+            format!("Unreadable document roots: {}", unreadable.join(", ")),
+        )
+    } else {
+        DeploymentReadinessItem::pass(
+            "document-roots",
+            format!("Readable document roots: {}", readable.join(", ")),
+        )
+    }
+}
+
+async fn check_document_scan_units(
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+) -> DeploymentReadinessItem {
+    let scan_details = if let Some(unit) =
+        descriptor.and_then(|deployment| deployment.document.scan_service_unit.as_deref())
+    {
+        Some(
+            inspect_systemd_service(unit)
+                .await
+                .map_err(|error| error.to_string()),
+        )
+    } else {
+        None
+    };
+    let timer_details = if let Some(unit) =
+        descriptor.and_then(|deployment| deployment.document.timer_unit.as_deref())
+    {
+        Some(
+            inspect_systemd_service(unit)
+                .await
+                .map_err(|error| error.to_string()),
+        )
+    } else {
+        None
+    };
+
+    evaluate_document_scan_units(descriptor, scan_details, timer_details)
+}
+
+fn evaluate_document_scan_units(
+    descriptor: Option<&DeploymentReadinessDescriptor>,
+    scan_details: Option<std::result::Result<SystemdServiceDetails, String>>,
+    timer_details: Option<std::result::Result<SystemdServiceDetails, String>>,
+) -> DeploymentReadinessItem {
+    let Some(descriptor) = descriptor else {
+        return DeploymentReadinessItem::skip(
+            "document-scan-units",
+            "No deployment descriptor available for document scan unit validation",
+        );
+    };
+
+    if !descriptor.document.surface.enabled {
+        return DeploymentReadinessItem::skip(
+            "document-scan-units",
+            "Document ingestion is disabled in the deployment descriptor",
+        );
+    }
+
+    let Some(scan_service_unit) = descriptor.document.scan_service_unit.as_deref() else {
+        return DeploymentReadinessItem::fail(
+            "document-scan-units",
+            "Document ingestion is enabled but no scan service unit is declared",
+        );
+    };
+
+    let Some(scan_details) = scan_details else {
+        return DeploymentReadinessItem::fail(
+            "document-scan-units",
+            format!(
+                "Could not query systemd for {scan_service_unit}: no service details collected"
+            ),
+        );
+    };
+
+    let scan_details = match scan_details {
+        Ok(details) => details,
+        Err(error) => {
+            return DeploymentReadinessItem::fail(
+                "document-scan-units",
+                format!("Could not query systemd for {scan_service_unit}: {error}"),
+            );
+        }
+    };
+
+    if !scan_details.is_loaded() {
+        return DeploymentReadinessItem::fail(
+            "document-scan-units",
+            format!("Document scan service {scan_service_unit} is not loaded"),
+        );
+    }
+
+    if scan_details.active_state == "failed" {
+        return DeploymentReadinessItem::fail(
+            "document-scan-units",
+            format!(
+                "Document scan service {scan_service_unit} is failed ({}/{})",
+                scan_details.active_state, scan_details.sub_state
+            ),
+        );
+    }
+
+    let timer_declared = descriptor.document.timer_unit.as_deref();
+    let timer_expected = descriptor.document.schedule.is_some();
+    if timer_expected && timer_declared.is_none() {
+        return DeploymentReadinessItem::fail(
+            "document-scan-units",
+            "Document ingestion declares a recurring schedule but no timer unit",
+        );
+    }
+    if !timer_expected && timer_declared.is_some() {
+        return DeploymentReadinessItem::fail(
+            "document-scan-units",
+            "Document ingestion declares a timer unit without a recurring schedule",
+        );
+    }
+
+    let mut summary = vec![format!(
+        "{scan_service_unit} loaded ({}/{})",
+        scan_details.active_state, scan_details.sub_state
+    )];
+
+    if let Some(timer_unit) = timer_declared {
+        let Some(timer_details) = timer_details else {
+            return DeploymentReadinessItem::fail(
+                "document-scan-units",
+                format!("Could not query systemd for {timer_unit}: no timer details collected"),
+            );
+        };
+
+        let timer_details = match timer_details {
+            Ok(details) => details,
+            Err(error) => {
+                return DeploymentReadinessItem::fail(
+                    "document-scan-units",
+                    format!("Could not query systemd for {timer_unit}: {error}"),
+                );
+            }
+        };
+
+        if !timer_details.is_loaded() {
+            return DeploymentReadinessItem::fail(
+                "document-scan-units",
+                format!("Document scan timer {timer_unit} is not loaded"),
+            );
+        }
+
+        if !timer_details.is_active() {
+            return DeploymentReadinessItem::fail(
+                "document-scan-units",
+                format!(
+                    "Document scan timer {timer_unit} is not active ({}/{})",
+                    timer_details.active_state, timer_details.sub_state
+                ),
+            );
+        }
+
+        summary.push(format!(
+            "{timer_unit} active ({}/{})",
+            timer_details.active_state, timer_details.sub_state
+        ));
+    } else {
+        summary.push("no recurring timer configured".to_string());
+    }
+
+    DeploymentReadinessItem::pass("document-scan-units", summary.join("; "))
+}
+
 fn check_singleton_workstation_topology(
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> DeploymentReadinessItem {
@@ -2674,6 +2897,8 @@ async fn execute_deployment_readiness(ctx: &CommandContext) -> Result<Deployment
     items.push(check_git_annex());
     items.push(check_singleton_workstation_topology(descriptor.as_ref()));
     items.push(check_inotify_limit(descriptor.as_ref()));
+    items.push(check_document_roots(descriptor.as_ref()));
+    items.push(check_document_scan_units(descriptor.as_ref()).await);
     items.push(check_secret_materials(descriptor.as_ref()));
     items.push(check_schema_apply(cfg.database_url.as_deref(), descriptor.as_ref()).await);
     items.push(check_nats_streams(cfg.nats_url.as_deref(), descriptor.as_ref()).await);
@@ -2775,6 +3000,21 @@ mod tests {
                 "sinex-health-automaton.service".to_string(),
             ],
             ..Default::default()
+        }
+    }
+
+    fn systemd_details(
+        active_state: &str,
+        sub_state: &str,
+        load_state: &str,
+    ) -> SystemdServiceDetails {
+        SystemdServiceDetails {
+            active_state: active_state.to_string(),
+            sub_state: sub_state.to_string(),
+            load_state: load_state.to_string(),
+            unit_type: None,
+            notify_access: None,
+            watchdog_usec: None,
         }
     }
 
@@ -4348,6 +4588,118 @@ mod tests {
         );
 
         assert_eq!(config.url, "nats://127.0.0.1:4222");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_document_roots_requires_declared_roots() -> ::xtask::sandbox::TestResult<()>
+    {
+        let descriptor = DeploymentReadinessDescriptor {
+            document: sinex_primitives::DocumentDeploymentSurface {
+                surface: sinex_primitives::DeploymentSurface {
+                    enabled: true,
+                    instances: None,
+                },
+                allowed_roots: Vec::new(),
+                scan_service_unit: Some("sinex-document-scan.service".to_string()),
+                timer_unit: Some("sinex-document-scan.timer".to_string()),
+                schedule: Some("hourly".to_string()),
+                run_on_boot: true,
+            },
+            ..Default::default()
+        };
+
+        let item = check_document_roots(Some(&descriptor));
+        assert_eq!(item.status, "fail");
+        assert!(item.description.contains("no allowed roots"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_document_roots_accepts_readable_root() -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("Documents");
+        fs::create_dir_all(&root)?;
+        fs::write(root.join("note.md"), "hello")?;
+
+        let descriptor = DeploymentReadinessDescriptor {
+            document: sinex_primitives::DocumentDeploymentSurface {
+                surface: sinex_primitives::DeploymentSurface {
+                    enabled: true,
+                    instances: None,
+                },
+                allowed_roots: vec![root.clone()],
+                scan_service_unit: Some("sinex-document-scan.service".to_string()),
+                timer_unit: Some("sinex-document-scan.timer".to_string()),
+                schedule: Some("hourly".to_string()),
+                run_on_boot: true,
+            },
+            ..Default::default()
+        };
+
+        let item = check_document_roots(Some(&descriptor));
+        assert_eq!(item.status, "pass");
+        assert!(item.description.contains(&root.display().to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_evaluate_document_scan_units_requires_active_timer_when_scheduled()
+    -> ::xtask::sandbox::TestResult<()> {
+        let descriptor = DeploymentReadinessDescriptor {
+            document: sinex_primitives::DocumentDeploymentSurface {
+                surface: sinex_primitives::DeploymentSurface {
+                    enabled: true,
+                    instances: None,
+                },
+                allowed_roots: vec![PathBuf::from("/tmp/Documents")],
+                scan_service_unit: Some("sinex-document-scan.service".to_string()),
+                timer_unit: Some("sinex-document-scan.timer".to_string()),
+                schedule: Some("hourly".to_string()),
+                run_on_boot: true,
+            },
+            ..Default::default()
+        };
+
+        let item = evaluate_document_scan_units(
+            Some(&descriptor),
+            Some(Ok(systemd_details("inactive", "dead", "loaded"))),
+            Some(Ok(systemd_details("inactive", "dead", "loaded"))),
+        );
+
+        assert_eq!(item.status, "fail");
+        assert!(item.description.contains("timer"));
+        assert!(item.description.contains("not active"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_evaluate_document_scan_units_accepts_loaded_service_and_active_timer()
+    -> ::xtask::sandbox::TestResult<()> {
+        let descriptor = DeploymentReadinessDescriptor {
+            document: sinex_primitives::DocumentDeploymentSurface {
+                surface: sinex_primitives::DeploymentSurface {
+                    enabled: true,
+                    instances: None,
+                },
+                allowed_roots: vec![PathBuf::from("/tmp/Documents")],
+                scan_service_unit: Some("sinex-document-scan.service".to_string()),
+                timer_unit: Some("sinex-document-scan.timer".to_string()),
+                schedule: Some("hourly".to_string()),
+                run_on_boot: true,
+            },
+            ..Default::default()
+        };
+
+        let item = evaluate_document_scan_units(
+            Some(&descriptor),
+            Some(Ok(systemd_details("inactive", "dead", "loaded"))),
+            Some(Ok(systemd_details("active", "waiting", "loaded"))),
+        );
+
+        assert_eq!(item.status, "pass");
+        assert!(item.description.contains("sinex-document-scan.service"));
+        assert!(item.description.contains("sinex-document-scan.timer"));
         Ok(())
     }
 

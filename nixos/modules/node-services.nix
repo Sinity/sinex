@@ -220,6 +220,10 @@ let
   targetUid =
     if targetUser == null then null
     else lib.attrByPath [ "users" "users" targetUser "uid" ] null config;
+  effectiveDocumentRoots =
+    if nodesCfg.document.allowedRoots != [] then nodesCfg.document.allowedRoots
+    else if targetHome == null then []
+    else [ "${targetHome}/Documents" ];
 
   mkBaseServiceConfig = resources: env: extra:
     {
@@ -963,6 +967,129 @@ let
       env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
     };
 
+  mkDocumentUnits =
+    let
+      sat = nodesCfg.document;
+      resources = resolveResources sat.resources;
+      documentRoots = unique (map toString effectiveDocumentRoots);
+      nodeConfig = builtins.toJSON {
+        supported_mime_types = sat.supportedMimeTypes;
+        max_document_size = sat.maxDocumentSize;
+        allowed_roots = documentRoots;
+      };
+      scanCommand = concatStringsSep " " (
+        [
+          "${sinexPackage}/bin/sinex-document-ingestor"
+          "--service-name"
+          "sinex-document-scan"
+          "--node-config"
+          (escapeShellArg nodeConfig)
+          "scan"
+          "--until"
+          "snapshot"
+        ]
+        ++ sat.extraArgs
+      );
+      env = mkServiceEnv ([ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env);
+      requiredUnits =
+        schemaApplyUnits
+        ++ postgresServiceUnits
+        ++ optionals natsEnabled [ "nats.service" ]
+        ++ optionals natsBootstrapEnabled [ "sinex-nats-bootstrap.service" ];
+      accessWritePaths =
+        unique (
+          optionals (targetHome != null) [ targetHome ]
+          ++ documentRoots
+        );
+      accessSetupScript =
+        if documentRoots == [] then null else pkgs.writeShellScript "sinex-document-target-access" ''
+          set -euo pipefail
+
+          SERVICE_USER=${escapeShellArg serviceUser}
+          SETFACL=${pkgs.acl}/bin/setfacl
+          FIND=${pkgs.findutils}/bin/find
+          DIRNAME=${pkgs.coreutils}/bin/dirname
+          acl_failures=0
+
+          record_acl_failure() {
+            local path="$1"
+            echo "sinex-document-target-access: failed to grant ACLs for $path" >&2
+            acl_failures=$((acl_failures + 1))
+          }
+
+          grant_parent_dirs() {
+            local path="$1"
+            local dir
+            dir="$path"
+            while [ "$dir" != "/" ] && [ "$dir" != "." ]; do
+              if [ -d "$dir" ]; then
+                "$SETFACL" --mask -m "u:$SERVICE_USER:--x" "$dir" || record_acl_failure "$dir"
+              fi
+              dir="$("$DIRNAME" "$dir")"
+            done
+          }
+
+          grant_recursive_document_access() {
+            local path="$1"
+
+            if [ -f "$path" ]; then
+              grant_parent_dirs "$path"
+              "$SETFACL" --mask -m "u:$SERVICE_USER:r--" "$path" || record_acl_failure "$path"
+              return
+            fi
+
+            if [ ! -d "$path" ]; then
+              return
+            fi
+
+            grant_parent_dirs "$path"
+            "$SETFACL" -R --mask -m "u:$SERVICE_USER:r-X" "$path" || record_acl_failure "$path"
+            while IFS= read -r dir; do
+              [ -n "$dir" ] || continue
+              "$SETFACL" -d --mask -m "u:$SERVICE_USER:r-X" "$dir" || record_acl_failure "$dir"
+            done < <("$FIND" "$path" -type d)
+          }
+
+          ${concatStringsSep "\n" (map (path: ''
+            grant_recursive_document_access ${escapeShellArg path}
+          '') documentRoots)}
+
+          if [ "$acl_failures" -ne 0 ]; then
+            exit 1
+          fi
+        '';
+      documentService = {
+        description = "Sinex document snapshot scan";
+        after = requiredUnits;
+        requires = requiredUnits;
+        wants = optionals coreEnabled [ "sinex-ingestd.service" ];
+        unitConfig = existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
+        path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
+        serviceConfig = (mkBaseServiceConfig resources env {
+          Type = lib.mkForce "oneshot";
+          Restart = lib.mkForce "no";
+          WatchdogSec = lib.mkForce "0";
+          ProtectHome = lib.mkForce "read-only";
+          ReadWritePaths = readWritePaths ++ accessWritePaths;
+          WorkingDirectory = stateRoot;
+          ExecStart = mkDatabasePasswordExec {
+            name = "document-scan";
+            command = scanCommand;
+            passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
+          };
+        }) // optionalAttrs (accessSetupScript != null) {
+          ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
+        };
+      };
+    in
+    {
+      "sinex-document-scan" =
+        documentService
+        // optionalAttrs sat.runOnBoot {
+          wantedBy = [ "multi-user.target" ];
+        };
+    };
+
   mkNodeUnits = params:
     let
       instances = params.instances;
@@ -1093,6 +1220,9 @@ let
       in
       filesystemUnits // terminalUnits // desktopUnits // systemUnits;
 
+  documentScanService =
+    if !(nodesEnabled && nodesCfg.document.enable) then {} else mkDocumentUnits;
+
   coreServices = mkCoreServices;
 
   generatedUnits = attrNames nodeservices ++ attrNames automataServices;
@@ -1115,7 +1245,24 @@ in
 
   config = mkMerge [
     (mkIf sinexEnabled {
-      systemd.services = mkMerge [ coreServices nodeservices automataServices ];
+      systemd.services = mkMerge [
+        coreServices
+        nodeservices
+        documentScanService
+        automataServices
+      ];
+      systemd.timers = mkMerge [
+        (optionalAttrs (nodesEnabled && nodesCfg.document.enable && nodesCfg.document.schedule != null) {
+          "sinex-document-scan" = {
+            description = "Schedule Sinex document snapshot scans";
+            wantedBy = [ "timers.target" ];
+            timerConfig = {
+              OnCalendar = nodesCfg.document.schedule;
+              Persistent = nodesCfg.document.persistentTimer;
+            };
+          };
+        })
+      ];
     })
     { sinex._generatedUnits = generatedUnits; }
   ];

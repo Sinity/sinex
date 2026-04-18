@@ -3,7 +3,7 @@ use sinex_node_sdk::prelude::DbPoolExt;
 use sinex_node_sdk::runtime::stream::{Checkpoint, NodeInitContext, ScanArgs, TimeHorizon};
 use sinex_node_sdk::{ExplorationProvider, IngestorNodeAdapter, Node};
 use sinex_primitives::Id;
-use tempfile::{Builder, NamedTempFile};
+use tempfile::{Builder, NamedTempFile, tempdir};
 use tokio::time::{Duration, timeout};
 use xtask::sandbox::{node_runtime::TestRuntimeBuilder, sinex_test};
 
@@ -273,6 +273,113 @@ async fn document_node_skipped_targets_are_not_reported_as_success(
             .is_err(),
         "skipped oversized target must not emit an event"
     );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn document_node_scans_configured_roots_when_targets_are_omitted(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let mut runtime = TestRuntimeBuilder::new(&ctx, "document-ingestor")
+        .with_dry_run(false)
+        .build()
+        .await?;
+    let (service_info, handles, raw_config, work_dir) = runtime.runtime.clone().into_parts();
+
+    let temp = tempdir()?;
+    let docs_dir = temp.path().join("docs");
+    std::fs::create_dir_all(&docs_dir)?;
+    let document_path = docs_dir.join("notes.md");
+    std::fs::write(&document_path, "# captured\n")?;
+
+    let mut config = DocumentIngestorConfig::default();
+    config.allowed_roots = vec![temp.path().to_string_lossy().into_owned()];
+    let init_ctx = NodeInitContext::new(config, raw_config, service_info, handles, work_dir);
+
+    let mut node = IngestorNodeAdapter::<DocumentNode>::default();
+    node.initialize(init_ctx).await?;
+
+    let report = node
+        .scan(Checkpoint::None, TimeHorizon::Snapshot, ScanArgs::default())
+        .await?;
+
+    assert_eq!(report.events_processed, 1);
+    assert_eq!(
+        report.successful_targets,
+        vec![document_path.to_string_lossy().into_owned()]
+    );
+
+    let event = timeout(Duration::from_secs(1), runtime.event_rx.recv())
+        .await
+        .ok()
+        .flatten()
+        .expect("document ingestor should emit for files discovered under allowed roots");
+    assert_eq!(event.event_type.as_str(), "document.ingested");
+    Ok(())
+}
+
+#[sinex_test]
+async fn document_node_skips_unchanged_roots_and_reingests_after_modification(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let mut runtime = TestRuntimeBuilder::new(&ctx, "document-ingestor")
+        .with_dry_run(false)
+        .build()
+        .await?;
+    let (service_info, handles, raw_config, work_dir) = runtime.runtime.clone().into_parts();
+
+    let temp = tempdir()?;
+    let document_path = temp.path().join("notes.md");
+    std::fs::write(&document_path, "# first pass\n")?;
+
+    let mut config = DocumentIngestorConfig::default();
+    config.allowed_roots = vec![temp.path().to_string_lossy().into_owned()];
+    let init_ctx = NodeInitContext::new(config, raw_config, service_info, handles, work_dir);
+
+    let mut node = IngestorNodeAdapter::<DocumentNode>::default();
+    node.initialize(init_ctx).await?;
+
+    let first_report = node
+        .scan(Checkpoint::None, TimeHorizon::Snapshot, ScanArgs::default())
+        .await?;
+    assert_eq!(first_report.events_processed, 1);
+    timeout(Duration::from_secs(1), runtime.event_rx.recv())
+        .await
+        .ok()
+        .flatten()
+        .expect("first scan should emit document.ingested");
+
+    let second_report = node
+        .scan(Checkpoint::None, TimeHorizon::Snapshot, ScanArgs::default())
+        .await?;
+    assert_eq!(second_report.events_processed, 0);
+    assert!(
+        second_report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Skipped 1 unchanged document")),
+        "expected unchanged-file warning, got {:?}",
+        second_report.warnings
+    );
+    assert!(
+        timeout(Duration::from_millis(200), runtime.event_rx.recv())
+            .await
+            .is_err(),
+        "unchanged root scan must not emit a duplicate event"
+    );
+
+    std::fs::write(&document_path, "# second pass\n")?;
+
+    let third_report = node
+        .scan(Checkpoint::None, TimeHorizon::Snapshot, ScanArgs::default())
+        .await?;
+    assert_eq!(third_report.events_processed, 1);
+    timeout(Duration::from_secs(1), runtime.event_rx.recv())
+        .await
+        .ok()
+        .flatten()
+        .expect("modified document should be re-ingested");
 
     Ok(())
 }
