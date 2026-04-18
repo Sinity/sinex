@@ -18,13 +18,13 @@
   };
 
   outputs =
-    inputs@{ self
-    , nixpkgs
-    , fenix
-    , crane
-    , agenix
-    , flake-utils
-    ,
+    inputs@{
+      self,
+      nixpkgs,
+      fenix,
+      crane,
+      agenix,
+      flake-utils,
     }:
     let
       # pg_jsonschema - PostgreSQL JSON Schema validation extension
@@ -145,29 +145,29 @@
 
           # Ephemeral Postgres setup for SQLx query validation
           postgresPreBuild = ''
-                        export PGDATA="$TMPDIR/pgdata"
-                        mkdir -p "$PGDATA"
-                        ${postgresForSqlx}/bin/initdb -D "$PGDATA" --locale=C --encoding=UTF8 --auth=trust --username=postgres
+            export PGDATA="$TMPDIR/pgdata"
+            mkdir -p "$PGDATA"
+            ${postgresForSqlx}/bin/initdb -D "$PGDATA" --locale=C --encoding=UTF8 --auth=trust --username=postgres
 
-                        export PGHOST="$TMPDIR"
-                        export PGPORT=55433
-                        echo "unix_socket_directories = '$TMPDIR'" >> "$PGDATA/postgresql.conf"
-                        echo "port = $PGPORT" >> "$PGDATA/postgresql.conf"
-                        echo "shared_preload_libraries = 'timescaledb'" >> "$PGDATA/postgresql.conf"
+            export PGHOST="$TMPDIR"
+            export PGPORT=55433
+            echo "unix_socket_directories = '$TMPDIR'" >> "$PGDATA/postgresql.conf"
+            echo "port = $PGPORT" >> "$PGDATA/postgresql.conf"
+            echo "shared_preload_libraries = 'timescaledb'" >> "$PGDATA/postgresql.conf"
 
-                        ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -w start
+            ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -w start
 
-                        ${postgresForSqlx}/bin/createdb -h "$PGHOST" -p "$PGPORT" -U postgres sinex_dev || true
+            ${postgresForSqlx}/bin/createdb -h "$PGHOST" -p "$PGPORT" -U postgres sinex_dev || true
 
-                        # Run schema apply as postgres (superuser) — creates schemas, tables, extensions.
-                        # SQLx compile-time query validation only needs the schema to exist; user is irrelevant.
-                        #
-                        # Build the bootstrap binary once outside the per-package sandbox and
-                        # invoke the already-built executable here. Re-running `cargo run` in every
-                        # package derivation forces the schema bootstrap path to recompile repeatedly,
-                        # which makes the full VM closure builds pathologically slow.
-                        export DATABASE_URL="postgresql:///sinex_dev?host=$PGHOST&user=postgres"
-                        ${schemaApplyBootstrap}/bin/schema-apply-bootstrap
+            # Run schema apply as postgres (superuser) — creates schemas, tables, extensions.
+            # SQLx compile-time query validation only needs the schema to exist; user is irrelevant.
+            #
+            # Build the bootstrap binary once outside the per-package sandbox and
+            # invoke the already-built executable here. Re-running `cargo run` in every
+            # package derivation forces the schema bootstrap path to recompile repeatedly,
+            # which makes the full VM closure builds pathologically slow.
+            export DATABASE_URL="postgresql:///sinex_dev?host=$PGHOST&user=postgres"
+            ${schemaApplyBootstrap}/bin/schema-apply-bootstrap
           '';
 
           postgresPostBuild = ''
@@ -266,11 +266,9 @@
             pg_jsonschema = pkgs.postgresql18Packages.pg_jsonschema;
           };
 
-          vmCheckOutputs = pkgs.lib.mapAttrs'
-            (
-              name: value: pkgs.lib.nameValuePair "sinex-vm-${name}" value
-            )
-            (pkgs.lib.filterAttrs (_: value: pkgs.lib.isDerivation value) vmTests);
+          vmCheckOutputs = pkgs.lib.mapAttrs' (name: value: pkgs.lib.nameValuePair "sinex-vm-${name}" value) (
+            pkgs.lib.filterAttrs (_: value: pkgs.lib.isDerivation value) vmTests
+          );
 
         in
         rec {
