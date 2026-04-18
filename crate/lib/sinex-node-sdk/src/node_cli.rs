@@ -685,46 +685,66 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
             replay: None,
         };
 
-        // Run estimation if requested
-        if estimate {
-            let estimate_result = runner
-                .estimate_scan_scope(&checkpoint, &time_horizon, &scan_args)
-                .await?;
-            println!("Scan Estimation:");
-            println!("  Estimated events: {}", estimate_result.estimated_events);
-            println!(
-                "  Estimated duration: {:?}",
-                estimate_result.estimated_duration
-            );
-            println!(
-                "  Estimated data size: {} bytes",
-                estimate_result.estimated_data_size
-            );
-            println!("  Estimated targets: {}", estimate_result.estimated_targets);
-            println!("  Confidence: {:.1}%", estimate_result.confidence * 100.0);
-            if !estimate_result.warnings.is_empty() {
-                println!("  Warnings:");
-                for warning in &estimate_result.warnings {
-                    println!("    - {warning}");
+        let workflow_result: NodeResult<Option<crate::runtime::stream::ScanReport>> = async {
+            if estimate {
+                let estimate_result = runner
+                    .estimate_scan_scope(&checkpoint, &time_horizon, &scan_args)
+                    .await?;
+                println!("Scan Estimation:");
+                println!("  Estimated events: {}", estimate_result.estimated_events);
+                println!(
+                    "  Estimated duration: {:?}",
+                    estimate_result.estimated_duration
+                );
+                println!(
+                    "  Estimated data size: {} bytes",
+                    estimate_result.estimated_data_size
+                );
+                println!("  Estimated targets: {}", estimate_result.estimated_targets);
+                println!("  Confidence: {:.1}%", estimate_result.confidence * 100.0);
+                if !estimate_result.warnings.is_empty() {
+                    println!("  Warnings:");
+                    for warning in &estimate_result.warnings {
+                        println!("    - {warning}");
+                    }
                 }
-            }
-            println!();
+                println!();
 
-            if interactive {
-                print!("Proceed with scan? [y/N] ");
-                use std::io::{self, Write};
-                io::stdout().flush()?;
-                let mut input = String::new();
-                io::stdin().read_line(&mut input)?;
-                if !input.trim().to_lowercase().starts_with('y') {
-                    println!("Scan cancelled");
-                    return Ok(());
+                if interactive {
+                    print!("Proceed with scan? [y/N] ");
+                    use std::io::{self, Write};
+                    io::stdout().flush()?;
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+                    if !input.trim().to_lowercase().starts_with('y') {
+                        println!("Scan cancelled");
+                        return Ok(None);
+                    }
                 }
             }
+
+            let report = runner.run_scan(checkpoint, time_horizon, scan_args).await?;
+            Ok(Some(report))
         }
+        .await;
 
-        // Run scan
-        let report = runner.run_scan(checkpoint, time_horizon, scan_args).await?;
+        let shutdown_result = runner.shutdown().await;
+        let maybe_report = match (workflow_result, shutdown_result) {
+            (Ok(report), Ok(())) => report,
+            (Err(scan_error), Ok(())) => return Err(scan_error),
+            (Ok(_), Err(shutdown_error)) => return Err(shutdown_error),
+            (Err(scan_error), Err(shutdown_error)) => {
+                return Err(SinexError::lifecycle(
+                    "scan command failed and runner shutdown also failed".to_string(),
+                )
+                .with_context("scan_error", scan_error.to_string())
+                .with_source(shutdown_error));
+            }
+        };
+
+        let Some(report) = maybe_report else {
+            return Ok(());
+        };
 
         // Display results
         println!("Scan Results:");

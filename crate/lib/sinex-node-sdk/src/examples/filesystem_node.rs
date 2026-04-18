@@ -382,6 +382,7 @@ impl Node for FilesystemNode {
             max_scan_size: Some(10000), // Limit for large directories
             supports_concurrent: false,
             manages_own_continuous_loop: false,
+            manages_own_checkpoints: false,
         }
     }
 

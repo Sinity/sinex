@@ -675,8 +675,9 @@ systemctl show sinex-ingestd --property=Type,NotifyAccess,WatchdogUSec
 # Run full preflight check
 sudo -u sinex /run/current-system/sw/bin/sinex-preflight verify
 
-# Prove gateway round-trip plus deployable automata output surfaces
-sinexctl --insecure verify --gateway-smoke --automata-smoke
+# Prove gateway round-trip plus deployable automata, managed document scan, enabled collector surfaces,
+# and implemented historical backfill surfaces
+sinexctl --insecure verify --gateway-smoke --automata-smoke --document-smoke --source-proof --historical-proof
 ```
 
 **Service health endpoints:**

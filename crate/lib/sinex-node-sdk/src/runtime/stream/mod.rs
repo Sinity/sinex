@@ -662,6 +662,13 @@ pub struct NodeCapabilities {
 
     /// Node manages its own continuous loop (runner skips `JetStream` bridge)
     pub manages_own_continuous_loop: bool,
+
+    /// Node persists its own event-processing checkpoint/state.
+    ///
+    /// When true, the generic automaton bridge must not create or advance a
+    /// second checkpoint entry for the same runtime, because that would race
+    /// with the node-owned state snapshot and can clobber its payload.
+    pub manages_own_checkpoints: bool,
 }
 
 impl Default for NodeCapabilities {
@@ -674,6 +681,7 @@ impl Default for NodeCapabilities {
             max_scan_size: None,
             supports_concurrent: false,
             manages_own_continuous_loop: false,
+            manages_own_checkpoints: false,
         }
     }
 }
@@ -2449,13 +2457,25 @@ impl<T: Node + 'static> NodeRunner<T> {
                 .await?;
         }
 
+        let bridge_manages_checkpoints = !self.node.capabilities().manages_own_checkpoints;
+        if !bridge_manages_checkpoints {
+            debug!(
+                node = %self.node.node_name(),
+                "Skipping generic automaton-bridge checkpoint tracking because the node persists its own state"
+            );
+        }
+
         // Periodic checkpoint saves: prevent data loss on crash by persisting
         // progress every CHECKPOINT_EVENT_INTERVAL events or CHECKPOINT_TIME_INTERVAL.
         const CHECKPOINT_EVENT_INTERVAL: u64 = 100;
         const CHECKPOINT_TIME_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
-        let checkpoint_manager = handles.checkpoint_manager();
-        let mut checkpoint_state = Self::load_bridge_checkpoint_state(&checkpoint_manager).await?;
+        let checkpoint_manager = bridge_manages_checkpoints.then(|| handles.checkpoint_manager());
+        let mut checkpoint_state = if let Some(manager) = checkpoint_manager.as_deref() {
+            Some(Self::load_bridge_checkpoint_state(manager).await?)
+        } else {
+            None
+        };
 
         let mut processed_events = 0u64;
         let mut events_since_checkpoint = 0u64;
@@ -2511,33 +2531,39 @@ impl<T: Node + 'static> NodeRunner<T> {
             }
 
             // Periodic checkpoint save: every N events or M seconds
-            if (events_since_checkpoint >= CHECKPOINT_EVENT_INTERVAL
-                || last_checkpoint_time.elapsed() >= CHECKPOINT_TIME_INTERVAL)
+            if bridge_manages_checkpoints
+                && (events_since_checkpoint >= CHECKPOINT_EVENT_INTERVAL
+                    || last_checkpoint_time.elapsed() >= CHECKPOINT_TIME_INTERVAL)
+                && let (Some(manager), Some(state)) =
+                    (checkpoint_manager.as_deref(), checkpoint_state.as_mut())
                 && let Some(revision) = Self::try_save_checkpoint(
-                    &checkpoint_manager,
-                    &mut checkpoint_state,
+                    manager,
+                    state,
                     last_event_id,
                     processed_events,
                     &mut consecutive_checkpoint_failures,
                 )
                 .await?
             {
-                checkpoint_state.revision = revision;
+                state.revision = revision;
                 events_since_checkpoint = 0;
                 last_checkpoint_time = std::time::Instant::now();
             }
         }
 
         // Save final checkpoint on clean exit
-        if Self::try_save_checkpoint(
-            &checkpoint_manager,
-            &mut checkpoint_state,
-            last_event_id,
-            processed_events,
-            &mut consecutive_checkpoint_failures,
-        )
-        .await?
-        .is_some()
+        if bridge_manages_checkpoints
+            && let (Some(manager), Some(state)) =
+                (checkpoint_manager.as_deref(), checkpoint_state.as_mut())
+            && Self::try_save_checkpoint(
+                manager,
+                state,
+                last_event_id,
+                processed_events,
+                &mut consecutive_checkpoint_failures,
+            )
+            .await?
+            .is_some()
         {
             info!(processed_events, "Final checkpoint saved on clean shutdown");
         }

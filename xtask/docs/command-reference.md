@@ -430,7 +430,7 @@ Run exported NixOS VM flake checks
 |---|---|---|---|
 | `-c, --category` | yes | no | Test category: smoke, integration, performance, chaos, all |
 | `--parallel` | no | no | Run tests in parallel |
-| `-t, --timeout` | yes | no | Timeout per test in seconds (default: 900, maintenance/performance: 1800) |
+| `-t, --timeout` | yes | no | Timeout per test in seconds (default: 900, closure-heavy scenarios: 3600) |
 | `-k, --keep-failed` | no | no | Keep VM state after test failure for debugging |
 | `-l, --list` | no | no | List available tests |
 | `--validate` | no | no | Validate VM test infrastructure (nix syntax check) |

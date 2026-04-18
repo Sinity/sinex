@@ -121,12 +121,9 @@ let
   '';
 
   # Stress test generator script
-  stress-generator = stateDir: pkgs.writeScriptBin "sinex-stress" ''
+  stress-generator = pkgs.writeScriptBin "sinex-stress" ''
     #!${pkgs.bash}/bin/bash
     set -euo pipefail
-
-    STATE_DIR="''${SINEX_STATE_DIR:-${stateDir}}"
-    export SINEX_STATE_DIR="$STATE_DIR"
 
     DURATION="''${1:-30}"  # Default 30 seconds
     INTENSITY="''${2:-medium}"  # low, medium, high
@@ -172,8 +169,8 @@ let
     # Shell history stress  
     (
       for ((i=1; i<=DURATION*SHELL_CMDS_PER_SEC; i++)); do
-        echo "stress_cmd_$i /tmp/stress_$i" >> "$STATE_DIR"/.zsh_history
-        echo "stress_bash_$i" >> "$STATE_DIR"/.bash_history
+        echo "stress_cmd_$i /tmp/stress_$i" >> /home/test/.zsh_history
+        echo "stress_bash_$i" >> /home/test/.bash_history
         sleep $(echo "scale=3; 1/$SHELL_CMDS_PER_SEC" | bc)
       done
     ) &
@@ -192,7 +189,7 @@ let
     
     # Atuin database stress
     (
-      db_path="$STATE_DIR/.local/share/atuin/history.db"
+      db_path="/home/test/.local/share/atuin/history.db"
       for ((i=1; i<=DURATION*5; i++)); do  # 5 atuin entries per second
         sqlite3 "$db_path" "INSERT INTO history (id, timestamp, duration, exit, command, cwd, session, hostname) VALUES ('stress$i', $(date +%s), 100, 0, 'stress-command-$i', '/tmp', 'stress-session', 'testhost');" 2>/dev/null || true
         sleep 0.2
@@ -243,8 +240,13 @@ pkgs.testers.nixosTest {
           terminal.enable = true;
           desktop.enable = true;
           system.enable = true;
+          document = {
+            enable = true;
+            allowedRoots = [ "/home/test/Documents" ];
+          };
 
           automata = {
+            enable = true;
             canonicalizer.enable = true;
             healthAggregator.enable = true;
             analyticsAutomaton.enable = true;
@@ -342,7 +344,7 @@ EOF
         wl-clipboard
         wl-clip-persist
         sinex-query
-        (stress-generator stateDir)
+        stress-generator
         hyprland
         bc  # For floating point calculations
         procps  # For process monitoring
@@ -363,7 +365,6 @@ EOF
       environment.sessionVariables = {
         WAYLAND_DISPLAY = "wayland-1";
         XDG_SESSION_TYPE = "wayland";
-        SINEX_STATE_DIR = stateDir;
       };
       
       programs.zsh.enable = true;
@@ -375,13 +376,15 @@ EOF
         "d /tmp/sinex-stress 0755 test users -"
         
         # Shell history files
-        "f ${stateDir}/.zsh_history 0644 sinex sinex -"
-        "f ${stateDir}/.bash_history 0644 sinex sinex -"
-        
+        "f /home/test/.zsh_history 0644 test users -"
+        "f /home/test/.bash_history 0644 test users -"
+
         # Atuin directories
-        "d ${stateDir}/.local 0755 sinex sinex -"
-        "d ${stateDir}/.local/share 0755 sinex sinex -"
-        "d ${stateDir}/.local/share/atuin 0755 sinex sinex -"
+        "d /home/test/.local 0755 test users -"
+        "d /home/test/.local/share 0755 test users -"
+        "d /home/test/.local/share/atuin 0755 test users -"
+        "d /home/test/.local/share/activitywatch 0755 test users -"
+        "d /home/test/.local/share/activitywatch/aw-server-rust 0755 test users -"
         
         # Asciinema directories
         "d /home/test/.local 0755 test users -"
@@ -395,6 +398,33 @@ EOF
         # Hyprland IPC socket directory
         "d /tmp/hypr 0755 test users -"
       ];
+
+      system.activationScripts.sinexActivitywatchFixture = ''
+        mkdir -p /home/test/.local/share/activitywatch/aw-server-rust
+        rm -f /home/test/.local/share/activitywatch/aw-server-rust/sqlite.db
+        ${pkgs.sqlite}/bin/sqlite3 /home/test/.local/share/activitywatch/aw-server-rust/sqlite.db <<'SQL'
+CREATE TABLE buckets (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL
+);
+CREATE TABLE events (
+  bucketrow INTEGER NOT NULL,
+  starttime INTEGER NOT NULL,
+  endtime INTEGER NOT NULL,
+  data TEXT,
+  FOREIGN KEY(bucketrow) REFERENCES buckets(id)
+);
+INSERT INTO buckets (id, name) VALUES
+  (1, 'aw-watcher-window_sinex-vm'),
+  (2, 'aw-watcher-web_sinex-vm'),
+  (3, 'aw-watcher-afk_sinex-vm');
+INSERT INTO events (bucketrow, starttime, endtime, data) VALUES
+  (1, 1000000000, 4000000000, '{"app":"kitty","title":"multi-source"}'),
+  (2, 5000000000, 9000000000, '{"app":"Firefox","title":"Docs","url":"https://example.com"}'),
+  (3, 10000000000, 16000000000, '{"status":"afk"}');
+SQL
+        chown -R test:users /home/test/.local/share/activitywatch
+      '';
       
       # Package overlays
       nixpkgs.overlays = [(final: prev: {
@@ -411,8 +441,6 @@ EOF
   testScript = ''
     import time
     import re
-
-    state_dir = machine.succeed("echo -n $SINEX_STATE_DIR")
 
     def extract_total_events():
         stats = machine.succeed("sinex stats")
@@ -492,10 +520,16 @@ EOF
 
     # Initialize all data sources
     with subtest("Initialize all event sources"):
-        machine.succeed(f"su - sinex -c 'cd {state_dir} && atuin init zsh'")
-        machine.succeed(f"su - sinex -c 'cd {state_dir} && atuin import auto'")
+        machine.succeed("su - test -c 'atuin init zsh >/dev/null'")
+        machine.succeed("su - test -c 'atuin import auto >/dev/null'")
         machine.succeed("su - test -c 'echo initial > /var/lib/sinex/watched/initial.txt'")
-        machine.succeed(f"echo 'initial_cmd' >> {state_dir}/.zsh_history")
+        machine.succeed("printf '# initial document\\n' > /home/test/Documents/initial.md")
+        machine.succeed("chown test:users /home/test/Documents/initial.md")
+        machine.succeed("su - test -c 'echo initial_cmd >> /home/test/.zsh_history'")
+        machine.succeed("systemctl start sinex-document-scan.service")
+        machine.wait_until_succeeds(
+            "su - postgres -c \"psql -d sinex -tAc \\\"SELECT COUNT(*) FROM core.events WHERE event_type = 'document.ingested'\\\"\" | grep -Eq '^[1-9][0-9]*$'"
+        )
         wait_for_event_pattern("initial")
         baseline_count = extract_total_events() or 0
         print(f"Baseline event count: {baseline_count}")
@@ -549,6 +583,11 @@ EOF
         print(f"Active sources: {sources_found}")
         assert any('filesystem' in found for found in sources_found), f"Filesystem events missing: {sources_found}"
         assert any('terminal' in found or 'shell' in found for found in sources_found), f"Terminal events missing: {sources_found}"
+
+    with subtest("Deployment proof via sinexctl verify"):
+        machine.succeed(
+            "sinexctl --insecure verify --gateway-smoke --automata-smoke --document-smoke --source-proof --historical-proof"
+        )
 
     # Test 5: Post-stress stability
     with subtest("System stability after stress test"):
