@@ -231,10 +231,13 @@ impl AcquisitionManager {
         env: &SinexEnvironment,
         namespace: Option<&str>,
     ) -> NodeResult<()> {
-        js.get_or_create_stream(jetstream::stream::Config {
+        js.create_or_update_stream(jetstream::stream::Config {
             name: env.nats_stream_name_with_namespace(namespace, "SOURCE_MATERIAL_BEGIN"),
             subjects: vec![env.nats_subject_with_namespace(namespace, "source_material.begin")],
+            retention: jetstream::stream::RetentionPolicy::WorkQueue,
             storage: jetstream::stream::StorageType::File,
+            max_age: std::time::Duration::from_hours(72),
+            max_bytes: 1_073_741_824, // 1 GiB
             ..Default::default()
         })
         .await
@@ -243,11 +246,13 @@ impl AcquisitionManager {
                 .with_std_error(&e)
         })?;
 
-        js.get_or_create_stream(jetstream::stream::Config {
+        js.create_or_update_stream(jetstream::stream::Config {
             name: env.nats_stream_name_with_namespace(namespace, "SOURCE_MATERIAL_SLICES"),
             subjects: vec![env.nats_subject_with_namespace(namespace, "source_material.slices.>")],
+            retention: jetstream::stream::RetentionPolicy::WorkQueue,
             storage: jetstream::stream::StorageType::File,
-            max_age: std::time::Duration::from_hours(168),
+            max_age: std::time::Duration::from_hours(72),
+            max_bytes: 34_359_738_368, // 32 GiB
             max_message_size: 512 * 1024,
             ..Default::default()
         })
@@ -257,10 +262,13 @@ impl AcquisitionManager {
                 .with_std_error(&e)
         })?;
 
-        js.get_or_create_stream(jetstream::stream::Config {
+        js.create_or_update_stream(jetstream::stream::Config {
             name: env.nats_stream_name_with_namespace(namespace, "SOURCE_MATERIAL_END"),
             subjects: vec![env.nats_subject_with_namespace(namespace, "source_material.end")],
+            retention: jetstream::stream::RetentionPolicy::WorkQueue,
             storage: jetstream::stream::StorageType::File,
+            max_age: std::time::Duration::from_hours(72),
+            max_bytes: 1_073_741_824, // 1 GiB
             ..Default::default()
         })
         .await
