@@ -358,6 +358,8 @@ pub async fn run_cli() -> Result<()> {
         unsafe {
             std::env::remove_var("XTASK_JOB_DIR");
         }
+    } else if let Err(error) = process::arm_current_process_parent_death_signal() {
+        eprintln!("⚠️  Failed to arm xtask parent-death signal: {error}");
     }
     let claimed_bg_job = parse_one_shot_i64_env("XTASK_BG_JOB_ID", "background job claim");
 
