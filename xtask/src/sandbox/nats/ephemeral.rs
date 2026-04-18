@@ -761,7 +761,27 @@ async fn get_or_init_shared(id: &str, builder: EphemeralNatsBuilder) -> Result<A
     // and correctness is more important than parallelism here.
     let mut guard = SHARED_NATS_REGISTRY.lock().await;
     if let Some(existing) = guard.get(id).cloned() {
-        return Ok(existing);
+        match existing.connect().await {
+            Ok(client) => {
+                drop(client);
+                return Ok(existing);
+            }
+            Err(error) => {
+                warn!(
+                    shared_id = id,
+                    error = %error,
+                    "Cached shared NATS instance is stale; restarting"
+                );
+                guard.remove(id);
+                if let Err(shutdown_error) = existing.shutdown().await {
+                    warn!(
+                        shared_id = id,
+                        error = %shutdown_error,
+                        "Failed shutting down stale shared NATS instance"
+                    );
+                }
+            }
+        }
     }
 
     let instance = Arc::new(builder.start().await?);

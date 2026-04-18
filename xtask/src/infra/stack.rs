@@ -771,11 +771,11 @@ mod tests {
         assert!(message.contains("git init for annex repository"));
     }
 
-    #[test]
-    fn list_snapshots_reports_directory_read_failures() {
-        let temp = tempfile::tempdir().unwrap();
+    #[sinex_test]
+    async fn list_snapshots_reports_directory_read_failures() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
         let not_a_dir = temp.path().join("snapshots");
-        fs::write(&not_a_dir, "blocked").unwrap();
+        fs::write(&not_a_dir, "blocked")?;
 
         let probe = list_snapshots(&not_a_dir);
         assert!(probe.snapshots.is_empty());
@@ -785,18 +785,20 @@ mod tests {
                 .unwrap_or_default()
                 .contains("failed to read snapshots directory")
         );
+        Ok(())
     }
 
-    #[test]
-    fn list_snapshots_collects_known_extensions_sorted() {
-        let temp = tempfile::tempdir().unwrap();
-        fs::write(temp.path().join("b.tar.zst"), "").unwrap();
-        fs::write(temp.path().join("a.sql.zst"), "").unwrap();
-        fs::write(temp.path().join("ignore.txt"), "").unwrap();
+    #[sinex_test]
+    async fn list_snapshots_collects_known_extensions_sorted() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        fs::write(temp.path().join("b.tar.zst"), "")?;
+        fs::write(temp.path().join("a.sql.zst"), "")?;
+        fs::write(temp.path().join("ignore.txt"), "")?;
 
         let probe = list_snapshots(temp.path());
         assert_eq!(probe.snapshots, vec!["a".to_string(), "b".to_string()]);
         assert!(probe.issue.is_none());
+        Ok(())
     }
 
     #[test]
@@ -844,11 +846,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn dir_size_reports_non_directory_paths() {
-        let temp = tempfile::tempdir().unwrap();
+    #[sinex_test]
+    async fn dir_size_reports_non_directory_paths() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
         let file_path = temp.path().join("postgres");
-        fs::write(&file_path, "blocked").unwrap();
+        fs::write(&file_path, "blocked")?;
 
         let probe = dir_size(&file_path);
         assert_eq!(probe.bytes, 0);
@@ -858,6 +860,7 @@ mod tests {
                 .unwrap_or_default()
                 .contains("expected directory while sizing stack data path")
         );
+        Ok(())
     }
 
     #[sinex_test]
