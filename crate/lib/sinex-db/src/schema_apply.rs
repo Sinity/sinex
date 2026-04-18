@@ -1,4 +1,4 @@
-use crate::DbPool;
+use crate::{DbPool, PoolConfig};
 use sinex_primitives::error::{Result, SinexError};
 use tracing::info;
 
@@ -51,9 +51,12 @@ pub async fn apply_schema(pool: &DbPool) -> Result<()> {
 
 /// Apply declarative schema for a given database URL by creating a temporary connection.
 pub async fn apply_schema_for_url(database_url: &str) -> Result<()> {
-    use crate::pool::create_pool;
+    use crate::pool::create_pool_with_config;
 
-    let pool = create_pool(database_url).await.map_err(|e| {
+    let config = PoolConfig::from_env();
+    let pool = create_pool_with_config(database_url, &config)
+        .await
+        .map_err(|e| {
         SinexError::database("Failed to create pool for schema apply").with_std_error(&e)
     })?;
 
