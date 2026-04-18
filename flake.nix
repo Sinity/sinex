@@ -436,12 +436,15 @@
                   export SINEX_GATEWAY_TLS_KEY="$PWD/.sinex/tls/server-key.pem"
                   export SINEX_GATEWAY_TLS_CLIENT_CA="$PWD/.sinex/tls/ca.pem"
                 fi
-                xtask --format silent docs sync >/dev/null 2>&1
                 if [ -t 1 ]; then
-                  # The plain `xtask` command is provided by the devShell and delegates
-                  # to `cargo build -p xtask` plus the checkout-local binary.
-                  # Set SINEX_NO_AUTO_INFRA=1 to skip (useful for remote DB or low-resource machines).
-                  if [ -z "''${SINEX_NO_AUTO_INFRA:-}" ]; then
+                  # Keep shell entry cheap by default. Heavy dev conveniences are
+                  # opt-in so direnv, one-shot commands, and fresh shells do not
+                  # silently compile xtask or launch infra.
+                  if [ "''${SINEX_AUTO_DOCS_SYNC:-0}" = 1 ]; then
+                    xtask --format silent docs sync >/dev/null 2>&1 || true
+                  fi
+
+                  if [ "''${SINEX_AUTO_INFRA:-0}" = 1 ]; then
                     _pg_running=0
                     _nats_running=0
                     _sinex_infra_start_lock="$SINEX_DEV_STATE_DIR/infra-start.lock"
@@ -477,20 +480,22 @@
                         echo "ℹ  Infrastructure already starting... (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT — live log: $_sinex_infra_start_current_log)" >&2
                       fi
                     fi
+                    if [ "''${SINEX_AUTO_STATUS:-0}" = 1 ]; then
+                      # If infra was just launched, poll for readiness before status
+                      # so the summary reflects actual state.
+                      if [ "''${_sinex_infra_starting:-0}" -eq 1 ]; then
+                        _deadline=$((SECONDS + 8))
+                        while [ $SECONDS -lt $_deadline ]; do
+                          _pg_up=0; _nats_up=0
+                          pg_isready -q -h "$SINEX_DEV_STATE_DIR/run" -p "${toString pgPort}" 2>/dev/null && _pg_up=1
+                          (timeout 1 bash -c ">/dev/tcp/localhost/$SINEX_DEV_NATS_PORT") 2>/dev/null && _nats_up=1
+                          [ "$_pg_up" -eq 1 ] && [ "$_nats_up" -eq 1 ] && break
+                          sleep 0.3
+                        done
+                      fi
+                      xtask status --summary || true
+                    fi
                   fi
-                  # Show workspace health on shell entry. If infra was just launched,
-                  # poll for readiness before status so the summary reflects actual state.
-                  if [ "''${_sinex_infra_starting:-0}" -eq 1 ]; then
-                    _deadline=$((SECONDS + 8))
-                    while [ $SECONDS -lt $_deadline ]; do
-                      _pg_up=0; _nats_up=0
-                      pg_isready -q -h "$SINEX_DEV_STATE_DIR/run" -p "${toString pgPort}" 2>/dev/null && _pg_up=1
-                      (timeout 1 bash -c ">/dev/tcp/localhost/$SINEX_DEV_NATS_PORT") 2>/dev/null && _nats_up=1
-                      [ "$_pg_up" -eq 1 ] && [ "$_nats_up" -eq 1 ] && break
-                      sleep 0.3
-                    done
-                  fi
-                  xtask status --summary || true
                 fi
               '';
             };
