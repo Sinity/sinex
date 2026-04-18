@@ -48,6 +48,8 @@ result
 # Project state (track the root, ignore checkout-local contents)
 .sinex/*
 !.sinex/.gitignore
+crate/**/.sinex/
+xtask/.sinex/
 .direnv/
 
 # Claude Code (track includes, ignore ephemeral)

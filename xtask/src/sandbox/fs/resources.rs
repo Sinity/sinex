@@ -13,28 +13,36 @@ use std::collections::hash_map::DefaultHasher;
 use std::ffi::OsString;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard};
 use tempfile::TempDir;
+
+static TEMP_ENV_MUTEX: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 
 /// Per-test temporary directory redirect.
 ///
 /// Keeps `tempfile`, `std::env::temp_dir()`, and subprocesses on a
 /// checkout-backed `.sinex/test-tmp` tree instead of the host `/tmp`.
 pub struct TestTempEnv {
+    lock: Option<MutexGuard<'static, ()>>,
     original: [(&'static str, Option<OsString>); 3],
     _dir: TempDir,
 }
 
 /// Redirect temporary-directory environment variables for the duration of a test.
 pub fn prepare_test_temp_env(test_name: &str) -> TestResult<TestTempEnv> {
+    let lock = TEMP_ENV_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let temp_root = workspace_test_temp_root()?;
     let dir = tempfile::Builder::new()
         .prefix(&short_test_temp_prefix(test_name))
         .tempdir_in(temp_root.as_std_path())
         .map_err(|e| eyre!("Failed to create workspace-backed temp directory: {e}"))?;
 
-    // Nextest executes each test case in its own process, so we can redirect the
-    // temp-directory variables for the full test lifetime without holding the
-    // process-wide EnvGuard lock and deadlocking nested EnvGuard users.
+    // `TMPDIR` / `TMP` / `TEMP` are process-global, so `cargo test` can race
+    // parallel cases into each other's deleted temp roots. Hold a dedicated
+    // temp-env mutex for the lifetime of the redirect while keeping the normal
+    // EnvGuard mutex free for other per-test environment overrides.
     let original = [
         ("TMPDIR", std::env::var_os("TMPDIR")),
         ("TMP", std::env::var_os("TMP")),
@@ -48,6 +56,7 @@ pub fn prepare_test_temp_env(test_name: &str) -> TestResult<TestTempEnv> {
     }
 
     Ok(TestTempEnv {
+        lock: Some(lock),
         original,
         _dir: dir,
     })
@@ -64,6 +73,7 @@ impl Drop for TestTempEnv {
                 }
             }
         }
+        self.lock.take();
     }
 }
 
