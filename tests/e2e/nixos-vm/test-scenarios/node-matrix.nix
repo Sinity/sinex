@@ -42,6 +42,10 @@ pkgs.testers.nixosTest {
           enable = lib.mkForce true;
           instances = lib.mkForce 1;
         };
+        document = {
+          enable = lib.mkForce true;
+          allowedRoots = lib.mkForce [ "/home/test/Documents" ];
+        };
 
         automata = {
           canonicalizer.enable = lib.mkForce true;
@@ -56,7 +60,6 @@ pkgs.testers.nixosTest {
   testScript = ''
     machine.start()
     machine.wait_for_unit("multi-user.target")
-    machine.wait_for_unit("sinex-coordination-setup.service")
 
     # Core hubs
     for unit in ["sinex-ingestd.service", "sinex-gateway.service", "nats.service"]:
@@ -75,6 +78,10 @@ pkgs.testers.nixosTest {
         machine.wait_for_unit(unit)
         machine.succeed(f"systemctl is-active {unit}")
 
+    machine.wait_for_unit("sinex-document-scan.timer")
+    machine.succeed("systemctl is-active sinex-document-scan.timer")
+    machine.succeed("test \"$(systemctl show -p LoadState --value sinex-document-scan.service)\" = loaded")
+
     # Automata
     automata = [
         "sinex-canonicalizer.service",
@@ -90,5 +97,6 @@ pkgs.testers.nixosTest {
     generated = machine.succeed("nixos-option sinex._generatedUnits")
     assert "sinex-filesystem-1" in generated
     assert "sinex-terminal-1" in generated
+    assert "sinex-document-scan" not in generated
   '';
 }

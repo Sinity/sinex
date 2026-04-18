@@ -109,6 +109,10 @@ disabled (e.g. staging migrations).
 - node defaults (`nodes.defaults`) cover instances, batching, and
   resource limits. Individual nodes can override by setting their field to
   `null` (inherit) or a concrete value.
+- `nodes.document` is intentionally not a long-running daemon. It renders a
+  managed oneshot service (`sinex-document-scan.service`) plus an optional
+  timer (`sinex-document-scan.timer`), and the module requires that at least
+  one of `runOnBoot` or `schedule` is enabled so the surface actually runs.
 - When `users.target` is set, the module now derives sane workstation defaults
   for terminal history sources and, when the target UID is known at evaluation
   time, the desktop runtime directory. The sinnix bridge can make that access
@@ -128,7 +132,9 @@ disabled (e.g. staging migrations).
 - The module emits deterministic unit names (`sinex-filesystem-1`,
   `sinex-health-automaton`, etc.) and publishes them via
   `config.sinex._generatedUnits` for other subsystems (pre-flight,
-  tests).
+  tests). `_generatedUnits` is limited to long-running notify/watchdog-backed
+  services; oneshot deployment surfaces such as `sinex-document-scan.service`
+  are verified separately and intentionally excluded.
 
 ### Transport Security
 - gateway TLS lives under `services.sinex.core.gateway.{tlsCertFile,tlsKeyFile,tlsClientCAFile,requireClientTLS,autoGenerateTls}`
@@ -191,6 +197,10 @@ disabled (e.g. staging migrations).
   `/etc/sinex/deployment-readiness.json`, the canonical descriptor consumed by
   `xtask doctor --deployment-readiness` and the config-derived preflight
   configuration checks.
+- That descriptor also records the managed document-ingestion surface
+  (`allowed_roots`, boot/timer execution mode, and scan/timer unit names) so
+  readiness checks can verify that non-daemon runtime surfaces are genuinely
+  configured and active.
 - That descriptor now carries the gateway probe base URL, whether the gateway
   requires client TLS, the effective NATS server list, and all secret-material
   paths needed for readiness checks, including the generated gateway TLS trust

@@ -30,6 +30,10 @@ pkgs.testers.nixosTest {
       terminal.enable = false;
       desktop.enable = false;
       system.enable = false;
+      document = {
+        enable = true;
+        allowedRoots = [ "/home/test/Documents" ];
+      };
       automata = {
         enable = true;
         canonicalizer.enable = true;
@@ -47,6 +51,7 @@ pkgs.testers.nixosTest {
     machine.wait_for_unit("sinex-gateway.service", timeout=60)
     machine.wait_for_unit("sinex-ingestd.service", timeout=60)
     machine.wait_for_unit("sinex-filesystem-1.service", timeout=60)
+    machine.wait_for_unit("sinex-document-scan.timer", timeout=60)
     machine.wait_for_unit("sinex-canonicalizer.service", timeout=60)
     machine.wait_for_unit("sinex-health-automaton.service", timeout=60)
     machine.wait_for_unit("sinex-analytics-automaton.service", timeout=60)
@@ -60,6 +65,14 @@ pkgs.testers.nixosTest {
     with subtest("Deployment proof via sinexctl verify"):
       machine.succeed(
         "sinexctl --insecure verify --gateway-smoke --automata-smoke"
+      )
+
+    with subtest("Document snapshot scan proof"):
+      machine.succeed("printf '# vm proof\\n' > /home/test/Documents/smoke.md")
+      machine.succeed("chown test:users /home/test/Documents/smoke.md")
+      machine.succeed("systemctl start sinex-document-scan.service")
+      machine.wait_until_succeeds(
+        "su - postgres -c \"psql -d sinex_dev -tAc \\\"SELECT COUNT(*) FROM core.events WHERE event_type = 'document.ingested'\\\"\" | grep -Eq '^[1-9][0-9]*$'"
       )
   '';
 }
