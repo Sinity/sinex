@@ -71,6 +71,7 @@ const FS_CAPTURE_CHUNK_SIZE: usize = 64 * 1024;
 const FS_READ_RETRY_ATTEMPTS: u32 = 3; // Number of retry attempts for transient file read errors
 const FS_READ_RETRY_BASE_DELAY_MS: u64 = 100; // Base delay for exponential backoff (100ms, 500ms, 1s)
 const FS_MAX_CONCURRENT_CAPTURES: usize = 64; // Cap concurrent file reads across all watchers to avoid FD exhaustion
+const FS_OVERSIZED_LOG_BUCKET_BYTES: u64 = 1024 * 1024; // Re-log oversized files only after 1 MiB growth
 const DEFAULT_IGNORED_DIRECTORY_NAMES: &[&str] = &[".git", ".direnv", "node_modules", "target"];
 const INOTIFY_MAX_USER_WATCHES_PATH: &str = "/proc/sys/fs/inotify/max_user_watches";
 const MATERIAL_REASON_CREATED: &str = "fs-watcher:file-created";
@@ -375,6 +376,7 @@ struct WatchContext {
     dropped_events: Arc<AtomicU64>,
     metrics: Arc<EventMetrics>,
     ignored_directory_names: Arc<HashSet<String>>,
+    oversized_skip_log_buckets: Arc<StdMutex<HashMap<PathBuf, u64>>>,
     cancel_token: CancellationToken,
     /// Semaphore limiting concurrent file reads across all watchers to prevent FD exhaustion
     capture_semaphore: Arc<tokio::sync::Semaphore>,
@@ -393,6 +395,7 @@ pub struct FilesystemNode {
     metrics: Arc<EventMetrics>,
     cancel_token: CancellationToken,
     capture_semaphore: Arc<tokio::sync::Semaphore>,
+    oversized_skip_log_buckets: Arc<StdMutex<HashMap<PathBuf, u64>>>,
 }
 
 impl FilesystemNode {
@@ -408,6 +411,7 @@ impl FilesystemNode {
             metrics: EventMetrics::new(),
             cancel_token: CancellationToken::new(),
             capture_semaphore: Arc::new(tokio::sync::Semaphore::new(FS_MAX_CONCURRENT_CAPTURES)),
+            oversized_skip_log_buckets: Arc::new(StdMutex::new(HashMap::new())),
         }
     }
 
@@ -423,6 +427,7 @@ impl FilesystemNode {
             metrics: EventMetrics::new(),
             cancel_token: CancellationToken::new(),
             capture_semaphore: Arc::new(tokio::sync::Semaphore::new(FS_MAX_CONCURRENT_CAPTURES)),
+            oversized_skip_log_buckets: Arc::new(StdMutex::new(HashMap::new())),
         }
     }
 
@@ -551,6 +556,7 @@ impl FilesystemNode {
                             .cloned()
                             .collect(),
                     ),
+                    oversized_skip_log_buckets: Arc::clone(&self.oversized_skip_log_buckets),
                     cancel_token: self.cancel_token.clone(),
                     capture_semaphore: Arc::clone(&self.capture_semaphore),
                 },
@@ -1529,12 +1535,10 @@ async fn handle_file_created(ctx: &WatchContext, _root: &str, path: &Path) -> No
 
     let size = metadata.len();
     if size > ctx.max_capture_bytes.as_u64() {
-        warn!(
-            "Skipping file {:?} ({} bytes) exceeding limit {}",
-            path, size, ctx.max_capture_bytes
-        );
+        warn_oversized_skip(ctx, path, size);
         return Ok(());
     }
+    clear_oversized_skip_tracking(ctx, path);
 
     let created_at = file_created_at(&metadata, path)?;
     let material_id = capture_material_from_file(ctx, path, MATERIAL_REASON_CREATED, size).await?;
@@ -1586,12 +1590,10 @@ async fn handle_file_modified(
 
     let size = metadata.len();
     if size > ctx.max_capture_bytes.as_u64() {
-        warn!(
-            "Skipping file {:?} ({} bytes) exceeding limit {}",
-            path, size, ctx.max_capture_bytes
-        );
+        warn_oversized_skip(ctx, path, size);
         return Ok(());
     }
+    clear_oversized_skip_tracking(ctx, path);
 
     let modified_at = file_modified_at(&metadata, path)?;
     let material_id = capture_material_from_file(ctx, path, MATERIAL_REASON_MODIFIED, size).await?;
@@ -1624,6 +1626,7 @@ async fn handle_file_modified(
 }
 
 async fn handle_file_deleted(ctx: &WatchContext, _root: &str, path: &Path) -> NodeResult<()> {
+    clear_oversized_skip_tracking(ctx, path);
     // For deletions no content is available; record zero-byte material.
     let material_id = capture_material(ctx, path, MATERIAL_REASON_DELETED, None).await?;
 
@@ -1658,6 +1661,8 @@ async fn handle_file_moved(
     old: &Path,
     new: &Path,
 ) -> NodeResult<()> {
+    clear_oversized_skip_tracking(ctx, old);
+    clear_oversized_skip_tracking(ctx, new);
     let material_id = capture_material(ctx, new, MATERIAL_REASON_MOVED, None).await?;
 
     let payload = sinex_primitives::events::payloads::filesystem::FileMovedPayload {
@@ -1714,6 +1719,41 @@ async fn capture_material(
         .map_err(|e| SinexError::processing("Failed to finalize material").with_source(e))?;
 
     Ok(material_id)
+}
+
+fn warn_oversized_skip(ctx: &WatchContext, path: &Path, size: u64) {
+    if should_log_oversized_skip(&ctx.oversized_skip_log_buckets, path, size) {
+        warn!(
+            "Skipping file {:?} ({} bytes) exceeding limit {}",
+            path, size, ctx.max_capture_bytes
+        );
+    }
+}
+
+fn should_log_oversized_skip(
+    buckets: &StdMutex<HashMap<PathBuf, u64>>,
+    path: &Path,
+    size: u64,
+) -> bool {
+    let bucket = size / FS_OVERSIZED_LOG_BUCKET_BYTES;
+    let mut guard = buckets
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match guard.get(path) {
+        Some(previous) if *previous == bucket => false,
+        _ => {
+            guard.insert(path.to_path_buf(), bucket);
+            true
+        }
+    }
+}
+
+fn clear_oversized_skip_tracking(ctx: &WatchContext, path: &Path) {
+    let mut guard = ctx
+        .oversized_skip_log_buckets
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    guard.remove(path);
 }
 
 async fn capture_material_from_file(
@@ -2585,7 +2625,22 @@ mod tests {
             ),
             cancel_token,
             capture_semaphore: Arc::new(tokio::sync::Semaphore::new(FS_MAX_CONCURRENT_CAPTURES)),
+            oversized_skip_log_buckets: Arc::new(StdMutex::new(HashMap::new())),
         }
+    }
+
+    #[test]
+    fn oversized_skip_logging_is_bucketed_per_path() {
+        let buckets = StdMutex::new(HashMap::new());
+        let path = Path::new("/tmp/session.cast");
+
+        assert!(should_log_oversized_skip(&buckets, path, 11 * 1024 * 1024,));
+        assert!(!should_log_oversized_skip(
+            &buckets,
+            path,
+            11 * 1024 * 1024 + 512,
+        ));
+        assert!(should_log_oversized_skip(&buckets, path, 12 * 1024 * 1024,));
     }
 
     #[cfg(unix)]
