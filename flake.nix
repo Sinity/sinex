@@ -130,6 +130,19 @@
           # which starts an ephemeral Postgres and sets DATABASE_URL.
           cargoArtifacts = craneLib.buildDepsOnly (commonArgs // { SQLX_OFFLINE = "true"; });
 
+          # Build the schema bootstrap binary once, then reuse it in every build
+          # that needs a live SQLx validation database.
+          schemaApplyBootstrap = craneLib.buildPackage (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              pname = "schema-apply-bootstrap";
+              cargoExtraArgs = "-p sinex-schema --bin schema-apply-bootstrap";
+              doCheck = false;
+              SQLX_OFFLINE = "true";
+            }
+          );
+
           # Ephemeral Postgres setup for SQLx query validation
           postgresPreBuild = ''
                         export PGDATA="$TMPDIR/pgdata"
@@ -146,14 +159,15 @@
 
                         ${postgresForSqlx}/bin/createdb -h "$PGHOST" -p "$PGPORT" -U postgres sinex_dev || true
 
-            # Run schema apply as postgres (superuser) — creates schemas, tables, extensions.
+                        # Run schema apply as postgres (superuser) — creates schemas, tables, extensions.
                         # SQLx compile-time query validation only needs the schema to exist; user is irrelevant.
                         #
-                        # Use the schema crate's private bootstrap binary here rather than xtask:
-                        # compiling xtask itself pulls in sinex-db query macros that expect the
-                        # schema to already exist.
+                        # Build the bootstrap binary once outside the per-package sandbox and
+                        # invoke the already-built executable here. Re-running `cargo run` in every
+                        # package derivation forces the schema bootstrap path to recompile repeatedly,
+                        # which makes the full VM closure builds pathologically slow.
                         export DATABASE_URL="postgresql:///sinex_dev?host=$PGHOST&user=postgres"
-                        cargo run -p sinex-schema --bin schema-apply-bootstrap
+                        ${schemaApplyBootstrap}/bin/schema-apply-bootstrap
           '';
 
           postgresPostBuild = ''
