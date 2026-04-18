@@ -25,7 +25,7 @@ Sinex nodes communicate via a distributed event bus powered by NATS `JetStream`.
 │   External World    │────▶│    Sinex Nodes      │────▶│   Data Substrate    │
 │                     │     │ (Stateful Streams)  │     │                     │
 │ • Files             │     │ • fs-ingestor       │     │ • core.events       │
-│ • Terminal          │     │ • pkm-automaton     │     │ • core.blobs        │
+│ • Terminal          │     │ • session-detector  │     │ • core.blobs        │
 │ • Desktop           │     │ • health-automaton  │     │ • core.checkpoints  │
 └─────────────────────┘     └──────────┬──────────┘     └──────────┬──────────┘
                                        │                           │

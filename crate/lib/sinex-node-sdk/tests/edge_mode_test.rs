@@ -56,6 +56,7 @@ impl Node for EdgeTestNode {
             supports_interactive: false,
             supports_concurrent: false,
             manages_own_continuous_loop: false,
+            manages_own_checkpoints: false,
             max_scan_size: None,
         }
     }

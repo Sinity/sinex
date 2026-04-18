@@ -1754,23 +1754,43 @@ in
             hyprland_command_socket = cfg.nodes.desktop.session.hyprlandCommandSocket;
           };
         system = mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.system.enable) cfg.nodes.system.instances;
-        document = {
-          surface = mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.document.enable) null;
-          allowed_roots = effectiveDocumentRoots;
-          scan_service_unit =
-            if cfg.nodes.enable && cfg.nodes.document.enable then
-              "sinex-document-scan.service"
-            else
-              null;
-          timer_unit =
-            if cfg.nodes.enable && cfg.nodes.document.enable && cfg.nodes.document.schedule != null then
-              "sinex-document-scan.timer"
-            else
-              null;
-          schedule = cfg.nodes.document.schedule;
-          run_on_boot = cfg.nodes.document.runOnBoot;
-        };
-        automata = mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.automata.enable) null;
+        document =
+          (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.document.enable) null)
+          // {
+            allowed_roots = effectiveDocumentRoots;
+            scan_service_unit =
+              if cfg.nodes.enable && cfg.nodes.document.enable then
+                "sinex-document-scan.service"
+              else
+                null;
+            timer_unit =
+              if cfg.nodes.enable && cfg.nodes.document.enable && cfg.nodes.document.schedule != null then
+                "sinex-document-scan.timer"
+              else
+                null;
+            schedule = cfg.nodes.document.schedule;
+            run_on_boot = cfg.nodes.document.runOnBoot;
+          };
+        automata =
+          (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.automata.enable) null)
+          // {
+            canonicalizer =
+              cfg.nodes.enable
+              && cfg.nodes.automata.enable
+              && cfg.nodes.automata.canonicalizer.enable;
+            health_aggregator =
+              cfg.nodes.enable
+              && cfg.nodes.automata.enable
+              && cfg.nodes.automata.healthAggregator.enable;
+            analytics_automaton =
+              cfg.nodes.enable
+              && cfg.nodes.automata.enable
+              && cfg.nodes.automata.analyticsAutomaton.enable;
+            session_detector =
+              cfg.nodes.enable
+              && cfg.nodes.automata.enable
+              && cfg.nodes.automata.sessionDetector.enable;
+          };
         expectations = {
           schema_apply = cfg.database.enable && cfg.database.autoSetup;
           nats_streams = cfg.enable && (cfg.core.enable || cfg.nodes.enable);
@@ -1792,6 +1812,7 @@ in
         };
       };
       deploymentReadinessDescriptorJson = builtins.toJSON deploymentReadinessDescriptor;
+      deploymentReadinessDescriptorFile = pkgs.writeText "sinex-deployment-readiness.json" deploymentReadinessDescriptorJson;
       dlqCleanupScript = if cfg.cliPackage == null then null else pkgs.writeShellScript "sinex-dlq-cleanup" ''
         set -euo pipefail
 
@@ -2013,7 +2034,7 @@ in
       })
 
       (mkIf (cfg.enable || targetUser != null) {
-        environment.etc."sinex/deployment-readiness.json".text = deploymentReadinessDescriptorJson;
+        environment.etc."sinex/deployment-readiness.json".source = deploymentReadinessDescriptorFile;
       })
 
       (mkIf (targetUser != null) {
