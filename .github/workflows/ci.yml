@@ -67,3 +67,8 @@ jobs:
       run: |
         nix develop --accept-flake-config --no-pure-eval --command \
           xtask docs check
+
+    - name: Build runtime flake package for Cachix
+      shell: bash
+      run: |
+        nix build --accept-flake-config .#sinex
