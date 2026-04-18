@@ -662,24 +662,26 @@ impl JetStreamConsumer {
     async fn bootstrap_streams(&self) -> IngestdResult<()> {
         info!("Bootstrapping JetStream streams");
 
-        // Events stream - durable event log for automata replay
-        // 90 days retention to support full operational history replay
+        // Events stream - durable event log for automata replay.
+        // Keep enough history for downstream catch-up, but bound the store so
+        // the event bus does not become the primary archive.
         let events_stream = self.topology.events_stream.clone();
         self.js
             .create_or_update_stream(jetstream::stream::Config {
                 name: events_stream.clone(),
                 subjects: vec![self.topology.events_subject.clone()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
-                max_messages: 10_000_000,
-                max_age: Duration::from_hours(2160), // 90 days (operational history)
+                max_messages: 2_000_000,
+                max_bytes: 34_359_738_368,          // 32 GiB
+                max_age: Duration::from_hours(336), // 14 days
                 storage: jetstream::stream::StorageType::File,
                 ..Default::default()
             })
             .await
             .map_err(|e| SinexError::network("Failed to create events stream").with_source(e))?;
 
-        // Confirmations stream with compaction - only keep latest per event
-        // Short retention since confirmations are ephemeral operational state
+        // Confirmations stream with compaction - only keep latest per event.
+        // These are ephemeral operational state, not durable history.
         let confirmations_stream = self.topology.confirmations_stream.clone();
         self.js
             .create_or_update_stream(jetstream::stream::Config {
@@ -687,7 +689,8 @@ impl JetStreamConsumer {
                 subjects: vec![self.topology.confirmations_subject.clone()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages_per_subject: 1, // Compaction: only keep latest confirmation
-                max_age: Duration::from_hours(168), // 7 days (operational buffer)
+                max_bytes: 2_147_483_648,    // 2 GiB
+                max_age: Duration::from_hours(72), // 3 days
                 storage: jetstream::stream::StorageType::File,
                 ..Default::default()
             })
@@ -703,7 +706,7 @@ impl JetStreamConsumer {
                 subjects: vec![self.topology.confirmation_retry_subject.clone()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages_per_subject: 1,
-                max_age: Duration::from_hours(168),
+                max_age: Duration::from_hours(72),
                 storage: jetstream::stream::StorageType::File,
                 ..Default::default()
             })
@@ -719,8 +722,8 @@ impl JetStreamConsumer {
                 name: dlq_stream.clone(),
                 subjects: vec![self.topology.dlq_subject.clone()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
-                max_messages: 1_000_000,
-                max_age: Duration::from_hours(720), // 30 days
+                max_bytes: 8_589_934_592,           // 8 GiB
+                max_age: Duration::from_hours(168), // 7 days
                 storage: jetstream::stream::StorageType::File,
                 duplicate_window: DLQ_DUPLICATE_WINDOW,
                 allow_direct: true,
