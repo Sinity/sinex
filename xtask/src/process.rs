@@ -32,6 +32,67 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use xshell::{Shell, cmd};
 
+#[cfg(target_os = "linux")]
+fn configure_parent_death_signal_std(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+
+    // SAFETY: `prctl(PR_SET_PDEATHSIG, SIGKILL)` is configured in the child
+    // between fork and exec so foreground helper processes die if xtask is
+    // killed by a dead terminal/agent session or host pressure.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn configure_parent_death_signal_std(_command: &mut Command) {}
+
+#[cfg(target_os = "linux")]
+fn configure_parent_death_signal_tokio(command: &mut tokio::process::Command) {
+    use std::os::unix::process::CommandExt;
+
+    // SAFETY: `prctl(PR_SET_PDEATHSIG, SIGKILL)` is configured in the child
+    // between fork and exec so foreground helper processes die if xtask is
+    // killed by a dead terminal/agent session or host pressure.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn configure_parent_death_signal_tokio(_command: &mut tokio::process::Command) {}
+
+#[cfg(target_os = "linux")]
+pub fn arm_current_process_parent_death_signal() -> Result<()> {
+    let original_parent = unsafe { libc::getppid() };
+    let rc = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error())
+            .wrap_err("failed to arm xtask parent-death signal");
+    }
+    if unsafe { libc::getppid() } != original_parent {
+        unsafe {
+            libc::raise(libc::SIGKILL);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn arm_current_process_parent_death_signal() -> Result<()> {
+    Ok(())
+}
+
 /// Canonical low-level cargo command constructor.
 ///
 /// Use this when a call site needs stdio/process control that `ProcessBuilder`
@@ -39,7 +100,9 @@ use xshell::{Shell, cmd};
 /// seam for future policy changes.
 #[must_use]
 pub fn cargo_command() -> Command {
-    Command::new("cargo")
+    let mut cmd = Command::new("cargo");
+    configure_parent_death_signal_std(&mut cmd);
+    cmd
 }
 
 /// Canonical async cargo command constructor.
@@ -48,7 +111,9 @@ pub fn cargo_command() -> Command {
 /// the caller needs direct access to `tokio::process::Command`.
 #[must_use]
 pub fn cargo_tokio_command() -> tokio::process::Command {
-    tokio::process::Command::new("cargo")
+    let mut cmd = tokio::process::Command::new("cargo");
+    configure_parent_death_signal_tokio(&mut cmd);
+    cmd
 }
 
 /// Output from a process execution.
@@ -240,6 +305,7 @@ impl ProcessBuilder {
                 .stdin(Stdio::null())
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit());
+            configure_parent_death_signal_std(&mut cmd);
 
             if let Some(ref dir) = self.working_dir {
                 cmd.current_dir(dir);
@@ -353,6 +419,7 @@ impl ProcessBuilder {
     pub fn spawn(self) -> Result<std::process::Child> {
         let mut cmd = Command::new(&self.program);
         cmd.args(&self.args);
+        configure_parent_death_signal_std(&mut cmd);
 
         if let Some(ref dir) = self.working_dir {
             cmd.current_dir(dir);
@@ -381,6 +448,7 @@ impl ProcessBuilder {
     pub fn spawn_tokio(self) -> Result<tokio::process::Child> {
         let mut cmd = tokio::process::Command::new(&self.program);
         cmd.args(&self.args);
+        configure_parent_death_signal_tokio(&mut cmd);
 
         if let Some(ref dir) = self.working_dir {
             cmd.current_dir(dir);
@@ -415,6 +483,7 @@ impl ProcessBuilder {
 
         let mut cmd = tokio::process::Command::new(&self.program);
         cmd.args(&self.args);
+        configure_parent_death_signal_tokio(&mut cmd);
 
         if let Some(ref dir) = self.working_dir {
             cmd.current_dir(dir);
@@ -451,6 +520,7 @@ impl ProcessBuilder {
     pub fn spawn_with_streaming(self) -> Result<(std::process::Child, impl std::io::BufRead)> {
         let mut cmd = Command::new(&self.program);
         cmd.args(&self.args);
+        configure_parent_death_signal_std(&mut cmd);
 
         if let Some(ref dir) = self.working_dir {
             cmd.current_dir(dir);
