@@ -180,6 +180,7 @@ host    all             all             ::1/128                 trust
   systemd.tmpfiles.rules = [
     "d ${stateDir} 0755 sinex sinex -"
     "d /var/lib/sinex/watched 0777 sinex sinex -"
+    "d /home/test/Documents 0755 test users -"
     "D ${stateDir}/nats 0755 sinex sinex -"
     "f ${stateDir}/.zsh_history 0644 sinex sinex -"
     "f ${stateDir}/.bash_history 0644 sinex sinex -"

@@ -27,7 +27,11 @@ use sinex_primitives::{
     domain::SanitizedPath,
     events::{EventPayload, payloads::document::DocumentIngestedPayload},
 };
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    sync::Arc,
+    time::{Instant, SystemTime},
+};
 use tokio::{fs, io::AsyncReadExt};
 use tracing::{error, info, warn};
 
@@ -103,8 +107,58 @@ impl DocumentIngestorConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct DocumentFingerprint {
+    size_bytes: u64,
+    modified_unix_ms: Option<u64>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct DocumentCheckpoint {}
+pub struct DocumentCheckpoint {
+    #[serde(default)]
+    scanned_documents: HashMap<String, DocumentFingerprint>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedDocumentTarget {
+    path: Utf8PathBuf,
+    strict: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedDocumentTargets {
+    targets: Vec<ResolvedDocumentTarget>,
+    full_root_scan: bool,
+}
+
+#[derive(Debug)]
+struct DocumentInput {
+    path: Utf8PathBuf,
+    sanitized_path: SanitizedPath,
+    file_size: u64,
+    mime: String,
+    encoding: Option<String>,
+    fingerprint: DocumentFingerprint,
+}
+
+#[derive(Debug)]
+enum DocumentSkipReason {
+    Unchanged,
+    UnsupportedMime,
+    TooLarge,
+}
+
+#[derive(Debug)]
+struct DocumentSkip {
+    reason: DocumentSkipReason,
+    fingerprint: DocumentFingerprint,
+}
+
+#[derive(Debug)]
+enum DocumentInspection {
+    Emit(DocumentInput),
+    Skip(DocumentSkip),
+}
 
 /// Simplified document node that ingests local files.
 pub struct DocumentNode {
@@ -168,28 +222,331 @@ impl DocumentNode {
             .any(|root| validate_path_within_root(target, root).is_ok())
     }
 
-    async fn ingest_targets(&self, targets: &[String]) -> NodeResult<ScanReport> {
+    fn default_scan_roots(&self) -> Vec<String> {
+        self.config.allowed_roots.clone()
+    }
+
+    fn resolve_targets(
+        &self,
+        targets: &[String],
+        warnings: &mut Vec<String>,
+    ) -> NodeResult<ResolvedDocumentTargets> {
+        let full_root_scan = targets.is_empty();
+        let top_level_targets = if full_root_scan {
+            self.default_scan_roots()
+        } else {
+            targets.to_vec()
+        };
+
+        let mut deduped = BTreeMap::<String, ResolvedDocumentTarget>::new();
+        for raw_target in top_level_targets {
+            for resolved in self.expand_target(&raw_target, full_root_scan, warnings)? {
+                let key = resolved.path.as_str().to_string();
+                deduped
+                    .entry(key)
+                    .and_modify(|existing| existing.strict |= resolved.strict)
+                    .or_insert(resolved);
+            }
+        }
+
+        Ok(ResolvedDocumentTargets {
+            targets: deduped.into_values().collect(),
+            full_root_scan,
+        })
+    }
+
+    fn expand_target(
+        &self,
+        target: &str,
+        from_default_root_scan: bool,
+        warnings: &mut Vec<String>,
+    ) -> NodeResult<Vec<ResolvedDocumentTarget>> {
+        let path_buf = std::path::PathBuf::from(target);
+        let utf8_path = Utf8PathBuf::from_path_buf(path_buf.clone()).map_err(|_| {
+            SinexError::processing(format!("Document path must be valid UTF-8: {target}"))
+        })?;
+
+        if !self.is_allowed_path(utf8_path.as_str()) {
+            return Err(SinexError::processing(format!(
+                "Document path is outside allowed roots: {target}"
+            )));
+        }
+
+        let metadata = std::fs::symlink_metadata(utf8_path.as_std_path()).map_err(|error| {
+            SinexError::io("Failed to inspect document scan target")
+                .with_std_error(&error)
+                .with_path(utf8_path.as_str())
+        })?;
+
+        if metadata.file_type().is_symlink() {
+            return Err(SinexError::processing(format!(
+                "Symlink document targets are not supported: {target}"
+            )));
+        }
+
+        if metadata.is_file() {
+            return Ok(vec![ResolvedDocumentTarget {
+                path: utf8_path,
+                strict: !from_default_root_scan,
+            }]);
+        }
+
+        if metadata.is_dir() {
+            let files = Self::collect_target_files(&utf8_path, warnings)?;
+            return Ok(files
+                .into_iter()
+                .map(|path| ResolvedDocumentTarget {
+                    path,
+                    strict: false,
+                })
+                .collect());
+        }
+
+        Err(SinexError::processing(format!(
+            "Document target is neither a file nor a directory: {target}"
+        )))
+    }
+
+    fn collect_target_files(
+        path: &Utf8Path,
+        warnings: &mut Vec<String>,
+    ) -> NodeResult<Vec<Utf8PathBuf>> {
+        let metadata = std::fs::symlink_metadata(path.as_std_path()).map_err(|error| {
+            SinexError::io("Failed to inspect document scan target")
+                .with_std_error(&error)
+                .with_path(path.as_str())
+        })?;
+
+        if metadata.file_type().is_symlink() {
+            warnings.push(format!(
+                "Skipping symlink during document scan: {}",
+                path.as_str()
+            ));
+            return Ok(Vec::new());
+        }
+
+        if metadata.is_file() {
+            return Ok(vec![path.to_path_buf()]);
+        }
+
+        if !metadata.is_dir() {
+            return Ok(Vec::new());
+        }
+
+        let entries = std::fs::read_dir(path.as_std_path()).map_err(|error| {
+            SinexError::io("Failed to enumerate document scan directory")
+                .with_std_error(&error)
+                .with_path(path.as_str())
+        })?;
+
+        let mut files = Vec::new();
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                    warnings.push(format!(
+                        "Skipping unreadable document directory entry under {}",
+                        path.as_str()
+                    ));
+                    continue;
+                }
+                Err(error) => {
+                    return Err(SinexError::io("Failed to inspect document directory entry")
+                        .with_std_error(&error)
+                        .with_path(path.as_str()));
+                }
+            };
+
+            let child = Utf8PathBuf::from_path_buf(entry.path()).map_err(|path| {
+                SinexError::processing(format!(
+                    "Document path must be valid UTF-8: {}",
+                    path.display()
+                ))
+            })?;
+            files.extend(Self::collect_target_files(&child, warnings)?);
+        }
+
+        Ok(files)
+    }
+
+    fn fingerprint_for(metadata: &std::fs::Metadata) -> DocumentFingerprint {
+        DocumentFingerprint {
+            size_bytes: metadata.len(),
+            modified_unix_ms: metadata
+                .modified()
+                .ok()
+                .and_then(Self::system_time_to_unix_ms),
+        }
+    }
+
+    fn system_time_to_unix_ms(value: SystemTime) -> Option<u64> {
+        value
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+    }
+
+    async fn inspect_target(
+        &self,
+        target: &ResolvedDocumentTarget,
+        state: &DocumentCheckpoint,
+    ) -> NodeResult<DocumentInspection> {
+        let sanitized_path = SanitizedPath::from_str_validated(target.path.as_str())
+            .map_err(|e| SinexError::processing("Invalid document path").with_source(e))?;
+
+        let metadata = fs::metadata(&target.path).await?;
+        if !metadata.is_file() {
+            return Err(SinexError::processing(format!(
+                "Document path is not a file: {}",
+                target.path
+            )));
+        }
+
+        let fingerprint = Self::fingerprint_for(&metadata);
+        if state
+            .scanned_documents
+            .get(target.path.as_str())
+            .is_some_and(|previous| previous == &fingerprint)
+        {
+            return Ok(DocumentInspection::Skip(DocumentSkip {
+                reason: DocumentSkipReason::Unchanged,
+                fingerprint,
+            }));
+        }
+
+        if metadata.len() > self.config.max_document_size {
+            warn!(
+                size = metadata.len(),
+                limit = self.config.max_document_size,
+                path = %target.path,
+                "Skipping document larger than configured limit"
+            );
+            return Ok(DocumentInspection::Skip(DocumentSkip {
+                reason: DocumentSkipReason::TooLarge,
+                fingerprint,
+            }));
+        }
+
+        let mime = MimeGuess::from_path(&target.path)
+            .first_raw()
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        let mime_supported = self.config.supported_mime_types.is_empty()
+            || self
+                .config
+                .supported_mime_types
+                .iter()
+                .any(|value| value == &mime);
+        if !mime_supported {
+            if target.strict {
+                return Err(SinexError::processing(format!(
+                    "Unsupported MIME type '{mime}' for document path {}",
+                    target.path
+                )));
+            }
+
+            return Ok(DocumentInspection::Skip(DocumentSkip {
+                reason: DocumentSkipReason::UnsupportedMime,
+                fingerprint,
+            }));
+        }
+
+        let encoding = self
+            .detect_encoding(&target.path, &mime)
+            .await
+            .unwrap_or_else(|err| {
+                warn!(error = %err, path = %target.path, "Failed to detect encoding; defaulting to binary");
+                Some("binary".to_string())
+            });
+
+        Ok(DocumentInspection::Emit(DocumentInput {
+            path: target.path.clone(),
+            sanitized_path,
+            file_size: metadata.len(),
+            mime,
+            encoding,
+            fingerprint,
+        }))
+    }
+
+    async fn ingest_targets(
+        &self,
+        state: &mut DocumentCheckpoint,
+        targets: &[String],
+    ) -> NodeResult<ScanReport> {
         let started_at = Timestamp::now();
         let start = Instant::now();
         let mut events_processed = 0u64;
         let mut successful_targets = Vec::new();
         let mut failed_targets = Vec::new();
         let mut warnings = Vec::new();
+        let mut skipped_unchanged = 0u64;
+        let mut skipped_unsupported = 0u64;
+        let mut skipped_oversized = 0u64;
 
-        for target in targets {
-            match self.ingest_target(target).await {
-                Ok(Some(_doc)) => {
-                    events_processed += 1;
-                    successful_targets.push(target.clone());
+        let resolved_targets = self.resolve_targets(targets, &mut warnings)?;
+        let mut observed_paths = BTreeSet::new();
+
+        for target in &resolved_targets.targets {
+            observed_paths.insert(target.path.as_str().to_string());
+            match self.inspect_target(target, state).await {
+                Ok(DocumentInspection::Emit(document)) => {
+                    match self.ingest_document(&document).await {
+                        Ok(Some(_material_id)) => {
+                            events_processed += 1;
+                            successful_targets.push(document.path.as_str().to_string());
+                            state
+                                .scanned_documents
+                                .insert(document.path.as_str().to_string(), document.fingerprint);
+                        }
+                        Ok(None) => {
+                            warnings.push(format!(
+                                "Skipped target {} (no events emitted)",
+                                document.path.as_str()
+                            ));
+                        }
+                        Err(err) => {
+                            error!(path = %document.path, error = %err, "Failed to ingest document");
+                            failed_targets
+                                .push((document.path.as_str().to_string(), err.to_string()));
+                        }
+                    }
                 }
-                Ok(None) => {
-                    warnings.push(format!("Skipped target {target} (no events emitted)"));
+                Ok(DocumentInspection::Skip(skip)) => {
+                    state
+                        .scanned_documents
+                        .insert(target.path.as_str().to_string(), skip.fingerprint);
+                    match skip.reason {
+                        DocumentSkipReason::Unchanged => skipped_unchanged += 1,
+                        DocumentSkipReason::UnsupportedMime => skipped_unsupported += 1,
+                        DocumentSkipReason::TooLarge => skipped_oversized += 1,
+                    }
                 }
                 Err(err) => {
-                    error!(path = %target, error = %err, "Failed to ingest document");
-                    failed_targets.push((target.clone(), err.to_string()));
+                    error!(path = %target.path, error = %err, "Failed to inspect document");
+                    failed_targets.push((target.path.as_str().to_string(), err.to_string()));
                 }
             }
+        }
+
+        if resolved_targets.full_root_scan {
+            state
+                .scanned_documents
+                .retain(|path, _| observed_paths.contains(path));
+        }
+
+        if skipped_unchanged > 0 {
+            warnings.push(format!("Skipped {skipped_unchanged} unchanged document(s)"));
+        }
+        if skipped_unsupported > 0 {
+            warnings.push(format!(
+                "Skipped {skipped_unsupported} non-document file(s) with unsupported MIME types"
+            ));
+        }
+        if skipped_oversized > 0 {
+            warnings.push(format!(
+                "Skipped {skipped_oversized} document(s) larger than the configured size limit"
+            ));
         }
 
         let finished_at = Timestamp::now();
@@ -204,7 +561,7 @@ impl DocumentNode {
         ))
     }
 
-    async fn ingest_target(&self, target: &str) -> NodeResult<Option<Uuid>> {
+    async fn ingest_document(&self, document: &DocumentInput) -> NodeResult<Option<Uuid>> {
         let stage_context = self
             .stage_context
             .as_ref()
@@ -214,71 +571,18 @@ impl DocumentNode {
             .as_ref()
             .ok_or_else(|| SinexError::lifecycle("Acquisition manager not initialized"))?;
 
-        let path_buf = std::path::PathBuf::from(target);
-        let utf8_path = Utf8PathBuf::from_path_buf(path_buf.clone()).map_err(|_| {
-            SinexError::processing(format!("Document path must be valid UTF-8: {target}"))
-        })?;
-        let sanitized_path = SanitizedPath::from_str_validated(utf8_path.as_str())
-            .map_err(|e| SinexError::processing("Invalid document path").with_source(e))?;
-
-        if !self.is_allowed_path(utf8_path.as_str()) {
-            return Err(SinexError::processing(format!(
-                "Document path is outside allowed roots: {target}"
-            )));
-        }
-
-        let metadata = fs::metadata(&utf8_path).await?;
-        if !metadata.is_file() {
-            return Err(SinexError::processing(format!(
-                "Document path is not a file: {target}"
-            )));
-        }
-
-        let file_size = metadata.len();
-        if file_size > self.config.max_document_size {
-            warn!(
-                size = file_size,
-                limit = self.config.max_document_size,
-                path = %utf8_path,
-                "Skipping document larger than configured limit"
-            );
-            return Ok(None);
-        }
-
-        let guess = MimeGuess::from_path(&utf8_path);
-        let mime = guess
-            .first_raw()
-            .unwrap_or("application/octet-stream")
-            .to_string();
-
-        if !self.config.supported_mime_types.is_empty()
-            && !self.config.supported_mime_types.iter().any(|m| m == &mime)
-        {
-            return Err(SinexError::processing(format!(
-                "Unsupported MIME type '{mime}' for document path {target}"
-            )));
-        }
-
-        let encoding = self
-            .detect_encoding(&utf8_path, &mime)
-            .await
-            .unwrap_or_else(|err| {
-                warn!(error = %err, path = %utf8_path, "Failed to detect encoding; defaulting to binary");
-                Some("binary".to_string())
-            });
-
         let metadata_json = json!({
-            "path": utf8_path.as_str(),
-            "sanitized_path": sanitized_path.as_str(),
-            "mime_type": mime,
-            "size_bytes": file_size,
-            "encoding": encoding.clone(),
+            "path": document.path.as_str(),
+            "sanitized_path": document.sanitized_path.as_str(),
+            "mime_type": document.mime,
+            "size_bytes": document.file_size,
+            "encoding": document.encoding.clone(),
         });
 
         let mut handle = acquisition
-            .begin_material_with_metadata(utf8_path.as_str(), metadata_json.clone())
+            .begin_material_with_metadata(document.path.as_str(), metadata_json.clone())
             .await?;
-        let mut file = fs::File::open(&utf8_path).await?;
+        let mut file = fs::File::open(&document.path).await?;
         let mut total_bytes: i64 = 0;
         let mut buf = vec![0u8; MAX_CHUNK_BYTES];
 
@@ -297,11 +601,11 @@ impl DocumentNode {
         acquisition.finalize(handle, MATERIAL_REASON_INGEST).await?;
 
         let payload = DocumentIngestedPayload {
-            file_path: sanitized_path.as_str().to_string(),
+            file_path: document.sanitized_path.as_str().to_string(),
             source_material_id: material_id.to_string(),
-            size_bytes: file_size,
-            mime_type: Some(mime.clone()),
-            encoding,
+            size_bytes: document.file_size,
+            mime_type: Some(document.mime.clone()),
+            encoding: document.encoding.clone(),
         };
 
         let event = payload
@@ -409,7 +713,7 @@ impl IngestorNode for DocumentNode {
             info!(targets = args.targets.len(), "Dry-run document ingestion");
             Ok(Self::dry_run_report(args.targets.len()))
         } else {
-            self.ingest_targets(&args.targets).await
+            self.ingest_targets(_state, &args.targets).await
         }
     }
 
@@ -428,7 +732,7 @@ impl IngestorNode for DocumentNode {
             );
             Ok(Self::dry_run_report(args.targets.len()))
         } else {
-            self.ingest_targets(&args.targets).await
+            self.ingest_targets(_state, &args.targets).await
         }
     }
 
@@ -464,6 +768,11 @@ impl ExplorationProvider for DocumentNode {
             "supported_mime_types".to_string(),
             json!(self.config.supported_mime_types),
         );
+        metadata.insert("continuous_supported".to_string(), json!(false));
+        metadata.insert(
+            "deployment_mode".to_string(),
+            json!("managed_snapshot_scan"),
+        );
         if let Some(error) = &config_status {
             metadata.insert("config_error".to_string(), json!(error));
         }
@@ -485,7 +794,7 @@ impl ExplorationProvider for DocumentNode {
                 true,
                 true,
                 format!(
-                    "Document ingestor ready for {} root(s)",
+                    "Document ingestor ready for {} root(s) via managed snapshot scans",
                     self.config.allowed_roots.len()
                 ),
             )

@@ -253,6 +253,7 @@ fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeResult<V
     let available_sources = vec![
         ("filesystem", "File system change monitoring"),
         ("terminal", "Terminal activity monitoring"),
+        ("document", "Managed document snapshot ingestion"),
         ("clipboard", "Clipboard content monitoring"),
         ("kitty", "Kitty terminal integration"),
         ("hyprland", "Hyprland window manager integration"),
@@ -394,6 +395,29 @@ pub fn validate_terminal_history_source(shell: &str, path: &Path) -> NodeResult<
     }
 }
 
+fn validate_document_root(path: &Path) -> NodeResult<()> {
+    let metadata = std::fs::metadata(path).map_err(|error| {
+        SinexError::processing("failed to inspect configured document root")
+            .with_context("path", path.display().to_string())
+            .with_std_error(&error)
+    })?;
+
+    if metadata.is_dir() {
+        std::fs::read_dir(path).map(|_| ()).map_err(|error| {
+            SinexError::processing("failed to enumerate configured document root")
+                .with_context("path", path.display().to_string())
+                .with_std_error(&error)
+        })
+    } else if metadata.is_file() {
+        validate_readable_file(path)
+    } else {
+        Err(
+            SinexError::configuration("configured document root is neither a file nor a directory")
+                .with_context("path", path.display().to_string()),
+        )
+    }
+}
+
 fn verify_event_source_config(
     source_name: &str,
     description: &str,
@@ -402,6 +426,7 @@ fn verify_event_source_config(
     let probe = match source_name {
         "filesystem" => probe_filesystem_source(descriptor),
         "terminal" => probe_terminal_source(descriptor),
+        "document" => probe_document_source(descriptor),
         "clipboard" => probe_clipboard_source(descriptor),
         "kitty" => probe_kitty_source(descriptor),
         "hyprland" => probe_hyprland_source(descriptor),
@@ -564,6 +589,69 @@ fn probe_terminal_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> 
     } else {
         EventSourceProbe::blocking_unavailable(
             "Configured terminal history sources are missing",
+            evidence_paths,
+        )
+    }
+}
+
+fn probe_document_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> EventSourceProbe {
+    let Some(descriptor) = descriptor else {
+        return EventSourceProbe::not_configured(
+            "No deployment descriptor loaded; document readiness is not config-derived",
+        );
+    };
+
+    if !descriptor.document.surface.enabled {
+        return EventSourceProbe::not_configured(
+            "Document ingestion is disabled in the deployment descriptor",
+        );
+    }
+
+    let evidence_paths = descriptor.document.allowed_roots.clone();
+    if evidence_paths.is_empty() {
+        return EventSourceProbe::blocking_unavailable(
+            "Document ingestion is enabled but no allowed roots are configured",
+            evidence_paths,
+        );
+    }
+
+    let mut readable = Vec::new();
+    let mut unreadable = Vec::new();
+    for path in &evidence_paths {
+        match validate_document_root(path) {
+            Ok(()) => readable.push(path.clone()),
+            Err(error) => unreadable.push(format!("{} ({error})", path.display())),
+        }
+    }
+
+    if !unreadable.is_empty() {
+        if !readable.is_empty() {
+            EventSourceProbe::advisory_unavailable(
+                format!(
+                    "Some configured document roots are not currently visible to preflight: {}",
+                    unreadable.join(", ")
+                ),
+                evidence_paths,
+            )
+        } else {
+            EventSourceProbe::blocking_unavailable(
+                format!(
+                    "Configured document roots are not currently visible to preflight: {}",
+                    unreadable.join(", ")
+                ),
+                evidence_paths,
+            )
+        }
+    } else {
+        EventSourceProbe::available(
+            format!(
+                "Configured document roots are readable: {}",
+                readable
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             evidence_paths,
         )
     }
