@@ -4,15 +4,16 @@ The Sinex architecture employs two primary patterns for distributed agents ("nod
 
 ## 1. Stream Nodes (The "Edge" Model)
 
-Stream Nodes are reactive, event-driven components designed to operate near the data source.
+Stream Nodes are reactive components designed to operate close to the capture
+surface or confirmed event stream.
 
-- **Primary Trigger**: Inbound NATS messages (Events).
+- **Primary Trigger**: External inputs or inbound confirmed NATS events.
 - **State**: Ephemeral or locally cached (via NATS KV).
 - **Database Dependency**: **Optional / None**. Use `SINEX_EDGE_MODE=1` to suppress DATABASE_URL requirement.
 - **Coordination**: NATS KV (LeaseManager).
 - **Examples**:
-  - `sinex-document-ingestor`: Receives file events, extracts text, emits text events.
-  - `sinex-code-analyzer`: Listens for code changes, computes complexity metrics.
+  - `sinex-fs-ingestor`: Watches configured roots and emits filesystem events.
+  - `sinex-terminal-command-canonicalizer`: Consumes confirmed shell commands and emits canonical forms.
 
 ### Architecture
 
@@ -25,24 +26,25 @@ graph LR
 
 ## 2. Automatons (The "Core" Model)
 
-Automatons are autonomous control loops or heavy aggregators that maintain the system's "Source of Truth".
+Automatons are long-lived derived services that maintain richer cross-event
+state, emit reconciled summaries, or close semantic windows.
 
-- **Primary Trigger**: Timer loops, Cron schedules, or Complex Queries.
+- **Primary Trigger**: Confirmed event streams plus internal window or scope state, sometimes complemented by database queries.
 - **State**: Persistent, Relational, Historical.
-- **Database Dependency**: **Hard Requirement**. Requires full access to the canonical PostgreSQL/TimescaleDB.
+- **Database Dependency**: **Often yes, but not universal**. Some automatons can run stream-first, while others need canonical PostgreSQL/TimescaleDB access for reconciliation or historical lookups.
 - **Coordination**: NATS KV for service coordination; may use advisory locks for DB-internal operations (migrations, replay state).
 - **Examples**:
-  - `sinex-search-automaton`: Queries DB for unindexed content, pushes to Vector DB.
-  - `sinex-analytics-automaton`: Aggregates hourly metrics from raw events table.
-  - `sinex-health-automaton`: Scans `operations_log` for stalled jobs.
+  - `sinex-analytics-automaton`: Emits sliding-window `analytics.insight` summaries from confirmed events.
+  - `sinex-health-automaton`: Reconciles per-component health into aggregated status reports.
+  - `sinex-session-detector`: Groups temporally adjacent activity into session boundaries.
 
 ### Architecture
 
 ```mermaid
 graph TD
+    Stream[(Confirmed Event Stream)] --> Automaton
     DB[(Postgres Core)] <--> Automaton
-    Automaton -->|Updates| VectorDB
-    Automaton -.->|Metrics| NATS
+    Automaton -->|Derived Events| NATS
 ```
 
 ## 3. Deployment Implications
@@ -51,7 +53,7 @@ graph TD
 |---------|------------------|-----------|
 | **Scalability** | Horizontal (Consumer Groups) | Singleton / Partitioned |
 | **Location** | Edge / Device / Cloud | Core Cloud / Data Center |
-| **Connectivity** | NATS Only (Tolerates Gaps) | Low Latency DB Access |
+| **Connectivity** | External surface or NATS event stream | NATS, sometimes low-latency DB access |
 | **Security** | Minimal Access (Credentials) | Full DB Privileges |
 
 ## 4. Hybrid nodes

@@ -86,6 +86,7 @@ pub trait IngestorNode: Send + Sync + 'static {
             max_scan_size: None,
             supports_concurrent: false,
             manages_own_continuous_loop: true,
+            manages_own_checkpoints: true,
         }
     }
 

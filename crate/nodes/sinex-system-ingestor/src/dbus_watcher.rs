@@ -165,54 +165,100 @@ pub struct DbusWatcher {
 
 impl DbusWatcher {
     fn monitoring_task_exit_error(
-        index: usize,
+        bus_name: Option<&str>,
         result: std::result::Result<NodeResult<()>, tokio::task::JoinError>,
     ) -> sinex_node_sdk::SinexError {
         match result {
             Ok(Ok(())) => sinex_node_sdk::SinexError::invalid_state(
                 "D-Bus monitoring task completed unexpectedly".to_string(),
             )
-            .with_context("task_index", index.to_string())
             .with_operation("dbus_start_streaming"),
-            Ok(Err(error)) => error
-                .with_context("task_index", index.to_string())
-                .with_operation("dbus_start_streaming"),
+            Ok(Err(error)) => error.with_operation("dbus_start_streaming"),
             Err(error) => {
                 sinex_node_sdk::SinexError::processing("D-Bus monitoring task panicked".to_string())
                     .with_source(error.to_string())
-                    .with_context("task_index", index.to_string())
                     .with_operation("dbus_start_streaming")
             }
         }
+        .with_context("bus", bus_name.unwrap_or("unknown D-Bus bus").to_string())
     }
 
-    async fn drain_cancelled_monitor_task(
-        index: usize,
-        task: tokio::task::JoinHandle<NodeResult<()>>,
-    ) {
-        match tokio::time::timeout(Duration::from_secs(5), task).await {
-            Ok(Ok(Ok(()))) => {}
-            Ok(Ok(Err(error))) => {
-                warn!(
-                    task_index = index,
-                    error = %error,
-                    "Cancelled D-Bus monitoring task failed while draining"
-                );
-            }
-            Ok(Err(error)) => {
-                warn!(
-                    task_index = index,
-                    error = %error,
-                    "Cancelled D-Bus monitoring task panicked while draining"
-                );
-            }
-            Err(_) => {
-                warn!(
-                    task_index = index,
-                    "Timed out waiting for cancelled D-Bus monitoring task to drain"
-                );
-            }
+    fn collapse_monitoring_errors(
+        mut errors: Vec<sinex_node_sdk::SinexError>,
+    ) -> sinex_node_sdk::NodeResult<()> {
+        if errors.is_empty() {
+            return Ok(());
         }
+
+        let mut error = errors.remove(0);
+        for (index, extra) in errors.into_iter().enumerate() {
+            error = error.with_context(
+                format!("additional_dbus_task_error_{}", index + 1),
+                extra.to_string(),
+            );
+        }
+        Err(error)
+    }
+
+    fn spawn_bus_monitor(
+        tasks: &mut tokio::task::JoinSet<(&'static str, NodeResult<()>)>,
+        bus_name: &'static str,
+        bus_type: DBusType,
+        tx: mpsc::Sender<Event<JsonValue>>,
+        config: DbusConfig,
+        material: WatcherMaterialContext,
+    ) {
+        let monitor_config = MonitorConfig {
+            bus_type,
+            tx,
+            config,
+            material,
+        };
+        tasks.spawn(async move {
+            (
+                bus_name,
+                Self::monitor_bus_with_config(monitor_config).await,
+            )
+        });
+    }
+
+    fn normalize_monitor_task_result(
+        result: std::result::Result<(&'static str, NodeResult<()>), tokio::task::JoinError>,
+    ) -> (
+        Option<&'static str>,
+        std::result::Result<NodeResult<()>, tokio::task::JoinError>,
+    ) {
+        match result {
+            Ok((bus_name, task_result)) => (Some(bus_name), Ok(task_result)),
+            Err(join_error) => (None, Err(join_error)),
+        }
+    }
+
+    async fn collect_monitor_errors(
+        tasks: &mut tokio::task::JoinSet<(&'static str, NodeResult<()>)>,
+    ) -> Vec<sinex_node_sdk::SinexError> {
+        let mut errors = Vec::new();
+
+        while let Some(result) = tasks.join_next().await {
+            let remaining = tasks.len();
+            let (bus_name, task_result) = Self::normalize_monitor_task_result(result);
+            let error = Self::monitoring_task_exit_error(bus_name, task_result);
+
+            if remaining == 0 {
+                errors.push(error);
+                break;
+            }
+
+            warn!(
+                bus = bus_name.unwrap_or("unknown"),
+                remaining_buses = remaining,
+                error = %error,
+                "D-Bus bus monitor exited; continuing with remaining buses"
+            );
+            errors.push(error);
+        }
+
+        errors
     }
 
     /// Create new D-Bus watcher
@@ -229,41 +275,30 @@ impl DbusWatcher {
     ) -> NodeResult<()> {
         info!("Starting D-Bus monitoring");
 
-        let cancel_token = tokio_util::sync::CancellationToken::new();
-        let mut tasks = Vec::new();
+        let mut tasks = tokio::task::JoinSet::new();
 
         // Monitor session bus if enabled
         if self.config.monitor_session {
-            let monitor_config = MonitorConfig {
-                bus_type: DBusType::Session,
-                tx: tx.clone(),
-                config: self.config.clone(),
-                material: material.clone(),
-            };
-            let token = cancel_token.clone();
-            tasks.push(tokio::spawn(async move {
-                tokio::select! {
-                    res = Self::monitor_bus_with_config(monitor_config) => res,
-                    () = token.cancelled() => Ok(()),
-                }
-            }));
+            Self::spawn_bus_monitor(
+                &mut tasks,
+                "session",
+                DBusType::Session,
+                tx.clone(),
+                self.config.clone(),
+                material.clone(),
+            );
         }
 
         // Monitor system bus if enabled
         if self.config.monitor_system {
-            let monitor_config = MonitorConfig {
-                bus_type: DBusType::System,
-                tx: tx.clone(),
-                config: self.config.clone(),
-                material: material.clone(),
-            };
-            let token = cancel_token.clone();
-            tasks.push(tokio::spawn(async move {
-                tokio::select! {
-                    res = Self::monitor_bus_with_config(monitor_config) => res,
-                    () = token.cancelled() => Ok(()),
-                }
-            }));
+            Self::spawn_bus_monitor(
+                &mut tasks,
+                "system",
+                DBusType::System,
+                tx.clone(),
+                self.config.clone(),
+                material.clone(),
+            );
         }
 
         if tasks.is_empty() {
@@ -271,21 +306,8 @@ impl DbusWatcher {
             return Ok(());
         }
 
-        // Wait for any task to complete (or fail) with panic handling
-        let (result, index, remaining) = futures::future::select_all(tasks).await;
-
-        // Signal cancellation to other tasks
-        cancel_token.cancel();
-
-        let primary_error = Self::monitoring_task_exit_error(index, result);
-        error!(error = %primary_error, "D-Bus monitoring task exited unexpectedly");
-
-        // Await remaining tasks with timeout
-        for (remaining_index, task) in remaining.into_iter().enumerate() {
-            Self::drain_cancelled_monitor_task(remaining_index, task).await;
-        }
-
-        Err(primary_error)
+        let errors = Self::collect_monitor_errors(&mut tasks).await;
+        Self::collapse_monitoring_errors(errors)
     }
 
     /// Monitor a specific D-Bus bus with configuration struct
@@ -1487,25 +1509,25 @@ mod tests {
 
     #[sinex_test]
     async fn monitoring_task_exit_error_rejects_normal_completion() -> TestResult<()> {
-        let error = DbusWatcher::monitoring_task_exit_error(2, Ok(Ok(())));
+        let error = DbusWatcher::monitoring_task_exit_error(Some("session"), Ok(Ok(())));
         assert!(
             error.to_string().contains("completed unexpectedly"),
             "normal completion must not be treated as success"
         );
-        assert!(error.to_string().contains("task_index"));
+        assert!(error.to_string().contains("session"));
         Ok(())
     }
 
     #[sinex_test]
     async fn monitoring_task_exit_error_preserves_worker_failure() -> TestResult<()> {
         let error = DbusWatcher::monitoring_task_exit_error(
-            1,
+            Some("system"),
             Ok(Err(sinex_node_sdk::SinexError::processing(
                 "worker failed".to_string(),
             ))),
         );
         assert!(error.to_string().contains("worker failed"));
-        assert!(error.to_string().contains("task_index"));
+        assert!(error.to_string().contains("system"));
         Ok(())
     }
 
@@ -1516,10 +1538,23 @@ mod tests {
         })
         .await
         .expect_err("panicing task must produce join error");
-        let error = DbusWatcher::monitoring_task_exit_error(0, Err(join_error));
+        let error = DbusWatcher::monitoring_task_exit_error(None, Err(join_error));
         let error_text = error.to_string();
         assert!(error_text.contains("panicked"));
-        assert!(error_text.contains("task_index"));
+        assert!(error_text.contains("unknown D-Bus bus"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn collapse_monitoring_errors_keeps_primary_and_context() -> TestResult<()> {
+        let error = DbusWatcher::collapse_monitoring_errors(vec![
+            sinex_node_sdk::SinexError::processing("primary failure"),
+            sinex_node_sdk::SinexError::processing("secondary failure"),
+        ])
+        .expect_err("non-empty error list must fail");
+        let rendered = error.to_string();
+        assert!(rendered.contains("primary failure"));
+        assert!(rendered.contains("secondary failure"));
         Ok(())
     }
 }

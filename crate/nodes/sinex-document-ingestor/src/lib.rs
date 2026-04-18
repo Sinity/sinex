@@ -674,6 +674,7 @@ impl IngestorNode for DocumentNode {
             max_scan_size: Some(1024),
             supports_concurrent: false,
             manages_own_continuous_loop: false,
+            manages_own_checkpoints: true,
         }
     }
 

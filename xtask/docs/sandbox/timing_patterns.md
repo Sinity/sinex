@@ -265,7 +265,7 @@ async fn test_event_ordering(ctx: TestContext) -> Result<()> {
 | Type | Needs DATABASE_URL? | Example |
 |------|---------------------|---------|
 | **Ingestors** | No | fs-watcher, terminal-node, desktop-node |
-| **Automata** | Usually yes | analytics-automaton, search-automaton |
+| **Automata** | Usually yes | analytics-automaton, health-aggregator |
 
 **Ingestors** only capture and publish events to NATS. **Automata** query historical events.
 
