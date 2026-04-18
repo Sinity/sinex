@@ -95,7 +95,12 @@ disabled (e.g. staging migrations).
 - `storage.blob.maintenance` controls GC/fsck timers. Enable health checks to log
   repository size warnings.
 - `nats.bootstrapStreams.enable` bootstraps standard JetStream streams via the `nats`
-  CLI (requires `pkgs.natscli`).
+  CLI (requires `pkgs.natscli`). Existing streams are reconciled with the
+  declared `retention` / `maxAge` / `maxMsgs` / `maxBytes` policy on boot, so
+  stream-shape changes land without imperative follow-up.
+- Source-material streams default to work-queue retention. They are an ingest
+  handoff into `ingestd`, not a long-lived archive; once the material assembler
+  acknowledges them they should leave JetStream.
 
 ### Core & nodes
 - `core.ingestd` and `core.gateway` expose per-service resources, log levels,

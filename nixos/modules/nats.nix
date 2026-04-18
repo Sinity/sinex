@@ -14,7 +14,7 @@ let
   dataDir = cfg.dataDir or (stateRoot + "/nats");
   storeDir = cfg.storeDir or (dataDir + "/jetstream");
   natsCli = pkgs.natscli or null; # natscli provides the `nats` CLI
-  secretPaths = config.sinex.secrets.paths or {};
+  secretPaths = config.sinex.secrets.paths or { };
   envName = lib.toLower cfg.environment;
   envUpper = lib.toUpper envName;
   prefixStreamName = name:
@@ -92,20 +92,22 @@ let
     ++ cfg.authorization.sharedClient.extraSubscribeAllow;
   mkPermissionMap = allow: deny:
     { inherit allow; }
-    // optionalAttrs (deny != []) { inherit deny; };
+    // optionalAttrs (deny != [ ]) { inherit deny; };
   bootstrapEnv = [
     "NATS_URL=${if serverTlsEnabled then "tls" else "nats"}://${cfg.host}:${toString cfg.port}"
   ]
-    ++ optional (effectiveSharedClientTokenFile != null) "NATS_TOKEN_FILE=${toString effectiveSharedClientTokenFile}"
-    ++ optional (effectiveSharedClientCredsFile != null) "NATS_CREDS=${toString effectiveSharedClientCredsFile}"
-    ++ optional (effectiveSharedClientNkeySeedFile != null) "NATS_NKEY=${toString effectiveSharedClientNkeySeedFile}"
-    ++ optional (effectiveSharedClientCaFile != null) "NATS_CA=${toString effectiveSharedClientCaFile}"
-    ++ optional (effectiveSharedClientCertFile != null) "NATS_CERT=${toString effectiveSharedClientCertFile}"
-    ++ optional (effectiveSharedClientKeyFile != null) "NATS_KEY=${toString effectiveSharedClientKeyFile}";
-  namespacedStreams = map (stream: stream // {
-    name = prefixStreamName stream.name;
-    subjects = map prefixSubject stream.subjects;
-  }) cfg.bootstrapStreams.streams;
+  ++ optional (effectiveSharedClientTokenFile != null) "NATS_TOKEN_FILE=${toString effectiveSharedClientTokenFile}"
+  ++ optional (effectiveSharedClientCredsFile != null) "NATS_CREDS=${toString effectiveSharedClientCredsFile}"
+  ++ optional (effectiveSharedClientNkeySeedFile != null) "NATS_NKEY=${toString effectiveSharedClientNkeySeedFile}"
+  ++ optional (effectiveSharedClientCaFile != null) "NATS_CA=${toString effectiveSharedClientCaFile}"
+  ++ optional (effectiveSharedClientCertFile != null) "NATS_CERT=${toString effectiveSharedClientCertFile}"
+  ++ optional (effectiveSharedClientKeyFile != null) "NATS_KEY=${toString effectiveSharedClientKeyFile}";
+  namespacedStreams = map
+    (stream: stream // {
+      name = prefixStreamName stream.name;
+      subjects = map prefixSubject stream.subjects;
+    })
+    cfg.bootstrapStreams.streams;
 in
 {
   # Ensure the upstream NATS service options are present even if not pulled in elsewhere.
@@ -246,7 +248,7 @@ in
           };
         };
       };
-      default = {};
+      default = { };
       description = "Typed TLS configuration for the managed local NATS server.";
     };
 
@@ -273,27 +275,27 @@ in
                 };
                 extraPublishAllow = mkOption {
                   type = listOf str;
-                  default = [];
+                  default = [ ];
                   description = "Additional publish subjects allowed for the shared Sinex client.";
                 };
                 extraPublishDeny = mkOption {
                   type = listOf str;
-                  default = [];
+                  default = [ ];
                   description = "Explicit publish subject denies for the shared Sinex client.";
                 };
                 extraSubscribeAllow = mkOption {
                   type = listOf str;
-                  default = [];
+                  default = [ ];
                   description = "Additional subscribe subjects allowed for the shared Sinex client.";
                 };
                 extraSubscribeDeny = mkOption {
                   type = listOf str;
-                  default = [];
+                  default = [ ];
                   description = "Explicit subscribe subject denies for the shared Sinex client.";
                 };
               };
             };
-            default = {};
+            default = { };
             description = ''
               Server-side authorization entry for the current shared Sinex runtime identity.
               This fences the deployment to Sinex subjects and JetStream/KV internals without
@@ -302,13 +304,13 @@ in
           };
         };
       };
-      default = {};
+      default = { };
       description = "Typed authorization configuration for the managed local NATS server.";
     };
 
     extraSettings = mkOption {
       type = with types; lazyAttrsOf anything;
-      default = {};
+      default = { };
       description = "Additional raw NATS settings merged into the generated config.";
     };
 
@@ -320,38 +322,88 @@ in
       };
 
       streams = mkOption {
-        type = listOf attrs;
+        type = listOf (submodule {
+          options = {
+            name = mkOption {
+              type = str;
+              description = "Logical stream name before environment namespacing.";
+            };
+            subjects = mkOption {
+              type = listOf str;
+              description = "Subjects attached to the stream before environment namespacing.";
+            };
+            retention = mkOption {
+              type = enum [ "limits" "interest" "work" ];
+              default = "limits";
+              description = "JetStream retention policy passed through to `nats stream add/edit --retention`.";
+            };
+            maxAge = mkOption {
+              type = str;
+              description = "JetStream max age passed through to `nats stream add/edit --max-age`.";
+            };
+            maxMsgs = mkOption {
+              type = nullOr positive;
+              default = null;
+              description = "Optional JetStream max message count.";
+            };
+            maxBytes = mkOption {
+              type = nullOr str;
+              default = null;
+              description = "Optional JetStream max bytes cap.";
+            };
+            maxMsgsPerSubject = mkOption {
+              type = nullOr positive;
+              default = null;
+              description = "Optional JetStream max_msgs_per_subject cap.";
+            };
+            dupeWindow = mkOption {
+              type = nullOr str;
+              default = null;
+              description = "Optional duplicate window passed to `nats stream add/edit --dupe-window`.";
+            };
+          };
+        });
         default = [
           {
             name = "SINEX_RAW_EVENTS";
             subjects = [ "events.raw.>" ];
-            maxAge = "2160h"; # 90d
+            maxAge = "336h"; # 14d
+            maxMsgs = 2000000;
+            maxBytes = "34359738368"; # 32 GiB
           }
           {
             name = "SOURCE_MATERIAL_BEGIN";
             subjects = [ "source_material.begin" ];
-            maxAge = "168h";
+            retention = "work";
+            maxAge = "72h";
+            maxBytes = "1073741824"; # 1 GiB
           }
           {
             name = "SOURCE_MATERIAL_SLICES";
             subjects = [ "source_material.slices.>" ];
-            maxAge = "168h";
+            retention = "work";
+            maxAge = "72h";
+            maxBytes = "34359738368"; # 32 GiB
           }
           {
             name = "SOURCE_MATERIAL_END";
             subjects = [ "source_material.end" ];
-            maxAge = "168h";
+            retention = "work";
+            maxAge = "72h";
+            maxBytes = "1073741824"; # 1 GiB
           }
           {
             name = "SINEX_RAW_EVENTS_CONFIRMATIONS";
             subjects = [ "events.confirmations.>" ];
-            maxAge = "168h"; # 7d
+            maxAge = "72h";
+            maxBytes = "2147483648"; # 2 GiB
             maxMsgsPerSubject = 1;
           }
           {
             name = "SINEX_RAW_EVENTS_DLQ";
             subjects = [ "events.dlq.>" ];
-            maxAge = "720h"; # 30d
+            maxAge = "168h"; # 7d
+            maxBytes = "8589934592"; # 8 GiB
             dupeWindow = "1h";
           }
         ];
@@ -441,7 +493,7 @@ in
           jetstream = {
             store_dir = storeDir;
           } // optionalAttrs (cfg.jetstreamMaxMemory != null) { max_mem = cfg.jetstreamMaxMemory; }
-            // optionalAttrs (cfg.jetstreamMaxStore != null) { max_file = cfg.jetstreamMaxStore; };
+          // optionalAttrs (cfg.jetstreamMaxStore != null) { max_file = cfg.jetstreamMaxStore; };
         }
         // optionalAttrs cfg.tls.enable {
           tls =
@@ -481,47 +533,51 @@ in
       wantedBy = [ "multi-user.target" ];
       serviceConfig = {
         Environment = bootstrapEnv;
-        ExecStart = let
-          mkStreamCommand = stream:
-            let
-              streamName = escapeShellArg stream.name;
-              subjectArgLines = concatStringsSep "\n" (
-                map (subject: "  stream_args+=(--subjects ${escapeShellArg subject})") stream.subjects
-              );
-              optionalArgLines = concatStringsSep "\n" (filter (line: line != "") [
-                (optionalString (stream ? maxMsgsPerSubject) "  stream_args+=(--max-msgs-per-subject ${escapeShellArg (toString stream.maxMsgsPerSubject)})")
-                (optionalString (stream ? dupeWindow) "  stream_args+=(--dupe-window ${escapeShellArg stream.dupeWindow})")
-              ]);
-            in ''
-              stream_args=()
-${subjectArgLines}
-              stream_args+=(--retention limits)
-              stream_args+=(--max-age ${escapeShellArg stream.maxAge})
-${optionalArgLines}
-              if ${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream info ${streamName} >/dev/null 2>&1; then
-                if ! output=$(${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream edit ${streamName} \
-                  --dry-run "''${stream_args[@]}" \
-                  2>&1); then
-                  echo "Stream ${stream.name} drifts from declarative bootstrap config; refusing to overwrite it automatically" >&2
-                  echo "$output" >&2
-                  exit 1
-                fi
-              else
-                if ! output=$(${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream add ${streamName} \
-                  --defaults "''${stream_args[@]}" \
-                  --storage file --replicas 1 \
-                  2>&1); then
-                  if echo "$output" | grep -q "subjects overlap with an existing stream"; then
-                    echo "Stream ${stream.name} already provisioned elsewhere; skipping bootstrap for it"
-                  else
-                    echo "$output"
-                    exit 1
-                  fi
-                fi
-              fi
-            '';
-          script = concatStringsSep "\n" (map mkStreamCommand namespacedStreams);
-        in
+        ExecStart =
+          let
+            mkStreamCommand = stream:
+              let
+                streamName = escapeShellArg stream.name;
+                subjectArgLines = concatStringsSep "\n" (
+                  map (subject: "  stream_args+=(--subjects ${escapeShellArg subject})") stream.subjects
+                );
+                optionalArgLines = concatStringsSep "\n" (filter (line: line != "") [
+                  (optionalString (stream.maxMsgs != null) "  stream_args+=(--max-msgs ${escapeShellArg (toString stream.maxMsgs)})")
+                  (optionalString (stream.maxBytes != null) "  stream_args+=(--max-bytes ${escapeShellArg stream.maxBytes})")
+                  (optionalString (stream.maxMsgsPerSubject != null) "  stream_args+=(--max-msgs-per-subject ${escapeShellArg (toString stream.maxMsgsPerSubject)})")
+                  (optionalString (stream.dupeWindow != null) "  stream_args+=(--dupe-window ${escapeShellArg stream.dupeWindow})")
+                ]);
+              in
+              ''
+                              stream_args=()
+                ${subjectArgLines}
+                              stream_args+=(--retention ${escapeShellArg stream.retention})
+                              stream_args+=(--max-age ${escapeShellArg stream.maxAge})
+                ${optionalArgLines}
+                              if ${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream info ${streamName} >/dev/null 2>&1; then
+                                if ! output=$(${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream edit ${streamName} \
+                                  "''${stream_args[@]}" \
+                                  2>&1); then
+                                  echo "Failed to reconcile stream ${stream.name} with declarative bootstrap config" >&2
+                                  echo "$output" >&2
+                                  exit 1
+                                fi
+                              else
+                                if ! output=$(${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream add ${streamName} \
+                                  --defaults "''${stream_args[@]}" \
+                                  --storage file --replicas 1 \
+                                  2>&1); then
+                                  if echo "$output" | grep -q "subjects overlap with an existing stream"; then
+                                    echo "Stream ${stream.name} already provisioned elsewhere; skipping bootstrap for it"
+                                  else
+                                    echo "$output"
+                                    exit 1
+                                  fi
+                                fi
+                              fi
+              '';
+            script = concatStringsSep "\n" (map mkStreamCommand namespacedStreams);
+          in
           pkgs.writeShellScript "sinex-nats-bootstrap" ''
             set -euo pipefail
             auth_args=()
