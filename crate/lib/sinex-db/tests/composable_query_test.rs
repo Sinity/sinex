@@ -7,7 +7,7 @@
 //! - Text search with relevance scoring
 //! - Payload filters (Contains, `HasKey`, Path operators)
 //! - Filter composition (And, Or, Not)
-//! - Aggregation modes (Count, `CountBy`, `TimeSeries`, `SourceStats`)
+//! - Aggregation modes (Count, `CountBy`, `SumBy`, `AvgBy`, `TimeSeries`, `SourceStats`)
 //! - Lineage traversal (ancestors, descendants, depth limits)
 //! - Edge cases (empty results, estimates, defaults)
 
@@ -16,8 +16,9 @@ use sinex_db::DynamicPayload;
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::query::{
-    AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, LineageDirection,
-    LineageQuery, PathOp, PayloadFilter, SortDirection, TimeSeriesOrder,
+    AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField,
+    GroupedValueAggregation, LineageDirection, LineageQuery, NumericField, PathOp,
+    PayloadFilter, SortDirection, TimeSeriesOrder,
 };
 use xtask::sandbox::prelude::*;
 
@@ -1084,6 +1085,161 @@ async fn test_aggregation_count_by_payload_path_with_quote_in_key(
             assert!(alpha.is_some() && alpha.unwrap().count >= 2);
         }
         _ => panic!("Expected GroupedCounts result"),
+    }
+
+    Ok(())
+}
+
+/// Test: Aggregation SumBy PayloadPath grouped by payload path.
+#[sinex_test]
+async fn test_aggregation_sum_by_payload_path(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx.create_source_material(Some("sumby-path")).await?;
+
+    for duration in [10, 15] {
+        let _event = ctx
+            .pool
+            .events()
+            .insert(
+                DynamicPayload::new(
+                    "sum-source",
+                    "focus.sample",
+                    json!({"app": "editor", "duration_ms": duration}),
+                )
+                .from_material(material_id)
+                .build()?,
+            )
+            .await?;
+    }
+
+    let _event = ctx
+        .pool
+        .events()
+        .insert(
+            DynamicPayload::new(
+                "sum-source",
+                "focus.sample",
+                json!({"app": "browser", "duration_ms": 7}),
+            )
+            .from_material(material_id)
+            .build()?,
+        )
+        .await?;
+
+    let _ignored_non_numeric = ctx
+        .pool
+        .events()
+        .insert(
+            DynamicPayload::new(
+                "sum-source",
+                "focus.sample",
+                json!({"app": "editor", "duration_ms": "oops"}),
+            )
+            .from_material(material_id)
+            .build()?,
+        )
+        .await?;
+
+    let result = ctx
+        .pool
+        .events()
+        .query(EventQuery {
+            sources: vec![EventSource::from_static("sum-source")],
+            aggregation: Some(AggregationMode::SumBy {
+                field: GroupByField::PayloadPath("app".to_string()),
+                value_field: NumericField::PayloadPath("duration_ms".to_string()),
+                limit: 10,
+            }),
+            ..Default::default()
+        })
+        .await?;
+
+    match result {
+        EventQueryResult::GroupedValues {
+            aggregation,
+            groups,
+        } => {
+            assert_eq!(aggregation, GroupedValueAggregation::Sum);
+            assert_eq!(groups.len(), 2);
+
+            let editor = groups.iter().find(|g| g.key == "editor");
+            let browser = groups.iter().find(|g| g.key == "browser");
+
+            assert!(editor.is_some());
+            assert_eq!(editor.unwrap().value, 25.0);
+            assert_eq!(editor.unwrap().sample_count, 2);
+
+            assert!(browser.is_some());
+            assert_eq!(browser.unwrap().value, 7.0);
+            assert_eq!(browser.unwrap().sample_count, 1);
+        }
+        _ => panic!("Expected GroupedValues result"),
+    }
+
+    Ok(())
+}
+
+/// Test: Aggregation AvgBy Source groups numeric payload values.
+#[sinex_test]
+async fn test_aggregation_avg_by_source(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx.create_source_material(Some("avgby-source")).await?;
+
+    for value in [4, 8, 10] {
+        let _event = ctx
+            .pool
+            .events()
+            .insert(
+                DynamicPayload::new("source-a", "agg.avg", json!({"latency_ms": value}))
+                    .from_material(material_id)
+                    .build()?,
+            )
+            .await?;
+    }
+
+    for value in [2, 6] {
+        let _event = ctx
+            .pool
+            .events()
+            .insert(
+                DynamicPayload::new("source-b", "agg.avg", json!({"latency_ms": value}))
+                    .from_material(material_id)
+                    .build()?,
+            )
+            .await?;
+    }
+
+    let result = ctx
+        .pool
+        .events()
+        .query(EventQuery {
+            event_types: vec![EventType::from_static("agg.avg")],
+            aggregation: Some(AggregationMode::AvgBy {
+                field: GroupByField::Source,
+                value_field: NumericField::PayloadPath("latency_ms".to_string()),
+                limit: 10,
+            }),
+            ..Default::default()
+        })
+        .await?;
+
+    match result {
+        EventQueryResult::GroupedValues {
+            aggregation,
+            groups,
+        } => {
+            assert_eq!(aggregation, GroupedValueAggregation::Avg);
+
+            let source_a = groups.iter().find(|g| g.key == "source-a");
+            let source_b = groups.iter().find(|g| g.key == "source-b");
+
+            assert!(source_a.is_some());
+            assert_eq!(source_a.unwrap().value, 22.0 / 3.0);
+            assert_eq!(source_a.unwrap().sample_count, 3);
+
+            assert!(source_b.is_some());
+            assert_eq!(source_b.unwrap().value, 4.0);
+            assert_eq!(source_b.unwrap().sample_count, 2);
+        }
+        _ => panic!("Expected GroupedValues result"),
     }
 
     Ok(())
