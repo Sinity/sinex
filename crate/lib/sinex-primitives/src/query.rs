@@ -483,6 +483,20 @@ pub enum AggregationMode {
         #[serde(default = "default_agg_limit")]
         limit: i64,
     },
+    /// Sum a numeric field grouped by a dimension
+    SumBy {
+        field: GroupByField,
+        value_field: NumericField,
+        #[serde(default = "default_agg_limit")]
+        limit: i64,
+    },
+    /// Average a numeric field grouped by a dimension
+    AvgBy {
+        field: GroupByField,
+        value_field: NumericField,
+        #[serde(default = "default_agg_limit")]
+        limit: i64,
+    },
     /// Time-bucketed counts (`TimescaleDB` `time_bucket`)
     TimeSeries {
         interval_minutes: i32,
@@ -504,6 +518,14 @@ pub enum GroupByField {
     EventType,
     Host,
     /// Group by a specific JSON path in the payload (e.g. `"command"`)
+    PayloadPath(String),
+}
+
+/// Numeric field to aggregate for `SumBy`/`AvgBy`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+pub enum NumericField {
+    /// Read a numeric value from a specific JSON path in the payload.
     PayloadPath(String),
 }
 
@@ -572,6 +594,11 @@ pub enum EventQueryResult {
     Count { count: i64 },
     /// Counts grouped by a dimension
     GroupedCounts { groups: Vec<GroupedCount> },
+    /// Numeric values grouped by a dimension
+    GroupedValues {
+        aggregation: GroupedValueAggregation,
+        groups: Vec<GroupedValue>,
+    },
     /// Time-bucketed counts
     TimeSeries { buckets: Vec<TimeBucketEntry> },
     /// Per-source statistics
@@ -594,6 +621,22 @@ pub struct QueryResultEvent {
 pub struct GroupedCount {
     pub key: String,
     pub count: i64,
+}
+
+/// A key/value pair from a `SumBy`/`AvgBy` aggregation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroupedValue {
+    pub key: String,
+    pub value: f64,
+    pub sample_count: i64,
+}
+
+/// Numeric aggregation kind used in `GroupedValues`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GroupedValueAggregation {
+    Sum,
+    Avg,
 }
 
 /// A time-bucket/count pair from a `TimeSeries` aggregation.

@@ -1344,6 +1344,7 @@ fn result_kind(result: &EventQueryResult) -> &'static str {
         EventQueryResult::Events { .. } => "events",
         EventQueryResult::Count { .. } => "count",
         EventQueryResult::GroupedCounts { .. } => "grouped_counts",
+        EventQueryResult::GroupedValues { .. } => "grouped_values",
         EventQueryResult::TimeSeries { .. } => "time_series",
         EventQueryResult::SourceStats { .. } => "source_stats",
     }
