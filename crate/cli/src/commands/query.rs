@@ -209,6 +209,10 @@ fn format_non_event_query_result_table(result: &EventQueryResult) -> String {
             output
         }
         EventQueryResult::GroupedCounts { groups } => format_grouped_counts_table(groups),
+        EventQueryResult::GroupedValues {
+            aggregation,
+            groups,
+        } => format_grouped_values_table(*aggregation, groups),
         EventQueryResult::TimeSeries { buckets } => format_time_series_table(buckets),
         EventQueryResult::SourceStats { sources } => format_source_stats_table(sources),
     }
@@ -251,6 +255,32 @@ fn format_grouped_counts_table(groups: &[sinex_primitives::query::GroupedCount])
 
     for group in groups {
         builder.push_record([group.key.clone(), group.count.to_string()]);
+    }
+
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    table.to_string()
+}
+
+fn format_grouped_values_table(
+    aggregation: sinex_primitives::query::GroupedValueAggregation,
+    groups: &[sinex_primitives::query::GroupedValue],
+) -> String {
+    use tabled::{builder::Builder, settings::Style};
+
+    let mut builder = Builder::default();
+    let value_header = match aggregation {
+        sinex_primitives::query::GroupedValueAggregation::Sum => "Sum",
+        sinex_primitives::query::GroupedValueAggregation::Avg => "Avg",
+    };
+    builder.push_record(["Key", value_header, "Samples"]);
+
+    for group in groups {
+        builder.push_record([
+            group.key.clone(),
+            format_numeric_value(group.value),
+            group.sample_count.to_string(),
+        ]);
     }
 
     let mut table = builder.build();
@@ -321,6 +351,21 @@ fn format_query_timestamp(timestamp: &Timestamp) -> String {
             "[year]-[month]-[day] [hour]:[minute]:[second]"
         ))
         .unwrap_or_else(|_| timestamp.to_string())
+}
+
+fn format_numeric_value(value: f64) -> String {
+    if (value.fract()).abs() < 1e-9 {
+        format!("{value:.0}")
+    } else {
+        let mut rendered = format!("{value:.3}");
+        while rendered.contains('.') && rendered.ends_with('0') {
+            rendered.pop();
+        }
+        if rendered.ends_with('.') {
+            rendered.pop();
+        }
+        rendered
+    }
 }
 
 /// Interactive query builder

@@ -12,9 +12,9 @@ use crate::models::Event;
 use crate::repositories::common::{DbResult, db_error};
 use sinex_primitives::query::{
     AggregationMode, Cursor, CursorAnchor, EventQuery, EventQueryResult, GroupByField,
-    GroupedCount, LineageDirection, LineageNode, LineageQuery, LineageResult, PathOp,
-    PayloadFilter, QueryResultEvent, SortDirection, SourceStatsEntry, TimeBucketEntry,
-    TimeSeriesOrder,
+    GroupedCount, GroupedValue, GroupedValueAggregation, LineageDirection, LineageNode,
+    LineageQuery, LineageResult, NumericField, PathOp, PayloadFilter, QueryResultEvent,
+    SortDirection, SourceStatsEntry, TimeBucketEntry, TimeSeriesOrder,
 };
 use sinex_primitives::{Id, Pagination, SinexError, Timestamp};
 use sqlx::postgres::types::PgInterval;
@@ -48,6 +48,9 @@ impl EventRepository<'_> {
             Some(ref agg) => match agg {
                 AggregationMode::Count => self.execute_count(query).await,
                 AggregationMode::CountBy { .. } => self.execute_count_by(query).await,
+                AggregationMode::SumBy { .. } | AggregationMode::AvgBy { .. } => {
+                    self.execute_grouped_values(query).await
+                }
                 AggregationMode::TimeSeries { .. } => self.execute_time_series(query).await,
                 AggregationMode::SourceStats { .. } => self.execute_source_stats(query).await,
             },
@@ -330,6 +333,75 @@ impl EventRepository<'_> {
         Ok(EventQueryResult::TimeSeries { buckets })
     }
 
+    async fn execute_grouped_values(&self, query: EventQuery) -> DbResult<EventQueryResult> {
+        let (field, value_field, aggregation, limit) = match &query.aggregation {
+            Some(AggregationMode::SumBy {
+                field,
+                value_field,
+                limit,
+            }) => (
+                field.clone(),
+                value_field.clone(),
+                GroupedValueAggregation::Sum,
+                (*limit).clamp(1, Pagination::MAX_LIMIT),
+            ),
+            Some(AggregationMode::AvgBy {
+                field,
+                value_field,
+                limit,
+            }) => (
+                field.clone(),
+                value_field.clone(),
+                GroupedValueAggregation::Avg,
+                (*limit).clamp(1, Pagination::MAX_LIMIT),
+            ),
+            _ => unreachable!("called execute_grouped_values without SumBy/AvgBy aggregation"),
+        };
+
+        let mut qb = QueryBuilder::<Postgres>::new("SELECT ");
+        push_group_by_expr(&mut qb, &field);
+        qb.push(" AS key, CAST(");
+        qb.push(match aggregation {
+            GroupedValueAggregation::Sum => "SUM(",
+            GroupedValueAggregation::Avg => "AVG(",
+        });
+        push_numeric_field_expr(&mut qb, &value_field);
+        qb.push(") AS DOUBLE PRECISION) AS value, COUNT(*) AS sample_count FROM core.events WHERE TRUE");
+        push_filters(&mut qb, &query);
+        qb.push(" AND ");
+        push_numeric_field_expr(&mut qb, &value_field);
+        qb.push(" IS NOT NULL");
+
+        if let GroupByField::PayloadPath(path) = &field {
+            qb.push(" AND payload->>");
+            qb.push_bind(path.clone());
+            qb.push(" IS NOT NULL");
+        }
+
+        qb.push(" GROUP BY 1 ORDER BY value DESC, key ASC LIMIT ");
+        qb.push_bind(limit);
+
+        let rows: Vec<GroupedValueRow> = qb
+            .build_query_as()
+            .fetch_all(self.pool)
+            .await
+            .map_err(|e| db_error(e, "composable query: grouped_values"))?;
+
+        let groups = rows
+            .into_iter()
+            .map(|row| GroupedValue {
+                key: row.key.unwrap_or_default(),
+                value: row.value.unwrap_or_default(),
+                sample_count: row.sample_count,
+            })
+            .collect();
+
+        Ok(EventQueryResult::GroupedValues {
+            aggregation,
+            groups,
+        })
+    }
+
     async fn execute_source_stats(&self, query: EventQuery) -> DbResult<EventQueryResult> {
         let limit = match &query.aggregation {
             Some(AggregationMode::SourceStats { limit }) => {
@@ -574,6 +646,14 @@ fn push_group_by_expr(qb: &mut QueryBuilder<'_, Postgres>, field: &GroupByField)
     }
 }
 
+fn push_numeric_field_expr(qb: &mut QueryBuilder<'_, Postgres>, field: &NumericField) {
+    match field {
+        NumericField::PayloadPath(path) => {
+            push_numeric_payload_path_sql_expr(qb, path);
+        }
+    }
+}
+
 fn push_path_op(qb: &mut QueryBuilder<'_, Postgres>, path: &str, op: &PathOp) {
     match op {
         PathOp::Eq(val) => {
@@ -629,7 +709,12 @@ fn push_path_op(qb: &mut QueryBuilder<'_, Postgres>, path: &str, op: &PathOp) {
 }
 
 fn push_numeric_payload_path_expr(qb: &mut QueryBuilder<'_, Postgres>, path: &str) {
-    qb.push(" AND CASE WHEN jsonb_typeof(payload->");
+    qb.push(" AND ");
+    push_numeric_payload_path_sql_expr(qb, path);
+}
+
+fn push_numeric_payload_path_sql_expr(qb: &mut QueryBuilder<'_, Postgres>, path: &str) {
+    qb.push("CASE WHEN jsonb_typeof(payload->");
     qb.push_bind(path.to_string());
     qb.push(") = 'number' THEN (payload->>");
     qb.push_bind(path.to_string());
@@ -801,6 +886,13 @@ struct CountRow {
 struct GroupedCountRow {
     key: Option<String>,
     count: i64,
+}
+
+#[derive(FromRow)]
+struct GroupedValueRow {
+    key: Option<String>,
+    value: Option<f64>,
+    sample_count: i64,
 }
 
 #[derive(FromRow)]
