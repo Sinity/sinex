@@ -101,6 +101,7 @@ pub mod schema_validator;
 #[cfg(feature = "messaging")]
 pub mod self_observation;
 pub mod shutdown;
+pub mod source_material;
 pub mod sqlite_source;
 #[cfg(feature = "messaging")]
 pub mod stage_as_you_go;
@@ -125,6 +126,10 @@ pub use config::{AutomatonConfig, EventSourceConfig, NodeConfig};
 pub use confirmation_handler::{
     ConfirmationBuffer, ConfirmedEventHandler, DEFAULT_MAX_PENDING_EVENTS, EventConfirmation,
     ProcessingModel, ProvisionalEvent, ProvisionalEventHandler,
+};
+pub use batch_importer::{
+    BatchImporterState, DiscoveredFile, ImportFileChangeKind, ImportedFileFingerprint,
+    ImportedFileState, ScanError, read_file_content, read_file_lines, scan_for_new_files,
 };
 #[cfg(feature = "messaging")]
 pub use coordination::{HandoffRequest, InstanceMode, NodeCoordination};
@@ -171,9 +176,9 @@ pub use self_observation::{
 };
 #[cfg(feature = "messaging")]
 pub use shutdown::wait_for_shutdown_signal;
-pub use shutdown::{ShutdownConfig, default_checkpoint_path};
 #[cfg(feature = "messaging")]
-pub use sqlite_source::stage_material;
+pub use source_material::{stage_material, stage_material_from_file};
+pub use shutdown::{ShutdownConfig, default_checkpoint_path};
 pub use sqlite_source::{
     SqliteHistoryImportError, SqliteHistoryImportReport, SqliteHistoryRowOutcome,
     SqliteHistoryWarningDisposition, SqliteTableCheckError, ensure_sqlite_with_tables,

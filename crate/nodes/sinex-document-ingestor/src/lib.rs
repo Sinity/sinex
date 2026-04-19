@@ -12,7 +12,7 @@ use sinex_node_sdk::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 use sinex_node_sdk::{
-    EventTransport, NodeResult, SinexError,
+    EventTransport, NodeResult, SinexError, stage_material_from_file,
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     ingestor_node::IngestorNode,
     runtime::stream::{
@@ -32,12 +32,12 @@ use std::{
     sync::Arc,
     time::{Instant, SystemTime},
 };
-use tokio::{fs, io::AsyncReadExt};
+use tokio::fs;
+use tokio::io::AsyncReadExt;
 use tracing::{error, info, warn};
 
 const ENCODING_SNIFF_BYTES: usize = 4096;
 const MATERIAL_REASON_INGEST: &str = "document-ingestor:ingest";
-const MAX_CHUNK_BYTES: usize = 256 * 1024;
 
 /// Configuration for the document ingestor.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -579,26 +579,13 @@ impl DocumentNode {
             "encoding": document.encoding.clone(),
         });
 
-        let mut handle = acquisition
-            .begin_material_with_metadata(document.path.as_str(), metadata_json.clone())
-            .await?;
-        let mut file = fs::File::open(&document.path).await?;
-        let mut total_bytes: i64 = 0;
-        let mut buf = vec![0u8; MAX_CHUNK_BYTES];
-
-        loop {
-            let read = file.read(&mut buf).await?;
-            if read == 0 {
-                break;
-            }
-
-            acquisition.append_slice(&mut handle, &buf[..read]).await?;
-            total_bytes += read as i64;
-        }
-
-        let material_id = handle.material_id;
-
-        acquisition.finalize(handle, MATERIAL_REASON_INGEST).await?;
+        let (material_id, total_bytes) = stage_material_from_file(
+            acquisition,
+            &document.path,
+            MATERIAL_REASON_INGEST,
+            Some(metadata_json),
+        )
+        .await?;
 
         let payload = DocumentIngestedPayload {
             file_path: document.sanitized_path.as_str().to_string(),

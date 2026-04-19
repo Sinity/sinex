@@ -59,17 +59,6 @@ pub struct ActivityWatchBrowserTabActivePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "webhistory", event_type = "browser.history.imported")]
-pub struct BrowserHistoryImportedPayload {
-    pub browser: String,
-    pub title: String,
-    pub url: String,
-    pub normalized_url: Option<String>,
-    pub source_file: String,
-    pub line_number: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "activitywatch", event_type = "afk.changed")]
 pub struct ActivityWatchAfkChangedPayload {
     pub status: String,
