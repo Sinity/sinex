@@ -1,13 +1,17 @@
 use clap::{Args, Subcommand};
 use color_eyre::Result;
 use console::style;
+use sinex_primitives::events::{EventPayload, payloads::ActivitySessionBoundaryPayload};
 use sinex_primitives::query::{
-    AggregationMode, EventQuery, EventQueryResult, GroupByField, SortDirection, TimeRange,
-    TimeSeriesOrder,
+    AggregationMode, EventQuery, EventQueryResult, GroupByField, GroupedValue, NumericField,
+    QueryResultEvent, SortDirection, TimeRange, TimeSeriesOrder,
 };
 use sinex_primitives::temporal::{OffsetDateTime, Timestamp};
 
 use crate::client::GatewayClient;
+
+const SESSION_QUERY_LIMIT: i64 = 256;
+const SESSION_SOURCE_LIMIT: i64 = 5;
 
 /// Daily activity summary reports
 #[derive(Debug, Args)]
@@ -130,6 +134,123 @@ fn label_for_yesterday() -> String {
         .expect("date format is always valid")
 }
 
+#[derive(Debug, Clone)]
+struct SessionReportSummary {
+    session_count: i64,
+    total_duration_secs: u64,
+    avg_duration_secs: Option<u64>,
+    longest_session: Option<ActivitySessionBoundaryPayload>,
+    by_primary_source: Vec<GroupedValue>,
+}
+
+fn session_query_base(time_range: TimeRange) -> EventQuery {
+    EventQuery {
+        sources: vec![ActivitySessionBoundaryPayload::SOURCE.clone()],
+        event_types: vec![ActivitySessionBoundaryPayload::EVENT_TYPE.clone()],
+        time_range: Some(time_range),
+        ..Default::default()
+    }
+}
+
+fn parse_session_event(event: QueryResultEvent) -> Option<ActivitySessionBoundaryPayload> {
+    serde_json::from_value(event.event.payload).ok()
+}
+
+fn grouped_value_to_duration_secs(result: EventQueryResult) -> Option<u64> {
+    match result {
+        EventQueryResult::GroupedValues { groups, .. } => groups
+            .first()
+            .map(|group| group.value.max(0.0).round() as u64),
+        _ => None,
+    }
+}
+
+async fn fetch_session_summary(
+    client: &GatewayClient,
+    time_range: TimeRange,
+) -> Result<Option<SessionReportSummary>> {
+    let base = session_query_base(time_range);
+    let session_count = match client
+        .query_events(EventQuery {
+            aggregation: Some(AggregationMode::Count),
+            ..base.clone()
+        })
+        .await?
+    {
+        EventQueryResult::Count { count } => count,
+        _ => 0,
+    };
+
+    if session_count == 0 {
+        return Ok(None);
+    }
+
+    let total_duration_secs = grouped_value_to_duration_secs(
+        client
+            .query_events(EventQuery {
+                aggregation: Some(AggregationMode::SumBy {
+                    field: GroupByField::Source,
+                    value_field: NumericField::PayloadPath("duration_secs".to_string()),
+                    limit: 1,
+                }),
+                ..base.clone()
+            })
+            .await?,
+    )
+    .unwrap_or(0);
+
+    let avg_duration_secs = grouped_value_to_duration_secs(
+        client
+            .query_events(EventQuery {
+                aggregation: Some(AggregationMode::AvgBy {
+                    field: GroupByField::Source,
+                    value_field: NumericField::PayloadPath("duration_secs".to_string()),
+                    limit: 1,
+                }),
+                ..base.clone()
+            })
+            .await?,
+    );
+
+    let by_primary_source = match client
+        .query_events(EventQuery {
+            aggregation: Some(AggregationMode::SumBy {
+                field: GroupByField::PayloadPath("primary_source".to_string()),
+                value_field: NumericField::PayloadPath("duration_secs".to_string()),
+                limit: SESSION_SOURCE_LIMIT,
+            }),
+            ..base.clone()
+        })
+        .await?
+    {
+        EventQueryResult::GroupedValues { groups, .. } => groups,
+        _ => Vec::new(),
+    };
+
+    let longest_session = match client
+        .query_events(EventQuery {
+            limit: SESSION_QUERY_LIMIT,
+            direction: SortDirection::Desc,
+            ..base
+        })
+        .await?
+    {
+        EventQueryResult::Events { events, .. } => events
+            .into_iter()
+            .filter_map(parse_session_event)
+            .max_by_key(|payload| payload.duration_secs),
+        _ => None,
+    };
+
+    Ok(Some(SessionReportSummary {
+        session_count,
+        total_duration_secs,
+        avg_duration_secs,
+        longest_session,
+        by_primary_source,
+    }))
+}
+
 // ─── Report rendering ─────────────────────────────────────────────────────────
 
 async fn print_report(client: &GatewayClient, time_range: TimeRange, label: &str) -> Result<()> {
@@ -156,6 +277,38 @@ async fn print_report(client: &GatewayClient, time_range: TimeRange, label: &str
         println!();
         println!("{}", style("No events recorded for this period.").dim());
         return Ok(());
+    }
+
+    if let Some(session_summary) = fetch_session_summary(client, time_range).await? {
+        println!();
+        println!("{}", style("Sessions:").bold());
+        println!(
+            "  {} total  ·  avg {}  ·  focused time {}",
+            style(format_count(session_summary.session_count)).bold(),
+            style(format_optional_duration(session_summary.avg_duration_secs)).cyan(),
+            style(format_duration_compact(session_summary.total_duration_secs)).cyan()
+        );
+
+        if let Some(longest_session) = &session_summary.longest_session {
+            println!(
+                "  Longest: {} → {}  ({})  [{}]",
+                style(format_clock_time(longest_session.start_time)).dim(),
+                style(format_clock_time(longest_session.end_time)).dim(),
+                style(format_duration_compact(longest_session.duration_secs)).bold(),
+                style(&longest_session.primary_source).yellow()
+            );
+        }
+
+        if !session_summary.by_primary_source.is_empty() {
+            println!("  By primary source:");
+            for group in &session_summary.by_primary_source {
+                println!(
+                    "    {:<16} {}",
+                    style(&group.key).cyan(),
+                    style(format_duration_compact(group.value.max(0.0).round() as u64)).dim()
+                );
+            }
+        }
     }
 
     // ── 2. Top sources ───────────────────────────────────────────────────────
@@ -347,6 +500,39 @@ fn format_date(date: time::Date) -> String {
 
 // ─── Formatting helpers ───────────────────────────────────────────────────────
 
+fn format_clock_time(timestamp: Timestamp) -> String {
+    timestamp
+        .inner()
+        .format(time::macros::format_description!("[hour]:[minute]"))
+        .unwrap_or_else(|_| "??:??".to_string())
+}
+
+fn format_duration_compact(total_secs: u64) -> String {
+    let hours = total_secs / 3600;
+    let minutes = (total_secs % 3600) / 60;
+    let seconds = total_secs % 60;
+
+    if hours > 0 {
+        if minutes > 0 {
+            format!("{hours}h {minutes}m")
+        } else {
+            format!("{hours}h")
+        }
+    } else if minutes > 0 {
+        if seconds > 0 {
+            format!("{minutes}m {seconds}s")
+        } else {
+            format!("{minutes}m")
+        }
+    } else {
+        format!("{seconds}s")
+    }
+}
+
+fn format_optional_duration(duration_secs: Option<u64>) -> String {
+    duration_secs.map_or_else(|| "n/a".to_string(), format_duration_compact)
+}
+
 /// Format a count with thousands separators.
 fn format_count(n: i64) -> String {
     if n < 1_000 {
@@ -378,4 +564,89 @@ fn render_bar(count: i64, max: i64, width: usize) -> String {
         style("█".repeat(filled)).cyan(),
         style("░".repeat(empty)).dim()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn format_duration_compact_handles_hours_minutes_and_seconds() -> TestResult<()> {
+        assert_eq!(format_duration_compact(47), "47s");
+        assert_eq!(format_duration_compact(120), "2m");
+        assert_eq!(format_duration_compact(198 * 60), "3h 18m");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn grouped_value_to_duration_secs_reads_first_group_value() -> TestResult<()> {
+        let result = EventQueryResult::GroupedValues {
+            aggregation: sinex_primitives::query::GroupedValueAggregation::Sum,
+            groups: vec![GroupedValue {
+                key: "derived.session-detector".to_string(),
+                value: 5400.0,
+                sample_count: 3,
+            }],
+        };
+
+        assert_eq!(grouped_value_to_duration_secs(result), Some(5400));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_session_event_roundtrips_boundary_payload() -> TestResult<()> {
+        let start = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid timestamp");
+        let end = start + time::Duration::minutes(42);
+        let payload = ActivitySessionBoundaryPayload {
+            session_id: "session-7".to_string(),
+            start_time: start,
+            end_time: end,
+            duration_secs: 2520,
+            event_count: 4,
+            source_count: 2,
+            sources: vec!["shell.kitty".to_string(), "wm.hyprland".to_string()],
+            activity_sources: vec!["terminal".to_string(), "window".to_string()],
+            activity_source_counts: BTreeMap::from([
+                ("terminal".to_string(), 3),
+                ("window".to_string(), 1),
+            ]),
+            primary_source: "terminal".to_string(),
+        };
+
+        let event = QueryResultEvent {
+            event: sinex_primitives::events::Event {
+                id: None,
+                source: ActivitySessionBoundaryPayload::SOURCE,
+                event_type: ActivitySessionBoundaryPayload::EVENT_TYPE,
+                payload: serde_json::to_value(&payload)?,
+                ts_orig: Some(end),
+                host: sinex_primitives::events::builder::get_hostname(),
+                node_run_id: None,
+                payload_schema_id: None,
+                provenance: sinex_primitives::events::Provenance::Material {
+                    id: Id::new(),
+                    anchor_byte: 0,
+                    offset_start: None,
+                    offset_end: None,
+                    offset_kind: sinex_primitives::events::OffsetKind::Byte,
+                },
+                associated_blob_ids: None,
+                temporal_policy: None,
+                semantics_version: None,
+                scope_key: None,
+                equivalence_key: None,
+                created_by_operation_id: None,
+                node_model: None,
+            },
+            relevance_score: None,
+            snippet: None,
+        };
+
+        let parsed = parse_session_event(event).expect("boundary payload should parse");
+        assert_eq!(parsed.primary_source, "terminal");
+        assert_eq!(parsed.duration_secs, 2520);
+        Ok(())
+    }
 }
