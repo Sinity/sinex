@@ -1,10 +1,6 @@
-#[cfg(feature = "messaging")]
-use crate::{NodeResult, acquisition_manager::AcquisitionManager};
 use camino::{Utf8Path, Utf8PathBuf};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Params, Row};
-#[cfg(feature = "messaging")]
-use serde_json::Value as JsonValue;
-use sinex_primitives::{Timestamp, Uuid};
+use sinex_primitives::Timestamp;
 use std::path::Path;
 use std::{error::Error, fmt, future::Future};
 
@@ -308,36 +304,4 @@ where
         last_row_id,
         warnings: Vec::new(),
     })
-}
-
-/// Stage source material bytes through the normal acquisition pipeline.
-///
-/// Each call creates a fresh source material with a `UUIDv7` ID — every observation
-/// is a distinct material, even if the underlying source content is identical.
-#[cfg(feature = "messaging")]
-pub async fn stage_material(
-    acquisition: &AcquisitionManager,
-    source_identifier: &str,
-    bytes: &[u8],
-    reason: &str,
-    metadata: Option<JsonValue>,
-) -> NodeResult<Uuid> {
-    let mut builder = acquisition.build_material(source_identifier);
-    if let Some(metadata_value) = metadata.clone() {
-        builder = builder.with_metadata(metadata_value);
-    }
-
-    let mut handle = builder.begin().await?;
-    let material_id = handle.material_id;
-    acquisition.append_slice(&mut handle, bytes).await?;
-
-    if let Some(metadata_value) = metadata {
-        acquisition
-            .finalize_with_metadata(&mut handle, reason, metadata_value)
-            .await?;
-    } else {
-        acquisition.finalize(handle, reason).await?;
-    }
-
-    Ok(material_id)
 }

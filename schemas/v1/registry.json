@@ -815,10 +815,10 @@
     },
     {
       "source": "webhistory",
-      "event_type": "browser.history.imported",
+      "event_type": "page.visited",
       "version": "1.0.0",
-      "path": "webhistory/browser.history.imported.json",
-      "content_hash": "5b62444503d696956cfd23a0c9420a26a2c062a971b5cbfb9efaa6ad0a533f73"
+      "path": "webhistory/page.visited.json",
+      "content_hash": "832fc8f12f05ac5e53df25e60396d1e40c8df9cb391b51702cbc60bb9aecd344"
     },
     {
       "source": "wm.hyprland",

@@ -29,6 +29,7 @@ pub mod metrics;
 pub mod process;
 pub mod shell;
 pub mod system;
+pub mod web;
 pub mod window;
 
 #[cfg(any(test, feature = "testing"))]
@@ -45,6 +46,7 @@ pub use metrics::*;
 pub use process::*;
 pub use shell::*;
 pub use system::*;
+pub use web::*;
 pub use window::*;
 
 #[cfg(any(test, feature = "testing"))]
