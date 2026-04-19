@@ -1,0 +1,87 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "browser": {
+      "type": "string"
+    },
+    "db_row_id": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "line_number": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "normalized_url": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "referrer": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_file": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "transition": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "url": {
+      "type": "string"
+    },
+    "visit_duration_ms": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "visit_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "visit_time": {
+      "$ref": "#/$defs/DateTime"
+    }
+  },
+  "required": [
+    "browser",
+    "title",
+    "url",
+    "visit_time",
+    "source_file"
+  ],
+  "title": "PageVisitedPayload",
+  "type": "object",
+  "x-sinex-event-type": "page.visited",
+  "x-sinex-source": "webhistory",
+  "x-sinex-version": "1.0.0"
+}

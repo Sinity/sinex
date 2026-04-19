@@ -1,0 +1,87 @@
+[[bin]]
+name = "sinex-browser-ingestor"
+path = "src/main.rs"
+
+[package]
+name = "sinex-browser-ingestor"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+chrono-tz = "0.10"
+futures = "0.3"
+human-panic = "2.0"
+
+[package.version]
+workspace = true
+
+[package.edition]
+workspace = true
+
+[package.authors]
+workspace = true
+
+[dependencies.mimalloc]
+workspace = true
+
+[dependencies.color-eyre]
+workspace = true
+
+[dependencies.tokio]
+workspace = true
+features = ["full"]
+
+[dependencies.time]
+workspace = true
+
+[dependencies.tracing]
+workspace = true
+
+[dependencies.tracing-subscriber]
+workspace = true
+
+[dependencies.camino]
+workspace = true
+
+[dependencies.clap]
+workspace = true
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.dirs]
+workspace = true
+
+[dependencies.rusqlite]
+workspace = true
+
+[dependencies.validator]
+workspace = true
+features = ["derive"]
+
+[dependencies.csv]
+workspace = true
+
+[dependencies.url]
+workspace = true
+
+[dependencies.sinex-node-sdk]
+path = "../../lib/sinex-node-sdk"
+
+[dependencies.sinex-primitives]
+path = "../../lib/sinex-primitives"
+
+[dev-dependencies.xtask]
+path = "../../../xtask"
+
+[dev-dependencies.sinex-primitives]
+path = "../../lib/sinex-primitives"
+features = ["testing"]
+
+[dev-dependencies.tempfile]
+workspace = true
+
+[lints]
+workspace = true
