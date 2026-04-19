@@ -16,7 +16,7 @@ This include keeps only the compressed memory surface for AGENTS consumers.
 |-------|----------|-------|
 | Gateway smoke unproven (token was empty) | deployment surface | 562K events in prod via ingestor path. Gateway dead until rebuild with re-encrypted token. After rebuild: prove `sinexctl gateway ingest → sinexctl query`. |
 | FS ingestor OOM (pending rebuild) | deployment surface | NixOS module `defaultMemory` raised 256M → 1G. OOM-kills until `nixos-rebuild switch`. |
-| Operator CAs empty | self-observation | `ingestd_batch_stats_1h` etc. are empty. Self-observation events publish to `sinex.telemetry` but don't persist — routing gap. |
+| Operator telemetry read models need rollout | self-observation | The six `_1h` operator surfaces were modeled as Timescale continuous aggregates, but `core.events` is partitioned by UUIDv7 `id`, so Timescale refuses that definition. Repo now uses hourly views over `ts_coided`; deploy the updated schema apply on host. |
 | Browser/webhistory historical capture still lacks the right source-shaped ingestion path | source capture surface | The direct CLI shortcut is gone. The remaining work is native browser-DB ingestion plus historical import support for real browser export formats (`json`, `jsonl`, `csv`). |
 
 ### Recently Fixed (verified through 2026-04-16)
@@ -57,12 +57,13 @@ This include keeps only the compressed memory surface for AGENTS consumers.
 | Automata processed 0 events during normal operation | `DerivedNodeAdapter` used invalidation-only loop (`manages_own_continuous_loop: true`). Changed to `false`, implemented `process_event_batch` for confirmation stream bridge (2026-04-16). |
 | FS ingestor OOM (256M NixOS limit) | NixOS module `defaultMemory` raised to 1G. Needs rebuild to take effect (2026-04-16). |
 | Gateway admin token empty | agenix secret was encrypted with empty plaintext. Re-encrypted with real token in sinnix repo. Needs rebuild (2026-04-16). |
+| Operator telemetry `_1h` surfaces were impossible continuous aggregates | `core.events` is hypertabled on UUIDv7 `id`, so Timescale would not create operator CAs over derived `ts_coided`. Replaced the six operator CAs with hourly views over `ts_coided` and added regression coverage (2026-04-19). |
 
 ### Design Tensions (Both Sides Are Correct)
 
 **Thin ingestors vs terminal ingestor complexity:** Terminal ingestor has 10K-entry dedup hash ring for file rotation. Justified: prevents doubling every command in event log. The "thin ingestor" principle is about semantic scope (don't correlate across sources), not code size.
 
-**One query surface vs two query paths:** Composable engine (events.query) and continuous aggregates serve different needs. CAs = fast for dashboards; composable = flexible for investigation. No code currently JOINs both. Missing: SumBy/AvgBy aggregation mode for duration analytics.
+**One query surface vs two query paths:** Composable engine (events.query) and telemetry read models serve different needs. The operator `_1h` surfaces now aggregate via hourly views over `ts_coided`; the user-facing activity surfaces stay as event-time views over `ts_orig`. No code currently JOINs both. Missing: SumBy/AvgBy aggregation mode for duration analytics.
 
 **Replay determinism vs privacy evolution:** Replay re-runs privacy engine with CURRENT rules, not original. Correct by design (privacy improvements should apply retroactively) but violates intuition that "replay produces same output."
 
@@ -77,7 +78,7 @@ This include keeps only the compressed memory surface for AGENTS consumers.
 | NatsPublisher 100-permit semaphore is per-publisher (`nats_publisher.rs:21`) | Starvation risk depends on publisher sharing | Per-publisher work already done |
 | COPY batch: one bad row kills entire batch | Up to 1000 events retried via NAK | HistoricalImporter has bisect-retry but ingestd doesn't use it |
 | Advisory lock on pooled connections | Lock acquired on conn A, released when pool recycles A | Use dedicated non-pooled connection |
-| CAs invisible after historical import | 3-hour lookback misses imported data | Must manually `CALL refresh_continuous_aggregate()` |
+| Operator telemetry views aggregate at query time | Wide Grafana lookbacks can become expensive if event volume climbs sharply | Monitor query cost and add dedicated persisted rollups only when measured |
 | Git-annex process spawn per blob | 100 events/sec = 100 processes/sec for small blobs | No mitigation |
 
 ### Clean Codebase Signals

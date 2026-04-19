@@ -294,8 +294,8 @@ Grafana, when enabled, now provisions:
 - a fixed PostgreSQL datasource (`sinex-postgres`) pointed at the Sinex database
 - tracked dashboards from `nixos/monitoring/grafana-dashboards/`
 
-Those dashboards are built around the current `sinex_telemetry.*` surfaces: continuous aggregates
-for operator telemetry and live event-time views for recent activity.
+Those dashboards are built around the current `sinex_telemetry.*` surfaces: hourly operator
+views for ingest/runtime telemetry and live event-time views for recent activity.
 
 ## Architecture Overview
 
