@@ -7,7 +7,9 @@ use serde_json::json;
 use sinex_primitives::DeploymentReadinessDescriptor;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::EventPayload;
-use sinex_primitives::events::payloads::{BashCommandExecutedPayload, CanonicalCommandPayload};
+use sinex_primitives::events::payloads::{
+    ActivitySessionBoundaryPayload, BashCommandExecutedPayload, CanonicalCommandPayload,
+};
 use sinex_primitives::query::{
     AggregationMode, EventQuery, EventQueryResult, GroupByField, PayloadFilter, SortDirection,
     TimeRange,
@@ -45,9 +47,15 @@ const VERIFY_GATEWAY_SOURCE: &str = "sinexctl.verify";
 const VERIFY_GATEWAY_EVENT_TYPE: &str = "test.ping";
 const DOCUMENT_INGESTOR_SOURCE: &str = "document-ingestor";
 const DOCUMENT_INGESTED_EVENT_TYPE: &str = "document.ingested";
-const SESSION_DETECTOR_OUTPUT_SOURCE: &str = "derived.session-detector";
-const SESSION_DETECTOR_OUTPUT_EVENT_TYPE: &str = "activity.session.boundary";
 const SOURCE_PROOF_RECENT_WINDOW: Duration = Duration::from_secs(60 * 60);
+
+fn session_detector_output_source() -> &'static str {
+    ActivitySessionBoundaryPayload::SOURCE.as_static_str()
+}
+
+fn session_detector_output_event_type() -> &'static str {
+    ActivitySessionBoundaryPayload::EVENT_TYPE.as_static_str()
+}
 
 const TERMINAL_COMMAND_SOURCES: &[&str] = &[
     "shell.kitty",
@@ -1063,8 +1071,8 @@ async fn run_session_smoke(client: &GatewayClient) -> Result<()> {
     .await?;
     let baseline = count_events_matching(
         client,
-        &[SESSION_DETECTOR_OUTPUT_SOURCE],
-        SESSION_DETECTOR_OUTPUT_EVENT_TYPE,
+        &[session_detector_output_source()],
+        session_detector_output_event_type(),
     )
     .await?;
     let marker = format!("session-smoke-{:016x}", rand::random::<u64>());
@@ -1092,8 +1100,8 @@ async fn run_session_smoke(client: &GatewayClient) -> Result<()> {
 
     wait_for_count_increase(
         client,
-        &[SESSION_DETECTOR_OUTPUT_SOURCE],
-        SESSION_DETECTOR_OUTPUT_EVENT_TYPE,
+        &[session_detector_output_source()],
+        session_detector_output_event_type(),
         baseline,
         Duration::from_secs(15),
     )

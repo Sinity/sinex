@@ -184,6 +184,13 @@
       "content_hash": "4f242de51a59ce26e71c43f170eab22f996868c20550b21b9c13983c86ff2e14"
     },
     {
+      "source": "derived.session-detector",
+      "event_type": "activity.session.boundary",
+      "version": "1.0.0",
+      "path": "derived.session-detector/activity.session.boundary.json",
+      "content_hash": "f4e5e8b3a89b2db79081e94d22899b0c4b8ac6c35836bfc0211d4eee7f88ef15"
+    },
+    {
       "source": "desktop",
       "event_type": "clipboard.historical",
       "version": "1.0.0",
