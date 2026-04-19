@@ -53,6 +53,7 @@ xtask/.sinex/
 .direnv/
 
 # Claude Code (track includes, ignore ephemeral)
+.agent/last-session-init.md
 .agent/scratch/
 .claude/worktrees/
 .claude/*.local.md
@@ -76,4 +77,3 @@ docs/analysis
 AGENTS.override.md
 # Generated instruction surface
 AGENTS.md
-.agent/scratch/
