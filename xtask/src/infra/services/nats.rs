@@ -493,6 +493,7 @@ jetstream {{
     fn nats_server_command(&self) -> Command {
         let mut command = self.nats_command();
         command.arg("-js").arg("-c").arg(&self.config.config_file);
+        crate::process::configure_persistent_service_child_std(&mut command);
         command
     }
 

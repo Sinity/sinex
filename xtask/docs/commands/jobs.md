@@ -22,7 +22,7 @@ List recent background jobs.
 ```bash
 xtask jobs list
 xtask jobs list --limit 50
-xtask jobs list --active
+xtask jobs active
 xtask jobs list --json
 ```
 

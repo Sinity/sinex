@@ -309,26 +309,45 @@ fn execute_serve(port: u16, build_first: bool, ctx: &CommandContext) -> Result<C
     let doc_dir_str = doc_dir.to_string_lossy().into_owned();
 
     // Try simple-http-server first
-    let http_server_result = Command::new("simple-http-server")
-        .args(["-p", &port.to_string(), "-i", &doc_dir_str])
-        .status();
-
-    if http_server_result.is_ok_and(|s| s.success()) {
-        return Ok(CommandResult::success()
-            .with_message("Documentation server stopped")
-            .with_duration(ctx.elapsed()));
+    let mut http_server = Command::new("simple-http-server");
+    http_server.args(["-p", &port.to_string(), "-i", &doc_dir_str]);
+    match run_foreground_docs_server(&mut http_server, "docs serve (simple-http-server)") {
+        Ok(status) if crate::process::status_indicates_clean_interactive_shutdown(&status) => {
+            return Ok(CommandResult::success()
+                .with_message("Documentation server stopped")
+                .with_duration(ctx.elapsed()));
+        }
+        Ok(status) => {
+            return Err(color_eyre::eyre::eyre!(
+                "simple-http-server exited with status {status}"
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).wrap_err("failed to launch simple-http-server");
+        }
     }
 
     // Fall back to Python
-    let python_result = Command::new("python3")
+    let mut python = Command::new("python3");
+    python
         .args(["-m", "http.server", &port.to_string()])
-        .current_dir(&doc_dir)
-        .status();
-
-    if python_result.is_ok_and(|s| s.success()) {
-        return Ok(CommandResult::success()
-            .with_message("Documentation server stopped")
-            .with_duration(ctx.elapsed()));
+        .current_dir(&doc_dir);
+    match run_foreground_docs_server(&mut python, "docs serve (python)") {
+        Ok(status) if crate::process::status_indicates_clean_interactive_shutdown(&status) => {
+            return Ok(CommandResult::success()
+                .with_message("Documentation server stopped")
+                .with_duration(ctx.elapsed()));
+        }
+        Ok(status) => {
+            return Err(color_eyre::eyre::eyre!(
+                "python3 -m http.server exited with status {status}"
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).wrap_err("failed to launch python3 http.server");
+        }
     }
 
     // Neither worked
@@ -340,6 +359,13 @@ fn execute_serve(port: u16, build_first: bool, ctx: &CommandContext) -> Result<C
             "Install simple-http-server: cargo install simple-http-server".to_string(),
         ),
     }))
+}
+
+fn run_foreground_docs_server(
+    command: &mut Command,
+    label: &str,
+) -> std::io::Result<std::process::ExitStatus> {
+    crate::process::run_managed_foreground_std_command(command, label)
 }
 
 /// Recursively resolve `@path` transclusion lines in `content`, reading relative paths

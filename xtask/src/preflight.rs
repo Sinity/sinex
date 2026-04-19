@@ -744,67 +744,17 @@ pub fn auto_start_stack(verbose: bool) -> Result<()> {
 fn spawn_process_group_leader(
     command: &mut std::process::Command,
 ) -> std::io::Result<std::process::Child> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-
-        // SAFETY: `setpgid(0, 0)` is async-signal-safe per POSIX and runs in the child
-        // between fork and exec so the spawned process becomes the leader of its own group.
-        // Arm parent-death handling so abandoned infra startup cannot keep running.
-        unsafe {
-            command.pre_exec(|| {
-                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                if libc::setpgid(0, 0) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-    }
-
-    command.spawn()
+    crate::process::spawn_managed_std_child(command, "preflight")
 }
 
 fn terminate_child_process_tree(child: &mut std::process::Child) -> Result<()> {
     #[cfg(unix)]
     {
-        let pid = nix::unistd::Pid::from_raw(child.id() as i32);
-
-        match nix::sys::signal::killpg(pid, nix::sys::signal::Signal::SIGTERM) {
-            Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
-            Err(error) => {
-                return Err(eyre!(
-                    "failed to send SIGTERM to infra start process group: {error}"
-                ));
-            }
-        }
-
-        let grace_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        loop {
-            if child
-                .try_wait()
-                .wrap_err("failed to poll infra start after SIGTERM")?
-                .is_some()
-            {
-                return Ok(());
-            }
-            if std::time::Instant::now() >= grace_deadline {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-
-        match nix::sys::signal::killpg(pid, nix::sys::signal::Signal::SIGKILL) {
-            Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
-            Err(error) => {
-                return Err(eyre!(
-                    "failed to send SIGKILL to infra start process group: {error}"
-                ));
-            }
-        }
-
+        crate::process::terminate_std_child_process_group(
+            child,
+            "infra start",
+            "infra start timeout",
+        )?;
         child
             .wait()
             .wrap_err("failed to reap timed-out infra start process")?;

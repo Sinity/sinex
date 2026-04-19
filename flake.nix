@@ -18,13 +18,13 @@
   };
 
   outputs =
-    inputs@{
-      self,
-      nixpkgs,
-      fenix,
-      crane,
-      agenix,
-      flake-utils,
+    inputs@{ self
+    , nixpkgs
+    , fenix
+    , crane
+    , agenix
+    , flake-utils
+    ,
     }:
     let
       # pg_jsonschema - PostgreSQL JSON Schema validation extension
@@ -291,12 +291,18 @@
                   exit 1
                 fi
 
-                _sinex_xtask_needs_build() {
-                  local bin_path="$root_dir/.sinex/target/debug/xtask"
-                  local depfile_path="$root_dir/.sinex/target/debug/xtask.d"
-                  local extra_dep
+                bin_path="$root_dir/.sinex/target/debug/xtask"
+                build_lock_dir="$root_dir/.sinex/state/xtask-build.lock"
+                build_failure_stamp="$root_dir/.sinex/state/xtask-build.failed"
+                build_failure_log="$root_dir/.sinex/state/xtask-build.failed.log"
+                force_rebuild="''${SINEX_XTASK_FORCE_REBUILD:-0}"
 
-                  [ ! -x "$bin_path" ] && return 0
+                _sinex_xtask_sources_newer_than() {
+                  local ref_path="$1"
+                  local depfile_path="$root_dir/.sinex/target/debug/xtask.d"
+                  local extra_dep dep_path
+
+                  [ ! -e "$ref_path" ] && return 0
                   [ ! -r "$depfile_path" ] && return 0
 
                   for extra_dep in \
@@ -305,14 +311,14 @@
                     "$root_dir/xtask/Cargo.toml" \
                     "$root_dir/.cargo/config.toml"
                   do
-                    if [ -e "$extra_dep" ] && [ "$extra_dep" -nt "$bin_path" ]; then
+                    if [ ! -e "$extra_dep" ] || [ "$extra_dep" -nt "$ref_path" ]; then
                       return 0
                     fi
                   done
 
                   while IFS= read -r dep_path; do
                     [ -z "$dep_path" ] && continue
-                    if [ ! -e "$dep_path" ] || [ "$dep_path" -nt "$bin_path" ]; then
+                    if [ ! -e "$dep_path" ] || [ "$dep_path" -nt "$ref_path" ]; then
                       return 0
                     fi
                   done < <(
@@ -322,6 +328,24 @@
                   )
 
                   return 1
+                }
+
+                _sinex_xtask_needs_build() {
+                  [ ! -x "$bin_path" ] && return 0
+                  _sinex_xtask_sources_newer_than "$bin_path"
+                }
+
+                _sinex_xtask_failed_build_is_current() {
+                  [ "$force_rebuild" = "1" ] && return 1
+                  [ ! -e "$build_failure_stamp" ] && return 1
+                  ! _sinex_xtask_sources_newer_than "$build_failure_stamp"
+                }
+
+                _sinex_xtask_report_current_failure() {
+                  echo "✗ checkout-local xtask rebuild is currently broken for these sources; not retrying until sources change or SINEX_XTASK_FORCE_REBUILD=1" >&2
+                  if [ -r "$build_failure_log" ]; then
+                    echo "  log: $build_failure_log" >&2
+                  fi
                 }
 
                 _sinex_xtask_is_observability_command() {
@@ -335,8 +359,58 @@
                   esac
                 }
 
-                bin_path="$root_dir/.sinex/target/debug/xtask"
-                force_rebuild="''${SINEX_XTASK_FORCE_REBUILD:-0}"
+                _sinex_xtask_wait_for_existing_build() {
+                  while [ -d "$build_lock_dir" ]; do
+                    if [ -r "$build_lock_dir/pid" ]; then
+                      _lock_pid="$(cat "$build_lock_dir/pid" 2>/dev/null || true)"
+                      if [ -n "$_lock_pid" ] && ! kill -0 "$_lock_pid" 2>/dev/null; then
+                        rm -rf "$build_lock_dir"
+                        continue
+                      fi
+                    fi
+
+                    if [ "$force_rebuild" != "1" ] && [ -x "$bin_path" ] && ! _sinex_xtask_needs_build; then
+                      return 0
+                    fi
+                    sleep 0.1
+                  done
+                  return 1
+                }
+
+                _sinex_xtask_build_with_lock() {
+                  mkdir -p "$root_dir/.sinex/state"
+
+                  while ! mkdir "$build_lock_dir" 2>/dev/null; do
+                    if _sinex_xtask_wait_for_existing_build; then
+                      return 0
+                    fi
+                  done
+
+                  printf '%s\n' "$$" > "$build_lock_dir/pid"
+                  trap 'rm -rf "$build_lock_dir"' EXIT INT TERM
+
+                  if _sinex_xtask_failed_build_is_current; then
+                    rm -rf "$build_lock_dir"
+                    trap - EXIT INT TERM
+                    return 1
+                  fi
+
+                  if [ "$force_rebuild" = "1" ] || _sinex_xtask_needs_build; then
+                    echo "ℹ  Rebuilding checkout-local xtask..." >&2
+                    if cargo build --quiet -p xtask >"$build_failure_log" 2>&1; then
+                      rm -f "$build_failure_stamp" "$build_failure_log"
+                    else
+                      printf '%s\n' "$(date -Iseconds)" > "$build_failure_stamp"
+                      cat "$build_failure_log" >&2 || true
+                      rm -rf "$build_lock_dir"
+                      trap - EXIT INT TERM
+                      return 1
+                    fi
+                  fi
+
+                  rm -rf "$build_lock_dir"
+                  trap - EXIT INT TERM
+                }
 
                 cd "$root_dir"
                 if [ -x "$bin_path" ] \
@@ -344,14 +418,26 @@
                   && _sinex_xtask_is_observability_command "$@"
                 then
                   if _sinex_xtask_needs_build; then
-                    echo "ℹ  Using existing xtask binary for read-only command while sources are newer" >&2
+                    if _sinex_xtask_failed_build_is_current; then
+                      echo "ℹ  Using existing xtask binary; local rebuild is currently broken for these sources" >&2
+                      if [ -r "$build_failure_log" ]; then
+                        echo "  log: $build_failure_log" >&2
+                      fi
+                    else
+                      echo "ℹ  Using existing xtask binary for read-only command while sources are newer" >&2
+                    fi
                   fi
                   exec "$bin_path" "$@"
                 fi
 
                 if [ "$force_rebuild" = "1" ] || _sinex_xtask_needs_build; then
-                  echo "ℹ  Rebuilding checkout-local xtask..." >&2
-                  cargo build --quiet -p xtask
+                  if ! _sinex_xtask_build_with_lock; then
+                    if _sinex_xtask_failed_build_is_current; then
+                      _sinex_xtask_report_current_failure
+                      exit 101
+                    fi
+                    exit 1
+                  fi
                 fi
                 exec "$bin_path" "$@"
               '';

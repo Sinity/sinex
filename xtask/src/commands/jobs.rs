@@ -10,8 +10,8 @@ use tabled::{builder::Builder, settings::Style};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
-use crate::history::{InvocationProgress, JobLifecycleStatus, StageTiming};
-use crate::jobs::{JobManager, JobQueryManager};
+use crate::history::{InvocationProgress, JobLifecycleStatus, ResourceUsage, StageTiming};
+use crate::jobs::{Job, JobManager, JobQueryManager};
 
 /// Inspect and manage background xtask jobs.
 #[derive(Debug, Clone, clap::Args)]
@@ -30,6 +30,11 @@ pub enum JobsSubcommand {
         /// Show only running/active jobs
         #[arg(long)]
         active: bool,
+    },
+    /// List active jobs
+    Active {
+        #[arg(long, default_value = "20")]
+        limit: usize,
     },
     /// Show status of a specific job
     Status {
@@ -75,10 +80,14 @@ impl XtaskCommand for JobsCommand {
             JobsSubcommand::List { limit, active } => {
                 let job_query = JobQueryManager::new(cfg.jobs_dir())?;
                 if *active {
-                    execute_active(&job_query, ctx)
+                    execute_active(&job_query, *limit, ctx)
                 } else {
                     execute_list(&job_query, *limit, ctx)
                 }
+            }
+            JobsSubcommand::Active { limit } => {
+                let job_query = JobQueryManager::new(cfg.jobs_dir())?;
+                execute_active(&job_query, *limit, ctx)
             }
             JobsSubcommand::Status { id, follow } => {
                 let job_query = JobQueryManager::new(cfg.jobs_dir())?;
@@ -106,6 +115,7 @@ impl XtaskCommand for JobsCommand {
     fn metadata(&self) -> CommandMetadata {
         match self.subcommand {
             JobsSubcommand::List { .. }
+            | JobsSubcommand::Active { .. }
             | JobsSubcommand::Status { .. }
             | JobsSubcommand::Output { .. }
             | JobsSubcommand::Wait { .. } => CommandMetadata::utility()
@@ -189,8 +199,15 @@ fn execute_list(
     Ok(result)
 }
 
-fn execute_active(job_query: &JobQueryManager, ctx: &CommandContext) -> Result<CommandResult> {
-    let active = job_query.list_active()?;
+fn execute_active(
+    job_query: &JobQueryManager,
+    limit: usize,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let mut active = job_query.list_active()?;
+    if active.len() > limit {
+        active.truncate(limit);
+    }
     let mut progress_issues = Vec::new();
 
     if ctx.is_human() {
@@ -356,6 +373,10 @@ async fn execute_status(
         if let Some(issue) = &progress.issue {
             result = result.with_warning(issue.clone());
         }
+        let resources = load_job_resources(ctx, &job);
+        if let Some(issue) = &resources.issue {
+            result = result.with_warning(issue.clone());
+        }
 
         if !ctx.is_human() {
             // Stage/diagnostic queries target the invocation record, not the job handle.
@@ -388,7 +409,19 @@ async fn execute_status(
                 "exit_code": job.exit_code,
                 "progress": progress.progress.as_ref().map(progress_to_json),
                 "progress_issue": progress.issue,
+                "resources": resources.usage.as_ref().map(resource_usage_to_json),
+                "resources_issue": resources.issue,
+                "resources_source": resources.source,
             }));
+        } else if let Some(usage) = &resources.usage {
+            let label = if resources.source == Some("live-probe") {
+                "  Resources (live)"
+            } else {
+                "  Resources"
+            };
+            println!("{label}: {}", resource_usage_brief(usage));
+        } else if let Some(invocation_id) = job.invocation_id {
+            println!("  Resources: <not yet recorded for invocation {invocation_id}>");
         }
 
         Ok(result)
@@ -503,8 +536,33 @@ async fn execute_wait(
     if let Some(issue) = &progress.issue {
         result = result.with_warning(issue.clone());
     }
+    let resources = load_job_resources(ctx, &job);
+    if let Some(issue) = &resources.issue {
+        result = result.with_warning(issue.clone());
+    }
+    let stages = load_stage_timings(ctx, job.invocation_id);
+    if let Some(issue) = &stages.issue {
+        result = result.with_warning(issue.clone());
+    }
 
-    if !ctx.is_human() {
+    if ctx.is_human() {
+        if let Some(resources) = &resources.usage {
+            println!("  Resources: {}", resource_usage_brief(resources));
+        } else if let Some(invocation_id) = job.invocation_id {
+            println!("  Resources: <not yet recorded for invocation {invocation_id}>");
+        }
+    } else {
+        let stages_json: Vec<serde_json::Value> = stages
+            .stages
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "name": s.stage_name,
+                    "duration_secs": s.duration_secs,
+                    "success": s.success,
+                })
+            })
+            .collect();
         result = result.with_data(serde_json::json!({
             "id": job.id,
             "invocation_id": job.invocation_id,
@@ -512,6 +570,11 @@ async fn execute_wait(
             "exit_code": job.exit_code,
             "progress": progress.progress.as_ref().map(progress_to_json),
             "progress_issue": progress.issue,
+            "stages": stages_json,
+            "stages_issue": stages.issue,
+            "resources": resources.usage.as_ref().map(resource_usage_to_json),
+            "resources_issue": resources.issue,
+            "resources_source": resources.source,
         }));
     }
 
@@ -538,7 +601,7 @@ fn execute_cancel(
             code: "JOB_NOT_FOUND".to_string(),
             message: format!("Job {id} not found or not running"),
             location: Some("jobs::cancel".to_string()),
-            suggestion: Some("List active jobs: xtask jobs list --active".to_string()),
+            suggestion: Some("List active jobs: xtask jobs active".to_string()),
         }))
     }
 }
@@ -612,6 +675,83 @@ fn progress_to_json(progress: &InvocationProgress) -> serde_json::Value {
     })
 }
 
+fn resource_usage_brief(usage: &ResourceUsage) -> String {
+    let cpu = if let Some(value) = usage.process_cpu_usage_avg {
+        format!("{value:.1}% tree cpu")
+    } else if let Some(value) = usage.host_cpu_usage_avg {
+        format!("{value:.1}% host cpu (legacy)")
+    } else {
+        "cpu n/a".to_string()
+    };
+    let memory = if let Some(value) = usage.process_memory_usage_max_mb {
+        format!("{value:.0} MB tree mem")
+    } else if let Some(value) = usage.host_memory_usage_max_mb {
+        format!("{value:.0} MB host mem (legacy)")
+    } else {
+        "mem n/a".to_string()
+    };
+    let process_count = usage.process_count_max.map_or_else(
+        || "proc n/a".to_string(),
+        |count| format!("max {count} proc"),
+    );
+    let root_cpu = usage.root_process_cpu_usage_avg.map_or_else(
+        || "xtask cpu n/a".to_string(),
+        |value| format!("{value:.1}% xtask cpu"),
+    );
+    let root_mem = usage.root_process_memory_usage_max_mb.map_or_else(
+        || "xtask mem n/a".to_string(),
+        |value| format!("{value:.0} MB xtask mem"),
+    );
+    let samples = usage.sample_count.map_or_else(
+        || "samples n/a".to_string(),
+        |count| format!("{count} samples"),
+    );
+    let mut parts = vec![cpu, memory];
+    if let Some(cpu) = usage.shared_nix_daemon_cpu_usage_avg {
+        parts.push(format!("{cpu:.1}% nix-daemon shared cpu"));
+    }
+    if let Some(memory) = usage.shared_nix_daemon_memory_usage_max_mb {
+        parts.push(format!("{memory:.0} MB nix-daemon shared mem"));
+    }
+    if let Some(cpu) = usage.shared_nix_build_slice_cpu_usage_avg {
+        parts.push(format!("{cpu:.1}% nix-build shared cpu"));
+    }
+    if let Some(memory) = usage.shared_nix_build_slice_memory_usage_max_mb {
+        parts.push(format!("{memory:.0} MB nix-build shared mem"));
+    }
+    if let Some(cpu) = usage.shared_background_slice_cpu_usage_avg {
+        parts.push(format!("{cpu:.1}% background shared cpu"));
+    }
+    if let Some(memory) = usage.shared_background_slice_memory_usage_max_mb {
+        parts.push(format!("{memory:.0} MB background shared mem"));
+    }
+    parts.extend([process_count, root_cpu, root_mem, samples]);
+    parts.join(", ")
+}
+
+fn resource_usage_to_json(usage: &ResourceUsage) -> serde_json::Value {
+    serde_json::json!({
+        "command": usage.command,
+        "status": usage.status,
+        "started_at": usage.started_at,
+        "duration_secs": usage.duration_secs,
+        "process_cpu_usage_avg": usage.process_cpu_usage_avg,
+        "process_memory_usage_max_mb": usage.process_memory_usage_max_mb,
+        "root_process_cpu_usage_avg": usage.root_process_cpu_usage_avg,
+        "root_process_memory_usage_max_mb": usage.root_process_memory_usage_max_mb,
+        "shared_nix_daemon_cpu_usage_avg": usage.shared_nix_daemon_cpu_usage_avg,
+        "shared_nix_daemon_memory_usage_max_mb": usage.shared_nix_daemon_memory_usage_max_mb,
+        "shared_nix_build_slice_cpu_usage_avg": usage.shared_nix_build_slice_cpu_usage_avg,
+        "shared_nix_build_slice_memory_usage_max_mb": usage.shared_nix_build_slice_memory_usage_max_mb,
+        "shared_background_slice_cpu_usage_avg": usage.shared_background_slice_cpu_usage_avg,
+        "shared_background_slice_memory_usage_max_mb": usage.shared_background_slice_memory_usage_max_mb,
+        "process_count_max": usage.process_count_max,
+        "sample_count": usage.sample_count,
+        "host_cpu_usage_avg": usage.host_cpu_usage_avg,
+        "host_memory_usage_max_mb": usage.host_memory_usage_max_mb,
+    })
+}
+
 #[derive(Debug)]
 struct ProgressProbe {
     progress: Option<InvocationProgress>,
@@ -622,6 +762,13 @@ struct ProgressProbe {
 struct StageTimingsProbe {
     stages: Vec<StageTiming>,
     issue: Option<String>,
+}
+
+#[derive(Debug)]
+struct ResourceUsageProbe {
+    usage: Option<ResourceUsage>,
+    issue: Option<String>,
+    source: Option<&'static str>,
 }
 
 fn load_invocation_progress(ctx: &CommandContext, invocation_id: Option<i64>) -> ProgressProbe {
@@ -674,6 +821,121 @@ fn load_stage_timings(ctx: &CommandContext, invocation_id: Option<i64>) -> Stage
     }
 }
 
+fn load_invocation_resources(
+    ctx: &CommandContext,
+    invocation_id: Option<i64>,
+) -> ResourceUsageProbe {
+    match invocation_id {
+        Some(iid) => resource_usage_probe_from_result(
+            iid,
+            ctx.try_with_history_db_query(|db| db.get_resource_usage_for_invocation(iid)),
+        ),
+        None => ResourceUsageProbe {
+            usage: None,
+            issue: None,
+            source: None,
+        },
+    }
+}
+
+fn load_job_resources(ctx: &CommandContext, job: &Job) -> ResourceUsageProbe {
+    let persisted = load_invocation_resources(ctx, job.invocation_id);
+    if persisted
+        .usage
+        .as_ref()
+        .is_some_and(ResourceUsage::has_samples)
+    {
+        return persisted;
+    }
+
+    if job.is_terminal() {
+        return persisted;
+    }
+
+    let Some(pid) = job.pid else {
+        return persisted;
+    };
+
+    let live_process_metrics =
+        crate::process::probe_process_tree_metrics(pid, Duration::from_millis(120));
+    let live_shared_build_metrics =
+        crate::process::probe_shared_build_metrics(Duration::from_millis(120));
+
+    match (live_process_metrics, live_shared_build_metrics) {
+        (Some(metrics), shared_build_metrics) => ResourceUsageProbe {
+            usage: Some(ResourceUsage {
+                command: job.command.clone(),
+                status: status_to_str(job.job_status).to_string(),
+                started_at: job.started_at.to_string(),
+                duration_secs: Some(
+                    (time::OffsetDateTime::now_utc() - job.started_at).as_seconds_f64(),
+                ),
+                process_cpu_usage_avg: metrics.cpu_usage_avg,
+                process_memory_usage_max_mb: metrics.memory_usage_max_mb,
+                root_process_cpu_usage_avg: metrics.root_cpu_usage_avg,
+                root_process_memory_usage_max_mb: metrics.root_memory_usage_max_mb,
+                shared_nix_daemon_cpu_usage_avg: shared_build_metrics
+                    .as_ref()
+                    .and_then(|metrics| metrics.shared_nix_daemon_cpu_usage_avg),
+                shared_nix_daemon_memory_usage_max_mb: shared_build_metrics
+                    .as_ref()
+                    .and_then(|metrics| metrics.shared_nix_daemon_memory_usage_max_mb),
+                shared_nix_build_slice_cpu_usage_avg: shared_build_metrics
+                    .as_ref()
+                    .and_then(|metrics| metrics.shared_nix_build_slice_cpu_usage_avg),
+                shared_nix_build_slice_memory_usage_max_mb: shared_build_metrics
+                    .as_ref()
+                    .and_then(|metrics| metrics.shared_nix_build_slice_memory_usage_max_mb),
+                shared_background_slice_cpu_usage_avg: shared_build_metrics
+                    .as_ref()
+                    .and_then(|metrics| metrics.shared_background_slice_cpu_usage_avg),
+                shared_background_slice_memory_usage_max_mb: shared_build_metrics
+                    .as_ref()
+                    .and_then(|metrics| metrics.shared_background_slice_memory_usage_max_mb),
+                process_count_max: metrics.process_count_max,
+                sample_count: Some(metrics.sample_count),
+                host_cpu_usage_avg: None,
+                host_memory_usage_max_mb: None,
+            }),
+            issue: persisted.issue,
+            source: Some("live-probe"),
+        },
+        (None, Some(shared_build_metrics)) => ResourceUsageProbe {
+            usage: Some(ResourceUsage {
+                command: job.command.clone(),
+                status: status_to_str(job.job_status).to_string(),
+                started_at: job.started_at.to_string(),
+                duration_secs: Some(
+                    (time::OffsetDateTime::now_utc() - job.started_at).as_seconds_f64(),
+                ),
+                process_cpu_usage_avg: None,
+                process_memory_usage_max_mb: None,
+                root_process_cpu_usage_avg: None,
+                root_process_memory_usage_max_mb: None,
+                shared_nix_daemon_cpu_usage_avg: shared_build_metrics
+                    .shared_nix_daemon_cpu_usage_avg,
+                shared_nix_daemon_memory_usage_max_mb: shared_build_metrics
+                    .shared_nix_daemon_memory_usage_max_mb,
+                shared_nix_build_slice_cpu_usage_avg: shared_build_metrics
+                    .shared_nix_build_slice_cpu_usage_avg,
+                shared_nix_build_slice_memory_usage_max_mb: shared_build_metrics
+                    .shared_nix_build_slice_memory_usage_max_mb,
+                shared_background_slice_cpu_usage_avg: shared_build_metrics
+                    .shared_background_slice_cpu_usage_avg,
+                shared_background_slice_memory_usage_max_mb: shared_build_metrics
+                    .shared_background_slice_memory_usage_max_mb,
+                process_count_max: None,
+                sample_count: None,
+                host_cpu_usage_avg: None,
+                host_memory_usage_max_mb: None,
+            }),
+            issue: persisted.issue,
+            source: Some("live-probe"),
+        },
+        (None, None) => persisted,
+    }
+}
+
 fn stage_timings_probe_from_result(
     invocation_id: i64,
     result: Option<Result<Vec<StageTiming>>>,
@@ -694,6 +956,38 @@ fn stage_timings_probe_from_result(
             issue: Some(format!(
                 "history DB unavailable while loading stage timings for invocation {invocation_id}"
             )),
+        },
+    }
+}
+
+fn resource_usage_probe_from_result(
+    invocation_id: i64,
+    result: Option<Result<Option<ResourceUsage>>>,
+) -> ResourceUsageProbe {
+    match result {
+        Some(Ok(usage)) => {
+            let source = usage
+                .as_ref()
+                .and_then(|usage| usage.has_samples().then_some("history"));
+            ResourceUsageProbe {
+                usage,
+                issue: None,
+                source,
+            }
+        }
+        Some(Err(error)) => ResourceUsageProbe {
+            usage: None,
+            issue: Some(format!(
+                "failed to load resource usage for invocation {invocation_id}: {error:#}"
+            )),
+            source: None,
+        },
+        None => ResourceUsageProbe {
+            usage: None,
+            issue: Some(format!(
+                "history DB unavailable while loading resource usage for invocation {invocation_id}"
+            )),
+            source: None,
         },
     }
 }

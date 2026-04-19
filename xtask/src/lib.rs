@@ -438,6 +438,10 @@ pub async fn run_cli() -> Result<()> {
         };
     let claimed_bg_invocation =
         parse_one_shot_i64_env("XTASK_BG_INVOCATION_ID", "background invocation claim");
+    let launcher_only_background_request =
+        cli.global.is_background() && claimed_bg_invocation.is_none() && claimed_bg_job.is_none();
+    let tracks_invocation = tracks_invocation && !launcher_only_background_request;
+
     let invocation_id = if tracks_invocation {
         if let Some(bg_id) = claimed_bg_invocation {
             if let Some(db) = history_db_write.as_ref() {
@@ -526,16 +530,76 @@ pub async fn run_cli() -> Result<()> {
         }
     };
 
-    let result = if let Some(timeout) = command_timeout {
+    let mut process_monitor =
+        tracks_invocation.then(process::InvocationResourceMonitor::start_for_current_process);
+    let mut timed_out = false;
+    let mut result = if let Some(timeout) = command_timeout {
         match tokio::time::timeout(timeout, execute_fut).await {
             Ok(result) => result,
-            Err(_) => Err(eyre!(
-                "Command '{command_name}' timed out after {timeout:?}"
-            )),
+            Err(_) => {
+                timed_out = true;
+                match process::terminate_registered_process_groups("command timeout") {
+                    Ok(terminated) if terminated > 0 => {
+                        eprintln!(
+                            "⚠️  Terminated {terminated} lingering child process group(s) after {command_name} timed out"
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        eprintln!(
+                            "⚠️  Failed to terminate child process groups after {command_name} timed out: {error:#}"
+                        );
+                    }
+                }
+                match process::terminate_current_process_descendants("command timeout") {
+                    Ok(terminated) if terminated > 0 => {
+                        eprintln!(
+                            "⚠️  Terminated {terminated} remaining descendant process(es) after {command_name} timed out"
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        eprintln!(
+                            "⚠️  Failed to terminate descendant processes after {command_name} timed out: {error:#}"
+                        );
+                    }
+                }
+                Err(eyre!(
+                    "Command '{command_name}' timed out after {timeout:?}"
+                ))
+            }
         }
     } else {
         execute_fut.await
     };
+
+    let lingering_process_groups = if timed_out {
+        0
+    } else {
+        match process::terminate_registered_process_groups("command completion") {
+            Ok(count) => count,
+            Err(error) => {
+                eprintln!(
+                    "⚠️  Failed to reap lingering child process groups after {command_name} completed: {error:#}"
+                );
+                0
+            }
+        }
+    };
+
+    if lingering_process_groups > 0 {
+        let warning = format!(
+            "Reaped {lingering_process_groups} lingering child process group(s) after {command_name} completed"
+        );
+        eprintln!("⚠️  {warning}");
+        if let Ok(command_result) = &mut result {
+            command_result.warnings.push(warning);
+        }
+    }
+
+    let process_metrics = process_monitor
+        .as_mut()
+        .map(process::InvocationResourceMonitor::stop);
 
     let invocation_exit_code = match &result {
         Ok(res)
@@ -565,6 +629,9 @@ pub async fn run_cli() -> Result<()> {
             Err(_) => ctx.elapsed().as_secs_f64(),
         };
         match ctx.try_with_history_db(|db| {
+            if let Some(metrics) = process_metrics.as_ref() {
+                db.record_resource_metrics(id, metrics)?;
+            }
             db.finish_invocation(id, status, Some(invocation_exit_code), duration)
         }) {
             Some(Ok(())) => {}
@@ -584,34 +651,40 @@ pub async fn run_cli() -> Result<()> {
     // Handle coordinator completion: clear state, spawn queued work (FIFO).
     // Uses block_in_place to ensure the spawn completes before process exits
     // (fire-and-forget tokio::spawn could lose work if runtime shuts down first).
-    if matches!(command_name, "check" | "test" | "build" | "fix")
+    if claimed_bg_job.is_some()
+        && matches!(command_name, "check" | "test" | "build" | "fix" | "vm")
         && let Ok(coord) = coordinator::JobCoordinator::new()
         && let Ok(Some(queued)) = coord.handle_completion(command_name)
     {
         let cfg = config();
         match jobs::JobManager::new(cfg.jobs_dir()) {
             Ok(manager) => {
-                match manager.spawn_xtask(command_name, &queued.args, queued.output_format) {
+                let queued_command = if queued.command.is_empty() {
+                    command_name.to_string()
+                } else {
+                    queued.command.clone()
+                };
+                match manager.spawn_xtask(&queued_command, &queued.args, queued.output_format) {
                     Ok(job) => {
                         // Update coordinator state with real job_id + pid.
                         // Critical for FIFO queue: handle_completion may have
                         // left remaining items in the state file with sentinel values.
                         if let Some(pid) = job.pid {
-                            if let Err(error) = coord.update_state(command_name, job.id, pid) {
+                            if let Err(error) = coord.update_state(&queued_command, job.id, pid) {
                                 eprintln!(
-                                    "⚠️  Failed to update queued {command_name} coordinator state for job {}: {error}",
+                                    "⚠️  Failed to update queued {queued_command} coordinator state for job {}: {error}",
                                     job.id
                                 );
                             }
                         } else {
                             eprintln!(
-                                "⚠️  Failed to update queued {command_name} coordinator state for job {}: spawned job did not expose a PID",
+                                "⚠️  Failed to update queued {queued_command} coordinator state for job {}: spawned job did not expose a PID",
                                 job.id
                             );
                         }
                     }
                     Err(error) => {
-                        eprintln!("Warning: failed to spawn queued {command_name} work: {error}");
+                        eprintln!("Warning: failed to spawn queued {queued_command} work: {error}");
                     }
                 }
             }
