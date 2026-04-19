@@ -20,6 +20,6 @@ engine that applies it. It uses `sea-query` to define the schema in a type-safe,
 | `audit` | Archive tier table: `audit.archived_events`. |
 | `sinex_schemas` | Payload schema and contract management: `event_payload_schemas`, `validation_cache`, `gitops_schema_sources`, `dlq_events`. |
 | `metrics` | Reserved schema namespace (created for compatibility with grants/registry; currently no canonical table definitions in `src/schema/`). |
-| `sinex_telemetry` | Continuous aggregates and telemetry views created by `src/apply.rs` SQL blocks. |
+| `sinex_telemetry` | Hourly operator views, activity/status views, and one materialized current-device view created by `src/apply.rs` SQL blocks. |
 
 The design trade-offs and indexing strategies are documented in `docs/schema_design.md`.

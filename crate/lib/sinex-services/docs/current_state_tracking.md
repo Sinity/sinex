@@ -275,11 +275,12 @@ REFRESH MATERIALIZED VIEW CONCURRENTLY sinex_telemetry.current_device_state;
 ### Query Performance
 
 The event-time activity views avoid import-time drift and "empty until first refresh" behavior.
-The operator-facing continuous aggregates still pre-compute common ingest telemetry, providing:
+The operator-facing hourly views now aggregate directly from indexed `core.events` rows using
+`ts_coided`, which keeps the surfaces live immediately after inserts and avoids refresh-policy lag.
 
-- **Sub-second latency** for current state queries
-- **No full table scans** on core.events
-- **Retention via explicit lifecycle operations** (no automatic TimescaleDB retention policy)
+- **Fresh rows immediately visible** after ingest without waiting for background policies
+- **No extra storage tier** for operator telemetry rollups
+- **Query-time aggregation cost** instead of precomputed materialization
 
 **Example query plan**:
 
@@ -291,19 +292,13 @@ WHERE bucket >= NOW() - INTERVAL '1 hour';
 
 ### Storage Overhead
 
-Continuous aggregates use additional storage:
-
-- **5-minute buckets**: ~1-2% of raw events storage
-- **1-hour buckets**: ~0.1-0.5% of raw events storage
-- **Total overhead**: Typically <5% of total database size
+The operator hourly views add no extra storage because they are ordinary views over `core.events`.
+Only `sinex_telemetry.current_device_state` remains materialized and consumes additional storage.
 
 ### Refresh Load
 
-Only the operator-facing continuous aggregates refresh incrementally:
-
-- **Refresh window**: Only processes new ingest-time data since last refresh
-- **Background refresh**: Does not block queries or writes
-- **Concurrency**: Multiple aggregates can refresh in parallel
+Only `sinex_telemetry.current_device_state` needs an explicit refresh path. The operator hourly
+views always reflect the current event store state because they do not materialize.
 
 ## Synthesis Events vs Continuous Aggregates
 
@@ -345,26 +340,16 @@ Both can coexist: synthesis events provide business semantics, continuous aggreg
 xtask reset --yes --schema
 xtask check
 
-# Verify continuous aggregates exist
-psql -c "SELECT view_name FROM timescaledb_information.continuous_aggregates WHERE view_schema = 'sinex_telemetry';"
-
-# Verify refresh policies
-psql -c "SELECT view_name, schedule_interval, start_offset, end_offset FROM timescaledb_information.continuous_aggregate_policies WHERE view_schema = 'sinex_telemetry';"
+# Verify the current materialized/read-model split
+psql -c "SELECT matviewname FROM pg_matviews WHERE schemaname = 'sinex_telemetry';"
+psql -c "SELECT table_name FROM information_schema.views WHERE table_schema = 'sinex_telemetry' ORDER BY table_name;"
 ```
 
 ### Manual Refresh
 
-If you need to force a refresh of the operator telemetry CAs:
+If you need to force a refresh of the remaining materialized view:
 
 ```sql
--- Refresh operator continuous aggregates
-CALL refresh_continuous_aggregate('sinex_telemetry.gateway_stats_1h', NULL, NULL);
-CALL refresh_continuous_aggregate('sinex_telemetry.stream_stats_1h', NULL, NULL);
-CALL refresh_continuous_aggregate('sinex_telemetry.assembly_stats_1h', NULL, NULL);
-CALL refresh_continuous_aggregate('sinex_telemetry.node_stats_1h', NULL, NULL);
-CALL refresh_continuous_aggregate('sinex_telemetry.metric_counters_1h', NULL, NULL);
-CALL refresh_continuous_aggregate('sinex_telemetry.ingestd_batch_stats_1h', NULL, NULL);
-
 -- Refresh materialized views
 REFRESH MATERIALIZED VIEW CONCURRENTLY entities.current_entity_state;
 REFRESH MATERIALIZED VIEW CONCURRENTLY sinex_telemetry.current_device_state;
@@ -372,28 +357,22 @@ REFRESH MATERIALIZED VIEW CONCURRENTLY sinex_telemetry.current_device_state;
 
 ### Monitoring
 
-Check continuous aggregate health:
+Check the telemetry read-model surface:
 
 ```sql
--- View last refresh time
+-- Operator telemetry `_1h` relations are ordinary views
 SELECT
-    view_name,
-    materialized_only,
-    compression_enabled,
-    materialization_hypertable_schema,
-    materialization_hypertable_name
-FROM timescaledb_information.continuous_aggregates
-WHERE view_schema = 'sinex_telemetry';
+    table_name
+FROM information_schema.views
+WHERE table_schema = 'sinex_telemetry'
+  AND table_name LIKE '%_1h'
+ORDER BY table_name;
 
--- Check refresh policy status
+-- `current_device_state` is still materialized
 SELECT
-    application_name,
-    state,
-    wait_event_type,
-    wait_event,
-    query
-FROM pg_stat_activity
-WHERE query LIKE '%refresh_continuous_aggregate%';
+    matviewname
+FROM pg_matviews
+WHERE schemaname = 'sinex_telemetry';
 ```
 
 ## Scale Triggers
@@ -401,11 +380,11 @@ WHERE query LIKE '%refresh_continuous_aggregate%';
 The current PostgreSQL + TimescaleDB approach is sufficient until one of the
 following thresholds is sustainably exceeded:
 
-1. **Event ingestion rate > 50K/sec** sustained — continuous aggregate refresh
-   will lag behind and backpressure will propagate into the ingest pipeline.
-2. **Sub-second freshness required** — NATS-driven automata + periodic continuous
-   aggregate refresh cannot achieve < 1s lag; a streaming database (RisingWave)
-   would be required.
+1. **Event ingestion rate > 50K/sec** sustained — hourly view scans over raw events
+   will become too expensive for dashboards without dedicated persisted rollups.
+2. **Sub-second freshness required with bounded query cost** — current views are fresh,
+   but a streaming database or dedicated telemetry table would be required to precompute
+   that surface cheaply.
 3. **Complex cross-hypertable joins** — multiple hypertables joined in a single
    materialized view are not well-supported by TimescaleDB continuous aggregates.
 4. **Multi-hypertable real-time materialized views** — would require a dedicated

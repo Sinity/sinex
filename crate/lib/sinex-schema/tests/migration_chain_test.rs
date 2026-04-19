@@ -627,7 +627,7 @@ async fn telemetry_relations_expose_expected_contract_columns(ctx: TestContext) 
 }
 
 #[sinex_test]
-async fn telemetry_continuous_aggregate_registry_matches_expected_surface(
+async fn operator_telemetry_does_not_register_continuous_aggregates(
     ctx: TestContext,
 ) -> TestResult<()> {
     sinex_schema::apply::apply(&ctx.pool).await?;
@@ -645,19 +645,80 @@ async fn telemetry_continuous_aggregate_registry_matches_expected_surface(
     .into_iter()
     .collect::<BTreeSet<_>>();
 
-    let expected = BTreeSet::from([
-        "assembly_stats_1h".to_string(),
-        "gateway_stats_1h".to_string(),
-        "ingestd_batch_stats_1h".to_string(),
-        "metric_counters_1h".to_string(),
-        "node_stats_1h".to_string(),
-        "stream_stats_1h".to_string(),
-    ]);
+    let expected = BTreeSet::new();
 
     assert_eq!(
         actual, expected,
-        "telemetry continuous aggregate registry drifted"
+        "operator telemetry should no longer rely on Timescale continuous aggregates"
     );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn operator_telemetry_views_include_live_rows(
+    ctx: TestContext,
+) -> TestResult<()> {
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    let material_id = ctx.create_source_material(Some("sinex.ingestd")).await?;
+    sqlx::query!(
+        r#"
+        INSERT INTO core.events (
+            id,
+            source,
+            event_type,
+            host,
+            payload,
+            ts_orig,
+            source_material_id,
+            anchor_byte
+        )
+        VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)
+        "#,
+        uuid::Uuid::now_v7(),
+        "sinex.ingestd",
+        "batch.stats",
+        "test-host",
+        serde_json::json!({
+            "batch_size": 8,
+            "fetch_to_ack_ms": 42,
+            "events_deferred": 1,
+            "events_failed": 0,
+            "had_synthesis": true,
+            "insert_path": "copy",
+            "validation_valid": 20,
+            "validation_skipped": 0,
+            "validation_no_schema": 2,
+            "validation_schema_not_found": 1,
+            "validation_invalid": 3,
+            "validation_coverage_pct": 87.5,
+            "suspicious_future_ts_orig": 4
+        }),
+        *sinex_primitives::temporal::now(),
+        material_id.to_uuid(),
+        0_i64,
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let rows = sqlx::query_as::<_, (Option<f64>, Option<i64>, Option<i64>)>(
+        r#"
+        SELECT
+            AVG(avg_batch_size::float8) AS avg_batch_size,
+            MAX(batch_count) AS batch_count,
+            MAX(total_deferred) AS total_deferred
+        FROM sinex_telemetry.ingestd_batch_stats_1h
+        WHERE batch_count > 0
+        "#,
+    )
+    .fetch_all(&ctx.pool)
+    .await?;
+
+    assert_eq!(rows.len(), 1, "real-time aggregate should expose the fresh batch");
+    assert_eq!(rows[0].0, Some(8.0));
+    assert_eq!(rows[0].1, Some(1));
+    assert_eq!(rows[0].2, Some(1));
 
     Ok(())
 }

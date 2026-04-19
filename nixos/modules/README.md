@@ -183,8 +183,8 @@ disabled (e.g. staging migrations).
 - Grafana provisions a fixed Prometheus datasource (`sinex-prometheus`), a fixed
   PostgreSQL datasource (`sinex-postgres`), and tracked dashboards from
   `nixos/monitoring/grafana-dashboards/`.
-- The built-in dashboards intentionally use `sinex_telemetry.*`: continuous
-  aggregates for operator telemetry and live event-time views for recent activity.
+- The built-in dashboards intentionally use `sinex_telemetry.*`: hourly operator
+  views for ingest/runtime telemetry and live event-time views for recent activity.
 - Grafana binds to loopback by default; widen it explicitly if you truly need
   remote access and have matching firewall/TLS controls.
 - `observability.alerts.enable` adds the provided rule files to Prometheus.
