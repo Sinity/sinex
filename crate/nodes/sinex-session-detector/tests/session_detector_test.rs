@@ -2,17 +2,21 @@ use sinex_node_sdk::WindowedNode;
 use sinex_node_sdk::derived_node::DerivedTriggerContext;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
-use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue};
 use sinex_session_detector::{SessionDetector, SessionState};
 use xtask::sandbox::prelude::*;
 
-fn make_context_with_optional_ts(ts_orig: Option<Timestamp>) -> DerivedTriggerContext {
+fn make_context_with_optional_ts(
+    source: &str,
+    event_type: &str,
+    ts_orig: Option<Timestamp>,
+) -> DerivedTriggerContext {
     let event_id: Id<Event<JsonValue>> = Id::new();
     DerivedTriggerContext {
         trigger_event_id: event_id,
-        source: "test".into(),
-        event_type: "desktop.window.focused".into(),
+        source: source.into(),
+        event_type: event_type.into(),
         ts_orig,
         ts_coided: event_id.timestamp(),
         processing_mode: ProcessingMode::Replay,
@@ -22,7 +26,7 @@ fn make_context_with_optional_ts(ts_orig: Option<Timestamp>) -> DerivedTriggerCo
 }
 
 fn make_context(ts_orig: Timestamp) -> DerivedTriggerContext {
-    make_context_with_optional_ts(Some(ts_orig))
+    make_context_with_optional_ts("wm.hyprland", "window.focused", Some(ts_orig))
 }
 
 #[sinex_test]
@@ -56,7 +60,7 @@ async fn missing_ts_orig_is_rejected() -> TestResult<()> {
         .accumulate(
             &mut state,
             serde_json::json!({}),
-            &make_context_with_optional_ts(None),
+            &make_context_with_optional_ts("wm.hyprland", "window.focused", None),
         )
         .await
         .expect_err("missing ts_orig must be rejected");
@@ -188,19 +192,12 @@ async fn gap_boundary_emits_previous_session_and_seeds_next_one() -> TestResult<
         .await?
         .expect("gap boundary should emit a completed session");
 
-    let payload = output
-        .payload
-        .as_object()
-        .expect("session output should be an object");
-    assert_eq!(payload.get("event_count"), Some(&serde_json::json!(1)));
-    assert_eq!(
-        payload.get("start_time"),
-        Some(&serde_json::json!(first.format_rfc3339()))
-    );
-    assert_eq!(
-        payload.get("end_time"),
-        Some(&serde_json::json!(first.format_rfc3339()))
-    );
+    let payload = output.payload;
+    assert_eq!(payload.event_count, 1);
+    assert_eq!(payload.start_time, first);
+    assert_eq!(payload.end_time, first);
+    assert_eq!(payload.primary_source, "window");
+    assert_eq!(payload.activity_source_counts.get("window"), Some(&1));
     assert_eq!(
         output.source_event_ids,
         vec![first_context.trigger_event_id.as_uuid().to_owned()],
@@ -219,5 +216,73 @@ async fn gap_boundary_emits_previous_session_and_seeds_next_one() -> TestResult<
         vec![*second_context.trigger_event_id.as_uuid()]
     );
 
+    Ok(())
+}
+
+#[sinex_test]
+async fn non_activity_events_do_not_seed_sessions() -> TestResult<()> {
+    let mut detector = SessionDetector::default();
+    let mut state = SessionState::default();
+    let ts = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid timestamp");
+
+    detector
+        .accumulate(
+            &mut state,
+            serde_json::json!({}),
+            &make_context_with_optional_ts("systemd", "unit.started", Some(ts)),
+        )
+        .await?;
+
+    assert_eq!(state.event_count, 0);
+    assert!(state.session_start.is_none());
+    assert!(state.sources.is_empty());
+    assert!(state.activity_source_counts.is_empty());
+    Ok(())
+}
+
+#[sinex_test]
+async fn primary_source_uses_logical_activity_categories() -> TestResult<()> {
+    let mut detector = SessionDetector::default();
+    let mut state = SessionState::default();
+
+    let base = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid timestamp");
+    let contexts = [
+        make_context_with_optional_ts("wm.hyprland", "window.focused", Some(base)),
+        make_context_with_optional_ts(
+            "shell.kitty",
+            "command.executed",
+            Some(base + Duration::seconds(10)),
+        ),
+        make_context_with_optional_ts(
+            "shell.atuin",
+            "command.executed",
+            Some(base + Duration::seconds(20)),
+        ),
+        make_context_with_optional_ts(
+            "wm.hyprland",
+            "window.focused",
+            Some(base + Duration::seconds(321)),
+        ),
+    ];
+
+    for context in contexts.iter().take(3) {
+        detector
+            .accumulate(&mut state, serde_json::json!({}), context)
+            .await?;
+    }
+    detector
+        .accumulate(&mut state, serde_json::json!({}), &contexts[3])
+        .await?;
+
+    assert!(detector.window_complete(&state));
+    let output = detector
+        .emit(&mut state, &contexts[3])
+        .await?
+        .expect("gap boundary should emit a completed session");
+
+    assert_eq!(output.payload.primary_source, "terminal");
+    assert_eq!(output.payload.activity_sources, vec!["terminal", "window"]);
+    assert_eq!(output.payload.activity_source_counts.get("terminal"), Some(&2));
+    assert_eq!(output.payload.activity_source_counts.get("window"), Some(&1));
     Ok(())
 }

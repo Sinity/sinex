@@ -7,7 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sinex_macros::EventPayload;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 // ============================================================================
 // Health Automaton Payloads
@@ -204,6 +204,26 @@ pub struct AnalyticsCorrelationPayload {
     pub analysis_type: String, // "correlation"
     pub pairs: Vec<CorrelationPair>,
     pub window_seconds: u64,
+}
+
+/// Completed activity session derived from trusted activity signals.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(
+    source = "derived.session-detector",
+    event_type = "activity.session.boundary",
+    version = "1.0.0"
+)]
+pub struct ActivitySessionBoundaryPayload {
+    pub session_id: String,
+    pub start_time: Timestamp,
+    pub end_time: Timestamp,
+    pub duration_secs: u64,
+    pub event_count: u64,
+    pub source_count: u64,
+    pub sources: Vec<String>,
+    pub activity_sources: Vec<String>,
+    pub activity_source_counts: BTreeMap<String, u64>,
+    pub primary_source: String,
 }
 
 /// Correlation pair
