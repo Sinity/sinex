@@ -1,0 +1,77 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Completed activity session derived from trusted activity signals.",
+  "properties": {
+    "activity_source_counts": {
+      "additionalProperties": {
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "type": "object"
+    },
+    "activity_sources": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "duration_secs": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "end_time": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "event_count": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "primary_source": {
+      "type": "string"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "source_count": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "sources": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "start_time": {
+      "$ref": "#/$defs/DateTime"
+    }
+  },
+  "required": [
+    "session_id",
+    "start_time",
+    "end_time",
+    "duration_secs",
+    "event_count",
+    "source_count",
+    "sources",
+    "activity_sources",
+    "activity_source_counts",
+    "primary_source"
+  ],
+  "title": "ActivitySessionBoundaryPayload",
+  "type": "object",
+  "x-sinex-event-type": "activity.session.boundary",
+  "x-sinex-source": "derived.session-detector",
+  "x-sinex-version": "1.0.0"
+}
