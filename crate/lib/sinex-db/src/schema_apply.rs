@@ -57,8 +57,8 @@ pub async fn apply_schema_for_url(database_url: &str) -> Result<()> {
     let pool = create_pool_with_config(database_url, &config)
         .await
         .map_err(|e| {
-        SinexError::database("Failed to create pool for schema apply").with_std_error(&e)
-    })?;
+            SinexError::database("Failed to create pool for schema apply").with_std_error(&e)
+        })?;
 
     apply_schema(&pool).await?;
     pool.close().await;
