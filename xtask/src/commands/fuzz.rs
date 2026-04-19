@@ -5,6 +5,7 @@ use color_eyre::eyre::{Result, WrapErr, bail};
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::output::StructuredError;
@@ -283,6 +284,7 @@ fn execute_run(
         .arg(target_name);
 
     if max_time > 0 {
+        builder = builder.with_timeout(Duration::from_secs(max_time.saturating_add(300)));
         builder = builder.arg("--").arg(format!("-max_total_time={max_time}"));
     }
 

@@ -2056,7 +2056,7 @@ impl<'a> MotdRenderer<'a> {
             line.push_str(&format!(
                 " {} {}",
                 style(format!("+{} more", count - max_show)).dim(),
-                style("→ xtask jobs list --active").cyan()
+                style("→ xtask jobs active").cyan()
             ));
         }
 

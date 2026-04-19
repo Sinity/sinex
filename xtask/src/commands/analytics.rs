@@ -412,31 +412,98 @@ fn execute_resources(
 
     if rows.is_empty() {
         println!(
-            "No resource usage data found. Resource metrics are recorded for longer-running commands."
+            "No command-local resource usage data found. Metrics are recorded only once an invocation captures process-tree samples."
         );
         return Ok(CommandResult::success()
             .with_message("no resource data")
             .with_duration(ctx.elapsed()));
     }
 
-    println!("\n{}", style("Resource Usage (recent invocations):").bold());
+    println!(
+        "\n{}",
+        style("Command Resource Usage (recent invocations):").bold()
+    );
+    println!(
+        "{}",
+        style("  TREE columns cover xtask plus spawned descendants; shared-slice columns reflect shared cgroup pressure observed during the invocation window; XTASK columns isolate the root xtask wrapper process; host-wide metrics remain test-only legacy data")
+            .dim()
+    );
     let mut builder = Builder::new();
-    builder.push_record(["COMMAND", "STARTED", "DURATION", "CPU AVG %", "MEM MAX MB"]);
+    builder.push_record([
+        "COMMAND",
+        "STATUS",
+        "STARTED",
+        "DURATION",
+        "TREE CPU AVG %",
+        "TREE MEM MAX MB",
+        "NIXD CPU AVG %",
+        "NIXD MEM MAX MB",
+        "NIX-BUILD CPU AVG %",
+        "NIX-BUILD MEM MAX MB",
+        "BG CPU AVG %",
+        "BG MEM MAX MB",
+        "XTASK CPU AVG %",
+        "XTASK MEM MAX MB",
+        "MAX PROCS",
+        "SAMPLES",
+    ]);
+    let mut has_legacy_host_fallback = false;
     for r in &rows {
+        let cpu_cell = if let Some(cpu) = r.process_cpu_usage_avg {
+            format!("{cpu:.1}")
+        } else if let Some(cpu) = r.host_cpu_usage_avg {
+            has_legacy_host_fallback = true;
+            format!("{cpu:.1}h")
+        } else {
+            "-".to_string()
+        };
+        let mem_cell = if let Some(mem) = r.process_memory_usage_max_mb {
+            format!("{mem:.0}")
+        } else if let Some(mem) = r.host_memory_usage_max_mb {
+            has_legacy_host_fallback = true;
+            format!("{mem:.0}h")
+        } else {
+            "-".to_string()
+        };
         builder.push_record([
             &r.command,
+            &r.status,
             &r.started_at,
             &r.duration_secs
                 .map_or_else(|| "-".into(), |d| format!("{d:.1}s")),
-            &r.cpu_usage_avg
-                .map_or_else(|| "-".into(), |c| format!("{c:.1}")),
-            &r.memory_usage_max_mb
-                .map_or_else(|| "-".into(), |m| format!("{m:.0}")),
+            &cpu_cell,
+            &mem_cell,
+            &r.shared_nix_daemon_cpu_usage_avg
+                .map_or_else(|| "-".into(), |cpu| format!("{cpu:.1}")),
+            &r.shared_nix_daemon_memory_usage_max_mb
+                .map_or_else(|| "-".into(), |mem| format!("{mem:.0}")),
+            &r.shared_nix_build_slice_cpu_usage_avg
+                .map_or_else(|| "-".into(), |cpu| format!("{cpu:.1}")),
+            &r.shared_nix_build_slice_memory_usage_max_mb
+                .map_or_else(|| "-".into(), |mem| format!("{mem:.0}")),
+            &r.shared_background_slice_cpu_usage_avg
+                .map_or_else(|| "-".into(), |cpu| format!("{cpu:.1}")),
+            &r.shared_background_slice_memory_usage_max_mb
+                .map_or_else(|| "-".into(), |mem| format!("{mem:.0}")),
+            &r.root_process_cpu_usage_avg
+                .map_or_else(|| "-".into(), |cpu| format!("{cpu:.1}")),
+            &r.root_process_memory_usage_max_mb
+                .map_or_else(|| "-".into(), |mem| format!("{mem:.0}")),
+            &r.process_count_max
+                .map_or_else(|| "-".into(), |count| count.to_string()),
+            &r.sample_count
+                .map_or_else(|| "-".into(), |count| count.to_string()),
         ]);
     }
     let mut table = builder.build();
     table.with(Style::sharp());
     println!("{table}");
+    if has_legacy_host_fallback {
+        println!(
+            "{}",
+            style("  values suffixed with 'h' come from legacy host-wide samples recorded before command-local tracking").dim()
+        );
+    }
     println!();
 
     Ok(CommandResult::success()

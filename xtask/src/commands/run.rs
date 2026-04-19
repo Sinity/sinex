@@ -22,7 +22,10 @@ use crate::config::config;
 use crate::jobs::JobManager;
 use crate::orchestrator::{DevOrchestrator, RunArgs};
 use crate::preflight;
-use crate::process::cargo_tokio_command;
+use crate::process::{
+    ProcessBuilder, configure_managed_child_tokio, register_tokio_child_process_group,
+    terminate_tokio_child_process_group,
+};
 
 fn unix_timestamp_secs(now: std::time::SystemTime, context: &str) -> Result<u64> {
     now.duration_since(std::time::UNIX_EPOCH)
@@ -270,12 +273,10 @@ fn require_spawned_pid(pid: Option<u32>, binary: &str) -> Result<u32> {
 /// Returns `None` after 8 hours (D6 fix) — callers treat None as "kill everything",
 /// so a timeout causes a clean shutdown rather than an infinite poll.
 ///
-/// X5: Signal propagation note — for foreground children spawned with `kill_on_drop(true)`
-/// (X2 fix), Ctrl+C reaches the children directly via the terminal process group (SIGINT
-/// is broadcast to all processes sharing the controlling terminal). This function does
-/// not need to intercept SIGINT to forward it. A tokio::signal handler would add full
-/// programmatic control but is deferred as low-priority since terminal delivery is correct
-/// for the common interactive case.
+/// X5: Signal propagation note — foreground helpers become managed child process
+/// groups with a parent-death kill signal. Ctrl+C therefore does not rely on the
+/// terminal forwarding SIGINT into each child process group: if xtask exits, the
+/// child groups are torn down by the managed-process contract.
 async fn wait_for_any_child_exit(
     children: &mut HashMap<String, Child>,
     ctx: &CommandContext,
@@ -317,20 +318,9 @@ async fn stop_bundle_child(name: &str, child: &mut Child) -> Result<()> {
         return Ok(());
     }
 
-    match child.kill().await {
-        Ok(()) => {}
-        Err(error) => {
-            if child
-                .try_wait()
-                .with_context(|| format!("failed to repoll {name} after bundle kill failure"))?
-                .is_none()
-            {
-                return Err(
-                    eyre!(error).wrap_err(format!("failed to kill {name} during bundle shutdown"))
-                );
-            }
-        }
-    }
+    terminate_tokio_child_process_group(child, name, "bundle shutdown").with_context(|| {
+        format!("failed to terminate {name} process group during bundle shutdown")
+    })?;
 
     child
         .wait()
@@ -593,6 +583,13 @@ impl XtaskCommand for RunCommand {
 }
 
 impl RunCommand {
+    fn ensure_ready_staged(&self, ctx: &CommandContext) -> Result<()> {
+        let stage = ctx.start_stage("preflight");
+        let result = preflight::ensure_ready(ctx);
+        ctx.finish_stage(stage, result.is_ok());
+        result
+    }
+
     fn runs_single_binary(&self) -> bool {
         matches!(
             self.subcommand,
@@ -695,13 +692,17 @@ impl RunCommand {
     }
 
     async fn build_packages(&self, packages: &[&str], ctx: &CommandContext) -> Result<()> {
-        let mut build_cmd = cargo_tokio_command();
-        build_cmd.arg("build");
+        let stage = ctx.start_stage("build");
+        let mut build_cmd = ProcessBuilder::cargo()
+            .arg("build")
+            .current_dir(crate::config::workspace_root())
+            .inherit_output()
+            .with_description(format!("building packages: {}", packages.join(", ")));
         for package in packages {
-            build_cmd.arg("-p").arg(package);
+            build_cmd = build_cmd.arg("-p").arg(*package);
         }
         if self.release {
-            build_cmd.arg("--release");
+            build_cmd = build_cmd.arg("--release");
         }
 
         if ctx.is_human() {
@@ -709,9 +710,11 @@ impl RunCommand {
         }
 
         let status = build_cmd
-            .status()
+            .run_tokio_status()
             .await
-            .with_context(|| format!("Failed to build packages: {}", packages.join(", ")))?;
+            .with_context(|| format!("Failed to build packages: {}", packages.join(", ")));
+        ctx.finish_stage(stage, status.as_ref().is_ok_and(|status| status.success()));
+        let status = status?;
         if !status.success() {
             bail!("Failed to build packages: {}", packages.join(", "));
         }
@@ -770,7 +773,7 @@ impl RunCommand {
     ) -> Result<CommandResult> {
         // Ensure infrastructure is ready (binaries need DB + NATS)
         if !self.dry_run {
-            preflight::ensure_ready(ctx)?;
+            self.ensure_ready_staged(ctx)?;
         }
 
         if self.dry_run {
@@ -883,6 +886,7 @@ impl RunCommand {
             }
 
             let mut cmd = Command::new(&binary_path);
+            configure_managed_child_tokio(&mut cmd);
             cmd.args(runtime_cli_args(package, &instance_id));
 
             let (stdout_io, stderr_io) = if pipe_output {
@@ -898,6 +902,7 @@ impl RunCommand {
                 .kill_on_drop(true)
                 .spawn()
                 .with_context(|| format!("Failed to spawn {name}"))?;
+            register_tokio_child_process_group(&child, name);
 
             if pipe_output {
                 let pid = require_spawned_pid(child.id(), name)?;
@@ -938,6 +943,7 @@ impl RunCommand {
 
         self.maybe_spawn_metrics_overlay(ctx);
 
+        let run_stage = ctx.start_stage("bundle-run");
         let exited_name = wait_for_any_child_exit(&mut children, ctx).await;
 
         // Kill remaining children
@@ -956,11 +962,13 @@ impl RunCommand {
             }
         }
         if !shutdown_failures.is_empty() {
+            ctx.finish_stage(run_stage, false);
             bail!(
                 "failed to stop remaining bundle processes:\n{}",
                 shutdown_failures.join("\n")
             );
         }
+        ctx.finish_stage(run_stage, true);
 
         Ok(CommandResult::success()
             .with_message(format!(
@@ -994,12 +1002,22 @@ impl RunCommand {
         self.maybe_spawn_metrics_overlay(ctx);
         let runtime_env = self.local_run_env_vars();
 
-        let status = cargo_tokio_command()
+        let run_stage = ctx.start_stage("run");
+        let status = ProcessBuilder::cargo()
             .args(&args)
             .envs(runtime_env)
-            .status()
+            .current_dir(crate::config::workspace_root())
+            .inherit_output()
+            .without_timeout()
+            .with_description(format!("running {package}"))
+            .run_tokio_status()
             .await
-            .with_context(|| format!("Failed to run {package}"))?;
+            .with_context(|| format!("Failed to run {package}"));
+        ctx.finish_stage(
+            run_stage,
+            status.as_ref().is_ok_and(|status| status.success()),
+        );
+        let status = status?;
 
         let run_result = RunResult {
             binary: package.to_string(),
@@ -1038,15 +1056,26 @@ impl RunCommand {
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         // Step 1: build
-        let mut build_args = vec!["build".to_string(), "-p".to_string(), package.to_string()];
+        let build_stage = ctx.start_stage("build");
+        let mut build = ProcessBuilder::cargo()
+            .arg("build")
+            .arg("-p")
+            .arg(package)
+            .current_dir(crate::config::workspace_root())
+            .inherit_output()
+            .with_description(format!("building {package}"));
         if self.release {
-            build_args.push("--release".to_string());
+            build = build.arg("--release");
         }
-        let build_status = cargo_tokio_command()
-            .args(&build_args)
-            .status()
+        let build_status = build
+            .run_tokio_status()
             .await
-            .with_context(|| format!("Failed to build {package}"))?;
+            .with_context(|| format!("Failed to build {package}"));
+        ctx.finish_stage(
+            build_stage,
+            build_status.as_ref().is_ok_and(|status| status.success()),
+        );
+        let build_status = build_status?;
         if !build_status.success() {
             return Ok(CommandResult::failure(crate::output::StructuredError {
                 code: "BUILD_FAILED".to_string(),
@@ -1060,6 +1089,7 @@ impl RunCommand {
         let binary_path = target_binary_path(self.release, binary);
 
         let mut cmd = Command::new(&binary_path);
+        configure_managed_child_tokio(&mut cmd);
         cmd.args(runtime_cli_args(package, instance_id));
         cmd.envs(self.local_run_env_vars());
 
@@ -1077,6 +1107,7 @@ impl RunCommand {
             .iter()
             .find(|(_, pkg, _)| *pkg == package)
             .map_or(binary, |(n, _, _)| *n);
+        register_tokio_child_process_group(&child, short_name);
 
         let journal_path = self
             .dev_journal
@@ -1110,7 +1141,15 @@ impl RunCommand {
             println!("{short_name} running (pid {pid}). Press Ctrl+C to stop.");
         }
 
-        let exit_status = child.wait().await?;
+        let run_stage = ctx.start_stage("run");
+        let exit_status = child.wait().await;
+        ctx.finish_stage(
+            run_stage,
+            exit_status
+                .as_ref()
+                .is_ok_and(std::process::ExitStatus::success),
+        );
+        let exit_status = exit_status?;
 
         let run_result = RunResult {
             binary: package.to_string(),
@@ -1201,7 +1240,10 @@ impl RunCommand {
 
         let mut orchestrator = DevOrchestrator::new(args, workspace_utf8);
         self.maybe_spawn_metrics_overlay(ctx);
-        orchestrator.run().await?;
+        let watch_stage = ctx.start_stage("watch");
+        let result = orchestrator.run().await;
+        ctx.finish_stage(watch_stage, result.is_ok());
+        result?;
 
         Ok(CommandResult::success()
             .with_message("Watch mode ended")
@@ -1668,6 +1710,48 @@ mod tests {
         child.wait().await?;
 
         stop_bundle_child("test child", &mut child).await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_stop_bundle_child_kills_child_process_group() -> ::xtask::sandbox::TestResult<()>
+    {
+        use std::os::unix::process::ExitStatusExt;
+
+        let mut command = tokio::process::Command::new("sh");
+        configure_managed_child_tokio(&mut command);
+        command
+            .arg("-c")
+            .arg("sleep 30 & echo $!; wait")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+
+        let mut child = command.spawn()?;
+        let stdout = child.stdout.take().expect("stdout should be piped");
+        let mut lines = BufReader::new(stdout).lines();
+        let sleep_pid = lines
+            .next_line()
+            .await?
+            .expect("shell should print background child pid")
+            .parse::<i32>()?;
+
+        stop_bundle_child("test child", &mut child).await?;
+
+        assert!(
+            child.try_wait()?.is_some(),
+            "terminated bundle child should be reaped"
+        );
+        assert_ne!(
+            unsafe { libc::kill(sleep_pid, 0) },
+            0,
+            "background process in the bundle child group should be gone"
+        );
+
+        let status = child.wait().await?;
+        assert!(
+            status.signal().is_some() || !status.success(),
+            "terminated bundle child should not report clean success"
+        );
         Ok(())
     }
 }

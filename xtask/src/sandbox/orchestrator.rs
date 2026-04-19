@@ -59,10 +59,8 @@ async fn terminate_test_child(child: &mut tokio::process::Child, process_name: &
         return Ok(());
     }
 
-    child
-        .kill()
-        .await
-        .wrap_err_with(|| format!("failed to kill {process_name} child process"))?;
+    crate::process::terminate_tokio_child_process_group(child, process_name, "sandbox stop")
+        .wrap_err_with(|| format!("failed to terminate {process_name} process group"))?;
     child
         .wait()
         .await
@@ -268,13 +266,7 @@ async fn start_test_gateway_inner(
     let listen_str = actual_addr.to_string();
 
     let mut cmd = tokio::process::Command::new(&binary_path);
-    #[cfg(target_os = "linux")]
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
-            Ok(())
-        });
-    }
+    crate::process::configure_managed_child_tokio(&mut cmd);
     cmd.args(["rpc-server", "--tcp-listen", &listen_str])
         .env("DATABASE_URL", &config.database_url)
         .env("SINEX_NATS_URL", &config.nats_url)
@@ -301,6 +293,7 @@ async fn start_test_gateway_inner(
         .kill_on_drop(true);
 
     let child = cmd.spawn()?;
+    crate::process::register_tokio_child_process_group(&child, "sandbox gateway");
 
     let mut handle = TestGatewayHandle {
         addr: actual_addr,
@@ -389,13 +382,7 @@ pub async fn start_test_ingestd_with_config(
     // tracing_subscriber::fmt() defaults to stdout in 0.3.x, so we need >{file} 2>&1.
     let debug_log = ingestd_debug_log_path_for_test_process();
     let mut cmd = Command::new("bash");
-    #[cfg(target_os = "linux")]
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
-            Ok(())
-        });
-    }
+    crate::process::configure_managed_child_tokio(&mut cmd);
     cmd.arg("-c").arg(format!(
         "exec {} --pool-size {} >{} 2>&1",
         binary_path.display(),
@@ -445,6 +432,7 @@ pub async fn start_test_ingestd_with_config(
     cmd.stdin(Stdio::null()).kill_on_drop(true);
 
     let child = cmd.spawn()?;
+    crate::process::register_tokio_child_process_group(&child, "sandbox ingestd");
 
     // Compute the stream name using the same logic as ingestd:
     // environment-prefixed base name, with optional namespace suffix.

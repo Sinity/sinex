@@ -17,6 +17,7 @@ use tokio::process;
 
 use crate::config::config;
 use crate::history::{BackgroundJob, HistoryDb, InvocationStatus, JobLifecycleStatus};
+use crate::process::configure_background_job_child_tokio;
 
 /// A handle to a background job (backed by `HistoryDb`).
 #[derive(Clone)]
@@ -481,15 +482,7 @@ impl JobManager {
             cmd.env(key, value);
         }
 
-        // Make the child its own process group leader so the coordinator can
-        // kill the entire group (cargo + rustc/nextest children) via kill(-pid).
-        // SAFETY: setpgid is async-signal-safe per POSIX.
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::setpgid(0, 0);
-                Ok(())
-            });
-        }
+        configure_background_job_child_tokio(&mut cmd);
 
         let child = cmd
             .spawn()

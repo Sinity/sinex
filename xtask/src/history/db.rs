@@ -534,6 +534,7 @@ impl HistoryDb {
             is_synthetic: false,
         };
         db.init_schema()?;
+        db.ensure_compat_schema()?;
         db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
         Ok(db)
     }
@@ -625,6 +626,7 @@ impl HistoryDb {
                 is_synthetic: false,
             };
             db.init_schema()?;
+            db.ensure_compat_schema()?;
             db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
             refresh_history_integrity_stamp(path, OffsetDateTime::now_utc());
             return Ok(db);
@@ -671,6 +673,7 @@ impl HistoryDb {
                     is_synthetic: false,
                 };
                 db.init_schema()?;
+                db.ensure_compat_schema()?;
                 db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
                 refresh_history_integrity_stamp(path, OffsetDateTime::now_utc());
                 return Ok(db);
@@ -729,6 +732,7 @@ impl HistoryDb {
                     is_synthetic: false,
                 };
                 recreated.init_schema()?;
+                recreated.ensure_compat_schema()?;
                 recreated.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
                 refresh_history_integrity_stamp(path, OffsetDateTime::now_utc());
                 return Ok(recreated);
@@ -757,9 +761,11 @@ impl HistoryDb {
             }
             db.drop_all_tables()?;
             db.init_schema()?;
+            db.ensure_compat_schema()?;
             db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
             refresh_history_integrity_stamp(path, OffsetDateTime::now_utc());
         }
+        db.ensure_compat_schema()?;
         db.is_synthetic = db.check_synthetic()?;
         if let Err(error) = db.with_busy_timeout(
             SQLITE_STALE_CLEANUP_BUSY_TIMEOUT,
@@ -852,6 +858,18 @@ impl HistoryDb {
                 stderr_content TEXT,
                 cpu_usage_avg REAL,
                 memory_usage_max_mb REAL,
+                process_cpu_usage_avg REAL,
+                process_memory_usage_max_mb REAL,
+                root_process_cpu_usage_avg REAL,
+                root_process_memory_usage_max_mb REAL,
+                shared_nix_daemon_cpu_usage_avg REAL,
+                shared_nix_daemon_memory_usage_max_mb REAL,
+                shared_nix_build_slice_cpu_usage_avg REAL,
+                shared_nix_build_slice_memory_usage_max_mb REAL,
+                shared_background_slice_cpu_usage_avg REAL,
+                shared_background_slice_memory_usage_max_mb REAL,
+                process_count_max INTEGER,
+                resource_sample_count INTEGER,
                 tree_fingerprint TEXT,
                 scope_key TEXT,
                 live_stage TEXT,
@@ -1044,6 +1062,79 @@ impl HistoryDb {
             CREATE INDEX IF NOT EXISTS idx_exercise_results_id ON exercise_results(exercise_id);
             ",
         )?;
+        Ok(())
+    }
+
+    fn ensure_column_exists(&self, table: &str, column: &str, definition: &str) -> Result<()> {
+        if self.column_exists(table, column)? {
+            return Ok(());
+        }
+
+        let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {definition}");
+        with_sqlite_lock_retry(
+            &format!("add {table}.{column} compatibility column"),
+            || match self.conn.execute(&sql, []) {
+                Ok(_) => Ok(()),
+                Err(error) => {
+                    if self.column_exists(table, column)? {
+                        return Ok(());
+                    }
+                    Err(error).with_context(|| {
+                        format!("failed to add {table}.{column} compatibility column")
+                    })
+                }
+            },
+        )?;
+        Ok(())
+    }
+
+    fn column_exists(&self, table: &str, column: &str) -> Result<bool> {
+        let pragma = format!("PRAGMA table_info({table})");
+        let mut stmt = self
+            .conn
+            .prepare(&pragma)
+            .with_context(|| format!("failed to inspect {table} columns"))?;
+        let exists = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .flatten()
+            .any(|name| name == column);
+
+        Ok(exists)
+    }
+
+    fn ensure_compat_schema(&self) -> Result<()> {
+        self.ensure_column_exists("invocations", "process_cpu_usage_avg", "REAL")?;
+        self.ensure_column_exists("invocations", "process_memory_usage_max_mb", "REAL")?;
+        self.ensure_column_exists("invocations", "root_process_cpu_usage_avg", "REAL")?;
+        self.ensure_column_exists("invocations", "root_process_memory_usage_max_mb", "REAL")?;
+        self.ensure_column_exists("invocations", "shared_nix_daemon_cpu_usage_avg", "REAL")?;
+        self.ensure_column_exists(
+            "invocations",
+            "shared_nix_daemon_memory_usage_max_mb",
+            "REAL",
+        )?;
+        self.ensure_column_exists(
+            "invocations",
+            "shared_nix_build_slice_cpu_usage_avg",
+            "REAL",
+        )?;
+        self.ensure_column_exists(
+            "invocations",
+            "shared_nix_build_slice_memory_usage_max_mb",
+            "REAL",
+        )?;
+        self.ensure_column_exists(
+            "invocations",
+            "shared_background_slice_cpu_usage_avg",
+            "REAL",
+        )?;
+        self.ensure_column_exists(
+            "invocations",
+            "shared_background_slice_memory_usage_max_mb",
+            "REAL",
+        )?;
+        self.ensure_column_exists("invocations", "process_count_max", "INTEGER")?;
+        self.ensure_column_exists("invocations", "resource_sample_count", "INTEGER")?;
         Ok(())
     }
 
@@ -2137,7 +2228,7 @@ impl HistoryDb {
         Ok(())
     }
 
-    /// Record system resource metrics for an invocation.
+    /// Record host-level resource metrics for an invocation.
     pub fn record_system_metrics(
         &self,
         invocation_id: i64,
@@ -2155,18 +2246,172 @@ impl HistoryDb {
         Ok(())
     }
 
+    /// Record invocation-local resource metrics for an invocation.
+    pub fn record_resource_metrics(
+        &self,
+        invocation_id: i64,
+        metrics: &crate::process::InvocationResourceMetrics,
+    ) -> Result<()> {
+        self.ensure_compat_schema()?;
+        self.conn.execute(
+            r"
+            UPDATE invocations
+            SET process_cpu_usage_avg = ?1,
+                process_memory_usage_max_mb = ?2,
+                root_process_cpu_usage_avg = ?3,
+                root_process_memory_usage_max_mb = ?4,
+                shared_nix_daemon_cpu_usage_avg = ?5,
+                shared_nix_daemon_memory_usage_max_mb = ?6,
+                shared_nix_build_slice_cpu_usage_avg = ?7,
+                shared_nix_build_slice_memory_usage_max_mb = ?8,
+                shared_background_slice_cpu_usage_avg = ?9,
+                shared_background_slice_memory_usage_max_mb = ?10,
+                process_count_max = ?11,
+                resource_sample_count = ?12
+            WHERE id = ?13
+            ",
+            params![
+                metrics.process_tree.cpu_usage_avg,
+                metrics.process_tree.memory_usage_max_mb,
+                metrics.process_tree.root_cpu_usage_avg,
+                metrics.process_tree.root_memory_usage_max_mb,
+                metrics.shared_build.shared_nix_daemon_cpu_usage_avg,
+                metrics.shared_build.shared_nix_daemon_memory_usage_max_mb,
+                metrics.shared_build.shared_nix_build_slice_cpu_usage_avg,
+                metrics
+                    .shared_build
+                    .shared_nix_build_slice_memory_usage_max_mb,
+                metrics.shared_build.shared_background_slice_cpu_usage_avg,
+                metrics
+                    .shared_build
+                    .shared_background_slice_memory_usage_max_mb,
+                metrics.process_tree.process_count_max.map(i64::from),
+                i64::from(metrics.process_tree.sample_count),
+                invocation_id
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn invocation_columns(&self) -> Result<HashSet<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("PRAGMA table_info(invocations)")
+            .context("failed to inspect invocation history schema")?;
+        let mut columns = HashSet::new();
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        for row in rows {
+            columns.insert(row?);
+        }
+        Ok(columns)
+    }
+
     /// Get resource usage (CPU/memory) for recent invocations.
     pub fn get_resource_usage(
         &self,
         command_filter: Option<&str>,
         limit: usize,
     ) -> Result<Vec<ResourceUsage>> {
-        let mut query = String::from(
-            r"SELECT command, started_at, duration_secs, cpu_usage_avg, memory_usage_max_mb
+        let columns = self.invocation_columns()?;
+        let process_cpu_expr = if columns.contains("process_cpu_usage_avg") {
+            "process_cpu_usage_avg"
+        } else {
+            "NULL"
+        };
+        let process_mem_expr = if columns.contains("process_memory_usage_max_mb") {
+            "process_memory_usage_max_mb"
+        } else {
+            "NULL"
+        };
+        let root_process_cpu_expr = if columns.contains("root_process_cpu_usage_avg") {
+            "root_process_cpu_usage_avg"
+        } else {
+            "NULL"
+        };
+        let root_process_mem_expr = if columns.contains("root_process_memory_usage_max_mb") {
+            "root_process_memory_usage_max_mb"
+        } else {
+            "NULL"
+        };
+        let shared_nix_daemon_cpu_expr = if columns.contains("shared_nix_daemon_cpu_usage_avg") {
+            "shared_nix_daemon_cpu_usage_avg"
+        } else {
+            "NULL"
+        };
+        let shared_nix_daemon_mem_expr =
+            if columns.contains("shared_nix_daemon_memory_usage_max_mb") {
+                "shared_nix_daemon_memory_usage_max_mb"
+            } else {
+                "NULL"
+            };
+        let shared_nix_build_cpu_expr = if columns.contains("shared_nix_build_slice_cpu_usage_avg")
+        {
+            "shared_nix_build_slice_cpu_usage_avg"
+        } else {
+            "NULL"
+        };
+        let shared_nix_build_mem_expr =
+            if columns.contains("shared_nix_build_slice_memory_usage_max_mb") {
+                "shared_nix_build_slice_memory_usage_max_mb"
+            } else {
+                "NULL"
+            };
+        let shared_background_cpu_expr =
+            if columns.contains("shared_background_slice_cpu_usage_avg") {
+                "shared_background_slice_cpu_usage_avg"
+            } else {
+                "NULL"
+            };
+        let shared_background_mem_expr =
+            if columns.contains("shared_background_slice_memory_usage_max_mb") {
+                "shared_background_slice_memory_usage_max_mb"
+            } else {
+                "NULL"
+            };
+        let process_count_expr = if columns.contains("process_count_max") {
+            "process_count_max"
+        } else {
+            "NULL"
+        };
+        let sample_count_expr = if columns.contains("resource_sample_count") {
+            "resource_sample_count"
+        } else {
+            "NULL"
+        };
+        let mut query = String::from(&format!(
+            r"SELECT command,
+                         status,
+                         started_at,
+                         duration_secs,
+                         {process_cpu_expr},
+                         {process_mem_expr},
+                         {root_process_cpu_expr},
+                         {root_process_mem_expr},
+                         {shared_nix_daemon_cpu_expr},
+                         {shared_nix_daemon_mem_expr},
+                         {shared_nix_build_cpu_expr},
+                         {shared_nix_build_mem_expr},
+                         {shared_background_cpu_expr},
+                         {shared_background_mem_expr},
+                         {process_count_expr},
+                         {sample_count_expr},
+                         cpu_usage_avg,
+                         memory_usage_max_mb
               FROM invocations
-              WHERE status = 'success'
-                AND cpu_usage_avg IS NOT NULL",
-        );
+              WHERE status != 'running'
+               AND ({process_cpu_expr} IS NOT NULL
+                     OR {process_mem_expr} IS NOT NULL
+                     OR {root_process_cpu_expr} IS NOT NULL
+                     OR {root_process_mem_expr} IS NOT NULL
+                     OR {shared_nix_daemon_cpu_expr} IS NOT NULL
+                     OR {shared_nix_daemon_mem_expr} IS NOT NULL
+                     OR {shared_nix_build_cpu_expr} IS NOT NULL
+                     OR {shared_nix_build_mem_expr} IS NOT NULL
+                     OR {shared_background_cpu_expr} IS NOT NULL
+                     OR {shared_background_mem_expr} IS NOT NULL
+                     OR cpu_usage_avg IS NOT NULL
+                     OR memory_usage_max_mb IS NOT NULL)",
+        ));
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         let mut param_idx = 1usize;
 
@@ -2186,10 +2431,23 @@ impl HistoryDb {
         let rows = stmt.query_map(rusqlite::params_from_iter(params_refs), |row| {
             Ok(ResourceUsage {
                 command: row.get(0)?,
-                started_at: row.get(1)?,
-                duration_secs: row.get(2)?,
-                cpu_usage_avg: row.get(3)?,
-                memory_usage_max_mb: row.get(4)?,
+                status: row.get(1)?,
+                started_at: row.get(2)?,
+                duration_secs: row.get(3)?,
+                process_cpu_usage_avg: row.get(4)?,
+                process_memory_usage_max_mb: row.get(5)?,
+                root_process_cpu_usage_avg: row.get(6)?,
+                root_process_memory_usage_max_mb: row.get(7)?,
+                shared_nix_daemon_cpu_usage_avg: row.get(8)?,
+                shared_nix_daemon_memory_usage_max_mb: row.get(9)?,
+                shared_nix_build_slice_cpu_usage_avg: row.get(10)?,
+                shared_nix_build_slice_memory_usage_max_mb: row.get(11)?,
+                shared_background_slice_cpu_usage_avg: row.get(12)?,
+                shared_background_slice_memory_usage_max_mb: row.get(13)?,
+                process_count_max: row.get::<_, Option<i64>>(14)?.map(|value| value as u32),
+                sample_count: row.get::<_, Option<i64>>(15)?.map(|value| value as u32),
+                host_cpu_usage_avg: row.get(16)?,
+                host_memory_usage_max_mb: row.get(17)?,
             })
         })?;
 
@@ -2200,12 +2458,158 @@ impl HistoryDb {
         Ok(results)
     }
 
+    /// Get resource usage (CPU/memory/process count) for a specific invocation.
+    pub fn get_resource_usage_for_invocation(
+        &self,
+        invocation_id: i64,
+    ) -> Result<Option<ResourceUsage>> {
+        let columns = self.invocation_columns()?;
+        let process_cpu_expr = if columns.contains("process_cpu_usage_avg") {
+            "process_cpu_usage_avg"
+        } else {
+            "NULL"
+        };
+        let process_mem_expr = if columns.contains("process_memory_usage_max_mb") {
+            "process_memory_usage_max_mb"
+        } else {
+            "NULL"
+        };
+        let root_process_cpu_expr = if columns.contains("root_process_cpu_usage_avg") {
+            "root_process_cpu_usage_avg"
+        } else {
+            "NULL"
+        };
+        let root_process_mem_expr = if columns.contains("root_process_memory_usage_max_mb") {
+            "root_process_memory_usage_max_mb"
+        } else {
+            "NULL"
+        };
+        let shared_nix_daemon_cpu_expr = if columns.contains("shared_nix_daemon_cpu_usage_avg") {
+            "shared_nix_daemon_cpu_usage_avg"
+        } else {
+            "NULL"
+        };
+        let shared_nix_daemon_mem_expr =
+            if columns.contains("shared_nix_daemon_memory_usage_max_mb") {
+                "shared_nix_daemon_memory_usage_max_mb"
+            } else {
+                "NULL"
+            };
+        let shared_nix_build_cpu_expr = if columns.contains("shared_nix_build_slice_cpu_usage_avg")
+        {
+            "shared_nix_build_slice_cpu_usage_avg"
+        } else {
+            "NULL"
+        };
+        let shared_nix_build_mem_expr =
+            if columns.contains("shared_nix_build_slice_memory_usage_max_mb") {
+                "shared_nix_build_slice_memory_usage_max_mb"
+            } else {
+                "NULL"
+            };
+        let shared_background_cpu_expr =
+            if columns.contains("shared_background_slice_cpu_usage_avg") {
+                "shared_background_slice_cpu_usage_avg"
+            } else {
+                "NULL"
+            };
+        let shared_background_mem_expr =
+            if columns.contains("shared_background_slice_memory_usage_max_mb") {
+                "shared_background_slice_memory_usage_max_mb"
+            } else {
+                "NULL"
+            };
+        let process_count_expr = if columns.contains("process_count_max") {
+            "process_count_max"
+        } else {
+            "NULL"
+        };
+        let sample_count_expr = if columns.contains("resource_sample_count") {
+            "resource_sample_count"
+        } else {
+            "NULL"
+        };
+
+        let query = format!(
+            r"SELECT command,
+                     status,
+                     started_at,
+                     duration_secs,
+                     {process_cpu_expr},
+                     {process_mem_expr},
+                     {root_process_cpu_expr},
+                     {root_process_mem_expr},
+                     {shared_nix_daemon_cpu_expr},
+                     {shared_nix_daemon_mem_expr},
+                     {shared_nix_build_cpu_expr},
+                     {shared_nix_build_mem_expr},
+                     {shared_background_cpu_expr},
+                     {shared_background_mem_expr},
+                     {process_count_expr},
+                     {sample_count_expr},
+                     cpu_usage_avg,
+                     memory_usage_max_mb
+              FROM invocations
+              WHERE id = ?1
+              LIMIT 1"
+        );
+
+        let usage = self
+            .conn
+            .query_row(&query, params![invocation_id], |row| {
+                Ok(ResourceUsage {
+                    command: row.get(0)?,
+                    status: row.get(1)?,
+                    started_at: row.get(2)?,
+                    duration_secs: row.get(3)?,
+                    process_cpu_usage_avg: row.get(4)?,
+                    process_memory_usage_max_mb: row.get(5)?,
+                    root_process_cpu_usage_avg: row.get(6)?,
+                    root_process_memory_usage_max_mb: row.get(7)?,
+                    shared_nix_daemon_cpu_usage_avg: row.get(8)?,
+                    shared_nix_daemon_memory_usage_max_mb: row.get(9)?,
+                    shared_nix_build_slice_cpu_usage_avg: row.get(10)?,
+                    shared_nix_build_slice_memory_usage_max_mb: row.get(11)?,
+                    shared_background_slice_cpu_usage_avg: row.get(12)?,
+                    shared_background_slice_memory_usage_max_mb: row.get(13)?,
+                    process_count_max: row.get::<_, Option<i64>>(14)?.map(|value| value as u32),
+                    sample_count: row.get::<_, Option<i64>>(15)?.map(|value| value as u32),
+                    host_cpu_usage_avg: row.get(16)?,
+                    host_memory_usage_max_mb: row.get(17)?,
+                })
+            })
+            .optional()
+            .context("failed to get resource usage for invocation")?;
+
+        Ok(usage.filter(ResourceUsage::has_samples))
+    }
+
     /// Get count of invocations.
     pub fn count(&self) -> Result<usize> {
         let count: usize = self
             .conn
             .query_row("SELECT COUNT(*) FROM invocations", [], |row| row.get(0))?;
         Ok(count)
+    }
+
+    /// Return the running background job PID for an invocation, if any.
+    pub fn get_running_job_pid_for_invocation(&self, invocation_id: i64) -> Result<Option<u32>> {
+        self.conn
+            .query_row(
+                r"
+                SELECT pid
+                FROM background_jobs
+                WHERE invocation_id = ?1
+                  AND job_status = 'running'
+                  AND pid IS NOT NULL
+                ORDER BY id DESC
+                LIMIT 1
+                ",
+                params![invocation_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .context("failed to get running background job pid for invocation")
     }
 
     // ============ Background Job Methods ============
@@ -4033,10 +4437,43 @@ pub struct DiagnosticDelta {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceUsage {
     pub command: String,
+    pub status: String,
     pub started_at: String,
     pub duration_secs: Option<f64>,
-    pub cpu_usage_avg: Option<f64>,
-    pub memory_usage_max_mb: Option<f64>,
+    pub process_cpu_usage_avg: Option<f64>,
+    pub process_memory_usage_max_mb: Option<f64>,
+    pub root_process_cpu_usage_avg: Option<f64>,
+    pub root_process_memory_usage_max_mb: Option<f64>,
+    pub shared_nix_daemon_cpu_usage_avg: Option<f64>,
+    pub shared_nix_daemon_memory_usage_max_mb: Option<f64>,
+    pub shared_nix_build_slice_cpu_usage_avg: Option<f64>,
+    pub shared_nix_build_slice_memory_usage_max_mb: Option<f64>,
+    pub shared_background_slice_cpu_usage_avg: Option<f64>,
+    pub shared_background_slice_memory_usage_max_mb: Option<f64>,
+    pub process_count_max: Option<u32>,
+    pub sample_count: Option<u32>,
+    pub host_cpu_usage_avg: Option<f64>,
+    pub host_memory_usage_max_mb: Option<f64>,
+}
+
+impl ResourceUsage {
+    #[must_use]
+    pub fn has_samples(&self) -> bool {
+        self.process_cpu_usage_avg.is_some()
+            || self.process_memory_usage_max_mb.is_some()
+            || self.root_process_cpu_usage_avg.is_some()
+            || self.root_process_memory_usage_max_mb.is_some()
+            || self.shared_nix_daemon_cpu_usage_avg.is_some()
+            || self.shared_nix_daemon_memory_usage_max_mb.is_some()
+            || self.shared_nix_build_slice_cpu_usage_avg.is_some()
+            || self.shared_nix_build_slice_memory_usage_max_mb.is_some()
+            || self.shared_background_slice_cpu_usage_avg.is_some()
+            || self.shared_background_slice_memory_usage_max_mb.is_some()
+            || self.process_count_max.is_some()
+            || self.sample_count.is_some()
+            || self.host_cpu_usage_avg.is_some()
+            || self.host_memory_usage_max_mb.is_some()
+    }
 }
 
 /// Stage timing summary entry (G2 — slowest stages view).
@@ -6130,6 +6567,206 @@ mod tests {
             .get_transition_probability("check", "test", 5, 20)
             .expect_err("transition probability query failures should surface");
         assert!(format!("{error:#}").contains("failed to compute transition probability"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_db_open_adds_process_resource_columns_compatibly() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-resource-compat.db");
+        let db = HistoryDb::open(&db_path)?;
+        db.conn.execute_batch(
+            r"
+            ALTER TABLE invocations RENAME TO invocations_old;
+            CREATE TABLE invocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                command TEXT NOT NULL,
+                subcommand TEXT,
+                profile TEXT,
+                args_json TEXT,
+                git_commit TEXT,
+                git_dirty INTEGER DEFAULT 0,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                duration_secs REAL,
+                exit_code INTEGER,
+                status TEXT NOT NULL DEFAULT 'running',
+                host TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                pid INTEGER,
+                is_background INTEGER DEFAULT 0,
+                stdout_path TEXT,
+                stderr_path TEXT,
+                stdout_content TEXT,
+                stderr_content TEXT,
+                cpu_usage_avg REAL,
+                memory_usage_max_mb REAL,
+                tree_fingerprint TEXT,
+                scope_key TEXT,
+                live_stage TEXT,
+                launch_mode TEXT DEFAULT 'foreground'
+            );
+            INSERT INTO invocations (command, started_at, status, host, cwd, cpu_usage_avg, memory_usage_max_mb)
+            VALUES ('test', '2026-04-18T00:00:00Z', 'success', 'localhost', '/tmp', 12.5, 256.0);
+            DROP TABLE invocations_old;
+            ",
+        )?;
+        drop(db);
+
+        let reopened = HistoryDb::open(&db_path)?;
+        let mut stmt = reopened.conn.prepare("PRAGMA table_info(invocations)")?;
+        let mut columns = HashSet::new();
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        for row in rows {
+            columns.insert(row?);
+        }
+
+        assert!(columns.contains("process_cpu_usage_avg"));
+        assert!(columns.contains("process_memory_usage_max_mb"));
+        assert!(columns.contains("root_process_cpu_usage_avg"));
+        assert!(columns.contains("root_process_memory_usage_max_mb"));
+        assert!(columns.contains("shared_nix_daemon_cpu_usage_avg"));
+        assert!(columns.contains("shared_nix_daemon_memory_usage_max_mb"));
+        assert!(columns.contains("shared_nix_build_slice_cpu_usage_avg"));
+        assert!(columns.contains("shared_nix_build_slice_memory_usage_max_mb"));
+        assert!(columns.contains("shared_background_slice_cpu_usage_avg"));
+        assert!(columns.contains("shared_background_slice_memory_usage_max_mb"));
+        assert!(columns.contains("process_count_max"));
+        assert!(columns.contains("resource_sample_count"));
+
+        let resources = reopened.get_resource_usage(None, 5)?;
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0].host_cpu_usage_avg, Some(12.5));
+        assert_eq!(resources[0].host_memory_usage_max_mb, Some(256.0));
+        assert_eq!(resources[0].process_cpu_usage_avg, None);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_db_open_upgrades_compat_schema_under_concurrent_access() -> TestResult<()>
+    {
+        let dir = tempdir()?;
+        let db_path = dir
+            .path()
+            .join("test-history-resource-compat-concurrent.db");
+        let db = HistoryDb::open(&db_path)?;
+        db.conn.execute_batch(
+            r"
+            ALTER TABLE invocations RENAME TO invocations_old;
+            CREATE TABLE invocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                command TEXT NOT NULL,
+                subcommand TEXT,
+                profile TEXT,
+                args_json TEXT,
+                git_commit TEXT,
+                git_dirty INTEGER DEFAULT 0,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                duration_secs REAL,
+                exit_code INTEGER,
+                status TEXT NOT NULL DEFAULT 'running',
+                host TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                pid INTEGER,
+                is_background INTEGER DEFAULT 0,
+                stdout_path TEXT,
+                stderr_path TEXT,
+                stdout_content TEXT,
+                stderr_content TEXT,
+                cpu_usage_avg REAL,
+                memory_usage_max_mb REAL,
+                tree_fingerprint TEXT,
+                scope_key TEXT,
+                live_stage TEXT,
+                launch_mode TEXT DEFAULT 'foreground'
+            );
+            INSERT INTO invocations (command, started_at, status, host, cwd)
+            VALUES ('check', '2026-04-18T00:00:00Z', 'success', 'localhost', '/tmp');
+            DROP TABLE invocations_old;
+            ",
+        )?;
+        drop(db);
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let db_path_a = db_path.clone();
+        let barrier_a = barrier.clone();
+        let open_a = std::thread::spawn(move || {
+            barrier_a.wait();
+            HistoryDb::open(&db_path_a)
+        });
+
+        let db_path_b = db_path.clone();
+        let barrier_b = barrier.clone();
+        let open_b = std::thread::spawn(move || {
+            barrier_b.wait();
+            HistoryDb::open(&db_path_b)
+        });
+
+        let first = open_a.join().expect("first open thread should join")?;
+        let second = open_b.join().expect("second open thread should join")?;
+
+        assert!(first.column_exists("invocations", "shared_background_slice_cpu_usage_avg")?);
+        assert!(
+            second.column_exists("invocations", "shared_background_slice_memory_usage_max_mb")?
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_get_resource_usage_for_invocation_prefers_process_metrics() -> TestResult<()> {
+        let db = HistoryDb::open_in_memory()?;
+        let invocation_id = db.start_invocation("check", None, None, None)?;
+        db.record_system_metrics(invocation_id, 88.8, 1024.0)?;
+        db.record_resource_metrics(
+            invocation_id,
+            &crate::process::InvocationResourceMetrics {
+                process_tree: crate::process::ProcessTreeMetrics {
+                    cpu_usage_avg: Some(12.5),
+                    memory_usage_max_mb: Some(256.0),
+                    root_cpu_usage_avg: Some(1.5),
+                    root_memory_usage_max_mb: Some(64.0),
+                    process_count_max: Some(7),
+                    sample_count: 42,
+                },
+                shared_build: crate::process::SharedBuildMetrics {
+                    shared_nix_daemon_cpu_usage_avg: Some(4.0),
+                    shared_nix_daemon_memory_usage_max_mb: Some(128.0),
+                    shared_nix_build_slice_cpu_usage_avg: Some(73.5),
+                    shared_nix_build_slice_memory_usage_max_mb: Some(1536.0),
+                    shared_background_slice_cpu_usage_avg: Some(19.0),
+                    shared_background_slice_memory_usage_max_mb: Some(512.0),
+                },
+            },
+        )?;
+        db.finish_invocation(invocation_id, InvocationStatus::Success, Some(0), 1.0)?;
+
+        let usage = db
+            .get_resource_usage_for_invocation(invocation_id)?
+            .expect("resource usage should exist");
+        assert_eq!(usage.process_cpu_usage_avg, Some(12.5));
+        assert_eq!(usage.process_memory_usage_max_mb, Some(256.0));
+        assert_eq!(usage.root_process_cpu_usage_avg, Some(1.5));
+        assert_eq!(usage.root_process_memory_usage_max_mb, Some(64.0));
+        assert_eq!(usage.shared_nix_daemon_cpu_usage_avg, Some(4.0));
+        assert_eq!(usage.shared_nix_daemon_memory_usage_max_mb, Some(128.0));
+        assert_eq!(usage.shared_nix_build_slice_cpu_usage_avg, Some(73.5));
+        assert_eq!(
+            usage.shared_nix_build_slice_memory_usage_max_mb,
+            Some(1536.0)
+        );
+        assert_eq!(usage.shared_background_slice_cpu_usage_avg, Some(19.0));
+        assert_eq!(
+            usage.shared_background_slice_memory_usage_max_mb,
+            Some(512.0)
+        );
+        assert_eq!(usage.process_count_max, Some(7));
+        assert_eq!(usage.sample_count, Some(42));
+        let host_cpu = usage
+            .host_cpu_usage_avg
+            .expect("host cpu metric should exist");
+        assert!((host_cpu - 88.8).abs() < 0.001);
+        assert_eq!(usage.host_memory_usage_max_mb, Some(1024.0));
         Ok(())
     }
 }

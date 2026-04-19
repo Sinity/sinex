@@ -12,7 +12,7 @@
 //!   `xtask test vm --category smoke`       # basic-flow coverage
 //!   `xtask test vm --category integration` # module/runtime compatibility coverage
 
-use color_eyre::eyre::{Result, WrapErr, bail, eyre};
+use color_eyre::eyre::{Result, WrapErr, bail};
 use console::style;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -21,7 +21,6 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config;
-use crate::history::InvocationStatus;
 use crate::history::TestStatus;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,9 +92,6 @@ pub enum VmSubcommand {
         /// Test category: smoke, integration, performance, chaos, all
         #[arg(long, short)]
         category: Option<String>,
-        /// Run tests in parallel
-        #[arg(long)]
-        parallel: bool,
         /// Timeout per test in seconds (default: 900, closure-heavy scenarios: 3600)
         #[arg(long, short, default_value = "900")]
         timeout: u64,
@@ -171,10 +167,20 @@ impl XtaskCommand for VmCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+        if ctx.is_background()
+            && let Some((spawn_args, coordination_args)) = self.background_coordination_plan()
+        {
+            return crate::coordinator::coordinate_and_spawn_with_scope(
+                "vm",
+                &spawn_args,
+                &coordination_args,
+                ctx,
+            );
+        }
+
         match &self.subcommand {
             VmSubcommand::Test {
                 category,
-                parallel,
                 timeout,
                 keep_failed,
                 list,
@@ -183,7 +189,6 @@ impl XtaskCommand for VmCommand {
             } => {
                 execute_test(
                     category.as_deref(),
-                    *parallel,
                     *timeout,
                     *keep_failed,
                     *list,
@@ -201,6 +206,88 @@ impl XtaskCommand for VmCommand {
             VmSubcommand::Ssh => execute_ssh(ctx),
             VmSubcommand::Stop => execute_stop(ctx),
             VmSubcommand::Snapshot { cmd } => Ok(execute_snapshot(cmd, ctx)),
+        }
+    }
+}
+
+pub(crate) fn vm_test_coordination_args(
+    category: Option<&str>,
+    timeout: u64,
+    keep_failed: bool,
+    validate: bool,
+    tests: &[String],
+) -> Vec<String> {
+    let selection = if validate {
+        "all-scenarios".to_string()
+    } else if !tests.is_empty() {
+        let mut sorted = tests.to_vec();
+        sorted.sort();
+        format!("tests:{}", sorted.join(","))
+    } else if let Some(category) = category {
+        format!("category:{category}")
+    } else {
+        "category:smoke".to_string()
+    };
+
+    if validate {
+        vec![format!("--scope=vm:validate:{selection}")]
+    } else {
+        vec![format!(
+            "--scope=vm:run:{selection}:timeout={timeout}:keep_failed={}",
+            u8::from(keep_failed)
+        )]
+    }
+}
+
+impl VmCommand {
+    fn background_coordination_plan(&self) -> Option<(Vec<String>, Vec<String>)> {
+        match &self.subcommand {
+            VmSubcommand::Test {
+                category,
+                timeout,
+                keep_failed,
+                list,
+                validate,
+                tests,
+            } => {
+                if *list {
+                    return None;
+                }
+
+                let mut spawn_args = vec!["test".to_string()];
+                if *validate {
+                    spawn_args.push("--validate".to_string());
+                } else {
+                    if let Some(category) = category {
+                        spawn_args.push("--category".to_string());
+                        spawn_args.push(category.clone());
+                    }
+                    if *timeout != DEFAULT_TIMEOUT_SECS {
+                        spawn_args.push(format!("--timeout={timeout}"));
+                    }
+                    if *keep_failed {
+                        spawn_args.push("--keep-failed".to_string());
+                    }
+                    if !tests.is_empty() {
+                        spawn_args.push("--".to_string());
+                        spawn_args.extend(tests.iter().cloned());
+                    }
+                }
+
+                let coordination_args = vm_test_coordination_args(
+                    category.as_deref(),
+                    *timeout,
+                    *keep_failed,
+                    *validate,
+                    tests,
+                );
+
+                Some((spawn_args, coordination_args))
+            }
+            VmSubcommand::Start { .. }
+            | VmSubcommand::Ssh
+            | VmSubcommand::Stop
+            | VmSubcommand::Snapshot { .. } => None,
         }
     }
 }
@@ -313,23 +400,7 @@ fn available_vm_tests(workspace_root: &Path, system: &str) -> Result<Vec<String>
 
 #[cfg(unix)]
 fn configure_process_group_leader(command: &mut tokio::process::Command) {
-    use std::os::unix::process::CommandExt;
-
-    // SAFETY: `setpgid(0, 0)` is async-signal-safe per POSIX and runs in the child
-    // between fork and exec so the spawned process becomes the leader of its own group.
-    // We also arm parent-death handling so an orphaned foreground xtask cannot
-    // leave a runaway `nix build` behind.
-    unsafe {
-        command.pre_exec(|| {
-            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            if libc::setpgid(0, 0) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
+    crate::process::configure_managed_child_tokio(command);
 }
 
 #[cfg(not(unix))]
@@ -338,46 +409,7 @@ fn configure_process_group_leader(_command: &mut tokio::process::Command) {}
 async fn terminate_vm_test_process_tree(child: &mut tokio::process::Child) -> Result<()> {
     #[cfg(unix)]
     {
-        let pid = nix::unistd::Pid::from_raw(
-            child
-                .id()
-                .ok_or_else(|| eyre!("failed to terminate timed-out VM build: child PID missing"))?
-                as i32,
-        );
-
-        match nix::sys::signal::killpg(pid, nix::sys::signal::Signal::SIGTERM) {
-            Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
-            Err(error) => {
-                return Err(eyre!(
-                    "failed to send SIGTERM to timed-out VM test process group: {error}"
-                ));
-            }
-        }
-
-        let grace_deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(2);
-        loop {
-            if child
-                .try_wait()
-                .wrap_err("failed to poll timed-out VM test after SIGTERM")?
-                .is_some()
-            {
-                return Ok(());
-            }
-            if tokio::time::Instant::now() >= grace_deadline {
-                break;
-            }
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        }
-
-        match nix::sys::signal::killpg(pid, nix::sys::signal::Signal::SIGKILL) {
-            Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
-            Err(error) => {
-                return Err(eyre!(
-                    "failed to send SIGKILL to timed-out VM test process group: {error}"
-                ));
-            }
-        }
-
+        crate::process::terminate_tokio_child_process_group(child, "vm test", "vm test timeout")?;
         child
             .wait()
             .await
@@ -449,6 +481,7 @@ async fn run_single_vm_test(
             };
         }
     };
+    crate::process::register_tokio_child_process_group(&child, &format!("vm test {name}"));
 
     let stdout = child.stdout.take().map(BufReader::new);
     let stderr = child.stderr.take().map(BufReader::new);
@@ -500,7 +533,6 @@ async fn run_single_vm_test(
 )]
 async fn execute_test(
     category: Option<&str>,
-    parallel: bool,
     timeout_secs: u64,
     keep_failed: bool,
     list: bool,
@@ -508,10 +540,38 @@ async fn execute_test(
     explicit_tests: &[String],
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    // --list: show available tests and exit
     let workspace_root = config::workspace_root();
-    let system = detect_nix_system(&workspace_root)?;
-    let available_tests = available_vm_tests(&workspace_root, &system)?;
+    if !list {
+        let coordination_args = vm_test_coordination_args(
+            category,
+            timeout_secs,
+            keep_failed,
+            validate,
+            explicit_tests,
+        );
+        ctx.record_coordination_fingerprint("test", &coordination_args);
+        ctx.record_invocation_args(&coordination_args);
+    }
+
+    // `--validate` checks the raw VM scenario surface directly and does not need
+    // flake-export discovery or system-specific attr enumeration first.
+    if validate {
+        if category.is_some() || keep_failed || !explicit_tests.is_empty() {
+            bail!(
+                "`xtask test vm --validate` validates the full VM scenario surface and does not accept category selection, explicit tests, or --keep-failed"
+            );
+        }
+        return execute_validate(ctx);
+    }
+
+    let discover_stage = ctx.start_stage("vm-checks-discover");
+    let resolved_environment = (|| -> Result<(String, Vec<String>)> {
+        let system = detect_nix_system(&workspace_root)?;
+        let available_tests = available_vm_tests(&workspace_root, &system)?;
+        Ok((system, available_tests))
+    })();
+    ctx.finish_stage(discover_stage, resolved_environment.is_ok());
+    let (system, available_tests) = resolved_environment?;
 
     if list {
         let categories = [
@@ -543,11 +603,6 @@ async fn execute_test(
         println!("  Add or remove scenarios there to keep the runner surface coherent.");
         println!();
         return Ok(CommandResult::success().with_message("listed exported VM checks"));
-    }
-
-    // --validate: check nix syntax of test scenario files
-    if validate {
-        return execute_validate(ctx);
     }
 
     // Resolve tests to run
@@ -586,46 +641,27 @@ async fn execute_test(
         println!("\n{}", style("NixOS VM Tests").bold());
         println!("  Tests : {}", tests_to_run.join(", "));
         println!("  Timeout: {timeout_secs}s per test");
-        println!("  Parallel: {parallel}");
         println!();
     }
 
-    // Open history DB for recording.
-    let invocation_id = ctx.with_history_db(|db| {
-        let args = serde_json::json!({
-            "category": category,
-            "parallel": parallel,
-            "tests": tests_to_run,
-        });
-        db.start_invocation("test", Some("vm"), None, Some(&args.to_string()))
-    });
-
     let suite_start = Instant::now();
+    let test_stage = ctx.start_stage("vm-test");
 
     // Run tests
-    let results: Vec<VmTestResult> = if parallel && tests_to_run.len() > 1 {
-        run_parallel(
-            &tests_to_run,
-            timeout_secs,
-            keep_failed,
-            &workspace_root,
-            &system,
-        )
-        .await
-    } else {
-        run_sequential(
-            &tests_to_run,
-            timeout_secs,
-            keep_failed,
-            &workspace_root,
-            &system,
-        )
-        .await
-    };
+    let results = run_sequential(
+        &tests_to_run,
+        timeout_secs,
+        keep_failed,
+        &workspace_root,
+        &system,
+        ctx,
+    )
+    .await;
 
     let suite_duration = suite_start.elapsed().as_secs_f64();
     let passed: Vec<&VmTestResult> = results.iter().filter(|r| r.passed).collect();
     let failed: Vec<&VmTestResult> = results.iter().filter(|r| !r.passed).collect();
+    ctx.finish_stage(test_stage, failed.is_empty());
 
     // Print summary
     println!("\n{}", style("VM Test Summary").bold());
@@ -647,8 +683,8 @@ async fn execute_test(
     );
     println!();
 
-    // Record results to history DB.
-    if let Some(inv_id) = invocation_id {
+    // Record per-scenario results to the existing `xtask test` invocation.
+    if let Some(inv_id) = ctx.invocation_id() {
         for r in &results {
             let status = if r.timed_out {
                 "timeout"
@@ -666,15 +702,6 @@ async fn execute_test(
                 db.record_test_result(inv_id, &r.name, "vm", status, r.duration_secs, output, "vm")
             });
         }
-        let final_status = if failed.is_empty() {
-            InvocationStatus::Success
-        } else {
-            InvocationStatus::Failed
-        };
-        let exit_code = i32::from(!failed.is_empty());
-        ctx.with_history_db(|db| {
-            db.finish_invocation(inv_id, final_status, Some(exit_code), suite_duration)
-        });
     }
 
     if failed.is_empty() {
@@ -703,11 +730,30 @@ async fn run_sequential(
     keep_failed: bool,
     workspace_root: &std::path::Path,
     system: &str,
+    ctx: &CommandContext,
 ) -> Vec<VmTestResult> {
     let mut results = Vec::with_capacity(tests.len());
-    for &name in tests {
+    let total = tests.len() as i64;
+    ctx.report_progress("vm-test", None, Some(0.0), Some(0), Some(total));
+
+    for (index, &name) in tests.iter().enumerate() {
+        let completed = index as i64;
+        let current_pct = if total == 0 {
+            100.0
+        } else {
+            completed as f64 / total as f64 * 100.0
+        };
+        ctx.report_progress(
+            "vm-test",
+            Some(name),
+            Some(current_pct),
+            Some(completed),
+            Some(total),
+        );
         print!("  Running {name}… ");
+        let scenario_stage = ctx.start_stage(&format!("vm-test:{name}"));
         let r = run_single_vm_test(name, timeout_secs, keep_failed, workspace_root, system).await;
+        ctx.finish_stage(scenario_stage, r.passed);
         if r.passed {
             println!("{} ({:.1}s)", style("PASS").green(), r.duration_secs);
         } else if r.timed_out {
@@ -716,45 +762,107 @@ async fn run_sequential(
             println!("{} ({:.1}s)", style("FAIL").red(), r.duration_secs);
         }
         results.push(r);
+        let completed = results.len() as i64;
+        let pct = if total == 0 {
+            100.0
+        } else {
+            completed as f64 / total as f64 * 100.0
+        };
+        ctx.report_progress(
+            "vm-test",
+            Some(name),
+            Some(pct),
+            Some(completed),
+            Some(total),
+        );
     }
     results
 }
 
-/// Run tests in parallel using tokio tasks.
-async fn run_parallel(
-    tests: &[&str],
-    timeout_secs: u64,
-    keep_failed: bool,
-    workspace_root: &std::path::Path,
-    system: &str,
-) -> Vec<VmTestResult> {
-    let workspace_root = workspace_root.to_path_buf();
-    let mut handles = Vec::with_capacity(tests.len());
+const VM_VALIDATION_DUMMY_PACKAGE_EXPR: &str =
+    r#"(import <nixpkgs> {}).runCommand "dummy" {} "mkdir -p $out""#;
 
-    for &name in tests {
-        let name = name.to_string();
-        let wr = workspace_root.clone();
-        let system = system.to_string();
-        let handle = tokio::spawn(async move {
-            run_single_vm_test(&name, timeout_secs, keep_failed, &wr, &system).await
-        });
-        handles.push(handle);
-    }
+fn run_vm_validation_probe(
+    target: &Path,
+    workspace_root: &Path,
+) -> std::io::Result<std::process::Output> {
+    Command::new("nix-instantiate")
+        .arg(target)
+        .args([
+            "--arg",
+            "pkgs",
+            "import <nixpkgs> {}",
+            "--arg",
+            "sinex-ingestd",
+            VM_VALIDATION_DUMMY_PACKAGE_EXPR,
+            "--arg",
+            "sinex-gateway",
+            VM_VALIDATION_DUMMY_PACKAGE_EXPR,
+            "--arg",
+            "sinex",
+            VM_VALIDATION_DUMMY_PACKAGE_EXPR,
+            "--arg",
+            "sinexCli",
+            VM_VALIDATION_DUMMY_PACKAGE_EXPR,
+            "--arg",
+            "pg_jsonschema",
+            VM_VALIDATION_DUMMY_PACKAGE_EXPR,
+            "--arg",
+            "xtask",
+            VM_VALIDATION_DUMMY_PACKAGE_EXPR,
+            "--arg",
+            "sinexVmTestSuite",
+            VM_VALIDATION_DUMMY_PACKAGE_EXPR,
+        ])
+        .current_dir(workspace_root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+}
 
-    let mut results = Vec::with_capacity(handles.len());
-    for handle in handles {
-        match handle.await {
-            Ok(r) => results.push(r),
-            Err(e) => results.push(VmTestResult {
-                name: "unknown".to_string(),
-                passed: false,
-                duration_secs: 0.0,
-                output: format!("Task panicked: {e}"),
-                timed_out: false,
-            }),
+fn first_stderr_detail(output: &std::process::Output) -> String {
+    String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("nix-instantiate failed")
+        .to_owned()
+}
+
+fn validate_vm_test_file(file: &Path, workspace_root: &Path, ctx: &CommandContext) -> (bool, bool) {
+    match run_vm_validation_probe(file, workspace_root) {
+        Ok(output) if output.status.success() => {
+            if ctx.is_human() {
+                println!(
+                    "  {} OK: {}",
+                    style("✓").green(),
+                    display_vm_test_label(file)
+                );
+            }
+            (true, false)
+        }
+        Ok(output) => {
+            if ctx.is_human() {
+                println!(
+                    "  {} Syntax error: {} ({})",
+                    style("✗").red(),
+                    file.display(),
+                    first_stderr_detail(&output)
+                );
+            }
+            (false, false)
+        }
+        Err(error) => {
+            if ctx.is_human() {
+                println!(
+                    "  {} Probe failure: {} ({error})",
+                    style("⚠").yellow(),
+                    file.display()
+                );
+            }
+            (false, true)
         }
     }
-    results
 }
 
 /// Validate nix syntax of VM test scenario files.
@@ -762,99 +870,153 @@ fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
     ctx.heading("vm validate");
 
     let workspace_root = config::workspace_root();
-    let test_files = discover_vm_test_files(&workspace_root)?;
-
-    let dummy_pkg = r#"(import <nixpkgs> {}).runCommand "dummy" {} "mkdir -p $out""#;
+    let discover_stage = ctx.start_stage("vm-scenarios-discover");
+    let test_files = discover_vm_test_files(&workspace_root);
+    ctx.finish_stage(discover_stage, test_files.is_ok());
+    let test_files = test_files?;
 
     let mut valid = 0usize;
     let mut missing = 0usize;
     let mut failed = 0usize;
     let mut probe_failures = 0usize;
+    let total = test_files.len() as i64;
+    let validate_stage = ctx.start_stage("vm-validate");
+    ctx.report_progress("vm-validate", None, Some(0.0), Some(0), Some(total));
 
+    let mut existing_files = Vec::with_capacity(test_files.len());
     for file in &test_files {
-        if !file.exists() {
-            if ctx.is_human() {
-                println!("  {} Missing: {}", style("⚠").yellow(), file.display());
-            }
-            missing += 1;
+        let label = display_vm_test_label(file);
+        if file.exists() {
+            existing_files.push(file.as_path());
             continue;
         }
+        missing += 1;
+        if ctx.is_human() {
+            println!("  {} Missing: {}", style("⚠").yellow(), file.display());
+        }
+        let completed = (valid + missing + failed + probe_failures) as i64;
+        let current_pct = if total == 0 {
+            100.0
+        } else {
+            completed as f64 / total as f64 * 100.0
+        };
+        ctx.report_progress(
+            "vm-validate",
+            Some(&label),
+            Some(current_pct),
+            Some(completed),
+            Some(total),
+        );
+    }
 
-        let output = Command::new("nix-instantiate")
-            .arg(file)
-            .args([
-                "--arg",
-                "pkgs",
-                "import <nixpkgs> {}",
-                "--arg",
-                "lib",
-                "(import <nixpkgs> {}).lib",
-                "--arg",
-                "sinex-ingestd",
-                dummy_pkg,
-                "--arg",
-                "sinex-gateway",
-                dummy_pkg,
-                "--arg",
-                "sinex",
-                dummy_pkg,
-                "--arg",
-                "sinexCli",
-                dummy_pkg,
-                "--arg",
-                "pg_jsonschema",
-                dummy_pkg,
-                "--arg",
-                "xtask",
-                dummy_pkg,
-                "--arg",
-                "sinexVmTestSuite",
-                dummy_pkg,
-            ])
-            .current_dir(&workspace_root)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .output();
+    let batch_stage = ctx.start_stage("vm-validate-batch");
+    let catalog_file = workspace_root.join("tests/e2e/nixos-vm/default.nix");
+    let batch_result = if existing_files.is_empty() {
+        None
+    } else {
+        ctx.report_progress(
+            "vm-validate",
+            Some("all-scenarios"),
+            Some(missing as f64 / total.max(1) as f64 * 100.0),
+            Some(missing as i64),
+            Some(total),
+        );
+        Some(run_vm_validation_probe(&catalog_file, &workspace_root))
+    };
 
-        match output {
-            Ok(output) if output.status.success() => {
-                if ctx.is_human() {
-                    println!(
-                        "  {} OK: {}",
-                        style("✓").green(),
-                        display_vm_test_label(file)
-                    );
-                }
-                valid += 1;
+    let needs_diagnosis = match batch_result {
+        None => {
+            ctx.finish_stage(batch_stage, true);
+            false
+        }
+        Some(Ok(output)) if output.status.success() => {
+            ctx.finish_stage(batch_stage, true);
+            valid += existing_files.len();
+            if ctx.is_human() {
+                println!(
+                    "  {} Batch OK: {} existing VM scenarios",
+                    style("✓").green(),
+                    existing_files.len()
+                );
             }
-            Ok(output) => {
-                if ctx.is_human() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    let detail = stderr
-                        .lines()
-                        .map(str::trim)
-                        .find(|line| !line.is_empty())
-                        .unwrap_or("nix-instantiate failed");
-                    println!(
-                        "  {} Syntax error: {} ({detail})",
-                        style("✗").red(),
-                        file.display()
-                    );
-                }
+            ctx.report_progress(
+                "vm-validate",
+                Some("all-scenarios"),
+                Some(100.0),
+                Some(total),
+                Some(total),
+            );
+            false
+        }
+        Some(Ok(output)) => {
+            ctx.finish_stage(batch_stage, false);
+            if ctx.is_human() {
+                println!(
+                    "  {} Batch validation failed; isolating scenario failures ({})",
+                    style("⚠").yellow(),
+                    first_stderr_detail(&output)
+                );
+            }
+            true
+        }
+        Some(Err(error)) => {
+            ctx.finish_stage(batch_stage, false);
+            if ctx.is_human() {
+                println!(
+                    "  {} Batch validation probe failed; isolating scenario failures ({error})",
+                    style("⚠").yellow()
+                );
+            }
+            true
+        }
+    };
+
+    if needs_diagnosis {
+        let diagnose_stage = ctx.start_stage("vm-validate-diagnose");
+        for (index, file) in existing_files.iter().enumerate() {
+            let checked = (missing + index) as i64;
+            let current_pct = if total == 0 {
+                100.0
+            } else {
+                checked as f64 / total as f64 * 100.0
+            };
+            let label = display_vm_test_label(file);
+            ctx.report_progress(
+                "vm-validate",
+                Some(&label),
+                Some(current_pct),
+                Some(checked),
+                Some(total),
+            );
+
+            let (file_valid, probe_failed) = validate_vm_test_file(file, &workspace_root, ctx);
+            if file_valid {
+                valid += 1;
+            } else if probe_failed {
+                probe_failures += 1;
+            } else {
                 failed += 1;
             }
-            Err(error) => {
-                if ctx.is_human() {
-                    println!(
-                        "  {} Probe failure: {} ({error})",
-                        style("⚠").yellow(),
-                        file.display()
-                    );
-                }
-                probe_failures += 1;
-            }
+
+            let completed = (missing + index + 1) as i64;
+            let pct = if total == 0 {
+                100.0
+            } else {
+                completed as f64 / total as f64 * 100.0
+            };
+            ctx.report_progress(
+                "vm-validate",
+                Some(&label),
+                Some(pct),
+                Some(completed),
+                Some(total),
+            );
         }
+        ctx.finish_stage(diagnose_stage, failed == 0 && probe_failures == 0);
     }
+
+    let validate_ok = failed == 0 && probe_failures == 0;
+    ctx.finish_stage(validate_stage, validate_ok);
 
     if ctx.is_human() {
         println!();
@@ -866,7 +1028,7 @@ fn execute_validate(ctx: &CommandContext) -> Result<CommandResult> {
         }
     }
 
-    if failed > 0 || probe_failures > 0 {
+    if !validate_ok {
         bail!(
             "{failed} test file(s) have syntax errors; {probe_failures} validation probe(s) failed"
         );
@@ -960,20 +1122,20 @@ fn execute_ssh(ctx: &CommandContext) -> Result<CommandResult> {
         println!("Connecting to VM via SSH on port {ssh_port}...");
     }
 
-    let status = Command::new("ssh")
-        .args([
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "UserKnownHostsFile=/dev/null",
-            "-p",
-            &ssh_port,
-            "root@localhost",
-        ])
-        .status()
+    let mut command = Command::new("ssh");
+    command.args([
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-p",
+        &ssh_port,
+        "root@localhost",
+    ]);
+    let status = crate::process::run_managed_foreground_std_command(&mut command, "vm ssh")
         .context("Failed to connect via SSH")?;
 
-    if status.success() {
+    if crate::process::status_indicates_clean_interactive_shutdown(&status) {
         Ok(CommandResult::success().with_message("SSH session ended"))
     } else {
         bail!("SSH connection failed")
@@ -1005,10 +1167,11 @@ fn execute_stop(ctx: &CommandContext) -> Result<CommandResult> {
         if ctx.is_human() {
             println!("Sending SIGTERM to PID {pid}...");
         }
-        Command::new("kill")
-            .args(["-TERM", pid])
-            .status()
-            .context("Failed to stop VM")?;
+        let pid = pid
+            .parse::<u32>()
+            .with_context(|| format!("invalid VM pid reported by pgrep: {pid}"))?;
+        crate::process::terminate_process_group_by_leader_pid(pid, "vm stop", "manual VM stop")
+            .with_context(|| format!("Failed to stop VM process group rooted at {pid}"))?;
     }
 
     Ok(CommandResult::success().with_message(format!("Stopped {} VM process(es)", pids.len())))
@@ -1057,7 +1220,97 @@ fn execute_snapshot(cmd: &VmSnapshotSubcommand, ctx: &CommandContext) -> Command
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::CommandContext;
+    use crate::output::{OutputFormat, OutputWriter};
     use crate::sandbox::sinex_test;
+
+    fn silent_ctx() -> CommandContext {
+        CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None, "vm")
+    }
+
+    #[sinex_test]
+    async fn test_background_coordination_plan_for_validate_normalizes_to_single_lane()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = VmCommand {
+            subcommand: VmSubcommand::Test {
+                category: Some("integration".to_string()),
+                timeout: DEFAULT_TIMEOUT_SECS,
+                keep_failed: false,
+                list: false,
+                validate: true,
+                tests: vec!["node-matrix".to_string()],
+            },
+        };
+
+        let (spawn_args, coordination_args) = command
+            .background_coordination_plan()
+            .expect("validate should coordinate in background");
+
+        assert_eq!(
+            spawn_args,
+            vec!["test".to_string(), "--validate".to_string()]
+        );
+        assert_eq!(
+            coordination_args,
+            vec!["--scope=vm:validate:all-scenarios".to_string()]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_background_coordination_plan_for_run_tracks_selected_tests()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = VmCommand {
+            subcommand: VmSubcommand::Test {
+                category: None,
+                timeout: 1337,
+                keep_failed: true,
+                list: false,
+                validate: false,
+                tests: vec!["replay-smoke".to_string(), "basic".to_string()],
+            },
+        };
+
+        let (spawn_args, coordination_args) = command
+            .background_coordination_plan()
+            .expect("vm runs should coordinate in background");
+
+        assert_eq!(
+            spawn_args,
+            vec![
+                "test".to_string(),
+                "--timeout=1337".to_string(),
+                "--keep-failed".to_string(),
+                "--".to_string(),
+                "replay-smoke".to_string(),
+                "basic".to_string(),
+            ]
+        );
+        assert_eq!(
+            coordination_args,
+            vec!["--scope=vm:run:tests:basic,replay-smoke:timeout=1337:keep_failed=1".to_string()]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_validate_rejects_run_only_flags() -> ::xtask::sandbox::TestResult<()> {
+        let error = execute_test(
+            Some("smoke"),
+            DEFAULT_TIMEOUT_SECS,
+            true,
+            false,
+            true,
+            &["basic".to_string()],
+            &silent_ctx(),
+        )
+        .await
+        .expect_err("validate should reject run-only selection flags");
+
+        let message = format!("{error:#}");
+        assert!(message.contains("does not accept category selection"));
+        Ok(())
+    }
 
     #[sinex_test]
     async fn test_discover_vm_test_files_reports_scenarios_dir_failures()
