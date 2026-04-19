@@ -41,22 +41,21 @@ const TEMPORAL_LEDGER_REQUIRED_INDEXES: &[&str] = &[
     "ix_tl_ts_and_source_type",
 ];
 const TELEMETRY_VIEW_RELATIONS: &[&str] = &[
+    "assembly_stats_1h",
     "current_health",
+    "gateway_stats_1h",
+    "ingestd_batch_stats_1h",
+    "metric_counters_1h",
     "current_window_focus",
     "command_frequency_hourly",
     "file_activity_summary",
     "current_system_state",
-    "recent_activity_summary",
-];
-const TELEMETRY_MATERIALIZED_VIEW_RELATIONS: &[&str] = &["current_device_state"];
-const TELEMETRY_CONTINUOUS_AGGREGATES: &[&str] = &[
-    "assembly_stats_1h",
-    "gateway_stats_1h",
-    "ingestd_batch_stats_1h",
-    "metric_counters_1h",
     "node_stats_1h",
+    "recent_activity_summary",
     "stream_stats_1h",
 ];
+const TELEMETRY_MATERIALIZED_VIEW_RELATIONS: &[&str] = &["current_device_state"];
+const TELEMETRY_CONTINUOUS_AGGREGATES: &[&str] = &[];
 
 #[derive(Debug)]
 pub enum ApplyError {
@@ -480,7 +479,7 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
 
     recreate_telemetry_read_models(pool).await?;
     execute_sql(pool, TELEMETRY_SQL).await?;
-    execute_sql(pool, OPERATOR_CONTINUOUS_AGGREGATES_SQL).await?;
+    execute_sql(pool, OPERATOR_TELEMETRY_VIEWS_SQL).await?;
     execute_sql(pool, ACTIVITY_READ_MODELS_SQL).await?;
     execute_sql(pool, RECENT_ACTIVITY_SUMMARY_SQL).await?;
     execute_sql(pool, EVENT_TEMPORAL_FACTS_SQL).await?;
@@ -1217,11 +1216,10 @@ CREATE INDEX IF NOT EXISTS ix_current_device_state_state
     ON sinex_telemetry.current_device_state (state);
 ";
 
-const OPERATOR_CONTINUOUS_AGGREGATES_SQL: &str = r"
-CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.gateway_stats_1h
-WITH (timescaledb.continuous) AS
+const OPERATOR_TELEMETRY_VIEWS_SQL: &str = r"
+CREATE OR REPLACE VIEW sinex_telemetry.gateway_stats_1h AS
 SELECT
-    time_bucket('1 hour', id) AS bucket,
+    time_bucket('1 hour', ts_coided) AS bucket,
     source,
     COUNT(*) FILTER (WHERE event_type = 'request.stats') AS stat_events,
     AVG((payload->>'total_requests')::bigint) AS avg_total_requests,
@@ -1231,21 +1229,11 @@ SELECT
 FROM core.events
 WHERE source LIKE 'sinex.gateway%'
   AND event_type IN ('request.stats', 'rate_limit.exceeded', 'replay.stats')
-GROUP BY bucket, source
-WITH NO DATA;
+GROUP BY bucket, source;
 
-SELECT add_continuous_aggregate_policy(
-    'sinex_telemetry.gateway_stats_1h',
-    start_offset => INTERVAL '3 hours',
-    end_offset => INTERVAL '10 minutes',
-    schedule_interval => INTERVAL '10 minutes',
-    if_not_exists => true
-);
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.stream_stats_1h
-WITH (timescaledb.continuous) AS
+CREATE OR REPLACE VIEW sinex_telemetry.stream_stats_1h AS
 SELECT
-    time_bucket('1 hour', id) AS bucket,
+    time_bucket('1 hour', ts_coided) AS bucket,
     payload->>'stream' AS stream_name,
     AVG((payload->>'fill_pct')::float) AS avg_fill_pct,
     MAX((payload->>'fill_pct')::float) AS max_fill_pct,
@@ -1255,21 +1243,11 @@ SELECT
 FROM core.events
 WHERE source = 'sinex.ingestd'
   AND event_type = 'stream.stats'
-GROUP BY bucket, payload->>'stream'
-WITH NO DATA;
+GROUP BY bucket, payload->>'stream';
 
-SELECT add_continuous_aggregate_policy(
-    'sinex_telemetry.stream_stats_1h',
-    start_offset => INTERVAL '3 hours',
-    end_offset => INTERVAL '10 minutes',
-    schedule_interval => INTERVAL '10 minutes',
-    if_not_exists => true
-);
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.assembly_stats_1h
-WITH (timescaledb.continuous) AS
+CREATE OR REPLACE VIEW sinex_telemetry.assembly_stats_1h AS
 SELECT
-    time_bucket('1 hour', id) AS bucket,
+    time_bucket('1 hour', ts_coided) AS bucket,
     MAX((payload->>'active_assemblies')::int) AS max_active_assemblies,
     SUM((payload->>'total_completed')::bigint) AS total_completed,
     SUM((payload->>'total_cancelled')::bigint) AS total_cancelled,
@@ -1280,21 +1258,11 @@ SELECT
 FROM core.events
 WHERE source = 'sinex.ingestd'
   AND event_type = 'assembly.stats'
-GROUP BY bucket
-WITH NO DATA;
+GROUP BY bucket;
 
-SELECT add_continuous_aggregate_policy(
-    'sinex_telemetry.assembly_stats_1h',
-    start_offset => INTERVAL '3 hours',
-    end_offset => INTERVAL '10 minutes',
-    schedule_interval => INTERVAL '10 minutes',
-    if_not_exists => true
-);
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.node_stats_1h
-WITH (timescaledb.continuous) AS
+CREATE OR REPLACE VIEW sinex_telemetry.node_stats_1h AS
 SELECT
-    time_bucket('1 hour', id) AS bucket,
+    time_bucket('1 hour', ts_coided) AS bucket,
     payload->>'node_type' AS node_type,
     SUM((payload->>'events_processed')::bigint) AS total_events_processed,
     SUM((payload->>'events_dropped')::bigint) AS total_events_dropped,
@@ -1305,21 +1273,11 @@ SELECT
 FROM core.events
 WHERE source = 'sinex.node'
   AND event_type = 'processing.stats'
-GROUP BY bucket, payload->>'node_type'
-WITH NO DATA;
+GROUP BY bucket, payload->>'node_type';
 
-SELECT add_continuous_aggregate_policy(
-    'sinex_telemetry.node_stats_1h',
-    start_offset => INTERVAL '3 hours',
-    end_offset => INTERVAL '10 minutes',
-    schedule_interval => INTERVAL '10 minutes',
-    if_not_exists => true
-);
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.metric_counters_1h
-WITH (timescaledb.continuous) AS
+CREATE OR REPLACE VIEW sinex_telemetry.metric_counters_1h AS
 SELECT
-    time_bucket('1 hour', id) AS bucket,
+    time_bucket('1 hour', ts_coided) AS bucket,
     payload->>'component' AS component,
     payload->>'name' AS metric_name,
     SUM((payload->>'value')::bigint) AS total_value,
@@ -1328,21 +1286,11 @@ SELECT
 FROM core.events
 WHERE source = 'sinex'
   AND event_type = 'metric.counter'
-GROUP BY bucket, payload->>'component', payload->>'name'
-WITH NO DATA;
+GROUP BY bucket, payload->>'component', payload->>'name';
 
-SELECT add_continuous_aggregate_policy(
-    'sinex_telemetry.metric_counters_1h',
-    start_offset => INTERVAL '3 hours',
-    end_offset => INTERVAL '10 minutes',
-    schedule_interval => INTERVAL '10 minutes',
-    if_not_exists => true
-);
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.ingestd_batch_stats_1h
-WITH (timescaledb.continuous) AS
+CREATE OR REPLACE VIEW sinex_telemetry.ingestd_batch_stats_1h AS
 SELECT
-    time_bucket('1 hour', id) AS bucket,
+    time_bucket('1 hour', ts_coided) AS bucket,
     AVG((payload->>'batch_size')::int) AS avg_batch_size,
     MAX((payload->>'batch_size')::int) AS max_batch_size,
     AVG((payload->>'fetch_to_ack_ms')::float) AS avg_latency_ms,
@@ -1360,16 +1308,7 @@ SELECT
 FROM core.events
 WHERE source = 'sinex.ingestd'
   AND event_type = 'batch.stats'
-GROUP BY bucket
-WITH NO DATA;
-
-SELECT add_continuous_aggregate_policy(
-    'sinex_telemetry.ingestd_batch_stats_1h',
-    start_offset => INTERVAL '3 hours',
-    end_offset => INTERVAL '10 minutes',
-    schedule_interval => INTERVAL '10 minutes',
-    if_not_exists => true
-);
+GROUP BY bucket;
 ";
 
 const ACTIVITY_READ_MODELS_SQL: &str = r"

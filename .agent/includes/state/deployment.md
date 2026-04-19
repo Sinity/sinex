@@ -38,7 +38,7 @@ the desktop/terminal services now emit real source-material traffic under system
 | Gateway smoke | Token was empty; token fixed in sinnix. Gateway dead until rebuild. | `nixos-rebuild switch` then `sinexctl gateway ingest → sinexctl query` |
 | FS ingestor stability | OOM-killing; MemoryMax fix in NixOS module needs rebuild. | `nixos-rebuild switch` |
 | Production historical-path proof | Terminal/desktop historical scans not yet query-verified on prod. | Re-run historical scans post-rebuild and query resulting rows. |
-| Operator CAs empty | Self-observation events don't persist (telemetry routing gap). | Known gap; investigate sinex.telemetry subject → ingestd routing. |
+| Operator telemetry rollout | The deployed host still has the stale operator telemetry schema. Root cause was invalid continuous aggregates over the `id`-partitioned hypertable, not a routing gap. | Deploy the updated schema apply that switches the six `_1h` operator surfaces to hourly `ts_coided` views. |
 
 ### Activation Sequence (Critical Path)
 
