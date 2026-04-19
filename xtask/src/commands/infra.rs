@@ -404,8 +404,9 @@ fn execute_logs(
     }
     cmd.arg(&log_path);
 
-    let status = cmd.status().context("tail failed")?;
-    if !status.success() {
+    let status = crate::process::run_managed_foreground_std_command(&mut cmd, "infra logs")
+        .context("tail failed")?;
+    if !crate::process::status_indicates_clean_interactive_shutdown(&status) {
         bail!("tail failed");
     }
 

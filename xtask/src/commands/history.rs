@@ -2,6 +2,7 @@
 
 use color_eyre::eyre::Result;
 use console::style;
+use std::time::Duration;
 use tabled::{builder::Builder, settings::Style};
 
 use color_eyre::eyre::WrapErr;
@@ -10,7 +11,7 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 use crate::history::query::HistoryAnalysis;
 use crate::history::{
     DiagnosticQuery, ExerciseResultRow, HistoryDb, InvocationQuery, InvocationStatus,
-    InvocationTimelineEntry, LifecycleStatus,
+    InvocationTimelineEntry, LifecycleStatus, ResourceUsage,
 };
 
 /// History command variants
@@ -3419,6 +3420,13 @@ fn execute_invocation(
     let inv_full = db
         .get_invocation_full(inv_id)?
         .ok_or_else(|| color_eyre::eyre::eyre!("Invocation #{inv_id} not found"))?;
+    let resource_usage = match db.get_resource_usage_for_invocation(inv_id)? {
+        Some(usage) => Some(usage),
+        None if matches!(inv_full.invocation.status, InvocationStatus::Running) => db
+            .get_running_job_pid_for_invocation(inv_id)?
+            .and_then(|pid| live_resource_usage_for_invocation(&inv_full.invocation, pid)),
+        None => None,
+    };
 
     if ctx.is_human() {
         let inv = &inv_full.invocation;
@@ -3450,6 +3458,9 @@ fn execute_invocation(
             inv_full.error_count, inv_full.warning_count
         );
         println!("  Stages:   {}", inv_full.stages.len());
+        if let Some(resources) = &resource_usage {
+            println!("  Resources: {}", format_resource_usage(resources));
+        }
 
         if full {
             if !inv_full.stages.is_empty() {
@@ -3478,7 +3489,17 @@ fn execute_invocation(
             }
         }
     } else if full {
-        println!("{}", serde_json::to_string_pretty(&inv_full)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "invocation": inv_full.invocation,
+                "stages": inv_full.stages,
+                "diagnostics": inv_full.diagnostics,
+                "error_count": inv_full.error_count,
+                "warning_count": inv_full.warning_count,
+                "resource_usage": resource_usage,
+            }))?
+        );
     } else {
         println!("{}", serde_json::to_string_pretty(&inv_full.invocation)?);
     }
@@ -3486,6 +3507,135 @@ fn execute_invocation(
     Ok(CommandResult::success()
         .with_message(format!("Invocation #{inv_id}"))
         .with_duration(ctx.elapsed()))
+}
+
+fn live_resource_usage_for_invocation(
+    invocation: &crate::history::Invocation,
+    pid: u32,
+) -> Option<ResourceUsage> {
+    let process_metrics =
+        crate::process::probe_process_tree_metrics(pid, Duration::from_millis(120));
+    let shared_build_metrics =
+        crate::process::probe_shared_build_metrics(Duration::from_millis(120));
+
+    match (process_metrics, shared_build_metrics) {
+        (Some(metrics), shared_build_metrics) => Some(ResourceUsage {
+            command: invocation.command.clone(),
+            status: invocation.status.as_str().to_string(),
+            started_at: invocation.started_at.to_string(),
+            duration_secs: Some(
+                (time::OffsetDateTime::now_utc() - invocation.started_at).as_seconds_f64(),
+            ),
+            process_cpu_usage_avg: metrics.cpu_usage_avg,
+            process_memory_usage_max_mb: metrics.memory_usage_max_mb,
+            root_process_cpu_usage_avg: metrics.root_cpu_usage_avg,
+            root_process_memory_usage_max_mb: metrics.root_memory_usage_max_mb,
+            shared_nix_daemon_cpu_usage_avg: shared_build_metrics
+                .as_ref()
+                .and_then(|metrics| metrics.shared_nix_daemon_cpu_usage_avg),
+            shared_nix_daemon_memory_usage_max_mb: shared_build_metrics
+                .as_ref()
+                .and_then(|metrics| metrics.shared_nix_daemon_memory_usage_max_mb),
+            shared_nix_build_slice_cpu_usage_avg: shared_build_metrics
+                .as_ref()
+                .and_then(|metrics| metrics.shared_nix_build_slice_cpu_usage_avg),
+            shared_nix_build_slice_memory_usage_max_mb: shared_build_metrics
+                .as_ref()
+                .and_then(|metrics| metrics.shared_nix_build_slice_memory_usage_max_mb),
+            shared_background_slice_cpu_usage_avg: shared_build_metrics
+                .as_ref()
+                .and_then(|metrics| metrics.shared_background_slice_cpu_usage_avg),
+            shared_background_slice_memory_usage_max_mb: shared_build_metrics
+                .as_ref()
+                .and_then(|metrics| metrics.shared_background_slice_memory_usage_max_mb),
+            process_count_max: metrics.process_count_max,
+            sample_count: Some(metrics.sample_count),
+            host_cpu_usage_avg: None,
+            host_memory_usage_max_mb: None,
+        }),
+        (None, Some(shared_build_metrics)) => Some(ResourceUsage {
+            command: invocation.command.clone(),
+            status: invocation.status.as_str().to_string(),
+            started_at: invocation.started_at.to_string(),
+            duration_secs: Some(
+                (time::OffsetDateTime::now_utc() - invocation.started_at).as_seconds_f64(),
+            ),
+            process_cpu_usage_avg: None,
+            process_memory_usage_max_mb: None,
+            root_process_cpu_usage_avg: None,
+            root_process_memory_usage_max_mb: None,
+            shared_nix_daemon_cpu_usage_avg: shared_build_metrics.shared_nix_daemon_cpu_usage_avg,
+            shared_nix_daemon_memory_usage_max_mb: shared_build_metrics
+                .shared_nix_daemon_memory_usage_max_mb,
+            shared_nix_build_slice_cpu_usage_avg: shared_build_metrics
+                .shared_nix_build_slice_cpu_usage_avg,
+            shared_nix_build_slice_memory_usage_max_mb: shared_build_metrics
+                .shared_nix_build_slice_memory_usage_max_mb,
+            shared_background_slice_cpu_usage_avg: shared_build_metrics
+                .shared_background_slice_cpu_usage_avg,
+            shared_background_slice_memory_usage_max_mb: shared_build_metrics
+                .shared_background_slice_memory_usage_max_mb,
+            process_count_max: None,
+            sample_count: None,
+            host_cpu_usage_avg: None,
+            host_memory_usage_max_mb: None,
+        }),
+        (None, None) => None,
+    }
+}
+
+fn format_resource_usage(usage: &ResourceUsage) -> String {
+    let cpu = if let Some(value) = usage.process_cpu_usage_avg {
+        format!("{value:.1}% tree cpu")
+    } else if let Some(value) = usage.host_cpu_usage_avg {
+        format!("{value:.1}% host cpu (legacy)")
+    } else {
+        "cpu n/a".to_string()
+    };
+    let memory = if let Some(value) = usage.process_memory_usage_max_mb {
+        format!("{value:.0} MB tree mem")
+    } else if let Some(value) = usage.host_memory_usage_max_mb {
+        format!("{value:.0} MB host mem (legacy)")
+    } else {
+        "mem n/a".to_string()
+    };
+    let process_count = usage.process_count_max.map_or_else(
+        || "proc n/a".to_string(),
+        |count| format!("max {count} proc"),
+    );
+    let root_cpu = usage.root_process_cpu_usage_avg.map_or_else(
+        || "xtask cpu n/a".to_string(),
+        |value| format!("{value:.1}% xtask cpu"),
+    );
+    let root_mem = usage.root_process_memory_usage_max_mb.map_or_else(
+        || "xtask mem n/a".to_string(),
+        |value| format!("{value:.0} MB xtask mem"),
+    );
+    let samples = usage.sample_count.map_or_else(
+        || "samples n/a".to_string(),
+        |count| format!("{count} samples"),
+    );
+    let mut parts = vec![cpu, memory];
+    if let Some(cpu) = usage.shared_nix_daemon_cpu_usage_avg {
+        parts.push(format!("{cpu:.1}% nix-daemon shared cpu"));
+    }
+    if let Some(memory) = usage.shared_nix_daemon_memory_usage_max_mb {
+        parts.push(format!("{memory:.0} MB nix-daemon shared mem"));
+    }
+    if let Some(cpu) = usage.shared_nix_build_slice_cpu_usage_avg {
+        parts.push(format!("{cpu:.1}% nix-build shared cpu"));
+    }
+    if let Some(memory) = usage.shared_nix_build_slice_memory_usage_max_mb {
+        parts.push(format!("{memory:.0} MB nix-build shared mem"));
+    }
+    if let Some(cpu) = usage.shared_background_slice_cpu_usage_avg {
+        parts.push(format!("{cpu:.1}% background shared cpu"));
+    }
+    if let Some(memory) = usage.shared_background_slice_memory_usage_max_mb {
+        parts.push(format!("{memory:.0} MB background shared mem"));
+    }
+    parts.extend([process_count, root_cpu, root_mem, samples]);
+    parts.join(", ")
 }
 
 fn execute_seed(

@@ -187,7 +187,6 @@ Run exported NixOS VM flake checks
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `--category` | yes | no | Test category: smoke, integration, performance, chaos, all |
-| `--parallel` | no | no | Run VM tests in parallel |
 | `--timeout` | yes | no | Timeout per test in seconds |
 | `--keep-failed` | no | no | Keep failed VM derivations for inspection |
 | `-l, --list` | no | no | List exported VM checks instead of running them |
@@ -429,7 +428,6 @@ Run exported NixOS VM flake checks
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `-c, --category` | yes | no | Test category: smoke, integration, performance, chaos, all |
-| `--parallel` | no | no | Run tests in parallel |
 | `-t, --timeout` | yes | no | Timeout per test in seconds (default: 900, closure-heavy scenarios: 3600) |
 | `-k, --keep-failed` | no | no | Keep VM state after test failure for debugging |
 | `-l, --list` | no | no | List available tests |
@@ -508,6 +506,7 @@ Inspect and manage background xtask jobs
 | Command | Purpose |
 |---|---|
 | `list` | List recent jobs |
+| `active` | List active jobs |
 | `status` | Show status of a specific job |
 | `output` | Show full output of a job |
 | `wait` | Wait for a job to complete |
@@ -524,6 +523,17 @@ List recent jobs
 |---|---|---|---|
 | `--limit` | yes | no |  |
 | `--active` | no | no | Show only running/active jobs |
+
+
+### `xtask jobs active`
+
+List active jobs
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--limit` | yes | no |  |
 
 
 ### `xtask jobs status`

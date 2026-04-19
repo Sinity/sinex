@@ -127,16 +127,10 @@ impl EphemeralNatsBuilder {
         log_err: &std::fs::File,
     ) -> Result<Command> {
         let mut cmd = Command::new(binary);
-        // Auto-kill the nats-server when the parent test process exits.
-        // Without this, shared NATS instances (held in a static registry)
-        // become orphans because Rust doesn't guarantee static destructors.
-        #[cfg(target_os = "linux")]
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
-                Ok(())
-            });
-        }
+        // Auto-kill the nats-server when the parent test process exits and
+        // isolate it in its own process group so cleanup can reap the whole
+        // descendant tree instead of only the direct server PID.
+        crate::process::configure_managed_child_tokio(&mut cmd);
         cmd.arg("--jetstream")
             .arg("--store_dir")
             .arg(store_dir)
@@ -170,8 +164,12 @@ impl EphemeralNatsBuilder {
     }
 
     async fn cleanup_failed_child(child: &mut Child) {
-        if let Err(error) = child.start_kill() {
-            warn!(error = %error, "Failed to start-kill NATS child after readiness failure");
+        if let Err(error) = crate::process::terminate_tokio_child_process_group(
+            child,
+            "ephemeral nats",
+            "readiness failure",
+        ) {
+            warn!(error = %error, "Failed to terminate ephemeral NATS process group after readiness failure");
         }
         match timeout(Duration::from_secs(1), child.wait()).await {
             Ok(Ok(_)) => {}
@@ -205,6 +203,7 @@ impl EphemeralNatsBuilder {
                 let mut cmd =
                     self.command_for_port(&binary, store_dir.path(), port, &log_file, &log_err)?;
                 let mut child = cmd.spawn()?;
+                crate::process::register_tokio_child_process_group(&child, "ephemeral nats");
 
                 // We pass the raw port for the connectivity check.
                 match EphemeralNats::wait_for_ready(port, &mut child).await {
@@ -309,8 +308,12 @@ impl EphemeralNats {
     pub async fn shutdown(&self) -> Result<()> {
         let mut guard = self.process.lock().await;
         if let Some(mut child) = guard.take() {
-            if let Err(error) = child.start_kill() {
-                warn!(error = %error, "Failed to start-kill ephemeral NATS child during shutdown");
+            if let Err(error) = crate::process::terminate_tokio_child_process_group(
+                &mut child,
+                "ephemeral nats",
+                "shutdown",
+            ) {
+                warn!(error = %error, "Failed to terminate ephemeral NATS process group during shutdown");
             }
             Self::wait_for_shutdown(&mut child).await;
         }

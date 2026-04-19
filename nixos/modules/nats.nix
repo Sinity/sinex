@@ -115,7 +115,9 @@ in
     (modulesPath + "/services/networking/nats.nix")
   ];
 
-  options.services.sinex.nats = with types; {
+  options.services.sinex.nats = with types; let
+    positive = ints.positive;
+  in {
     enable = mkEnableOption "Manage a local NATS server with JetStream for Sinex";
 
     autoSetup = mkOption {

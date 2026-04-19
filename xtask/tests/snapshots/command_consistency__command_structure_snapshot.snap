@@ -1,6 +1,5 @@
 ---
 source: xtask/tests/command_consistency.rs
-assertion_line: 29
 expression: json
 ---
 {
@@ -744,19 +743,6 @@ expression: json
             },
             {
               "global": false,
-              "help": "Run VM tests in parallel",
-              "long": "parallel",
-              "name": "parallel",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
               "help": "Timeout per test in seconds",
               "long": "timeout",
               "name": "timeout",
@@ -1345,19 +1331,6 @@ expression: json
                 },
                 {
                   "global": false,
-                  "help": "Run tests in parallel",
-                  "long": "parallel",
-                  "name": "parallel",
-                  "possible_values": [
-                    "true",
-                    "false"
-                  ],
-                  "required": false,
-                  "short": null,
-                  "takes_value": false
-                },
-                {
-                  "global": false,
                   "help": "Timeout per test in seconds (default: 900, closure-heavy scenarios: 3600)",
                   "long": "timeout",
                   "name": "timeout",
@@ -1555,6 +1528,23 @@ expression: json
             }
           ],
           "name": "list",
+          "subcommands": []
+        },
+        {
+          "about": "List active jobs",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "active",
           "subcommands": []
         },
         {

@@ -5,39 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read};
 use std::process::Stdio;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
 use std::time::Duration;
 
-use crate::process::cargo_command;
-
-/// X3: Verify that `pid` still refers to a cargo or rustc process before SIGKILL.
-///
-/// Reads `/proc/{pid}/cmdline` on Linux. If the process has exited and the PID was
-/// recycled for an unrelated process, this returns `false` and we skip the SIGKILL.
-/// Returns `true` on non-Linux or if `/proc` is unavailable (conservative: allow kill).
-fn watchdog_pid_is_cargo(pid: u32) -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        let cmdline_path = format!("/proc/{pid}/cmdline");
-        match std::fs::read(&cmdline_path) {
-            Ok(bytes) => {
-                // cmdline is NUL-separated; convert for substring search
-                let text = String::from_utf8_lossy(&bytes);
-                text.contains("cargo") || text.contains("rustc")
-            }
-            // Process already exited — no need to kill
-            Err(_) => false,
-        }
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = pid;
-        true // Conservative: allow kill on non-Linux
-    }
-}
+use crate::process::{ProcessTimeoutGuard, cargo_command};
 
 /// A parsed compiler diagnostic
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -206,34 +176,12 @@ fn run_cargo_with_timeout(cargo_args: &[&str]) -> color_eyre::eyre::Result<(Vec<
         .stderr(Stdio::inherit()) // Stream compiler progress/errors to terminal in real-time
         .spawn()?;
 
-    let pid = child.id();
-
-    // Shared flag: watchdog sets this to true if it fires (timeout exceeded).
-    let timed_out = Arc::new(AtomicBool::new(false));
-    let timed_out_clone = timed_out.clone();
-
-    // Spawn timeout watchdog: kills child after timeout seconds.
-    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
-    std::thread::spawn(move || {
-        if done_rx
-            .recv_timeout(Duration::from_secs(timeout_secs))
-            .is_err()
-        {
-            // Timeout fired — record it and kill the child
-            timed_out_clone.store(true, Ordering::Relaxed);
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
-            }
-            std::thread::sleep(Duration::from_secs(2));
-            // X3: Verify PID still refers to a cargo/rustc process before SIGKILL
-            // to avoid killing a recycled PID on a heavily loaded system.
-            if watchdog_pid_is_cargo(pid) {
-                unsafe {
-                    libc::kill(pid as i32, libc::SIGKILL);
-                }
-            }
-        }
-    });
+    let mut timeout_guard = ProcessTimeoutGuard::start_for_process_group_leader(
+        child.id(),
+        "cargo diagnostics",
+        Duration::from_secs(timeout_secs),
+        "cargo diagnostics timeout",
+    );
 
     // Read stdout while child runs (must drain the pipe or child blocks on full pipe buffer)
     let mut stdout_bytes = Vec::new();
@@ -242,10 +190,8 @@ fn run_cargo_with_timeout(cargo_args: &[&str]) -> color_eyre::eyre::Result<(Vec<
     }
 
     let exit_status = child.wait()?;
-    let _ = done_tx.send(()); // Cancel watchdog
 
-    // Check if we timed out (watchdog set the flag)
-    if timed_out.load(Ordering::Relaxed) {
+    if timeout_guard.finish() {
         return Err(eyre!(
             "cargo timed out after {timeout_secs}s — possible cargo target/ lock contention \
              from a concurrent cargo process. \
@@ -376,29 +322,12 @@ where
         .stderr(Stdio::inherit())
         .spawn()?;
 
-    let pid = child.id();
-
-    let timed_out = Arc::new(AtomicBool::new(false));
-    let timed_out_clone = timed_out.clone();
-
-    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
-    std::thread::spawn(move || {
-        if done_rx
-            .recv_timeout(Duration::from_secs(timeout_secs))
-            .is_err()
-        {
-            timed_out_clone.store(true, Ordering::Relaxed);
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
-            }
-            std::thread::sleep(Duration::from_secs(2));
-            if watchdog_pid_is_cargo(pid) {
-                unsafe {
-                    libc::kill(pid as i32, libc::SIGKILL);
-                }
-            }
-        }
-    });
+    let mut timeout_guard = ProcessTimeoutGuard::start_for_process_group_leader(
+        child.id(),
+        "cargo streaming diagnostics",
+        Duration::from_secs(timeout_secs),
+        "cargo streaming diagnostics timeout",
+    );
 
     let mut all_bytes = Vec::new();
     let progress_targets = progress_target_packages(cargo_args);
@@ -419,9 +348,8 @@ where
     }
 
     let exit_status = child.wait()?;
-    let _ = done_tx.send(());
 
-    if timed_out.load(Ordering::Relaxed) {
+    if timeout_guard.finish() {
         return Err(eyre!(
             "cargo timed out after {timeout_secs}s — possible cargo target/ lock contention \
              from a concurrent cargo process. \

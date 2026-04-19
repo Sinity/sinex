@@ -353,10 +353,6 @@ pub struct VmArgs {
     #[arg(long)]
     pub category: Option<String>,
 
-    /// Run VM tests in parallel
-    #[arg(long)]
-    pub parallel: bool,
-
     /// Timeout per test in seconds
     #[arg(long, default_value_t = crate::commands::vm::DEFAULT_TIMEOUT_SECS)]
     pub timeout: u64,
@@ -644,9 +640,6 @@ impl XtaskCommand for TestCommand {
                     if let Some(ref c) = vm.category {
                         args.push(format!("--category={c}"));
                     }
-                    if vm.parallel {
-                        args.push("--parallel".to_string());
-                    }
                     if vm.timeout != crate::commands::vm::DEFAULT_TIMEOUT_SECS {
                         args.push(format!("--timeout={}", vm.timeout));
                     }
@@ -663,6 +656,20 @@ impl XtaskCommand for TestCommand {
                         args.push("--".to_string());
                         args.extend(vm.args.clone());
                     }
+
+                    let coordination_args = crate::commands::vm::vm_test_coordination_args(
+                        vm.category.as_deref(),
+                        vm.timeout,
+                        vm.keep_failed,
+                        vm.validate,
+                        &vm.args,
+                    );
+                    return crate::coordinator::coordinate_and_spawn_with_scope(
+                        "test",
+                        &args,
+                        &coordination_args,
+                        ctx,
+                    );
                 }
                 None => {
                     // Default nextest mode — serialize nextest-specific flags
@@ -1125,7 +1132,6 @@ mod tests {
         let command = TestCommand {
             subcommand: Some(TestSubcommand::Vm(VmArgs {
                 category: Some("smoke".to_string()),
-                parallel: false,
                 timeout: crate::commands::vm::DEFAULT_TIMEOUT_SECS,
                 keep_failed: false,
                 list: false,
@@ -1564,7 +1570,8 @@ fn execute_mutants(m: &MutantsArgs, _ctx: &CommandContext) -> Result<CommandResu
         ));
     }
 
-    let mut builder = ProcessBuilder::new("cargo-mutants");
+    let mut builder =
+        ProcessBuilder::new("cargo-mutants").with_timeout(std::time::Duration::from_secs(14400));
     builder = builder
         .arg("--timeout")
         .arg(format!("{}", m.timeout))
@@ -1599,7 +1606,6 @@ async fn execute_vm(vm: &VmArgs, ctx: &CommandContext) -> Result<CommandResult> 
     let vm_cmd = crate::commands::vm::VmCommand {
         subcommand: crate::commands::vm::VmSubcommand::Test {
             category: vm.category.clone(),
-            parallel: vm.parallel,
             timeout: vm.timeout,
             keep_failed: vm.keep_failed,
             list: vm.list,

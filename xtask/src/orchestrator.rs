@@ -14,7 +14,11 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 
-use crate::process::cargo_tokio_command;
+use crate::process::{
+    ProcessBuilder, ProcessTimeoutGuard, configure_managed_child_tokio,
+    helper_process_timeout_for_program, register_tokio_child_process_group,
+    terminate_tokio_child_process_group,
+};
 use crate::watcher::{FileWatcher, WatchEvent};
 
 /// Arguments for running a binary with hot reload
@@ -105,14 +109,8 @@ async fn kill_child_if_running(child: &mut Child, label: &str, context: &str) ->
     if !child_running(child, label)? {
         return Ok(());
     }
-    match child.kill().await {
-        Ok(()) => {}
-        Err(error) => {
-            if child_running(child, label)? {
-                return Err(eyre!(error).wrap_err(format!("failed to kill {label} {context}")));
-            }
-        }
-    }
+    terminate_tokio_child_process_group(child, label, context)
+        .wrap_err_with(|| format!("failed to kill {label} {context}"))?;
     child
         .wait()
         .await
@@ -136,22 +134,29 @@ impl DevOrchestrator {
     async fn build(&self) -> Result<PathBuf> {
         println!("[build] Building {}...", self.args.binary);
 
-        let mut cmd = cargo_tokio_command();
-        cmd.arg("build")
+        let mut build = ProcessBuilder::cargo()
+            .arg("build")
             .arg("-p")
             .arg(&self.args.binary)
             .arg("--bin")
             .arg(&self.args.binary)
             .current_dir(&self.workspace_root)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .with_description(format!("building {}", self.args.binary));
 
         if self.args.release {
-            cmd.arg("--release");
+            build = build.arg("--release");
         }
-
+        let mut child = build.spawn_tokio()?;
+        let build_timeout = helper_process_timeout_for_program("cargo");
+        let timeout_guard = child.id().map(|pid| {
+            ProcessTimeoutGuard::start_for_process_group_leader(
+                pid,
+                "cargo build",
+                build_timeout,
+                format!("build {} timeout", self.args.binary),
+            )
+        });
         // Stream output in real-time
-        let mut child = cmd.spawn()?;
 
         // Handle stdout
         if let Some(stdout) = child.stdout.take() {
@@ -176,8 +181,16 @@ impl DevOrchestrator {
                 }
             });
         }
-
         let status = child.wait().await?;
+        if let Some(mut guard) = timeout_guard
+            && guard.finish()
+        {
+            bail!(
+                "building {} timed out after {:.0}s",
+                self.args.binary,
+                build_timeout.as_secs_f64()
+            );
+        }
         if !status.success() {
             bail!("Build failed with status: {status}");
         }
@@ -198,6 +211,7 @@ impl DevOrchestrator {
     /// Build a `Command` for the target binary with args, env vars, and piped stdio.
     fn build_process_command(&self, binary_path: &PathBuf) -> Command {
         let mut cmd = Command::new(binary_path);
+        configure_managed_child_tokio(&mut cmd);
         cmd.args(&self.args.args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -227,6 +241,7 @@ impl DevOrchestrator {
     /// from multiple instances remains distinguishable.
     fn spawn_with_streaming(&self, mut cmd: Command, label: &str) -> Result<Child> {
         let mut child = cmd.spawn()?;
+        register_tokio_child_process_group(&child, label);
 
         // Stream stdout
         if let Some(stdout) = child.stdout.take() {
