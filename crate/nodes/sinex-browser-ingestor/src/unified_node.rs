@@ -6,11 +6,14 @@ use crate::sqlite_sources::{
 use crate::visit::{BrowserVisitRecord, make_material_metadata};
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
+use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use sinex_node_sdk::{
     BatchImporterState, EventTransport, ImportFileChangeKind, IngestorNode, NodeResult,
-    RotationPolicy, SinexError, acquisition_manager::AcquisitionManager,
+    RotationPolicy, SinexError, SqliteSourceCheckpointState,
+    acquisition_manager::AcquisitionManager,
+    checkpointed_sqlite_source_strict, discover_importable_files_at_root,
     runtime::stream::{Checkpoint, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon},
-    scan_for_new_files, stage_material,
+    stage_material,
 };
 use sinex_primitives::{
     Seconds, Timestamp,
@@ -20,7 +23,6 @@ use sinex_primitives::{
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::watch;
 use tracing::info;
-use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 
 const MATERIAL_REASON_HISTORY: &str = "browser-history";
 const DEFAULT_POLLING_INTERVAL_SECS: u64 = 30;
@@ -37,7 +39,9 @@ impl Default for BrowserIngestorConfig {
         Self {
             dump_sources: vec![
                 Utf8PathBuf::from("/realm/data/captures/webhistory/gestalt/data"),
-                Utf8PathBuf::from("/realm/data/captures/webhistory/gestalt/derived/full_history.ndjson"),
+                Utf8PathBuf::from(
+                    "/realm/data/captures/webhistory/gestalt/derived/full_history.ndjson",
+                ),
             ],
             sqlite_sources: vec![
                 BrowserSqliteSourceConfig {
@@ -46,7 +50,9 @@ impl Default for BrowserIngestorConfig {
                     format: BrowserSqliteFormat::QutebrowserNative,
                 },
                 BrowserSqliteSourceConfig {
-                    path: Utf8PathBuf::from("/home/sinity/.local/share/qutebrowser/webengine/History"),
+                    path: Utf8PathBuf::from(
+                        "/home/sinity/.local/share/qutebrowser/webengine/History",
+                    ),
                     browser: "qutebrowser".to_string(),
                     format: BrowserSqliteFormat::ChromiumHistory,
                 },
@@ -77,7 +83,7 @@ pub struct BrowserIngestorState {
     #[serde(default)]
     pub dump_imports: BatchImporterState,
     #[serde(default)]
-    pub sqlite_row_ids: HashMap<String, i64>,
+    pub sqlite_sources: SqliteSourceCheckpointState,
 }
 
 #[derive(Default)]
@@ -181,8 +187,7 @@ impl BrowserNode {
             .await
             .map(|_| ())
             .map_err(|error| {
-                SinexError::messaging("failed to emit browser history event")
-                    .with_source(error)
+                SinexError::messaging("failed to emit browser history event").with_source(error)
             })
     }
 
@@ -192,15 +197,15 @@ impl BrowserNode {
         root: &Utf8PathBuf,
     ) -> NodeResult<(u64, Vec<String>)> {
         let mut warnings = Vec::new();
-        state.remember_scan_root(root.clone());
-        let discovered = match scan_for_new_files(state, root, SUPPORTED_HISTORY_EXTENSIONS) {
-            Ok(discovered) => discovered,
-            Err(sinex_node_sdk::ScanError::PathNotFound(_)) => {
-                warnings.push(format!("browser history dump root missing: {root}"));
-                return Ok((0, warnings));
-            }
-            Err(error) => return Err(SinexError::io(error.to_string())),
-        };
+        let discovered =
+            match discover_importable_files_at_root(state, root, SUPPORTED_HISTORY_EXTENSIONS) {
+                Ok(discovered) => discovered,
+                Err(sinex_node_sdk::ScanError::PathNotFound(_)) => {
+                    warnings.push(format!("browser history dump root missing: {root}"));
+                    return Ok((0, warnings));
+                }
+                Err(error) => return Err(SinexError::io(error.to_string())),
+            };
 
         let mut processed = 0u64;
         for file in discovered {
@@ -247,7 +252,10 @@ impl BrowserNode {
             let ParsedDumpFile { visits, stats } = match parsed {
                 Ok(parsed) => parsed,
                 Err(error) => {
-                    warnings.push(format!("failed to parse browser dump {}: {error}", file.path));
+                    warnings.push(format!(
+                        "failed to parse browser dump {}: {error}",
+                        file.path
+                    ));
                     continue;
                 }
             };
@@ -261,7 +269,8 @@ impl BrowserNode {
                 &file.path,
                 file.fingerprint,
                 file.fingerprint.size_bytes,
-                file.start_line_number.saturating_add(stats.delta_line_count),
+                file.start_line_number
+                    .saturating_add(stats.delta_line_count),
             );
         }
 
@@ -289,22 +298,27 @@ impl BrowserNode {
         }
 
         let checkpoint_key = source.checkpoint_key();
-        let from_row_id = state.sqlite_row_ids.get(&checkpoint_key).copied().unwrap_or_default();
-        let (visits, last_row_id) = read_browser_sqlite_history(source, from_row_id, historical_end_time)
-            .map_err(|error| {
+        let report = checkpointed_sqlite_source_strict(
+            &mut state.sqlite_sources,
+            &checkpoint_key,
+            historical_end_time,
+            |from_row_id, end_time| read_browser_sqlite_history(source, from_row_id, end_time),
+            |visit| async move {
+                self.emit_visit(visit).await?;
+                Ok(sinex_node_sdk::SqliteHistoryRowOutcome::Processed)
+            },
+        )
+        .await
+        .map_err(|error| match error {
+            sinex_node_sdk::SqliteHistoryImportError::Read(error) => {
                 SinexError::processing("failed to read browser sqlite history")
                     .with_context("source", source.path.to_string())
                     .with_std_error(&error)
-            })?;
+            }
+            sinex_node_sdk::SqliteHistoryImportError::Process(error) => error,
+        })?;
 
-        let mut processed = 0u64;
-        for visit in visits {
-            self.emit_visit(visit).await?;
-            processed = processed.saturating_add(1);
-        }
-        state.sqlite_row_ids.insert(checkpoint_key, last_row_id);
-
-        Ok((processed, warnings))
+        Ok((report.processed_rows as u64, warnings))
     }
 
     async fn run_import_pass(
@@ -328,7 +342,10 @@ impl BrowserNode {
         }
 
         for source in &self.config.sqlite_sources {
-            match self.process_sqlite_source(state, source, historical_end_time).await {
+            match self
+                .process_sqlite_source(state, source, historical_end_time)
+                .await
+            {
                 Ok((processed, warnings)) => {
                     outcome.processed = outcome.processed.saturating_add(processed);
                     outcome.warnings.extend(warnings);
@@ -385,10 +402,8 @@ impl IngestorNode for BrowserNode {
         config.validate()?;
         Self::bootstrap_streams_for_runtime(runtime).await?;
 
-        let acquisition = Arc::new(runtime.acquisition_manager(
-            RotationPolicy::default(),
-            "browser-history",
-        )?);
+        let acquisition =
+            Arc::new(runtime.acquisition_manager(RotationPolicy::default(), "browser-history")?);
         self.stage_context = Some(
             StageAsYouGoContext::from_runtime(runtime)
                 .with_acquisition_manager(Arc::clone(&acquisition)),
@@ -452,13 +467,14 @@ impl IngestorNode for BrowserNode {
             }
         }
 
-        Ok(Self::scan_report(accumulated, started_at, started.elapsed()))
+        Ok(Self::scan_report(
+            accumulated,
+            started_at,
+            started.elapsed(),
+        ))
     }
 }
 
 fn is_appendable_dump(path: &Utf8PathBuf) -> bool {
-    matches!(
-        path.extension(),
-        Some("jsonl" | "ndjson")
-    )
+    matches!(path.extension(), Some("jsonl" | "ndjson"))
 }

@@ -14,7 +14,7 @@ adapters for the common cases:
 2. **Shared checkpointing**: durable checkpoint/state management across node restarts.
 3. **Shared runtime plumbing**: NATS transport, confirmations, health reporting, coordination, and shutdown handling.
 4. **Different authoring traits**: `IngestorNode` for external capture, and `TransducerNode` / `WindowedNode` / `ScopeReconcilerNode` for synthesis.
-5. **Reusable source adapters**: common input shapes like append-only text files and SQLite-backed history sources live in the SDK so future ingestors can extend the normal node/runtime plane instead of rebuilding bespoke readers or direct-import paths.
+5. **Reusable source adapters**: common input shapes like append-only UTF-8 tail sources, checkpointed SQLite history readers, and incremental file-import roots live in the SDK so future ingestors can extend the normal node/runtime plane instead of rebuilding bespoke readers or direct-import paths.
 
 ## 🛰️ Distributed Service Architecture
 

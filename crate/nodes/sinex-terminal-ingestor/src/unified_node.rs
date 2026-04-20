@@ -11,8 +11,8 @@ use serde_json::{self, json};
 use sinex_node_sdk::{
     ActivityEntry, AppendOnlyFileChange, AppendOnlyFileState, CoverageAnalysis,
     ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState, SqliteHistoryRowOutcome,
-    SqliteHistoryWarningDisposition, TailError, import_sqlite_history_lenient, poll_utf8_lines,
-    stage_material,
+    SqliteHistoryWarningDisposition, TailError, checkpointed_sqlite_history_lenient,
+    poll_append_only_utf8_source, stage_material,
 };
 use sinex_node_sdk::{
     NodeResult, SinexError,
@@ -293,19 +293,22 @@ impl SqliteShellEntry for crate::fish_history::FishHistoryEntry {
     ) -> Result<Option<String>, HistorySqliteWarning> {
         let row_id = self.row_id;
         match sqlite_row_id_to_line_number(ctx, row_id) {
-            Ok(line_number) => prepare_command_for_capture(
-                ctx,
-                &self.command,
-                line_number,
-                Some(recent_hashes),
-            )
-            .map_err(|error| {
-                let message = format!("failed to process {} row {row_id}: {error}", Self::SOURCE_LABEL);
-                ctx.record_error(Self::PROCESS_STAGE, &message);
-                ctx.skippable_sqlite_warning(message)
-            }),
+            Ok(line_number) => {
+                prepare_command_for_capture(ctx, &self.command, line_number, Some(recent_hashes))
+                    .map_err(|error| {
+                        let message = format!(
+                            "failed to process {} row {row_id}: {error}",
+                            Self::SOURCE_LABEL
+                        );
+                        ctx.record_error(Self::PROCESS_STAGE, &message);
+                        ctx.skippable_sqlite_warning(message)
+                    })
+            }
             Err(error) => {
-                let message = format!("failed to process {} row {row_id}: {error}", Self::SOURCE_LABEL);
+                let message = format!(
+                    "failed to process {} row {row_id}: {error}",
+                    Self::SOURCE_LABEL
+                );
                 ctx.record_error(Self::PROCESS_STAGE, &message);
                 Err(ctx.skippable_sqlite_warning(message))
             }
@@ -337,18 +340,20 @@ impl SqliteShellEntry for crate::atuin_history::AtuinHistoryEntry {
     ) -> Result<Option<String>, HistorySqliteWarning> {
         let row_id = self.row_id;
         match sqlite_row_id_to_line_number(ctx, row_id) {
-            Ok(line_number) => {
-                prepare_command_for_capture(ctx, &self.command, line_number, None).map_err(
-                    |error| {
-                        let message =
-                            format!("failed to process {} row {row_id}: {error}", Self::SOURCE_LABEL);
-                        ctx.record_error(Self::PROCESS_STAGE, &message);
-                        ctx.skippable_sqlite_warning(message)
-                    },
-                )
-            }
+            Ok(line_number) => prepare_command_for_capture(ctx, &self.command, line_number, None)
+                .map_err(|error| {
+                    let message = format!(
+                        "failed to process {} row {row_id}: {error}",
+                        Self::SOURCE_LABEL
+                    );
+                    ctx.record_error(Self::PROCESS_STAGE, &message);
+                    ctx.skippable_sqlite_warning(message)
+                }),
             Err(error) => {
-                let message = format!("failed to process {} row {row_id}: {error}", Self::SOURCE_LABEL);
+                let message = format!(
+                    "failed to process {} row {row_id}: {error}",
+                    Self::SOURCE_LABEL
+                );
                 ctx.record_error(Self::PROCESS_STAGE, &message);
                 Err(ctx.skippable_sqlite_warning(message))
             }
@@ -997,17 +1002,19 @@ impl HistoryWatcherContext {
     async fn monitor_sqlite_history<Entry, Read>(self, read: Read) -> NodeResult<()>
     where
         Entry: SqliteShellEntry,
-        Read:
-            Copy + Fn(&Utf8PathBuf, i64, Option<Timestamp>) -> Result<(Vec<Entry>, i64), rusqlite::Error>,
+        Read: Copy
+            + Fn(&Utf8PathBuf, i64, Option<Timestamp>) -> Result<(Vec<Entry>, i64), rusqlite::Error>,
     {
-        let (mut sqlite_row_id, mut recent_hashes) =
-            match self.resolve_state(self.initial_state_override.clone()).await {
-                Ok(state) => match self.require_sqlite_row_id(&state) {
-                    Ok(sqlite_row_id) => (sqlite_row_id, state.recent_hashes),
-                    Err(error) => return Err(error),
-                },
+        let (mut sqlite_row_id, mut recent_hashes) = match self
+            .resolve_state(self.initial_state_override.clone())
+            .await
+        {
+            Ok(state) => match self.require_sqlite_row_id(&state) {
+                Ok(sqlite_row_id) => (sqlite_row_id, state.recent_hashes),
                 Err(error) => return Err(error),
-            };
+            },
+            Err(error) => return Err(error),
+        };
         let mut shutdown_rx = self.shutdown_rx.clone();
         debug!(
             path = %self.path,
@@ -1211,8 +1218,8 @@ impl HistoryWatcherContext {
     ) -> HistoryScanOutcome
     where
         Entry: SqliteShellEntry,
-        Read:
-            Copy + Fn(&Utf8PathBuf, i64, Option<Timestamp>) -> Result<(Vec<Entry>, i64), rusqlite::Error>,
+        Read: Copy
+            + Fn(&Utf8PathBuf, i64, Option<Timestamp>) -> Result<(Vec<Entry>, i64), rusqlite::Error>,
     {
         let state = match self.resolve_state(state_override).await {
             Ok(state) => state,
@@ -1253,8 +1260,8 @@ impl HistoryWatcherContext {
                 );
             }
         };
-        match import_sqlite_history_lenient(
-            sqlite_row_id,
+        match checkpointed_sqlite_history_lenient(
+            &mut sqlite_row_id,
             historical_end_time,
             |from_row_id, end_time| read(&self.path, from_row_id, end_time),
             |entry: &Entry| entry.row_id(),
@@ -1285,7 +1292,6 @@ impl HistoryWatcherContext {
         .await
         {
             Ok(report) => {
-                sqlite_row_id = sqlite_row_id.max(report.last_row_id);
                 self.record_poll(poll_started_at, file_size, report.processed_rows);
                 self.success_outcome(
                     report.processed_rows,
@@ -1354,10 +1360,9 @@ impl HistoryWatcherContext {
                 let mut file_size = 0u64;
                 let mut warnings = Vec::new();
 
-                match poll_utf8_lines(&self.path, file_state.clone()).await {
+                match poll_append_only_utf8_source(&self.path, &mut file_state).await {
                     Ok(polled) => {
                         file_size = polled.file_size;
-                        file_state = polled.state;
                         if let Some(message) = self.reconcile_text_file_change(
                             &polled.change,
                             &mut line_number,
@@ -1583,9 +1588,8 @@ impl HistoryWatcherContext {
             inode: *last_inode,
         };
 
-        let result = match poll_utf8_lines(&self.path, file_state.clone()).await {
+        let result = match poll_append_only_utf8_source(&self.path, &mut file_state).await {
             Ok(polled) => {
-                file_state = polled.state;
                 if let Some(message) =
                     self.reconcile_text_file_change(&polled.change, line_number, pending_timestamp)
                 {
@@ -1650,9 +1654,8 @@ impl HistoryWatcherContext {
             offset_bytes: *offset_bytes,
         };
 
-        let result = match poll_utf8_lines(&self.path, file_state.clone()).await {
+        let result = match poll_append_only_utf8_source(&self.path, &mut file_state).await {
             Ok(polled) => {
-                file_state = polled.state;
                 if let Some(message) =
                     self.reconcile_text_file_change(&polled.change, line_number, pending_timestamp)
                 {
@@ -1710,8 +1713,8 @@ impl HistoryWatcherContext {
     ) -> NodeResult<usize>
     where
         Entry: SqliteShellEntry,
-        Read:
-            Copy + Fn(&Utf8PathBuf, i64, Option<Timestamp>) -> Result<(Vec<Entry>, i64), rusqlite::Error>,
+        Read: Copy
+            + Fn(&Utf8PathBuf, i64, Option<Timestamp>) -> Result<(Vec<Entry>, i64), rusqlite::Error>,
     {
         let poll_started_at = Instant::now();
         let file_size = match self.history_file_size().await {
@@ -1729,8 +1732,8 @@ impl HistoryWatcherContext {
             }
         };
 
-        let processed = match import_sqlite_history_lenient(
-            *sqlite_row_id,
+        let processed = match checkpointed_sqlite_history_lenient(
+            sqlite_row_id,
             None,
             |from_row_id, end_time| read(&self.path, from_row_id, end_time),
             |entry: &Entry| entry.row_id(),
@@ -1767,12 +1770,9 @@ impl HistoryWatcherContext {
         .await
         {
             Ok(report) => {
-                if report.last_row_id > *sqlite_row_id {
-                    *sqlite_row_id = report.last_row_id;
-                    if persist_state {
-                        self.persist_sqlite_state(*sqlite_row_id, recent_hashes)
-                            .await?;
-                    }
+                if persist_state {
+                    self.persist_sqlite_state(*sqlite_row_id, recent_hashes)
+                        .await?;
                 }
                 report.processed_rows
             }
@@ -1790,22 +1790,6 @@ impl HistoryWatcherContext {
 
         self.record_poll(poll_started_at, file_size, processed);
         Ok(processed)
-    }
-
-    #[cfg(test)]
-    async fn poll_fish_history_once(
-        &self,
-        sqlite_row_id: &mut i64,
-        recent_hashes: &mut VecDeque<u64>,
-        persist_state: bool,
-    ) -> NodeResult<usize> {
-        self.poll_sqlite_history_once::<crate::fish_history::FishHistoryEntry, _>(
-            sqlite_row_id,
-            recent_hashes,
-            persist_state,
-            crate::fish_history::read_fish_history,
-        )
-        .await
     }
 
     #[cfg(test)]
