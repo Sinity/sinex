@@ -953,6 +953,150 @@ let
       };
     };
 
+  mkBrowserUnits =
+    let
+      sat = nodesCfg.browser;
+      instances = resolveInstances sat.instances;
+      batch = resolveBatch sat.batch;
+      resources = resolveResources sat.resources;
+      nodeConfig = builtins.toJSON {
+        dump_sources = sat.dumpSources;
+        sqlite_sources = map (source: {
+          path = source.path;
+          browser = source.browser;
+          format = source.format;
+        }) sat.sqliteSources;
+        polling_interval_secs = sat.pollIntervalSec;
+      };
+      sqlitePaths = unique (map (source: source.path) sat.sqliteSources);
+      sqliteDirs = unique (map builtins.dirOf sqlitePaths);
+      accessWritePaths =
+        unique (
+          sqliteDirs
+          ++ optionals (targetHome != null) [
+            targetHome
+            "${targetHome}/.local"
+            "${targetHome}/.local/share"
+            "${targetHome}/.local/share/qutebrowser"
+            "${targetHome}/.local/share/qutebrowser/webengine"
+          ]
+        );
+      accessSetupScript =
+        if sqlitePaths == [] then null else pkgs.writeShellScript "sinex-browser-target-access" ''
+          set -euo pipefail
+
+          SERVICE_USER=${escapeShellArg serviceUser}
+          SETFACL=${pkgs.acl}/bin/setfacl
+          DIRNAME=${pkgs.coreutils}/bin/dirname
+          acl_failures=0
+
+          record_acl_failure() {
+            local path="$1"
+            echo "sinex-browser-target-access: failed to grant ACLs for $path" >&2
+            acl_failures=$((acl_failures + 1))
+          }
+
+          set_access_acl() {
+            local path="$1"
+            local acl_spec="$2"
+            local mask_spec=""
+            if [ "$#" -ge 3 ]; then
+              mask_spec="$3"
+            fi
+            if [ -n "$mask_spec" ]; then
+              "$SETFACL" -m "$acl_spec,m::$mask_spec" "$path" || record_acl_failure "$path"
+            else
+              "$SETFACL" --mask -m "$acl_spec" "$path" || record_acl_failure "$path"
+            fi
+          }
+
+          set_default_acl() {
+            local path="$1"
+            local acl_spec="$2"
+            local mask_spec=""
+            if [ "$#" -ge 3 ]; then
+              mask_spec="$3"
+            fi
+            if [ -n "$mask_spec" ]; then
+              "$SETFACL" -d -m "$acl_spec,m::$mask_spec" "$path" || record_acl_failure "$path"
+            else
+              "$SETFACL" -d --mask -m "$acl_spec" "$path" || record_acl_failure "$path"
+            fi
+          }
+
+          grant_parent_dirs() {
+            local path="$1"
+            local dir
+            dir="$path"
+            while [ "$dir" != "/" ] && [ "$dir" != "." ]; do
+              if [ -d "$dir" ]; then
+                set_access_acl "$dir" "u:$SERVICE_USER:--x" "--x"
+              fi
+              dir="$("$DIRNAME" "$dir")"
+            done
+          }
+
+          grant_dir_read() {
+            local path="$1"
+            if [ -d "$path" ]; then
+              set_access_acl "$path" "u:$SERVICE_USER:r-x" "r-x"
+            fi
+          }
+
+          grant_dir_read_defaults() {
+            local path="$1"
+            if [ -d "$path" ]; then
+              set_default_acl "$path" "u:$SERVICE_USER:r-X" "r-X"
+            fi
+          }
+
+          grant_file_read() {
+            local path="$1"
+            if [ -f "$path" ]; then
+              set_access_acl "$path" "u:$SERVICE_USER:r--" "r--"
+            fi
+          }
+
+          grant_sqlite_sidecars() {
+            local path="$1"
+            grant_file_read "$path-wal"
+            grant_file_read "$path-shm"
+          }
+
+          ${concatStringsSep "\n" (map (path: ''
+            grant_parent_dirs ${escapeShellArg path}
+            grant_file_read ${escapeShellArg path}
+            grant_sqlite_sidecars ${escapeShellArg path}
+          '') sqlitePaths)}
+
+          ${concatStringsSep "\n" (map (path: ''
+            grant_parent_dirs ${escapeShellArg path}
+            grant_dir_read ${escapeShellArg path}
+            grant_dir_read_defaults ${escapeShellArg path}
+          '') sqliteDirs)}
+
+          if [ "$acl_failures" -ne 0 ]; then
+            exit 1
+          fi
+        '';
+    in
+    mkNodeUnits {
+      name = "browser";
+      binary = "browser-ingestor";
+      description = "Browser history node";
+      inherit instances batch resources;
+      extraArgs = [ "--node-config ${escapeShellArg nodeConfig}" ] ++ sat.extraArgs;
+      env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
+      serviceConfig = {
+        ProtectHome = lib.mkForce "read-only";
+        ReadWritePaths = readWritePaths ++ accessWritePaths;
+      } // optionalAttrs (sat.access.bindReadOnlyPaths != [] && accessSetupScript == null) {
+        BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
+      } // optionalAttrs (accessSetupScript != null) {
+        ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
+      };
+    };
+
   mkSystemUnits =
     let
       sat = nodesCfg.system;
@@ -1225,10 +1369,11 @@ let
       let
         filesystemUnits = if nodesCfg.filesystem.enable then mkFilesystemUnits else {};
         terminalUnits = if nodesCfg.terminal.enable then mkTerminalUnits else {};
+        browserUnits = if nodesCfg.browser.enable then mkBrowserUnits else {};
         desktopUnits = if nodesCfg.desktop.enable then mkDesktopUnits else {};
         systemUnits = if nodesCfg.system.enable then mkSystemUnits else {};
       in
-      filesystemUnits // terminalUnits // desktopUnits // systemUnits;
+      filesystemUnits // terminalUnits // browserUnits // desktopUnits // systemUnits;
 
   documentScanService =
     if !(nodesEnabled && nodesCfg.document.enable) then {} else mkDocumentUnits;

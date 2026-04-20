@@ -27,6 +27,8 @@ pub struct DeploymentReadinessDescriptor {
     #[serde(default)]
     pub terminal: TerminalDeploymentSurface,
     #[serde(default)]
+    pub browser: BrowserDeploymentSurface,
+    #[serde(default)]
     pub desktop: DesktopDeploymentSurface,
     #[serde(default)]
     pub system: DeploymentSurface,
@@ -112,6 +114,25 @@ pub struct TerminalDeploymentSurface {
     pub kitty_enabled: bool,
     #[serde(default)]
     pub history_sources: Vec<TerminalHistorySource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct BrowserSqliteSource {
+    pub path: PathBuf,
+    pub browser: String,
+    pub format: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct BrowserDeploymentSurface {
+    #[serde(flatten)]
+    pub surface: DeploymentSurface,
+    #[serde(default)]
+    pub dump_sources: Vec<PathBuf>,
+    #[serde(default)]
+    pub sqlite_sources: Vec<BrowserSqliteSource>,
+    #[serde(default)]
+    pub polling_interval_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
