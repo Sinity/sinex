@@ -14,6 +14,10 @@ let
   dataDir = cfg.dataDir or (stateRoot + "/nats");
   storeDir = cfg.storeDir or (dataDir + "/jetstream");
   natsCli = pkgs.natscli or null; # natscli provides the `nats` CLI
+  # natscli currently rejects --max-bytes values above signed 32-bit range even though
+  # JetStream itself supports larger caps. Keep declarative bootstrap values within the
+  # CLI ceiling so stream reconciliation succeeds on every host switch.
+  natsCliMaxBytes = "2147483647";
   secretPaths = config.sinex.secrets.paths or { };
   envName = lib.toLower cfg.environment;
   envUpper = lib.toUpper envName;
@@ -117,7 +121,8 @@ in
 
   options.services.sinex.nats = with types; let
     positive = ints.positive;
-  in {
+  in
+  {
     enable = mkEnableOption "Manage a local NATS server with JetStream for Sinex";
 
     autoSetup = mkOption {
@@ -371,7 +376,7 @@ in
             subjects = [ "events.raw.>" ];
             maxAge = "336h"; # 14d
             maxMsgs = 2000000;
-            maxBytes = "34359738368"; # 32 GiB
+            maxBytes = natsCliMaxBytes;
           }
           {
             name = "SOURCE_MATERIAL_BEGIN";
@@ -385,7 +390,7 @@ in
             subjects = [ "source_material.slices.>" ];
             retention = "work";
             maxAge = "72h";
-            maxBytes = "34359738368"; # 32 GiB
+            maxBytes = natsCliMaxBytes;
           }
           {
             name = "SOURCE_MATERIAL_END";
@@ -398,14 +403,14 @@ in
             name = "SINEX_RAW_EVENTS_CONFIRMATIONS";
             subjects = [ "events.confirmations.>" ];
             maxAge = "72h";
-            maxBytes = "2147483648"; # 2 GiB
+            maxBytes = natsCliMaxBytes;
             maxMsgsPerSubject = 1;
           }
           {
             name = "SINEX_RAW_EVENTS_DLQ";
             subjects = [ "events.dlq.>" ];
             maxAge = "168h"; # 7d
-            maxBytes = "8589934592"; # 8 GiB
+            maxBytes = natsCliMaxBytes;
             dupeWindow = "1h";
           }
         ];

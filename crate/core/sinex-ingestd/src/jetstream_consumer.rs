@@ -281,6 +281,9 @@ const TS_ORIG_LOWER_BOUND: Timestamp =
 const FK_VIOLATION_RETRY_DELAY: Duration = Duration::from_millis(200);
 const STREAM_CAPACITY_WARNING_THRESHOLD: f64 = 0.8; // Alert at 80% capacity
 const STREAM_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_mins(5); // Check every 5 minutes
+// Keep runtime-created stream caps aligned with the Nix bootstrap path. The current
+// nats CLI rejects --max-bytes values above signed 32-bit range.
+const JETSTREAM_BOOTSTRAP_MAX_BYTES: i64 = 2_147_483_647;
 
 fn is_suspicious_future_ts_orig(ts_orig: Timestamp, now: Timestamp) -> bool {
     ts_orig > now + SUSPICIOUS_TS_ORIG_FUTURE_SKEW
@@ -672,7 +675,7 @@ impl JetStreamConsumer {
                 subjects: vec![self.topology.events_subject.clone()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages: 2_000_000,
-                max_bytes: 34_359_738_368,          // 32 GiB
+                max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
                 max_age: Duration::from_hours(336), // 14 days
                 storage: jetstream::stream::StorageType::File,
                 ..Default::default()
@@ -689,7 +692,7 @@ impl JetStreamConsumer {
                 subjects: vec![self.topology.confirmations_subject.clone()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages_per_subject: 1, // Compaction: only keep latest confirmation
-                max_bytes: 2_147_483_648,    // 2 GiB
+                max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
                 max_age: Duration::from_hours(72), // 3 days
                 storage: jetstream::stream::StorageType::File,
                 ..Default::default()
@@ -722,7 +725,7 @@ impl JetStreamConsumer {
                 name: dlq_stream.clone(),
                 subjects: vec![self.topology.dlq_subject.clone()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
-                max_bytes: 8_589_934_592,           // 8 GiB
+                max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
                 max_age: Duration::from_hours(168), // 7 days
                 storage: jetstream::stream::StorageType::File,
                 duplicate_window: DLQ_DUPLICATE_WINDOW,
