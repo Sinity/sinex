@@ -299,6 +299,44 @@
                 build_failure_log="$root_dir/.sinex/state/xtask-build.failed.log"
                 force_rebuild="''${SINEX_XTASK_FORCE_REBUILD:-0}"
 
+                _sinex_xtask_normalize_global_args() {
+                  local global_args=()
+                  local command_args=()
+
+                  while [ "$#" -gt 0 ]; do
+                    case "$1" in
+                      --json|--list-commands|--bg|--fg)
+                        global_args+=("$1")
+                        shift
+                        ;;
+                      --format)
+                        if [ "$#" -ge 2 ]; then
+                          global_args+=("$1" "$2")
+                          shift 2
+                        else
+                          command_args+=("$1")
+                          shift
+                        fi
+                        ;;
+                      --format=*)
+                        global_args+=("$1")
+                        shift
+                        ;;
+                      -v|-vv|-vvv)
+                        global_args+=("$1")
+                        shift
+                        ;;
+                      *)
+                        command_args+=("$1")
+                        shift
+                        ;;
+                    esac
+                  done
+
+                  set -- "''${global_args[@]}" "''${command_args[@]}"
+                  printf '%s\n' "$@"
+                }
+
                 _sinex_xtask_sources_newer_than() {
                   local ref_path="$1"
                   local depfile_path="$root_dir/.sinex/target/debug/xtask.d"
@@ -351,8 +389,47 @@
                 }
 
                 _sinex_xtask_is_observability_command() {
-                  case "''${1:-}" in
+                  local command_name
+                  command_name="$(_sinex_xtask_command_name "$@")"
+                  case "$command_name" in
                     ""|-h|--help|--version|--list-commands|status|history|analytics|jobs|snapshot)
+                      return 0
+                      ;;
+                    *)
+                      return 1
+                      ;;
+                  esac
+                }
+
+                _sinex_xtask_command_name() {
+                  while [ "$#" -gt 0 ]; do
+                    case "$1" in
+                      --json|--list-commands|--bg|--fg|-v|-vv|-vvv)
+                        shift
+                        ;;
+                      --format)
+                        if [ "$#" -ge 2 ]; then
+                          shift 2
+                        else
+                          shift
+                        fi
+                        ;;
+                      --format=*)
+                        shift
+                        ;;
+                      *)
+                        printf '%s\n' "$1"
+                        return 0
+                        ;;
+                    esac
+                  done
+                }
+
+                _sinex_xtask_can_use_existing_binary() {
+                  local command_name
+                  command_name="$(_sinex_xtask_command_name "$@")"
+                  case "$command_name" in
+                    ""|-h|--help|--version|--list-commands|status|history|analytics|jobs|snapshot|check|test|build|deps|doctor|infra)
                       return 0
                       ;;
                     *)
@@ -415,9 +492,15 @@
                 }
 
                 cd "$root_dir"
+                _normalized_args=()
+                while IFS= read -r _arg; do
+                  _normalized_args+=("$_arg")
+                done < <(_sinex_xtask_normalize_global_args "$@")
+                set -- "''${_normalized_args[@]}"
+
                 if [ -x "$bin_path" ] \
                   && [ "$force_rebuild" != "1" ] \
-                  && _sinex_xtask_is_observability_command "$@"
+                  && _sinex_xtask_can_use_existing_binary "$@"
                 then
                   if _sinex_xtask_needs_build; then
                     if _sinex_xtask_failed_build_is_current; then
@@ -425,8 +508,20 @@
                       if [ -r "$build_failure_log" ]; then
                         echo "  log: $build_failure_log" >&2
                       fi
-                    else
+                    elif _sinex_xtask_is_observability_command "$@"; then
                       echo "ℹ  Using existing xtask binary for read-only command while sources are newer" >&2
+                    else
+                      if ! _sinex_xtask_build_with_lock; then
+                        if _sinex_xtask_failed_build_is_current; then
+                          echo "ℹ  Falling back to existing xtask binary after rebuild failure" >&2
+                          if [ -r "$build_failure_log" ]; then
+                            echo "  log: $build_failure_log" >&2
+                          fi
+                          exec "$bin_path" "$@"
+                        fi
+                        exit 1
+                      fi
+                      exec "$bin_path" "$@"
                     fi
                   fi
                   exec "$bin_path" "$@"
@@ -435,6 +530,13 @@
                 if [ "$force_rebuild" = "1" ] || _sinex_xtask_needs_build; then
                   if ! _sinex_xtask_build_with_lock; then
                     if _sinex_xtask_failed_build_is_current; then
+                      if [ -x "$bin_path" ] && _sinex_xtask_can_use_existing_binary "$@"; then
+                        echo "ℹ  Falling back to existing xtask binary after rebuild failure" >&2
+                        if [ -r "$build_failure_log" ]; then
+                          echo "  log: $build_failure_log" >&2
+                        fi
+                        exec "$bin_path" "$@"
+                      fi
                       _sinex_xtask_report_current_failure
                       exit 101
                     fi
