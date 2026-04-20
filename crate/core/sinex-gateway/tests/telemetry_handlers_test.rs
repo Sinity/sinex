@@ -3,15 +3,22 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_gateway::handlers::{
-    handle_telemetry_command_frequency, handle_telemetry_file_activity,
-    handle_telemetry_ingestd_validation, handle_telemetry_recent_activity,
-    handle_telemetry_system_state, handle_telemetry_window_focus,
+    handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
+    handle_telemetry_current_device_state, handle_telemetry_current_health,
+    handle_telemetry_file_activity, handle_telemetry_gateway_stats,
+    handle_telemetry_ingestd_batch_stats, handle_telemetry_ingestd_validation,
+    handle_telemetry_metric_counters, handle_telemetry_node_stats,
+    handle_telemetry_recent_activity, handle_telemetry_stream_stats, handle_telemetry_system_state,
+    handle_telemetry_window_focus,
 };
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::rpc::telemetry::{
-    TelemetryCommandFrequencyResponse, TelemetryFileActivityResponse,
-    TelemetryIngestdValidationResponse, TelemetryRecentActivityResponse,
-    TelemetrySystemStateResponse, TelemetryWindowFocusResponse,
+    TelemetryAssemblyStatsResponse, TelemetryCommandFrequencyResponse,
+    TelemetryCurrentDeviceStateResponse, TelemetryCurrentHealthResponse,
+    TelemetryFileActivityResponse, TelemetryGatewayStatsResponse,
+    TelemetryIngestdBatchStatsResponse, TelemetryIngestdValidationResponse,
+    TelemetryMetricCountersResponse, TelemetryNodeStatsResponse, TelemetryRecentActivityResponse,
+    TelemetryStreamStatsResponse, TelemetrySystemStateResponse, TelemetryWindowFocusResponse,
 };
 use time::format_description::well_known::Rfc3339;
 use xtask::sandbox::prelude::*;
@@ -32,6 +39,13 @@ async fn insert_event(
         }
     };
     ctx.pool().events().insert(event).await?;
+    Ok(())
+}
+
+async fn refresh_current_device_state(ctx: &TestContext) -> TestResult<()> {
+    sqlx::query("REFRESH MATERIALIZED VIEW sinex_telemetry.current_device_state")
+        .execute(ctx.pool())
+        .await?;
     Ok(())
 }
 
@@ -289,6 +303,226 @@ async fn telemetry_handlers_bucket_activity_by_event_time(ctx: TestContext) -> T
     assert_eq!(system_state.buckets.len(), 1);
     assert_eq!(system_state.buckets[0].current_active_units, Some(7));
     assert_eq!(system_state.buckets[0].sample_count, 2);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) -> TestResult<()> {
+    sinex_schema::apply::apply(ctx.pool()).await?;
+
+    let now = time::OffsetDateTime::now_utc();
+    let from = (now - time::Duration::hours(1)).format(&Rfc3339)?;
+    let to = (now + time::Duration::hours(1)).format(&Rfc3339)?;
+
+    insert_event(
+        &ctx,
+        "sinex",
+        "health.status",
+        json!({
+            "component": "gateway",
+            "current_status": "healthy",
+            "reason": "steady"
+        }),
+        None,
+    )
+    .await?;
+    insert_event(
+        &ctx,
+        "system-ingestor",
+        "systemd.unit_changed",
+        json!({
+            "unit_name": "sinex-gateway.service",
+            "unit_type": "service",
+            "state": "active",
+            "sub_state": "running"
+        }),
+        None,
+    )
+    .await?;
+    refresh_current_device_state(&ctx).await?;
+    insert_event(
+        &ctx,
+        "sinex.gateway.rpc",
+        "request.stats",
+        json!({
+            "total_requests": 120,
+            "rate_limited_requests": 7,
+            "avg_latency_ms": 12.5,
+            "p99_latency_ms": 25.0
+        }),
+        None,
+    )
+    .await?;
+    insert_event(
+        &ctx,
+        "sinex.ingestd",
+        "stream.stats",
+        json!({
+            "stream": "events.raw",
+            "messages": 640,
+            "max_messages": 2000,
+            "bytes": 0,
+            "max_bytes": 0,
+            "consumer_count": 1,
+            "fill_pct": 32.5,
+            "first_seq": 1,
+            "last_seq": 640
+        }),
+        None,
+    )
+    .await?;
+    insert_event(
+        &ctx,
+        "sinex.ingestd",
+        "assembly.stats",
+        json!({
+            "active_assemblies": 3,
+            "total_started": 4,
+            "total_completed": 2,
+            "total_cancelled": 1,
+            "total_failed": 0,
+            "total_timed_out": 0,
+            "avg_duration_ms": 18.0,
+            "buffered_slices": 9
+        }),
+        None,
+    )
+    .await?;
+    insert_event(
+        &ctx,
+        "sinex.node",
+        "processing.stats",
+        json!({
+            "node_type": "terminal-ingestor",
+            "events_processed": 40,
+            "events_dropped": 2,
+            "avg_latency_ms": 5.5,
+            "queue_depth": 4,
+            "error_count": 1
+        }),
+        None,
+    )
+    .await?;
+    insert_event(
+        &ctx,
+        "sinex",
+        "metric.counter",
+        json!({
+            "component": "sinex-gateway",
+            "name": "requests.total",
+            "value": 120,
+            "labels": {}
+        }),
+        None,
+    )
+    .await?;
+    insert_event(
+        &ctx,
+        "sinex.ingestd",
+        "batch.stats",
+        json!({
+            "batch_size": 16,
+            "fetch_to_ack_ms": 48,
+            "events_deferred": 2,
+            "events_failed": 1,
+            "had_synthesis": false,
+            "insert_path": "querybuilder",
+            "validation_valid": 30,
+            "validation_skipped": 1,
+            "validation_no_schema": 2,
+            "validation_schema_not_found": 0,
+            "validation_invalid": 3,
+            "validation_coverage_pct": 88.2,
+            "suspicious_future_ts_orig": 0
+        }),
+        None,
+    )
+    .await?;
+
+    let params = json!({ "from": from, "to": to, "limit": 10 });
+
+    let current_health: TelemetryCurrentHealthResponse = serde_json::from_value(
+        handle_telemetry_current_health(ctx.pool(), json!({ "limit": 10 })).await?,
+    )?;
+    let current_device_state: TelemetryCurrentDeviceStateResponse = serde_json::from_value(
+        handle_telemetry_current_device_state(ctx.pool(), json!({ "limit": 10 })).await?,
+    )?;
+    let gateway_stats: TelemetryGatewayStatsResponse =
+        serde_json::from_value(handle_telemetry_gateway_stats(ctx.pool(), params.clone()).await?)?;
+    let stream_stats: TelemetryStreamStatsResponse =
+        serde_json::from_value(handle_telemetry_stream_stats(ctx.pool(), params.clone()).await?)?;
+    let assembly_stats: TelemetryAssemblyStatsResponse =
+        serde_json::from_value(handle_telemetry_assembly_stats(ctx.pool(), params.clone()).await?)?;
+    let node_stats: TelemetryNodeStatsResponse =
+        serde_json::from_value(handle_telemetry_node_stats(ctx.pool(), params.clone()).await?)?;
+    let metric_counters: TelemetryMetricCountersResponse = serde_json::from_value(
+        handle_telemetry_metric_counters(ctx.pool(), params.clone()).await?,
+    )?;
+    let ingestd_batch_stats: TelemetryIngestdBatchStatsResponse =
+        serde_json::from_value(handle_telemetry_ingestd_batch_stats(ctx.pool(), params).await?)?;
+
+    assert_eq!(current_health.entries.len(), 1);
+    assert_eq!(current_health.entries[0].source, "sinex");
+    assert_eq!(
+        current_health.entries[0].component.as_deref(),
+        Some("gateway")
+    );
+    assert_eq!(current_health.entries[0].status.as_deref(), Some("healthy"));
+
+    assert_eq!(current_device_state.entries.len(), 1);
+    assert_eq!(
+        current_device_state.entries[0].unit_name.as_deref(),
+        Some("sinex-gateway.service")
+    );
+    assert_eq!(
+        current_device_state.entries[0].state.as_deref(),
+        Some("active")
+    );
+
+    assert_eq!(gateway_stats.buckets.len(), 1);
+    assert_eq!(gateway_stats.buckets[0].source, "sinex.gateway.rpc");
+    assert_eq!(gateway_stats.buckets[0].stat_events, 1);
+    assert_eq!(gateway_stats.buckets[0].avg_total_requests, Some(120.0));
+    assert_eq!(gateway_stats.buckets[0].total_rate_limited, Some(7));
+
+    assert_eq!(stream_stats.buckets.len(), 1);
+    assert_eq!(
+        stream_stats.buckets[0].stream_name.as_deref(),
+        Some("events.raw")
+    );
+    assert_eq!(stream_stats.buckets[0].avg_fill_pct, Some(32.5));
+    assert_eq!(stream_stats.buckets[0].max_messages, Some(2000));
+
+    assert_eq!(assembly_stats.buckets.len(), 1);
+    assert_eq!(assembly_stats.buckets[0].max_active_assemblies, Some(3));
+    assert_eq!(assembly_stats.buckets[0].total_completed, Some(2));
+    assert_eq!(assembly_stats.buckets[0].avg_duration_ms, Some(18.0));
+
+    assert_eq!(node_stats.buckets.len(), 1);
+    assert_eq!(
+        node_stats.buckets[0].node_type.as_deref(),
+        Some("terminal-ingestor")
+    );
+    assert_eq!(node_stats.buckets[0].total_events_processed, Some(40));
+    assert_eq!(node_stats.buckets[0].max_queue_depth, Some(4));
+
+    assert_eq!(metric_counters.buckets.len(), 1);
+    assert_eq!(
+        metric_counters.buckets[0].component.as_deref(),
+        Some("sinex-gateway")
+    );
+    assert_eq!(
+        metric_counters.buckets[0].metric_name.as_deref(),
+        Some("requests.total")
+    );
+    assert_eq!(metric_counters.buckets[0].total_value, Some(120));
+
+    assert_eq!(ingestd_batch_stats.buckets.len(), 1);
+    assert_eq!(ingestd_batch_stats.buckets[0].avg_batch_size, Some(16.0));
+    assert_eq!(ingestd_batch_stats.buckets[0].max_latency_ms, Some(48.0));
+    assert_eq!(ingestd_batch_stats.buckets[0].total_failed, Some(1));
+    assert_eq!(ingestd_batch_stats.buckets[0].batch_count, 1);
 
     Ok(())
 }

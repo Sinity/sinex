@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 // ─────────────────────────────────────────────────────────────
-// Shared time-range parameters
+// Shared parameters
 // ─────────────────────────────────────────────────────────────
 
 /// Optional time-range filter embedded in telemetry requests.
@@ -21,6 +21,61 @@ pub struct TelemetryTimeRange {
     /// End of the time range (inclusive).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
+}
+
+/// Limit-only request used by current-state telemetry views.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelemetryLimitRequest {
+    /// Maximum number of rows to return (default: 50).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+}
+
+// ─────────────────────────────────────────────────────────────
+// telemetry.current_health
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `telemetry.current_health`
+pub type TelemetryCurrentHealthRequest = TelemetryLimitRequest;
+
+/// A single current-health row.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrentHealthEntry {
+    pub source: String,
+    pub event_type: String,
+    pub component: Option<String>,
+    pub status: Option<String>,
+    pub reason: Option<String>,
+    pub last_update: String,
+}
+
+/// Response: `telemetry.current_health`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetryCurrentHealthResponse {
+    pub entries: Vec<CurrentHealthEntry>,
+}
+
+// ─────────────────────────────────────────────────────────────
+// telemetry.current_device_state
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `telemetry.current_device_state`
+pub type TelemetryCurrentDeviceStateRequest = TelemetryLimitRequest;
+
+/// A single current-device-state row.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrentDeviceStateEntry {
+    pub unit_name: Option<String>,
+    pub unit_type: Option<String>,
+    pub state: Option<String>,
+    pub sub_state: Option<String>,
+    pub last_update: String,
+}
+
+/// Response: `telemetry.current_device_state`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetryCurrentDeviceStateResponse {
+    pub entries: Vec<CurrentDeviceStateEntry>,
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -40,19 +95,12 @@ pub struct TelemetryWindowFocusRequest {
 /// A single 5-minute window-focus aggregate bucket.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowFocusBucket {
-    /// Bucket start timestamp (RFC 3339).
     pub bucket: String,
-    /// Workspace associated with the focus bucket.
     pub workspace: Option<String>,
-    /// Most recently focused window class in this bucket.
     pub window_class: Option<String>,
-    /// Most recently focused window title in this bucket.
     pub window_title: Option<String>,
-    /// Most recently focused compositor/window identifier.
     pub window_id: Option<String>,
-    /// Timestamp of the latest focus event in this bucket.
     pub last_focus_time: Option<String>,
-    /// Total number of focus events in this bucket.
     pub focus_event_count: i64,
 }
 
@@ -79,17 +127,11 @@ pub struct TelemetryCommandFrequencyRequest {
 /// A single command-frequency aggregate entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandFrequencyEntry {
-    /// The recorded shell command.
     pub command: String,
-    /// Shell/runtime that emitted the command.
     pub shell: Option<String>,
-    /// Total invocation count across the requested window.
     pub total_executions: i64,
-    /// Successful invocation count (`exit_code = 0`) across the requested window.
     pub successful_executions: i64,
-    /// Failed invocation count (`exit_code != 0`) across the requested window.
     pub failed_executions: i64,
-    /// Average duration in milliseconds when present in the source events.
     pub avg_duration_ms: Option<f64>,
 }
 
@@ -116,15 +158,10 @@ pub struct TelemetryFileActivityRequest {
 /// A single file-activity aggregate entry (per bucket + directory).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileActivityEntry {
-    /// Bucket start timestamp (RFC 3339).
     pub bucket: String,
-    /// Directory path that saw activity.
     pub directory: Option<String>,
-    /// Filesystem event type aggregated into this bucket.
     pub event_type: String,
-    /// Total filesystem event count in this bucket.
     pub total_events: i64,
-    /// Distinct files observed in this bucket.
     pub unique_files: i64,
 }
 
@@ -138,24 +175,15 @@ pub struct TelemetryFileActivityResponse {
 // telemetry.recent_activity
 // ─────────────────────────────────────────────────────────────
 
-/// Request: `telemetry.recent_activity` (no time params — view has hardcoded lookback).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct TelemetryRecentActivityRequest {
-    /// Maximum number of entries to return (default: 50).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<i64>,
-}
+/// Request: `telemetry.recent_activity`
+pub type TelemetryRecentActivityRequest = TelemetryLimitRequest;
 
 /// A single recent-activity summary row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecentActivityEntry {
-    /// Activity category (e.g. `"focus"`, `"command"`, `"system"`).
     pub activity_type: String,
-    /// Secondary grouping or subsystem context.
     pub context: Option<String>,
-    /// Human-readable activity detail.
     pub detail: Option<String>,
-    /// When this activity was recorded (RFC 3339).
     pub timestamp: Option<String>,
 }
 
@@ -182,21 +210,13 @@ pub struct TelemetrySystemStateRequest {
 /// A single 5-minute system-state aggregate bucket.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemStateBucket {
-    /// Bucket start timestamp (RFC 3339).
     pub bucket: String,
-    /// Average CPU usage percentage across this bucket (0–100).
     pub avg_cpu_percent: Option<f64>,
-    /// Maximum CPU usage percentage across this bucket (0–100).
     pub max_cpu_percent: Option<f64>,
-    /// Average memory usage percentage across this bucket (0–100).
     pub avg_memory_percent: Option<f64>,
-    /// Maximum memory usage percentage across this bucket (0–100).
     pub max_memory_percent: Option<f64>,
-    /// Average disk usage percentage across this bucket (0–100).
     pub avg_disk_percent: Option<f64>,
-    /// Latest active systemd unit count emitted in this bucket.
     pub current_active_units: Option<i64>,
-    /// Number of source samples aggregated into the bucket.
     pub sample_count: i64,
 }
 
@@ -207,43 +227,230 @@ pub struct TelemetrySystemStateResponse {
 }
 
 // ─────────────────────────────────────────────────────────────
+// telemetry.gateway_stats
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `telemetry.gateway_stats`
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelemetryGatewayStatsRequest {
+    #[serde(flatten)]
+    pub time_range: TelemetryTimeRange,
+    /// Maximum number of buckets to return (default: 50).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+}
+
+/// A single gateway-stat bucket.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayStatsBucket {
+    pub bucket: String,
+    pub source: String,
+    pub stat_events: i64,
+    pub avg_total_requests: Option<f64>,
+    pub total_rate_limited: Option<i64>,
+    pub avg_latency_ms: Option<f64>,
+    pub max_p99_latency_ms: Option<f64>,
+}
+
+/// Response: `telemetry.gateway_stats`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetryGatewayStatsResponse {
+    pub buckets: Vec<GatewayStatsBucket>,
+}
+
+// ─────────────────────────────────────────────────────────────
+// telemetry.stream_stats
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `telemetry.stream_stats`
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelemetryStreamStatsRequest {
+    #[serde(flatten)]
+    pub time_range: TelemetryTimeRange,
+    /// Maximum number of buckets to return (default: 50).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+}
+
+/// A single stream-stat bucket.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamStatsBucket {
+    pub bucket: String,
+    pub stream_name: Option<String>,
+    pub avg_fill_pct: Option<f64>,
+    pub max_fill_pct: Option<f64>,
+    pub avg_messages: Option<f64>,
+    pub max_messages: Option<i64>,
+    pub sample_count: i64,
+}
+
+/// Response: `telemetry.stream_stats`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetryStreamStatsResponse {
+    pub buckets: Vec<StreamStatsBucket>,
+}
+
+// ─────────────────────────────────────────────────────────────
+// telemetry.assembly_stats
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `telemetry.assembly_stats`
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelemetryAssemblyStatsRequest {
+    #[serde(flatten)]
+    pub time_range: TelemetryTimeRange,
+    /// Maximum number of buckets to return (default: 50).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+}
+
+/// A single assembly-stat bucket.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssemblyStatsBucket {
+    pub bucket: String,
+    pub max_active_assemblies: Option<i64>,
+    pub total_completed: Option<i64>,
+    pub total_cancelled: Option<i64>,
+    pub total_failed: Option<i64>,
+    pub total_timed_out: Option<i64>,
+    pub avg_duration_ms: Option<f64>,
+    pub sample_count: i64,
+}
+
+/// Response: `telemetry.assembly_stats`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetryAssemblyStatsResponse {
+    pub buckets: Vec<AssemblyStatsBucket>,
+}
+
+// ─────────────────────────────────────────────────────────────
+// telemetry.node_stats
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `telemetry.node_stats`
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelemetryNodeStatsRequest {
+    #[serde(flatten)]
+    pub time_range: TelemetryTimeRange,
+    /// Maximum number of buckets to return (default: 50).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+}
+
+/// A single node-stat bucket.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeStatsBucket {
+    pub bucket: String,
+    pub node_type: Option<String>,
+    pub total_events_processed: Option<i64>,
+    pub total_events_dropped: Option<i64>,
+    pub avg_latency_ms: Option<f64>,
+    pub max_queue_depth: Option<i64>,
+    pub total_errors: Option<i64>,
+    pub sample_count: i64,
+}
+
+/// Response: `telemetry.node_stats`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetryNodeStatsResponse {
+    pub buckets: Vec<NodeStatsBucket>,
+}
+
+// ─────────────────────────────────────────────────────────────
+// telemetry.metric_counters
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `telemetry.metric_counters`
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelemetryMetricCountersRequest {
+    #[serde(flatten)]
+    pub time_range: TelemetryTimeRange,
+    /// Maximum number of buckets to return (default: 50).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+}
+
+/// A single metric-counter bucket.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricCounterBucket {
+    pub bucket: String,
+    pub component: Option<String>,
+    pub metric_name: Option<String>,
+    pub total_value: Option<i64>,
+    pub max_value: Option<i64>,
+    pub sample_count: i64,
+}
+
+/// Response: `telemetry.metric_counters`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetryMetricCountersResponse {
+    pub buckets: Vec<MetricCounterBucket>,
+}
+
+// ─────────────────────────────────────────────────────────────
+// telemetry.ingestd_batch_stats
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `telemetry.ingestd_batch_stats`
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelemetryIngestdBatchStatsRequest {
+    #[serde(flatten)]
+    pub time_range: TelemetryTimeRange,
+    /// Maximum number of buckets to return (default: 50).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+}
+
+/// A single ingestd batch-stat bucket.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IngestdBatchStatsBucket {
+    pub bucket: String,
+    pub avg_batch_size: Option<f64>,
+    pub max_batch_size: Option<i64>,
+    pub avg_latency_ms: Option<f64>,
+    pub max_latency_ms: Option<f64>,
+    pub total_deferred: Option<i64>,
+    pub total_failed: Option<i64>,
+    pub synthesis_batches: i64,
+    pub batch_count: i64,
+    pub validation_valid: Option<i64>,
+    pub validation_skipped: Option<i64>,
+    pub validation_no_schema: Option<i64>,
+    pub validation_schema_not_found: Option<i64>,
+    pub validation_invalid: Option<i64>,
+    pub avg_validation_coverage_pct: Option<f64>,
+}
+
+/// Response: `telemetry.ingestd_batch_stats`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetryIngestdBatchStatsResponse {
+    pub buckets: Vec<IngestdBatchStatsBucket>,
+}
+
+// ─────────────────────────────────────────────────────────────
 // telemetry.ingestd_validation
 // ─────────────────────────────────────────────────────────────
 
-/// Request: `telemetry.ingestd_validation` (returns the latest ingestd batch snapshot).
+/// Request: `telemetry.ingestd_validation`
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TelemetryIngestdValidationRequest {}
 
 /// Latest ingestd validation / batch snapshot emitted via `sinex.ingestd batch.stats`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngestdValidationSnapshot {
-    /// When the batch stats event was persisted (RFC 3339).
     pub observed_at: String,
-    /// Number of events in the observed batch.
     pub batch_size: i64,
-    /// End-to-end latency from fetch to ack in milliseconds.
     pub fetch_to_ack_ms: i64,
-    /// Number of events deferred for retry in the batch.
     pub events_deferred: i64,
-    /// Number of events that failed processing in the batch.
     pub events_failed: i64,
-    /// Whether this batch contained synthesis events.
     pub had_synthesis: bool,
-    /// Insert path used by ingestd for the batch.
     pub insert_path: String,
-    /// Cumulative count of events that passed schema validation.
     pub validation_valid: i64,
-    /// Cumulative count of events where validation was skipped.
     pub validation_skipped: i64,
-    /// Cumulative count of events without a registered schema.
     pub validation_no_schema: i64,
-    /// Cumulative count of events whose schema ID was not found.
     pub validation_schema_not_found: i64,
-    /// Cumulative count of events that failed validation.
     pub validation_invalid: i64,
-    /// Coverage percentage for events with a schema (excluding skipped validation).
     pub validation_coverage_pct: f64,
-    /// Cumulative count of events whose `ts_orig` was implausibly far in the future.
     pub suspicious_future_ts_orig: i64,
 }
 
