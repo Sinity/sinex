@@ -1,23 +1,24 @@
 use sinex_node_sdk::WindowedNode;
-use sinex_node_sdk::derived_node::DerivedTriggerContext;
+use sinex_node_sdk::derived_node::{DerivedAggregationMeta, DerivedTriggerContext};
+use sinex_primitives::activity::ActivitySourceKind;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
+use sinex_primitives::events::payloads::{
+    ActivitySessionBoundaryPayload, ActivityWindowCloseReason, ActivityWindowSummaryPayload,
+};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue};
 use sinex_session_detector::{SessionDetector, SessionState};
+use std::collections::BTreeMap;
 use xtask::sandbox::prelude::*;
 
-fn make_context_with_optional_ts(
-    source: &str,
-    event_type: &str,
-    ts_orig: Option<Timestamp>,
-) -> DerivedTriggerContext {
+fn make_context(ts_orig: Timestamp) -> DerivedTriggerContext {
     let event_id: Id<Event<JsonValue>> = Id::new();
     DerivedTriggerContext {
         trigger_event_id: event_id,
-        source: source.into(),
-        event_type: event_type.into(),
-        ts_orig,
+        source: ActivityWindowSummaryPayload::SOURCE,
+        event_type: ActivityWindowSummaryPayload::EVENT_TYPE,
+        ts_orig: Some(ts_orig),
         ts_coided: event_id.timestamp(),
         processing_mode: ProcessingMode::Replay,
         trigger_kind: TriggerKind::NewEvent,
@@ -25,264 +26,159 @@ fn make_context_with_optional_ts(
     }
 }
 
-fn make_context(ts_orig: Timestamp) -> DerivedTriggerContext {
-    make_context_with_optional_ts("wm.hyprland", "window.focused", Some(ts_orig))
+fn make_window(
+    index: u64,
+    start: Timestamp,
+    end: Timestamp,
+    event_count: u64,
+    close_reason: ActivityWindowCloseReason,
+    primary_source: ActivitySourceKind,
+) -> ActivityWindowSummaryPayload {
+    ActivityWindowSummaryPayload {
+        window_id: format!("window-{index}"),
+        window_start: start,
+        window_end: end,
+        duration_secs: (end - start).whole_seconds().max(0) as u64,
+        event_count,
+        source_count: 1,
+        sources: vec!["shell.kitty".to_string()],
+        activity_sources: vec![primary_source],
+        activity_source_counts: BTreeMap::from([(primary_source, event_count)]),
+        primary_source,
+        close_reason,
+    }
 }
 
 #[sinex_test]
-async fn replay_events_do_not_trigger_gap_from_wall_clock() -> TestResult<()> {
-    let mut detector = SessionDetector::default();
+async fn budget_windows_accumulate_without_emitting_session() -> TestResult<()> {
+    let mut detector = SessionDetector;
     let mut state = SessionState::default();
+    let start = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid timestamp");
+    let payload = make_window(
+        1,
+        start,
+        start + Duration::seconds(30),
+        12,
+        ActivityWindowCloseReason::MaxEventCount,
+        ActivitySourceKind::Terminal,
+    );
+    let ctx = make_context(payload.window_end);
 
-    let first = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid timestamp");
-    let second = Timestamp::from_unix_timestamp(1_700_000_001).expect("valid timestamp");
+    detector.accumulate(&mut state, payload, &ctx).await?;
 
-    detector
-        .accumulate(&mut state, serde_json::json!({}), &make_context(first))
-        .await?;
-    detector
-        .accumulate(&mut state, serde_json::json!({}), &make_context(second))
-        .await?;
-
-    assert!(
-        !detector.window_complete(&state),
-        "replay of closely spaced historical events must not trigger a session boundary from wall-clock drift"
+    assert!(!detector.window_complete(&state));
+    assert_eq!(state.event_count, 12);
+    assert_eq!(state.window_count, 1);
+    assert_eq!(
+        state.window_event_ids,
+        vec![*ctx.trigger_event_id.as_uuid()]
     );
     Ok(())
 }
 
 #[sinex_test]
-async fn missing_ts_orig_is_rejected() -> TestResult<()> {
-    let mut detector = SessionDetector::default();
+async fn gap_closed_window_emits_completed_session() -> TestResult<()> {
+    let mut detector = SessionDetector;
     let mut state = SessionState::default();
 
-    let error = detector
-        .accumulate(
-            &mut state,
-            serde_json::json!({}),
-            &make_context_with_optional_ts("wm.hyprland", "window.focused", None),
-        )
-        .await
-        .expect_err("missing ts_orig must be rejected");
-
-    assert!(error.to_string().contains("missing ts_orig"));
-    Ok(())
-}
-
-#[sinex_test]
-async fn event_time_gap_triggers_session_boundary() -> TestResult<()> {
-    let mut detector = SessionDetector::default();
-    let mut state = SessionState::default();
-
-    let first = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid timestamp");
-    let second = Timestamp::from_unix_timestamp(1_700_000_301).expect("valid timestamp");
-
-    detector
-        .accumulate(&mut state, serde_json::json!({}), &make_context(first))
-        .await?;
-    detector
-        .accumulate(&mut state, serde_json::json!({}), &make_context(second))
-        .await?;
-
-    assert!(
-        detector.window_complete(&state),
-        "a five-minute event-time gap must trigger a session boundary"
+    let first_start = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid timestamp");
+    let first_payload = make_window(
+        1,
+        first_start,
+        first_start + Duration::seconds(120),
+        20,
+        ActivityWindowCloseReason::MaxDuration,
+        ActivitySourceKind::Terminal,
     );
-    Ok(())
-}
-
-#[sinex_test]
-async fn invalid_gap_override_falls_back_to_default_threshold() -> TestResult<()> {
-    let mut _guard = EnvGuard::new();
-    _guard.set("SINEX_SESSION_GAP_SECS", "not-a-number");
-    let mut detector = SessionDetector::default();
-    let mut state = SessionState::default();
-
-    let first = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid timestamp");
-    let second = Timestamp::from_unix_timestamp(1_700_000_301).expect("valid timestamp");
-
-    detector
-        .accumulate(&mut state, serde_json::json!({}), &make_context(first))
-        .await?;
-    detector
-        .accumulate(&mut state, serde_json::json!({}), &make_context(second))
-        .await?;
-
-    assert!(
-        detector.window_complete(&state),
-        "invalid overrides should fall back to the five-minute default"
+    let second_payload = make_window(
+        2,
+        first_start + Duration::seconds(120),
+        first_start + Duration::seconds(240),
+        10,
+        ActivityWindowCloseReason::Gap,
+        ActivitySourceKind::Window,
     );
-    Ok(())
-}
 
-#[sinex_test]
-async fn valid_gap_override_changes_boundary_detection() -> TestResult<()> {
-    let mut _guard = EnvGuard::new();
-    _guard.set("SINEX_SESSION_GAP_SECS", "600");
-    let mut detector = SessionDetector::default();
-    let mut state = SessionState::default();
-
-    let first = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid timestamp");
-    let second = Timestamp::from_unix_timestamp(1_700_000_301).expect("valid timestamp");
+    let first_ctx = make_context(first_payload.window_end);
+    let second_ctx = make_context(second_payload.window_end);
 
     detector
-        .accumulate(&mut state, serde_json::json!({}), &make_context(first))
+        .accumulate(&mut state, first_payload, &first_ctx)
         .await?;
     detector
-        .accumulate(&mut state, serde_json::json!({}), &make_context(second))
-        .await?;
-
-    assert!(
-        !detector.window_complete(&state),
-        "a wider configured threshold should suppress the default five-minute boundary"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn non_positive_gap_override_falls_back_to_default_threshold() -> TestResult<()> {
-    let mut _guard = EnvGuard::new();
-    _guard.set("SINEX_SESSION_GAP_SECS", "0");
-    let mut detector = SessionDetector::default();
-    let mut state = SessionState::default();
-
-    let first = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid timestamp");
-    let second = Timestamp::from_unix_timestamp(1_700_000_301).expect("valid timestamp");
-
-    detector
-        .accumulate(&mut state, serde_json::json!({}), &make_context(first))
-        .await?;
-    detector
-        .accumulate(&mut state, serde_json::json!({}), &make_context(second))
-        .await?;
-
-    assert!(
-        detector.window_complete(&state),
-        "non-positive overrides should be rejected and fall back to default behavior"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn gap_boundary_emits_previous_session_and_seeds_next_one() -> TestResult<()> {
-    let mut detector = SessionDetector::default();
-    let mut state = SessionState::default();
-
-    let first = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid timestamp");
-    let second = Timestamp::from_unix_timestamp(1_700_000_301).expect("valid timestamp");
-
-    let first_context = make_context(first);
-    let second_context = make_context(second);
-
-    detector
-        .accumulate(&mut state, serde_json::json!({}), &first_context)
-        .await?;
-    detector
-        .accumulate(&mut state, serde_json::json!({}), &second_context)
+        .accumulate(&mut state, second_payload, &second_ctx)
         .await?;
 
     assert!(detector.window_complete(&state));
-    assert_eq!(
-        state.event_count, 1,
-        "the post-gap event must not be absorbed into the emitted session"
-    );
-
     let output = detector
-        .emit(&mut state, &second_context)
+        .emit(&mut state, &second_ctx)
         .await?
-        .expect("gap boundary should emit a completed session");
+        .expect("gap-closed window should emit a completed session");
 
     let payload = output.payload;
-    assert_eq!(payload.event_count, 1);
-    assert_eq!(payload.start_time, first);
-    assert_eq!(payload.end_time, first);
-    assert_eq!(payload.primary_source, "window");
-    assert_eq!(payload.activity_source_counts.get("window"), Some(&1));
+    assert_eq!(payload.event_count, 30);
+    assert_eq!(payload.window_count, 2);
+    assert_eq!(payload.start_time, first_start);
+    assert_eq!(payload.end_time, first_start + Duration::seconds(240));
+    assert_eq!(payload.primary_source, ActivitySourceKind::Terminal);
+    assert_eq!(
+        payload.activity_sources,
+        vec![ActivitySourceKind::Terminal, ActivitySourceKind::Window]
+    );
+    assert_eq!(
+        payload
+            .activity_source_counts
+            .get(&ActivitySourceKind::Terminal),
+        Some(&20)
+    );
+    assert_eq!(
+        payload
+            .activity_source_counts
+            .get(&ActivitySourceKind::Window),
+        Some(&10)
+    );
     assert_eq!(
         output.source_event_ids,
-        vec![first_context.trigger_event_id.as_uuid().to_owned()],
-        "emitted provenance must stay attached to the completed session only"
-    );
-
-    assert_eq!(state.session_start, Some(second));
-    assert_eq!(state.last_event_time, Some(second));
-    assert_eq!(state.event_count, 1);
-    assert!(
-        !state.gap_detected,
-        "next session should be ready to accumulate"
+        vec![
+            first_ctx.trigger_event_id.as_uuid().to_owned(),
+            second_ctx.trigger_event_id.as_uuid().to_owned(),
+        ]
     );
     assert_eq!(
-        state.event_ids,
-        vec![*second_context.trigger_event_id.as_uuid()]
+        output.aggregation,
+        Some(DerivedAggregationMeta::new("activity.session", 1, 30))
     );
+    assert_eq!(state.window_count, 0);
+    assert!(state.window_event_ids.is_empty());
 
     Ok(())
 }
 
 #[sinex_test]
-async fn non_activity_events_do_not_seed_sessions() -> TestResult<()> {
-    let mut detector = SessionDetector::default();
-    let mut state = SessionState::default();
-    let ts = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid timestamp");
+async fn parse_session_event_shape_roundtrips() -> TestResult<()> {
+    let start = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid timestamp");
+    let end = start + Duration::minutes(42);
+    let payload = ActivitySessionBoundaryPayload {
+        session_id: "session-7".to_string(),
+        start_time: start,
+        end_time: end,
+        duration_secs: 2520,
+        event_count: 4,
+        window_count: 2,
+        source_count: 2,
+        sources: vec!["shell.kitty".to_string(), "wm.hyprland".to_string()],
+        activity_sources: vec![ActivitySourceKind::Terminal, ActivitySourceKind::Window],
+        activity_source_counts: BTreeMap::from([
+            (ActivitySourceKind::Terminal, 3),
+            (ActivitySourceKind::Window, 1),
+        ]),
+        primary_source: ActivitySourceKind::Terminal,
+    };
 
-    detector
-        .accumulate(
-            &mut state,
-            serde_json::json!({}),
-            &make_context_with_optional_ts("systemd", "unit.started", Some(ts)),
-        )
-        .await?;
+    let encoded = serde_json::to_value(&payload)?;
+    let decoded: ActivitySessionBoundaryPayload = serde_json::from_value(encoded)?;
 
-    assert_eq!(state.event_count, 0);
-    assert!(state.session_start.is_none());
-    assert!(state.sources.is_empty());
-    assert!(state.activity_source_counts.is_empty());
-    Ok(())
-}
-
-#[sinex_test]
-async fn primary_source_uses_logical_activity_categories() -> TestResult<()> {
-    let mut detector = SessionDetector::default();
-    let mut state = SessionState::default();
-
-    let base = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid timestamp");
-    let contexts = [
-        make_context_with_optional_ts("wm.hyprland", "window.focused", Some(base)),
-        make_context_with_optional_ts(
-            "shell.kitty",
-            "command.executed",
-            Some(base + Duration::seconds(10)),
-        ),
-        make_context_with_optional_ts(
-            "shell.atuin",
-            "command.executed",
-            Some(base + Duration::seconds(20)),
-        ),
-        make_context_with_optional_ts(
-            "wm.hyprland",
-            "window.focused",
-            Some(base + Duration::seconds(321)),
-        ),
-    ];
-
-    for context in contexts.iter().take(3) {
-        detector
-            .accumulate(&mut state, serde_json::json!({}), context)
-            .await?;
-    }
-    detector
-        .accumulate(&mut state, serde_json::json!({}), &contexts[3])
-        .await?;
-
-    assert!(detector.window_complete(&state));
-    let output = detector
-        .emit(&mut state, &contexts[3])
-        .await?
-        .expect("gap boundary should emit a completed session");
-
-    assert_eq!(output.payload.primary_source, "terminal");
-    assert_eq!(output.payload.activity_sources, vec!["terminal", "window"]);
-    assert_eq!(output.payload.activity_source_counts.get("terminal"), Some(&2));
-    assert_eq!(output.payload.activity_source_counts.get("window"), Some(&1));
+    assert_eq!(decoded.window_count, 2);
+    assert_eq!(decoded.primary_source, ActivitySourceKind::Terminal);
     Ok(())
 }

@@ -1314,7 +1314,7 @@ in
                     };
                   };
                   default = {};
-                  description = "Analytics automaton. Emits sliding-window `analytics.insight` summaries from raw events.";
+                  description = "Analytics automaton. Emits bounded `activity.window.summary` rollups from trusted activity signals.";
                 };
 
                 sessionDetector = mkOption {
@@ -1326,7 +1326,7 @@ in
                     };
                   };
                   default = {};
-                  description = "Session detector automaton. Groups events by temporal proximity (gap > 5 min = new session boundary).";
+                  description = "Session detector automaton. Rolls bounded `activity.window.summary` inputs into `activity.session.boundary` outputs.";
                 };
 
                 profiles = mkOption {

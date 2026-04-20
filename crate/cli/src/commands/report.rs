@@ -295,7 +295,7 @@ async fn print_report(client: &GatewayClient, time_range: TimeRange, label: &str
                 style(format_clock_time(longest_session.start_time)).dim(),
                 style(format_clock_time(longest_session.end_time)).dim(),
                 style(format_duration_compact(longest_session.duration_secs)).bold(),
-                style(&longest_session.primary_source).yellow()
+                style(longest_session.primary_source.to_string()).yellow()
             );
         }
 
@@ -569,6 +569,7 @@ fn render_bar(count: i64, max: i64, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_primitives::activity::ActivitySourceKind;
     use std::collections::BTreeMap;
     use xtask::sandbox::prelude::*;
 
@@ -605,14 +606,15 @@ mod tests {
             end_time: end,
             duration_secs: 2520,
             event_count: 4,
+            window_count: 2,
             source_count: 2,
             sources: vec!["shell.kitty".to_string(), "wm.hyprland".to_string()],
-            activity_sources: vec!["terminal".to_string(), "window".to_string()],
+            activity_sources: vec![ActivitySourceKind::Terminal, ActivitySourceKind::Window],
             activity_source_counts: BTreeMap::from([
-                ("terminal".to_string(), 3),
-                ("window".to_string(), 1),
+                (ActivitySourceKind::Terminal, 3),
+                (ActivitySourceKind::Window, 1),
             ]),
-            primary_source: "terminal".to_string(),
+            primary_source: ActivitySourceKind::Terminal,
         };
 
         let event = QueryResultEvent {
@@ -645,7 +647,7 @@ mod tests {
         };
 
         let parsed = parse_session_event(event).expect("boundary payload should parse");
-        assert_eq!(parsed.primary_source, "terminal");
+        assert_eq!(parsed.primary_source, ActivitySourceKind::Terminal);
         assert_eq!(parsed.duration_secs, 2520);
         Ok(())
     }

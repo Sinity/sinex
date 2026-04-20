@@ -20,7 +20,7 @@ pub use adapter::{
 };
 pub use context::DerivedTriggerContext;
 pub use invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
-pub use output::DerivedOutput;
+pub use output::{DerivedAggregationMeta, DerivedOutput};
 pub use traits::{
     DerivedNodeConfig, DerivedNodeImpl, InputProvenanceFilter, ScopeReconcilerNode,
     ScopeReconcilerWrapper, TransducerNode, TransducerWrapper, WindowedNode, WindowedWrapper,

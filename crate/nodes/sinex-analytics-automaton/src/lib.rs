@@ -2,48 +2,189 @@
 
 //! Analytics automaton — [`WindowedNode`] implementation.
 //!
-//! Model classification: **Windowed** — accumulates events in a sliding window
-//! (last 1000), emits a summary every 100 events. `ts_orig` is derived from the
-//! latest event in the window, ensuring temporal determinism across replays.
+//! Model classification: **Windowed** — accumulates trusted activity signals
+//! into bounded windows and emits `activity.window.summary` rollups when a gap,
+//! duration bound, or parent-count budget closes the current window.
 
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, WindowedNodeAdapter};
+use sinex_node_sdk::derived_node::{
+    DerivedAggregationMeta, DerivedOutput, DerivedTriggerContext, WindowedNodeAdapter,
+};
 use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, WindowedNode};
-use sinex_primitives::JsonValue;
-use sinex_primitives::Uuid;
+use sinex_primitives::activity::{
+    ActivitySourceKind, classify_trusted_activity_signal, primary_activity_source,
+};
+use sinex_primitives::events::{
+    EventPayload,
+    payloads::{ActivityWindowCloseReason, ActivityWindowSummaryPayload},
+};
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::temporal::Timestamp;
-use std::collections::{HashMap, VecDeque};
+use sinex_primitives::temporal::{Duration, Timestamp};
+use sinex_primitives::{JsonValue, Uuid, env as shared_env};
+use std::collections::{BTreeMap, BTreeSet};
+use tracing::warn;
+
+const DEFAULT_WINDOW_GAP_THRESHOLD_SECS: i64 = 300;
+const DEFAULT_WINDOW_MAX_DURATION_SECS: i64 = 900;
+const DEFAULT_WINDOW_MAX_EVENTS: usize = 250;
+
+fn parse_positive_i64_env(var: &str, description: &str, default: i64) -> i64 {
+    shared_env::parse_optional::<i64>(var, description)
+        .filter(|&value| {
+            if value > 0 {
+                true
+            } else {
+                warn!(
+                    env = var,
+                    parsed = value,
+                    "Activity window override must be positive; using default"
+                );
+                false
+            }
+        })
+        .unwrap_or(default)
+}
+
+fn parse_positive_usize_env(var: &str, description: &str, default: usize) -> usize {
+    shared_env::parse_optional::<usize>(var, description)
+        .filter(|&value| {
+            if value > 0 {
+                true
+            } else {
+                warn!(
+                    env = var,
+                    parsed = value,
+                    "Activity window override must be positive; using default"
+                );
+                false
+            }
+        })
+        .unwrap_or(default)
+}
+
+fn window_gap_threshold() -> Duration {
+    let secs = shared_env::parse_optional::<i64>(
+        "SINEX_ACTIVITY_WINDOW_GAP_SECS",
+        "activity window gap threshold",
+    )
+    .or_else(|| {
+        shared_env::parse_optional::<i64>("SINEX_SESSION_GAP_SECS", "legacy session gap threshold")
+    })
+    .filter(|&secs| {
+        if secs > 0 {
+            true
+        } else {
+            warn!(
+                env = "SINEX_ACTIVITY_WINDOW_GAP_SECS",
+                parsed = secs,
+                "Activity window gap override must be positive; using default"
+            );
+            false
+        }
+    })
+    .unwrap_or(DEFAULT_WINDOW_GAP_THRESHOLD_SECS);
+    Duration::seconds(secs)
+}
+
+fn window_max_duration() -> Duration {
+    Duration::seconds(parse_positive_i64_env(
+        "SINEX_ACTIVITY_WINDOW_MAX_DURATION_SECS",
+        "activity window max duration",
+        DEFAULT_WINDOW_MAX_DURATION_SECS,
+    ))
+}
+
+fn window_max_events() -> usize {
+    parse_positive_usize_env(
+        "SINEX_ACTIVITY_WINDOW_MAX_EVENTS",
+        "activity window max event count",
+        DEFAULT_WINDOW_MAX_EVENTS,
+    )
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AnalyticsState {
-    pub recent_events: VecDeque<EventSummary>,
-    pub event_counts: HashMap<String, u64>,
+    pub window_start: Option<Timestamp>,
+    pub last_event_time: Option<Timestamp>,
+    pub event_count: u64,
+    pub sources: BTreeSet<String>,
+    pub activity_source_counts: BTreeMap<ActivitySourceKind, u64>,
+    pub event_ids: Vec<Uuid>,
+    pub window_counter: u64,
+    pub close_reason: Option<ActivityWindowCloseReason>,
+    pub pending_window_seed: Option<PendingWindowSeed>,
+}
+
+impl AnalyticsState {
+    fn reset_window(&mut self) {
+        self.window_start = None;
+        self.last_event_time = None;
+        self.event_count = 0;
+        self.sources.clear();
+        self.activity_source_counts.clear();
+        self.event_ids.clear();
+        self.close_reason = None;
+        self.pending_window_seed = None;
+    }
+
+    fn seed_window(&mut self, seed: PendingWindowSeed) {
+        self.window_start = Some(seed.event_time);
+        self.last_event_time = Some(seed.event_time);
+        self.event_count = 1;
+        self.sources.clear();
+        self.sources.insert(seed.raw_source);
+        self.activity_source_counts.clear();
+        self.activity_source_counts.insert(seed.activity_source, 1);
+        self.event_ids.clear();
+        self.event_ids.push(seed.event_id);
+        self.close_reason = None;
+        self.pending_window_seed = None;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EventSummary {
-    pub event_type: String,
-    pub timestamp: Timestamp,
+pub struct PendingWindowSeed {
+    pub event_time: Timestamp,
+    pub raw_source: String,
+    pub activity_source: ActivitySourceKind,
     pub event_id: Uuid,
 }
 
-#[derive(Default)]
-pub struct AnalyticsAutomaton;
+pub struct AnalyticsAutomaton {
+    gap_threshold: Duration,
+    max_duration: Duration,
+    max_events: usize,
+}
+
+impl Default for AnalyticsAutomaton {
+    fn default() -> Self {
+        Self {
+            gap_threshold: window_gap_threshold(),
+            max_duration: window_max_duration(),
+            max_events: window_max_events(),
+        }
+    }
+}
 
 impl WindowedNode for AnalyticsAutomaton {
     type State = AnalyticsState;
     type Input = JsonValue;
-    type Output = JsonValue;
+    type Output = ActivityWindowSummaryPayload;
 
     fn name(&self) -> &'static str {
         "analytics-automaton"
     }
+
     fn input_event_type(&self) -> &'static str {
         "*"
     }
+
     fn output_event_type(&self) -> &'static str {
-        "analytics.insight"
+        ActivityWindowSummaryPayload::EVENT_TYPE.as_static_str()
+    }
+
+    fn output_event_source(&self) -> &'static str {
+        ActivityWindowSummaryPayload::SOURCE.as_static_str()
     }
 
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
@@ -60,61 +201,121 @@ impl WindowedNode for AnalyticsAutomaton {
         _input: Self::Input,
         context: &DerivedTriggerContext,
     ) -> Result<(), NodeLogicError> {
-        let event_type_str = context.event_type.as_str().to_string();
-        *state
-            .event_counts
-            .entry(event_type_str.clone())
-            .or_insert(0) += 1;
-        let ts_orig = context.require_ts_orig()?;
+        let Some(activity_source) =
+            classify_trusted_activity_signal(context.source.as_str(), context.event_type.as_str())
+        else {
+            return Ok(());
+        };
 
-        state.recent_events.push_back(EventSummary {
-            event_type: event_type_str,
-            timestamp: ts_orig,
-            event_id: context.trigger_uuid(),
-        });
+        let event_time = context.require_ts_orig()?;
+        let event_id = context.trigger_uuid();
+        let raw_source = context.source.as_str().to_string();
 
-        // Prune window (keep last 1000)
-        if state.recent_events.len() > 1000
-            && let Some(evicted) = state.recent_events.pop_front()
-            && let Some(count) = state.event_counts.get_mut(&evicted.event_type)
+        let seed = PendingWindowSeed {
+            event_time,
+            raw_source,
+            activity_source,
+            event_id,
+        };
+
+        if let Some(last_time) = state.last_event_time
+            && state.event_count > 0
+            && (event_time - last_time) >= self.gap_threshold
         {
-            if *count > 1 {
-                *count -= 1;
-            } else {
-                state.event_counts.remove(&evicted.event_type);
-            }
+            state.close_reason = Some(ActivityWindowCloseReason::Gap);
+            state.pending_window_seed = Some(seed);
+            return Ok(());
         }
+
+        if let Some(start_time) = state.window_start
+            && state.event_count > 0
+            && (event_time - start_time) >= self.max_duration
+        {
+            state.close_reason = Some(ActivityWindowCloseReason::MaxDuration);
+            state.pending_window_seed = Some(seed);
+            return Ok(());
+        }
+
+        if state.event_count as usize >= self.max_events {
+            state.close_reason = Some(ActivityWindowCloseReason::MaxEventCount);
+            state.pending_window_seed = Some(seed);
+            return Ok(());
+        }
+
+        if state.window_start.is_none() {
+            state.window_start = Some(event_time);
+        }
+        state.last_event_time = Some(event_time);
+        state.event_count += 1;
+        state.sources.insert(seed.raw_source);
+        *state
+            .activity_source_counts
+            .entry(seed.activity_source)
+            .or_insert(0) += 1;
+        state.event_ids.push(seed.event_id);
 
         Ok(())
     }
 
     fn window_complete(&self, state: &Self::State) -> bool {
-        state.recent_events.len() % 100 == 0 && !state.recent_events.is_empty()
+        state.close_reason.is_some() && state.event_count > 0
     }
 
     async fn emit(
         &mut self,
         state: &mut Self::State,
-        context: &DerivedTriggerContext,
+        _context: &DerivedTriggerContext,
     ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
-        let source_event_ids: Vec<Uuid> = state.recent_events.iter().map(|e| e.event_id).collect();
+        let Some(start_time) = state.window_start else {
+            return Ok(None);
+        };
+        let Some(close_reason) = state.close_reason else {
+            return Ok(None);
+        };
 
-        // Derive ts_orig from the latest event in the window — deterministic across replays.
-        let ts_orig = state
-            .recent_events
-            .back()
-            .map_or(context.ts_coided, |e| e.timestamp);
+        let end_time = state.last_event_time.unwrap_or(start_time);
+        let duration_secs = (end_time - start_time).whole_seconds().max(0) as u64;
 
-        let payload = serde_json::json!({
-            "top_events": state.event_counts,
-            "window_size": state.recent_events.len(),
-        });
+        state.window_counter += 1;
+        let window_id = format!("activity-window-{}", state.window_counter);
+        let event_count = state.event_count;
+        let sources: Vec<String> = state.sources.iter().cloned().collect();
+        let activity_sources: Vec<ActivitySourceKind> =
+            state.activity_source_counts.keys().copied().collect();
+        let primary_source = primary_activity_source(&state.activity_source_counts);
+        let source_event_ids = std::mem::take(&mut state.event_ids);
 
-        Ok(Some(DerivedOutput::windowed(
-            payload,
-            ts_orig,
-            source_event_ids,
-        )))
+        let payload = ActivityWindowSummaryPayload {
+            window_id: window_id.clone(),
+            window_start: start_time,
+            window_end: end_time,
+            duration_secs,
+            event_count,
+            source_count: state.sources.len() as u64,
+            sources,
+            activity_sources,
+            activity_source_counts: state.activity_source_counts.clone(),
+            primary_source,
+            close_reason,
+        };
+
+        let output = DerivedOutput::windowed(payload, end_time, source_event_ids)
+            .with_temporal_policy(sinex_primitives::domain::SyntheticTemporalPolicy::WindowBoundary)
+            .with_semantics_version("2.0.0")
+            .with_equivalence_key(window_id)
+            .with_aggregation(DerivedAggregationMeta::new(
+                "activity.window",
+                0,
+                event_count,
+            ));
+
+        let pending_seed = state.pending_window_seed.take();
+        state.reset_window();
+        if let Some(seed) = pending_seed {
+            state.seed_window(seed);
+        }
+
+        Ok(Some(output))
     }
 }
 

@@ -4,13 +4,12 @@ use clap::Args;
 use color_eyre::{Result, eyre::eyre};
 use console::{StyledObject, style};
 use serde_json::json;
-use sinex_primitives::{
-    BrowserDeploymentSurface, DeploymentReadinessDescriptor,
-};
+use sinex_primitives::DeploymentReadinessDescriptor;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
-    ActivitySessionBoundaryPayload, BashCommandExecutedPayload, CanonicalCommandPayload,
+    ActivitySessionBoundaryPayload, ActivityWindowSummaryPayload, BashCommandExecutedPayload,
+    CanonicalCommandPayload,
 };
 use sinex_primitives::query::{
     AggregationMode, EventQuery, EventQueryResult, GroupByField, PayloadFilter, SortDirection,
@@ -57,6 +56,14 @@ fn session_detector_output_source() -> &'static str {
 
 fn session_detector_output_event_type() -> &'static str {
     ActivitySessionBoundaryPayload::EVENT_TYPE.as_static_str()
+}
+
+fn activity_window_output_source() -> &'static str {
+    ActivityWindowSummaryPayload::SOURCE.as_static_str()
+}
+
+fn activity_window_output_event_type() -> &'static str {
+    ActivityWindowSummaryPayload::EVENT_TYPE.as_static_str()
 }
 
 const TERMINAL_COMMAND_SOURCES: &[&str] = &[
@@ -934,7 +941,9 @@ async fn run_automata_smoke(
 
     if enabled_automata.analytics_automaton {
         match run_analytics_smoke(client).await {
-            Ok(()) => summary.pass("Analytics automaton smoke produced analytics.insight output"),
+            Ok(()) => {
+                summary.pass("Analytics automaton smoke produced activity.window.summary output");
+            }
             Err(error) => summary.fail(format!("Analytics automaton smoke failed: {error}")),
         }
     } else {
@@ -1055,29 +1064,45 @@ async fn run_health_smoke(client: &GatewayClient) -> Result<()> {
 }
 
 async fn run_analytics_smoke(client: &GatewayClient) -> Result<()> {
-    let baseline =
-        count_events_matching(client, &["analytics-automaton"], "analytics.insight").await?;
+    let input_baseline = count_events_matching(
+        client,
+        &[BashCommandExecutedPayload::SOURCE.as_static_str()],
+        BashCommandExecutedPayload::EVENT_TYPE.as_static_str(),
+    )
+    .await?;
+    let baseline = count_events_matching(
+        client,
+        &[activity_window_output_source()],
+        activity_window_output_event_type(),
+    )
+    .await?;
     let marker = format!("analytics-{:016x}", rand::random::<u64>());
-    let emitted_at = Timestamp::now();
+    let window_times = session_smoke_timestamps(Timestamp::now());
 
-    for index in 0..100 {
+    for (ordinal, ts_orig) in window_times.into_iter().enumerate() {
         ingest_raw_event(
             client,
-            "sinexctl.verify.analytics",
-            "test.analytics.ping",
-            emitted_at,
-            json!({
-                "marker": marker,
-                "index": index,
-            }),
+            BashCommandExecutedPayload::SOURCE.as_static_str(),
+            BashCommandExecutedPayload::EVENT_TYPE.as_static_str(),
+            ts_orig,
+            bash_command_payload(&format!("{marker}-{ordinal}")),
         )
         .await?;
     }
 
     wait_for_count_increase(
         client,
-        &["analytics-automaton"],
-        "analytics.insight",
+        &[BashCommandExecutedPayload::SOURCE.as_static_str()],
+        BashCommandExecutedPayload::EVENT_TYPE.as_static_str(),
+        input_baseline,
+        Duration::from_secs(10),
+    )
+    .await?;
+
+    wait_for_count_increase(
+        client,
+        &[activity_window_output_source()],
+        activity_window_output_event_type(),
         baseline,
         Duration::from_secs(15),
     )

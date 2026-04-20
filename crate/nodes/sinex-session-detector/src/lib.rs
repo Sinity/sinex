@@ -2,43 +2,25 @@
 
 //! Session detector -- [`WindowedNode`] implementation.
 //!
-//! Model classification: **Windowed** -- accumulates events, detects session
-//! boundaries when the gap between consecutive event timestamps exceeds a
-//! configurable threshold (default 5 minutes).
-//! Emits `activity.session.boundary` events with session metadata.
+//! Model classification: **Windowed** -- accumulates bounded
+//! `activity.window.summary` events into completed activity sessions.
 
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, WindowedNodeAdapter};
+use sinex_node_sdk::derived_node::{
+    DerivedAggregationMeta, DerivedOutput, DerivedTriggerContext, WindowedNodeAdapter,
+};
 use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, WindowedNode};
-use sinex_primitives::domain::SyntheticTemporalPolicy;
-use sinex_primitives::events::{EventPayload, payloads::ActivitySessionBoundaryPayload};
+use sinex_primitives::Uuid;
+use sinex_primitives::activity::{ActivitySourceKind, primary_activity_source};
+use sinex_primitives::events::{
+    EventPayload,
+    payloads::{
+        ActivitySessionBoundaryPayload, ActivityWindowCloseReason, ActivityWindowSummaryPayload,
+    },
+};
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::temporal::{Duration, Timestamp};
-use sinex_primitives::{JsonValue, Uuid, env as shared_env};
+use sinex_primitives::temporal::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
-use tracing::warn;
-
-/// Default session gap threshold in seconds (5 minutes).
-const DEFAULT_GAP_THRESHOLD_SECS: i64 = 300;
-
-/// Session gap threshold, configurable via `SINEX_SESSION_GAP_SECS`.
-fn gap_threshold() -> Duration {
-    let secs = shared_env::parse_optional::<i64>("SINEX_SESSION_GAP_SECS", "session gap threshold")
-        .filter(|&secs| {
-            if secs > 0 {
-                true
-            } else {
-                warn!(
-                    env = "SINEX_SESSION_GAP_SECS",
-                    parsed = secs,
-                    "Session gap override must be positive; using default"
-                );
-                false
-            }
-        })
-        .unwrap_or(DEFAULT_GAP_THRESHOLD_SECS);
-    Duration::seconds(secs)
-}
 
 /// Persistent window state tracking the current activity session.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -46,121 +28,52 @@ pub struct SessionState {
     /// Start time of the current session.
     pub session_start: Option<Timestamp>,
 
-    /// Timestamp of the most recent event in the current session.
-    pub last_event_time: Option<Timestamp>,
+    /// End time of the most recent window included in the session.
+    pub last_window_end: Option<Timestamp>,
 
-    /// Number of events accumulated in the current session.
+    /// Number of raw activity events represented by the session.
     pub event_count: u64,
 
-    /// Unique event sources observed in the current session.
+    /// Number of bounded activity windows represented by the session.
+    pub window_count: u64,
+
+    /// Unique raw event sources observed in the current session.
     pub sources: BTreeSet<String>,
 
     /// Logical activity sources observed in the current session.
-    pub activity_source_counts: BTreeMap<String, u64>,
+    pub activity_source_counts: BTreeMap<ActivitySourceKind, u64>,
 
-    /// `UUIDv7` IDs of events in the current session (for provenance).
-    pub event_ids: Vec<Uuid>,
+    /// `UUIDv7` IDs of contributing `activity.window.summary` events.
+    pub window_event_ids: Vec<Uuid>,
 
     /// Session counter for generating deterministic session IDs.
     pub session_counter: u64,
 
-    /// Whether a gap was detected between the last event and the current one.
-    /// Set in `accumulate()` using event timestamps (not wall clock), making
-    /// session boundary detection deterministic and replay-correct.
+    /// Whether the current session has received a gap-closed final window.
     #[serde(default)]
-    pub gap_detected: bool,
-
-    /// Deferred first event of the next session when a gap boundary is hit.
-    #[serde(default)]
-    pub pending_session_seed: Option<PendingSessionSeed>,
+    pub session_complete: bool,
 }
 
 impl SessionState {
     /// Reset state for a new session, preserving the counter.
     fn reset_session(&mut self) {
         self.session_start = None;
-        self.last_event_time = None;
+        self.last_window_end = None;
         self.event_count = 0;
+        self.window_count = 0;
         self.sources.clear();
         self.activity_source_counts.clear();
-        self.event_ids.clear();
-        self.gap_detected = false;
-        self.pending_session_seed = None;
-    }
-
-    fn seed_session(&mut self, seed: PendingSessionSeed) {
-        self.session_start = Some(seed.event_time);
-        self.last_event_time = Some(seed.event_time);
-        self.event_count = 1;
-        self.sources.clear();
-        self.sources.insert(seed.source);
-        self.activity_source_counts.clear();
-        self.activity_source_counts
-            .insert(seed.activity_source, 1);
-        self.event_ids.clear();
-        self.event_ids.push(seed.event_id);
-        self.gap_detected = false;
-        self.pending_session_seed = None;
+        self.window_event_ids.clear();
+        self.session_complete = false;
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PendingSessionSeed {
-    pub event_time: Timestamp,
-    pub source: String,
-    pub activity_source: String,
-    pub event_id: Uuid,
-}
-
-#[derive(Debug, Clone)]
-struct ActivitySignal {
-    raw_source: String,
-    activity_source: &'static str,
-}
-
-fn classify_activity_signal(context: &DerivedTriggerContext) -> Option<ActivitySignal> {
-    let raw_source = context.source.as_str().to_string();
-    let activity_source = match (context.source.as_str(), context.event_type.as_str()) {
-        ("wm.hyprland", "window.focused") | ("activitywatch", "window.active") => "window",
-        ("activitywatch", "browser.tab.active") | ("webhistory", "page.visited") => "browser",
-        (source, "command.executed") if source.starts_with("shell.") || source == "shell.history" => {
-            "terminal"
-        }
-        _ => return None,
-    };
-
-    Some(ActivitySignal {
-        raw_source,
-        activity_source,
-    })
-}
-
-fn primary_activity_source(counts: &BTreeMap<String, u64>) -> String {
-    counts
-        .iter()
-        .max_by(|(left_key, left_count), (right_key, right_count)| {
-            left_count
-                .cmp(right_count)
-                .then_with(|| right_key.cmp(left_key))
-        })
-        .map_or_else(|| "unknown".to_string(), |(key, _)| key.clone())
-}
-
-pub struct SessionDetector {
-    gap_threshold: Duration,
-}
-
-impl Default for SessionDetector {
-    fn default() -> Self {
-        Self {
-            gap_threshold: gap_threshold(),
-        }
-    }
-}
+#[derive(Default)]
+pub struct SessionDetector;
 
 impl WindowedNode for SessionDetector {
     type State = SessionState;
-    type Input = JsonValue;
+    type Input = ActivityWindowSummaryPayload;
     type Output = ActivitySessionBoundaryPayload;
 
     fn name(&self) -> &'static str {
@@ -168,7 +81,7 @@ impl WindowedNode for SessionDetector {
     }
 
     fn input_event_type(&self) -> &'static str {
-        "*"
+        ActivityWindowSummaryPayload::EVENT_TYPE.as_static_str()
     }
 
     fn output_event_type(&self) -> &'static str {
@@ -180,7 +93,7 @@ impl WindowedNode for SessionDetector {
     }
 
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
-        InputProvenanceFilter::MaterialOnly
+        InputProvenanceFilter::SynthesizedOnly
     }
 
     fn output_privacy_context(&self) -> ProcessingContext {
@@ -190,62 +103,28 @@ impl WindowedNode for SessionDetector {
     async fn accumulate(
         &mut self,
         state: &mut Self::State,
-        _input: Self::Input,
+        input: Self::Input,
         context: &DerivedTriggerContext,
     ) -> Result<(), NodeLogicError> {
-        let Some(signal) = classify_activity_signal(context) else {
-            return Ok(());
-        };
-        let event_time = context.require_ts_orig()?;
-        let event_id = context.trigger_uuid();
-
-        // Detect session gap using event timestamps (replay-correct).
-        // A gap is detected when the incoming event's ts_orig is more than
-        // gap_threshold after the last event's ts_orig. This uses event
-        // time, not wall clock, so replay produces the same boundaries.
-        if let Some(last_time) = state.last_event_time
-            && state.event_count > 0
-            && (event_time - last_time) >= self.gap_threshold
-        {
-            state.gap_detected = true;
-            state.pending_session_seed = Some(PendingSessionSeed {
-                event_time,
-                source: signal.raw_source,
-                activity_source: signal.activity_source.to_string(),
-                event_id,
-            });
-            return Ok(());
-        }
-
-        // Initialize session start if this is the first event
         if state.session_start.is_none() {
-            state.session_start = Some(event_time);
+            state.session_start = Some(input.window_start);
         }
 
-        state.last_event_time = Some(event_time);
-        state.event_count += 1;
-        state.sources.insert(signal.raw_source);
-        *state
-            .activity_source_counts
-            .entry(signal.activity_source.to_string())
-            .or_insert(0) += 1;
-        state.event_ids.push(event_id);
-
-        // Cap provenance list to prevent unbounded growth in very long sessions
-        if state.event_ids.len() > 10_000 {
-            // Keep first and last 5000 for provenance bookends
-            let last_5k: Vec<Uuid> = state.event_ids[state.event_ids.len() - 5000..].to_vec();
-            state.event_ids.truncate(5000);
-            state.event_ids.extend(last_5k);
+        state.last_window_end = Some(input.window_end);
+        state.event_count += input.event_count;
+        state.window_count += 1;
+        state.sources.extend(input.sources);
+        for (source, count) in input.activity_source_counts {
+            *state.activity_source_counts.entry(source).or_insert(0) += count;
         }
+        state.window_event_ids.push(context.trigger_uuid());
+        state.session_complete = matches!(input.close_reason, ActivityWindowCloseReason::Gap);
 
         Ok(())
     }
 
     fn window_complete(&self, state: &Self::State) -> bool {
-        // Gap detection is done in accumulate() using event timestamps,
-        // making it deterministic and replay-correct.
-        state.gap_detected && state.event_count > 0
+        state.session_complete && state.window_count > 0
     }
 
     async fn emit(
@@ -257,25 +136,27 @@ impl WindowedNode for SessionDetector {
             return Ok(None);
         };
 
-        let end_time = state.last_event_time.unwrap_or(start_time);
-        let duration = end_time - start_time;
-        let duration_secs = duration.whole_seconds().max(0) as u64;
+        let end_time = state.last_window_end.unwrap_or(start_time);
+        let duration_secs = (end_time - start_time).whole_seconds().max(0) as u64;
 
         state.session_counter += 1;
         let session_id = format!("session-{}", state.session_counter);
 
         let sources: Vec<String> = state.sources.iter().cloned().collect();
-        let activity_sources: Vec<String> = state.activity_source_counts.keys().cloned().collect();
+        let activity_sources: Vec<ActivitySourceKind> =
+            state.activity_source_counts.keys().copied().collect();
         let primary_source = primary_activity_source(&state.activity_source_counts);
-        let source_event_ids = std::mem::take(&mut state.event_ids);
+        let source_event_ids = std::mem::take(&mut state.window_event_ids);
         let event_count = state.event_count;
+        let window_count = state.window_count;
 
         let payload = ActivitySessionBoundaryPayload {
-            session_id,
+            session_id: session_id.clone(),
             start_time,
             end_time,
             duration_secs,
             event_count,
+            window_count,
             source_count: state.sources.len() as u64,
             sources,
             activity_sources,
@@ -283,19 +164,17 @@ impl WindowedNode for SessionDetector {
             primary_source,
         };
 
-        // Use WindowBoundary policy: the emission represents the boundary
-        // between sessions, not any single input event's time.
         let output = DerivedOutput::windowed(payload, end_time, source_event_ids)
-            .with_temporal_policy(SyntheticTemporalPolicy::WindowBoundary);
+            .with_temporal_policy(sinex_primitives::domain::SyntheticTemporalPolicy::WindowBoundary)
+            .with_semantics_version("2.0.0")
+            .with_equivalence_key(session_id)
+            .with_aggregation(DerivedAggregationMeta::new(
+                "activity.session",
+                1,
+                event_count,
+            ));
 
-        // Reset state for the next session, seeding it with the deferred
-        // post-gap event when a boundary was triggered by an incoming event.
-        let pending_seed = state.pending_session_seed.take();
         state.reset_session();
-        if let Some(seed) = pending_seed {
-            state.seed_session(seed);
-        }
-
         Ok(Some(output))
     }
 }
