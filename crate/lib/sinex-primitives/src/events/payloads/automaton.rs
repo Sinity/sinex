@@ -3,6 +3,7 @@
 //! Typed payloads for events emitted by automatons (health, search, analytics, content, pkm).
 
 use crate::Timestamp;
+use crate::activity::ActivitySourceKind;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -206,6 +207,35 @@ pub struct AnalyticsCorrelationPayload {
     pub window_seconds: u64,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityWindowCloseReason {
+    Gap,
+    MaxDuration,
+    MaxEventCount,
+}
+
+/// Completed bounded activity window derived from trusted activity signals.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(
+    source = "derived.activity-window",
+    event_type = "activity.window.summary",
+    version = "1.0.0"
+)]
+pub struct ActivityWindowSummaryPayload {
+    pub window_id: String,
+    pub window_start: Timestamp,
+    pub window_end: Timestamp,
+    pub duration_secs: u64,
+    pub event_count: u64,
+    pub source_count: u64,
+    pub sources: Vec<String>,
+    pub activity_sources: Vec<ActivitySourceKind>,
+    pub activity_source_counts: BTreeMap<ActivitySourceKind, u64>,
+    pub primary_source: ActivitySourceKind,
+    pub close_reason: ActivityWindowCloseReason,
+}
+
 /// Completed activity session derived from trusted activity signals.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(
@@ -219,11 +249,12 @@ pub struct ActivitySessionBoundaryPayload {
     pub end_time: Timestamp,
     pub duration_secs: u64,
     pub event_count: u64,
+    pub window_count: u64,
     pub source_count: u64,
     pub sources: Vec<String>,
-    pub activity_sources: Vec<String>,
-    pub activity_source_counts: BTreeMap<String, u64>,
-    pub primary_source: String,
+    pub activity_sources: Vec<ActivitySourceKind>,
+    pub activity_source_counts: BTreeMap<ActivitySourceKind, u64>,
+    pub primary_source: ActivitySourceKind,
 }
 
 /// Correlation pair

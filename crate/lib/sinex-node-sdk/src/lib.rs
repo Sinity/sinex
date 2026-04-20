@@ -136,10 +136,10 @@ pub use confirmation_handler::{
 pub use coordination::{HandoffRequest, InstanceMode, NodeCoordination};
 #[cfg(feature = "messaging")]
 pub use derived_node::{
-    DerivedNodeAdapter, DerivedNodeConfig, DerivedOutput, DerivedScopeInvalidation,
-    DerivedTriggerContext, INVALIDATION_SUBJECT, InputProvenanceFilter, ScopeReconcilerNode,
-    ScopeReconcilerNodeAdapter, TransducerNode, TransducerNodeAdapter, WindowedNode,
-    WindowedNodeAdapter,
+    DerivedAggregationMeta, DerivedNodeAdapter, DerivedNodeConfig, DerivedOutput,
+    DerivedScopeInvalidation, DerivedTriggerContext, INVALIDATION_SUBJECT, InputProvenanceFilter,
+    ScopeReconcilerNode, ScopeReconcilerNodeAdapter, TransducerNode, TransducerNodeAdapter,
+    WindowedNode, WindowedNodeAdapter,
 };
 #[cfg(feature = "messaging")]
 pub use dlq_retry::{DlqRetryConfig, DlqRetryHandler, DlqRetryResult, DlqStats};

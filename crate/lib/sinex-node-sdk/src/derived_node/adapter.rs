@@ -33,6 +33,8 @@ use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 
 const INVALIDATION_QUERY_PAGE_SIZE: i64 = Pagination::MAX_LIMIT;
+const DERIVED_OUTPUT_PARENT_WARN_THRESHOLD: usize = 100;
+const DERIVED_OUTPUT_PARENT_HARD_LIMIT: usize = 1000;
 
 fn signal_shutdown_channel(shutdown_tx: &watch::Sender<bool>, node_name: &str) -> bool {
     if shutdown_tx.send(true).is_err() {
@@ -593,6 +595,150 @@ where
         self.events_since_checkpoint += 1;
     }
 
+    fn validate_output_batch(
+        &self,
+        outputs: &[DerivedOutput<JsonValue>],
+        phase: &'static str,
+    ) -> NodeResult<()> {
+        let mut max_parent_count = 0usize;
+
+        for output in outputs {
+            let parent_count = output.source_event_ids.len();
+            max_parent_count = max_parent_count.max(parent_count);
+
+            if parent_count > DERIVED_OUTPUT_PARENT_HARD_LIMIT {
+                let mut error = SinexError::validation(
+                    "derived output exceeds synthesis parent hard limit before persistence",
+                )
+                .with_context("node", self.node.name())
+                .with_context("phase", phase)
+                .with_context("output_event_type", self.node.output_event_type())
+                .with_context("parent_count", parent_count.to_string())
+                .with_context("hard_limit", DERIVED_OUTPUT_PARENT_HARD_LIMIT.to_string());
+
+                if let Some(aggregation) = &output.aggregation {
+                    error = error
+                        .with_context("aggregation_kind", aggregation.kind.clone())
+                        .with_context("rollup_level", aggregation.rollup_level.to_string())
+                        .with_context(
+                            "logical_input_count",
+                            aggregation.total_input_count.to_string(),
+                        );
+                }
+
+                return Err(error);
+            }
+        }
+
+        if max_parent_count > DERIVED_OUTPUT_PARENT_WARN_THRESHOLD {
+            warn!(
+                node = %self.node.name(),
+                phase,
+                output_event_type = %self.node.output_event_type(),
+                output_count = outputs.len(),
+                max_parent_count,
+                threshold = DERIVED_OUTPUT_PARENT_WARN_THRESHOLD,
+                hard_limit = DERIVED_OUTPUT_PARENT_HARD_LIMIT,
+                "Derived output batch is approaching synthesis parent limits"
+            );
+        }
+
+        Ok(())
+    }
+
+    async fn observe_output_batch(
+        &self,
+        outputs: &[DerivedOutput<JsonValue>],
+        phase: &'static str,
+    ) {
+        if outputs.is_empty() {
+            return;
+        }
+
+        #[cfg(feature = "messaging")]
+        if let Some(obs) = self.self_observer.as_ref() {
+            let mut labels = HashMap::new();
+            labels.insert("phase".to_string(), phase.to_string());
+            labels.insert(
+                "output_event_type".to_string(),
+                self.node.output_event_type().to_string(),
+            );
+
+            let count = outputs.len() as u64;
+            let parent_counts: Vec<f64> = outputs
+                .iter()
+                .map(|output| output.source_event_ids.len() as f64)
+                .collect();
+            let parent_sum = parent_counts.iter().sum::<f64>();
+            let parent_min = parent_counts.iter().copied().fold(f64::INFINITY, f64::min);
+            let parent_max = parent_counts.iter().copied().fold(0.0, f64::max);
+
+            if let Err(error) = obs
+                .emit_counter_with_delta(
+                    "derived.outputs_emitted",
+                    count,
+                    count,
+                    Some(labels.clone()),
+                )
+                .await
+            {
+                log_self_observation_failure(self.node.name(), "derived.outputs_emitted", &error);
+            }
+
+            if let Err(error) = obs
+                .emit_histogram(
+                    "derived.output.parent_count",
+                    count,
+                    parent_sum,
+                    parent_min,
+                    parent_max,
+                    None,
+                    Some(labels.clone()),
+                )
+                .await
+            {
+                log_self_observation_failure(
+                    self.node.name(),
+                    "derived.output.parent_count",
+                    &error,
+                );
+            }
+
+            let aggregated = outputs
+                .iter()
+                .filter_map(|output| output.aggregation.as_ref())
+                .collect::<Vec<_>>();
+            if !aggregated.is_empty() {
+                let logical_counts: Vec<f64> = aggregated
+                    .iter()
+                    .map(|aggregation| aggregation.total_input_count as f64)
+                    .collect();
+                let logical_sum = logical_counts.iter().sum::<f64>();
+                let logical_min = logical_counts.iter().copied().fold(f64::INFINITY, f64::min);
+                let logical_max = logical_counts.iter().copied().fold(0.0, f64::max);
+
+                if let Err(error) = obs
+                    .emit_histogram(
+                        "derived.output.logical_input_count",
+                        aggregated.len() as u64,
+                        logical_sum,
+                        logical_min,
+                        logical_max,
+                        None,
+                        Some(labels.clone()),
+                    )
+                    .await
+                {
+                    log_self_observation_failure(
+                        self.node.name(),
+                        "derived.output.logical_input_count",
+                        &error,
+                    );
+                }
+            }
+        }
+    }
+
     // ── Event Processing ───────────────────────────────────────────────
 
     /// Process a single event through the derived node's logic.
@@ -627,6 +773,8 @@ where
 
         match result {
             Ok(outputs) => {
+                self.validate_output_batch(&outputs, "live processing")?;
+                self.observe_output_batch(&outputs, "live").await;
                 let output_events =
                     self.build_output_events(outputs, Some(source_event_id), &context)?;
                 self.record_processed_input(source_event_id);
@@ -678,6 +826,7 @@ where
             semantics_version,
             scope_key,
             equivalence_key,
+            aggregation: _aggregation,
         } = output;
 
         let privacy_context = self.node.output_privacy_context();
@@ -974,6 +1123,8 @@ where
                         "Scope recomputation failed for scope '{scope_key}': {e}"
                     ))
                 })?;
+            self.validate_output_batch(&outputs, "scope invalidation")?;
+            self.observe_output_batch(&outputs, "invalidation").await;
 
             // Build output events
             let mut new_event_ids = Vec::new();
@@ -1605,6 +1756,8 @@ where
                     .await
                 {
                     Ok(outputs) => {
+                        self.validate_output_batch(&outputs, "historical replay")?;
+                        self.observe_output_batch(&outputs, "replay").await;
                         let output_events =
                             self.build_output_events(outputs, Some(ctx.trigger_event_id), &ctx)?;
                         if let Some(ref emitter) = self.event_emitter {

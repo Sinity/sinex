@@ -1,18 +1,20 @@
 # sinex-session-detector
 
-The session detector groups trusted activity signals into activity sessions.
-A gap of more than 5 minutes between consecutive activity events marks a session boundary.
+The session detector groups bounded `activity.window.summary` rollups into
+completed activity sessions.
+It no longer points session boundaries directly at raw events; it consumes the
+bounded activity-window layer and emits exact synthesized provenance over those
+window summaries.
 
 It implements the `WindowedNode` interface from `sinex-node-sdk` via
 `WindowedNodeAdapter` and emits `activity.session.boundary` events containing
-session metadata (duration, dominant activity source, contributing sources).
+session metadata (duration, dominant activity source, contributing sources,
+window count).
 
-- Subscribes to all event types (`*`) but only accumulates activity-bearing
-  signals: Hyprland focus changes, terminal command execution, and browser
-  activity events.
-- Tracks current session state: start time, event count, unique raw sources, and
-  logical activity-source counts (`window`, `terminal`, `browser`).
-- Emits a boundary event when a gap exceeding the threshold is detected.
+- Subscribes specifically to `activity.window.summary` synthesized outputs.
+- Tracks current session state as a rollup over bounded windows rather than raw
+  event IDs, keeping provenance exact while capping fan-in.
+- Emits a boundary event when a gap-closed window arrives.
 - Uses `SyntheticTemporalPolicy::WindowBoundary` for replay-correct timestamps.
 
 Reference `README.md#deployment--operations` for the operator path and
