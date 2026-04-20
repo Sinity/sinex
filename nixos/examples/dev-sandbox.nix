@@ -70,6 +70,15 @@
         };
       };
 
+      browser = {
+        enable = true;
+        instances = 1;
+        resources = {
+          memoryMax = "384M";
+          cpuQuota = "60%";
+        };
+      };
+
       desktop = {
         enable = true;
         instances = 1;
@@ -134,7 +143,7 @@
   };
 
   environment.systemPackages = with pkgs; [
-    sinexCli
+    sinexctl
     jq
     httpie
     stress

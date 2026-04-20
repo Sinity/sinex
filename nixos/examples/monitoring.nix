@@ -33,6 +33,7 @@
       enable = true;
       filesystem.watchPaths = [ "/home/observer" ];
       terminal.enable = true;
+      browser.enable = true;
       desktop.enable = true;
       system.enable = true;
       automata = {

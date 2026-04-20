@@ -52,11 +52,11 @@ pub mod prelude {
 // Re-export commonly used types at crate root
 pub use constants::filesystem;
 pub use deployment_readiness::{
-    AutomataDeploymentSurface, DeploymentDatabaseRuntime, DeploymentExpectations,
-    DeploymentGatewayRuntime, DeploymentNatsRuntime, DeploymentReadinessDescriptor,
-    DeploymentReadinessMode, DeploymentSecrets, DeploymentSurface, DeploymentTarget,
-    DesktopDeploymentSurface, DocumentDeploymentSurface, TerminalDeploymentSurface,
-    TerminalHistorySource,
+    AutomataDeploymentSurface, BrowserDeploymentSurface, BrowserSqliteSource,
+    DeploymentDatabaseRuntime, DeploymentExpectations, DeploymentGatewayRuntime,
+    DeploymentNatsRuntime, DeploymentReadinessDescriptor, DeploymentReadinessMode,
+    DeploymentSecrets, DeploymentSurface, DeploymentTarget, DesktopDeploymentSurface,
+    DocumentDeploymentSurface, TerminalDeploymentSurface, TerminalHistorySource,
 };
 pub use domain::{EventSource, EventType, HostName, RecordedPath, SanitizedPath};
 pub use env::strict_env_filter_source;

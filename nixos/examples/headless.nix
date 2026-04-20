@@ -51,6 +51,7 @@
       };
 
       terminal.enable = false;
+      browser.enable = false;
       desktop.enable = false;
 
       automata = {

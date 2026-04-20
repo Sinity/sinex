@@ -207,6 +207,7 @@
             # Ingestors (data capture nodes)
             sinex-fs-ingestor = mkPackage "sinex-fs-ingestor";
             sinex-terminal-ingestor = mkPackage "sinex-terminal-ingestor";
+            sinex-browser-ingestor = mkPackage "sinex-browser-ingestor";
             sinex-desktop-ingestor = mkPackage "sinex-desktop-ingestor";
             sinex-system-ingestor = mkPackage "sinex-system-ingestor";
             sinex-document-ingestor = mkPackage "sinex-document-ingestor";
@@ -235,6 +236,7 @@
                 sinexPackages.sinexctl
                 sinexPackages.sinex-fs-ingestor
                 sinexPackages.sinex-terminal-ingestor
+                sinexPackages.sinex-browser-ingestor
                 sinexPackages.sinex-desktop-ingestor
                 sinexPackages.sinex-system-ingestor
                 sinexPackages.sinex-document-ingestor
