@@ -84,6 +84,7 @@ pub mod heartbeat;
 pub mod ingestion_helpers;
 #[cfg(feature = "messaging")]
 pub mod ingestor_node;
+pub mod input_shapes;
 #[cfg(feature = "messaging")]
 pub mod jetstream_consumer;
 #[cfg(feature = "messaging")]
@@ -117,6 +118,10 @@ pub use acquisition_manager::{
 };
 #[cfg(feature = "messaging")]
 pub use automaton_base::{ActivityEntry, IngestionHistoryEntry};
+pub use batch_importer::{
+    BatchImporterState, DiscoveredFile, ImportFileChangeKind, ImportedFileFingerprint,
+    ImportedFileState, ScanError, read_file_content, read_file_lines, scan_for_new_files,
+};
 #[cfg(feature = "messaging")]
 pub use checkpoint::{
     CheckpointCleanupConfig, CheckpointCleanupResult, CheckpointManager, CheckpointState,
@@ -126,10 +131,6 @@ pub use config::{AutomatonConfig, EventSourceConfig, NodeConfig};
 pub use confirmation_handler::{
     ConfirmationBuffer, ConfirmedEventHandler, DEFAULT_MAX_PENDING_EVENTS, EventConfirmation,
     ProcessingModel, ProvisionalEvent, ProvisionalEventHandler,
-};
-pub use batch_importer::{
-    BatchImporterState, DiscoveredFile, ImportFileChangeKind, ImportedFileFingerprint,
-    ImportedFileState, ScanError, read_file_content, read_file_lines, scan_for_new_files,
 };
 #[cfg(feature = "messaging")]
 pub use coordination::{HandoffRequest, InstanceMode, NodeCoordination};
@@ -157,6 +158,12 @@ pub use health_reporter::{HealthMetrics, HealthReporter, HealthThresholds};
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatLogSink, HeartbeatMetrics};
 #[cfg(feature = "messaging")]
 pub use ingestor_node::{IngestorNode, IngestorNodeAdapter, IngestorState};
+pub use input_shapes::{
+    SqliteSourceCheckpointState, checkpointed_sqlite_history_lenient,
+    checkpointed_sqlite_history_strict, checkpointed_sqlite_source_lenient,
+    checkpointed_sqlite_source_strict, discover_importable_files_at_root,
+    poll_append_only_utf8_source,
+};
 #[cfg(feature = "messaging")]
 pub use jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig};
 #[cfg(feature = "messaging")]
@@ -176,9 +183,9 @@ pub use self_observation::{
 };
 #[cfg(feature = "messaging")]
 pub use shutdown::wait_for_shutdown_signal;
+pub use shutdown::{ShutdownConfig, default_checkpoint_path};
 #[cfg(feature = "messaging")]
 pub use source_material::{stage_material, stage_material_from_file};
-pub use shutdown::{ShutdownConfig, default_checkpoint_path};
 pub use sqlite_source::{
     SqliteHistoryImportError, SqliteHistoryImportReport, SqliteHistoryRowOutcome,
     SqliteHistoryWarningDisposition, SqliteTableCheckError, ensure_sqlite_with_tables,
