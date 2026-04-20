@@ -881,9 +881,8 @@ let
             fi
           }
 
-          OWNER="$SERVICE_USER"
-          "$INSTALL" -d -m0755 -o "$OWNER" -g "$OWNER" ${escapeShellArg runtimeDir}
-          "$INSTALL" -m0640 -o "$OWNER" -g "$OWNER" /dev/null "$ENV_FILE"
+          "$INSTALL" -d -m0755 ${escapeShellArg runtimeDir}
+          "$INSTALL" -m0600 /dev/null "$ENV_FILE"
 
           if [ -n "$CONFIGURED_RUNTIME_DIR" ]; then
             RUNTIME_ROOT="$CONFIGURED_RUNTIME_DIR"
