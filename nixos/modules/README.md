@@ -15,7 +15,7 @@ to a systemd unit, CLI argument, or generated configuration file.
 | `services.sinex.nats` | NATS/JetStream provisioning and stream bootstrap. |
 | `services.sinex.storage` | Dead-letter queue handling and git-annex backed blob store. |
 | `services.sinex.core` | Ingestion (`sinex-ingestd`) and gateway service configuration. |
-| `services.sinex.nodes` | Filesystem/terminal/desktop/system collectors plus automata. |
+| `services.sinex.nodes` | Filesystem/terminal/browser/desktop/system collectors plus automata. |
 | `services.sinex.observability` | Prometheus/Grafana/exporters and structured log retention. |
 | `services.sinex.lifecycle` | Pre-flight verification and coordinated update orchestration. |
 | `services.sinex.shell` | Developer ergonomics (asciinema capture, Kitty auto-config). |
@@ -114,19 +114,21 @@ disabled (e.g. staging migrations).
   timer (`sinex-document-scan.timer`), and the module requires that at least
   one of `runOnBoot` or `schedule` is enabled so the surface actually runs.
 - When `users.target` is set, the module now derives sane workstation defaults
-  for terminal history sources and, when the target UID is known at evaluation
-  time, the desktop runtime directory. The sinnix bridge can make that access
-  explicit with `BindReadOnlyPaths` for the target home and `/run/user/$UID`,
-  while the terminal and desktop units still run a root `ExecStartPre` bridge
-  that grants the `sinex` service account the ACLs it needs for shell-history
-  files and live Wayland/Hyprland sockets.
+  for terminal history sources, browser dump/sqlite sources, and, when the
+  target UID is known at evaluation time, the desktop runtime directory. The
+  sinnix bridge can make that access explicit with `BindReadOnlyPaths` for the
+  target home and `/run/user/$UID`, while the terminal, browser, and desktop
+  units still run a root `ExecStartPre` bridge that grants the `sinex` service
+  account the ACLs it needs for shell-history files, browser SQLite histories,
+  and live Wayland/Hyprland sockets.
 - When the module is enabled, workstation-facing collectors (`filesystem`,
-  `terminal`, `desktop`, `system`) default to singleton startup
+  `terminal`, `browser`, `desktop`, `system`) default to singleton startup
   (`instances = 1`) so the first live host enable does not double-run capture
   nodes before coordination is intentionally introduced.
-- `nodes.terminal.historySources` and `nodes.desktop.session.*` remain the
-  typed override surfaces when the target user layout is non-standard or a
-  deployment needs explicit socket/runtime wiring.
+- `nodes.terminal.historySources`, `nodes.browser.{dumpSources,sqliteSources}`,
+  and `nodes.desktop.session.*` remain the typed override surfaces when the
+  target user layout is non-standard or a deployment needs explicit socket/runtime
+  wiring.
 - Automata use named profiles defined under `nodes.automata.profiles`; set
   `profile = "light"|"standard"|"heavy"` to select batch and MemoryMax/CPUQuota.
 - The module emits deterministic unit names (`sinex-filesystem-1`,

@@ -4,7 +4,9 @@ use clap::Args;
 use color_eyre::{Result, eyre::eyre};
 use console::{StyledObject, style};
 use serde_json::json;
-use sinex_primitives::DeploymentReadinessDescriptor;
+use sinex_primitives::{
+    BrowserDeploymentSurface, DeploymentReadinessDescriptor,
+};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
@@ -72,6 +74,7 @@ const TERMINAL_PROOF_SOURCES: &[&str] = &[
     "shell.history.fish",
     "shell.history",
 ];
+const BROWSER_PROOF_SOURCES: &[&str] = &["webhistory"];
 const DESKTOP_PROOF_SOURCES: &[&str] = &["desktop", "activitywatch", "clipboard", "wm.hyprland"];
 const FILESYSTEM_PROOF_SOURCES: &[&str] = &["fs-watcher"];
 const SYSTEM_PROOF_SOURCES: &[&str] = &["system", "journald", "systemd"];
@@ -120,6 +123,7 @@ impl EnabledAutomata {
 struct EnabledSourceSurfaces {
     filesystem: bool,
     terminal: bool,
+    browser: bool,
     desktop: bool,
     system: bool,
 }
@@ -138,6 +142,13 @@ const HISTORICAL_SIGNAL_CHECKS: &[HistoricalSignalCheck] = &[
         sources: &["desktop"],
         event_type: "window.wm_historical",
         zero_message: "No desktop window.wm_historical events found",
+    },
+    HistoricalSignalCheck {
+        label: "Browser history ingestion",
+        surface: HistoricalSurface::Browser,
+        sources: &["webhistory"],
+        event_type: "page.visited",
+        zero_message: "No webhistory page.visited events found",
     },
 ];
 
@@ -401,6 +412,7 @@ fn print_verification_footer(summary: &VerificationSummary) {
 #[derive(Debug, Clone, Copy)]
 enum HistoricalSurface {
     Terminal,
+    Browser,
     Desktop,
 }
 
@@ -526,12 +538,14 @@ fn enabled_source_surfaces(
         || EnabledSourceSurfaces {
             filesystem: false,
             terminal: false,
+            browser: false,
             desktop: false,
             system: false,
         },
         |descriptor| EnabledSourceSurfaces {
             filesystem: descriptor.filesystem.enabled,
             terminal: descriptor.terminal.surface.enabled,
+            browser: descriptor.browser.surface.enabled,
             desktop: descriptor.desktop.surface.enabled,
             system: descriptor.system.enabled,
         },
@@ -580,6 +594,7 @@ const fn historical_surface_enabled(
 ) -> bool {
     match surface {
         HistoricalSurface::Terminal => enabled.terminal,
+        HistoricalSurface::Browser => enabled.browser,
         HistoricalSurface::Desktop => enabled.desktop,
     }
 }
@@ -654,6 +669,13 @@ async fn run_source_proof(
         .await?;
     } else {
         summary.skip("Terminal collector disabled in local deployment");
+    }
+
+    if enabled.browser {
+        report_source_surface_proof(summary, client, "Browser collector", BROWSER_PROOF_SOURCES)
+            .await?;
+    } else {
+        summary.skip("Browser collector disabled in local deployment");
     }
 
     if enabled.desktop {
@@ -1445,6 +1467,13 @@ mod tests {
                 },
                 ..Default::default()
             },
+            browser: BrowserDeploymentSurface {
+                surface: DeploymentSurface {
+                    enabled: true,
+                    instances: Some(1),
+                },
+                ..Default::default()
+            },
             desktop: DesktopDeploymentSurface {
                 surface: DeploymentSurface {
                     enabled: true,
@@ -1461,6 +1490,7 @@ mod tests {
 
         assert!(enabled.filesystem);
         assert!(!enabled.terminal);
+        assert!(enabled.browser);
         assert!(enabled.desktop);
         assert!(!enabled.system);
         Ok(())

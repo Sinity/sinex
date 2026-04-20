@@ -4,7 +4,7 @@ Complete deployment and operations guide for the Sinex Exocortex personal data c
 
 ## Documentation Structure
 
-- **examples/workstation.nix** - Minimal workstation deployment (filesystem + terminal nodes)
+- **examples/workstation.nix** - Minimal workstation deployment (filesystem + terminal + browser nodes)
 - **examples/monitoring.nix** - Staging configuration with maintenance + observability stack
 - **examples/dev-sandbox.nix** - Comprehensive developer sandbox with all services enabled
 - **examples/headless.nix** - Headless/server capture (filesystem + system nodes)
@@ -201,13 +201,14 @@ exercises the module conventions.
 
 ### User-Session Node Wiring
 
-Terminal and desktop capture now default to the interactive target user more
+Terminal, browser, and desktop capture now default to the interactive target user more
 honestly. When `services.sinex.users.target` is set, the module:
 
 - derives terminal history sources from that user's home directory
+- derives browser dump/sqlite history sources from that user's home directory
 - derives the desktop runtime dir when the target UID is known at evaluation time
 - runs a root `ExecStartPre` bridge that grants the `sinex` service account ACL
-  access to shell-history files and live Wayland/Hyprland sockets
+  access to shell-history files, browser SQLite history, and live Wayland/Hyprland sockets
 
 That means a typical workstation usually only needs the target user:
 
@@ -232,6 +233,16 @@ services.sinex.nodes = {
     ];
   };
 
+  browser = {
+    sqliteSources = [
+      {
+        path = "/srv/history/qutebrowser/history.sqlite";
+        browser = "qutebrowser";
+        format = "QutebrowserNative";
+      }
+    ];
+  };
+
   desktop = {
     session = {
       runtimeDir = "/run/user/1001";
@@ -242,7 +253,8 @@ services.sinex.nodes = {
 };
 ```
 
-`nodes.terminal.access.bindReadOnlyPaths` and
+`nodes.terminal.access.bindReadOnlyPaths`,
+`nodes.browser.access.bindReadOnlyPaths`, and
 `nodes.desktop.access.bindReadOnlyPaths` remain available as escape hatches, but
 they are no longer the primary workstation path.
 
@@ -337,6 +349,7 @@ services.sinex = {
       watchPaths = [ "~/Documents" "~/Projects" ];
     };
     terminal.enable = true;
+    browser.enable = true;
     desktop.enable = true;
     system.enable = true;
     automata = {
@@ -378,6 +391,7 @@ services.sinex = {
       watchPaths = [ "/srv/data" "/var/log" ];
     };
     terminal.enable = false;
+    browser.enable = false;
     desktop.enable = false;      # No GUI
     system.enable = true;
     automata.healthAggregator.enable = true;
@@ -407,6 +421,7 @@ services.sinex = {
       watchPaths = [ "~/Projects" ];  # Only watch projects
     };
     terminal.enable = true;
+    browser.enable = true;
   };
   
   shell = {
@@ -464,6 +479,7 @@ systemctl status sinex-ingestd
 systemctl status sinex-gateway
 systemctl status sinex-filesystem-1
 systemctl status sinex-terminal-1
+systemctl status sinex-browser-1
 ```
 
 **View logs:**
@@ -490,6 +506,7 @@ sudo systemctl start sinex-ingestd
 sudo systemctl start sinex-gateway
 sudo systemctl start sinex-filesystem-1
 sudo systemctl start sinex-terminal-1
+sudo systemctl start sinex-browser-1
 sudo systemctl start sinex-desktop-1
 sudo systemctl start sinex-system-1
 ```
