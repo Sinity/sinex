@@ -43,13 +43,22 @@ use sinex_primitives::rpc::{
     },
     system::{SystemHealthRequest, SystemHealthResponse},
     telemetry::{
-        CommandFrequencyEntry, FileActivityEntry, IngestdValidationSnapshot, RecentActivityEntry,
-        SystemStateBucket, TelemetryCommandFrequencyRequest, TelemetryCommandFrequencyResponse,
-        TelemetryFileActivityRequest, TelemetryFileActivityResponse,
-        TelemetryIngestdValidationRequest, TelemetryIngestdValidationResponse,
+        AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
+        FileActivityEntry, GatewayStatsBucket, IngestdBatchStatsBucket, IngestdValidationSnapshot,
+        MetricCounterBucket, NodeStatsBucket, RecentActivityEntry, StreamStatsBucket,
+        SystemStateBucket, TelemetryAssemblyStatsRequest, TelemetryAssemblyStatsResponse,
+        TelemetryCommandFrequencyRequest, TelemetryCommandFrequencyResponse,
+        TelemetryCurrentDeviceStateRequest, TelemetryCurrentDeviceStateResponse,
+        TelemetryCurrentHealthRequest, TelemetryCurrentHealthResponse,
+        TelemetryFileActivityRequest, TelemetryFileActivityResponse, TelemetryGatewayStatsRequest,
+        TelemetryGatewayStatsResponse, TelemetryIngestdBatchStatsRequest,
+        TelemetryIngestdBatchStatsResponse, TelemetryIngestdValidationRequest,
+        TelemetryIngestdValidationResponse, TelemetryMetricCountersRequest,
+        TelemetryMetricCountersResponse, TelemetryNodeStatsRequest, TelemetryNodeStatsResponse,
         TelemetryRecentActivityRequest, TelemetryRecentActivityResponse,
-        TelemetrySystemStateRequest, TelemetrySystemStateResponse, TelemetryTimeRange,
-        TelemetryWindowFocusRequest, TelemetryWindowFocusResponse, WindowFocusBucket,
+        TelemetryStreamStatsRequest, TelemetryStreamStatsResponse, TelemetrySystemStateRequest,
+        TelemetrySystemStateResponse, TelemetryTimeRange, TelemetryWindowFocusRequest,
+        TelemetryWindowFocusResponse, WindowFocusBucket,
     },
 };
 use sinex_primitives::temporal::Timestamp;
@@ -1029,6 +1038,38 @@ impl GatewayClient {
 
     // ==================== Telemetry Commands ====================
 
+    /// Query current health telemetry rows.
+    pub async fn telemetry_current_health(
+        &self,
+        limit: Option<i64>,
+    ) -> Result<Vec<CurrentHealthEntry>> {
+        let req = TelemetryCurrentHealthRequest { limit };
+        let result = self
+            .call_rpc(
+                methods::TELEMETRY_CURRENT_HEALTH,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        let response: TelemetryCurrentHealthResponse = serde_json::from_value(result)?;
+        Ok(response.entries)
+    }
+
+    /// Query current device-state telemetry rows.
+    pub async fn telemetry_current_device_state(
+        &self,
+        limit: Option<i64>,
+    ) -> Result<Vec<CurrentDeviceStateEntry>> {
+        let req = TelemetryCurrentDeviceStateRequest { limit };
+        let result = self
+            .call_rpc(
+                methods::TELEMETRY_CURRENT_DEVICE_STATE,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        let response: TelemetryCurrentDeviceStateResponse = serde_json::from_value(result)?;
+        Ok(response.entries)
+    }
+
     /// Query window focus telemetry aggregates.
     pub async fn telemetry_window_focus(
         &self,
@@ -1120,6 +1161,126 @@ impl GatewayClient {
             .call_rpc(methods::TELEMETRY_SYSTEM_STATE, serde_json::to_value(&req)?)
             .await?;
         let response: TelemetrySystemStateResponse = serde_json::from_value(result)?;
+        Ok(response.buckets)
+    }
+
+    /// Query gateway hourly operator telemetry.
+    pub async fn telemetry_gateway_stats(
+        &self,
+        from: Option<String>,
+        to: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<Vec<GatewayStatsBucket>> {
+        let req = TelemetryGatewayStatsRequest {
+            time_range: TelemetryTimeRange { from, to },
+            limit,
+        };
+        let result = self
+            .call_rpc(
+                methods::TELEMETRY_GATEWAY_STATS,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        let response: TelemetryGatewayStatsResponse = serde_json::from_value(result)?;
+        Ok(response.buckets)
+    }
+
+    /// Query stream hourly operator telemetry.
+    pub async fn telemetry_stream_stats(
+        &self,
+        from: Option<String>,
+        to: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<Vec<StreamStatsBucket>> {
+        let req = TelemetryStreamStatsRequest {
+            time_range: TelemetryTimeRange { from, to },
+            limit,
+        };
+        let result = self
+            .call_rpc(methods::TELEMETRY_STREAM_STATS, serde_json::to_value(&req)?)
+            .await?;
+        let response: TelemetryStreamStatsResponse = serde_json::from_value(result)?;
+        Ok(response.buckets)
+    }
+
+    /// Query assembly hourly operator telemetry.
+    pub async fn telemetry_assembly_stats(
+        &self,
+        from: Option<String>,
+        to: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<Vec<AssemblyStatsBucket>> {
+        let req = TelemetryAssemblyStatsRequest {
+            time_range: TelemetryTimeRange { from, to },
+            limit,
+        };
+        let result = self
+            .call_rpc(
+                methods::TELEMETRY_ASSEMBLY_STATS,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        let response: TelemetryAssemblyStatsResponse = serde_json::from_value(result)?;
+        Ok(response.buckets)
+    }
+
+    /// Query node hourly operator telemetry.
+    pub async fn telemetry_node_stats(
+        &self,
+        from: Option<String>,
+        to: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<Vec<NodeStatsBucket>> {
+        let req = TelemetryNodeStatsRequest {
+            time_range: TelemetryTimeRange { from, to },
+            limit,
+        };
+        let result = self
+            .call_rpc(methods::TELEMETRY_NODE_STATS, serde_json::to_value(&req)?)
+            .await?;
+        let response: TelemetryNodeStatsResponse = serde_json::from_value(result)?;
+        Ok(response.buckets)
+    }
+
+    /// Query metric-counter hourly operator telemetry.
+    pub async fn telemetry_metric_counters(
+        &self,
+        from: Option<String>,
+        to: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<Vec<MetricCounterBucket>> {
+        let req = TelemetryMetricCountersRequest {
+            time_range: TelemetryTimeRange { from, to },
+            limit,
+        };
+        let result = self
+            .call_rpc(
+                methods::TELEMETRY_METRIC_COUNTERS,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        let response: TelemetryMetricCountersResponse = serde_json::from_value(result)?;
+        Ok(response.buckets)
+    }
+
+    /// Query ingestd hourly batch-stat telemetry.
+    pub async fn telemetry_ingestd_batch_stats(
+        &self,
+        from: Option<String>,
+        to: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<Vec<IngestdBatchStatsBucket>> {
+        let req = TelemetryIngestdBatchStatsRequest {
+            time_range: TelemetryTimeRange { from, to },
+            limit,
+        };
+        let result = self
+            .call_rpc(
+                methods::TELEMETRY_INGESTD_BATCH_STATS,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        let response: TelemetryIngestdBatchStatsResponse = serde_json::from_value(result)?;
         Ok(response.buckets)
     }
 

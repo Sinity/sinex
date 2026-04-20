@@ -1,7 +1,9 @@
 use clap::Subcommand;
 use console::style;
 use sinex_primitives::rpc::telemetry::{
-    CommandFrequencyEntry, FileActivityEntry, IngestdValidationSnapshot, RecentActivityEntry,
+    AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
+    FileActivityEntry, GatewayStatsBucket, IngestdBatchStatsBucket, IngestdValidationSnapshot,
+    MetricCounterBucket, NodeStatsBucket, RecentActivityEntry, StreamStatsBucket,
     SystemStateBucket, WindowFocusBucket,
 };
 use tabled::{builder::Builder, settings::Style};
@@ -11,119 +13,169 @@ use crate::client::GatewayClient;
 use crate::fmt::CommandOutput;
 use crate::model::OutputFormat;
 
-/// Telemetry data from event-time activity views and operator read models
+/// Telemetry data from activity views and operator read models
 #[derive(Debug, Subcommand)]
 #[command(after_help = "\
 EXAMPLES:
-    # Window focus aggregates for the last 6 hours
-    sinexctl telemetry window-focus --from 6h
-
-    # Top commands by frequency over the past day
-    sinexctl telemetry command-frequency --from 24h --limit 20
-
-    # File activity for a specific date range (RFC3339)
-    sinexctl telemetry file-activity --from 2026-03-01T00:00:00Z --to 2026-03-22T00:00:00Z
-
-    # Recent activity summary (hardcoded lookback in view)
-    sinexctl telemetry recent-activity
-
-    # System state as JSON for piping
-    sinexctl telemetry system-state --from 1h -f json
-
-    # Latest ingestd validation snapshot
+    sinexctl telemetry current-health
+    sinexctl telemetry gateway-stats --from 24h
+    sinexctl telemetry metric-counters --from 6h --limit 20
+    sinexctl telemetry ingestd-batch-stats --from 12h -f json
     sinexctl telemetry ingestd-validation
 ")]
 pub enum TelemetryCommands {
-    /// Window focus aggregates (5-minute buckets)
-    WindowFocus {
-        /// Start of time range: relative (1h, 6h, 2d) or RFC3339
-        #[arg(long)]
-        from: Option<String>,
-
-        /// End of time range (default: now)
-        #[arg(long)]
-        to: Option<String>,
-
-        /// Maximum number of buckets to return (default: 50)
+    /// Latest component health-status rows
+    CurrentHealth {
+        /// Maximum number of rows to return (default: 50)
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
 
         /// Output format
+        #[arg(long, short = 'f', value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+
+    /// Latest system/device state rows (materialized view)
+    CurrentDeviceState {
+        /// Maximum number of rows to return (default: 50)
+        #[arg(long, short = 'n', default_value = "50")]
+        limit: i64,
+
+        /// Output format
+        #[arg(long, short = 'f', value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+
+    /// Window focus aggregates (5-minute buckets)
+    WindowFocus {
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long, short = 'n', default_value = "50")]
+        limit: i64,
         #[arg(long, short = 'f', value_enum, default_value = "table")]
         format: OutputFormat,
     },
 
     /// Command frequency aggregates (hourly buckets)
     CommandFrequency {
-        /// Start of time range: relative (1h, 6h, 2d) or RFC3339
         #[arg(long)]
         from: Option<String>,
-
-        /// End of time range (default: now)
         #[arg(long)]
         to: Option<String>,
-
-        /// Maximum number of entries to return (default: 50)
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
-
-        /// Output format
         #[arg(long, short = 'f', value_enum, default_value = "table")]
         format: OutputFormat,
     },
 
     /// File activity aggregates (hourly buckets, per directory)
     FileActivity {
-        /// Start of time range: relative (1h, 6h, 2d) or RFC3339
         #[arg(long)]
         from: Option<String>,
-
-        /// End of time range (default: now)
         #[arg(long)]
         to: Option<String>,
-
-        /// Maximum number of entries to return (default: 50)
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
-
-        /// Output format
         #[arg(long, short = 'f', value_enum, default_value = "table")]
         format: OutputFormat,
     },
 
     /// Recent activity summary (hardcoded lookback window)
     RecentActivity {
-        /// Maximum number of entries to return (default: 50)
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
-
-        /// Output format
         #[arg(long, short = 'f', value_enum, default_value = "table")]
         format: OutputFormat,
     },
 
-    /// System state aggregates (5-minute buckets: CPU, memory, disk I/O)
+    /// System state aggregates (5-minute buckets)
     SystemState {
-        /// Start of time range: relative (1h, 6h, 2d) or RFC3339
         #[arg(long)]
         from: Option<String>,
-
-        /// End of time range (default: now)
         #[arg(long)]
         to: Option<String>,
-
-        /// Maximum number of buckets to return (default: 50)
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
+        #[arg(long, short = 'f', value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
 
-        /// Output format
+    /// Gateway hourly operator telemetry
+    GatewayStats {
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long, short = 'n', default_value = "50")]
+        limit: i64,
+        #[arg(long, short = 'f', value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+
+    /// Stream hourly operator telemetry
+    StreamStats {
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long, short = 'n', default_value = "50")]
+        limit: i64,
+        #[arg(long, short = 'f', value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+
+    /// Assembly hourly operator telemetry
+    AssemblyStats {
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long, short = 'n', default_value = "50")]
+        limit: i64,
+        #[arg(long, short = 'f', value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+
+    /// Node hourly operator telemetry
+    NodeStats {
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long, short = 'n', default_value = "50")]
+        limit: i64,
+        #[arg(long, short = 'f', value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+
+    /// Metric-counter hourly operator telemetry
+    MetricCounters {
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long, short = 'n', default_value = "50")]
+        limit: i64,
+        #[arg(long, short = 'f', value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+
+    /// Ingestd hourly batch-stat aggregates
+    IngestdBatchStats {
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long, short = 'n', default_value = "50")]
+        limit: i64,
         #[arg(long, short = 'f', value_enum, default_value = "table")]
         format: OutputFormat,
     },
 
     /// Latest ingestd validation and plausibility snapshot
     IngestdValidation {
-        /// Output format
         #[arg(long, short = 'f', value_enum, default_value = "table")]
         format: OutputFormat,
     },
@@ -132,6 +184,26 @@ pub enum TelemetryCommands {
 impl TelemetryCommands {
     pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
         match self {
+            Self::CurrentHealth { limit, format } => {
+                let entries = client.telemetry_current_health(Some(*limit)).await?;
+                CommandOutput::list(
+                    entries,
+                    "No current-health data found.",
+                    format_current_health_table,
+                )
+                .display(format)?;
+            }
+
+            Self::CurrentDeviceState { limit, format } => {
+                let entries = client.telemetry_current_device_state(Some(*limit)).await?;
+                CommandOutput::list(
+                    entries,
+                    "No current-device-state data found.",
+                    format_current_device_state_table,
+                )
+                .display(format)?;
+            }
+
             Self::WindowFocus {
                 from,
                 to,
@@ -218,6 +290,120 @@ impl TelemetryCommands {
                 .display(format)?;
             }
 
+            Self::GatewayStats {
+                from,
+                to,
+                limit,
+                format,
+            } => {
+                let from_rfc = from.as_deref().map(resolve_time_arg).transpose()?;
+                let to_rfc = to.as_deref().map(resolve_time_arg).transpose()?;
+                let buckets = client
+                    .telemetry_gateway_stats(from_rfc, to_rfc, Some(*limit))
+                    .await?;
+                CommandOutput::list(
+                    buckets,
+                    "No gateway-stats data found.",
+                    format_gateway_stats_table,
+                )
+                .display(format)?;
+            }
+
+            Self::StreamStats {
+                from,
+                to,
+                limit,
+                format,
+            } => {
+                let from_rfc = from.as_deref().map(resolve_time_arg).transpose()?;
+                let to_rfc = to.as_deref().map(resolve_time_arg).transpose()?;
+                let buckets = client
+                    .telemetry_stream_stats(from_rfc, to_rfc, Some(*limit))
+                    .await?;
+                CommandOutput::list(
+                    buckets,
+                    "No stream-stats data found.",
+                    format_stream_stats_table,
+                )
+                .display(format)?;
+            }
+
+            Self::AssemblyStats {
+                from,
+                to,
+                limit,
+                format,
+            } => {
+                let from_rfc = from.as_deref().map(resolve_time_arg).transpose()?;
+                let to_rfc = to.as_deref().map(resolve_time_arg).transpose()?;
+                let buckets = client
+                    .telemetry_assembly_stats(from_rfc, to_rfc, Some(*limit))
+                    .await?;
+                CommandOutput::list(
+                    buckets,
+                    "No assembly-stats data found.",
+                    format_assembly_stats_table,
+                )
+                .display(format)?;
+            }
+
+            Self::NodeStats {
+                from,
+                to,
+                limit,
+                format,
+            } => {
+                let from_rfc = from.as_deref().map(resolve_time_arg).transpose()?;
+                let to_rfc = to.as_deref().map(resolve_time_arg).transpose()?;
+                let buckets = client
+                    .telemetry_node_stats(from_rfc, to_rfc, Some(*limit))
+                    .await?;
+                CommandOutput::list(
+                    buckets,
+                    "No node-stats data found.",
+                    format_node_stats_table,
+                )
+                .display(format)?;
+            }
+
+            Self::MetricCounters {
+                from,
+                to,
+                limit,
+                format,
+            } => {
+                let from_rfc = from.as_deref().map(resolve_time_arg).transpose()?;
+                let to_rfc = to.as_deref().map(resolve_time_arg).transpose()?;
+                let buckets = client
+                    .telemetry_metric_counters(from_rfc, to_rfc, Some(*limit))
+                    .await?;
+                CommandOutput::list(
+                    buckets,
+                    "No metric-counter data found.",
+                    format_metric_counters_table,
+                )
+                .display(format)?;
+            }
+
+            Self::IngestdBatchStats {
+                from,
+                to,
+                limit,
+                format,
+            } => {
+                let from_rfc = from.as_deref().map(resolve_time_arg).transpose()?;
+                let to_rfc = to.as_deref().map(resolve_time_arg).transpose()?;
+                let buckets = client
+                    .telemetry_ingestd_batch_stats(from_rfc, to_rfc, Some(*limit))
+                    .await?;
+                CommandOutput::list(
+                    buckets,
+                    "No ingestd-batch-stats data found.",
+                    format_ingestd_batch_stats_table,
+                )
+                .display(format)?;
+            }
+
             Self::IngestdValidation { format } => {
                 match client.telemetry_ingestd_validation().await? {
                     Some(snapshot) => {
@@ -254,7 +440,6 @@ fn resolve_time_arg(s: &str) -> Result<String> {
         return Ok(s.to_string());
     }
 
-    // Date-only: YYYY-MM-DD
     if let Ok(date) =
         time::Date::parse(s, time::macros::format_description!("[year]-[month]-[day]"))
     {
@@ -273,7 +458,47 @@ fn resolve_time_arg(s: &str) -> Result<String> {
     ))
 }
 
-// ─── Table formatters ────────────────────────────────────────────────────────
+fn format_current_health_table(entries: &[CurrentHealthEntry]) -> String {
+    let mut builder = Builder::new();
+    builder.push_record([
+        "SOURCE",
+        "EVENT TYPE",
+        "COMPONENT",
+        "STATUS",
+        "REASON",
+        "LAST UPDATE",
+    ]);
+    for entry in entries {
+        builder.push_record([
+            entry.source.clone(),
+            entry.event_type.clone(),
+            entry.component.as_deref().unwrap_or("—").to_string(),
+            entry.status.as_deref().unwrap_or("—").to_string(),
+            entry.reason.as_deref().unwrap_or("—").to_string(),
+            style(entry.last_update.as_str()).dim().to_string(),
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    table.to_string()
+}
+
+fn format_current_device_state_table(entries: &[CurrentDeviceStateEntry]) -> String {
+    let mut builder = Builder::new();
+    builder.push_record(["UNIT", "TYPE", "STATE", "SUBSTATE", "LAST UPDATE"]);
+    for entry in entries {
+        builder.push_record([
+            entry.unit_name.as_deref().unwrap_or("—").to_string(),
+            entry.unit_type.as_deref().unwrap_or("—").to_string(),
+            entry.state.as_deref().unwrap_or("—").to_string(),
+            entry.sub_state.as_deref().unwrap_or("—").to_string(),
+            style(entry.last_update.as_str()).dim().to_string(),
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    table.to_string()
+}
 
 fn format_window_focus_table(buckets: &[WindowFocusBucket]) -> String {
     let mut builder = Builder::new();
@@ -285,14 +510,14 @@ fn format_window_focus_table(buckets: &[WindowFocusBucket]) -> String {
         "FOCUS EVENTS",
         "LAST FOCUS",
     ]);
-    for b in buckets {
+    for bucket in buckets {
         builder.push_record([
-            style(b.bucket.as_str()).dim().to_string(),
-            b.workspace.as_deref().unwrap_or("—").to_string(),
-            b.window_class.as_deref().unwrap_or("—").to_string(),
-            b.window_title.as_deref().unwrap_or("—").to_string(),
-            b.focus_event_count.to_string(),
-            b.last_focus_time.as_deref().unwrap_or("—").to_string(),
+            style(bucket.bucket.as_str()).dim().to_string(),
+            bucket.workspace.as_deref().unwrap_or("—").to_string(),
+            bucket.window_class.as_deref().unwrap_or("—").to_string(),
+            bucket.window_title.as_deref().unwrap_or("—").to_string(),
+            bucket.focus_event_count.to_string(),
+            bucket.last_focus_time.as_deref().unwrap_or("—").to_string(),
         ]);
     }
     let mut table = builder.build();
@@ -310,14 +535,15 @@ fn format_command_frequency_table(entries: &[CommandFrequencyEntry]) -> String {
         "FAILED",
         "AVG DURATION (ms)",
     ]);
-    for e in entries {
+    for entry in entries {
         builder.push_record([
-            e.command.clone(),
-            e.shell.as_deref().unwrap_or("—").to_string(),
-            e.total_executions.to_string(),
-            e.successful_executions.to_string(),
-            e.failed_executions.to_string(),
-            e.avg_duration_ms
+            entry.command.clone(),
+            entry.shell.as_deref().unwrap_or("—").to_string(),
+            entry.total_executions.to_string(),
+            entry.successful_executions.to_string(),
+            entry.failed_executions.to_string(),
+            entry
+                .avg_duration_ms
                 .map_or_else(|| "—".to_string(), |value| format!("{value:.1}")),
         ]);
     }
@@ -329,13 +555,13 @@ fn format_command_frequency_table(entries: &[CommandFrequencyEntry]) -> String {
 fn format_file_activity_table(entries: &[FileActivityEntry]) -> String {
     let mut builder = Builder::new();
     builder.push_record(["BUCKET", "DIRECTORY", "EVENT TYPE", "EVENTS", "FILES"]);
-    for e in entries {
+    for entry in entries {
         builder.push_record([
-            style(e.bucket.as_str()).dim().to_string(),
-            e.directory.as_deref().unwrap_or("—").to_string(),
-            e.event_type.clone(),
-            e.total_events.to_string(),
-            e.unique_files.to_string(),
+            style(entry.bucket.as_str()).dim().to_string(),
+            entry.directory.as_deref().unwrap_or("—").to_string(),
+            entry.event_type.clone(),
+            entry.total_events.to_string(),
+            entry.unique_files.to_string(),
         ]);
     }
     let mut table = builder.build();
@@ -346,12 +572,12 @@ fn format_file_activity_table(entries: &[FileActivityEntry]) -> String {
 fn format_recent_activity_table(entries: &[RecentActivityEntry]) -> String {
     let mut builder = Builder::new();
     builder.push_record(["TYPE", "CONTEXT", "DETAIL", "TIMESTAMP"]);
-    for e in entries {
+    for entry in entries {
         builder.push_record([
-            e.activity_type.clone(),
-            e.context.as_deref().unwrap_or("—").to_string(),
-            e.detail.as_deref().unwrap_or("—").to_string(),
-            e.timestamp.as_deref().unwrap_or("—").to_string(),
+            entry.activity_type.clone(),
+            entry.context.as_deref().unwrap_or("—").to_string(),
+            entry.detail.as_deref().unwrap_or("—").to_string(),
+            entry.timestamp.as_deref().unwrap_or("—").to_string(),
         ]);
     }
     let mut table = builder.build();
@@ -371,22 +597,179 @@ fn format_system_state_table(buckets: &[SystemStateBucket]) -> String {
         "ACTIVE UNITS",
         "SAMPLES",
     ]);
-    for b in buckets {
+    for bucket in buckets {
         builder.push_record([
-            style(b.bucket.as_str()).dim().to_string(),
-            b.avg_cpu_percent
-                .map_or_else(|| "—".to_string(), |v| format!("{v:.1}")),
-            b.max_cpu_percent
-                .map_or_else(|| "—".to_string(), |v| format!("{v:.1}")),
-            b.avg_memory_percent
-                .map_or_else(|| "—".to_string(), |v| format!("{v:.1}")),
-            b.max_memory_percent
-                .map_or_else(|| "—".to_string(), |v| format!("{v:.1}")),
-            b.avg_disk_percent
-                .map_or_else(|| "—".to_string(), |v| format!("{v:.1}")),
-            b.current_active_units
-                .map_or_else(|| "—".to_string(), |value| value.to_string()),
-            b.sample_count.to_string(),
+            style(bucket.bucket.as_str()).dim().to_string(),
+            format_opt_f64(bucket.avg_cpu_percent),
+            format_opt_f64(bucket.max_cpu_percent),
+            format_opt_f64(bucket.avg_memory_percent),
+            format_opt_f64(bucket.max_memory_percent),
+            format_opt_f64(bucket.avg_disk_percent),
+            format_opt_i64(bucket.current_active_units),
+            bucket.sample_count.to_string(),
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    table.to_string()
+}
+
+fn format_gateway_stats_table(buckets: &[GatewayStatsBucket]) -> String {
+    let mut builder = Builder::new();
+    builder.push_record([
+        "BUCKET",
+        "SOURCE",
+        "STAT EVENTS",
+        "AVG REQS",
+        "RATE LIMITED",
+        "AVG LAT ms",
+        "MAX P99 ms",
+    ]);
+    for bucket in buckets {
+        builder.push_record([
+            style(bucket.bucket.as_str()).dim().to_string(),
+            bucket.source.clone(),
+            bucket.stat_events.to_string(),
+            format_opt_f64(bucket.avg_total_requests),
+            format_opt_i64(bucket.total_rate_limited),
+            format_opt_f64(bucket.avg_latency_ms),
+            format_opt_f64(bucket.max_p99_latency_ms),
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    table.to_string()
+}
+
+fn format_stream_stats_table(buckets: &[StreamStatsBucket]) -> String {
+    let mut builder = Builder::new();
+    builder.push_record([
+        "BUCKET",
+        "STREAM",
+        "AVG FILL %",
+        "MAX FILL %",
+        "AVG MSGS",
+        "MAX MSGS",
+        "SAMPLES",
+    ]);
+    for bucket in buckets {
+        builder.push_record([
+            style(bucket.bucket.as_str()).dim().to_string(),
+            bucket.stream_name.as_deref().unwrap_or("—").to_string(),
+            format_opt_f64(bucket.avg_fill_pct),
+            format_opt_f64(bucket.max_fill_pct),
+            format_opt_f64(bucket.avg_messages),
+            format_opt_i64(bucket.max_messages),
+            bucket.sample_count.to_string(),
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    table.to_string()
+}
+
+fn format_assembly_stats_table(buckets: &[AssemblyStatsBucket]) -> String {
+    let mut builder = Builder::new();
+    builder.push_record([
+        "BUCKET",
+        "ACTIVE",
+        "DONE",
+        "CANCELLED",
+        "FAILED",
+        "TIMED OUT",
+        "AVG DUR ms",
+        "SAMPLES",
+    ]);
+    for bucket in buckets {
+        builder.push_record([
+            style(bucket.bucket.as_str()).dim().to_string(),
+            format_opt_i64(bucket.max_active_assemblies),
+            format_opt_i64(bucket.total_completed),
+            format_opt_i64(bucket.total_cancelled),
+            format_opt_i64(bucket.total_failed),
+            format_opt_i64(bucket.total_timed_out),
+            format_opt_f64(bucket.avg_duration_ms),
+            bucket.sample_count.to_string(),
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    table.to_string()
+}
+
+fn format_node_stats_table(buckets: &[NodeStatsBucket]) -> String {
+    let mut builder = Builder::new();
+    builder.push_record([
+        "BUCKET",
+        "NODE TYPE",
+        "PROCESSED",
+        "DROPPED",
+        "AVG LAT ms",
+        "MAX QUEUE",
+        "ERRORS",
+        "SAMPLES",
+    ]);
+    for bucket in buckets {
+        builder.push_record([
+            style(bucket.bucket.as_str()).dim().to_string(),
+            bucket.node_type.as_deref().unwrap_or("—").to_string(),
+            format_opt_i64(bucket.total_events_processed),
+            format_opt_i64(bucket.total_events_dropped),
+            format_opt_f64(bucket.avg_latency_ms),
+            format_opt_i64(bucket.max_queue_depth),
+            format_opt_i64(bucket.total_errors),
+            bucket.sample_count.to_string(),
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    table.to_string()
+}
+
+fn format_metric_counters_table(buckets: &[MetricCounterBucket]) -> String {
+    let mut builder = Builder::new();
+    builder.push_record(["BUCKET", "COMPONENT", "METRIC", "TOTAL", "MAX", "SAMPLES"]);
+    for bucket in buckets {
+        builder.push_record([
+            style(bucket.bucket.as_str()).dim().to_string(),
+            bucket.component.as_deref().unwrap_or("—").to_string(),
+            bucket.metric_name.as_deref().unwrap_or("—").to_string(),
+            format_opt_i64(bucket.total_value),
+            format_opt_i64(bucket.max_value),
+            bucket.sample_count.to_string(),
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    table.to_string()
+}
+
+fn format_ingestd_batch_stats_table(buckets: &[IngestdBatchStatsBucket]) -> String {
+    let mut builder = Builder::new();
+    builder.push_record([
+        "BUCKET",
+        "AVG SIZE",
+        "MAX SIZE",
+        "AVG LAT ms",
+        "MAX LAT ms",
+        "DEFERRED",
+        "FAILED",
+        "SYNTH",
+        "BATCHES",
+        "COVERAGE %",
+    ]);
+    for bucket in buckets {
+        builder.push_record([
+            style(bucket.bucket.as_str()).dim().to_string(),
+            format_opt_f64(bucket.avg_batch_size),
+            format_opt_i64(bucket.max_batch_size),
+            format_opt_f64(bucket.avg_latency_ms),
+            format_opt_f64(bucket.max_latency_ms),
+            format_opt_i64(bucket.total_deferred),
+            format_opt_i64(bucket.total_failed),
+            bucket.synthesis_batches.to_string(),
+            bucket.batch_count.to_string(),
+            format_opt_f64(bucket.avg_validation_coverage_pct),
         ]);
     }
     let mut table = builder.build();
@@ -426,4 +809,12 @@ fn format_ingestd_validation_table(snapshot: &IngestdValidationSnapshot) -> Stri
     let mut table = builder.build();
     table.with(Style::rounded());
     table.to_string()
+}
+
+fn format_opt_f64(value: Option<f64>) -> String {
+    value.map_or_else(|| "—".to_string(), |value| format!("{value:.1}"))
+}
+
+fn format_opt_i64(value: Option<i64>) -> String {
+    value.map_or_else(|| "—".to_string(), |value| value.to_string())
 }

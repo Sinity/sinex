@@ -1238,7 +1238,7 @@ SELECT
     AVG((payload->>'fill_pct')::float) AS avg_fill_pct,
     MAX((payload->>'fill_pct')::float) AS max_fill_pct,
     AVG((payload->>'messages')::bigint) AS avg_messages,
-    MAX((payload->>'messages')::bigint) AS max_messages,
+    MAX((payload->>'max_messages')::bigint) AS max_messages,
     COUNT(*) AS sample_count
 FROM core.events
 WHERE source = 'sinex.ingestd'
