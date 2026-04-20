@@ -397,14 +397,25 @@ pub fn validate_terminal_history_source(shell: &str, path: &Path) -> NodeResult<
 
 fn validate_document_root(path: &Path) -> NodeResult<()> {
     let metadata = std::fs::metadata(path).map_err(|error| {
+        let probe = match error.kind() {
+            std::io::ErrorKind::NotFound => "missing",
+            std::io::ErrorKind::PermissionDenied => "permission_denied",
+            _ => "inspect_failed",
+        };
         SinexError::processing("failed to inspect configured document root")
+            .with_context("document_root_probe", probe)
             .with_context("path", path.display().to_string())
             .with_std_error(&error)
     })?;
 
     if metadata.is_dir() {
         std::fs::read_dir(path).map(|_| ()).map_err(|error| {
+            let probe = match error.kind() {
+                std::io::ErrorKind::PermissionDenied => "permission_denied",
+                _ => "enumerate_failed",
+            };
             SinexError::processing("failed to enumerate configured document root")
+                .with_context("document_root_probe", probe)
                 .with_context("path", path.display().to_string())
                 .with_std_error(&error)
         })
@@ -616,19 +627,40 @@ fn probe_document_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> 
     }
 
     let mut readable = Vec::new();
-    let mut unreadable = Vec::new();
+    let mut blocking_unreadable = Vec::new();
+    let mut advisory_unreadable = Vec::new();
     for path in &evidence_paths {
         match validate_document_root(path) {
             Ok(()) => readable.push(path.clone()),
-            Err(error) => unreadable.push(format!("{} ({error})", path.display())),
+            Err(error) => {
+                let entry = format!("{} ({error})", path.display());
+                if document_root_error_is_blocking(&error) {
+                    blocking_unreadable.push(entry);
+                } else {
+                    advisory_unreadable.push(entry);
+                }
+            }
         }
     }
 
-    if !unreadable.is_empty() {
+    if !blocking_unreadable.is_empty() || !advisory_unreadable.is_empty() {
+        let unreadable = blocking_unreadable
+            .iter()
+            .chain(advisory_unreadable.iter())
+            .cloned()
+            .collect::<Vec<_>>();
         if !readable.is_empty() {
             EventSourceProbe::advisory_unavailable(
                 format!(
                     "Some configured document roots are not currently visible to preflight: {}",
+                    unreadable.join(", ")
+                ),
+                evidence_paths,
+            )
+        } else if blocking_unreadable.is_empty() {
+            EventSourceProbe::advisory_unavailable(
+                format!(
+                    "Configured document roots exist but are not yet visible to preflight: {}",
                     unreadable.join(", ")
                 ),
                 evidence_paths,
@@ -666,6 +698,13 @@ fn terminal_history_source_error_is_blocking(
         "fish" => error.to_string().contains("unsupported") && source.path.is_file(),
         _ => false,
     }
+}
+
+fn document_root_error_is_blocking(error: &SinexError) -> bool {
+    error
+        .context_map()
+        .get("document_root_probe")
+        .is_none_or(|value| value != "permission_denied")
 }
 
 fn probe_clipboard_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> EventSourceProbe {
@@ -885,7 +924,11 @@ fn probe_atuin_source(descriptor: Option<&DeploymentReadinessDescriptor>) -> Eve
 mod tests {
     // Small inline tests are justified here because they exercise private
     // helper behavior without widening the preflight API surface.
-    use super::{collect_hyprland_runtime_sockets, parse_systemd_version_line};
+    use super::{
+        collect_hyprland_runtime_sockets, document_root_error_is_blocking,
+        parse_systemd_version_line,
+    };
+    use crate::SinexError;
     use std::fs;
     use std::io;
     use xtask::sandbox::prelude::*;
@@ -949,6 +992,24 @@ mod tests {
         let version_line = parse_systemd_version_line(b"\n systemd 256 (256.7)\n+PAM\n")?;
 
         assert_eq!(version_line, " systemd 256 (256.7)");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn document_root_permission_denied_is_advisory() -> TestResult<()> {
+        let permission_denied = SinexError::processing("denied")
+            .with_context("document_root_probe", "permission_denied");
+        let missing =
+            SinexError::processing("missing").with_context("document_root_probe", "missing");
+
+        assert!(
+            !document_root_error_is_blocking(&permission_denied),
+            "permission-denied roots should not block preflight if they otherwise exist"
+        );
+        assert!(
+            document_root_error_is_blocking(&missing),
+            "missing roots must still block preflight"
+        );
         Ok(())
     }
 }
