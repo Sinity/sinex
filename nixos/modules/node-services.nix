@@ -806,9 +806,6 @@ let
           SETFACL=${pkgs.acl}/bin/setfacl
           ID=${pkgs.coreutils}/bin/id
           INSTALL=${pkgs.coreutils}/bin/install
-          CHOWN=${pkgs.coreutils}/bin/chown
-          CHMOD=${pkgs.coreutils}/bin/chmod
-          RM=${pkgs.coreutils}/bin/rm
           FIND=${pkgs.findutils}/bin/find
           SORT=${pkgs.coreutils}/bin/sort
           BASENAME=${pkgs.coreutils}/bin/basename
@@ -886,15 +883,12 @@ let
 
           OWNER="$SERVICE_USER"
           "$INSTALL" -d -m0755 -o "$OWNER" -g "$OWNER" ${escapeShellArg runtimeDir}
-          "$RM" -f "$ENV_FILE"
-          : > "$ENV_FILE"
+          "$INSTALL" -m0640 -o "$OWNER" -g "$OWNER" /dev/null "$ENV_FILE"
 
           if [ -n "$CONFIGURED_RUNTIME_DIR" ]; then
             RUNTIME_ROOT="$CONFIGURED_RUNTIME_DIR"
           else
             if ! TARGET_UID="$("$ID" -u "$TARGET_USER" 2>/dev/null)"; then
-              "$CHOWN" "$OWNER:$OWNER" "$ENV_FILE"
-              "$CHMOD" 0640 "$ENV_FILE"
               echo "Sinex desktop bridge failed: target user '$TARGET_USER' does not exist" >&2
               exit 1
             fi
@@ -902,8 +896,6 @@ let
           fi
 
           if [ ! -d "$RUNTIME_ROOT" ]; then
-            "$CHOWN" "$OWNER:$OWNER" "$ENV_FILE"
-            "$CHMOD" 0640 "$ENV_FILE"
             echo "Sinex desktop bridge failed: runtime directory '$RUNTIME_ROOT' is missing" >&2
             exit 1
           fi
@@ -919,7 +911,7 @@ let
               if [ -z "$WAYLAND_DISPLAY_NAME" ]; then
                 WAYLAND_DISPLAY_NAME="$("$BASENAME" "$socket_path")"
               fi
-            done < <("$FIND" "$RUNTIME_ROOT" -maxdepth 1 -type s -name 'wayland-*' | "$SORT")
+            done < <("$FIND" "$RUNTIME_ROOT" -maxdepth 1 -type s -name 'wayland-*' 2>/dev/null | "$SORT")
           fi
 
           HYPRLAND_SIGNATURE="$CONFIGURED_HYPRLAND_SIGNATURE"
@@ -931,12 +923,12 @@ let
               [ -n "$instance_dir" ] || continue
               grant_parent_dirs "$instance_dir"
               grant_dir_defaults "$instance_dir"
-            done < <("$FIND" "$RUNTIME_ROOT/hypr" -mindepth 1 -maxdepth 1 -type d | "$SORT")
+            done < <("$FIND" "$RUNTIME_ROOT/hypr" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | "$SORT")
 
             while IFS= read -r socket_path; do
               [ -n "$socket_path" ] || continue
               grant_socket_access "$socket_path"
-            done < <("$FIND" "$RUNTIME_ROOT/hypr" -mindepth 2 -maxdepth 2 -type s -name '.socket.sock' | "$SORT")
+            done < <("$FIND" "$RUNTIME_ROOT/hypr" -mindepth 2 -maxdepth 2 -type s -name '.socket.sock' 2>/dev/null | "$SORT")
 
             HYPRLAND_EVENT_SOCKET_COUNT=0
             while IFS= read -r socket_path; do
@@ -946,7 +938,7 @@ let
               if [ -z "$HYPRLAND_SIGNATURE" ]; then
                 HYPRLAND_SIGNATURE="$("$BASENAME" "$("$DIRNAME" "$socket_path")")"
               fi
-            done < <("$FIND" "$RUNTIME_ROOT/hypr" -mindepth 2 -maxdepth 2 -type s -name '.socket2.sock' | "$SORT")
+            done < <("$FIND" "$RUNTIME_ROOT/hypr" -mindepth 2 -maxdepth 2 -type s -name '.socket2.sock' 2>/dev/null | "$SORT")
 
             if [ -n "$CONFIGURED_HYPRLAND_SIGNATURE" ]; then
               HYPRLAND_SIGNATURE="$CONFIGURED_HYPRLAND_SIGNATURE"
@@ -970,9 +962,6 @@ let
               echo "SINEX_ACTIVITYWATCH_DB_PATH=$CONFIGURED_ACTIVITYWATCH_DB"
             fi
           } > "$ENV_FILE"
-
-          "$CHOWN" "$OWNER:$OWNER" "$ENV_FILE"
-          "$CHMOD" 0640 "$ENV_FILE"
 
           if [ "$acl_failures" -ne 0 ]; then
             exit 1
