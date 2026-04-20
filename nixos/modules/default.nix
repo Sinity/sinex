@@ -124,6 +124,22 @@ in
         };
       };
     };
+    browserSqliteSourceModule = submodule {
+      options = {
+        path = mkOption {
+          type = str;
+          description = "Absolute path to a browser SQLite history source.";
+        };
+        browser = mkOption {
+          type = str;
+          description = "Browser identifier emitted on page.visited events.";
+        };
+        format = mkOption {
+          type = enum [ "QutebrowserNative" "ChromiumHistory" ];
+          description = "Typed browser history SQLite format.";
+        };
+      };
+    };
   in {
     enable = mkEnableOption "Sinex Exocortex event capture system";
 
@@ -1007,6 +1023,62 @@ in
             description = "Terminal node.";
           };
 
+          browser = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable browser history node."; };
+                instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
+                batch = mkOption { type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; }); default = null; description = "Batch override."; };
+                resources = mkOption {
+                  type = nullOr (resourceModule { defaultMemory = "384M"; defaultCpu = "50%"; });
+                  default = null;
+                  description = "Resource override.";
+                };
+                dumpSources = mkOption {
+                  type = strList;
+                  default = [];
+                  description = ''
+                    Absolute paths to browser export roots (`json`, `jsonl`, `ndjson`, `csv`)
+                    scanned by the browser history node.
+                  '';
+                };
+                sqliteSources = mkOption {
+                  type = listOf browserSqliteSourceModule;
+                  default = [];
+                  description = ''
+                    Typed browser SQLite sources passed to the browser history node through
+                    <literal>--node-config</literal>.
+                  '';
+                };
+                pollIntervalSec = mkOption {
+                  type = positive;
+                  default = 30;
+                  description = "Polling interval for browser dump roots and SQLite sources.";
+                };
+                access = mkOption {
+                  type = submodule {
+                    options = {
+                      bindReadOnlyPaths = mkOption {
+                        type = listOf bindReadOnlyPathModule;
+                        default = [];
+                        description = ''
+                          Optional <literal>BindReadOnlyPaths</literal> entries for exposing
+                          browser history files into the service namespace.
+                        '';
+                      };
+                    };
+                  };
+                  default = {};
+                  description = "Browser node host-access configuration.";
+                };
+                env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
+                extraArgs = mkOption { type = strList; default = []; description = "Extra CLI args."; };
+              };
+            };
+            default = {};
+            description = "Browser history node.";
+          };
+
           desktop = mkOption {
             type = submodule {
               options = {
@@ -1742,6 +1814,17 @@ in
               shell = source.shell;
             }) cfg.nodes.terminal.historySources;
           };
+        browser =
+          (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.browser.enable) cfg.nodes.browser.instances)
+          // {
+            dump_sources = cfg.nodes.browser.dumpSources;
+            sqlite_sources = map (source: {
+              path = source.path;
+              browser = source.browser;
+              format = source.format;
+            }) cfg.nodes.browser.sqliteSources;
+            polling_interval_secs = cfg.nodes.browser.pollIntervalSec;
+          };
         desktop =
           (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.desktop.enable) cfg.nodes.desktop.instances)
           // {
@@ -2033,6 +2116,25 @@ in
         ];
       })
 
+      (mkIf (targetHome != null) {
+        services.sinex.nodes.browser.dumpSources = mkDefault [
+          "/realm/data/captures/webhistory/gestalt/data"
+          "/realm/data/captures/webhistory/gestalt/derived/full_history.ndjson"
+        ];
+        services.sinex.nodes.browser.sqliteSources = mkDefault [
+          {
+            path = "${targetHome}/.local/share/qutebrowser/history.sqlite";
+            browser = "qutebrowser";
+            format = "QutebrowserNative";
+          }
+          {
+            path = "${targetHome}/.local/share/qutebrowser/webengine/History";
+            browser = "qutebrowser";
+            format = "ChromiumHistory";
+          }
+        ];
+      })
+
       (mkIf (cfg.enable || targetUser != null) {
         environment.etc."sinex/deployment-readiness.json".source = deploymentReadinessDescriptorFile;
       })
@@ -2040,6 +2142,7 @@ in
       (mkIf (targetUser != null) {
         services.sinex.nodes.filesystem.instances = mkDefault 1;
         services.sinex.nodes.terminal.instances = mkDefault 1;
+        services.sinex.nodes.browser.instances = mkDefault 1;
         services.sinex.nodes.desktop.instances = mkDefault 1;
         services.sinex.nodes.system.instances = mkDefault 1;
       })

@@ -2,7 +2,7 @@
 # Minimal Sinex configuration example
 #
 # Defines a single-node deployment with the node architecture and
-# filesystem/terminal capture enabled. Update the REQUIRED fields for your host.
+# filesystem/terminal/browser capture enabled. Update the REQUIRED fields for your host.
 
 { config, lib, pkgs, ... }:
 
@@ -15,7 +15,7 @@
 
     # Optional: select packages explicitly (module defaults work out of the box)
     # package = pkgs.sinex;
-    # cliPackage = pkgs.sinexCli;
+    # cliPackage = pkgs.sinexctl;
 
     database = {
       autoSetup = true;
@@ -42,6 +42,10 @@
         instances = 1;
       };
       terminal = {
+        enable = true;
+        instances = 1;
+      };
+      browser = {
         enable = true;
         instances = 1;
       };

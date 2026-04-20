@@ -41,6 +41,7 @@ let
     else
       (if cfg.nodes.filesystem.enable then resolveInstances cfg.nodes.filesystem else 0)
       + (if cfg.nodes.terminal.enable then resolveInstances cfg.nodes.terminal else 0)
+      + (if cfg.nodes.browser.enable then resolveInstances cfg.nodes.browser else 0)
       + (if cfg.nodes.desktop.enable then resolveInstances cfg.nodes.desktop else 0)
       + (if cfg.nodes.system.enable then resolveInstances cfg.nodes.system else 0);
 

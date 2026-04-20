@@ -84,7 +84,7 @@
   environment.etc."sinex/remote-nats-key.pem".text = "replace-with-real-client-key";
 
   environment.systemPackages = with pkgs; [
-    sinexCli
+    sinexctl
     jq
   ];
 }
