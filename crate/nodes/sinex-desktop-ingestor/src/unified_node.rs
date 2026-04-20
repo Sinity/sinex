@@ -24,7 +24,7 @@ use serde_json::json;
 use sinex_node_sdk::{
     EventTransport, SqliteHistoryImportError, SqliteHistoryRowOutcome,
     acquisition_manager::{AcquisitionManager, RotationPolicy},
-    import_sqlite_history_strict,
+    checkpointed_sqlite_history_strict,
     ingestor_node::IngestorNode,
     nats_publisher::NatsPublisher,
     stage_as_you_go::StageAsYouGoContext,
@@ -809,8 +809,9 @@ impl IngestorNode for DesktopNode {
         let mut first_ts = None;
         let mut last_ts = None;
         let node = &*self;
-        let import_report = import_sqlite_history_strict(
-            start_row_id,
+        let mut row_id_cursor = start_row_id;
+        let import_report = checkpointed_sqlite_history_strict(
+            &mut row_id_cursor,
             until.end_time(),
             |from_row_id, end_time| read_activitywatch_history(&db_path, from_row_id, end_time),
             |entry| {
@@ -836,16 +837,16 @@ impl IngestorNode for DesktopNode {
             SqliteHistoryImportError::Process(error) => error,
         })?;
 
-        if import_report.last_row_id > state.activitywatch_last_row_id {
-            state.activitywatch_last_row_id = import_report.last_row_id;
+        if row_id_cursor > state.activitywatch_last_row_id {
+            state.activitywatch_last_row_id = row_id_cursor;
         }
 
         Ok(ScanReport {
             events_processed: import_report.processed_rows as u64,
             duration: start_time.elapsed(),
             final_checkpoint: Checkpoint::external(
-                json!({ "activitywatch_row_id": import_report.last_row_id }),
-                format!("ActivityWatch row {}", import_report.last_row_id),
+                json!({ "activitywatch_row_id": row_id_cursor }),
+                format!("ActivityWatch row {}", row_id_cursor),
             ),
             time_range: first_ts.zip(last_ts),
             node_stats: HashMap::new(),
