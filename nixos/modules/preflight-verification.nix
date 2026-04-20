@@ -25,6 +25,7 @@ let
   updatesEnabled = sinexEnabled && updates.enable;
 
   generatedUnits = config.sinex._generatedUnits;
+  preflightSupportUnits = config.sinex._preflightSupportUnits;
   localPostgresEnabled = cfg.database.enable && (cfg.database.autoSetup || config.services.postgresql.enable);
   localPostgresUnits = optionals localPostgresEnabled [ "postgresql.service" "postgresql-setup.service" ];
   schemaApplyUnits = optionals schemaApplyEnabled [ "sinex-schema-apply.service" ];
@@ -319,11 +320,13 @@ in
             after = [ "network-online.target" ]
               ++ schemaApplyUnits
               ++ localPostgresUnits
-              ++ optionals natsEnabled [ "nats.service" ];
+              ++ optionals natsEnabled [ "nats.service" ]
+              ++ preflightSupportUnits;
             # Require the services that preflight actively checks.
             requires = schemaApplyUnits
               ++ localPostgresUnits
-              ++ optionals natsEnabled [ "nats.service" ];
+              ++ optionals natsEnabled [ "nats.service" ]
+              ++ preflightSupportUnits;
             path = [ pkgs.postgresql ];
             environment = preflightEnvironment;
             serviceConfig = {
