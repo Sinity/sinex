@@ -256,6 +256,34 @@ let
     // renderResources resources
     // extra;
 
+  mkAccessSetupUnit =
+    {
+      name,
+      description,
+      script,
+      writePaths ? [ ],
+      beforeUnits ? [ ],
+    }:
+    if script == null then { } else {
+      "${name}" = {
+        inherit description;
+        before = beforeUnits;
+        serviceConfig =
+          {
+            ExecStart = script;
+          }
+          // mkHelperServiceConfig {
+            user = "root";
+            group = "root";
+            remainAfterExit = true;
+            protectHome = false;
+            privateTmp = true;
+            restrictAddressFamilies = [ ];
+            readWritePaths = unique (readWritePaths ++ writePaths);
+          };
+      };
+    };
+
   mkCoreServices =
     let
       batch = coreCfg.ingestd.batch;
@@ -697,25 +725,35 @@ let
             exit 1
           fi
         '';
-    in
-    mkNodeUnits {
-      name = "terminal";
-      binary = "terminal-ingestor";
-      description = "Terminal node";
-      inherit instances batch resources;
-      extraArgs = derivedArgs ++ sat.extraArgs;
-      env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
-      serviceConfig = {
-        # The terminal ingestor needs read access to the target user's shell history
-        # (Atuin DB, bash_history, zsh_history). ProtectHome blocks /home entirely,
-        # so we use read-only mode to allow reading history files without write access.
-        ProtectHome = lib.mkForce "read-only";
-        ReadWritePaths = readWritePaths ++ accessWritePaths;
-      } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
-        BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
-      } // optionalAttrs (accessSetupScript != null) {
-        ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
+      units = mkNodeUnits {
+        name = "terminal";
+        binary = "terminal-ingestor";
+        description = "Terminal node";
+        inherit instances batch resources;
+        extraArgs = derivedArgs ++ sat.extraArgs;
+        env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
+        serviceConfig = {
+          # The terminal ingestor needs read access to the target user's shell history
+          # (Atuin DB, bash_history, zsh_history). ProtectHome blocks /home entirely,
+          # so we use read-only mode to allow reading history files without write access.
+          ProtectHome = lib.mkForce "read-only";
+          ReadWritePaths = readWritePaths ++ accessWritePaths;
+        } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
+          BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
+        } // optionalAttrs (accessSetupScript != null) {
+          ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
+        };
       };
+      supportUnits = mkAccessSetupUnit {
+        name = "sinex-terminal-target-access";
+        description = "Prepare target-user access for the Sinex terminal node";
+        script = accessSetupScript;
+        writePaths = accessWritePaths;
+        beforeUnits = [ "sinex-preflight.service" ] ++ map (unit: "${unit}.service") (attrNames units);
+      };
+    in
+    {
+      inherit units supportUnits;
     };
 
   mkDesktopUnits =
@@ -940,24 +978,34 @@ let
             exit 1
           fi
         '';
-    in
-    mkNodeUnits {
-      name = "desktop";
-      binary = "desktop-ingestor";
-      description = "Desktop node";
-      inherit instances batch resources;
-      extraArgs = sat.extraArgs;
-      env = clipboardEnv ++ sessionEnv ++ [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
-      path = [ pkgs.hyprland ];
-      serviceConfig = {
-        ProtectHome = lib.mkForce "read-only";
-        ReadWritePaths = readWritePaths ++ accessWritePaths;
-      } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
-        BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
-      } // optionalAttrs (accessSetupScript != null) {
-        EnvironmentFile = [ "-${bridgeEnvFile}" ];
-        ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
+      units = mkNodeUnits {
+        name = "desktop";
+        binary = "desktop-ingestor";
+        description = "Desktop node";
+        inherit instances batch resources;
+        extraArgs = sat.extraArgs;
+        env = clipboardEnv ++ sessionEnv ++ [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
+        path = [ pkgs.hyprland ];
+        serviceConfig = {
+          ProtectHome = lib.mkForce "read-only";
+          ReadWritePaths = readWritePaths ++ accessWritePaths;
+        } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
+          BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
+        } // optionalAttrs (accessSetupScript != null) {
+          EnvironmentFile = [ "-${bridgeEnvFile}" ];
+          ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
+        };
       };
+      supportUnits = mkAccessSetupUnit {
+        name = "sinex-desktop-target-access";
+        description = "Prepare target-user access for the Sinex desktop node";
+        script = accessSetupScript;
+        writePaths = accessWritePaths;
+        beforeUnits = [ "sinex-preflight.service" ] ++ map (unit: "${unit}.service") (attrNames units);
+      };
+    in
+    {
+      inherit units supportUnits;
     };
 
   mkBrowserUnits =
@@ -1089,22 +1137,32 @@ let
             exit 1
           fi
         '';
-    in
-    mkNodeUnits {
-      name = "browser";
-      binary = "browser-ingestor";
-      description = "Browser history node";
-      inherit instances batch resources;
-      extraArgs = [ "--node-config ${escapeShellArg nodeConfig}" ] ++ sat.extraArgs;
-      env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
-      serviceConfig = {
-        ProtectHome = lib.mkForce "read-only";
-        ReadWritePaths = readWritePaths ++ accessWritePaths;
-      } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
-        BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
-      } // optionalAttrs (accessSetupScript != null) {
-        ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
+      units = mkNodeUnits {
+        name = "browser";
+        binary = "browser-ingestor";
+        description = "Browser history node";
+        inherit instances batch resources;
+        extraArgs = [ "--node-config ${escapeShellArg nodeConfig}" ] ++ sat.extraArgs;
+        env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
+        serviceConfig = {
+          ProtectHome = lib.mkForce "read-only";
+          ReadWritePaths = readWritePaths ++ accessWritePaths;
+        } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
+          BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
+        } // optionalAttrs (accessSetupScript != null) {
+          ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
+        };
       };
+      supportUnits = mkAccessSetupUnit {
+        name = "sinex-browser-target-access";
+        description = "Prepare target-user access for the Sinex browser node";
+        script = accessSetupScript;
+        writePaths = accessWritePaths;
+        beforeUnits = [ "sinex-preflight.service" ] ++ map (unit: "${unit}.service") (attrNames units);
+      };
+    in
+    {
+      inherit units supportUnits;
     };
 
   mkSystemUnits =
@@ -1186,13 +1244,41 @@ let
             acl_failures=$((acl_failures + 1))
           }
 
+          set_access_acl() {
+            local path="$1"
+            local acl_spec="$2"
+            local mask_spec=""
+            if [ "$#" -ge 3 ]; then
+              mask_spec="$3"
+            fi
+            if [ -n "$mask_spec" ]; then
+              "$SETFACL" -m "$acl_spec,m::$mask_spec" "$path" || record_acl_failure "$path"
+            else
+              "$SETFACL" --mask -m "$acl_spec" "$path" || record_acl_failure "$path"
+            fi
+          }
+
+          set_default_acl() {
+            local path="$1"
+            local acl_spec="$2"
+            local mask_spec=""
+            if [ "$#" -ge 3 ]; then
+              mask_spec="$3"
+            fi
+            if [ -n "$mask_spec" ]; then
+              "$SETFACL" -d -m "$acl_spec,m::$mask_spec" "$path" || record_acl_failure "$path"
+            else
+              "$SETFACL" -d --mask -m "$acl_spec" "$path" || record_acl_failure "$path"
+            fi
+          }
+
           grant_parent_dirs() {
             local path="$1"
             local dir
             dir="$path"
             while [ "$dir" != "/" ] && [ "$dir" != "." ]; do
               if [ -d "$dir" ]; then
-                "$SETFACL" --mask -m "u:$SERVICE_USER:--x" "$dir" || record_acl_failure "$dir"
+                set_access_acl "$dir" "u:$SERVICE_USER:--x" "--x"
               fi
               dir="$("$DIRNAME" "$dir")"
             done
@@ -1207,7 +1293,7 @@ let
 
             if [ -f "$path" ]; then
               grant_parent_dirs "$path"
-              "$SETFACL" --mask -m "u:$SERVICE_USER:r--" "$path" || record_acl_failure "$path"
+              set_access_acl "$path" "u:$SERVICE_USER:r--" "r--"
               return
             fi
 
@@ -1216,10 +1302,11 @@ let
             fi
 
             grant_parent_dirs "$path"
-            "$SETFACL" -R --mask -m "u:$SERVICE_USER:r-X" "$path" || record_acl_failure "$path"
+            set_access_acl "$path" "u:$SERVICE_USER:r-X" "r-X"
+            "$SETFACL" -R -m "u:$SERVICE_USER:r-X,m::r-X" "$path" || record_acl_failure "$path"
             while IFS= read -r dir; do
               [ -n "$dir" ] || continue
-              "$SETFACL" -d --mask -m "u:$SERVICE_USER:r-X" "$dir" || record_acl_failure "$dir"
+              set_default_acl "$dir" "u:$SERVICE_USER:r-X" "r-X"
             done < <("$FIND" "$path" -type d)
           }
 
@@ -1254,13 +1341,23 @@ let
           ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
         };
       };
+      units = {
+        "sinex-document-scan" =
+          documentService
+          // optionalAttrs sat.runOnBoot {
+            wantedBy = [ "multi-user.target" ];
+          };
+      };
+      supportUnits = mkAccessSetupUnit {
+        name = "sinex-document-target-access";
+        description = "Prepare target-user access for the Sinex document scan";
+        script = accessSetupScript;
+        writePaths = accessWritePaths;
+        beforeUnits = [ "sinex-preflight.service" ] ++ map (unit: "${unit}.service") (attrNames units);
+      };
     in
     {
-      "sinex-document-scan" =
-        documentService
-        // optionalAttrs sat.runOnBoot {
-          wantedBy = [ "multi-user.target" ];
-        };
+      inherit units supportUnits;
     };
 
   mkNodeUnits = params:
@@ -1386,22 +1483,39 @@ let
     canonicalizerUnit // healthUnit // analyticsUnit // sessionUnit;
 
   nodeservices =
-    if !nodesEnabled then { } else
+    if !nodesEnabled then { units = { }; supportUnits = { }; } else
     let
       filesystemUnits = if nodesCfg.filesystem.enable then mkFilesystemUnits else { };
-      terminalUnits = if nodesCfg.terminal.enable then mkTerminalUnits else { };
-      browserUnits = if nodesCfg.browser.enable then mkBrowserUnits else { };
-      desktopUnits = if nodesCfg.desktop.enable then mkDesktopUnits else { };
+      terminalUnits =
+        if nodesCfg.terminal.enable then mkTerminalUnits else { units = { }; supportUnits = { }; };
+      browserUnits =
+        if nodesCfg.browser.enable then mkBrowserUnits else { units = { }; supportUnits = { }; };
+      desktopUnits =
+        if nodesCfg.desktop.enable then mkDesktopUnits else { units = { }; supportUnits = { }; };
       systemUnits = if nodesCfg.system.enable then mkSystemUnits else { };
     in
-    filesystemUnits // terminalUnits // browserUnits // desktopUnits // systemUnits;
+    {
+      units =
+        filesystemUnits
+        // terminalUnits.units
+        // browserUnits.units
+        // desktopUnits.units
+        // systemUnits;
+      supportUnits =
+        terminalUnits.supportUnits
+        // browserUnits.supportUnits
+        // desktopUnits.supportUnits;
+    };
 
   documentScanService =
-    if !(nodesEnabled && nodesCfg.document.enable) then { } else mkDocumentUnits;
+    if !(nodesEnabled && nodesCfg.document.enable) then { units = { }; supportUnits = { }; } else mkDocumentUnits;
 
   coreServices = mkCoreServices;
 
-  generatedUnits = attrNames nodeservices ++ attrNames automataServices;
+  accessSupportServices = nodeservices.supportUnits // documentScanService.supportUnits;
+
+  generatedUnits = attrNames nodeservices.units ++ attrNames automataServices;
+  preflightSupportUnits = map (unit: "${unit}.service") (attrNames accessSupportServices);
 
 in
 {
@@ -1419,12 +1533,21 @@ in
     description = "Systemd units generated by node-services.nix (internal, breaks cycle).";
   };
 
+  options.sinex._preflightSupportUnits = mkOption {
+    type = with types; listOf str;
+    default = [ ];
+    internal = true;
+    description = "Support units that must run before Sinex preflight verification.";
+  };
+
   config = mkMerge [
     (mkIf sinexEnabled {
       systemd.services = mkMerge [
         coreServices
-        nodeservices
-        documentScanService
+        nodeservices.units
+        nodeservices.supportUnits
+        documentScanService.units
+        documentScanService.supportUnits
         automataServices
       ];
       systemd.timers = mkMerge [
@@ -1441,5 +1564,6 @@ in
       ];
     })
     { sinex._generatedUnits = generatedUnits; }
+    { sinex._preflightSupportUnits = preflightSupportUnits; }
   ];
 }
