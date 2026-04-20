@@ -34,9 +34,9 @@ state, emit reconciled summaries, or close semantic windows.
 - **Database Dependency**: **Often yes, but not universal**. Some automatons can run stream-first, while others need canonical PostgreSQL/TimescaleDB access for reconciliation or historical lookups.
 - **Coordination**: NATS KV for service coordination; may use advisory locks for DB-internal operations (migrations, replay state).
 - **Examples**:
-  - `sinex-analytics-automaton`: Emits sliding-window `analytics.insight` summaries from confirmed events.
+  - `sinex-analytics-automaton`: Emits bounded `activity.window.summary` rollups from trusted activity signals.
   - `sinex-health-automaton`: Reconciles per-component health into aggregated status reports.
-  - `sinex-session-detector`: Groups temporally adjacent activity into session boundaries.
+  - `sinex-session-detector`: Groups bounded activity windows into session boundaries.
 
 ### Architecture
 

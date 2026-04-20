@@ -4,6 +4,7 @@
 
 extern crate self as sinex_primitives;
 
+pub mod activity;
 pub mod constants;
 #[cfg(feature = "nats")]
 pub mod coordination;
@@ -50,6 +51,7 @@ pub mod prelude {
 }
 
 // Re-export commonly used types at crate root
+pub use activity::{ActivitySourceKind, classify_trusted_activity_signal, primary_activity_source};
 pub use constants::filesystem;
 pub use deployment_readiness::{
     AutomataDeploymentSurface, BrowserDeploymentSurface, BrowserSqliteSource,

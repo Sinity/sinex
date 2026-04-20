@@ -59,6 +59,7 @@ fn serialize_output<T: Serialize>(
         semantics_version: output.semantics_version,
         scope_key: output.scope_key,
         equivalence_key: output.equivalence_key,
+        aggregation: output.aggregation,
     })
 }
 
@@ -583,6 +584,7 @@ impl<N: WindowedNode> DerivedNodeImpl for WindowedWrapper<N> {
                     semantics_version: output.semantics_version,
                     scope_key: output.scope_key,
                     equivalence_key: output.equivalence_key,
+                    aggregation: output.aggregation,
                 }])
             }
             None => Ok(Vec::new()),
@@ -698,6 +700,7 @@ where
                     semantics_version: output.semantics_version,
                     scope_key: output.scope_key,
                     equivalence_key: output.equivalence_key,
+                    aggregation: output.aggregation,
                 })
             })
             .collect()

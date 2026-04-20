@@ -4,6 +4,29 @@ use sinex_primitives::Uuid;
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::temporal::Timestamp;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DerivedAggregationMeta {
+    /// Semantic aggregate kind, e.g. `activity.window` or `activity.session`.
+    pub kind: String,
+
+    /// Rollup depth from raw material events.
+    pub rollup_level: u32,
+
+    /// Logical input count represented by the output payload.
+    pub total_input_count: u64,
+}
+
+impl DerivedAggregationMeta {
+    #[must_use]
+    pub fn new(kind: impl Into<String>, rollup_level: u32, total_input_count: u64) -> Self {
+        Self {
+            kind: kind.into(),
+            rollup_level,
+            total_input_count,
+        }
+    }
+}
+
 /// Output from a derived node's processing logic.
 ///
 /// Carries the full synthetic metadata required for replay-correct provenance chains.
@@ -41,6 +64,12 @@ pub struct DerivedOutput<T> {
     /// Events with the same `equivalence_key` from the same node are considered
     /// semantically equivalent — replay can replace rather than duplicate.
     pub equivalence_key: Option<String>,
+
+    /// Aggregate semantics for bounded rollups.
+    ///
+    /// This stays in runtime metadata rather than the event row so the adapter
+    /// can expose truthful fan-in metrics without widening core provenance.
+    pub aggregation: Option<DerivedAggregationMeta>,
 }
 
 impl<T> DerivedOutput<T> {
@@ -54,6 +83,7 @@ impl<T> DerivedOutput<T> {
             semantics_version: None,
             scope_key: None,
             equivalence_key: None,
+            aggregation: None,
         }
     }
 
@@ -75,6 +105,7 @@ impl<T> DerivedOutput<T> {
             semantics_version: None,
             scope_key: None,
             equivalence_key: None,
+            aggregation: None,
         }
     }
 
@@ -92,6 +123,7 @@ impl<T> DerivedOutput<T> {
             semantics_version: None,
             scope_key: None,
             equivalence_key: None,
+            aggregation: None,
         }
     }
 
@@ -110,6 +142,7 @@ impl<T> DerivedOutput<T> {
             semantics_version: None,
             scope_key: Some(scope_key),
             equivalence_key: None,
+            aggregation: None,
         }
     }
 
@@ -138,6 +171,13 @@ impl<T> DerivedOutput<T> {
     #[must_use]
     pub fn with_temporal_policy(mut self, policy: SyntheticTemporalPolicy) -> Self {
         self.temporal_policy = policy;
+        self
+    }
+
+    /// Attach aggregate semantics so the adapter can observe bounded fan-in truthfully.
+    #[must_use]
+    pub fn with_aggregation(mut self, aggregation: DerivedAggregationMeta) -> Self {
+        self.aggregation = Some(aggregation);
         self
     }
 }
