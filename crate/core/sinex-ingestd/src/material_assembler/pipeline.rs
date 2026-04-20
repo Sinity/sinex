@@ -21,6 +21,9 @@ use crate::{IngestdResult, SinexError};
 
 const BATCH_PROCESSING_SEMAPHORE_PERMITS: usize = 4; // Allow up to 4 concurrent batches
 const MATERIAL_CONSUMER_BATCH_EXPIRES: std::time::Duration = std::time::Duration::from_secs(1);
+// Keep SOURCE_MATERIAL_* stream caps aligned with the Nix bootstrap path. The current
+// nats CLI rejects --max-bytes values above signed 32-bit range.
+const JETSTREAM_BOOTSTRAP_MAX_BYTES: i64 = 2_147_483_647;
 
 async fn ack_with_warning(
     message: &jetstream::Message,
@@ -101,7 +104,7 @@ pub(super) async fn bootstrap_streams(assembler: &MaterialAssembler) -> IngestdR
             retention: jetstream::stream::RetentionPolicy::WorkQueue,
             storage: jetstream::stream::StorageType::File,
             max_age: tokio::time::Duration::from_hours(72),
-            max_bytes: 34_359_738_368, // 32 GiB
+            max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
             max_message_size: 512 * 1024,
             ..Default::default()
         })

@@ -30,6 +30,10 @@ use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
+// Keep SOURCE_MATERIAL_* stream caps aligned with the Nix bootstrap path. The current
+// nats CLI rejects --max-bytes values above signed 32-bit range.
+const JETSTREAM_BOOTSTRAP_MAX_BYTES: i64 = 2_147_483_647;
+
 /// Rotation policy configuration
 #[derive(Debug, Clone)]
 pub struct RotationPolicy {
@@ -252,7 +256,7 @@ impl AcquisitionManager {
             retention: jetstream::stream::RetentionPolicy::WorkQueue,
             storage: jetstream::stream::StorageType::File,
             max_age: std::time::Duration::from_hours(72),
-            max_bytes: 34_359_738_368, // 32 GiB
+            max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
             max_message_size: 512 * 1024,
             ..Default::default()
         })

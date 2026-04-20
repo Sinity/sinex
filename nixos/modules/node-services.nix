@@ -77,7 +77,7 @@ let
   databaseUrl = renderDatabaseUrl cfg.database;
 
   natsUrl = concatStringsSep "," nodesCfg.nats.servers;
-  secretPaths = config.sinex.secrets.paths or {};
+  secretPaths = config.sinex.secrets.paths or { };
   resolveSecretPath = resolveNamedSecretPath secretPaths;
   gatewayAdminTokenFile =
     resolveSecretPath cfg.secrets.gatewayAdminTokenFile [
@@ -143,7 +143,7 @@ let
     let
       existingPaths = collectReadablePaths paths;
     in
-    optionalAttrs (existingPaths != []) { AssertPathExists = existingPaths; };
+    optionalAttrs (existingPaths != [ ]) { AssertPathExists = existingPaths; };
 
   toEnvList = envAttrs: mapAttrsToList (name: value: "${name}=${value}") envAttrs;
   renderBindReadOnlyPaths = mounts:
@@ -179,7 +179,7 @@ let
       "SINEX_COORDINATION_HEARTBEAT=${toString nodesCfg.coordination.heartbeatSec}"
       "SINEX_COORDINATION_TIMEOUT=${toString nodesCfg.coordination.leadershipTimeoutSec}"
       "SINEX_COORDINATION_HANDOFF=${toString nodesCfg.coordination.handoffTimeoutSec}"
-    ] else [];
+    ] else [ ];
 
   resolveBatch = nodeBatch:
     if nodeBatch == null then nodesCfg.defaults.batch else nodeBatch;
@@ -221,8 +221,8 @@ let
     if targetUser == null then null
     else lib.attrByPath [ "users" "users" targetUser "uid" ] null config;
   effectiveDocumentRoots =
-    if nodesCfg.document.allowedRoots != [] then nodesCfg.document.allowedRoots
-    else if targetHome == null then []
+    if nodesCfg.document.allowedRoots != [ ] then nodesCfg.document.allowedRoots
+    else if targetHome == null then [ ]
     else [ "${targetHome}/Documents" ];
 
   mkBaseServiceConfig = resources: env: extra:
@@ -290,81 +290,82 @@ let
           && cfg.core.gateway.tlsKeyFile == null
           && gatewayTlsTrustAnchorSourceFile == null
           && cfg.core.gateway.tlsClientCAFile == null
-        then null else pkgs.writeShellScript "sinex-gateway-stage-runtime-inputs" ''
-          set -euo pipefail
+        then null else
+          pkgs.writeShellScript "sinex-gateway-stage-runtime-inputs" ''
+            set -euo pipefail
 
-          INSTALL=${pkgs.coreutils}/bin/install
-          runtime_dir=${escapeShellArg runtimeDir}
+            INSTALL=${pkgs.coreutils}/bin/install
+            runtime_dir=${escapeShellArg runtimeDir}
 
-          stage_file() {
-            local source_path="$1"
-            local dest_path="$2"
-            local mode="$3"
+            stage_file() {
+              local source_path="$1"
+              local dest_path="$2"
+              local mode="$3"
 
-            if [ -z "$source_path" ]; then
-              return 0
-            fi
+              if [ -z "$source_path" ]; then
+                return 0
+              fi
 
-            if [ ! -r "$source_path" ]; then
-              echo "[sinex] runtime input $source_path is not readable" >&2
-              exit 1
-            fi
-
-            "$INSTALL" -m "$mode" -o ${serviceUser} -g ${serviceUser} "$source_path" "$dest_path"
-          }
-
-          stage_gateway_admin_token() {
-            local source_path="$1"
-            local dest_path="$2"
-            local tmp_path
-            local raw_token
-            local staged_token
-
-            if [ -z "$source_path" ]; then
-              return 0
-            fi
-
-            if [ ! -r "$source_path" ]; then
-              echo "[sinex] gateway admin token $source_path is not readable" >&2
-              exit 1
-            fi
-
-            raw_token="$(${pkgs.coreutils}/bin/cat "$source_path")"
-            raw_token="$(${pkgs.coreutils}/bin/printf '%s' "$raw_token" | ${pkgs.gnused}/bin/sed -e 's/[[:space:]]*$//')"
-            if [ -z "$raw_token" ]; then
-              echo "[sinex] gateway admin token $source_path is empty" >&2
-              exit 1
-            fi
-
-            case "$raw_token" in
-              *:admin)
-                staged_token="$raw_token"
-                ;;
-              *:readonly|*:write)
-                echo "[sinex] gateway admin token $source_path must be raw or already end with :admin" >&2
+              if [ ! -r "$source_path" ]; then
+                echo "[sinex] runtime input $source_path is not readable" >&2
                 exit 1
-                ;;
-              *)
-                staged_token="$raw_token:admin"
-                ;;
-            esac
+              fi
 
-            tmp_path="$(mktemp "$runtime_dir/gateway-admin-token.XXXXXX")"
-            ${pkgs.coreutils}/bin/chmod 0600 "$tmp_path"
-            ${pkgs.coreutils}/bin/printf '%s\n' "$staged_token" > "$tmp_path"
-            ${pkgs.coreutils}/bin/chown ${serviceUser}:${serviceUser} "$tmp_path"
-            ${pkgs.coreutils}/bin/chmod 0400 "$tmp_path"
-            ${pkgs.coreutils}/bin/mv "$tmp_path" "$dest_path"
-          }
+              "$INSTALL" -m "$mode" -o ${serviceUser} -g ${serviceUser} "$source_path" "$dest_path"
+            }
 
-          "$INSTALL" -d -m 0750 -o ${serviceUser} -g ${serviceUser} "$runtime_dir"
+            stage_gateway_admin_token() {
+              local source_path="$1"
+              local dest_path="$2"
+              local tmp_path
+              local raw_token
+              local staged_token
 
-          stage_gateway_admin_token ${escapeShellArg (if gatewayAdminTokenFile == null then "" else toString gatewayAdminTokenFile)} ${escapeShellArg gatewayAdminTokenRuntimeFile}
-          stage_file ${escapeShellArg (if cfg.core.gateway.tlsCertFile == null then "" else toString cfg.core.gateway.tlsCertFile)} ${escapeShellArg gatewayTlsCertRuntimeFile} 0440
-          stage_file ${escapeShellArg (if cfg.core.gateway.tlsKeyFile == null then "" else toString cfg.core.gateway.tlsKeyFile)} ${escapeShellArg gatewayTlsKeyRuntimeFile} 0400
-          stage_file ${escapeShellArg (if gatewayTlsTrustAnchorSourceFile == null then "" else toString gatewayTlsTrustAnchorSourceFile)} ${escapeShellArg gatewayTlsTrustAnchorRuntimeFile} 0444
-          stage_file ${escapeShellArg (if cfg.core.gateway.tlsClientCAFile == null then "" else toString cfg.core.gateway.tlsClientCAFile)} ${escapeShellArg gatewayTlsClientCaRuntimeFile} 0440
-        '';
+              if [ -z "$source_path" ]; then
+                return 0
+              fi
+
+              if [ ! -r "$source_path" ]; then
+                echo "[sinex] gateway admin token $source_path is not readable" >&2
+                exit 1
+              fi
+
+              raw_token="$(${pkgs.coreutils}/bin/cat "$source_path")"
+              raw_token="$(${pkgs.coreutils}/bin/printf '%s' "$raw_token" | ${pkgs.gnused}/bin/sed -e 's/[[:space:]]*$//')"
+              if [ -z "$raw_token" ]; then
+                echo "[sinex] gateway admin token $source_path is empty" >&2
+                exit 1
+              fi
+
+              case "$raw_token" in
+                *:admin)
+                  staged_token="$raw_token"
+                  ;;
+                *:readonly|*:write)
+                  echo "[sinex] gateway admin token $source_path must be raw or already end with :admin" >&2
+                  exit 1
+                  ;;
+                *)
+                  staged_token="$raw_token:admin"
+                  ;;
+              esac
+
+              tmp_path="$(mktemp "$runtime_dir/gateway-admin-token.XXXXXX")"
+              ${pkgs.coreutils}/bin/chmod 0600 "$tmp_path"
+              ${pkgs.coreutils}/bin/printf '%s\n' "$staged_token" > "$tmp_path"
+              ${pkgs.coreutils}/bin/chown ${serviceUser}:${serviceUser} "$tmp_path"
+              ${pkgs.coreutils}/bin/chmod 0400 "$tmp_path"
+              ${pkgs.coreutils}/bin/mv "$tmp_path" "$dest_path"
+            }
+
+            "$INSTALL" -d -m 0750 -o ${serviceUser} -g ${serviceUser} "$runtime_dir"
+
+            stage_gateway_admin_token ${escapeShellArg (if gatewayAdminTokenFile == null then "" else toString gatewayAdminTokenFile)} ${escapeShellArg gatewayAdminTokenRuntimeFile}
+            stage_file ${escapeShellArg (if cfg.core.gateway.tlsCertFile == null then "" else toString cfg.core.gateway.tlsCertFile)} ${escapeShellArg gatewayTlsCertRuntimeFile} 0440
+            stage_file ${escapeShellArg (if cfg.core.gateway.tlsKeyFile == null then "" else toString cfg.core.gateway.tlsKeyFile)} ${escapeShellArg gatewayTlsKeyRuntimeFile} 0400
+            stage_file ${escapeShellArg (if gatewayTlsTrustAnchorSourceFile == null then "" else toString gatewayTlsTrustAnchorSourceFile)} ${escapeShellArg gatewayTlsTrustAnchorRuntimeFile} 0444
+            stage_file ${escapeShellArg (if cfg.core.gateway.tlsClientCAFile == null then "" else toString cfg.core.gateway.tlsClientCAFile)} ${escapeShellArg gatewayTlsClientCaRuntimeFile} 0440
+          '';
       gatewayEnv = mkServiceEnv (
         [
           "RUST_LOG=${coreCfg.gateway.logLevel}"
@@ -408,7 +409,7 @@ let
       coreWants = optionals blobInitEnabled [ "sinex-blob-init.service" ];
       gatewayAfter = coreAfter ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
     in
-    if !coreEnabled then {} else
+    if !coreEnabled then { } else
     {
       "sinex-ingestd" = {
         description = "Sinex ingestion daemon";
@@ -418,37 +419,39 @@ let
         wants = coreWants;
         unitConfig = restartRateLimits // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
         path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
-        serviceConfig = mkBaseServiceConfig coreCfg.ingestd.resources (
-          mkServiceEnv [
-            "RUST_LOG=${coreCfg.ingestd.logLevel}"
-            # Pool size and timeouts: read by sinex-ingestd via env vars.
-            "SINEX_INGESTD_POOL_SIZE=${toString cfg.database.connectionPool.maxConnections}"
-            "SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
-            "SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS=${toString cfg.database.connectionPool.idleTimeout}"
-            # Ack-pending limits: read by sinex-ingestd via SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING
-            # and SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING (clap env attribute).
-            "SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING=${toString coreCfg.ingestd.consumerMaxAckPending}"
-            "SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING=${toString coreCfg.ingestd.materialSlicesMaxAckPending}"
-            # Explicit work and spool dirs prevent fallback to dirs::cache_dir() (~/.cache)
-            # which is blocked by ProtectHome = true in the systemd unit.
-            "SINEX_INGESTD_WORK_DIR=${stateRoot}/ingestd/work"
-            "SINEX_ASSEMBLER_STATE_DIR=${ingestSpool}"
-            # Schema and validation behaviour
-            "SINEX_INGESTD_GITOPS_ENABLED=${if coreCfg.ingestd.gitopsEnabled then "true" else "false"}"
-            "SINEX_SKIP_SCHEMA_SYNC=${if coreCfg.ingestd.skipSchemaSync then "true" else "false"}"
-            "SINEX_INGESTD_STRICT_VALIDATION=${if coreCfg.ingestd.strictValidation then "true" else "false"}"
-            "SINEX_VALIDATE_SCHEMAS=${if coreCfg.ingestd.validateSchemas then "true" else "false"}"
-            # Operational intervals
-            "SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS=${toString coreCfg.ingestd.schemaReloadIntervalSecs}"
-            "SINEX_INGESTD_STATS_LOG_INTERVAL_SECS=${toString coreCfg.ingestd.statsLogIntervalSecs}"
-          ]
-        ) {
-          ExecStart = mkDatabasePasswordExec {
-            name = "ingestd";
-            command = "${sinexPackage}/bin/sinex-ingestd ${ingestArgs}";
-            passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
+        serviceConfig = mkBaseServiceConfig coreCfg.ingestd.resources
+          (
+            mkServiceEnv [
+              "RUST_LOG=${coreCfg.ingestd.logLevel}"
+              # Pool size and timeouts: read by sinex-ingestd via env vars.
+              "SINEX_INGESTD_POOL_SIZE=${toString cfg.database.connectionPool.maxConnections}"
+              "SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
+              "SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS=${toString cfg.database.connectionPool.idleTimeout}"
+              # Ack-pending limits: read by sinex-ingestd via SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING
+              # and SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING (clap env attribute).
+              "SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING=${toString coreCfg.ingestd.consumerMaxAckPending}"
+              "SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING=${toString coreCfg.ingestd.materialSlicesMaxAckPending}"
+              # Explicit work and spool dirs prevent fallback to dirs::cache_dir() (~/.cache)
+              # which is blocked by ProtectHome = true in the systemd unit.
+              "SINEX_INGESTD_WORK_DIR=${stateRoot}/ingestd/work"
+              "SINEX_ASSEMBLER_STATE_DIR=${ingestSpool}"
+              # Schema and validation behaviour
+              "SINEX_INGESTD_GITOPS_ENABLED=${if coreCfg.ingestd.gitopsEnabled then "true" else "false"}"
+              "SINEX_SKIP_SCHEMA_SYNC=${if coreCfg.ingestd.skipSchemaSync then "true" else "false"}"
+              "SINEX_INGESTD_STRICT_VALIDATION=${if coreCfg.ingestd.strictValidation then "true" else "false"}"
+              "SINEX_VALIDATE_SCHEMAS=${if coreCfg.ingestd.validateSchemas then "true" else "false"}"
+              # Operational intervals
+              "SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS=${toString coreCfg.ingestd.schemaReloadIntervalSecs}"
+              "SINEX_INGESTD_STATS_LOG_INTERVAL_SECS=${toString coreCfg.ingestd.statsLogIntervalSecs}"
+            ]
+          )
+          {
+            ExecStart = mkDatabasePasswordExec {
+              name = "ingestd";
+              command = "${sinexPackage}/bin/sinex-ingestd ${ingestArgs}";
+              passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
+            };
           };
-        };
       };
       "sinex-gateway" = {
         description = "Sinex gateway";
@@ -540,8 +543,8 @@ let
       batch = resolveBatch sat.batch;
       resources = resolveResources sat.resources;
       effectiveHistorySources =
-        if sat.historySources != [] then sat.historySources
-        else if targetHome == null then []
+        if sat.historySources != [ ] then sat.historySources
+        else if targetHome == null then [ ]
         else [
           {
             path = "${targetHome}/.bash_history";
@@ -561,15 +564,17 @@ let
           }
         ];
       nodeConfig = builtins.toJSON {
-        history_sources = map (source: {
-          path = source.path;
-          shell = source.shell;
-        }) effectiveHistorySources;
+        history_sources = map
+          (source: {
+            path = source.path;
+            shell = source.shell;
+          })
+          effectiveHistorySources;
         polling_interval_secs = 5;
         max_capture_bytes = 32768;
       };
       derivedArgs =
-        optional (effectiveHistorySources != []) "--node-config ${escapeShellArg nodeConfig}";
+        optional (effectiveHistorySources != [ ]) "--node-config ${escapeShellArg nodeConfig}";
       sqliteHistoryPaths =
         unique (
           map (source: source.path) (filter (source: source.shell == "atuin") effectiveHistorySources)
@@ -590,7 +595,8 @@ let
           ]
         );
       accessSetupScript =
-        if accessAclPaths == [] then null else pkgs.writeShellScript "sinex-terminal-target-access" ''
+        if accessAclPaths == [ ] then null else
+        pkgs.writeShellScript "sinex-terminal-target-access" ''
           set -euo pipefail
 
           SERVICE_USER=${escapeShellArg serviceUser}
@@ -705,7 +711,7 @@ let
         # so we use read-only mode to allow reading history files without write access.
         ProtectHome = lib.mkForce "read-only";
         ReadWritePaths = readWritePaths ++ accessWritePaths;
-      } // optionalAttrs (sat.access.bindReadOnlyPaths != [] && accessSetupScript == null) {
+      } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
         BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
       } // optionalAttrs (accessSetupScript != null) {
         ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
@@ -748,7 +754,8 @@ let
           ]
         );
       accessSetupScript =
-        if targetUser == null then null else pkgs.writeShellScript "sinex-desktop-target-access" ''
+        if targetUser == null then null else
+        pkgs.writeShellScript "sinex-desktop-target-access" ''
           set -euo pipefail
 
           SERVICE_USER=${escapeShellArg serviceUser}
@@ -945,7 +952,7 @@ let
       serviceConfig = {
         ProtectHome = lib.mkForce "read-only";
         ReadWritePaths = readWritePaths ++ accessWritePaths;
-      } // optionalAttrs (sat.access.bindReadOnlyPaths != [] && accessSetupScript == null) {
+      } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
         BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
       } // optionalAttrs (accessSetupScript != null) {
         EnvironmentFile = [ "-${bridgeEnvFile}" ];
@@ -961,11 +968,13 @@ let
       resources = resolveResources sat.resources;
       nodeConfig = builtins.toJSON {
         dump_sources = sat.dumpSources;
-        sqlite_sources = map (source: {
-          path = source.path;
-          browser = source.browser;
-          format = source.format;
-        }) sat.sqliteSources;
+        sqlite_sources = map
+          (source: {
+            path = source.path;
+            browser = source.browser;
+            format = source.format;
+          })
+          sat.sqliteSources;
         polling_interval_secs = sat.pollIntervalSec;
       };
       sqlitePaths = unique (map (source: source.path) sat.sqliteSources);
@@ -982,7 +991,8 @@ let
           ]
         );
       accessSetupScript =
-        if sqlitePaths == [] then null else pkgs.writeShellScript "sinex-browser-target-access" ''
+        if sqlitePaths == [ ] then null else
+        pkgs.writeShellScript "sinex-browser-target-access" ''
           set -euo pipefail
 
           SERVICE_USER=${escapeShellArg serviceUser}
@@ -1090,7 +1100,7 @@ let
       serviceConfig = {
         ProtectHome = lib.mkForce "read-only";
         ReadWritePaths = readWritePaths ++ accessWritePaths;
-      } // optionalAttrs (sat.access.bindReadOnlyPaths != [] && accessSetupScript == null) {
+      } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
         BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
       } // optionalAttrs (accessSetupScript != null) {
         ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
@@ -1154,13 +1164,20 @@ let
           ++ documentRoots
         );
       accessSetupScript =
-        if documentRoots == [] then null else pkgs.writeShellScript "sinex-document-target-access" ''
+        if documentRoots == [ ] then null else
+        pkgs.writeShellScript "sinex-document-target-access" ''
           set -euo pipefail
 
           SERVICE_USER=${escapeShellArg serviceUser}
           SETFACL=${pkgs.acl}/bin/setfacl
           FIND=${pkgs.findutils}/bin/find
           DIRNAME=${pkgs.coreutils}/bin/dirname
+          INSTALL=${pkgs.coreutils}/bin/install
+          ID=${pkgs.coreutils}/bin/id
+          ${optionalString (targetUser != null) ''
+          TARGET_USER=${escapeShellArg targetUser}
+          TARGET_GROUP="$("$ID" -gn "$TARGET_USER")"
+          ''}
           acl_failures=0
 
           record_acl_failure() {
@@ -1183,6 +1200,10 @@ let
 
           grant_recursive_document_access() {
             local path="$1"
+
+            if [ ! -e "$path" ] && [ -n "''${TARGET_USER:-}" ]; then
+              "$INSTALL" -d -m 0750 -o "$TARGET_USER" -g "$TARGET_GROUP" "$path" || record_acl_failure "$path"
+            fi
 
             if [ -f "$path" ]; then
               grant_parent_dirs "$path"
@@ -1246,10 +1267,10 @@ let
     let
       instances = params.instances;
       resources = params.resources;
-      extraArgs = params.extraArgs or [];
-      envExtras = params.env or [];
-      unitPath = params.path or [];
-      serviceConfigOverrides = params.serviceConfig or {};
+      extraArgs = params.extraArgs or [ ];
+      envExtras = params.env or [ ];
+      unitPath = params.path or [ ];
+      serviceConfigOverrides = params.serviceConfig or { };
       afterUnits = schemaApplyUnits ++ optionals coreEnabled [ "sinex-ingestd.service" ];
       requireUnits = schemaApplyUnits;
       # Nodes publish to NATS and don't strictly require ingestd to be up.
@@ -1278,8 +1299,8 @@ let
         } // serviceConfigOverrides);
       };
     in
-    if instances <= 0 then {} else
-      listToAttrs (map (idx: nameValuePair "sinex-${params.name}-${toString idx}" (mkUnit idx)) (range 1 instances));
+    if instances <= 0 then { } else
+    listToAttrs (map (idx: nameValuePair "sinex-${params.name}-${toString idx}" (mkUnit idx)) (range 1 instances));
 
   mkAutomataProfile = profileName:
     let
@@ -1292,7 +1313,7 @@ let
     let
       profile = mkAutomataProfile params.profile;
       resources = profile.resources;
-      extraArgs = params.extraArgs or [];
+      extraArgs = params.extraArgs or [ ];
       execArgs = concatStringsSep " " (
         [ "--service-name sinex-${params.binary}" ] ++ extraArgs ++ [ "service" ]
       );
@@ -1315,68 +1336,68 @@ let
     };
 
   automataServices =
-    if !(nodesEnabled && nodesCfg.automata.enable) then {} else
-      let
-        canon = nodesCfg.automata.canonicalizer;
-        health = nodesCfg.automata.healthAggregator;
-        analytics = nodesCfg.automata.analyticsAutomaton;
-        session = nodesCfg.automata.sessionDetector;
-        canonicalizerUnit =
-          if !canon.enable then {} else {
-            "sinex-canonicalizer" = mkAutomataUnit {
-              binary = "terminal-command-canonicalizer";
-              description = "Sinex canonical command synthesizer";
-              profile = canon.profile;
-              env = canon.env;
-              extraArgs = [];
-            };
+    if !(nodesEnabled && nodesCfg.automata.enable) then { } else
+    let
+      canon = nodesCfg.automata.canonicalizer;
+      health = nodesCfg.automata.healthAggregator;
+      analytics = nodesCfg.automata.analyticsAutomaton;
+      session = nodesCfg.automata.sessionDetector;
+      canonicalizerUnit =
+        if !canon.enable then { } else {
+          "sinex-canonicalizer" = mkAutomataUnit {
+            binary = "terminal-command-canonicalizer";
+            description = "Sinex canonical command synthesizer";
+            profile = canon.profile;
+            env = canon.env;
+            extraArgs = [ ];
           };
-        healthUnit =
-          if !health.enable then {} else {
-            "sinex-health-automaton" = mkAutomataUnit {
-              binary = "health-automaton";
-              description = "Sinex health automaton";
-              profile = health.profile;
-              env = health.env;
-              extraArgs = [];
-            };
+        };
+      healthUnit =
+        if !health.enable then { } else {
+          "sinex-health-automaton" = mkAutomataUnit {
+            binary = "health-automaton";
+            description = "Sinex health automaton";
+            profile = health.profile;
+            env = health.env;
+            extraArgs = [ ];
           };
-        analyticsUnit =
-          if !analytics.enable then {} else {
-            "sinex-analytics-automaton" = mkAutomataUnit {
-              binary = "analytics-automaton";
-              description = "Sinex analytics automaton";
-              profile = analytics.profile;
-              env = analytics.env;
-              extraArgs = [];
-            };
+        };
+      analyticsUnit =
+        if !analytics.enable then { } else {
+          "sinex-analytics-automaton" = mkAutomataUnit {
+            binary = "analytics-automaton";
+            description = "Sinex analytics automaton";
+            profile = analytics.profile;
+            env = analytics.env;
+            extraArgs = [ ];
           };
-        sessionUnit =
-          if !session.enable then {} else {
-            "sinex-session-detector" = mkAutomataUnit {
-              binary = "session-detector";
-              description = "Sinex session detector";
-              profile = session.profile;
-              env = session.env;
-              extraArgs = [];
-            };
+        };
+      sessionUnit =
+        if !session.enable then { } else {
+          "sinex-session-detector" = mkAutomataUnit {
+            binary = "session-detector";
+            description = "Sinex session detector";
+            profile = session.profile;
+            env = session.env;
+            extraArgs = [ ];
           };
-      in
-      canonicalizerUnit // healthUnit // analyticsUnit // sessionUnit;
+        };
+    in
+    canonicalizerUnit // healthUnit // analyticsUnit // sessionUnit;
 
   nodeservices =
-    if !nodesEnabled then {} else
-      let
-        filesystemUnits = if nodesCfg.filesystem.enable then mkFilesystemUnits else {};
-        terminalUnits = if nodesCfg.terminal.enable then mkTerminalUnits else {};
-        browserUnits = if nodesCfg.browser.enable then mkBrowserUnits else {};
-        desktopUnits = if nodesCfg.desktop.enable then mkDesktopUnits else {};
-        systemUnits = if nodesCfg.system.enable then mkSystemUnits else {};
-      in
-      filesystemUnits // terminalUnits // browserUnits // desktopUnits // systemUnits;
+    if !nodesEnabled then { } else
+    let
+      filesystemUnits = if nodesCfg.filesystem.enable then mkFilesystemUnits else { };
+      terminalUnits = if nodesCfg.terminal.enable then mkTerminalUnits else { };
+      browserUnits = if nodesCfg.browser.enable then mkBrowserUnits else { };
+      desktopUnits = if nodesCfg.desktop.enable then mkDesktopUnits else { };
+      systemUnits = if nodesCfg.system.enable then mkSystemUnits else { };
+    in
+    filesystemUnits // terminalUnits // browserUnits // desktopUnits // systemUnits;
 
   documentScanService =
-    if !(nodesEnabled && nodesCfg.document.enable) then {} else mkDocumentUnits;
+    if !(nodesEnabled && nodesCfg.document.enable) then { } else mkDocumentUnits;
 
   coreServices = mkCoreServices;
 
@@ -1393,7 +1414,7 @@ in
   # sub-option.  A separate top-level path avoids the cycle.
   options.sinex._generatedUnits = mkOption {
     type = with types; listOf str;
-    default = [];
+    default = [ ];
     internal = true;
     description = "Systemd units generated by node-services.nix (internal, breaks cycle).";
   };
