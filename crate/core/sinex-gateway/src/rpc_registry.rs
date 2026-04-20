@@ -395,8 +395,12 @@ fn build_registry_impl() -> RpcRegistry {
         handle_replay_preview_operation, handle_replay_submit_operation, handle_retrieve_blob,
         handle_shadow_create, handle_shadow_delete, handle_shadow_list, handle_store_blob,
         handle_system_health, handle_system_ping, handle_system_version,
-        handle_telemetry_command_frequency, handle_telemetry_file_activity,
-        handle_telemetry_ingestd_validation, handle_telemetry_recent_activity,
+        handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
+        handle_telemetry_current_device_state, handle_telemetry_current_health,
+        handle_telemetry_file_activity, handle_telemetry_gateway_stats,
+        handle_telemetry_ingestd_batch_stats, handle_telemetry_ingestd_validation,
+        handle_telemetry_metric_counters, handle_telemetry_node_stats,
+        handle_telemetry_recent_activity, handle_telemetry_stream_stats,
         handle_telemetry_system_state, handle_telemetry_window_focus, handle_tombstone_approve,
         handle_tombstone_cancel, handle_tombstone_create, handle_tombstone_list,
         handle_tombstone_preview, handle_tombstone_status,
@@ -490,38 +494,78 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_rpc("nodes.health", Role::ReadOnly, boxed!(handle_nodes_health))
         // GitOps source listing (ReadOnly)
         .pool_rpc(
-            "gitops.list_sources",
+            methods::GITOPS_LIST_SOURCES,
             Role::ReadOnly,
             boxed!(handle_gitops_list_sources),
         )
         // Telemetry read models (ReadOnly)
         .pool_rpc(
-            "telemetry.window_focus",
+            methods::TELEMETRY_CURRENT_HEALTH,
+            Role::ReadOnly,
+            boxed!(handle_telemetry_current_health),
+        )
+        .pool_rpc(
+            methods::TELEMETRY_CURRENT_DEVICE_STATE,
+            Role::ReadOnly,
+            boxed!(handle_telemetry_current_device_state),
+        )
+        .pool_rpc(
+            methods::TELEMETRY_WINDOW_FOCUS,
             Role::ReadOnly,
             boxed!(handle_telemetry_window_focus),
         )
         .pool_rpc(
-            "telemetry.command_frequency",
+            methods::TELEMETRY_COMMAND_FREQUENCY,
             Role::ReadOnly,
             boxed!(handle_telemetry_command_frequency),
         )
         .pool_rpc(
-            "telemetry.file_activity",
+            methods::TELEMETRY_FILE_ACTIVITY,
             Role::ReadOnly,
             boxed!(handle_telemetry_file_activity),
         )
         .pool_rpc(
-            "telemetry.recent_activity",
+            methods::TELEMETRY_RECENT_ACTIVITY,
             Role::ReadOnly,
             boxed!(handle_telemetry_recent_activity),
         )
         .pool_rpc(
-            "telemetry.system_state",
+            methods::TELEMETRY_SYSTEM_STATE,
             Role::ReadOnly,
             boxed!(handle_telemetry_system_state),
         )
         .pool_rpc(
-            "telemetry.ingestd_validation",
+            methods::TELEMETRY_GATEWAY_STATS,
+            Role::ReadOnly,
+            boxed!(handle_telemetry_gateway_stats),
+        )
+        .pool_rpc(
+            methods::TELEMETRY_STREAM_STATS,
+            Role::ReadOnly,
+            boxed!(handle_telemetry_stream_stats),
+        )
+        .pool_rpc(
+            methods::TELEMETRY_ASSEMBLY_STATS,
+            Role::ReadOnly,
+            boxed!(handle_telemetry_assembly_stats),
+        )
+        .pool_rpc(
+            methods::TELEMETRY_NODE_STATS,
+            Role::ReadOnly,
+            boxed!(handle_telemetry_node_stats),
+        )
+        .pool_rpc(
+            methods::TELEMETRY_METRIC_COUNTERS,
+            Role::ReadOnly,
+            boxed!(handle_telemetry_metric_counters),
+        )
+        .pool_rpc(
+            methods::TELEMETRY_INGESTD_BATCH_STATS,
+            Role::ReadOnly,
+            boxed!(handle_telemetry_ingestd_batch_stats),
+        )
+        .pool_rpc(
+            methods::TELEMETRY_INGESTD_VALIDATION,
             Role::ReadOnly,
             boxed!(handle_telemetry_ingestd_validation),
         )

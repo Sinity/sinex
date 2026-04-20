@@ -72,11 +72,19 @@ pub const GITOPS_DELETE_SOURCE: &str = "gitops.delete_source";
 pub const GITOPS_TRIGGER_SYNC: &str = "gitops.trigger_sync";
 
 // Telemetry
+pub const TELEMETRY_CURRENT_HEALTH: &str = "telemetry.current_health";
+pub const TELEMETRY_CURRENT_DEVICE_STATE: &str = "telemetry.current_device_state";
 pub const TELEMETRY_WINDOW_FOCUS: &str = "telemetry.window_focus";
 pub const TELEMETRY_COMMAND_FREQUENCY: &str = "telemetry.command_frequency";
 pub const TELEMETRY_FILE_ACTIVITY: &str = "telemetry.file_activity";
 pub const TELEMETRY_RECENT_ACTIVITY: &str = "telemetry.recent_activity";
 pub const TELEMETRY_SYSTEM_STATE: &str = "telemetry.system_state";
+pub const TELEMETRY_GATEWAY_STATS: &str = "telemetry.gateway_stats";
+pub const TELEMETRY_STREAM_STATS: &str = "telemetry.stream_stats";
+pub const TELEMETRY_ASSEMBLY_STATS: &str = "telemetry.assembly_stats";
+pub const TELEMETRY_NODE_STATS: &str = "telemetry.node_stats";
+pub const TELEMETRY_METRIC_COUNTERS: &str = "telemetry.metric_counters";
+pub const TELEMETRY_INGESTD_BATCH_STATS: &str = "telemetry.ingestd_batch_stats";
 pub const TELEMETRY_INGESTD_VALIDATION: &str = "telemetry.ingestd_validation";
 
 // Tombstone (two-step)
