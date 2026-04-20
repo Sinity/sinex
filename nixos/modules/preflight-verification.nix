@@ -154,6 +154,7 @@ let
   schemaApplyScript = pkgs.writeShellScript "sinex-schema-apply" ''
     set -euo pipefail
 
+    export SINEX_STATE_DIR=${escapeShellArg stateRoot}
     for db_name in ${concatStringsSep " " (map escapeShellArg allDatabases)}; do
       echo "$(date): applying Sinex schema to $db_name"
       export SINEX_DB_MAX_CONNECTIONS=${toString cfg.database.connectionPool.maxConnections}
@@ -296,6 +297,7 @@ in
             passwordFile = effectiveDatabasePasswordFile;
           };
           TimeoutStartSec = preflight.schemaApplyTimeoutSec;
+          ReadWritePaths = [ stateRoot ];
         } // mkHelperServiceConfig {
           user = serviceUser;
           group = serviceUser;
