@@ -1410,11 +1410,10 @@ impl UnifiedJournalWatcher {
             material.initial_provenance(),
         );
 
-        // Set deterministic ID based on cursor to prevent duplicates (discriminator 0 for generic entry)
+        // Set deterministic UUIDv7 based on cursor to prevent duplicates.
         let id_entropy = Self::calculate_entropy(cursor_str.as_str(), 0);
-        let timestamp_ms = payload.timestamp_us / 1000;
-        let id_val = (timestamp_ms as u128) << 80 | (id_entropy & 0xFFFF_FFFF_FFFF_FFFF_FFFF);
-        let uuid = uuid::Uuid::from_bytes(id_val.to_be_bytes());
+        let timestamp_ms = timestamp_us / 1000;
+        let uuid = Self::deterministic_uuid_v7(timestamp_ms, id_entropy);
 
         let id = sinex_primitives::Id::from_uuid(uuid);
         event.id = Some(id);
@@ -1461,12 +1460,10 @@ impl UnifiedJournalWatcher {
         let timestamp_us = Self::parse_realtime_timestamp_us(entry, unit_name)?;
         let ts_orig = Self::timestamp_from_micros(timestamp_us, unit_name)?;
 
-        // Helper to construct deterministic ID
-        // timestamp (48 bits) | entropy (80 bits)
+        // Set deterministic UUIDv7 based on cursor to prevent duplicates.
         let id_entropy = Self::calculate_entropy(&cursor, 1);
         let timestamp_ms = timestamp_us / 1000;
-        let id_val = u128::from(timestamp_ms) << 80 | (id_entropy & 0xFFFF_FFFF_FFFF_FFFF_FFFF);
-        let uuid = uuid::Uuid::from_bytes(id_val.to_be_bytes());
+        let uuid = Self::deterministic_uuid_v7(timestamp_ms, id_entropy);
 
         // Note: We create typed IDs inside each branch to satisfy type inference
 
@@ -1566,6 +1563,25 @@ impl UnifiedJournalWatcher {
         let mut bytes = [0u8; 16];
         bytes.copy_from_slice(&hash[0..16]);
         u128::from_be_bytes(bytes)
+    }
+
+    fn deterministic_uuid_v7(timestamp_ms: u64, entropy: u128) -> uuid::Uuid {
+        let mut bytes = [0u8; 16];
+        let ts = (timestamp_ms & 0x0000_FFFF_FFFF_FFFF).to_be_bytes();
+        bytes[..6].copy_from_slice(&ts[2..]);
+
+        bytes[6] = 0x70 | (((entropy >> 72) as u8) & 0x0f);
+        bytes[7] = (entropy >> 64) as u8;
+        bytes[8] = 0x80 | (((entropy >> 56) as u8) & 0x3f);
+        bytes[9] = (entropy >> 48) as u8;
+        bytes[10] = (entropy >> 40) as u8;
+        bytes[11] = (entropy >> 32) as u8;
+        bytes[12] = (entropy >> 24) as u8;
+        bytes[13] = (entropy >> 16) as u8;
+        bytes[14] = (entropy >> 8) as u8;
+        bytes[15] = entropy as u8;
+
+        uuid::Uuid::from_bytes(bytes)
     }
 
     fn lock_pending_cursor(&self) -> NodeResult<std::sync::MutexGuard<'_, Option<String>>> {
@@ -1812,6 +1828,18 @@ mod tests {
         Arc::new(TestMaterialContext)
     }
 
+    #[sinex_test]
+    async fn deterministic_journal_uuid_sets_v7_and_rfc4122_bits() -> TestResult<()> {
+        let uuid = UnifiedJournalWatcher::deterministic_uuid_v7(
+            1_710_000_000_000,
+            UnifiedJournalWatcher::calculate_entropy("s=abc", 1),
+        );
+
+        assert_eq!(uuid.get_version_num(), 7);
+        assert_eq!(uuid.get_variant(), uuid::Variant::RFC4122);
+        Ok(())
+    }
+
     fn fake_journalctl_script(stdout_lines: &[String]) -> String {
         let mut script =
             "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'journalctl test\\n'\n  exit 0\nfi\n"
@@ -1943,6 +1971,11 @@ mod tests {
         let expected = Timestamp::from_unix_timestamp_nanos(1_710_000_000_000_000_000)
             .expect("valid timestamp");
         assert_eq!(event.ts_orig, Some(expected));
+        let event_id = event
+            .id
+            .expect("systemd entry should have deterministic ID");
+        assert_eq!(event_id.as_uuid().get_version_num(), 7);
+        assert_eq!(event_id.as_uuid().get_variant(), uuid::Variant::RFC4122);
         Ok(())
     }
 
