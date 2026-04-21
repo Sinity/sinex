@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use sinex_db::models::{Event, OffsetKind, Provenance, SourceMaterial};
-use sinex_node_sdk::acquisition_manager::{AcquisitionManager, SourceMaterialHandle};
+use sinex_node_sdk::acquisition_manager::{
+    AcquisitionManager, AppendStreamAcquirer, SourceRecordAnchor,
+};
 use sinex_node_sdk::{NodeResult, SinexError};
 use sinex_primitives::{Id, JsonValue};
 use std::fmt;
@@ -23,8 +25,8 @@ pub trait MaterialContext: Send + Sync + fmt::Debug {
 pub type WatcherMaterialContext = Arc<dyn MaterialContext>;
 
 fn send_material_reply(
-    reply: oneshot::Sender<NodeResult<Option<(i64, i64)>>>,
-    result: NodeResult<Option<(i64, i64)>>,
+    reply: oneshot::Sender<NodeResult<Option<SourceRecordAnchor>>>,
+    result: NodeResult<Option<SourceRecordAnchor>>,
     phase: &str,
 ) -> bool {
     if reply.send(result).is_err() {
@@ -46,30 +48,31 @@ struct MaterialWriteRequest {
     reason: Option<String>,
     /// Reply channel.
     ///
-    /// On append: `Ok(Some((offset_start, offset_end)))`.
+    /// On append: `Ok(Some(anchor))`.
     /// On finalize sentinel: `Ok(None)` after finalization completes.
-    reply: oneshot::Sender<NodeResult<Option<(i64, i64)>>>,
+    reply: oneshot::Sender<NodeResult<Option<SourceRecordAnchor>>>,
 }
 
 const WRITER_BATCH_MAX_RECORDS: usize = 64;
 const WRITER_BATCH_MAX_BYTES: usize = 128 * 1024;
 
 async fn append_material_batch(
-    acquisition: &Arc<AcquisitionManager>,
-    handle: &mut SourceMaterialHandle,
-    batch: Vec<(Vec<u8>, oneshot::Sender<NodeResult<Option<(i64, i64)>>>)>,
+    stream: &mut AppendStreamAcquirer,
+    source_identifier: &str,
+    batch: Vec<(
+        Vec<u8>,
+        oneshot::Sender<NodeResult<Option<SourceRecordAnchor>>>,
+    )>,
 ) {
     let records: Vec<Vec<u8>> = batch.iter().map(|(payload, _)| payload.clone()).collect();
-    let result = acquisition.append_record_batch(handle, &records).await;
+    let result = stream
+        .append_many_with_anchors(&records, source_identifier)
+        .await;
 
     match result {
         Ok(anchors) => {
             for ((_, reply), anchor) in batch.into_iter().zip(anchors) {
-                send_material_reply(
-                    reply,
-                    Ok(Some((anchor.offset_start, anchor.offset_end))),
-                    "append",
-                );
+                send_material_reply(reply, Ok(Some(anchor)), "append");
             }
         }
         Err(error) => {
@@ -87,15 +90,15 @@ async fn append_material_batch(
     }
 }
 
-/// Background task that owns the `SourceMaterialHandle`.
+/// Background task that owns the rotating source-material stream.
 ///
 /// Serializes all NATS I/O through a single task so callers never hold a lock
-/// across an async NATS write.  The task exits (and finalizes the handle) when
+/// across an async NATS write.  The task exits (and finalizes the stream) when
 /// it receives a finalize sentinel (`payload == None`).
 #[allow(clippy::needless_pass_by_value)]
 async fn material_writer_task(
-    acquisition: Arc<AcquisitionManager>,
-    mut handle: SourceMaterialHandle,
+    mut stream: AppendStreamAcquirer,
+    source_identifier: String,
     mut rx: mpsc::Receiver<MaterialWriteRequest>,
 ) {
     let mut pending_request: Option<MaterialWriteRequest> = None;
@@ -150,26 +153,22 @@ async fn material_writer_task(
                     }
                 }
 
-                append_material_batch(&acquisition, &mut handle, batch).await;
+                append_material_batch(&mut stream, &source_identifier, batch).await;
             }
 
             // ── finalize sentinel ─────────────────────────────────────────
             None => {
                 let reason = req.reason.as_deref().unwrap_or("material writer shutdown");
-                let finalize_result = acquisition
-                    .finalize(handle, reason)
-                    .await
-                    .map(|()| None)
-                    .map_err(|e| {
-                        SinexError::lifecycle(format!(
-                            "Failed to finalize system watcher material: {e}"
-                        ))
-                    });
+                let finalize_result = stream.finalize(reason).await.map(|()| None).map_err(|e| {
+                    SinexError::lifecycle(format!(
+                        "Failed to finalize system watcher material: {e}"
+                    ))
+                });
 
                 // Notify caller that finalization completed (or failed).
                 send_material_reply(req.reply, finalize_result, "finalize");
 
-                // Exit the loop — the handle has been consumed.
+                // Exit the loop — the stream has been finalized.
                 return;
             }
         }
@@ -178,8 +177,8 @@ async fn material_writer_task(
     // Channel closed without a finalize sentinel (e.g. all senders dropped without
     // calling `finalize`).  Perform a best-effort finalize so the material is not
     // left open.
-    if let Err(e) = acquisition
-        .finalize(handle, "material writer task: channel closed")
+    if let Err(e) = stream
+        .finalize("material writer task: channel closed")
         .await
     {
         warn!(error = %e, "Failed to finalize system watcher material in writer task");
@@ -230,9 +229,18 @@ impl RealWatcherMaterialContext {
                 SinexError::lifecycle(format!("Failed to begin system watcher material: {e}"))
             })?;
         let material_id = Id::from_uuid(handle.material_id);
+        let stream = AppendStreamAcquirer::from_active_handle(
+            Arc::clone(&acquisition),
+            handle,
+            source_identifier.to_string(),
+        );
 
         let (writer_tx, writer_rx) = mpsc::channel(WRITER_CHANNEL_CAPACITY);
-        tokio::spawn(material_writer_task(acquisition, handle, writer_rx));
+        tokio::spawn(material_writer_task(
+            stream,
+            source_identifier.to_string(),
+            writer_rx,
+        ));
 
         Ok(Self {
             material_id,
@@ -244,7 +252,7 @@ impl RealWatcherMaterialContext {
     /// Send an append request and await the writer task's reply.
     ///
     /// Does **not** hold any mutex across the NATS write.
-    async fn append_payload(&self, payload_bytes: &[u8]) -> NodeResult<(i64, i64)> {
+    async fn append_payload(&self, payload_bytes: &[u8]) -> NodeResult<SourceRecordAnchor> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.writer_tx
             .send(MaterialWriteRequest {
@@ -290,12 +298,13 @@ impl MaterialContext for RealWatcherMaterialContext {
             SinexError::processing(format!("Failed to serialize system payload: {e}"))
         })?;
 
-        let (offset_start, offset_end) = self.append_payload(&payload_bytes).await?;
+        let anchor = self.append_payload(&payload_bytes).await?;
+        let material_id = Id::<SourceMaterial>::from_uuid(anchor.material_id);
         event.provenance = Provenance::Material {
-            id: self.material_id,
-            anchor_byte: offset_start,
-            offset_start: Some(offset_start),
-            offset_end: Some(offset_end),
+            id: material_id,
+            anchor_byte: anchor.offset_start,
+            offset_start: Some(anchor.offset_start),
+            offset_end: Some(anchor.offset_end),
             offset_kind: OffsetKind::Byte,
         };
 
@@ -345,11 +354,16 @@ impl MaterialContext for RealWatcherMaterialContext {
 #[cfg(test)]
 mod tests {
     use super::{
-        MaterialWriteRequest, RealWatcherMaterialContext, material_writer_task, send_material_reply,
+        MaterialContext, MaterialWriteRequest, RealWatcherMaterialContext, material_writer_task,
+        send_material_reply,
     };
+    use serde_json::json;
     use sinex_db::models::SourceMaterial;
-    use sinex_node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
-    use sinex_primitives::Uuid;
+    use sinex_node_sdk::acquisition_manager::{
+        AcquisitionManager, AppendStreamAcquirer, RotationPolicy, SourceRecordAnchor,
+    };
+    use sinex_primitives::events::DynamicPayload;
+    use sinex_primitives::{Bytes, Seconds, Uuid};
     use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
     use tokio::sync::{mpsc, oneshot};
@@ -367,9 +381,15 @@ mod tests {
     #[sinex_test]
     async fn send_material_reply_delivers_payload() -> TestResult<()> {
         let (tx, rx) = oneshot::channel();
+        let material_id = Uuid::now_v7();
+        let anchor = SourceRecordAnchor {
+            material_id,
+            offset_start: 1,
+            offset_end: 4,
+        };
 
-        assert!(send_material_reply(tx, Ok(Some((1, 4))), "append"));
-        assert_eq!(rx.await??, Some((1, 4)));
+        assert!(send_material_reply(tx, Ok(Some(anchor)), "append"));
+        assert_eq!(rx.await??, Some(anchor));
         Ok(())
     }
 
@@ -421,10 +441,15 @@ mod tests {
             .with_work_dir(&work_dir),
         );
         let handle = acquisition.begin_material("test://system-writer").await?;
-        let (writer_tx, writer_rx) = mpsc::channel(8);
-        let writer = tokio::spawn(material_writer_task(
+        let stream = AppendStreamAcquirer::from_active_handle(
             Arc::clone(&acquisition),
             handle,
+            "test://system-writer",
+        );
+        let (writer_tx, writer_rx) = mpsc::channel(8);
+        let writer = tokio::spawn(material_writer_task(
+            stream,
+            "test://system-writer".to_string(),
             writer_rx,
         ));
 
@@ -459,7 +484,75 @@ mod tests {
         assert_eq!(finalize_rx.await??, None);
         writer.await?;
 
-        assert_eq!(anchors, vec![(0, 3), (3, 6), (6, 11)]);
+        assert_eq!(
+            anchors
+                .iter()
+                .map(|anchor| (anchor.offset_start, anchor.offset_end))
+                .collect::<Vec<_>>(),
+            vec![(0, 3), (3, 6), (6, 11)]
+        );
+        let _ = tokio::fs::remove_dir_all(&work_dir).await;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn watcher_material_context_rotates_at_sdk_policy(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let namespace = format!("system-material-rotation-{}", Uuid::now_v7());
+        let work_dir = std::env::temp_dir().join(format!("sinex-system-material-{namespace}"));
+        tokio::fs::create_dir_all(&work_dir).await?;
+        let acquisition = Arc::new(
+            AcquisitionManager::new_with_namespace(
+                ctx.nats_client(),
+                RotationPolicy {
+                    max_bytes: Bytes::from(8),
+                    max_age_seconds: Seconds::from_secs(3600),
+                },
+                "system-test".to_string(),
+                Some(namespace),
+            )
+            .with_work_dir(&work_dir),
+        );
+        let context =
+            RealWatcherMaterialContext::new(acquisition, "test://rotating-system", json!({}))
+                .await?;
+
+        let mut first = DynamicPayload::new(
+            "system.test",
+            "system.test.payload",
+            json!({ "record": "first-record" }),
+        )
+        .from_material(context.material_id)
+        .build()?
+        .to_json_event()?;
+        let mut second = DynamicPayload::new(
+            "system.test",
+            "system.test.payload",
+            json!({ "record": "second-record" }),
+        )
+        .from_material(context.material_id)
+        .build()?
+        .to_json_event()?;
+
+        context.decorate_event(&mut first).await?;
+        context.decorate_event(&mut second).await?;
+        context.finalize("test-complete").await?;
+
+        let Provenance::Material { id: first_id, .. } = first.provenance else {
+            panic!("expected material provenance");
+        };
+        let Provenance::Material { id: second_id, .. } = second.provenance else {
+            panic!("expected material provenance");
+        };
+
+        assert_eq!(
+            first_id, context.material_id,
+            "first event should use the initially exposed material"
+        );
+        assert_ne!(
+            first_id, second_id,
+            "hot watcher streams should rotate through the SDK stream acquirer"
+        );
         let _ = tokio::fs::remove_dir_all(&work_dir).await;
         Ok(())
     }
