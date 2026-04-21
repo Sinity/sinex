@@ -12,7 +12,6 @@ use sinex_node_sdk::annex::AnnexKey;
 use sinex_primitives::Timestamp;
 use sinex_primitives::{Id, JsonValue, Uuid};
 use sinex_schema::schema::records::SourceMaterialRecord;
-use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
@@ -931,15 +930,16 @@ impl MaterialAssembler {
                 ))
             })?;
 
-            if let Some(mut file) = state.temp_file.take()
-                && let Err(e) = file.flush().await
+            if let Err(e) =
+                super::io::sync_staged_file_for_finalization(&mut state, material_id).await
             {
                 warn!(
                     material_id = %material_id,
-                    "Failed to flush temp file during finalization: {}",
+                    "Failed to sync temp file during finalization: {}",
                     e
                 );
             }
+            drop(state.temp_file.take());
 
             let computed_hash = state.hasher.clone().finalize().to_hex().to_string();
             // WAL keeps the End message, so we don't need to persist implicit state changes here.
