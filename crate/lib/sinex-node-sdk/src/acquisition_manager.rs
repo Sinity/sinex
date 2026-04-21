@@ -891,6 +891,24 @@ impl AppendStreamAcquirer {
         }
     }
 
+    /// Build a stream acquirer around an already-open material handle.
+    ///
+    /// Use this when callers need to expose the first material id before the
+    /// first append, while still delegating subsequent size/age rotation to the
+    /// SDK stream-acquisition path.
+    #[must_use]
+    pub fn from_active_handle(
+        manager: Arc<AcquisitionManager>,
+        handle: SourceMaterialHandle,
+        source_identifier: impl Into<String>,
+    ) -> Self {
+        Self {
+            manager,
+            current_handle: Some(handle),
+            current_source_identifier: Some(source_identifier.into()),
+        }
+    }
+
     /// Append data, automatically rotating if needed.
     pub async fn append(&mut self, data: &[u8], source_identifier: &str) -> NodeResult<()> {
         self.append_with_anchor(data, source_identifier).await?;
@@ -1052,8 +1070,9 @@ impl AppendStreamAcquirer {
 mod tests {
     // Inline because these tests exercise private bootstrap coordination state;
     // extracting them would require widening the test surface of AcquisitionManager.
-    use super::{AcquisitionManager, AppendStreamAcquirer};
+    use super::{AcquisitionManager, AppendStreamAcquirer, RotationPolicy};
     use serde_json::json;
+    use sinex_primitives::{Bytes, Seconds};
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -1318,6 +1337,49 @@ mod tests {
             tokio::fs::read(handle.temp_path()).await?,
             b"one\ntwo\nthree\n"
         );
+        stream.finalize("test-complete").await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn append_stream_can_start_from_active_handle(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let namespace = format!("append-stream-existing-{}", Uuid::now_v7());
+        let work_dir = tempfile::tempdir()?;
+        let manager = Arc::new(
+            AcquisitionManager::new_with_namespace(
+                ctx.nats_client(),
+                RotationPolicy {
+                    max_bytes: Bytes::from(8),
+                    max_age_seconds: Seconds::from_secs(3600),
+                },
+                "append-stream-existing-test".to_string(),
+                Some(namespace),
+            )
+            .with_work_dir(work_dir.path()),
+        );
+        let handle = manager.begin_material("test://existing-stream").await?;
+        let first_material_id = handle.material_id;
+        let mut stream =
+            AppendStreamAcquirer::from_active_handle(manager, handle, "test://existing-stream");
+
+        let first = stream
+            .append_with_anchor(b"1234", "test://existing-stream")
+            .await?;
+        let second = stream
+            .append_with_anchor(b"56789", "test://existing-stream")
+            .await?;
+
+        assert_eq!(
+            first.material_id, first_material_id,
+            "first append should use the provided active material"
+        );
+        assert_ne!(
+            second.material_id, first_material_id,
+            "append that would exceed the rotation policy should rotate"
+        );
+        assert_eq!(second.offset_start, 0);
+
         stream.finalize("test-complete").await?;
         Ok(())
     }
