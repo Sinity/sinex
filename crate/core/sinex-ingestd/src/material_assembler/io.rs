@@ -848,8 +848,9 @@ async fn cleanup_state_path(path: &Path) {
 ///
 /// # Edge Cases
 ///
-/// - **Early slice arrival**: Slices may arrive before the begin message due to separate
-///   `JetStream` subjects. A placeholder state is created to buffer slices until begin arrives.
+/// - **Early slice arrival**: Slices may arrive before local begin state after WAL restore,
+///   redelivery, or non-SDK publishers. A placeholder state is created to buffer slices until
+///   begin arrives.
 /// - **Race condition on placeholder creation**: Multiple slices arriving concurrently for
 ///   a new material may attempt to create placeholders. `insert_state_handle` handles this
 ///   via `DashMap`'s entry API, ensuring only one placeholder wins.

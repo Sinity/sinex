@@ -114,8 +114,10 @@ pub mod watcher_handle;
 
 #[cfg(feature = "messaging")]
 pub use acquisition_manager::{
-    AcquisitionManager, AppendStreamAcquirer, RotationPolicy, SourceMaterialHandle,
-    SourceRecordAnchor,
+    AcquisitionManager, AppendStreamAcquirer, RotationPolicy, SOURCE_MATERIAL_BEGIN_SUBJECT,
+    SOURCE_MATERIAL_END_SUBJECT, SOURCE_MATERIAL_FRAMES_SUBJECT,
+    SOURCE_MATERIAL_SLICE_SUBJECT_PREFIX, SOURCE_MATERIAL_STREAM, SourceMaterialHandle,
+    SourceRecordAnchor, source_material_slice_subject,
 };
 #[cfg(feature = "messaging")]
 pub use automaton_base::{ActivityEntry, IngestionHistoryEntry};

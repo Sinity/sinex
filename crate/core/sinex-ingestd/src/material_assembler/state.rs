@@ -54,7 +54,7 @@ pub(super) fn parse_material_ended_at(
     })
 }
 
-/// Message from `source_material.begin`
+/// Message from a material begin frame.
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct MaterialBeginMessage {
     pub material_id: String,
@@ -64,7 +64,7 @@ pub(super) struct MaterialBeginMessage {
     pub started_at: String,
 }
 
-/// Message from `source_material.end`
+/// Message from a material end frame.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct MaterialEndMessage {
     pub material_id: String,

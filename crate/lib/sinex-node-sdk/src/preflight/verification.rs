@@ -480,9 +480,7 @@ async fn verify_service_integration(_messages: &mut [String]) -> NodeResult<Valu
     let required_streams = vec![
         env.nats_stream_name("SINEX_RAW_EVENTS"),
         env.nats_stream_name("SINEX_RAW_EVENTS_CONFIRMATIONS"),
-        env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
-        env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
-        env.nats_stream_name("SOURCE_MATERIAL_END"),
+        env.nats_stream_name(crate::SOURCE_MATERIAL_STREAM),
     ];
     let mut available_streams = BTreeSet::new();
     let mut streams = js.streams();

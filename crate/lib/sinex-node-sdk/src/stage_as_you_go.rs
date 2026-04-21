@@ -63,7 +63,7 @@ impl StageCleanupConfig {
 #[cfg(test)]
 mod tests {
     use super::StageAsYouGoContext;
-    use crate::acquisition_manager::AcquisitionManager;
+    use crate::acquisition_manager::{AcquisitionManager, SOURCE_MATERIAL_END_SUBJECT};
     use crate::runtime::stream::EventEmitter;
     use sinex_primitives::environment::environment;
     use sinex_primitives::{DynamicPayload, Id, events::Provenance};
@@ -214,7 +214,8 @@ mod tests {
         let material_id = context
             .register_in_flight("log_file", Some("test://resume"), serde_json::json!({}))
             .await?;
-        let end_subject = environment().nats_subject_with_namespace(None, "source_material.end");
+        let end_subject =
+            environment().nats_subject_with_namespace(None, SOURCE_MATERIAL_END_SUBJECT);
         let mut end_sub = ctx.nats_client().subscribe(end_subject).await?;
 
         let mut handle = context

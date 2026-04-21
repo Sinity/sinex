@@ -5,6 +5,7 @@ use serde_json::Value;
 use sinex_node_sdk::preflight::{
     VerificationStatus, configuration, database, resources, services, verification,
 };
+use sinex_node_sdk::{SOURCE_MATERIAL_FRAMES_SUBJECT, SOURCE_MATERIAL_STREAM};
 use sinex_primitives::constants::timeouts;
 use sinex_primitives::{environment::SinexEnvironment, nats::JetStreamTopology};
 use std::env;
@@ -167,22 +168,8 @@ async fn ensure_preflight_streams(
         .await?;
     let _ = js
         .get_or_create_stream(jetstream::stream::Config {
-            name: env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
-            subjects: vec![env.nats_subject("source_material.begin")],
-            ..Default::default()
-        })
-        .await?;
-    let _ = js
-        .get_or_create_stream(jetstream::stream::Config {
-            name: env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
-            subjects: vec![env.nats_subject("source_material.slices.>")],
-            ..Default::default()
-        })
-        .await?;
-    let _ = js
-        .get_or_create_stream(jetstream::stream::Config {
-            name: env.nats_stream_name("SOURCE_MATERIAL_END"),
-            subjects: vec![env.nats_subject("source_material.end")],
+            name: env.nats_stream_name(SOURCE_MATERIAL_STREAM),
+            subjects: vec![env.nats_subject(SOURCE_MATERIAL_FRAMES_SUBJECT)],
             ..Default::default()
         })
         .await?;
@@ -222,22 +209,8 @@ async fn ensure_preflight_event_streams_only(
         .await?;
     let _ = js
         .get_or_create_stream(jetstream::stream::Config {
-            name: env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
-            subjects: vec![env.nats_subject("source_material.begin")],
-            ..Default::default()
-        })
-        .await?;
-    let _ = js
-        .get_or_create_stream(jetstream::stream::Config {
-            name: env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
-            subjects: vec![env.nats_subject("source_material.slices.>")],
-            ..Default::default()
-        })
-        .await?;
-    let _ = js
-        .get_or_create_stream(jetstream::stream::Config {
-            name: env.nats_stream_name("SOURCE_MATERIAL_END"),
-            subjects: vec![env.nats_subject("source_material.end")],
+            name: env.nats_stream_name(SOURCE_MATERIAL_STREAM),
+            subjects: vec![env.nats_subject(SOURCE_MATERIAL_FRAMES_SUBJECT)],
             ..Default::default()
         })
         .await?;
@@ -1952,7 +1925,7 @@ async fn test_phase7_integration_success(ctx: TestContext) -> TestResult<()> {
                 service
                     .get("required_streams")
                     .and_then(Value::as_array)
-                    .is_some_and(|streams| streams.len() == 5)
+                    .is_some_and(|streams| streams.len() == 3)
             );
 
             Ok(())
