@@ -15,6 +15,7 @@ adapters for the common cases:
 3. **Shared runtime plumbing**: NATS transport, confirmations, health reporting, coordination, and shutdown handling.
 4. **Different authoring traits**: `IngestorNode` for external capture, and `TransducerNode` / `WindowedNode` / `ScopeReconcilerNode` for synthesis.
 5. **Reusable source adapters**: common input shapes like append-only UTF-8 tail sources, checkpointed `SQLite` history readers, and incremental file-import roots live in the SDK so future ingestors can extend the normal node/runtime plane instead of rebuilding bespoke readers or direct-import paths.
+6. **Reusable material writers**: high-volume logical records can use SDK-managed rotating append streams, including buffered writers that coalesce records while returning exact per-record byte anchors.
 
 ## 🛰️ Distributed Service Architecture
 
@@ -76,6 +77,13 @@ The SDK automatically enforces data lineage:
 - **Ingested Events**: Linked to `SourceMaterial` via byte offsets and hashes.
 - **Synthesized Events**: Linked to parent events via `source_event_ids`.
 - **Dual-Hash Verification**: Large files are verified using both BLAKE3 (Sinex-native) and SHA256 (Git-annex native) to detect tampering.
+
+For row-like or metadata-only observations, use
+`BufferedAppendStreamWriter` over `AppendStreamAcquirer`: it batches adjacent
+logical records into fewer physical source-material slices, rotates through the
+normal SDK policy, and returns `SourceRecordAnchor` values for event provenance.
+This keeps events byte-addressable without creating one tiny material or one
+fsync-heavy slice per observation.
 
 ## 🚦 Error Handling & DLQ
 

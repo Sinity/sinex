@@ -26,7 +26,7 @@ use std::{
 };
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
@@ -1066,11 +1066,241 @@ impl AppendStreamAcquirer {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct BufferedAppendStreamWriterConfig {
+    pub channel_capacity: usize,
+    pub batch_max_records: usize,
+    pub batch_max_bytes: usize,
+    pub batch_coalesce_window: std::time::Duration,
+}
+
+impl Default for BufferedAppendStreamWriterConfig {
+    fn default() -> Self {
+        Self {
+            channel_capacity: 256,
+            batch_max_records: 64,
+            batch_max_bytes: 128 * 1024,
+            batch_coalesce_window: std::time::Duration::from_millis(20),
+        }
+    }
+}
+
+struct BufferedAppendRequest {
+    payload: Option<Vec<u8>>,
+    reason: Option<String>,
+    reply: oneshot::Sender<NodeResult<Option<SourceRecordAnchor>>>,
+}
+
+async fn append_buffered_batch(
+    stream: &mut AppendStreamAcquirer,
+    source_identifier: &str,
+    batch: Vec<(
+        Vec<u8>,
+        oneshot::Sender<NodeResult<Option<SourceRecordAnchor>>>,
+    )>,
+) {
+    let records: Vec<Vec<u8>> = batch.iter().map(|(payload, _)| payload.clone()).collect();
+    let result = stream
+        .append_many_with_anchors(&records, source_identifier)
+        .await;
+
+    match result {
+        Ok(anchors) => {
+            for ((_, reply), anchor) in batch.into_iter().zip(anchors) {
+                let _ = reply.send(Ok(Some(anchor)));
+            }
+        }
+        Err(error) => {
+            let message = error.to_string();
+            for (_, reply) in batch {
+                let _ = reply.send(Err(SinexError::processing(format!(
+                    "failed to append source material batch: {message}"
+                ))));
+            }
+        }
+    }
+}
+
+async fn buffered_append_writer_task(
+    mut stream: AppendStreamAcquirer,
+    source_identifier: String,
+    config: BufferedAppendStreamWriterConfig,
+    mut rx: mpsc::Receiver<BufferedAppendRequest>,
+) {
+    let mut pending_request: Option<BufferedAppendRequest> = None;
+
+    loop {
+        let request = match pending_request.take() {
+            Some(request) => request,
+            None => match rx.recv().await {
+                Some(request) => request,
+                None => break,
+            },
+        };
+
+        if let Some(payload) = request.payload {
+            let mut batch_bytes = payload.len();
+            let mut batch = vec![(payload, request.reply)];
+
+            tokio::time::sleep(config.batch_coalesce_window).await;
+
+            while batch.len() < config.batch_max_records {
+                match rx.try_recv() {
+                    Ok(next) => {
+                        if let Some(next_payload) = next.payload {
+                            let projected_bytes = batch_bytes.saturating_add(next_payload.len());
+                            if projected_bytes > config.batch_max_bytes {
+                                pending_request = Some(BufferedAppendRequest {
+                                    payload: Some(next_payload),
+                                    reason: next.reason,
+                                    reply: next.reply,
+                                });
+                                break;
+                            }
+                            batch_bytes = projected_bytes;
+                            batch.push((next_payload, next.reply));
+                        } else {
+                            pending_request = Some(BufferedAppendRequest {
+                                payload: None,
+                                reason: next.reason,
+                                reply: next.reply,
+                            });
+                            break;
+                        }
+                    }
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Err(mpsc::error::TryRecvError::Disconnected) => break,
+                }
+            }
+
+            append_buffered_batch(&mut stream, &source_identifier, batch).await;
+        } else {
+            let reason = request
+                .reason
+                .as_deref()
+                .unwrap_or("buffered append writer shutdown");
+            let result = stream
+                .finalize(reason)
+                .await
+                .map(|()| None)
+                .map_err(|error| {
+                    SinexError::lifecycle(format!(
+                        "failed to finalize buffered append stream: {error}"
+                    ))
+                });
+            let _ = request.reply.send(result);
+            return;
+        }
+    }
+
+    if let Err(error) = stream
+        .finalize("buffered append writer: channel closed")
+        .await
+    {
+        warn!(%error, "Failed to finalize buffered append stream");
+    }
+}
+
+/// Background writer for rotating append-only source-material streams.
+///
+/// Use this when many logical observations belong to one source stream. Callers
+/// get per-record byte anchors, while the SDK owns stream rotation, batching,
+/// and finalization without requiring a mutex across NATS I/O.
+#[derive(Clone)]
+pub struct BufferedAppendStreamWriter {
+    writer_tx: mpsc::Sender<BufferedAppendRequest>,
+}
+
+impl BufferedAppendStreamWriter {
+    #[must_use]
+    pub fn spawn(
+        stream: AppendStreamAcquirer,
+        source_identifier: impl Into<String>,
+        config: BufferedAppendStreamWriterConfig,
+    ) -> Self {
+        let (writer_tx, writer_rx) = mpsc::channel(config.channel_capacity);
+        tokio::spawn(buffered_append_writer_task(
+            stream,
+            source_identifier.into(),
+            config,
+            writer_rx,
+        ));
+        Self { writer_tx }
+    }
+
+    #[must_use]
+    pub fn from_manager(
+        manager: Arc<AcquisitionManager>,
+        source_identifier: impl Into<String>,
+        config: BufferedAppendStreamWriterConfig,
+    ) -> Self {
+        let source_identifier = source_identifier.into();
+        let stream = AppendStreamAcquirer::new(manager);
+        Self::spawn(stream, source_identifier, config)
+    }
+
+    pub async fn append(&self, payload: Vec<u8>) -> NodeResult<SourceRecordAnchor> {
+        let (reply, response) = oneshot::channel();
+        self.writer_tx
+            .send(BufferedAppendRequest {
+                payload: Some(payload),
+                reason: None,
+                reply,
+            })
+            .await
+            .map_err(|_| {
+                SinexError::processing("buffered append writer has shut down".to_string())
+            })?;
+
+        response
+            .await
+            .map_err(|_| {
+                SinexError::processing("buffered append writer dropped reply channel".to_string())
+            })?
+            .and_then(|anchor| {
+                anchor.ok_or_else(|| {
+                    SinexError::processing(
+                        "buffered append writer returned finalize response for append request"
+                            .to_string(),
+                    )
+                })
+            })
+    }
+
+    pub async fn finalize(&self, reason: &str) -> NodeResult<()> {
+        let (reply, response) = oneshot::channel();
+        let send_result = self
+            .writer_tx
+            .send(BufferedAppendRequest {
+                payload: None,
+                reason: Some(reason.to_string()),
+                reply,
+            })
+            .await;
+
+        if send_result.is_err() {
+            return Ok(());
+        }
+
+        response
+            .await
+            .map_err(|_| {
+                SinexError::processing(
+                    "buffered append writer dropped finalize reply channel".to_string(),
+                )
+            })?
+            .map(|_| ())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     // Inline because these tests exercise private bootstrap coordination state;
     // extracting them would require widening the test surface of AcquisitionManager.
-    use super::{AcquisitionManager, AppendStreamAcquirer, RotationPolicy};
+    use super::{
+        AcquisitionManager, AppendStreamAcquirer, BufferedAppendStreamWriter,
+        BufferedAppendStreamWriterConfig, RotationPolicy,
+    };
     use serde_json::json;
     use sinex_primitives::{Bytes, Seconds};
     use std::sync::{
@@ -1381,6 +1611,39 @@ mod tests {
         assert_eq!(second.offset_start, 0);
 
         stream.finalize("test-complete").await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn buffered_append_writer_preserves_record_offsets(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let namespace = format!("buffered-append-writer-{}", Uuid::now_v7());
+        let work_dir = tempfile::tempdir()?;
+        let manager = Arc::new(
+            AcquisitionManager::new_with_namespace(
+                ctx.nats_client(),
+                RotationPolicy::default(),
+                "buffered-writer-test".to_string(),
+                Some(namespace),
+            )
+            .with_work_dir(work_dir.path()),
+        );
+        let writer = BufferedAppendStreamWriter::from_manager(
+            manager,
+            "test://buffered-writer",
+            BufferedAppendStreamWriterConfig {
+                batch_coalesce_window: std::time::Duration::from_millis(1),
+                ..BufferedAppendStreamWriterConfig::default()
+            },
+        );
+
+        let first = writer.append(b"one".to_vec()).await?;
+        let second = writer.append(b"two".to_vec()).await?;
+        writer.finalize("test-complete").await?;
+
+        assert_eq!((first.offset_start, first.offset_end), (0, 3));
+        assert_eq!((second.offset_start, second.offset_end), (3, 6));
+        assert_eq!(first.material_id, second.material_id);
         Ok(())
     }
 }
