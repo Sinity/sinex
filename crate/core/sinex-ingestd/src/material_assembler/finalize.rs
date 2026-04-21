@@ -185,7 +185,7 @@ impl MaterialAssembler {
         // WAL is immutable — End message remains. In-memory state reverted.
     }
 
-    /// Insert or fetch blob metadata for the assembled material
+    /// Insert or fetch blob metadata for the assembled material.
     ///
     /// # BLAKE3 Hash Collision Handling
     ///
@@ -193,11 +193,11 @@ impl MaterialAssembler {
     /// makes collisions cryptographically infeasible (2^128 security for 256-bit hashes).
     ///
     /// Collision handling strategy:
-    /// - Primary deduplication: git-annex natural key (backend, hash, size)
-    /// - BLAKE3 checksum stored for verification but not uniqueness enforcement
-    /// - If a collision occurred (astronomically unlikely), the existing blob would be reused
-    ///   since git-annex guarantees content identity via its own hash
-    /// - This is acceptable: a true collision means identical content by cryptographic assumption
+    /// - Primary deduplication: BLAKE3 checksum when present, matching the database uniqueness
+    ///   invariant.
+    /// - Legacy/no-checksum rows use the storage backend key (`annex_backend`, `content_hash`).
+    /// - If a collision occurred (astronomically unlikely), the existing blob would be reused.
+    /// - This is acceptable: a true collision means identical content by cryptographic assumption.
     ///
     /// The theoretical collision risk is negligible compared to hardware/cosmic ray bit flips.
     pub(super) async fn upsert_blob_with_executor(
@@ -956,8 +956,8 @@ impl MaterialAssembler {
         };
 
         // Finalization below is intentionally lock-free with respect to `state_handle`.
-        // The lock only guarded the handoff into a stable `FinalizationState`; annex import,
-        // blob registration, and source-material updates must not run while holding it.
+        // The lock only guarded the handoff into a stable `FinalizationState`; content-store
+        // import, blob registration, and source-material updates must not run while holding it.
         debug!(
             material_id = %material_id,
             assembled_bytes,
@@ -967,14 +967,14 @@ impl MaterialAssembler {
             "Processing end message"
         );
 
-        // If the payload claims zero bytes, avoid annex/blob work and treat this as an empty
-        // material. Persist a DLQ entry so publishers can diagnose.
+        // If the payload claims zero bytes, avoid content-store/blob work and treat this as an
+        // empty material. Persist a DLQ entry so publishers can diagnose.
         if end.total_size_bytes == 0 {
             warn!(
                 material_id = %material_id,
                 slices = slice_count,
                 total_size = end.total_size_bytes,
-                "Material ended with no content; skipping annex import and routing to DLQ"
+                "Material ended with no content; skipping content-store import and routing to DLQ"
             );
 
             self.route_terminal_failure_with_retry(
@@ -1014,7 +1014,7 @@ impl MaterialAssembler {
             return Ok(());
         }
 
-        // Verify the staged file size matches expectations before annex import.
+        // Verify the staged file size matches expectations before content-store import.
         // Edge case: File size mismatch can occur if:
         // - Disk writes were incomplete due to process crash during slice write
         // - Filesystem corruption or out-of-space errors during assembly
@@ -1112,12 +1112,12 @@ impl MaterialAssembler {
         };
         let final_status = final_material_status(&finalize_metadata);
 
-        let annex_key = match self.import_into_annex(&final_state).await {
+        let annex_key = match self.import_into_content_store(&final_state).await {
             Ok(result) => result,
             Err(e) => {
                 self.route_material_error(
                     material_id,
-                    "annex_import_failed",
+                    "content_store_import_failed",
                     serde_json::json!({ "error": e.to_string() }),
                 )
                 .await;
@@ -1185,7 +1185,7 @@ impl MaterialAssembler {
                 size_bytes = end.total_size_bytes,
                 slices = slice_count,
                 duration_ms = duration_ms,
-                "Material assembly cancelled and persisted to git-annex"
+                "Material assembly cancelled and persisted to content store"
             );
         } else {
             self.stats_inc_completed(duration_ms as f64 / 1000.0, end.total_size_bytes as u64);
@@ -1205,7 +1205,7 @@ impl MaterialAssembler {
                 size_bytes = end.total_size_bytes,
                 slices = slice_count,
                 duration_ms = duration_ms,
-                "Material assembly complete and persisted to git-annex"
+                "Material assembly complete and persisted to content store"
             );
         }
 

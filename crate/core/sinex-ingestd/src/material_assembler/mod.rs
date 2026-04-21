@@ -1,7 +1,7 @@
 //! Material Assembler for consuming material slices from NATS `JetStream`.
 //!
 //! The assembler is responsible for rebuilding source material streams from
-//! begin/slice/end messages, persisting the assembled material into git-annex,
+//! begin/slice/end messages, persisting the assembled material into the SDK content store,
 //! registering blobs in Postgres, updating the source material registry and
 //! temporal ledger, and routing failures to the DLQ. State is persisted on disk
 //! so that in-flight assemblies can survive process restarts.
@@ -227,7 +227,7 @@ impl DiskSpaceMonitor {
 /// - `assembler_state` gives each material its own mutable state handle
 /// - one material may serialize on its own `Mutex`, but unrelated materials must not
 /// - the per-material lock is for state mutation and snapshots only
-/// - filesystem, git-annex, and database work must run after dropping that lock
+/// - filesystem, content-store, and database work must run after dropping that lock
 pub struct MaterialAssembler {
     js: jetstream::Context,
     nats_client: NatsClient,
@@ -623,12 +623,12 @@ impl MaterialAssembler {
         io::cleanup_state(self, material_id).await;
     }
 
-    /// Import the assembled material into git-annex
-    async fn import_into_annex(
+    /// Import the assembled material into the SDK content store.
+    async fn import_into_content_store(
         &self,
         state: &FinalizationState,
     ) -> IngestdResult<sinex_node_sdk::annex::AnnexKey> {
-        io::import_into_annex(self, state).await
+        io::import_into_content_store(self, state).await
     }
 
     async fn register_material_record(
