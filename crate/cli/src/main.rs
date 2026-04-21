@@ -1,6 +1,6 @@
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, parser::ValueSource};
 use color_eyre::eyre::eyre;
-use sinex_primitives::strict_env_filter_source;
+use sinex_primitives::{RuntimeTargetDescriptor, strict_env_filter_source};
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
     AuditCommand, BlobCommands, CompletionsCommand, ConfigCommands, ContextCommand, CoreCommands,
@@ -11,6 +11,7 @@ use sinexctl::commands::{
 };
 use sinexctl::model::OutputFormat;
 use sinexctl::{Config, default_rpc_url};
+use std::path::PathBuf;
 
 /// Sinex control CLI
 #[derive(Debug, Parser)]
@@ -52,6 +53,10 @@ struct Cli {
     #[arg(long, short = 'f', value_enum, default_value = "table", global = true)]
     format: OutputFormat,
 
+    /// Runtime target descriptor to load for gateway/auth/TLS settings
+    #[arg(long, env = "SINEX_RUNTIME_TARGET_CONFIG", global = true)]
+    runtime_target: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -70,6 +75,17 @@ fn load_env_filter(
             tracing_subscriber::EnvFilter::DEFAULT_ENV
         )
     })
+}
+
+fn load_runtime_target_override(
+    path: Option<PathBuf>,
+) -> color_eyre::Result<Option<RuntimeTargetDescriptor>> {
+    let Some(path) = path.filter(|path| !path.as_os_str().is_empty()) else {
+        return Ok(None);
+    };
+    RuntimeTargetDescriptor::load_from_path(path)
+        .map(Some)
+        .map_err(Into::into)
 }
 
 #[derive(Debug, Subcommand)]
@@ -212,6 +228,10 @@ async fn main() -> color_eyre::Result<()> {
         Config::default()
     });
 
+    if let Some(runtime_target) = load_runtime_target_override(cli.runtime_target.clone())? {
+        config.apply_runtime_target(runtime_target);
+    }
+
     // Override with explicit CLI args.
     let rpc_url_override = cli_value_is_explicit(&matches, "rpc_url")
         .then(|| cli.rpc_url.clone().unwrap_or_else(default_rpc_url));
@@ -264,7 +284,9 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::GitOps { cmd } => cmd.execute(&client, format).await?,
                 Commands::Telemetry { cmd } => cmd.execute(&client).await?,
                 Commands::Report { cmd } => cmd.execute(&client).await?,
-                Commands::Status(cmd) => cmd.execute(&client).await?,
+                Commands::Status(cmd) => {
+                    cmd.execute(&client, config.runtime_target.as_ref()).await?;
+                }
                 Commands::Recent(cmd) => cmd.execute(&client).await?,
                 Commands::Errors(cmd) => cmd.execute(&client).await?,
                 Commands::Watch(cmd) => cmd.execute(&client).await?,
@@ -420,6 +442,69 @@ mod tests {
         assert!(cli_value_is_explicit(&explicit_matches, "format"));
         assert_eq!(explicit_cli.timeout, 45);
         assert!(matches!(explicit_cli.format, OutputFormat::Json));
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn runtime_target_path_can_come_from_environment() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set(
+            "SINEX_RUNTIME_TARGET_CONFIG",
+            "/tmp/sinex-runtime-target.json",
+        );
+
+        let (matches, cli) = parse_cli(&["sinexctl", "status"])?;
+
+        assert_eq!(
+            matches.value_source("runtime_target"),
+            Some(ValueSource::EnvVariable)
+        );
+        assert_eq!(
+            cli.runtime_target.as_deref(),
+            Some(std::path::Path::new("/tmp/sinex-runtime-target.json"))
+        );
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn runtime_target_override_populates_config() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let descriptor_path = dir.path().join("runtime-target.json");
+        std::fs::write(
+            &descriptor_path,
+            r#"{
+              "version": 1,
+              "name": "prod",
+              "kind": "deployed_host",
+              "gateway": {
+                "base_url": "https://127.0.0.1:9999",
+                "token_file": "/run/agenix/sinex-gateway-admin-token",
+                "ca_cert_file": "/var/lib/sinex/run/gateway-ca.pem"
+              }
+            }"#,
+        )?;
+
+        let target = load_runtime_target_override(Some(descriptor_path))?
+            .expect("runtime target descriptor must load");
+        let mut config = Config::default();
+        config.apply_runtime_target(target);
+
+        assert_eq!(config.rpc_url, "https://127.0.0.1:9999");
+        assert_eq!(
+            config.token_file.as_deref(),
+            Some("/run/agenix/sinex-gateway-admin-token")
+        );
+        assert_eq!(
+            config.ca_cert.as_deref(),
+            Some("/var/lib/sinex/run/gateway-ca.pem")
+        );
+        assert_eq!(
+            config
+                .runtime_target
+                .as_ref()
+                .map(|target| target.name.as_str()),
+            Some("prod")
+        );
         Ok(())
     }
 }

@@ -50,11 +50,18 @@ Global flags (available on most commands):
 - `--insecure` (dev only)
 - `--timeout`
 - `--format`
+- `--runtime-target` (loads gateway/auth/TLS settings from a runtime target descriptor)
 
 Environment variables (directly supported by CLI flags/token loader):
 
 - `SINEX_RPC_URL`
 - `SINEX_RPC_TOKEN`
+- `SINEX_RUNTIME_TARGET_CONFIG`
+
+When `--runtime-target` or `SINEX_RUNTIME_TARGET_CONFIG` is set, descriptor
+values populate the gateway URL, token file, and TLS material before explicit
+CLI flags are applied. `sinexctl status` prints the loaded target so live
+runtime health is tied to the descriptor that supplied the connection settings.
 
 ## Completions
 

@@ -123,6 +123,7 @@ fn config_strategy() -> impl Strategy<Value = Config> {
                     aliases,
                     theme,
                     editor: "vim".to_string(),
+                    runtime_target: None,
                 }
             },
         )

@@ -15,9 +15,15 @@ sinexctl [GLOBAL_OPTIONS] <COMMAND>
 Global options are layered with runtime env and local preferences:
 
 - CLI flags
+- Runtime target descriptor (`--runtime-target` / `SINEX_RUNTIME_TARGET_CONFIG`)
 - Runtime environment variables (`SINEX_RPC_URL`, `SINEX_RPC_TOKEN`, TLS/token path vars)
 - Local preference file (`~/.config/sinexctl/config.toml`) for format/theme/editor/aliases
 - Built-in defaults
+
+Runtime target descriptors bridge deployed-host configuration into the live
+operator CLI without making `xtask` the production control surface. They supply
+gateway URL, auth token file, TLS trust material, and target identity. Explicit
+CLI flags still win so one-off overrides remain possible.
 
 ## Command Families
 
