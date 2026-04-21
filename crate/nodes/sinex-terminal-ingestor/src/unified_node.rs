@@ -1150,6 +1150,68 @@ impl HistoryWatcherContext {
         }
     }
 
+    async fn bootstrap_live_state_for_continuous_monitoring(&self) -> NodeResult<HistoryState> {
+        match &self.source_mode {
+            HistorySourceMode::Text => self.bootstrap_text_tail_state().await,
+            HistorySourceMode::FishSqlite => {
+                self.bootstrap_sqlite_tail_state(crate::fish_history::get_max_row_id, "fish")
+            }
+            HistorySourceMode::AtuinSqlite => {
+                self.bootstrap_sqlite_tail_state(crate::atuin_history::get_max_row_id, "atuin")
+            }
+            HistorySourceMode::ConfiguredError(_) => Ok(self.empty_state()),
+        }
+    }
+
+    async fn bootstrap_text_tail_state(&self) -> NodeResult<HistoryState> {
+        match fs::metadata(&self.path).await {
+            Ok(metadata) => {
+                let file_state = AppendOnlyFileState {
+                    offset_bytes: metadata.len(),
+                    #[cfg(unix)]
+                    inode: {
+                        use std::os::unix::fs::MetadataExt;
+                        Some(metadata.ino())
+                    },
+                };
+                Ok(HistoryState::from_text_progress(
+                    &file_state,
+                    0,
+                    None,
+                    VecDeque::new(),
+                ))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(self.empty_state()),
+            Err(error) => Err(SinexError::io(
+                "failed to stat terminal history file while bootstrapping live tail",
+            )
+            .with_context("path", self.path.to_string())
+            .with_std_error(&error)),
+        }
+    }
+
+    fn bootstrap_sqlite_tail_state<GetMaxRowId>(
+        &self,
+        get_max_row_id: GetMaxRowId,
+        source_label: &'static str,
+    ) -> NodeResult<HistoryState>
+    where
+        GetMaxRowId: Fn(&Utf8PathBuf) -> Result<i64, rusqlite::Error>,
+    {
+        if !self.path.exists() {
+            return Ok(self.empty_state());
+        }
+
+        let sqlite_row_id = get_max_row_id(&self.path).map_err(|error| {
+            SinexError::io("failed to query SQLite history live tail position")
+                .with_context("source", source_label)
+                .with_context("path", self.path.to_string())
+                .with_std_error(&error)
+        })?;
+
+        Ok(Self::sqlite_history_state(sqlite_row_id, VecDeque::new()))
+    }
+
     async fn history_file_size(&self) -> NodeResult<u64> {
         fs::metadata(&self.path)
             .await
@@ -2854,6 +2916,19 @@ impl IngestorNode for TerminalNode {
     ) -> NodeResult<ScanReport> {
         let started_at = Timestamp::now();
         let start_time = Instant::now();
+        if *shutdown_rx.borrow() {
+            let finished_at = Timestamp::now();
+            return Ok(ScanReport {
+                events_processed: 0,
+                duration: start_time.elapsed(),
+                final_checkpoint: from,
+                time_range: Some((started_at, finished_at)),
+                node_stats: HashMap::new(),
+                successful_targets: Vec::new(),
+                failed_targets: Vec::new(),
+                warnings: Vec::new(),
+            });
+        }
         let contexts = self.build_history_contexts(shutdown_rx.clone())?;
         let mut successful_targets = Vec::new();
         let mut failed_targets = Vec::new();
@@ -2883,21 +2958,50 @@ impl IngestorNode for TerminalNode {
                     &mut warnings,
                 ) {
                     Ok(IncomingHistoryCheckpointState::State(state)) => Some(state),
-                    Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => None,
-                    Ok(IncomingHistoryCheckpointState::MissingSource) => match watch_ctx
-                        .load_valid_local_state_for_recovery(&mut warnings)
-                        .await
-                    {
-                        LocalStateRestore::Present(state) => Some(state),
-                        LocalStateRestore::Missing => Some(watch_ctx.empty_state()),
-                        LocalStateRestore::Unusable => {
-                            failed_targets.push((
-                                checkpoint_key.clone(),
-                                "failed to restore local terminal watcher state for omitted checkpoint source".to_string(),
-                            ));
-                            continue;
+                    Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => {
+                        match watch_ctx.load_state().await {
+                            Ok(Some(state)) => match watch_ctx.validate_state(state) {
+                                Ok(state) => Some(state),
+                                Err(_) => None,
+                            },
+                            Ok(None) => {
+                                warnings.push(watch_ctx.strict_warning(
+                                    "no saved terminal progress; bootstrapping continuous watcher from the current live tail",
+                                ));
+                                Some(
+                                    watch_ctx
+                                        .bootstrap_live_state_for_continuous_monitoring()
+                                        .await?,
+                                )
+                            }
+                            Err(_) => None,
                         }
-                    },
+                    }
+                    Ok(IncomingHistoryCheckpointState::MissingSource) => {
+                        match watch_ctx
+                            .load_valid_local_state_for_recovery(&mut warnings)
+                            .await
+                        {
+                            LocalStateRestore::Present(state) => Some(state),
+                            LocalStateRestore::Missing => {
+                                warnings.push(watch_ctx.strict_warning(
+                                    "no saved terminal progress; bootstrapping continuous watcher from the current live tail",
+                                ));
+                                Some(
+                                    watch_ctx
+                                        .bootstrap_live_state_for_continuous_monitoring()
+                                        .await?,
+                                )
+                            }
+                            LocalStateRestore::Unusable => {
+                                failed_targets.push((
+                                    checkpoint_key.clone(),
+                                    "failed to restore local terminal watcher state for omitted checkpoint source".to_string(),
+                                ));
+                                continue;
+                            }
+                        }
+                    }
                     Err(error) => {
                         warnings.push(watch_ctx.strict_warning(format!(
                             "incoming checkpoint state is unusable for continuous monitoring: {error}"
@@ -5225,6 +5329,172 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn run_continuous_bootstraps_sqlite_sources_to_live_tail_without_saved_progress(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-continuous-bootstrap-sqlite-tail")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join("atuin.db");
+        let conn = rusqlite::Connection::open(&history_path)?;
+        conn.execute(
+            "CREATE TABLE history (
+                id TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL,
+                duration INTEGER NOT NULL,
+                exit INTEGER NOT NULL,
+                command TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                session TEXT NOT NULL,
+                hostname TEXT NOT NULL,
+                deleted_at INTEGER
+            )",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO history (id, timestamp, duration, exit, command, cwd, session, hostname, deleted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)",
+            rusqlite::params![
+                "row-1",
+                1_700_000_000_000_000_000_i64,
+                1_i64,
+                0_i64,
+                "echo historical",
+                "/tmp",
+                "session-1",
+                "host-a",
+            ],
+        )?;
+        conn.execute(
+            "INSERT INTO history (id, timestamp, duration, exit, command, cwd, session, hostname, deleted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)",
+            rusqlite::params![
+                "row-2",
+                1_700_000_000_000_000_100_i64,
+                1_i64,
+                0_i64,
+                "echo still historical",
+                "/tmp",
+                "session-1",
+                "host-a",
+            ],
+        )?;
+        let history_path = Utf8PathBuf::from_path_buf(history_path).map_err(|path| {
+            color_eyre::eyre::eyre!(
+                "invalid Atuin temp path should be utf-8: {}",
+                path.display()
+            )
+        })?;
+
+        let checkpoint_key = format!("atuin:{history_path}");
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: history_path,
+                shell: "atuin".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(async move {
+            let mut node = node;
+            let mut state = state;
+            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+                .await
+        });
+
+        tokio::task::yield_now().await;
+        let _ = shutdown_tx.send(true);
+
+        let report = task.await??;
+        let final_state =
+            TerminalNode::checkpoint_state_for_source(&report.final_checkpoint, &checkpoint_key)?
+                .ok_or_else(|| color_eyre::eyre::eyre!("missing final checkpoint state"))?;
+        assert_eq!(final_state.sqlite_row_id, Some(2));
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("bootstrapping continuous watcher from the current live tail")),
+            "expected bootstrap warning, got {:?}",
+            report.warnings
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn run_continuous_bootstraps_text_sources_to_file_end_without_saved_progress(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let TestRuntime { runtime, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-continuous-bootstrap-text-tail")
+                .with_dry_run(true)
+                .build()
+                .await?;
+
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join(".bash_history");
+        tokio::fs::write(&history_path, "echo first\nprintf second\n").await?;
+        let history_len = tokio::fs::metadata(&history_path).await?.len();
+        let history_path = Utf8PathBuf::from_path_buf(history_path).map_err(|path| {
+            color_eyre::eyre::eyre!(
+                "invalid bash temp path should be utf-8: {}",
+                path.display()
+            )
+        })?;
+
+        let checkpoint_key = format!("bash:{history_path}");
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: history_path,
+                shell: "bash".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(5),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let mut node = TerminalNode::new();
+        let mut state = TerminalCheckpoint::default();
+        node.initialize(config, &runtime, &mut state).await?;
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(async move {
+            let mut node = node;
+            let mut state = state;
+            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+                .await
+        });
+
+        tokio::task::yield_now().await;
+        let _ = shutdown_tx.send(true);
+
+        let report = task.await??;
+        let final_state =
+            TerminalNode::checkpoint_state_for_source(&report.final_checkpoint, &checkpoint_key)?
+                .ok_or_else(|| color_eyre::eyre::eyre!("missing final checkpoint state"))?;
+        assert_eq!(final_state.offset_bytes, history_len);
+        assert_eq!(final_state.line_number, 0);
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("bootstrapping continuous watcher from the current live tail")),
+            "expected bootstrap warning, got {:?}",
+            report.warnings
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn run_continuous_preserves_local_state_when_checkpoint_omits_source(
         ctx: TestContext,
     ) -> TestResult<()> {
@@ -5916,7 +6186,16 @@ mod tests {
             .next()
             .and_then(|ctx| ctx.state_path)
             .ok_or_else(|| color_eyre::eyre::eyre!("terminal state path missing"))?;
+        #[cfg(unix)]
+        let expected_inode = {
+            use std::os::unix::fs::MetadataExt;
+            Some(std::fs::metadata(history_path.as_std_path())?.ino())
+        };
+        #[cfg(not(unix))]
+        let expected_inode = None;
         let expected_state = HistoryState {
+            #[cfg(unix)]
+            inode: expected_inode,
             sqlite_row_id: Some(99),
             ..HistoryState::default()
         };
