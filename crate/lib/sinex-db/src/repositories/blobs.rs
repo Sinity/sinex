@@ -44,44 +44,85 @@ impl BlobRepository {
     {
         let record: BlobRecord = blob.into();
 
-        let record = sqlx::query_as!(
-            BlobRecord,
-            r#"
-            INSERT INTO core.blobs (
-                annex_backend, content_hash, original_filename, size_bytes, 
-                mime_type, checksum_blake3, metadata,
-                created_at, last_verified_at, verification_status
-            ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+        let record = if record.checksum_blake3.is_some() {
+            sqlx::query_as!(
+                BlobRecord,
+                r#"
+                INSERT INTO core.blobs (
+                    annex_backend, content_hash, original_filename, size_bytes,
+                    mime_type, checksum_blake3, metadata,
+                    created_at, last_verified_at, verification_status
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+                )
+                ON CONFLICT (checksum_blake3) WHERE checksum_blake3 IS NOT NULL DO UPDATE
+                SET original_filename = core.blobs.original_filename
+                RETURNING
+                    id as "id!: uuid::Uuid",
+                    annex_backend,
+                    content_hash,
+                    original_filename,
+                    size_bytes,
+                    mime_type,
+                    checksum_blake3,
+                    metadata,
+                    created_at as "created_at: Timestamp",
+                    last_verified_at as "last_verified_at: Timestamp",
+                    verification_status
+                "#,
+                record.annex_backend,
+                record.content_hash,
+                record.original_filename,
+                record.size_bytes,
+                record.mime_type,
+                record.checksum_blake3,
+                record.metadata,
+                record.created_at.inner(),
+                record.last_verified_at.map(|ts| ts.inner()),
+                record.verification_status
             )
-            ON CONFLICT (annex_backend, content_hash) DO UPDATE
-            SET original_filename = core.blobs.original_filename
-            RETURNING 
-                id as "id!: uuid::Uuid",
-                annex_backend,
-                content_hash,
-                original_filename,
-                size_bytes,
-                mime_type,
-                checksum_blake3,
-                metadata,
-                created_at as "created_at: Timestamp",
-                last_verified_at as "last_verified_at: Timestamp",
-                verification_status
-            "#,
-            record.annex_backend,
-            record.content_hash,
-            record.original_filename,
-            record.size_bytes,
-            record.mime_type,
-            record.checksum_blake3,
-            record.metadata,
-            record.created_at.inner(),
-            record.last_verified_at.map(|ts| ts.inner()),
-            record.verification_status
-        )
-        .fetch_one(executor)
-        .await
+            .fetch_one(executor)
+            .await
+        } else {
+            sqlx::query_as!(
+                BlobRecord,
+                r#"
+                INSERT INTO core.blobs (
+                    annex_backend, content_hash, original_filename, size_bytes,
+                    mime_type, checksum_blake3, metadata,
+                    created_at, last_verified_at, verification_status
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+                )
+                ON CONFLICT (annex_backend, content_hash) DO UPDATE
+                SET original_filename = core.blobs.original_filename
+                RETURNING
+                    id as "id!: uuid::Uuid",
+                    annex_backend,
+                    content_hash,
+                    original_filename,
+                    size_bytes,
+                    mime_type,
+                    checksum_blake3,
+                    metadata,
+                    created_at as "created_at: Timestamp",
+                    last_verified_at as "last_verified_at: Timestamp",
+                    verification_status
+                "#,
+                record.annex_backend,
+                record.content_hash,
+                record.original_filename,
+                record.size_bytes,
+                record.mime_type,
+                record.checksum_blake3,
+                record.metadata,
+                record.created_at.inner(),
+                record.last_verified_at.map(|ts| ts.inner()),
+                record.verification_status
+            )
+            .fetch_one(executor)
+            .await
+        }
         .map_err(|err| {
             SinexError::database(format!(
                 "Failed to insert blob (backend={}, hash={}): {err}",
