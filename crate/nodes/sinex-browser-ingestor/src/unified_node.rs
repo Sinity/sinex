@@ -8,10 +8,14 @@ use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use sinex_node_sdk::{
-    BatchImporterState, EventTransport, ImportFileChangeKind, IngestorNode, NodeResult,
-    RotationPolicy, SinexError, SourceRecordAnchor, SqliteSourceCheckpointState,
-    acquisition_manager::{AcquisitionManager, AppendStreamAcquirer},
-    checkpointed_sqlite_source_strict, discover_importable_files_at_root,
+    BatchImporterState, BufferedRecordSink, EventTransport, ImportFileChangeKind, IngestorNode,
+    NodeResult, RecordMaterializer, RecordProcessingOutcome, RecordReadHorizon, RecordSource,
+    RecordSources, RotationPolicy, SinexError, SourceRecordAnchor, SqliteRowCheckpoint,
+    SqliteSourceCheckpointState,
+    acquisition_manager::{
+        AcquisitionManager, AppendStreamAcquirer, BufferedAppendStreamWriterConfig,
+    },
+    discover_importable_files_at_root, process_record_batch_lenient,
     runtime::stream::{
         Checkpoint, ContinuousStart, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon,
     },
@@ -121,6 +125,17 @@ impl BrowserNode {
             .ok_or_else(|| SinexError::lifecycle("browser stage context not initialized"))
     }
 
+    fn materializer(
+        &self,
+        source_identifier: &str,
+    ) -> NodeResult<RecordMaterializer<BufferedRecordSink>> {
+        Ok(RecordMaterializer::new(BufferedRecordSink::spawn(
+            AppendStreamAcquirer::new(self.acquisition()?.clone()),
+            source_identifier,
+            BufferedAppendStreamWriterConfig::default(),
+        )))
+    }
+
     fn redact_document(value: &str) -> NodeResult<String> {
         Ok(privacy::process(value, ProcessingContext::Document)
             .map_err(|error| {
@@ -133,13 +148,13 @@ impl BrowserNode {
     }
 
     async fn append_visit_material(
-        stream: &mut AppendStreamAcquirer,
+        materializer: &RecordMaterializer<BufferedRecordSink>,
         visit: &BrowserVisitRecord,
     ) -> NodeResult<SourceRecordAnchor> {
         let mut material_bytes = visit.material_bytes.clone();
         material_bytes.push(b'\n');
-        stream
-            .append_with_anchor(&material_bytes, &visit.source_file)
+        materializer
+            .append_stable_bytes(material_bytes)
             .await
             .map_err(|error| {
                 SinexError::service("failed to append browser history source record")
@@ -150,9 +165,9 @@ impl BrowserNode {
     async fn emit_visit(
         &self,
         visit: BrowserVisitRecord,
-        stream: &mut AppendStreamAcquirer,
+        materializer: &RecordMaterializer<BufferedRecordSink>,
     ) -> NodeResult<()> {
-        let anchor = Self::append_visit_material(stream, &visit).await?;
+        let anchor = Self::append_visit_material(materializer, &visit).await?;
         let payload = PageVisitedPayload {
             browser: visit.browser,
             title: Self::redact_document(&visit.title)?,
@@ -270,16 +285,16 @@ impl BrowserNode {
                 }
             };
 
-            let mut stream = AppendStreamAcquirer::new(self.acquisition()?.clone());
+            let materializer = self.materializer(file.path.as_str())?;
             let import_result: NodeResult<()> = async {
                 for visit in visits {
-                    self.emit_visit(visit, &mut stream).await?;
+                    self.emit_visit(visit, &materializer).await?;
                     processed = processed.saturating_add(1);
                 }
                 Ok(())
             }
             .await;
-            if let Err(error) = stream.finalize("browser-dump-import").await {
+            if let Err(error) = materializer.finalize("browser-dump-import").await {
                 return Err(
                     SinexError::service("failed to finalize browser dump material")
                         .with_source(error),
@@ -320,41 +335,57 @@ impl BrowserNode {
         }
 
         let checkpoint_key = source.checkpoint_key();
-        let stream = Arc::new(tokio::sync::Mutex::new(AppendStreamAcquirer::new(
-            self.acquisition()?.clone(),
-        )));
-        let import_result = checkpointed_sqlite_source_strict(
-            &mut state.sqlite_sources,
-            &checkpoint_key,
-            historical_end_time,
-            |from_row_id, end_time| read_browser_sqlite_history(source, from_row_id, end_time),
-            |visit| {
-                let stream = Arc::clone(&stream);
-                async move {
-                    let mut stream = stream.lock().await;
-                    self.emit_visit(visit, &mut stream).await?;
-                    Ok(sinex_node_sdk::SqliteHistoryRowOutcome::Processed)
-                }
+        let materializer = self.materializer(source.path.as_str())?;
+        let source_config = source.clone();
+        let record_source = RecordSources::sqlite(
+            source.path.clone(),
+            checkpoint_key.clone(),
+            move |_path, from_row_id, end_time| {
+                read_browser_sqlite_history(&source_config, from_row_id, end_time)
             },
-        )
-        .await;
-
-        stream
-            .lock()
+            |visit: &BrowserVisitRecord| {
+                visit
+                    .db_row_id
+                    .and_then(|row_id| i64::try_from(row_id).ok())
+                    .unwrap_or_default()
+            },
+        );
+        let mut checkpoint = SqliteRowCheckpoint::new(state.sqlite_sources.cursor(&checkpoint_key));
+        let batch = record_source
+            .read_batch(
+                &checkpoint,
+                historical_end_time.map_or(RecordReadHorizon::Unbounded, RecordReadHorizon::Until),
+            )
             .await
-            .finalize("browser-sqlite-import")
-            .await?;
-
-        let report = import_result.map_err(|error| match error {
-            sinex_node_sdk::SqliteHistoryImportError::Read(error) => {
+            .map_err(|error| {
                 SinexError::processing("failed to read browser sqlite history")
                     .with_context("source", source.path.to_string())
                     .with_std_error(&error)
-            }
-            sinex_node_sdk::SqliteHistoryImportError::Process(error) => error,
-        })?;
+            })?;
+        let report = process_record_batch_lenient(
+            &mut checkpoint,
+            batch,
+            |visit| {
+                let materializer = materializer.clone();
+                async move {
+                    self.emit_visit(visit, &materializer)
+                        .await
+                        .map(|()| RecordProcessingOutcome::Processed)
+                }
+            },
+            |_| sinex_node_sdk::RecordWarningDisposition::Retry,
+        )
+        .await;
 
-        Ok((report.processed_rows as u64, warnings))
+        materializer.finalize("browser-sqlite-import").await?;
+        if let Some(error) = report.warnings.into_iter().next() {
+            return Err(error);
+        }
+        state
+            .sqlite_sources
+            .set_cursor(checkpoint_key, checkpoint.row_id);
+
+        Ok((report.processed_records as u64, warnings))
     }
 
     async fn run_import_pass(

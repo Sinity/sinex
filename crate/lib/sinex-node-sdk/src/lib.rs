@@ -2,6 +2,7 @@
 #![doc = include_str!("../docs/overview.md")]
 #![doc = include_str!("../docs/coordination.md")]
 #![doc = include_str!("../docs/stage_as_you_go.md")]
+#![doc = include_str!("../docs/record_source.md")]
 #![doc = include_str!("../docs/stream_runtime.md")]
 
 //! # Sinex Node SDK
@@ -96,6 +97,8 @@ pub mod preflight;
 pub mod prelude;
 pub mod processing;
 #[cfg(feature = "messaging")]
+pub mod record_source;
+#[cfg(feature = "messaging")]
 pub mod runtime;
 #[cfg(feature = "messaging")]
 pub mod schema_validator;
@@ -153,7 +156,8 @@ pub use exploration::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, MissingItem, SourceState,
 };
 pub use file_tailer::{
-    AppendOnlyFileChange, AppendOnlyFilePollResult, AppendOnlyFileState, TailError, poll_utf8_lines,
+    AppendOnlyFileChange, AppendOnlyFileLine, AppendOnlyFilePollResult, AppendOnlyFileState,
+    TailError, poll_utf8_lines,
 };
 #[cfg(feature = "messaging")]
 pub use health_reporter::{HealthMetrics, HealthReporter, HealthThresholds};
@@ -161,12 +165,7 @@ pub use health_reporter::{HealthMetrics, HealthReporter, HealthThresholds};
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatLogSink, HeartbeatMetrics};
 #[cfg(feature = "messaging")]
 pub use ingestor_node::{IngestorNode, IngestorNodeAdapter, IngestorState};
-pub use input_shapes::{
-    SqliteSourceCheckpointState, checkpointed_sqlite_history_lenient,
-    checkpointed_sqlite_history_strict, checkpointed_sqlite_source_lenient,
-    checkpointed_sqlite_source_strict, discover_importable_files_at_root,
-    poll_append_only_utf8_source,
-};
+pub use input_shapes::{SqliteSourceCheckpointState, discover_importable_files_at_root};
 #[cfg(feature = "messaging")]
 pub use jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig};
 #[cfg(feature = "messaging")]
@@ -174,6 +173,16 @@ pub use nats_publisher::NatsPublisher;
 #[cfg(all(feature = "db", feature = "messaging"))]
 pub use node_cli::{NodeCli, NodeCliRunner, NodeCommand, parse_checkpoint, parse_time_horizon};
 pub use processing::{ErrorAction, NodeLogicError};
+#[cfg(feature = "messaging")]
+pub use record_source::{
+    AppendOnlyTextRecord, AppendOnlyUtf8FileSource, BufferedRecordSink, MockRecordSource,
+    MockRecordSourceError, PollingRecordSource, RecordMaterialSink, RecordMaterializer,
+    RecordProcessContext, RecordProcessReport, RecordProcessingOutcome, RecordReadBatch,
+    RecordReadHorizon, RecordReadItem, RecordSource, RecordSourceDescriptor, RecordSourceHarness,
+    RecordSourceKind, RecordSourceObservation, RecordSources, RecordWarningDisposition,
+    SqliteRecordSource, SqliteRowCheckpoint, TimestampRecordCheckpoint,
+    process_record_batch_lenient, stable_json_line,
+};
 #[cfg(feature = "messaging")]
 pub use runtime::stream::{
     Checkpoint, ContinuousStart, EventSender, EventStream, MaterialReplayContext, Node,
@@ -191,10 +200,8 @@ pub use shutdown::{ShutdownConfig, default_checkpoint_path};
 #[cfg(feature = "messaging")]
 pub use source_material::{stage_material, stage_material_from_file};
 pub use sqlite_source::{
-    SqliteHistoryImportError, SqliteHistoryImportReport, SqliteHistoryRowOutcome,
-    SqliteHistoryWarningDisposition, SqliteTableCheckError, ensure_sqlite_with_tables,
-    import_sqlite_history_lenient, import_sqlite_history_strict, max_row_id_for_query,
-    read_rows_after, read_rows_with_params,
+    SqliteTableCheckError, ensure_sqlite_with_tables, max_row_id_for_query, read_rows_after,
+    read_rows_with_params,
 };
 #[cfg(feature = "messaging")]
 pub use systemd_notify::{notify_ready, notify_stopping, spawn_watchdog, stop_watchdog};
