@@ -25,9 +25,7 @@ use sinex_node_sdk::{
     BufferedRecordSink, EventTransport, RecordMaterializer, RecordProcessingOutcome,
     RecordReadHorizon, RecordSource, RecordSources, RecordWarningDisposition, SourceRecordAnchor,
     SqliteRowCheckpoint,
-    acquisition_manager::{
-        AcquisitionManager, AppendStreamAcquirer, BufferedAppendStreamWriterConfig, RotationPolicy,
-    },
+    acquisition_manager::{AcquisitionManager, BufferedAppendStreamWriterConfig, RotationPolicy},
     ingestor_node::IngestorNode,
     nats_publisher::NatsPublisher,
     process_record_batch_lenient,
@@ -807,8 +805,8 @@ impl IngestorNode for DesktopNode {
             Arc::clone(self.acquisition.as_ref().ok_or_else(|| {
                 SinexError::lifecycle("Desktop acquisition manager not initialized")
             })?);
-        let materializer = RecordMaterializer::new(BufferedRecordSink::spawn(
-            AppendStreamAcquirer::new(acquisition),
+        let materializer = RecordMaterializer::new(BufferedRecordSink::from_manager(
+            acquisition,
             db_path.as_str(),
             BufferedAppendStreamWriterConfig::default(),
         ));
