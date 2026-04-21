@@ -1200,7 +1200,7 @@ in
                   default = { size = 200; timeoutSec = 10; };
                   description = "Batch override (defaults to a slower cadence).";
                 };
-                resources = mkOption { type = nullOr (resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
+                resources = mkOption { type = nullOr (resourceModule { defaultMemory = "512M"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
                 env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
                 extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
               };
