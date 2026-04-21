@@ -116,17 +116,29 @@ fn parse_csv_dump(
 
     let headers = reader
         .headers()
-        .map_err(|error| SinexError::parse(format!("failed to read CSV headers from {}: {error}", file.path)))?
+        .map_err(|error| {
+            SinexError::parse(format!(
+                "failed to read CSV headers from {}: {error}",
+                file.path
+            ))
+        })?
         .clone();
 
     let browser = infer_browser_from_path(&file.path, browser_override);
     let mut visits = Vec::new();
     let mut line_count = 0u64;
 
-    for (index, row) in reader.deserialize::<std::collections::BTreeMap<String, String>>().enumerate() {
+    for (index, row) in reader
+        .deserialize::<std::collections::BTreeMap<String, String>>()
+        .enumerate()
+    {
         line_count += 1;
         let row = row.map_err(|error| {
-            SinexError::parse(format!("failed to parse CSV row {} from {}: {error}", index + 2, file.path))
+            SinexError::parse(format!(
+                "failed to parse CSV row {} from {}: {error}",
+                index + 2,
+                file.path
+            ))
         })?;
         let mut payload = Map::new();
         for header in &headers {
@@ -144,8 +156,8 @@ fn parse_csv_dump(
         })?;
         let url = extract_optional_string(&payload, &["url", "NavigatedToUrl", "navigatedtourl"])
             .unwrap_or_default();
-        let title =
-            extract_optional_string(&payload, &["title", "PageTitle", "pagetitle"]).unwrap_or_default();
+        let title = extract_optional_string(&payload, &["title", "PageTitle", "pagetitle"])
+            .unwrap_or_default();
         let material_bytes = build_material_bytes(&payload)?;
 
         visits.push(BrowserVisitRecord {
@@ -226,14 +238,14 @@ fn build_visit_from_payload(
     browser_override: Option<&str>,
     line_number: Option<u64>,
 ) -> NodeResult<Option<BrowserVisitRecord>> {
-    let Some(timestamp) = payload_timestamp(&payload) else {
+    let Some(timestamp) = payload_timestamp(payload) else {
         return Ok(None);
     };
 
     let browser = infer_browser_from_path(&file.path, browser_override);
-    let url = extract_optional_string(&payload, &["url"]).unwrap_or_default();
-    let title = extract_optional_string(&payload, &["title"]).unwrap_or_default();
-    let material_bytes = build_material_bytes(&payload)?;
+    let url = extract_optional_string(payload, &["url"]).unwrap_or_default();
+    let title = extract_optional_string(payload, &["title"]).unwrap_or_default();
+    let material_bytes = build_material_bytes(payload)?;
 
     Ok(Some(BrowserVisitRecord {
         browser,
@@ -242,13 +254,13 @@ fn build_visit_from_payload(
         normalized_url: normalize_url(&url),
         visit_time: timestamp,
         referrer: extract_optional_string(
-            &payload,
+            payload,
             &["referrer", "external_referrer_url", "referring_url"],
         ),
-        transition: extract_optional_string(&payload, &["transition"]),
-        visit_id: extract_optional_string(&payload, &["visitId", "visit_id", "id"]),
+        transition: extract_optional_string(payload, &["transition"]),
+        visit_id: extract_optional_string(payload, &["visitId", "visit_id", "id"]),
         visit_duration_ms: extract_optional_u64(
-            &payload,
+            payload,
             &["visit_duration_ms", "visit_duration", "visit_duration_us"],
         )
         .map(normalize_duration_ms),
@@ -260,11 +272,7 @@ fn build_visit_from_payload(
 }
 
 fn normalize_duration_ms(raw: u64) -> u64 {
-    if raw >= 1_000_000 {
-        raw / 1_000
-    } else {
-        raw
-    }
+    if raw >= 1_000_000 { raw / 1_000 } else { raw }
 }
 
 fn parse_csv_timestamp(payload: &Map<String, Value>) -> Option<sinex_primitives::Timestamp> {

@@ -1,4 +1,6 @@
-use crate::visit::{BrowserVisitRecord, build_material_bytes, normalize_url, parse_numeric_timestamp_i64};
+use crate::visit::{
+    BrowserVisitRecord, build_material_bytes, normalize_url, parse_numeric_timestamp_i64,
+};
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -44,8 +46,12 @@ pub fn ensure_browser_sqlite_source(
     source: &BrowserSqliteSourceConfig,
 ) -> Result<(), SqliteTableCheckError> {
     match source.format {
-        BrowserSqliteFormat::QutebrowserNative => ensure_sqlite_with_tables(&source.path, &["History"]),
-        BrowserSqliteFormat::ChromiumHistory => ensure_sqlite_with_tables(&source.path, &["urls", "visits"]),
+        BrowserSqliteFormat::QutebrowserNative => {
+            ensure_sqlite_with_tables(&source.path, &["History"])
+        }
+        BrowserSqliteFormat::ChromiumHistory => {
+            ensure_sqlite_with_tables(&source.path, &["urls", "visits"])
+        }
     }
 }
 
@@ -55,8 +61,12 @@ pub fn read_browser_sqlite_history(
     end_time: Option<Timestamp>,
 ) -> Result<(Vec<BrowserVisitRecord>, i64), rusqlite::Error> {
     match source.format {
-        BrowserSqliteFormat::QutebrowserNative => read_qutebrowser_history(source, from_row_id, end_time),
-        BrowserSqliteFormat::ChromiumHistory => read_chromium_history(source, from_row_id, end_time),
+        BrowserSqliteFormat::QutebrowserNative => {
+            read_qutebrowser_history(source, from_row_id, end_time)
+        }
+        BrowserSqliteFormat::ChromiumHistory => {
+            read_chromium_history(source, from_row_id, end_time)
+        }
     }
 }
 
@@ -170,10 +180,7 @@ fn read_chromium_history(
             ("rowid".to_string(), Value::from(row_id)),
             ("url".to_string(), Value::from(url.clone())),
             ("title".to_string(), Value::from(title.clone())),
-            (
-                "visit_time".to_string(),
-                Value::from(visit_time_raw),
-            ),
+            ("visit_time".to_string(), Value::from(visit_time_raw)),
             (
                 "external_referrer_url".to_string(),
                 referrer

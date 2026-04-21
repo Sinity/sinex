@@ -78,6 +78,14 @@ pub struct SourceMaterialHandle {
     pending_published_slice: Option<PendingPublishedSlice>,
 }
 
+/// Byte anchor returned after appending one logical source record to a stream material.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceRecordAnchor {
+    pub material_id: Uuid,
+    pub offset_start: i64,
+    pub offset_end: i64,
+}
+
 struct PendingMaterialBegin {
     source_identifier: String,
     metadata: JsonValue,
@@ -817,6 +825,7 @@ impl<'a> MaterialBuilder<'a> {
 pub struct AppendStreamAcquirer {
     manager: Arc<AcquisitionManager>,
     current_handle: Option<SourceMaterialHandle>,
+    current_source_identifier: Option<String>,
 }
 
 impl AppendStreamAcquirer {
@@ -825,37 +834,131 @@ impl AppendStreamAcquirer {
         Self {
             manager,
             current_handle: None,
+            current_source_identifier: None,
         }
     }
 
-    /// Append data, automatically rotating if needed
+    /// Append data, automatically rotating if needed.
     pub async fn append(&mut self, data: &[u8], source_identifier: &str) -> NodeResult<()> {
+        self.append_with_anchor(data, source_identifier).await?;
+        Ok(())
+    }
+
+    /// Append one logical source record and return its byte anchor in the active material.
+    ///
+    /// This is the preferred API for row/event streams: one material grows per
+    /// source, while each emitted event references the byte range for the record
+    /// it interpreted.
+    pub async fn append_with_anchor(
+        &mut self,
+        data: &[u8],
+        source_identifier: &str,
+    ) -> NodeResult<SourceRecordAnchor> {
         // Initialize if needed
         if self.current_handle.is_none() {
-            self.current_handle = Some(self.manager.begin_material(source_identifier).await?);
+            self.begin_stream_material(source_identifier).await?;
+        } else if self.current_source_identifier.as_deref() != Some(source_identifier) {
+            info!(
+                previous_source_identifier = ?self.current_source_identifier,
+                source_identifier,
+                "Rotating material due to source identifier change"
+            );
+            let old_handle = self.current_handle.take().ok_or_else(|| {
+                SinexError::invalid_state(
+                    "current_handle should exist for source identifier rotation",
+                )
+            })?;
+            self.manager
+                .finalize(old_handle, "source-identifier-change")
+                .await?;
+            self.current_source_identifier = None;
+            self.begin_stream_material(source_identifier).await?;
         }
 
-        let handle = self
-            .current_handle
-            .as_mut()
-            .ok_or_else(|| SinexError::invalid_state("current_handle should be initialized"))?;
-
         // Check rotation
-        if self.manager.should_rotate(handle) {
+        if self.should_rotate_before_append(data)? {
             info!("Rotating material due to size/age limits");
             let old_handle = self.current_handle.take().ok_or_else(|| {
                 SinexError::invalid_state("current_handle should exist for rotation")
             })?;
             self.manager.finalize(old_handle, "rotation").await?;
-            self.current_handle = Some(self.manager.begin_material(source_identifier).await?);
+            self.current_source_identifier = None;
+            self.begin_stream_material(source_identifier).await?;
         }
 
         // Append to current material
         let handle = self.current_handle.as_mut().ok_or_else(|| {
             SinexError::invalid_state("current_handle should exist after rotation")
         })?;
+        let material_id = handle.material_id;
+        let offset_start = handle.bytes_written;
         self.manager.append_slice(handle, data).await?;
+        let offset_end = handle.bytes_written;
 
+        Ok(SourceRecordAnchor {
+            material_id,
+            offset_start,
+            offset_end,
+        })
+    }
+
+    /// Serialize one record as JSONL, append it, and return its byte anchor.
+    pub async fn append_json_line<T>(
+        &mut self,
+        record: &T,
+        source_identifier: &str,
+    ) -> NodeResult<SourceRecordAnchor>
+    where
+        T: Serialize + ?Sized,
+    {
+        let mut data = serde_json::to_vec(record).map_err(|error| {
+            SinexError::serialization("failed to serialize source stream record")
+                .with_std_error(&error)
+        })?;
+        data.push(b'\n');
+        self.append_with_anchor(&data, source_identifier).await
+    }
+
+    fn should_rotate_before_append(&self, data: &[u8]) -> NodeResult<bool> {
+        let Some(handle) = self.current_handle.as_ref() else {
+            return Ok(false);
+        };
+
+        if self.manager.should_rotate(handle) {
+            return Ok(true);
+        }
+
+        if handle.bytes_written <= 0 {
+            return Ok(false);
+        }
+
+        let incoming = i64::try_from(data.len()).map_err(|error| {
+            SinexError::validation("source record exceeds supported material size")
+                .with_context("record_bytes", data.len().to_string())
+                .with_std_error(&error)
+        })?;
+        let projected = handle.bytes_written.checked_add(incoming).ok_or_else(|| {
+            SinexError::validation("source material byte offset overflow")
+                .with_context("bytes_written", handle.bytes_written.to_string())
+                .with_context("record_bytes", data.len().to_string())
+        })?;
+
+        let max_bytes =
+            i64::try_from(self.manager.rotation_policy.max_bytes.as_u64()).map_err(|error| {
+                SinexError::validation("source material rotation limit exceeds supported offset")
+                    .with_context(
+                        "max_bytes",
+                        self.manager.rotation_policy.max_bytes.as_u64().to_string(),
+                    )
+                    .with_std_error(&error)
+            })?;
+
+        Ok(projected > max_bytes)
+    }
+
+    async fn begin_stream_material(&mut self, source_identifier: &str) -> NodeResult<()> {
+        self.current_handle = Some(self.manager.begin_material(source_identifier).await?);
+        self.current_source_identifier = Some(source_identifier.to_string());
         Ok(())
     }
 
@@ -864,6 +967,7 @@ impl AppendStreamAcquirer {
         if let Some(handle) = self.current_handle.take() {
             self.manager.finalize(handle, reason).await?;
         }
+        self.current_source_identifier = None;
         Ok(())
     }
 }
@@ -872,7 +976,8 @@ impl AppendStreamAcquirer {
 mod tests {
     // Inline because these tests exercise private bootstrap coordination state;
     // extracting them would require widening the test surface of AcquisitionManager.
-    use super::AcquisitionManager;
+    use super::{AcquisitionManager, AppendStreamAcquirer};
+    use serde_json::json;
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -1012,6 +1117,57 @@ mod tests {
             metadata.len(),
             0,
             "oversized rejection must not stage bytes locally"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn append_stream_returns_contiguous_anchors(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let work_dir = tempfile::tempdir()?;
+        let manager = Arc::new(
+            AcquisitionManager::with_defaults(ctx.nats_client(), "append-stream-test")
+                .with_work_dir(work_dir.path()),
+        );
+        let mut stream = AppendStreamAcquirer::new(manager);
+
+        let first = stream
+            .append_json_line(&json!({ "row": 1, "value": "alpha" }), "test://history")
+            .await?;
+        let second = stream
+            .append_json_line(&json!({ "row": 2, "value": "beta" }), "test://history")
+            .await?;
+        let third = stream
+            .append_json_line(
+                &json!({ "row": 1, "value": "gamma" }),
+                "test://other-history",
+            )
+            .await?;
+        stream.finalize("test-complete").await?;
+
+        assert_eq!(
+            first.material_id, second.material_id,
+            "one logical source stream should use one material until rotation"
+        );
+        assert_ne!(
+            second.material_id, third.material_id,
+            "changing logical sources must rotate instead of mixing records"
+        );
+        assert_eq!(
+            first.offset_end, second.offset_start,
+            "source record anchors should be contiguous byte ranges"
+        );
+        assert_eq!(
+            third.offset_start, 0,
+            "a rotated source material should restart byte anchors at zero"
+        );
+        assert!(
+            first.offset_start < first.offset_end,
+            "first record must occupy a non-empty range"
+        );
+        assert!(
+            second.offset_start < second.offset_end,
+            "second record must occupy a non-empty range"
         );
         Ok(())
     }

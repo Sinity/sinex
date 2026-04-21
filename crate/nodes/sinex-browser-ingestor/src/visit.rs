@@ -1,11 +1,8 @@
 use chrono::{NaiveDateTime, TimeZone, Utc};
 use chrono_tz::Europe::Warsaw;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use sinex_node_sdk::{NodeResult, SinexError};
-use sinex_primitives::{
-    Timestamp,
-    utils::timestamp_helpers::parse_flexible_timestamp,
-};
+use sinex_primitives::{Timestamp, utils::timestamp_helpers::parse_flexible_timestamp};
 use url::Url;
 
 const TIMESTAMP_FIELDS: &[&str] = &[
@@ -20,8 +17,27 @@ const TIMESTAMP_FIELDS: &[&str] = &[
 ];
 
 const TRACKING_PREFIXES: &[&str] = &[
-    "utm_", "fbclid", "gclid", "igshid", "yclid", "dclid", "ref_", "spm", "sc_", "mc_",
-    "mkt_", "pk_campaign", "pk_kwd", "ga_", "gs_", "ved", "ei", "sa", "rlz", "dpr", "biw",
+    "utm_",
+    "fbclid",
+    "gclid",
+    "igshid",
+    "yclid",
+    "dclid",
+    "ref_",
+    "spm",
+    "sc_",
+    "mc_",
+    "mkt_",
+    "pk_campaign",
+    "pk_kwd",
+    "ga_",
+    "gs_",
+    "ved",
+    "ei",
+    "sa",
+    "rlz",
+    "dpr",
+    "biw",
     "bih",
 ];
 
@@ -53,10 +69,7 @@ pub fn infer_browser_from_path(path: &camino::Utf8Path, browser_override: Option
         return browser_override.to_string();
     }
 
-    let filename = path
-        .file_name()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+    let filename = path.file_name().unwrap_or_default().to_ascii_lowercase();
 
     for browser in [
         "chrome",
@@ -301,7 +314,9 @@ pub fn parse_slash_timestamp(value: &str) -> Option<Timestamp> {
             .or_else(|| Warsaw.from_local_datetime(&naive).earliest())
             .or_else(|| Warsaw.from_local_datetime(&naive).latest())?;
         let utc = localized.with_timezone(&Utc);
-        if let Some(timestamp) = Timestamp::from_unix_timestamp_nanos(utc.timestamp_nanos_opt()? as i128) {
+        if let Some(timestamp) =
+            Timestamp::from_unix_timestamp_nanos(i128::from(utc.timestamp_nanos_opt()?))
+        {
             return Some(timestamp);
         }
     }
@@ -349,19 +364,9 @@ pub fn extract_optional_u64(payload: &Map<String, Value>, fields: &[&str]) -> Op
 }
 
 pub fn build_material_bytes(payload: &Map<String, Value>) -> NodeResult<Vec<u8>> {
-    serde_json::to_vec(payload)
-        .map_err(|error| SinexError::serialization("failed to encode browser history material").with_std_error(&error))
-}
-
-#[must_use]
-pub fn make_material_metadata(visit: &BrowserVisitRecord) -> Value {
-    json!({
-        "browser": visit.browser,
-        "source_file": visit.source_file,
-        "line_number": visit.line_number,
-        "db_row_id": visit.db_row_id,
-        "visit_id": visit.visit_id,
-        "transition": visit.transition,
+    serde_json::to_vec(payload).map_err(|error| {
+        SinexError::serialization("failed to encode browser history material")
+            .with_std_error(&error)
     })
 }
 
@@ -372,9 +377,8 @@ mod tests {
 
     #[test]
     fn normalize_url_strips_tracking_params() {
-        let normalized = normalize_url(
-            "https://www.youtube.com/watch?v=abc123&utm_source=test&list=playlist",
-        );
+        let normalized =
+            normalize_url("https://www.youtube.com/watch?v=abc123&utm_source=test&list=playlist");
         assert_eq!(
             normalized.as_deref(),
             Some("https://youtube.com/watch?v=abc123&list=playlist")
