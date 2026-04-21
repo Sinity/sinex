@@ -316,17 +316,18 @@ in
           sinex-preflight = {
             description = "Sinex pre-flight verification";
             wantedBy = [ "multi-user.target" ];
-            wants = [ "network-online.target" ];
+            wants = [ "network-online.target" ] ++ preflightSupportUnits;
             after = [ "network-online.target" ]
               ++ schemaApplyUnits
               ++ localPostgresUnits
-              ++ optionals natsEnabled [ "nats.service" ]
-              ++ preflightSupportUnits;
-            # Require the services that preflight actively checks.
+              ++ optionals natsEnabled [ "nats.service" ];
+            # Require only the infrastructure that preflight actively checks.
+            # Target-user bridge helpers are best-effort: if a desktop/browser
+            # runtime is not visible yet, preflight should still run and the
+            # affected node can recover via its own access bootstrap.
             requires = schemaApplyUnits
               ++ localPostgresUnits
-              ++ optionals natsEnabled [ "nats.service" ]
-              ++ preflightSupportUnits;
+              ++ optionals natsEnabled [ "nats.service" ];
             path = [ pkgs.postgresql ];
             environment = preflightEnvironment;
             serviceConfig = {
