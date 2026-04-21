@@ -6,7 +6,10 @@ use sinex_primitives::{Id, JsonValue};
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{
+    mpsc::{self, error::TryRecvError},
+    oneshot,
+};
 use tracing::warn;
 
 #[async_trait]
@@ -48,6 +51,42 @@ struct MaterialWriteRequest {
     reply: oneshot::Sender<NodeResult<Option<(i64, i64)>>>,
 }
 
+const WRITER_BATCH_MAX_RECORDS: usize = 64;
+const WRITER_BATCH_MAX_BYTES: usize = 128 * 1024;
+
+async fn append_material_batch(
+    acquisition: &Arc<AcquisitionManager>,
+    handle: &mut SourceMaterialHandle,
+    batch: Vec<(Vec<u8>, oneshot::Sender<NodeResult<Option<(i64, i64)>>>)>,
+) {
+    let records: Vec<Vec<u8>> = batch.iter().map(|(payload, _)| payload.clone()).collect();
+    let result = acquisition.append_record_batch(handle, &records).await;
+
+    match result {
+        Ok(anchors) => {
+            for ((_, reply), anchor) in batch.into_iter().zip(anchors) {
+                send_material_reply(
+                    reply,
+                    Ok(Some((anchor.offset_start, anchor.offset_end))),
+                    "append",
+                );
+            }
+        }
+        Err(error) => {
+            let message = error.to_string();
+            for (_, reply) in batch {
+                send_material_reply(
+                    reply,
+                    Err(SinexError::processing(format!(
+                        "Failed to append system payload batch: {message}"
+                    ))),
+                    "append",
+                );
+            }
+        }
+    }
+}
+
 /// Background task that owns the `SourceMaterialHandle`.
 ///
 /// Serializes all NATS I/O through a single task so callers never hold a lock
@@ -59,9 +98,17 @@ async fn material_writer_task(
     mut handle: SourceMaterialHandle,
     mut rx: mpsc::Receiver<MaterialWriteRequest>,
 ) {
-    let mut bytes_written: i64 = 0;
+    let mut pending_request: Option<MaterialWriteRequest> = None;
 
-    while let Some(req) = rx.recv().await {
+    loop {
+        let req = match pending_request.take() {
+            Some(req) => req,
+            None => match rx.recv().await {
+                Some(req) => req,
+                None => break,
+            },
+        };
+
         #[allow(
             clippy::single_match_else,
             reason = "Two-arm match makes the append/finalize dichotomy visible; the finalize arm returns"
@@ -69,26 +116,41 @@ async fn material_writer_task(
         match req.payload {
             // ── normal append ────────────────────────────────────────────
             Some(payload_bytes) => {
-                let offset_start = bytes_written;
-                let offset_end = offset_start + payload_bytes.len() as i64;
+                let mut batch_bytes = payload_bytes.len();
+                let mut batch = vec![(payload_bytes, req.reply)];
 
-                let result = if payload_bytes.is_empty() {
-                    bytes_written = offset_end;
-                    Ok(Some((offset_start, offset_end)))
-                } else {
-                    match acquisition.append_slice(&mut handle, &payload_bytes).await {
-                        Ok(()) => {
-                            bytes_written = offset_end;
-                            Ok(Some((offset_start, offset_end)))
-                        }
-                        Err(e) => Err(SinexError::processing(format!(
-                            "Failed to append system payload: {e}"
-                        ))),
+                while batch.len() < WRITER_BATCH_MAX_RECORDS {
+                    match rx.try_recv() {
+                        Ok(next) => match next.payload {
+                            Some(next_payload) => {
+                                let projected_bytes =
+                                    batch_bytes.saturating_add(next_payload.len());
+                                if projected_bytes > WRITER_BATCH_MAX_BYTES {
+                                    pending_request = Some(MaterialWriteRequest {
+                                        payload: Some(next_payload),
+                                        reason: next.reason,
+                                        reply: next.reply,
+                                    });
+                                    break;
+                                }
+                                batch_bytes = projected_bytes;
+                                batch.push((next_payload, next.reply));
+                            }
+                            None => {
+                                pending_request = Some(MaterialWriteRequest {
+                                    payload: None,
+                                    reason: next.reason,
+                                    reply: next.reply,
+                                });
+                                break;
+                            }
+                        },
+                        Err(TryRecvError::Empty) => break,
+                        Err(TryRecvError::Disconnected) => break,
                     }
-                };
+                }
 
-                // Ignore send error: caller may have been cancelled.
-                send_material_reply(req.reply, result, "append");
+                append_material_batch(&acquisition, &mut handle, batch).await;
             }
 
             // ── finalize sentinel ─────────────────────────────────────────
@@ -282,8 +344,12 @@ impl MaterialContext for RealWatcherMaterialContext {
 
 #[cfg(test)]
 mod tests {
-    use super::{RealWatcherMaterialContext, send_material_reply};
+    use super::{
+        MaterialWriteRequest, RealWatcherMaterialContext, material_writer_task, send_material_reply,
+    };
     use sinex_db::models::SourceMaterial;
+    use sinex_node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
+    use sinex_primitives::Uuid;
     use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
     use tokio::sync::{mpsc, oneshot};
@@ -334,6 +400,67 @@ mod tests {
                 .to_string()
                 .contains("finalize response for append request")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn material_writer_preserves_offsets_for_queued_payloads(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let namespace = format!("system-writer-batch-{}", Uuid::now_v7());
+        let work_dir = std::env::temp_dir().join(format!("sinex-system-writer-{namespace}"));
+        tokio::fs::create_dir_all(&work_dir).await?;
+        let acquisition = Arc::new(
+            AcquisitionManager::new_with_namespace(
+                ctx.nats_client(),
+                RotationPolicy::default(),
+                "system-test".to_string(),
+                Some(namespace.clone()),
+            )
+            .with_work_dir(&work_dir),
+        );
+        let handle = acquisition.begin_material("test://system-writer").await?;
+        let (writer_tx, writer_rx) = mpsc::channel(8);
+        let writer = tokio::spawn(material_writer_task(
+            Arc::clone(&acquisition),
+            handle,
+            writer_rx,
+        ));
+
+        let mut replies = Vec::new();
+        for payload in [b"one".to_vec(), b"two".to_vec(), b"three".to_vec()] {
+            let (reply, rx) = oneshot::channel();
+            writer_tx
+                .send(MaterialWriteRequest {
+                    payload: Some(payload),
+                    reason: None,
+                    reply,
+                })
+                .await?;
+            replies.push(rx);
+        }
+
+        let (finalize_reply, finalize_rx) = oneshot::channel();
+        writer_tx
+            .send(MaterialWriteRequest {
+                payload: None,
+                reason: Some("test-complete".to_string()),
+                reply: finalize_reply,
+            })
+            .await?;
+
+        let mut anchors = Vec::new();
+        for reply in replies {
+            anchors.push(reply.await??.ok_or_else(|| {
+                SinexError::invalid_state("append request returned finalize response")
+            })?);
+        }
+        assert_eq!(finalize_rx.await??, None);
+        writer.await?;
+
+        assert_eq!(anchors, vec![(0, 3), (3, 6), (6, 11)]);
+        let _ = tokio::fs::remove_dir_all(&work_dir).await;
         Ok(())
     }
 }

@@ -7,7 +7,7 @@ use blake3::Hasher;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use sinex_primitives::Timestamp;
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{collections::BTreeMap, path::PathBuf, time::Instant};
 use tokio::fs::File;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -152,6 +152,11 @@ pub(super) struct AssemblerState {
     pub pending_write: Option<PendingWrite>,
     pub pending_end: Option<MaterialEndMessage>,
     pub last_slice_received: Timestamp,
+    pub staged_bytes_since_sync: i64,
+    pub wal_entries_since_sync: u32,
+    pub wal_bytes_since_sync: usize,
+    pub last_staged_sync: Instant,
+    pub last_wal_sync: Instant,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -466,6 +471,11 @@ mod tests {
             pending_write: None,
             pending_end: None,
             last_slice_received: Timestamp::now(),
+            staged_bytes_since_sync: 0,
+            wal_entries_since_sync: 0,
+            wal_bytes_since_sync: 0,
+            last_staged_sync: Instant::now(),
+            last_wal_sync: Instant::now(),
         }
     }
 
