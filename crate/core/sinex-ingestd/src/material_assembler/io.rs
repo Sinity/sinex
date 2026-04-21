@@ -6,6 +6,7 @@
 
 use super::{
     MaterialAssembler,
+    finalize::PendingEndBehavior,
     state::{
         AssemblerState,
         AssemblyPhase,
@@ -96,8 +97,19 @@ pub(super) async fn restore_state(assembler: &MaterialAssembler) -> IngestdResul
 
         match restore_state_params(assembler, material_id, &path).await {
             Ok(Some(state)) => {
-                assembler.insert_state_handle(material_id, state);
+                let should_finalize_pending_end =
+                    state.phase != AssemblyPhase::PendingBegin && state.pending_end.is_some();
+                let state_handle = assembler.insert_state_handle(material_id, state);
                 info!(material_id = %material_id, "Restored in-flight material state from WAL");
+                if should_finalize_pending_end {
+                    assembler
+                        .try_finalize_pending_end(
+                            material_id,
+                            state_handle,
+                            PendingEndBehavior::Ignore,
+                        )
+                        .await?;
+                }
             }
             Ok(None) => {}
             Err(error @ SinexError::InvalidState(_)) => {
@@ -390,8 +402,27 @@ fn restored_state_is_stale(
     }
 
     let elapsed = Timestamp::now() - last_slice_received;
+    let pending_end_blocked = state_snapshot.pending_end.is_some()
+        && !restored_pending_end_is_complete(state_snapshot, buffered_slices);
     elapsed.whole_seconds() > slice_arrival_timeout.as_secs() as i64
-        && (state_snapshot.pending_end.is_none() || !buffered_slices.is_empty())
+        && (state_snapshot.pending_end.is_none()
+            || pending_end_blocked
+            || !buffered_slices.is_empty()
+            || state_snapshot.phase == AssemblyPhase::PendingBegin)
+}
+
+fn restored_pending_end_is_complete(
+    state_snapshot: &ReplayedState,
+    buffered_slices: &BTreeMap<i64, PathBuf>,
+) -> bool {
+    let Some(end) = &state_snapshot.pending_end else {
+        return false;
+    };
+
+    state_snapshot.phase != AssemblyPhase::PendingBegin
+        && buffered_slices.is_empty()
+        && state_snapshot.expected_offset == end.total_size_bytes
+        && state_snapshot.slice_count == end.total_slices
 }
 
 fn parse_wal_envelope_line(line: &str) -> Result<WalEntryEnvelope, String> {
@@ -1915,6 +1946,72 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn restore_state_finalizes_complete_pending_end(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let material_dir = state_dir.path().join(material_id.to_string());
+        tokio::fs::create_dir_all(&material_dir).await?;
+
+        ctx.pool
+            .source_materials()
+            .register_external_in_flight(
+                material_id,
+                "test",
+                Some("test://empty-pending-end-restore"),
+                json!({}),
+                Timestamp::now(),
+            )
+            .await?;
+
+        write_wal_entry(
+            &material_dir.join(WAL_FILE_NAME),
+            WalEntry::Begin(super::super::state::MaterialBeginMessage {
+                material_id: material_id.to_string(),
+                material_kind: "test".to_string(),
+                source_identifier: "test://empty-pending-end-restore".to_string(),
+                metadata: json!({}),
+                started_at: Timestamp::now().format_rfc3339(),
+            }),
+        )
+        .await?;
+        write_wal_entry(
+            &material_dir.join(WAL_FILE_NAME),
+            WalEntry::End(MaterialEndMessage {
+                material_id: material_id.to_string(),
+                ended_at: Timestamp::now().format_rfc3339(),
+                content_hash: blake3::hash(b"").to_hex().to_string(),
+                total_slices: 0,
+                total_size_bytes: 0,
+                metadata: json!({}),
+            }),
+        )
+        .await?;
+
+        restore_state(&assembler).await?;
+
+        assert!(
+            !material_dir.exists(),
+            "complete pending_end state should finalize during restore, not stay active"
+        );
+        assert!(
+            assembler.get_state_handle(&material_id).is_none(),
+            "finalized restored pending_end state must not occupy the active set"
+        );
+        let material = ctx
+            .pool
+            .source_materials()
+            .get_by_id(Id::from_uuid(material_id))
+            .await?
+            .expect("material should still be tracked");
+        assert_eq!(
+            material.status.as_str(),
+            sinex_db::repositories::material_status::FAILED
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn restore_state_cleans_up_assemblies_already_past_slice_timeout(
         ctx: TestContext,
     ) -> TestResult<()> {
@@ -1946,6 +2043,54 @@ mod tests {
         assert!(
             assembler.assembler_state.is_empty(),
             "stale restored assemblies must not occupy the active set"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn restore_state_cleans_up_stale_incomplete_pending_end(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, state_dir) = test_assembler_with_config(&ctx, 1).await?;
+        let material_id = Uuid::now_v7();
+        let material_dir = state_dir.path().join(material_id.to_string());
+        tokio::fs::create_dir_all(&material_dir).await?;
+
+        write_wal_entry(
+            &material_dir.join(WAL_FILE_NAME),
+            WalEntry::Begin(super::super::state::MaterialBeginMessage {
+                material_id: material_id.to_string(),
+                material_kind: "test".to_string(),
+                source_identifier: "test://incomplete-pending-end-restore".to_string(),
+                metadata: json!({}),
+                started_at: Timestamp::now().format_rfc3339(),
+            }),
+        )
+        .await?;
+        write_wal_entry(
+            &material_dir.join(WAL_FILE_NAME),
+            WalEntry::End(MaterialEndMessage {
+                material_id: material_id.to_string(),
+                ended_at: Timestamp::now().format_rfc3339(),
+                content_hash: blake3::hash(b"incomplete").to_hex().to_string(),
+                total_slices: 1,
+                total_size_bytes: 10,
+                metadata: json!({}),
+            }),
+        )
+        .await?;
+
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        restore_state(&assembler).await?;
+
+        assert!(
+            !material_dir.exists(),
+            "stale incomplete pending_end state should not be restored indefinitely"
+        );
+        assert!(
+            assembler.get_state_handle(&material_id).is_none(),
+            "stale incomplete pending_end state must not occupy the active set"
         );
         Ok(())
     }
