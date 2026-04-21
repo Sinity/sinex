@@ -115,6 +115,7 @@ pub mod watcher_handle;
 #[cfg(feature = "messaging")]
 pub use acquisition_manager::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy, SourceMaterialHandle,
+    SourceRecordAnchor,
 };
 #[cfg(feature = "messaging")]
 pub use automaton_base::{ActivityEntry, IngestionHistoryEntry};

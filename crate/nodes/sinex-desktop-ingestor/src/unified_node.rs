@@ -22,13 +22,13 @@ use crate::{
 use camino::Utf8PathBuf;
 use serde_json::json;
 use sinex_node_sdk::{
-    EventTransport, SqliteHistoryImportError, SqliteHistoryRowOutcome,
-    acquisition_manager::{AcquisitionManager, RotationPolicy},
+    EventTransport, SourceRecordAnchor, SqliteHistoryImportError, SqliteHistoryRowOutcome,
+    acquisition_manager::{AcquisitionManager, AppendStreamAcquirer, RotationPolicy},
     checkpointed_sqlite_history_strict,
     ingestor_node::IngestorNode,
     nats_publisher::NatsPublisher,
     stage_as_you_go::StageAsYouGoContext,
-    stage_material, wait_for_shutdown_signal,
+    wait_for_shutdown_signal,
     watcher_handle::WatcherHandle,
 };
 use sinex_primitives::{
@@ -44,8 +44,6 @@ use sinex_primitives::{
 };
 use std::sync::Arc;
 use tokio::sync::watch;
-
-const MATERIAL_REASON_ACTIVITYWATCH_HISTORY: &str = "desktop-activitywatch-history";
 
 /// Desktop monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -415,40 +413,31 @@ impl DesktopNode {
     }
 
     async fn stage_activitywatch_material(
-        acquisition: &AcquisitionManager,
+        stream: &tokio::sync::Mutex<AppendStreamAcquirer>,
         db_path: &Utf8PathBuf,
         entry: &ActivityWatchHistoryEntry,
-    ) -> NodeResult<(Uuid, Vec<u8>)> {
-        let material_metadata = json!({
-            "bucket_id": entry.bucket_id,
-            "kind": entry.kind.as_str(),
-            "row_id": entry.row_id,
-            "host": entry.host,
-        });
-        let material_bytes =
+    ) -> NodeResult<SourceRecordAnchor> {
+        let mut material_bytes =
             serde_json::to_vec(&entry.raw_material_payload()).map_err(|error| {
                 SinexError::serialization("failed to serialize ActivityWatch source material")
                     .with_std_error(&error)
             })?;
-        let material_id = stage_material(
-            acquisition,
-            db_path.as_str(),
-            &material_bytes,
-            MATERIAL_REASON_ACTIVITYWATCH_HISTORY,
-            Some(material_metadata),
-        )
-        .await
-        .map_err(|error| {
-            SinexError::service("failed to stage ActivityWatch material").with_source(error)
-        })?;
+        material_bytes.push(b'\n');
 
-        Ok((material_id, material_bytes))
+        let mut stream = stream.lock().await;
+        stream
+            .append_with_anchor(&material_bytes, db_path.as_str())
+            .await
+            .map_err(|error| {
+                SinexError::service("failed to append ActivityWatch material").with_source(error)
+            })
     }
 
     fn build_activitywatch_event(
         entry: &ActivityWatchHistoryEntry,
         material_id: Uuid,
-        material_len: usize,
+        offset_start: i64,
+        offset_end: i64,
     ) -> NodeResult<sinex_primitives::events::Event<serde_json::Value>> {
         let host = HostName::new(entry.host.clone()).map_err(|error| {
             SinexError::validation("invalid ActivityWatch hostname").with_source(error)
@@ -467,13 +456,13 @@ impl DesktopNode {
                 }
                 .into_builder()
                 .hostname(host)
-                .from_material(material_id, 0)
+                .from_material(material_id, offset_start)
                 .at_time(entry.started_at)
-                .with_offset_start(0)
+                .with_offset_start(offset_start)
                 .map_err(|error| {
                     SinexError::service("failed to set ActivityWatch offset").with_source(error)
                 })?
-                .with_offset_end(material_len as i64)
+                .with_offset_end(offset_end)
                 .map_err(|error| {
                     SinexError::service("failed to set ActivityWatch offset").with_source(error)
                 })?
@@ -502,13 +491,13 @@ impl DesktopNode {
                 }
                 .into_builder()
                 .hostname(host)
-                .from_material(material_id, 0)
+                .from_material(material_id, offset_start)
                 .at_time(entry.started_at)
-                .with_offset_start(0)
+                .with_offset_start(offset_start)
                 .map_err(|error| {
                     SinexError::service("failed to set ActivityWatch offset").with_source(error)
                 })?
-                .with_offset_end(material_len as i64)
+                .with_offset_end(offset_end)
                 .map_err(|error| {
                     SinexError::service("failed to set ActivityWatch offset").with_source(error)
                 })?
@@ -533,13 +522,13 @@ impl DesktopNode {
                 }
                 .into_builder()
                 .hostname(host)
-                .from_material(material_id, 0)
+                .from_material(material_id, offset_start)
                 .at_time(entry.started_at)
-                .with_offset_start(0)
+                .with_offset_start(offset_start)
                 .map_err(|error| {
                     SinexError::service("failed to set ActivityWatch offset").with_source(error)
                 })?
-                .with_offset_end(material_len as i64)
+                .with_offset_end(offset_end)
                 .map_err(|error| {
                     SinexError::service("failed to set ActivityWatch offset").with_source(error)
                 })?
@@ -559,20 +548,25 @@ impl DesktopNode {
 
     async fn emit_activitywatch_entry(
         &self,
+        stream: &tokio::sync::Mutex<AppendStreamAcquirer>,
         db_path: &Utf8PathBuf,
         entry: &ActivityWatchHistoryEntry,
     ) -> NodeResult<()> {
-        let (acquisition, stage_context) = self.activitywatch_runtime_handles()?;
-        let (material_id, material_bytes) =
-            Self::stage_activitywatch_material(acquisition, db_path, entry).await?;
-        let event = Self::build_activitywatch_event(entry, material_id, material_bytes.len())?;
+        let (_, stage_context) = self.activitywatch_runtime_handles()?;
+        let anchor = Self::stage_activitywatch_material(stream, db_path, entry).await?;
+        let event = Self::build_activitywatch_event(
+            entry,
+            anchor.material_id,
+            anchor.offset_start,
+            anchor.offset_end,
+        )?;
 
         stage_context
             .emit_event_with_provenance(
                 event,
-                material_id,
-                Some(0),
-                Some(material_bytes.len() as i64),
+                anchor.material_id,
+                Some(anchor.offset_start),
+                Some(anchor.offset_end),
             )
             .await
             .map(|_| ())
@@ -809,13 +803,21 @@ impl IngestorNode for DesktopNode {
         let mut first_ts = None;
         let mut last_ts = None;
         let node = &*self;
+        let acquisition =
+            Arc::clone(self.acquisition.as_ref().ok_or_else(|| {
+                SinexError::lifecycle("Desktop acquisition manager not initialized")
+            })?);
+        let stream = Arc::new(tokio::sync::Mutex::new(AppendStreamAcquirer::new(
+            acquisition,
+        )));
         let mut row_id_cursor = start_row_id;
-        let import_report = checkpointed_sqlite_history_strict(
+        let import_result = checkpointed_sqlite_history_strict(
             &mut row_id_cursor,
             until.end_time(),
             |from_row_id, end_time| read_activitywatch_history(&db_path, from_row_id, end_time),
             |entry| {
                 let db_path = db_path.clone();
+                let stream = Arc::clone(&stream);
                 let started_at = entry.started_at;
                 let ended_at = entry.ended_at;
                 if first_ts.is_none() {
@@ -823,14 +825,21 @@ impl IngestorNode for DesktopNode {
                 }
                 last_ts = Some(ended_at);
                 async move {
-                    node.emit_activitywatch_entry(&db_path, &entry)
+                    node.emit_activitywatch_entry(stream.as_ref(), &db_path, &entry)
                         .await
                         .map(|()| SqliteHistoryRowOutcome::Processed)
                 }
             },
         )
-        .await
-        .map_err(|error| match error {
+        .await;
+
+        stream
+            .lock()
+            .await
+            .finalize("desktop-activitywatch-historical")
+            .await?;
+
+        let import_report = import_result.map_err(|error| match error {
             SqliteHistoryImportError::Read(error) => SinexError::io(format!(
                 "Failed to read ActivityWatch history from {db_path}: {error}"
             )),
@@ -846,7 +855,7 @@ impl IngestorNode for DesktopNode {
             duration: start_time.elapsed(),
             final_checkpoint: Checkpoint::external(
                 json!({ "activitywatch_row_id": row_id_cursor }),
-                format!("ActivityWatch row {}", row_id_cursor),
+                format!("ActivityWatch row {row_id_cursor}"),
             ),
             time_range: first_ts.zip(last_ts),
             node_stats: HashMap::new(),
@@ -1611,7 +1620,7 @@ mod tests {
             json!({ "title": "main.rs" }),
         )?;
 
-        let error = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 32)
+        let error = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 0, 32)
             .expect_err("missing ActivityWatch app should fail honestly");
 
         assert!(error.to_string().contains("missing required field 'app'"));
@@ -1626,7 +1635,7 @@ mod tests {
             json!({ "app": "Alacritty", "title": "main.rs" }),
         )?;
 
-        let event = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 32)?;
+        let event = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 0, 32)?;
 
         assert_eq!(event.payload["title"], json!("main.rs"));
         Ok(())
@@ -1640,7 +1649,7 @@ mod tests {
             json!({ "app": "Firefox", "title": "Docs", "url": 42 }),
         )?;
 
-        let error = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 32)
+        let error = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 0, 32)
             .expect_err("non-string ActivityWatch url should fail honestly");
 
         assert!(error.to_string().contains("field 'url' must be a string"));
@@ -1655,7 +1664,7 @@ mod tests {
             json!({ "app": "Firefox", "title": "Docs", "url": "https://example.com/docs" }),
         )?;
 
-        let event = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 32)?;
+        let event = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 0, 32)?;
 
         assert_eq!(event.payload["url"], json!("https://example.com/docs"));
         Ok(())
@@ -1667,7 +1676,7 @@ mod tests {
         let entry =
             sample_activitywatch_entry(ActivityWatchEntryKind::Afk, json!({ "status": "   " }))?;
 
-        let error = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 32)
+        let error = DesktopNode::build_activitywatch_event(&entry, Uuid::now_v7(), 0, 32)
             .expect_err("empty ActivityWatch status should fail honestly");
 
         assert!(

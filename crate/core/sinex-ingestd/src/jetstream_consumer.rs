@@ -176,6 +176,10 @@ fn is_source_material_fk_constraint_name(value: &str) -> bool {
             .is_some_and(|prefix| prefix.ends_with('_'))
 }
 
+fn is_uuid_v7(value: &Uuid) -> bool {
+    value.get_version_num() == 7
+}
+
 fn is_foreign_key_violation(err: &SinexError) -> bool {
     err.context_map()
         .get("sqlstate")
@@ -1035,6 +1039,24 @@ impl JetStreamConsumer {
                 .await?;
             return Ok(None);
         };
+        if !is_uuid_v7(&parsed_id) {
+            error!(
+                event_id = %parsed_id,
+                source = %event.source,
+                event_type = %event.event_type,
+                uuid_version = parsed_id.get_version_num(),
+                "Event ID is not UUIDv7 - violates hypertable partition contract; routing to DLQ"
+            );
+            self.route_validation_failure(
+                &msg,
+                format!(
+                    "Invalid event ID: {parsed_id} is UUID version {}, expected UUIDv7",
+                    parsed_id.get_version_num()
+                ),
+            )
+            .await?;
+            return Ok(None);
+        }
 
         Ok(Some(PreparedEvent {
             event,
@@ -2256,6 +2278,13 @@ mod tests {
         assert!(!is_source_material_fk_constraint_name(
             "events_source_material_id_fkey_extra"
         ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn uuid_v7_guard_rejects_other_uuid_versions() -> TestResult<()> {
+        assert!(is_uuid_v7(&Uuid::now_v7()));
+        assert!(!is_uuid_v7(&Uuid::new_v4()));
         Ok(())
     }
 

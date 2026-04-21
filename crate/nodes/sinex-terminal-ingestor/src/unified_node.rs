@@ -1,9 +1,8 @@
 #![doc = include_str!("../docs/overview.md")]
 
 //! Terminal node that tails configured history files and emits structured
-//! command events. Each discovered command is captured as a source material via
-//! `AcquisitionManager` and published to `JetStream`, while the structured event
-//! is emitted through the shared Stage-as-You-Go channel.
+//! command events. History rows are appended to SDK-managed source material
+//! streams and structured events anchor to the interpreted byte ranges.
 
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
@@ -12,11 +11,11 @@ use sinex_node_sdk::{
     ActivityEntry, AppendOnlyFileChange, AppendOnlyFileState, CoverageAnalysis,
     ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState, SqliteHistoryRowOutcome,
     SqliteHistoryWarningDisposition, TailError, checkpointed_sqlite_history_lenient,
-    poll_append_only_utf8_source, stage_material,
+    poll_append_only_utf8_source,
 };
 use sinex_node_sdk::{
-    NodeResult, SinexError,
-    acquisition_manager::{AcquisitionManager, RotationPolicy},
+    NodeResult, SinexError, SourceRecordAnchor,
+    acquisition_manager::{AcquisitionManager, AppendStreamAcquirer, RotationPolicy},
     ingestor_node::IngestorNode,
     runtime::stream::{
         Checkpoint, NodeRuntimeState, ScanArgs, ScanReport, ServiceInfo, TimeHorizon,
@@ -51,8 +50,6 @@ use tokio::{
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 use validator::ValidationError;
-
-const MATERIAL_REASON_HISTORY: &str = "terminal-history";
 
 // Default configuration values
 const DEFAULT_POLLING_INTERVAL: Seconds = Seconds::from_secs(5);
@@ -418,7 +415,7 @@ fn normalize_shell_name(shell: &str) -> String {
 
 #[derive(Clone)]
 struct HistoryWatcherContext {
-    acquisition: Arc<AcquisitionManager>,
+    material_stream: Arc<Mutex<AppendStreamAcquirer>>,
     stage_context: StageAsYouGoContext,
     metrics: Arc<TerminalMetrics>,
     shell: String,
@@ -953,26 +950,38 @@ impl HistoryWatcherContext {
 
             #[cfg(unix)]
             {
-                self.poll_history_once(
-                    &mut offset_bytes,
-                    &mut line_number,
-                    &mut pending_timestamp,
-                    &mut last_inode,
-                    &mut recent_hashes,
-                    true,
-                )
-                .await?;
+                if let Err(error) = self
+                    .poll_history_once(
+                        &mut offset_bytes,
+                        &mut line_number,
+                        &mut pending_timestamp,
+                        &mut last_inode,
+                        &mut recent_hashes,
+                        true,
+                    )
+                    .await
+                {
+                    self.finalize_material_stream_after_error("terminal-history-text-error")
+                        .await;
+                    return Err(error);
+                }
             }
             #[cfg(not(unix))]
             {
-                self.poll_history_once(
-                    &mut offset_bytes,
-                    &mut line_number,
-                    &mut pending_timestamp,
-                    &mut recent_hashes,
-                    true,
-                )
-                .await?;
+                if let Err(error) = self
+                    .poll_history_once(
+                        &mut offset_bytes,
+                        &mut line_number,
+                        &mut pending_timestamp,
+                        &mut recent_hashes,
+                        true,
+                    )
+                    .await
+                {
+                    self.finalize_material_stream_after_error("terminal-history-text-error")
+                        .await;
+                    return Err(error);
+                }
             }
 
             tokio::select! {
@@ -996,7 +1005,8 @@ impl HistoryWatcherContext {
             }
         }
 
-        Ok(())
+        self.finalize_material_stream("terminal-history-text-shutdown")
+            .await
     }
 
     async fn monitor_sqlite_history<Entry, Read>(self, read: Read) -> NodeResult<()>
@@ -1038,13 +1048,19 @@ impl HistoryWatcherContext {
                 break;
             }
 
-            self.poll_sqlite_history_once::<Entry, _>(
-                &mut sqlite_row_id,
-                &mut recent_hashes,
-                true,
-                read,
-            )
-            .await?;
+            if let Err(error) = self
+                .poll_sqlite_history_once::<Entry, _>(
+                    &mut sqlite_row_id,
+                    &mut recent_hashes,
+                    true,
+                    read,
+                )
+                .await
+            {
+                self.finalize_material_stream_after_error("terminal-history-sqlite-error")
+                    .await;
+                return Err(error);
+            }
 
             tokio::select! {
                 () = tokio::time::sleep(self.polling_interval) => {},
@@ -1072,7 +1088,8 @@ impl HistoryWatcherContext {
             }
         }
 
-        Ok(())
+        self.finalize_material_stream("terminal-history-sqlite-shutdown")
+            .await
     }
 
     async fn monitor_fish_sqlite(self) -> NodeResult<()> {
@@ -1113,6 +1130,21 @@ async fn load_history_state(path: Option<&std::path::Path>) -> NodeResult<Option
 }
 
 impl HistoryWatcherContext {
+    async fn finalize_material_stream(&self, reason: &str) -> NodeResult<()> {
+        self.material_stream.lock().await.finalize(reason).await
+    }
+
+    async fn finalize_material_stream_after_error(&self, reason: &str) {
+        if let Err(error) = self.finalize_material_stream(reason).await {
+            warn!(
+                path = %self.path,
+                reason,
+                error = %error,
+                "Failed to finalize terminal history source material stream after watcher error"
+            );
+        }
+    }
+
     async fn resolve_state(
         &self,
         state_override: Option<HistoryState>,
@@ -1322,7 +1354,7 @@ impl HistoryWatcherContext {
                 );
             }
         };
-        match checkpointed_sqlite_history_lenient(
+        let import_result = checkpointed_sqlite_history_lenient(
             &mut sqlite_row_id,
             historical_end_time,
             |from_row_id, end_time| read(&self.path, from_row_id, end_time),
@@ -1351,8 +1383,24 @@ impl HistoryWatcherContext {
             },
             HistorySqliteWarning::disposition,
         )
-        .await
+        .await;
+
+        if let Err(error) = self
+            .finalize_material_stream("terminal-history-sqlite-scan")
+            .await
         {
+            let processed_rows = import_result
+                .as_ref()
+                .map_or(0, |report| report.processed_rows);
+            self.record_poll(poll_started_at, file_size, processed_rows);
+            return self.failed_outcome(
+                "finalize_source_material",
+                error,
+                Self::sqlite_history_state(sqlite_row_id, recent_hashes),
+            );
+        }
+
+        match import_result {
             Ok(report) => {
                 self.record_poll(poll_started_at, file_size, report.processed_rows);
                 self.success_outcome(
@@ -1442,6 +1490,21 @@ impl HistoryWatcherContext {
                             )
                             .await;
                         self.record_poll(poll_started_at, file_size, processed);
+                        if let Err(error) = self
+                            .finalize_material_stream("terminal-history-text-scan")
+                            .await
+                        {
+                            return self.failed_outcome(
+                                "finalize_source_material",
+                                error,
+                                HistoryState::from_text_progress(
+                                    &file_state,
+                                    line_number,
+                                    pending_timestamp,
+                                    recent_hashes,
+                                ),
+                            );
+                        }
                         self.success_outcome(
                             processed,
                             HistoryState::from_text_progress(
@@ -1982,34 +2045,31 @@ async fn record_processed_command_for_test(ctx: &HistoryWatcherContext, command:
     }
 }
 
-async fn stage_history_material(
+async fn stage_history_json_record(
     ctx: &HistoryWatcherContext,
-    material_bytes: &[u8],
+    material_record: &serde_json::Value,
     error_context: &str,
-) -> NodeResult<Uuid> {
-    stage_material(
-        ctx.acquisition.as_ref(),
-        ctx.path.as_str(),
-        material_bytes,
-        MATERIAL_REASON_HISTORY,
-        None,
-    )
-    .await
-    .map_err(|error| SinexError::service(error_context).with_source(error))
+) -> NodeResult<SourceRecordAnchor> {
+    let mut stream = ctx.material_stream.lock().await;
+    stream
+        .append_json_line(material_record, ctx.path.as_str())
+        .await
+        .map_err(|error| SinexError::service(error_context).with_source(error))
 }
 
 fn build_material_json_event<P: EventPayload>(
     payload: P,
     material_id: Uuid,
-    material_len: usize,
+    offset_start: i64,
+    offset_end: i64,
     build_error_context: &str,
     encode_error_context: &str,
 ) -> NodeResult<sinex_primitives::events::Event<serde_json::Value>> {
     payload
         .from_material(material_id)
-        .with_offset_start(0)
+        .with_offset_start(offset_start)
         .map_err(|error| SinexError::service(build_error_context).with_source(error))?
-        .with_offset_end(material_len as i64)
+        .with_offset_end(offset_end)
         .map_err(|error| SinexError::service(build_error_context).with_source(error))?
         .build()
         .map_err(|error| SinexError::service(build_error_context).with_source(error))?
@@ -2020,16 +2080,28 @@ fn build_material_json_event<P: EventPayload>(
 async fn emit_history_event(
     ctx: &HistoryWatcherContext,
     event: sinex_primitives::events::Event<serde_json::Value>,
-    material_id: Uuid,
-    material_len: usize,
+    anchor: SourceRecordAnchor,
     emit_error_context: &str,
     line_number: u64,
 ) -> NodeResult<()> {
     ctx.stage_context
-        .emit_event_with_provenance(event, material_id, Some(0), Some(material_len as i64))
+        .emit_event_with_provenance(
+            event,
+            anchor.material_id,
+            Some(anchor.offset_start),
+            Some(anchor.offset_end),
+        )
         .await
         .map(|_| ())
         .map_err(|error| SinexError::messaging(emit_error_context).with_source(error))?;
+
+    let material_len =
+        usize::try_from(anchor.offset_end - anchor.offset_start).map_err(|error| {
+            SinexError::processing("terminal history material range exceeded usize")
+                .with_context("offset_start", anchor.offset_start.to_string())
+                .with_context("offset_end", anchor.offset_end.to_string())
+                .with_std_error(&error)
+        })?;
 
     ctx.metrics
         .record_command(&ctx.shell, &ctx.path, material_len, line_number);
@@ -2049,13 +2121,19 @@ async fn process_command(
     else {
         return Ok(());
     };
-    let material_bytes = final_command.as_bytes().to_vec();
-
     record_processed_command_for_test(ctx, &final_command).await;
 
-    let material_id = stage_history_material(
+    let material_record = json!({
+        "source": "terminal.history.text",
+        "shell": ctx.shell.as_str(),
+        "source_file": ctx.path.as_str(),
+        "line_number": line_number,
+        "timestamp": timestamp.map(|value| value.format_rfc3339()),
+        "command": final_command.as_str(),
+    });
+    let anchor = stage_history_json_record(
         ctx,
-        &material_bytes,
+        &material_record,
         "Failed to stage terminal history material",
     )
     .await?;
@@ -2070,8 +2148,9 @@ async fn process_command(
 
     let event = build_material_json_event(
         payload,
-        material_id,
-        material_bytes.len(),
+        anchor.material_id,
+        anchor.offset_start,
+        anchor.offset_end,
         "Failed to build terminal history event",
         "Failed to convert terminal history event to JSON",
     )?;
@@ -2079,8 +2158,7 @@ async fn process_command(
     emit_history_event(
         ctx,
         event,
-        material_id,
-        material_bytes.len(),
+        anchor,
         "Failed to emit terminal event",
         line_number,
     )
@@ -2228,7 +2306,6 @@ async fn emit_prepared_fish_entry(
     final_command: String,
 ) -> NodeResult<()> {
     let line_number = sqlite_row_id_to_line_number(ctx, entry.row_id)?;
-    let material_bytes = final_command.as_bytes().to_vec();
     let timestamp = match entry.when {
         Some(raw_timestamp) => {
             let Some(timestamp) = Timestamp::from_unix_timestamp(raw_timestamp) else {
@@ -2250,9 +2327,18 @@ async fn emit_prepared_fish_entry(
 
     record_processed_command_for_test(ctx, &final_command).await;
 
-    let material_id = stage_history_material(
+    let material_record = json!({
+        "source": "terminal.history.fish.sqlite",
+        "shell": ctx.shell.as_str(),
+        "source_file": ctx.path.as_str(),
+        "row_id": entry.row_id,
+        "command": entry.command.as_str(),
+        "captured_command": final_command.as_str(),
+        "when": entry.when,
+    });
+    let anchor = stage_history_json_record(
         ctx,
-        &material_bytes,
+        &material_record,
         "Failed to stage Fish history material",
     )
     .await?;
@@ -2267,8 +2353,9 @@ async fn emit_prepared_fish_entry(
 
     let event = build_material_json_event(
         payload,
-        material_id,
-        material_bytes.len(),
+        anchor.material_id,
+        anchor.offset_start,
+        anchor.offset_end,
         "Failed to build Fish history event",
         "Failed to convert Fish event to JSON",
     )?;
@@ -2276,8 +2363,7 @@ async fn emit_prepared_fish_entry(
     emit_history_event(
         ctx,
         event,
-        material_id,
-        material_bytes.len(),
+        anchor,
         "Failed to emit Fish history event",
         line_number,
     )
@@ -2328,21 +2414,35 @@ async fn emit_prepared_atuin_entry(
             .with_source(error));
         }
     };
-    let material_bytes = final_command.as_bytes().to_vec();
-
     record_processed_command_for_test(ctx, &final_command).await;
 
-    let material_id = stage_history_material(
+    let material_record = json!({
+        "source": "terminal.history.atuin.sqlite",
+        "shell": ctx.shell.as_str(),
+        "source_file": ctx.path.as_str(),
+        "row_id": entry.row_id,
+        "history_id": entry.history_id.as_str(),
+        "timestamp_ns": entry.timestamp_ns,
+        "duration_ns": entry.duration_ns,
+        "exit_code": entry.exit_code,
+        "command": entry.command.as_str(),
+        "captured_command": final_command.as_str(),
+        "cwd": entry.cwd.as_str(),
+        "session_id": entry.session_id.as_str(),
+        "hostname": entry.hostname.as_str(),
+    });
+    let anchor = stage_history_json_record(
         ctx,
-        &material_bytes,
+        &material_record,
         "Failed to stage Atuin history material",
     )
     .await?;
 
     let event = build_material_json_event(
         payload,
-        material_id,
-        material_bytes.len(),
+        anchor.material_id,
+        anchor.offset_start,
+        anchor.offset_end,
         "Failed to build Atuin event",
         "Failed to convert Atuin event to JSON",
     )?;
@@ -2350,8 +2450,7 @@ async fn emit_prepared_atuin_entry(
     emit_history_event(
         ctx,
         event,
-        material_id,
-        material_bytes.len(),
+        anchor,
         "Failed to emit Atuin event",
         line_number,
     )
@@ -2549,7 +2648,9 @@ impl TerminalNode {
             let source_mode = classify_history_source(source);
 
             contexts.push(HistoryWatcherContext {
-                acquisition,
+                material_stream: Arc::new(Mutex::new(AppendStreamAcquirer::new(Arc::clone(
+                    &acquisition,
+                )))),
                 stage_context,
                 metrics: Arc::clone(&self.metrics),
                 shell: normalized_shell,
@@ -2960,10 +3061,7 @@ impl IngestorNode for TerminalNode {
                     Ok(IncomingHistoryCheckpointState::State(state)) => Some(state),
                     Ok(IncomingHistoryCheckpointState::MissingCheckpoint) => {
                         match watch_ctx.load_state().await {
-                            Ok(Some(state)) => match watch_ctx.validate_state(state) {
-                                Ok(state) => Some(state),
-                                Err(_) => None,
-                            },
+                            Ok(Some(state)) => watch_ctx.validate_state(state).ok(),
                             Ok(None) => {
                                 warnings.push(watch_ctx.strict_warning(
                                     "no saved terminal progress; bootstrapping continuous watcher from the current live tail",
@@ -3652,7 +3750,9 @@ mod tests {
             .with_acquisition_manager(Arc::clone(&acquisition));
 
         let watcher_ctx = HistoryWatcherContext {
-            acquisition,
+            material_stream: Arc::new(Mutex::new(AppendStreamAcquirer::new(Arc::clone(
+                &acquisition,
+            )))),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "bash".to_string(),
@@ -3678,6 +3778,12 @@ mod tests {
             &mut recent_hashes,
         )
         .await?;
+        watcher_ctx
+            .material_stream
+            .lock()
+            .await
+            .finalize("test-process-command")
+            .await?;
         assert_eq!(
             watcher_ctx
                 .metrics
@@ -3696,15 +3802,26 @@ mod tests {
             Some(&serde_json::json!("2024-03-19T19:45:44Z"))
         );
 
-        let material_uuid = match event.provenance() {
-            Provenance::Material { id, .. } => *id.as_uuid(),
+        let (material_uuid, offset_start, offset_end) = match event.provenance() {
+            Provenance::Material {
+                id,
+                offset_start,
+                offset_end,
+                ..
+            } => (*id.as_uuid(), *offset_start, *offset_end),
             _ => {
                 return Err(color_eyre::eyre::eyre!(
                     "expected material provenance in terminal event"
                 ));
             }
         };
-        let expected_bytes = command.len() as i64;
+        assert_eq!(offset_start, Some(0));
+        let expected_bytes = offset_end
+            .ok_or_else(|| color_eyre::eyre::eyre!("terminal event offset_end missing"))?;
+        assert!(
+            expected_bytes > command.len() as i64,
+            "material record should include JSONL source context, not only command bytes"
+        );
         xtask::sandbox::timing::WaitHelpers::wait_for_condition(
             || {
                 let pool = ctx.pool.clone();
@@ -3993,7 +4110,9 @@ mod tests {
             .with_acquisition_manager(Arc::clone(&acquisition));
 
         let watcher_ctx = HistoryWatcherContext {
-            acquisition,
+            material_stream: Arc::new(Mutex::new(AppendStreamAcquirer::new(Arc::clone(
+                &acquisition,
+            )))),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "atuin".to_string(),
@@ -4094,7 +4213,9 @@ mod tests {
             .map_err(|path| color_eyre::eyre::eyre!("history path not utf8: {}", path.display()))?;
 
         let mut watcher_ctx = HistoryWatcherContext {
-            acquisition,
+            material_stream: Arc::new(Mutex::new(AppendStreamAcquirer::new(Arc::clone(
+                &acquisition,
+            )))),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "bash".to_string(),
@@ -4232,7 +4353,9 @@ mod tests {
             .with_acquisition_manager(Arc::clone(&acquisition));
 
         let watcher_ctx = HistoryWatcherContext {
-            acquisition,
+            material_stream: Arc::new(Mutex::new(AppendStreamAcquirer::new(Arc::clone(
+                &acquisition,
+            )))),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "atuin".to_string(),
@@ -4323,7 +4446,9 @@ mod tests {
             .with_acquisition_manager(Arc::clone(&acquisition));
 
         let watcher_ctx = HistoryWatcherContext {
-            acquisition,
+            material_stream: Arc::new(Mutex::new(AppendStreamAcquirer::new(Arc::clone(
+                &acquisition,
+            )))),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "fish".to_string(),
@@ -4374,7 +4499,9 @@ mod tests {
             .with_acquisition_manager(Arc::clone(&acquisition));
 
         let watcher_ctx = HistoryWatcherContext {
-            acquisition,
+            material_stream: Arc::new(Mutex::new(AppendStreamAcquirer::new(Arc::clone(
+                &acquisition,
+            )))),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "atuin".to_string(),
@@ -5421,10 +5548,8 @@ mod tests {
                 .ok_or_else(|| color_eyre::eyre::eyre!("missing final checkpoint state"))?;
         assert_eq!(final_state.sqlite_row_id, Some(2));
         assert!(
-            report
-                .warnings
-                .iter()
-                .any(|warning| warning.contains("bootstrapping continuous watcher from the current live tail")),
+            report.warnings.iter().any(|warning| warning
+                .contains("bootstrapping continuous watcher from the current live tail")),
             "expected bootstrap warning, got {:?}",
             report.warnings
         );
@@ -5446,10 +5571,7 @@ mod tests {
         tokio::fs::write(&history_path, "echo first\nprintf second\n").await?;
         let history_len = tokio::fs::metadata(&history_path).await?.len();
         let history_path = Utf8PathBuf::from_path_buf(history_path).map_err(|path| {
-            color_eyre::eyre::eyre!(
-                "invalid bash temp path should be utf-8: {}",
-                path.display()
-            )
+            color_eyre::eyre::eyre!("invalid bash temp path should be utf-8: {}", path.display())
         })?;
 
         let checkpoint_key = format!("bash:{history_path}");
@@ -5484,10 +5606,8 @@ mod tests {
         assert_eq!(final_state.offset_bytes, history_len);
         assert_eq!(final_state.line_number, 0);
         assert!(
-            report
-                .warnings
-                .iter()
-                .any(|warning| warning.contains("bootstrapping continuous watcher from the current live tail")),
+            report.warnings.iter().any(|warning| warning
+                .contains("bootstrapping continuous watcher from the current live tail")),
             "expected bootstrap warning, got {:?}",
             report.warnings
         );
@@ -6575,7 +6695,9 @@ mod tests {
             .map_err(|p| color_eyre::eyre::eyre!("path not utf8: {}", p.display()))?;
 
         let mut ctx = HistoryWatcherContext {
-            acquisition,
+            material_stream: Arc::new(Mutex::new(AppendStreamAcquirer::new(Arc::clone(
+                &acquisition,
+            )))),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "bash".to_string(),
