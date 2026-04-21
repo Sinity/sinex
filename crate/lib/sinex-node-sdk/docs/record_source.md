@@ -45,6 +45,9 @@ policy.
 Use `RecordMaterializer<BufferedRecordSink>` for source-material bytes. The
 materializer appends one stable logical record, returns a `SourceRecordAnchor`,
 and delegates batching/rotation/finalization to the acquisition substrate.
+Construct buffered sinks through `BufferedRecordSink::from_manager(...)` or
+`BufferedRecordSink::from_active_handle(...)`; node code should not wire
+`AppendStreamAcquirer` directly for ordinary record materialization.
 
 ## Default Node Pattern
 
