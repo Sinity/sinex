@@ -2282,9 +2282,7 @@ fn required_nats_stream_names() -> Result<Vec<String>> {
     Ok(vec![
         env.nats_stream_name("SINEX_RAW_EVENTS"),
         env.nats_stream_name("SINEX_RAW_EVENTS_CONFIRMATIONS"),
-        env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
-        env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
-        env.nats_stream_name("SOURCE_MATERIAL_END"),
+        env.nats_stream_name("SOURCE_MATERIAL"),
     ])
 }
 
@@ -4397,7 +4395,7 @@ mod tests {
         let streams = required_nats_stream_names()?;
         assert!(streams.iter().all(|stream| stream.starts_with("PROD_")));
         assert!(streams.contains(&"PROD_SINEX_RAW_EVENTS".to_string()));
-        assert!(streams.contains(&"PROD_SOURCE_MATERIAL_SLICES".to_string()));
+        assert!(streams.contains(&"PROD_SOURCE_MATERIAL".to_string()));
         Ok(())
     }
 

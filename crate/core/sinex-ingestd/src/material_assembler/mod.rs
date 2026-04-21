@@ -64,6 +64,26 @@ type MaterialTaskOutcome = (
     Result<IngestdResult<()>, tokio::task::JoinError>,
 );
 
+struct AbortOnDropHandle<T> {
+    handle: JoinHandle<T>,
+}
+
+impl<T> AbortOnDropHandle<T> {
+    fn new(handle: JoinHandle<T>) -> Self {
+        Self { handle }
+    }
+
+    async fn join(mut self) -> Result<T, tokio::task::JoinError> {
+        (&mut self.handle).await
+    }
+}
+
+impl<T> Drop for AbortOnDropHandle<T> {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
 fn material_task_timeout(count: usize, timeout: Duration) -> SinexError {
     SinexError::service(format!(
         "timed out waiting for {count} material tasks during shutdown"
@@ -678,9 +698,10 @@ impl MaterialAssembler {
             .await
     }
 
-    /// Run the assembler, optionally signalling readiness after streams are bound
-    /// and WAL state is restored. Callers can await the receiver before emitting
-    /// `sd_notify(READY)` to ensure the assembler is actually ready to process slices.
+    /// Run the assembler, optionally signalling readiness after streams are bound,
+    /// WAL state is restored, and the material frame consumer is created. Callers
+    /// can await the receiver before emitting `sd_notify(READY)` to ensure the
+    /// assembler is actually ready to process source material frames.
     pub async fn run_with_shutdown_and_ready(
         self,
         shutdown_flag: Arc<AtomicBool>,
@@ -712,25 +733,13 @@ impl MaterialAssembler {
             restored_assemblies = restored_count,
         );
 
-        // Signal readiness: streams bootstrapped, WAL restored, consumers about to start.
-        signal_ready(ready_tx, "material-assembler");
-
         let mut tasks = JoinSet::new();
-        Self::track_material_task(
-            &mut tasks,
-            "material begin consumer",
-            pipeline::spawn_begin_consumer(&self, shutdown_flag.clone()),
-        );
-        Self::track_material_task(
-            &mut tasks,
-            "material slice consumer",
-            pipeline::spawn_slices_consumer(&self, shutdown_flag.clone()),
-        );
-        Self::track_material_task(
-            &mut tasks,
-            "material end consumer",
-            pipeline::spawn_end_consumer(&self, shutdown_flag.clone()),
-        );
+        let material_consumer =
+            pipeline::spawn_material_consumer(&self, shutdown_flag.clone()).await?;
+        Self::track_material_task(&mut tasks, "material frame consumer", material_consumer);
+
+        // Signal readiness only after the ordered frame consumer is bound.
+        signal_ready(ready_tx, "material-assembler");
 
         let cleanup_task = {
             let assembler = self.clone_for_task();
@@ -772,7 +781,7 @@ impl MaterialAssembler {
         name: &'static str,
         handle: JoinHandle<IngestdResult<()>>,
     ) {
-        tasks.spawn(async move { (name, handle.await) });
+        tasks.spawn(async move { (name, AbortOnDropHandle::new(handle).join().await) });
     }
 
     async fn wait_for_material_tasks(
@@ -1206,7 +1215,7 @@ mod tests {
     #[sinex_test]
     async fn wait_for_material_tasks_accepts_clean_shutdown() -> TestResult<()> {
         let mut tasks = JoinSet::<MaterialTaskOutcome>::new();
-        tasks.spawn(async { ("material begin consumer", Ok(Ok(()))) });
+        tasks.spawn(async { ("material frame consumer", Ok(Ok(()))) });
 
         let error =
             MaterialAssembler::wait_for_material_tasks(&mut tasks, Duration::from_secs(1)).await;
@@ -1221,19 +1230,19 @@ mod tests {
         let mut tasks = JoinSet::<MaterialTaskOutcome>::new();
         tasks.spawn(async {
             (
-                "material slice consumer",
+                "material frame consumer",
                 Ok(Err(sinex_primitives::error::SinexError::service(
-                    "slice consumer failed",
+                    "frame consumer failed",
                 ))),
             )
         });
-        tasks.spawn(async { ("material end consumer", Ok(Ok(()))) });
+        tasks.spawn(async { ("material stale cleanup task", Ok(Ok(()))) });
 
         let error = MaterialAssembler::wait_for_material_tasks(&mut tasks, Duration::from_secs(1))
             .await
             .expect("shutdown error should be preserved");
 
-        assert!(error.to_string().contains("material slice consumer"));
+        assert!(error.to_string().contains("material frame consumer"));
         assert!(
             error.to_string().contains("shutdown"),
             "cleanup path should annotate the shutdown phase"

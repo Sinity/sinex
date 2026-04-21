@@ -59,20 +59,6 @@ async fn start_assembler(
     Ok((handle, js, annex_dir, state_dir))
 }
 
-fn namespaced_consumer(namespace: &str, base: &str) -> String {
-    let sanitized = namespace
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_uppercase()
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    format!("{sanitized}_{base}")
-}
-
 #[sinex_test(timeout = 120, trace = true)]
 async fn assembler_handles_concurrent_materials_and_records_ledger(
     ctx: TestContext,
@@ -81,11 +67,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     let _nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let (handle, js, _annex_guard, _state_guard) = start_assembler(&ctx, &namespace).await?;
-    let begin_stream = ctx.pipeline_namespace().stream("SOURCE_MATERIAL_BEGIN");
-    let slices_stream = ctx.pipeline_namespace().stream("SOURCE_MATERIAL_SLICES");
-    let end_stream = ctx.pipeline_namespace().stream("SOURCE_MATERIAL_END");
-
-    println!("assembler streams: begin={begin_stream}, slices={slices_stream}, end={end_stream}");
+    let material_stream = ctx.pipeline_namespace().stream("SOURCE_MATERIAL");
 
     // Prepare three materials with predictable hashes/offsets.
     let material_ids: Vec<_> = (0..3).map(|_| uuid::Uuid::now_v7()).collect();
@@ -121,42 +103,35 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
         .await?;
     }
 
-    for stream in [&begin_stream, &slices_stream, &end_stream] {
-        WaitHelpers::wait_for_condition(
-            || {
-                let js = js.clone();
-                let stream = stream.clone();
-                async move {
-                    let mut stream_handle = js
-                        .get_stream(&stream)
-                        .await
-                        .map_err(|e| sinex_primitives::error::SinexError::network(e.to_string()))?;
-                    let info = stream_handle
-                        .info()
-                        .await
-                        .map_err(|e| sinex_primitives::error::SinexError::network(e.to_string()))?;
-                    Ok::<bool, sinex_primitives::error::SinexError>(info.state.consumer_count > 0)
-                }
-            },
-            DEFAULT_WAIT_SECS,
-        )
-        .await?;
-    }
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = js.clone();
+            let material_stream = material_stream.clone();
+            async move {
+                let mut stream_handle = js
+                    .get_stream(&material_stream)
+                    .await
+                    .map_err(|e| sinex_primitives::error::SinexError::network(e.to_string()))?;
+                let info = stream_handle
+                    .info()
+                    .await
+                    .map_err(|e| sinex_primitives::error::SinexError::network(e.to_string()))?;
+                Ok::<bool, sinex_primitives::error::SinexError>(info.state.consumer_count > 0)
+            }
+        },
+        DEFAULT_WAIT_SECS,
+    )
+    .await?;
 
-    if let Ok(info) = js.get_stream(&begin_stream).await?.info().await {
-        assert_eq!(info.state.consumer_count, 1);
-    }
-    if let Ok(info) = js.get_stream(&slices_stream).await?.info().await {
-        assert_eq!(info.state.consumer_count, 1);
-    }
-    if let Ok(info) = js.get_stream(&end_stream).await?.info().await {
+    if let Ok(info) = js.get_stream(&material_stream).await?.info().await {
         assert_eq!(info.state.consumer_count, 1);
     }
 
     // Fire off begin messages for each material.
     for (material_id, _, _, _) in &material_plans {
         js.publish(
-            ctx.pipeline_namespace().subject("source_material.begin"),
+            ctx.pipeline_namespace()
+                .subject("source_material.frames.begin"),
             json!({
                 "material_id": material_id.to_string(),
                 "material_kind": "annex",
@@ -185,7 +160,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
 
             let subject = ctx
                 .pipeline_namespace()
-                .subject(&format!("source_material.slices.{material_id}"));
+                .subject(&format!("source_material.frames.slices.{material_id}"));
             publish_futs.push(js.publish_with_headers(subject, headers, payload.into()));
         }
     }
@@ -196,7 +171,8 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     // Send end markers.
     for (material_id, slices, total_size, hash) in &material_plans {
         js.publish(
-            ctx.pipeline_namespace().subject("source_material.end"),
+            ctx.pipeline_namespace()
+                .subject("source_material.frames.end"),
             json!({
                 "material_id": material_id.to_string(),
                 "ended_at": temporal::now().format_rfc3339(),
@@ -209,74 +185,6 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
         )
         .await?
         .await?;
-    }
-
-    // Observe JetStream state after publishing.
-    if let Ok(info) = js.get_stream(&begin_stream).await?.info().await {
-        println!(
-            "post-publish begin messages: {}, consumers: {}",
-            info.state.messages, info.state.consumer_count
-        );
-    }
-    if let Ok(info) = js.get_stream(&slices_stream).await?.info().await {
-        println!(
-            "post-publish slices messages: {}, consumers: {}",
-            info.state.messages, info.state.consumer_count
-        );
-    }
-    if let Ok(info) = js.get_stream(&end_stream).await?.info().await {
-        println!(
-            "post-publish end messages: {}, consumers: {}",
-            info.state.messages, info.state.consumer_count
-        );
-    }
-    if let Ok(mut consumer) = js
-        .get_consumer_from_stream::<async_nats::jetstream::consumer::pull::Config, _, _>(
-            &begin_stream,
-            namespaced_consumer(&namespace, "ingestd_material_begin"),
-        )
-        .await
-    {
-        if let Ok(info) = consumer.info().await {
-            println!(
-                "begin consumer pending={}, num_ack_pending={}",
-                info.num_pending, info.num_ack_pending
-            );
-        }
-    } else {
-        eprintln!("failed to inspect begin consumer");
-    }
-    if let Ok(mut consumer) = js
-        .get_consumer_from_stream::<async_nats::jetstream::consumer::pull::Config, _, _>(
-            &slices_stream,
-            namespaced_consumer(&namespace, "ingestd_material_slices"),
-        )
-        .await
-    {
-        if let Ok(info) = consumer.info().await {
-            println!(
-                "slices consumer pending={}, num_ack_pending={}",
-                info.num_pending, info.num_ack_pending
-            );
-        }
-    } else {
-        eprintln!("failed to inspect slices consumer");
-    }
-    if let Ok(mut consumer) = js
-        .get_consumer_from_stream::<async_nats::jetstream::consumer::pull::Config, _, _>(
-            &end_stream,
-            namespaced_consumer(&namespace, "ingestd_material_end"),
-        )
-        .await
-    {
-        if let Ok(info) = consumer.info().await {
-            println!(
-                "end consumer pending={}, num_ack_pending={}",
-                info.num_pending, info.num_ack_pending
-            );
-        }
-    } else {
-        eprintln!("failed to inspect end consumer");
     }
 
     // Wait for ledger entries to appear for all materials, while also surfacing assembler failures.
@@ -321,6 +229,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
         res = ledger_wait => {
             res?;
             handle.abort();
+            let _ = (&mut handle).await;
         }
         res = &mut handle => {
             match res {
@@ -334,6 +243,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
         }
         () = tokio::time::sleep(Duration::from_secs(90)) => {
             handle.abort();
+            let _ = (&mut handle).await;
             color_eyre::eyre::bail!("timed out waiting for ledger entries");
         }
     }

@@ -1244,8 +1244,8 @@ impl MaterialAssembler {
                 );
                 return Ok(());
             }
-            // End may arrive before begin/slices (separate streams). Create a placeholder so we can
-            // record the end and finalize once the missing slices arrive.
+            // Preserve compatibility with redelivery, restored WAL state, and non-SDK publishers:
+            // record the end even if local state is not present yet.
             warn!(
                 material_id = %material_id,
                 "End message received before material state existed; creating placeholder"
@@ -1254,7 +1254,7 @@ impl MaterialAssembler {
             self.insert_state_handle(material_id, placeholder)
         };
 
-        // Record end so we can tolerate out-of-order delivery across begin/slices/end streams.
+        // Record end so a later redelivery or restored slice can complete the material.
         {
             let mut state = state_handle.lock().await;
             if state.phase == AssemblyPhase::Finalizing {

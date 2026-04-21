@@ -86,7 +86,8 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
 
     // Publish begin
     js.publish(
-        ctx.pipeline_namespace().subject("source_material.begin"),
+        ctx.pipeline_namespace()
+            .subject("source_material.frames.begin"),
         json!({
             "material_id": material_id.to_string(),
             "material_kind": "test",
@@ -109,7 +110,7 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
 
     js.publish_with_headers(
         ctx.pipeline_namespace()
-            .subject(&format!("source_material.slices.{material_id}")),
+            .subject(&format!("source_material.frames.slices.{material_id}")),
         headers,
         b"payload".to_vec().into(),
     )
@@ -118,7 +119,8 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
 
     // Publish end to trigger assembly.
     js.publish(
-        ctx.pipeline_namespace().subject("source_material.end"),
+        ctx.pipeline_namespace()
+            .subject("source_material.frames.end"),
         json!({
             "material_id": material_id.to_string(),
             "ended_at": temporal::now().format_rfc3339(),
@@ -191,7 +193,7 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
 
     js.publish_with_headers(
         ctx.pipeline_namespace()
-            .subject(&format!("source_material.slices.{material_id}")),
+            .subject(&format!("source_material.frames.slices.{material_id}")),
         headers,
         data.to_vec().into(),
     )
@@ -214,7 +216,8 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
 
     // 2. Publish Begin
     js.publish(
-        ctx.pipeline_namespace().subject("source_material.begin"),
+        ctx.pipeline_namespace()
+            .subject("source_material.frames.begin"),
         json!({
             "material_id": material_id.to_string(),
             "material_kind": "test",
@@ -230,7 +233,8 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
 
     // 3. Publish End
     js.publish(
-        ctx.pipeline_namespace().subject("source_material.end"),
+        ctx.pipeline_namespace()
+            .subject("source_material.frames.end"),
         json!({
             "material_id": material_id.to_string(),
             "ended_at": temporal::now().format_rfc3339(),
@@ -303,7 +307,8 @@ async fn assembler_routes_empty_material_to_dlq(ctx: TestContext) -> TestResult<
 
     // Publish Begin
     js.publish(
-        ctx.pipeline_namespace().subject("source_material.begin"),
+        ctx.pipeline_namespace()
+            .subject("source_material.frames.begin"),
         json!({
             "material_id": material_id.to_string(),
             "material_kind": "test",
@@ -319,7 +324,8 @@ async fn assembler_routes_empty_material_to_dlq(ctx: TestContext) -> TestResult<
 
     // Publish End with 0 bytes
     js.publish(
-        ctx.pipeline_namespace().subject("source_material.end"),
+        ctx.pipeline_namespace()
+            .subject("source_material.frames.end"),
         json!({
             "material_id": material_id.to_string(),
             "ended_at": temporal::now().format_rfc3339(),
@@ -373,7 +379,8 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
 
     // Begin
     js.publish(
-        ctx.pipeline_namespace().subject("source_material.begin"),
+        ctx.pipeline_namespace()
+            .subject("source_material.frames.begin"),
         json!({
             "material_id": material_id.to_string(),
             "material_kind": "test",
@@ -393,7 +400,7 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
     slice_headers.insert("Chunk-Hash", blake3::hash(b"data").to_hex().as_str());
     js.publish_with_headers(
         ctx.pipeline_namespace()
-            .subject(&format!("source_material.slices.{material_id}")),
+            .subject(&format!("source_material.frames.slices.{material_id}")),
         slice_headers,
         b"data".to_vec().into(),
     )
@@ -402,7 +409,8 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
 
     // End with WRONG HASH
     js.publish(
-        ctx.pipeline_namespace().subject("source_material.end"),
+        ctx.pipeline_namespace()
+            .subject("source_material.frames.end"),
         json!({
             "material_id": material_id.to_string(),
             "ended_at": temporal::now().format_rfc3339(),
@@ -475,7 +483,7 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
     slice_headers.insert("Chunk-Hash", hash.as_str());
     js.publish_with_headers(
         ctx.pipeline_namespace()
-            .subject(&format!("source_material.slices.{material_id}")),
+            .subject(&format!("source_material.frames.slices.{material_id}")),
         slice_headers,
         data.to_vec().into(),
     )
@@ -484,7 +492,8 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
 
     // 2. End (should be buffered/retried because no Begin yet)
     js.publish(
-        ctx.pipeline_namespace().subject("source_material.end"),
+        ctx.pipeline_namespace()
+            .subject("source_material.frames.end"),
         json!({
             "material_id": material_id.to_string(),
             "ended_at": temporal::now().format_rfc3339(),
@@ -514,7 +523,8 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
 
     // 3. Begin (arrives late)
     js.publish(
-        ctx.pipeline_namespace().subject("source_material.begin"),
+        ctx.pipeline_namespace()
+            .subject("source_material.frames.begin"),
         json!({
             "material_id": material_id.to_string(),
             "material_kind": "test",
@@ -550,7 +560,8 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
     let material_id = uuid::Uuid::now_v7();
 
     js.publish(
-        ctx.pipeline_namespace().subject("source_material.begin"),
+        ctx.pipeline_namespace()
+            .subject("source_material.frames.begin"),
         json!({
 
             "material_id": material_id.to_string(),
@@ -576,7 +587,7 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
 
     js.publish_with_headers(
         ctx.pipeline_namespace()
-            .subject(&format!("source_material.slices.{material_id}")),
+            .subject(&format!("source_material.frames.slices.{material_id}")),
         {
             let mut h = async_nats::HeaderMap::new();
             h.insert("Offset", "0");
@@ -591,7 +602,7 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
 
     js.publish_with_headers(
         ctx.pipeline_namespace()
-            .subject(&format!("source_material.slices.{material_id}")),
+            .subject(&format!("source_material.frames.slices.{material_id}")),
         {
             let mut h = async_nats::HeaderMap::new();
             h.insert("Offset", "0");
@@ -607,7 +618,8 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
     let hash = blake3::hash(chunk).to_hex().to_string();
 
     js.publish(
-        ctx.pipeline_namespace().subject("source_material.end"),
+        ctx.pipeline_namespace()
+            .subject("source_material.frames.end"),
         json!({
 
             "material_id": material_id.to_string(),

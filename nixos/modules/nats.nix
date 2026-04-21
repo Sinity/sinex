@@ -73,9 +73,7 @@ let
     "events.raw.>"
     "events.confirmations.>"
     "events.dlq.>"
-    "source_material.begin"
-    "source_material.slices.>"
-    "source_material.end"
+    "source_material.frames.>"
     "system.schemas.active"
     "sinex.control.>"
     "sinex.coordination.>"
@@ -379,25 +377,11 @@ in
             maxBytes = natsCliMaxBytes;
           }
           {
-            name = "SOURCE_MATERIAL_BEGIN";
-            subjects = [ "source_material.begin" ];
-            retention = "work";
-            maxAge = "72h";
-            maxBytes = "1073741824"; # 1 GiB
-          }
-          {
-            name = "SOURCE_MATERIAL_SLICES";
-            subjects = [ "source_material.slices.>" ];
+            name = "SOURCE_MATERIAL";
+            subjects = [ "source_material.frames.>" ];
             retention = "work";
             maxAge = "72h";
             maxBytes = natsCliMaxBytes;
-          }
-          {
-            name = "SOURCE_MATERIAL_END";
-            subjects = [ "source_material.end" ];
-            retention = "work";
-            maxAge = "72h";
-            maxBytes = "1073741824"; # 1 GiB
           }
           {
             name = "SINEX_RAW_EVENTS_CONFIRMATIONS";

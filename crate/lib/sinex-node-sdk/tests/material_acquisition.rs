@@ -1,6 +1,9 @@
 use futures::{StreamExt, future::try_join_all};
 use sinex_db::repositories::{DbPoolExt, material_status};
-use sinex_node_sdk::{AcquisitionManager, RotationPolicy};
+use sinex_node_sdk::{
+    AcquisitionManager, RotationPolicy, SOURCE_MATERIAL_BEGIN_SUBJECT, SOURCE_MATERIAL_END_SUBJECT,
+    SOURCE_MATERIAL_STREAM, source_material_slice_subject,
+};
 use sinex_primitives::error::SinexError;
 use sinex_primitives::ids::Id;
 use sinex_primitives::temporal::Timestamp;
@@ -21,18 +24,9 @@ async fn wait_for_material_assembler_ready(
 ) -> Result<()> {
     let env = sinex_primitives::environment::environment();
     let js_check = nats.jetstream_with_client(nats_client.clone());
-    for stream in [
-        env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
-        env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
-        env.nats_stream_name("SOURCE_MATERIAL_END"),
-    ] {
-        nats.wait_for_consumer_on_stream(
-            &js_check,
-            &stream,
-            Duration::from_secs(Timeouts::STANDARD),
-        )
+    let stream = env.nats_stream_name(SOURCE_MATERIAL_STREAM);
+    nats.wait_for_consumer_on_stream(&js_check, &stream, Duration::from_secs(Timeouts::STANDARD))
         .await?;
-    }
     Ok(())
 }
 
@@ -491,7 +485,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
         "started_at": Timestamp::now().format_rfc3339(),
     });
     js.publish(
-        env.nats_subject("source_material.begin"),
+        env.nats_subject(SOURCE_MATERIAL_BEGIN_SUBJECT),
         serde_json::to_vec(&begin_msg)?.into(),
     )
     .await?
@@ -512,7 +506,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
         headers.insert("Chunk-Hash", chunk_hash.as_str());
 
         js.publish_with_headers(
-            env.nats_subject(&format!("source_material.slices.{material_id}")),
+            env.nats_subject(&source_material_slice_subject(material_id)),
             headers,
             data.into(),
         )
@@ -538,7 +532,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
         "total_size_bytes": expected_size,
     });
     js.publish(
-        env.nats_subject("source_material.end"),
+        env.nats_subject(SOURCE_MATERIAL_END_SUBJECT),
         serde_json::to_vec(&end_msg)?.into(),
     )
     .await?
@@ -624,7 +618,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
         "total_size_bytes": expected_size,
     });
     js.publish(
-        env.nats_subject("source_material.end"),
+        env.nats_subject(SOURCE_MATERIAL_END_SUBJECT),
         serde_json::to_vec(&end_msg)?.into(),
     )
     .await?
@@ -641,7 +635,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
         "started_at": Timestamp::now().format_rfc3339(),
     });
     js.publish(
-        env.nats_subject("source_material.begin"),
+        env.nats_subject(SOURCE_MATERIAL_BEGIN_SUBJECT),
         serde_json::to_vec(&begin_msg)?.into(),
     )
     .await?
@@ -655,7 +649,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
         headers.insert("Chunk-Hash", chunk_hash.as_str());
 
         js.publish_with_headers(
-            env.nats_subject(&format!("source_material.slices.{material_id}")),
+            env.nats_subject(&source_material_slice_subject(material_id)),
             headers,
             data.into(),
         )

@@ -11,8 +11,8 @@ async fn subject_lookup_should_resolve_existing_stream(ctx: TestContext) -> Test
     let js = nats.jetstream_with_client(nats_client);
 
     let namespace = ctx.pipeline_namespace();
-    let stream_name = namespace.stream("SOURCE_MATERIAL_BEGIN");
-    let subject = namespace.subject("source_material.begin");
+    let stream_name = namespace.stream("SOURCE_MATERIAL");
+    let subject = namespace.subject("source_material.frames.>");
 
     js.get_or_create_stream(jetstream::stream::Config {
         name: stream_name.clone(),

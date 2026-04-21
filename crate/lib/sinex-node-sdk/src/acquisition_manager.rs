@@ -30,9 +30,25 @@ use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
-// Keep SOURCE_MATERIAL_* stream caps aligned with the Nix bootstrap path. The current
+// Keep SOURCE_MATERIAL stream caps aligned with the Nix bootstrap path. The current
 // nats CLI rejects --max-bytes values above signed 32-bit range.
 const JETSTREAM_BOOTSTRAP_MAX_BYTES: i64 = 2_147_483_647;
+
+/// Ordered `JetStream` stream used for all source-material lifecycle frames.
+pub const SOURCE_MATERIAL_STREAM: &str = "SOURCE_MATERIAL";
+/// Subject wildcard for the ordered source-material frame stream.
+pub const SOURCE_MATERIAL_FRAMES_SUBJECT: &str = "source_material.frames.>";
+/// Subject for material begin frames.
+pub const SOURCE_MATERIAL_BEGIN_SUBJECT: &str = "source_material.frames.begin";
+/// Subject prefix for material slice frames.
+pub const SOURCE_MATERIAL_SLICE_SUBJECT_PREFIX: &str = "source_material.frames.slices.";
+/// Subject for material end frames.
+pub const SOURCE_MATERIAL_END_SUBJECT: &str = "source_material.frames.end";
+
+#[must_use]
+pub fn source_material_slice_subject(material_id: Uuid) -> String {
+    format!("{SOURCE_MATERIAL_SLICE_SUBJECT_PREFIX}{material_id}")
+}
 
 /// Rotation policy configuration
 #[derive(Debug, Clone)]
@@ -135,7 +151,7 @@ impl Drop for SourceMaterialHandle {
     }
 }
 
-/// Message for `source_material.begin` subject
+/// Message for material begin frames.
 #[derive(Debug, Serialize)]
 struct MaterialBeginMessage {
     material_id: String,
@@ -145,7 +161,7 @@ struct MaterialBeginMessage {
     started_at: String,
 }
 
-/// Message for `source_material.end` subject
+/// Message for material end frames.
 #[derive(Debug, Serialize)]
 struct MaterialEndMessage {
     material_id: String,
@@ -244,23 +260,10 @@ impl AcquisitionManager {
         namespace: Option<&str>,
     ) -> NodeResult<()> {
         js.create_or_update_stream(jetstream::stream::Config {
-            name: env.nats_stream_name_with_namespace(namespace, "SOURCE_MATERIAL_BEGIN"),
-            subjects: vec![env.nats_subject_with_namespace(namespace, "source_material.begin")],
-            retention: jetstream::stream::RetentionPolicy::WorkQueue,
-            storage: jetstream::stream::StorageType::File,
-            max_age: std::time::Duration::from_hours(72),
-            max_bytes: 1_073_741_824, // 1 GiB
-            ..Default::default()
-        })
-        .await
-        .map_err(|e| {
-            SinexError::messaging("failed to create SOURCE_MATERIAL_BEGIN stream")
-                .with_std_error(&e)
-        })?;
-
-        js.create_or_update_stream(jetstream::stream::Config {
-            name: env.nats_stream_name_with_namespace(namespace, "SOURCE_MATERIAL_SLICES"),
-            subjects: vec![env.nats_subject_with_namespace(namespace, "source_material.slices.>")],
+            name: env.nats_stream_name_with_namespace(namespace, SOURCE_MATERIAL_STREAM),
+            subjects: vec![
+                env.nats_subject_with_namespace(namespace, SOURCE_MATERIAL_FRAMES_SUBJECT),
+            ],
             retention: jetstream::stream::RetentionPolicy::WorkQueue,
             storage: jetstream::stream::StorageType::File,
             max_age: std::time::Duration::from_hours(72),
@@ -270,22 +273,7 @@ impl AcquisitionManager {
         })
         .await
         .map_err(|e| {
-            SinexError::messaging("failed to create SOURCE_MATERIAL_SLICES stream")
-                .with_std_error(&e)
-        })?;
-
-        js.create_or_update_stream(jetstream::stream::Config {
-            name: env.nats_stream_name_with_namespace(namespace, "SOURCE_MATERIAL_END"),
-            subjects: vec![env.nats_subject_with_namespace(namespace, "source_material.end")],
-            retention: jetstream::stream::RetentionPolicy::WorkQueue,
-            storage: jetstream::stream::StorageType::File,
-            max_age: std::time::Duration::from_hours(72),
-            max_bytes: 1_073_741_824, // 1 GiB
-            ..Default::default()
-        })
-        .await
-        .map_err(|e| {
-            SinexError::messaging("failed to create SOURCE_MATERIAL_END stream").with_std_error(&e)
+            SinexError::messaging("failed to create SOURCE_MATERIAL stream").with_std_error(&e)
         })?;
 
         Ok(())
@@ -420,7 +408,7 @@ impl AcquisitionManager {
 
         let subject = self
             .env
-            .nats_subject_with_namespace(self.namespace.as_deref(), "source_material.begin");
+            .nats_subject_with_namespace(self.namespace.as_deref(), SOURCE_MATERIAL_BEGIN_SUBJECT);
         let payload = serde_json::to_vec(&msg)?;
 
         let js = &self.js;
@@ -576,7 +564,7 @@ impl AcquisitionManager {
 
         let subject = self.env.nats_subject_with_namespace(
             self.namespace.as_deref(),
-            &format!("source_material.slices.{material_id}"),
+            &source_material_slice_subject(material_id),
         );
 
         // Add headers
@@ -697,7 +685,7 @@ impl AcquisitionManager {
 
         let subject = self
             .env
-            .nats_subject_with_namespace(self.namespace.as_deref(), "source_material.end");
+            .nats_subject_with_namespace(self.namespace.as_deref(), SOURCE_MATERIAL_END_SUBJECT);
         let payload = serde_json::to_vec(&msg)?;
 
         let js = &self.js;

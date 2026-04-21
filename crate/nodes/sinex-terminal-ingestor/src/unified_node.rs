@@ -3736,14 +3736,9 @@ mod tests {
         // Wait for MaterialAssembler consumers before publishing
         let env = sinex_primitives::environment::environment();
         let js_check = nats.jetstream_with_client(publisher.nats_client().clone());
-        for stream in [
-            env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
-            env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
-            env.nats_stream_name("SOURCE_MATERIAL_END"),
-        ] {
-            nats.wait_for_consumer_on_stream(&js_check, &stream, Duration::from_mins(1))
-                .await?;
-        }
+        let stream = env.nats_stream_name("SOURCE_MATERIAL");
+        nats.wait_for_consumer_on_stream(&js_check, &stream, Duration::from_mins(1))
+            .await?;
 
         let acquisition =
             Arc::new(runtime.acquisition_manager(RotationPolicy::default(), "terminal-history")?);
@@ -4097,14 +4092,9 @@ mod tests {
 
         let env = sinex_primitives::environment::environment();
         let js_check = nats.jetstream_with_client(publisher.nats_client().clone());
-        for stream in [
-            env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
-            env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
-            env.nats_stream_name("SOURCE_MATERIAL_END"),
-        ] {
-            nats.wait_for_consumer_on_stream(&js_check, &stream, Duration::from_mins(1))
-                .await?;
-        }
+        let stream = env.nats_stream_name("SOURCE_MATERIAL");
+        nats.wait_for_consumer_on_stream(&js_check, &stream, Duration::from_mins(1))
+            .await?;
 
         let acquisition =
             Arc::new(runtime.acquisition_manager(RotationPolicy::default(), "terminal-history")?);
@@ -4340,14 +4330,9 @@ mod tests {
 
         let env = sinex_primitives::environment::environment();
         let js_check = nats.jetstream_with_client(publisher.nats_client().clone());
-        for stream in [
-            env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
-            env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
-            env.nats_stream_name("SOURCE_MATERIAL_END"),
-        ] {
-            nats.wait_for_consumer_on_stream(&js_check, &stream, Duration::from_mins(1))
-                .await?;
-        }
+        let stream = env.nats_stream_name("SOURCE_MATERIAL");
+        nats.wait_for_consumer_on_stream(&js_check, &stream, Duration::from_mins(1))
+            .await?;
 
         let acquisition =
             Arc::new(runtime.acquisition_manager(RotationPolicy::default(), "terminal-history")?);
@@ -4433,14 +4418,9 @@ mod tests {
 
         let env = sinex_primitives::environment::environment();
         let js_check = nats.jetstream_with_client(publisher.nats_client().clone());
-        for stream in [
-            env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
-            env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
-            env.nats_stream_name("SOURCE_MATERIAL_END"),
-        ] {
-            nats.wait_for_consumer_on_stream(&js_check, &stream, Duration::from_mins(1))
-                .await?;
-        }
+        let stream = env.nats_stream_name("SOURCE_MATERIAL");
+        nats.wait_for_consumer_on_stream(&js_check, &stream, Duration::from_mins(1))
+            .await?;
 
         let acquisition =
             Arc::new(runtime.acquisition_manager(RotationPolicy::default(), "terminal-history")?);
