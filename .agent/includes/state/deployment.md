@@ -1,8 +1,12 @@
 ## Deployment Readiness
 
-Canonical deferred deployment/host-activation backlog lives in:
+Canonical deployment and host-activation follow-up is tracked in GitHub under:
 
-- `.agent/scratch/041-advanced-horizon-plan.md`
+- `#308` — Core hardening follow-up, especially runtime target/status, source-material proof,
+  historical backfill, browser ingestion, VM coverage, and automata verification issues.
+
+Scratch notes are temporary investigation material only; do not treat `.agent/scratch/` as a
+durable deployment backlog.
 
 **Current state:** `sinex.enable = true; provisionDatabase = true` on `sinnix-prime`, and the
 host has been switched successfully under the checked-in NixOS module graph. The trustworthy gap

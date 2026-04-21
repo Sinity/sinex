@@ -1,12 +1,11 @@
 ## Current Issue Summary
 
-Canonical current-work backlog lives in:
+Canonical current-work tracking lives in GitHub:
 
-- `.agent/scratch/040-maximalist-remaining-plan.md`
+- `#308` — Core hardening follow-up: SDK, test harness, runtime proof boundaries.
 
-Canonical deferred deployment and horizon backlog lives in:
-
-- `.agent/scratch/041-advanced-horizon-plan.md`
+Scratch notes are not a backlog. If scratch content becomes durable project work, promote it into
+GitHub issues or tracked docs and delete the scratch file.
 
 This include keeps only the compressed memory surface for AGENTS consumers.
 
