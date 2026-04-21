@@ -1274,8 +1274,8 @@ impl MaterialAssembler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::material_assembler::{io, state};
     use crate::MaterialReadySet;
+    use crate::material_assembler::{io, state};
     use camino::Utf8PathBuf;
     use serde_json::json;
     use sinex_db::repositories::{DbPoolExt, source_materials::status};

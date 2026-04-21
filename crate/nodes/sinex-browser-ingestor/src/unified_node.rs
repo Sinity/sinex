@@ -3,17 +3,16 @@ use crate::sqlite_sources::{
     BrowserSqliteFormat, BrowserSqliteSourceConfig, ensure_browser_sqlite_source,
     read_browser_sqlite_history,
 };
-use crate::visit::{BrowserVisitRecord, make_material_metadata};
+use crate::visit::BrowserVisitRecord;
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use sinex_node_sdk::{
     BatchImporterState, EventTransport, ImportFileChangeKind, IngestorNode, NodeResult,
-    RotationPolicy, SinexError, SqliteSourceCheckpointState,
-    acquisition_manager::AcquisitionManager,
+    RotationPolicy, SinexError, SourceRecordAnchor, SqliteSourceCheckpointState,
+    acquisition_manager::{AcquisitionManager, AppendStreamAcquirer},
     checkpointed_sqlite_source_strict, discover_importable_files_at_root,
     runtime::stream::{Checkpoint, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon},
-    stage_material,
 };
 use sinex_primitives::{
     Seconds, Timestamp,
@@ -24,7 +23,6 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::watch;
 use tracing::info;
 
-const MATERIAL_REASON_HISTORY: &str = "browser-history";
 const DEFAULT_POLLING_INTERVAL_SECS: u64 = 30;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,17 +130,27 @@ impl BrowserNode {
             .into_owned())
     }
 
-    async fn emit_visit(&self, visit: BrowserVisitRecord) -> NodeResult<()> {
-        let material_len = visit.material_bytes.len() as i64;
-        let material_id = stage_material(
-            self.acquisition()?.as_ref(),
-            &visit.source_file,
-            &visit.material_bytes,
-            MATERIAL_REASON_HISTORY,
-            Some(make_material_metadata(&visit)),
-        )
-        .await?;
+    async fn append_visit_material(
+        stream: &mut AppendStreamAcquirer,
+        visit: &BrowserVisitRecord,
+    ) -> NodeResult<SourceRecordAnchor> {
+        let mut material_bytes = visit.material_bytes.clone();
+        material_bytes.push(b'\n');
+        stream
+            .append_with_anchor(&material_bytes, &visit.source_file)
+            .await
+            .map_err(|error| {
+                SinexError::service("failed to append browser history source record")
+                    .with_source(error)
+            })
+    }
 
+    async fn emit_visit(
+        &self,
+        visit: BrowserVisitRecord,
+        stream: &mut AppendStreamAcquirer,
+    ) -> NodeResult<()> {
+        let anchor = Self::append_visit_material(stream, &visit).await?;
         let payload = PageVisitedPayload {
             browser: visit.browser,
             title: Self::redact_document(&visit.title)?,
@@ -167,9 +175,9 @@ impl BrowserNode {
         };
 
         let event = payload
-            .from_material(material_id)
-            .with_offset_start(0)?
-            .with_offset_end(material_len)?
+            .from_material(anchor.material_id)
+            .with_offset_start(anchor.offset_start)?
+            .with_offset_end(anchor.offset_end)?
             .build()?
             .to_json_event()
             .map_err(|error| {
@@ -178,7 +186,12 @@ impl BrowserNode {
             })?;
 
         self.stage_context()?
-            .emit_event_with_provenance(event, material_id, Some(0), Some(material_len))
+            .emit_event_with_provenance(
+                event,
+                anchor.material_id,
+                Some(anchor.offset_start),
+                Some(anchor.offset_end),
+            )
             .await
             .map(|_| ())
             .map_err(|error| {
@@ -255,10 +268,22 @@ impl BrowserNode {
                 }
             };
 
-            for visit in visits {
-                self.emit_visit(visit).await?;
-                processed = processed.saturating_add(1);
+            let mut stream = AppendStreamAcquirer::new(self.acquisition()?.clone());
+            let import_result: NodeResult<()> = async {
+                for visit in visits {
+                    self.emit_visit(visit, &mut stream).await?;
+                    processed = processed.saturating_add(1);
+                }
+                Ok(())
             }
+            .await;
+            if let Err(error) = stream.finalize("browser-dump-import").await {
+                return Err(
+                    SinexError::service("failed to finalize browser dump material")
+                        .with_source(error),
+                );
+            }
+            import_result?;
 
             state.mark_processed(
                 &file.path,
@@ -293,18 +318,32 @@ impl BrowserNode {
         }
 
         let checkpoint_key = source.checkpoint_key();
-        let report = checkpointed_sqlite_source_strict(
+        let stream = Arc::new(tokio::sync::Mutex::new(AppendStreamAcquirer::new(
+            self.acquisition()?.clone(),
+        )));
+        let import_result = checkpointed_sqlite_source_strict(
             &mut state.sqlite_sources,
             &checkpoint_key,
             historical_end_time,
             |from_row_id, end_time| read_browser_sqlite_history(source, from_row_id, end_time),
-            |visit| async move {
-                self.emit_visit(visit).await?;
-                Ok(sinex_node_sdk::SqliteHistoryRowOutcome::Processed)
+            |visit| {
+                let stream = Arc::clone(&stream);
+                async move {
+                    let mut stream = stream.lock().await;
+                    self.emit_visit(visit, &mut stream).await?;
+                    Ok(sinex_node_sdk::SqliteHistoryRowOutcome::Processed)
+                }
             },
         )
-        .await
-        .map_err(|error| match error {
+        .await;
+
+        stream
+            .lock()
+            .await
+            .finalize("browser-sqlite-import")
+            .await?;
+
+        let report = import_result.map_err(|error| match error {
             sinex_node_sdk::SqliteHistoryImportError::Read(error) => {
                 SinexError::processing("failed to read browser sqlite history")
                     .with_context("source", source.path.to_string())
@@ -420,7 +459,12 @@ impl IngestorNode for BrowserNode {
             .dump_sources
             .iter()
             .map(ToString::to_string)
-            .chain(self.config.sqlite_sources.iter().map(|source| source.path.to_string()))
+            .chain(
+                self.config
+                    .sqlite_sources
+                    .iter()
+                    .map(|source| source.path.to_string()),
+            )
             .collect();
 
         Ok(ScanReport {
