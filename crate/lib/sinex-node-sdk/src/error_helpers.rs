@@ -150,6 +150,7 @@ pub fn nats_settlement_error(
     err
 }
 
+#[must_use]
 pub fn env_bool_with_default(var: &str, default: bool, context: &str) -> bool {
     shared_env::bool_or(var, default, context)
 }
@@ -184,10 +185,12 @@ pub fn unix_timestamp_secs_with_warning(timestamp: SystemTime, context: &str) ->
     }
 }
 
+#[must_use]
 pub fn env_string_optional(var: &str, context: &str) -> Option<String> {
     shared_env::var_optional(var, context)
 }
 
+#[must_use]
 pub fn env_nonempty_string_optional(var: &str, context: &str) -> Option<String> {
     env_string_optional(var, context).and_then(|raw| {
         if raw.trim().is_empty() {

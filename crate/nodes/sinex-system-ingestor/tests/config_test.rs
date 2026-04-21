@@ -98,7 +98,7 @@ async fn test_journal_config_defaults() -> TestResult<()> {
 
     assert!(config.follow);
     assert!(config.import_on_startup);
-    assert_eq!(config.import_hours, 0);
+    assert_eq!(config.import_hours, 24);
     assert_eq!(config.units.len(), 0);
     assert_eq!(config.priorities.len(), 0);
     assert!(config.include_kernel);

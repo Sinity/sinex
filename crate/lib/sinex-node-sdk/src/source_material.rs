@@ -67,7 +67,9 @@ pub async fn stage_material_from_file(
         if read == 0 {
             break;
         }
-        acquisition.append_slice(&mut handle, &buffer[..read]).await?;
+        acquisition
+            .append_slice(&mut handle, &buffer[..read])
+            .await?;
         total_bytes += read as i64;
     }
 

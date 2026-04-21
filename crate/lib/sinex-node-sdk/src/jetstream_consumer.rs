@@ -13,6 +13,7 @@ use async_nats::jetstream;
 use sinex_primitives::{
     domain::{EventSource, EventType},
     environment::SinexEnvironment,
+    temporal::Timestamp,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,6 +35,12 @@ pub struct JetStreamEventConsumerConfig {
     pub consumer_name: String,
     /// Whether to process provisional events immediately
     pub enable_provisional_processing: bool,
+    /// Whether to consume and buffer raw events while awaiting confirmations.
+    pub buffer_raw_events: bool,
+    /// Whether confirmations can be dispatched without a matching raw event.
+    pub accept_unbuffered_confirmations: bool,
+    /// Where a newly-created durable consumer should begin delivering messages.
+    pub deliver_policy: jetstream::consumer::DeliverPolicy,
 }
 
 impl Default for JetStreamEventConsumerConfig {
@@ -45,6 +52,9 @@ impl Default for JetStreamEventConsumerConfig {
             confirmation_timeout: Duration::from_secs(30),
             consumer_name: "automaton-consumer".to_string(),
             enable_provisional_processing: false,
+            buffer_raw_events: true,
+            accept_unbuffered_confirmations: false,
+            deliver_policy: jetstream::consumer::DeliverPolicy::All,
         }
     }
 }
@@ -175,11 +185,25 @@ impl JetStreamEventConsumer {
             .env
             .nats_subject_with_namespace(self.namespace.as_deref(), "events.confirmations.>");
 
-        let raw_consumer = self
-            .create_or_get_consumer(&js, &raw_stream, &raw_subject)
-            .await?;
         let confirmations_consumer = self
             .create_or_get_consumer(&js, &confirmations_stream, &confirmations_subject)
+            .await?;
+
+        if !self.config.buffer_raw_events {
+            return Self::consume_confirmations(
+                confirmations_consumer,
+                self.config.batch_size,
+                self.confirmation_buffer.clone(),
+                self.confirmed_handler.clone(),
+                self.provisional_handler.clone(),
+                self.running.clone(),
+                self.config.accept_unbuffered_confirmations,
+            )
+            .await;
+        }
+
+        let raw_consumer = self
+            .create_or_get_consumer(&js, &raw_stream, &raw_subject)
             .await?;
 
         let confirmation_buffer = self.confirmation_buffer.clone();
@@ -214,6 +238,7 @@ impl JetStreamEventConsumer {
                 confirmed_handler,
                 provisional_handler_for_confirmations,
                 running_confirmations,
+                false,
             )
             .await
         });
@@ -282,7 +307,7 @@ impl JetStreamEventConsumer {
         spec.max_ack_pending = self.config.max_ack_pending;
         spec.max_deliver = -1;
         spec.ack_wait = Duration::from_secs(30);
-        spec.deliver_policy = jetstream::consumer::DeliverPolicy::All;
+        spec.deliver_policy = self.config.deliver_policy;
         ensure_pull_consumer(js, &spec).await
     }
 
@@ -390,6 +415,7 @@ impl JetStreamEventConsumer {
         confirmed_handler: Arc<dyn ConfirmedEventHandler>,
         provisional_handler: Option<Arc<dyn ProvisionalEventHandler>>,
         running: Arc<RwLock<bool>>,
+        accept_unbuffered_confirmations: bool,
     ) -> NodeResult<()> {
         while *running.read().await {
             let messages = pull_batch(&consumer, batch_size, Duration::from_secs(1)).await?;
@@ -399,6 +425,7 @@ impl JetStreamEventConsumer {
                     &buffer,
                     &*confirmed_handler,
                     provisional_handler.as_ref(),
+                    accept_unbuffered_confirmations,
                 )
                 .await?;
             }
@@ -413,6 +440,7 @@ impl JetStreamEventConsumer {
         buffer: &ConfirmationBuffer,
         confirmed_handler: &dyn ConfirmedEventHandler,
         provisional_handler: Option<&Arc<dyn ProvisionalEventHandler>>,
+        accept_unbuffered_confirmations: bool,
     ) -> NodeResult<()> {
         let confirmation = match Self::parse_confirmation(&msg) {
             Ok(c) => c,
@@ -489,6 +517,54 @@ impl JetStreamEventConsumer {
                 })?;
             }
         } else {
+            if accept_unbuffered_confirmations {
+                if !confirmation.persisted {
+                    msg.ack().await.map_err(|error| {
+                        Self::message_settlement_error(
+                            "failed to ack unbuffered non-persisted confirmation",
+                            &msg,
+                            Some(confirmation.event_id),
+                            error,
+                        )
+                    })?;
+                    return Ok(());
+                }
+
+                let event = Self::event_from_unbuffered_confirmation(&confirmation);
+                let handler_success = match confirmed_handler.handle_confirmed(&event).await {
+                    Ok(()) => true,
+                    Err(e) => {
+                        error!("Confirmed handler failed: {e}");
+                        false
+                    }
+                };
+
+                if handler_success {
+                    msg.ack().await.map_err(|error| {
+                        Self::message_settlement_error(
+                            "failed to ack unbuffered confirmation",
+                            &msg,
+                            Some(confirmation.event_id),
+                            error,
+                        )
+                    })?;
+                } else {
+                    msg.ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                        Duration::from_secs(5),
+                    )))
+                    .await
+                    .map_err(|error| {
+                        Self::message_settlement_error(
+                            "failed to NAK unbuffered confirmed handler failure",
+                            &msg,
+                            Some(confirmation.event_id),
+                            error,
+                        )
+                    })?;
+                }
+                return Ok(());
+            }
+
             // Confirmation arrived before the provisional event was buffered
             // (race between consume_raw_events and consume_confirmations tasks).
             // NAK with a short redelivery delay so the confirmation is retried
@@ -550,6 +626,17 @@ impl JetStreamEventConsumer {
         }
 
         Ok(())
+    }
+
+    fn event_from_unbuffered_confirmation(confirmation: &EventConfirmation) -> ProvisionalEvent {
+        ProvisionalEvent {
+            event_id: confirmation.event_id,
+            source: EventSource::from_static("confirmed"),
+            event_type: EventType::from_static("confirmed.event"),
+            payload: serde_json::Value::Null,
+            ts_orig: confirmation.ts_ingest,
+            received_at: Timestamp::now(),
+        }
     }
 
     fn parse_provisional_event(msg: &jetstream::Message) -> NodeResult<ProvisionalEvent> {
@@ -624,8 +711,9 @@ impl JetStreamEventConsumer {
 mod tests {
     // Small inline tests are justified here because they target private background-task
     // exit classification logic that is not exposed through the public consumer API.
-    use super::JetStreamEventConsumer;
-    use sinex_primitives::SinexError;
+    use super::{EventConfirmation, JetStreamEventConsumer, JetStreamEventConsumerConfig};
+    use async_nats::jetstream::consumer::DeliverPolicy;
+    use sinex_primitives::{SinexError, Uuid, events::builder::EventId};
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -658,6 +746,38 @@ mod tests {
             JetStreamEventConsumer::background_task_exit_result("confirmation task", result, false)
                 .expect_err("panic must surface as an error");
         assert!(format!("{error:#}").contains("confirmation task panicked"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn default_consumer_config_preserves_buffered_raw_mode() -> xtask::sandbox::TestResult<()>
+    {
+        let config = JetStreamEventConsumerConfig::default();
+
+        assert!(config.buffer_raw_events);
+        assert!(!config.accept_unbuffered_confirmations);
+        assert_eq!(config.deliver_policy, DeliverPolicy::All);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn unbuffered_confirmation_event_carries_only_event_identity()
+    -> xtask::sandbox::TestResult<()> {
+        let event_id = EventId::from_uuid(Uuid::now_v7());
+        let ts_ingest = sinex_primitives::temporal::now();
+        let confirmation = EventConfirmation {
+            event_id,
+            persisted: true,
+            ts_ingest,
+        };
+
+        let event = JetStreamEventConsumer::event_from_unbuffered_confirmation(&confirmation);
+
+        assert_eq!(event.event_id, event_id);
+        assert_eq!(event.source.as_ref(), "confirmed");
+        assert_eq!(event.event_type.as_ref(), "confirmed.event");
+        assert!(event.payload.is_null());
+        assert_eq!(event.ts_orig, ts_ingest);
         Ok(())
     }
 }

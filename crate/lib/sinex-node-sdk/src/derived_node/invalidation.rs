@@ -61,6 +61,7 @@ pub struct DerivedScopeInvalidation {
 
 impl DerivedScopeInvalidation {
     /// Create an invalidation for archived events (e.g., replay cascade).
+    #[must_use]
     pub fn archived(
         affected_event_ids: Vec<Uuid>,
         event_source: EventSource,
@@ -78,6 +79,7 @@ impl DerivedScopeInvalidation {
     }
 
     /// Create an invalidation for newly inserted events (e.g., late backfill).
+    #[must_use]
     pub fn inserted(
         affected_event_ids: Vec<Uuid>,
         event_source: EventSource,
@@ -95,6 +97,7 @@ impl DerivedScopeInvalidation {
     }
 
     /// Create an invalidation for replaced events (archive + re-insert).
+    #[must_use]
     pub fn replaced(
         affected_event_ids: Vec<Uuid>,
         event_source: EventSource,

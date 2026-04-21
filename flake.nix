@@ -479,7 +479,7 @@
 
                   if [ "$force_rebuild" = "1" ] || _sinex_xtask_needs_build; then
                     echo "ℹ  Rebuilding checkout-local xtask..." >&2
-                    if cargo build --quiet -p xtask >"$build_failure_log" 2>&1; then
+                    if _sinex_xtask_build_checkout_binary >"$build_failure_log" 2>&1; then
                       rm -f "$build_failure_stamp" "$build_failure_log"
                     else
                       printf '%s\n' "$(date -Iseconds)" > "$build_failure_stamp"
@@ -492,6 +492,53 @@
 
                   rm -rf "$build_lock_dir"
                   trap - EXIT INT TERM
+                }
+
+                _sinex_xtask_build_checkout_binary() {
+                  local sqlx_tmp pgdata pglog build_rc
+
+                  sqlx_tmp="$(mktemp -d "$root_dir/.sinex/state/xtask-sqlx.XXXXXX")"
+                  pgdata="$sqlx_tmp/pgdata"
+                  pglog="$sqlx_tmp/postgres.log"
+                  build_rc=0
+
+                  export PGDATA="$pgdata"
+                  export PGHOST="$sqlx_tmp"
+                  export PGPORT="$((55433 + ($$ % 1000)))"
+
+                  if ! ${postgresForSqlx}/bin/initdb -D "$PGDATA" --locale=C --encoding=UTF8 --auth=trust --username=postgres; then
+                    rm -rf "$sqlx_tmp"
+                    return 1
+                  fi
+
+                  echo "unix_socket_directories = '$PGHOST'" >> "$PGDATA/postgresql.conf"
+                  echo "port = $PGPORT" >> "$PGDATA/postgresql.conf"
+                  echo "shared_preload_libraries = 'timescaledb'" >> "$PGDATA/postgresql.conf"
+
+                  if ! ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -l "$pglog" -w -t 180 start; then
+                    cat "$pglog" >&2 || true
+                    rm -rf "$sqlx_tmp"
+                    return 1
+                  fi
+
+                  if ! ${postgresForSqlx}/bin/createdb -h "$PGHOST" -p "$PGPORT" -U postgres sinex_dev; then
+                    ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -m fast stop || true
+                    rm -rf "$sqlx_tmp"
+                    return 1
+                  fi
+
+                  export DATABASE_URL="postgresql:///sinex_dev?host=$PGHOST&user=postgres"
+
+                  if ! ${schemaApplyBootstrap}/bin/schema-apply-bootstrap; then
+                    ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -m fast stop || true
+                    rm -rf "$sqlx_tmp"
+                    return 1
+                  fi
+
+                  cargo build --quiet -p xtask || build_rc=$?
+                  ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -m fast stop || true
+                  rm -rf "$sqlx_tmp"
+                  return "$build_rc"
                 }
 
                 cd "$root_dir"

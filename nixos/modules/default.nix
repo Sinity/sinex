@@ -27,19 +27,19 @@ let
     if pkgs ? sinexctl then pkgs.sinexctl else null;
 
   defaultKittySnippet = ''
-# Enable shell integration boundaries for session capture
-shell_integration enabled
+    # Enable shell integration boundaries for session capture
+    shell_integration enabled
 
-# Allow remote control for event collection (unix socket only)
-allow_remote_control socket-only
+    # Allow remote control for event collection (unix socket only)
+    allow_remote_control socket-only
 
-# Socket path used by Sinex listeners
-listen_on unix:/tmp/kitty-$USER
+    # Socket path used by Sinex listeners
+    listen_on unix:/tmp/kitty-$USER
 
-# Preserve editor cursor and titles while still emitting events
-shell_integration no-cursor
-shell_integration no-title
-'';
+    # Preserve editor cursor and titles while still emitting events
+    shell_integration no-cursor
+    shell_integration no-title
+  '';
 
 in
 {
@@ -140,7 +140,8 @@ in
         };
       };
     };
-  in {
+  in
+  {
     enable = mkEnableOption "Sinex Exocortex event capture system";
 
     package = mkOption {
@@ -185,7 +186,7 @@ in
           };
         };
       };
-      default = {};
+      default = { };
       description = "User and identity configuration.";
     };
 
@@ -238,7 +239,7 @@ in
 
           extraDatabases = mkOption {
             type = listOf str;
-            default = [];
+            default = [ ];
             description = ''
               Additional PostgreSQL databases to provision alongside the primary one.
               Useful when you want both `sinex` and `sinex_dev` (or other sandboxes)
@@ -310,13 +311,13 @@ in
                 };
               };
             };
-            default = {};
+            default = { };
             description = "Connection pool tuning for Sinex services.";
           };
 
         };
       };
-      default = {};
+      default = { };
       description = "PostgreSQL provisioning and connection configuration.";
     };
 
@@ -362,12 +363,12 @@ in
                       };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = "DLQ maintenance configuration.";
                 };
               };
             };
-            default = {};
+            default = { };
             description = "Dead Letter Queue settings.";
           };
 
@@ -418,7 +419,7 @@ in
                             };
                           };
                         };
-                        default = {};
+                        default = { };
                         description = "git-annex garbage collection.";
                       };
                       fsck = mkOption {
@@ -436,12 +437,12 @@ in
                             };
                           };
                         };
-                        default = {};
+                        default = { };
                         description = "git-annex fsck configuration.";
                       };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = "Blob maintenance tasks.";
                 };
                 health = mkOption {
@@ -469,17 +470,17 @@ in
                       };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = "Blob repository health monitoring.";
                 };
               };
             };
-            default = {};
+            default = { };
             description = "Blob storage configuration.";
           };
         };
       };
-      default = {};
+      default = { };
       description = "Storage configuration.";
     };
 
@@ -514,7 +515,7 @@ in
                 };
                 batch = mkOption {
                   type = batchModule { defaultSize = 50; defaultTimeout = 2; };
-                  default = {};
+                  default = { };
                   description = "Batch settings for ingestd. Defaults tuned for desktop workloads (low latency). Increase size/timeout for high-throughput server deployments.";
                 };
                 consumerMaxAckPending = mkOption {
@@ -533,7 +534,7 @@ in
                     defaultCpu = "100%";
                     defaultOpenFiles = 524288;
                   };
-                  default = {};
+                  default = { };
                   description = "Resource limits for ingestd.";
                 };
                 gitopsEnabled = mkOption {
@@ -581,12 +582,12 @@ in
                 };
                 extraArgs = mkOption {
                   type = strList;
-                  default = [];
+                  default = [ ];
                   description = "Additional command-line arguments for ingestd.";
                 };
               };
             };
-            default = {};
+            default = { };
             description = "Ingestion daemon configuration.";
           };
 
@@ -606,7 +607,7 @@ in
                 };
                 resources = mkOption {
                   type = resourceModule { defaultMemory = "512M"; defaultCpu = "75%"; };
-                  default = {};
+                  default = { };
                   description = "Resource limits for the gateway.";
                 };
                 listenAddress = mkOption {
@@ -682,12 +683,12 @@ in
                             };
                           };
                         };
-                        default = {};
+                        default = { };
                         description = "Per-token rate limiting. Two complementary limiters operate in tandem: a local token-bucket (fast, in-process) and a distributed NATS KV limiter (consistent across gateway replicas).";
                       };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = "RPC resource guard configuration for the gateway.";
                 };
                 tlsCertFile = mkOption {
@@ -745,17 +746,17 @@ in
 
                 extraArgs = mkOption {
                   type = strList;
-                  default = [];
+                  default = [ ];
                   description = "Additional command-line arguments for the gateway.";
                 };
               };
             };
-            default = {};
+            default = { };
             description = "Gateway configuration.";
           };
         };
       };
-      default = {};
+      default = { };
       description = "Core service configuration.";
     };
 
@@ -833,7 +834,7 @@ in
                       };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = "Typed TLS configuration for the shared NATS client connection; exported automatically to core services and nodes.";
                 };
                 auth = mkOption {
@@ -876,7 +877,7 @@ in
                       };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = ''
                     Typed shared NATS authentication configuration exported automatically to
                     core services and nodes. Configure at most one auth mode.
@@ -884,7 +885,7 @@ in
                 };
               };
             };
-            default = {};
+            default = { };
             description = "Shared NATS client configuration used by core services and nodes.";
           };
 
@@ -904,22 +905,22 @@ in
                 };
                 batch = mkOption {
                   type = batchModule { defaultSize = 100; defaultTimeout = 2; };
-                  default = {};
+                  default = { };
                   description = "Default batching configuration for nodes.";
                 };
                 resources = mkOption {
                   type = resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; };
-                  default = {};
+                  default = { };
                   description = "Default resource limits.";
                 };
                 env = mkOption {
                   type = envModule;
-                  default = {};
+                  default = { };
                   description = "Environment variables applied to every node.";
                 };
               };
             };
-            default = {};
+            default = { };
             description = "Node defaults.";
           };
 
@@ -929,7 +930,7 @@ in
                 enable = mkOption { type = bool; default = true; description = "Enable filesystem node. Watches large directory trees; needs more memory than other nodes."; };
                 watchPaths = mkOption {
                   type = strList;
-                  default = [];
+                  default = [ ];
                   description = ''
                     Absolute paths for the filesystem node to watch.
                     When empty and <option>services.sinex.users.target</option> is set,
@@ -948,7 +949,20 @@ in
                 };
                 ignoredDirectoryNames = mkOption {
                   type = strList;
-                  default = [ ".git" ".direnv" "node_modules" "target" ];
+                  default = [
+                    ".btrfs"
+                    ".cache"
+                    ".direnv"
+                    ".git"
+                    ".hg"
+                    ".jj"
+                    ".sinex"
+                    ".svn"
+                    ".Trash-1000"
+                    "__pycache__"
+                    "node_modules"
+                    "target"
+                  ];
                   description = ''
                     Directory names excluded from recursive filesystem watch planning
                     and historical scans. This trims heavy local tooling trees that
@@ -970,15 +984,15 @@ in
                   description = "Batch override (null ⇒ inherit defaults).";
                 };
                 resources = mkOption {
-                  type = nullOr (resourceModule { defaultMemory = "1G"; defaultCpu = "50%"; });
-                  default = {};
-                  description = "Filesystem node resource limits. Defaults to 1G memory (higher than other nodes due to inotify watch overhead).";
+                  type = nullOr (resourceModule { defaultMemory = "2G"; defaultCpu = "50%"; });
+                  default = { };
+                  description = "Filesystem node resource limits. Defaults to 2G memory (higher than other nodes due to inotify watch and file-cache overhead).";
                 };
-                env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
-                extraArgs = mkOption { type = strList; default = []; description = "Extra CLI args."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+                extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
               };
             };
-            default = {};
+            default = { };
             description = "Filesystem node.";
           };
 
@@ -991,7 +1005,7 @@ in
                 resources = mkOption { type = nullOr (resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
                 historySources = mkOption {
                   type = listOf terminalHistorySourceModule;
-                  default = [];
+                  default = [ ];
                   description = ''
                     Structured history sources passed to the terminal node through
                     <literal>--node-config</literal>. When empty, the node falls back to its
@@ -1004,7 +1018,7 @@ in
                     options = {
                       bindReadOnlyPaths = mkOption {
                         type = listOf bindReadOnlyPathModule;
-                        default = [];
+                        default = [ ];
                         description = ''
                           Optional <literal>BindReadOnlyPaths</literal> entries for exposing
                           target-user history files into the service namespace.
@@ -1012,14 +1026,14 @@ in
                       };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = "Terminal node host-access configuration.";
                 };
-                env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
-                extraArgs = mkOption { type = strList; default = []; description = "Extra CLI args."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+                extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
               };
             };
-            default = {};
+            default = { };
             description = "Terminal node.";
           };
 
@@ -1036,7 +1050,7 @@ in
                 };
                 dumpSources = mkOption {
                   type = strList;
-                  default = [];
+                  default = [ ];
                   description = ''
                     Absolute paths to browser export roots (`json`, `jsonl`, `ndjson`, `csv`)
                     scanned by the browser history node.
@@ -1044,7 +1058,7 @@ in
                 };
                 sqliteSources = mkOption {
                   type = listOf browserSqliteSourceModule;
-                  default = [];
+                  default = [ ];
                   description = ''
                     Typed browser SQLite sources passed to the browser history node through
                     <literal>--node-config</literal>.
@@ -1060,7 +1074,7 @@ in
                     options = {
                       bindReadOnlyPaths = mkOption {
                         type = listOf bindReadOnlyPathModule;
-                        default = [];
+                        default = [ ];
                         description = ''
                           Optional <literal>BindReadOnlyPaths</literal> entries for exposing
                           browser history files into the service namespace.
@@ -1068,14 +1082,14 @@ in
                       };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = "Browser node host-access configuration.";
                 };
-                env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
-                extraArgs = mkOption { type = strList; default = []; description = "Extra CLI args."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+                extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
               };
             };
-            default = {};
+            default = { };
             description = "Browser history node.";
           };
 
@@ -1120,7 +1134,7 @@ in
                       };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = "Desktop node session/runtime wiring.";
                 };
                 access = mkOption {
@@ -1128,7 +1142,7 @@ in
                     options = {
                       bindReadOnlyPaths = mkOption {
                         type = listOf bindReadOnlyPathModule;
-                        default = [];
+                        default = [ ];
                         description = ''
                           Optional <literal>BindReadOnlyPaths</literal> entries for exposing
                           user-runtime sockets (Hyprland, Wayland) into the service namespace.
@@ -1136,7 +1150,7 @@ in
                       };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = "Desktop node host-access configuration.";
                 };
                 history = mkOption {
@@ -1152,11 +1166,11 @@ in
                       };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = "Desktop historical-import configuration.";
                 };
-                env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
-                extraArgs = mkOption { type = strList; default = []; description = "Extra CLI args."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+                extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
                 clipboard = mkOption {
                   type = submodule {
                     options = {
@@ -1167,12 +1181,12 @@ in
                       };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = "Desktop clipboard integration.";
                 };
               };
             };
-            default = {};
+            default = { };
             description = "Desktop node.";
           };
 
@@ -1187,11 +1201,11 @@ in
                   description = "Batch override (defaults to a slower cadence).";
                 };
                 resources = mkOption { type = nullOr (resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
-                env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
-                extraArgs = mkOption { type = strList; default = []; description = "Extra CLI args."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+                extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
               };
             };
-            default = {};
+            default = { };
             description = "System node.";
           };
 
@@ -1208,7 +1222,7 @@ in
                 };
                 allowedRoots = mkOption {
                   type = pathList;
-                  default = [];
+                  default = [ ];
                   description = ''
                     Root directories scanned by the managed document-ingestion service.
                     When left empty and <option>services.sinex.users.target</option> is
@@ -1262,17 +1276,17 @@ in
                 };
                 env = mkOption {
                   type = envModule;
-                  default = {};
+                  default = { };
                   description = "Extra environment variables.";
                 };
                 extraArgs = mkOption {
                   type = strList;
-                  default = [];
+                  default = [ ];
                   description = "Extra CLI args.";
                 };
               };
             };
-            default = {};
+            default = { };
             description = "Managed document snapshot ingestion.";
           };
 
@@ -1286,10 +1300,10 @@ in
                     options = {
                       enable = mkOption { type = bool; default = true; description = "Enable canonical command synthesizer."; };
                       profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
-                      env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
+                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = "Canonical command synthesizer automaton.";
                 };
 
@@ -1298,10 +1312,10 @@ in
                     options = {
                       enable = mkOption { type = bool; default = true; description = "Enable health aggregator automaton."; };
                       profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
-                      env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
+                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = "Health aggregator automaton.";
                 };
 
@@ -1310,10 +1324,10 @@ in
                     options = {
                       enable = mkOption { type = bool; default = true; description = "Enable analytics automaton."; };
                       profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
-                      env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
+                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = "Analytics automaton. Emits bounded `activity.window.summary` rollups from trusted activity signals.";
                 };
 
@@ -1322,10 +1336,10 @@ in
                     options = {
                       enable = mkOption { type = bool; default = true; description = "Enable session detector automaton. Groups events by temporal proximity into session boundaries."; };
                       profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
-                      env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
+                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = "Session detector automaton. Rolls bounded `activity.window.summary` inputs into `activity.session.boundary` outputs.";
                 };
 
@@ -1334,12 +1348,12 @@ in
                     options = {
                       batch = mkOption {
                         type = batchModule { defaultSize = 100; defaultTimeout = 5; };
-                        default = {};
+                        default = { };
                         description = "Batch parameters for this automata profile.";
                       };
                       resources = mkOption {
                         type = resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; };
-                        default = {};
+                        default = { };
                         description = "Resource limits for this automata profile.";
                       };
                     };
@@ -1362,7 +1376,7 @@ in
                 };
               };
             };
-            default = {};
+            default = { };
             description = "Automata configuration.";
           };
 
@@ -1375,19 +1389,19 @@ in
                 handoffTimeoutSec = mkOption { type = positive; default = 10; description = "Handoff timeout in seconds."; };
               };
             };
-            default = {};
+            default = { };
             description = "Coordination settings.";
           };
 
           generatedUnits = mkOption {
             type = listOf str;
-            default = [];
+            default = [ ];
             internal = true;
             description = "Systemd units generated for node services.";
           };
         };
       };
-      default = {};
+      default = { };
       description = "Node ecosystem configuration.";
     };
 
@@ -1414,10 +1428,10 @@ in
                       listen = mkOption { type = str; default = "127.0.0.1"; description = "Prometheus bind address."; };
                       port = mkOption { type = port; default = 9090; description = "Prometheus port."; };
                       retention = mkOption { type = str; default = "30d"; description = "Prometheus retention window."; };
-                      extraScrapeConfigs = mkOption { type = listOf attrs; default = []; description = "Additional scrape configs merged in."; };
+                      extraScrapeConfigs = mkOption { type = listOf attrs; default = [ ]; description = "Additional scrape configs merged in."; };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = "Prometheus configuration.";
                 };
 
@@ -1451,7 +1465,7 @@ in
                       };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = "Grafana configuration.";
                 };
 
@@ -1472,12 +1486,12 @@ in
                       };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = "Exporter configuration.";
                 };
               };
             };
-            default = {};
+            default = { };
             description = "Monitoring stack.";
           };
 
@@ -1493,12 +1507,12 @@ in
                       age = mkOption { type = str; default = "30d"; description = "Maximum log age."; };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = "Log retention policy.";
                 };
               };
             };
-            default = {};
+            default = { };
             description = "Logging configuration.";
           };
 
@@ -1506,15 +1520,15 @@ in
             type = submodule {
               options = {
                 enable = mkOption { type = bool; default = false; description = "Enable Prometheus alert rules."; };
-                rulesFiles = mkOption { type = pathList; default = []; description = "Alert rule files to include."; };
+                rulesFiles = mkOption { type = pathList; default = [ ]; description = "Alert rule files to include."; };
               };
             };
-            default = {};
+            default = { };
             description = "Alerting configuration.";
           };
         };
       };
-      default = {};
+      default = { };
       description = "Observability configuration.";
     };
 
@@ -1541,7 +1555,7 @@ in
                     "services"
                     "integration"
                   ]);
-                  default = [];
+                  default = [ ];
                   description = "Phases to skip during preflight verification.";
                 };
                 failureAction = mkOption {
@@ -1551,7 +1565,7 @@ in
                 };
               };
             };
-            default = {};
+            default = { };
             description = "Preflight verification configuration.";
           };
 
@@ -1563,10 +1577,10 @@ in
                 healthCheckTimeoutSec = mkOption { type = positive; default = 60; description = "Time to wait for units to become healthy."; };
                 rollbackOnFailure = mkOption { type = bool; default = true; description = "Rollback units if update fails."; };
                 preserveData = mkOption { type = bool; default = true; description = "Preserve DLQ data during update."; };
-                units = mkOption { type = strList; default = []; description = "Explicit list of units to manage (empty derives)."; };
+                units = mkOption { type = strList; default = [ ]; description = "Explicit list of units to manage (empty derives)."; };
               };
             };
-            default = {};
+            default = { };
             description = "Coordinated update configuration.";
           };
 
@@ -1580,20 +1594,20 @@ in
                       dlq = mkOption { type = bool; default = true; description = "Run DLQ cleanup timer."; };
                       blobGc = mkOption { type = bool; default = true; description = "Run blob garbage collection."; };
                       blobFsck = mkOption { type = bool; default = true; description = "Run blob fsck timer."; };
-                      custom = mkOption { type = strList; default = []; description = "Additional maintenance units to start."; };
+                      custom = mkOption { type = strList; default = [ ]; description = "Additional maintenance units to start."; };
                     };
                   };
-                  default = {};
+                  default = { };
                   description = "Maintenance task selection.";
                 };
               };
             };
-            default = {};
+            default = { };
             description = "Maintenance configuration.";
           };
         };
       };
-      default = {};
+      default = { };
       description = "Lifecycle management configuration.";
     };
 
@@ -1612,7 +1626,7 @@ in
                 };
               };
             };
-            default = {};
+            default = { };
             description = "Shell recording configuration.";
           };
 
@@ -1630,12 +1644,12 @@ in
                 };
               };
             };
-            default = {};
+            default = { };
             description = "Kitty terminal integration.";
           };
         };
       };
-      default = {};
+      default = { };
       description = "Developer ergonomics configuration.";
     };
 
@@ -1673,7 +1687,7 @@ in
           };
         };
       };
-      default = {};
+      default = { };
       description = "Secret management integration.";
     };
   };
@@ -1700,13 +1714,13 @@ in
         if targetUser == null then null
         else lib.attrByPath [ "users" "users" targetUser "uid" ] null config;
       effectiveDocumentRoots =
-        if cfg.nodes.document.allowedRoots != [] then cfg.nodes.document.allowedRoots
-        else if targetHome == null then []
+        if cfg.nodes.document.allowedRoots != [ ] then cfg.nodes.document.allowedRoots
+        else if targetHome == null then [ ]
         else [ "${targetHome}/Documents" ];
       dbUser = cfg.database.user;
       dbCfg = cfg.database;
       databaseUrl = renderDatabaseUrl dbCfg;
-      secretPaths = config.sinex.secrets.paths or {};
+      secretPaths = config.sinex.secrets.paths or { };
       resolveSecretPath = resolveNamedSecretPath secretPaths;
       gatewayAdminTokenFile =
         resolveSecretPath cfg.secrets.gatewayAdminTokenFile [
@@ -1765,7 +1779,7 @@ in
       deploymentManagedUnits = lib.unique (
         (lib.optionals (cfg.enable && cfg.core.enable) [ "sinex-ingestd.service" ])
         ++ (lib.optionals (cfg.enable && cfg.core.enable && cfg.core.gateway.enable) [ "sinex-gateway.service" ])
-        ++ lib.optionals cfg.enable (map (name: "${name}.service") (config.sinex._generatedUnits or []))
+        ++ lib.optionals cfg.enable (map (name: "${name}.service") (config.sinex._generatedUnits or [ ]))
       );
       resolveNodeInstances = nodeInstances:
         if nodeInstances == null then
@@ -1809,20 +1823,24 @@ in
           (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.terminal.enable) cfg.nodes.terminal.instances)
           // {
             kitty_enabled = cfg.shell.kitty.enable;
-            history_sources = map (source: {
-              path = source.path;
-              shell = source.shell;
-            }) cfg.nodes.terminal.historySources;
+            history_sources = map
+              (source: {
+                path = source.path;
+                shell = source.shell;
+              })
+              cfg.nodes.terminal.historySources;
           };
         browser =
           (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.browser.enable) cfg.nodes.browser.instances)
           // {
             dump_sources = cfg.nodes.browser.dumpSources;
-            sqlite_sources = map (source: {
-              path = source.path;
-              browser = source.browser;
-              format = source.format;
-            }) cfg.nodes.browser.sqliteSources;
+            sqlite_sources = map
+              (source: {
+                path = source.path;
+                browser = source.browser;
+                format = source.format;
+              })
+              cfg.nodes.browser.sqliteSources;
             polling_interval_secs = cfg.nodes.browser.pollIntervalSec;
           };
         desktop =
@@ -1896,7 +1914,8 @@ in
       };
       deploymentReadinessDescriptorJson = builtins.toJSON deploymentReadinessDescriptor;
       deploymentReadinessDescriptorFile = pkgs.writeText "sinex-deployment-readiness.json" deploymentReadinessDescriptorJson;
-      dlqCleanupScript = if cfg.cliPackage == null then null else pkgs.writeShellScript "sinex-dlq-cleanup" ''
+      dlqCleanupScript = if cfg.cliPackage == null then null else
+      pkgs.writeShellScript "sinex-dlq-cleanup" ''
         set -euo pipefail
 
         CLI_BIN="${cfg.cliPackage}/bin/sinexctl"
@@ -1922,9 +1941,9 @@ in
           { path = ingestSpool; mode = "0755"; }
           { path = logDir; mode = "0755"; }
         ]
-        ++ optionals (cfg.storage.dlq.enable) [ { path = dlqDir; mode = "0750"; } ]
-        ++ optionals (cfg.storage.blob.enable) [ { path = blobDir; mode = "0750"; } ]
-        ++ optionals (cfg.core.enable && cfg.core.gateway.autoGenerateTls) [ { path = "${stateRoot}/tls"; mode = "0750"; } ]
+        ++ optionals (cfg.storage.dlq.enable) [{ path = dlqDir; mode = "0750"; }]
+        ++ optionals (cfg.storage.blob.enable) [{ path = blobDir; mode = "0750"; }]
+        ++ optionals (cfg.core.enable && cfg.core.gateway.autoGenerateTls) [{ path = "${stateRoot}/tls"; mode = "0750"; }]
         ++ optionals (cfg.shell.asciinema.autoRecord && targetUser != null && hasPrefix "/" asciiPath) [
           { path = asciiPath; mode = "0770"; user = targetUser; group = targetGroup; }
         ];
@@ -1979,11 +1998,12 @@ in
           }
           {
             assertion =
-              length (filter (x: x != null) [
-                effectiveNatsTokenFile
-                effectiveNatsCredsFile
-                effectiveNatsNkeySeedFile
-              ]) <= 1;
+              length
+                (filter (x: x != null) [
+                  effectiveNatsTokenFile
+                  effectiveNatsCredsFile
+                  effectiveNatsNkeySeedFile
+                ]) <= 1;
             message = "Configure at most one NATS auth mode under services.sinex.nodes.nats.auth: tokenFile, credsFile, or nkeySeedFile.";
           }
           {
@@ -1996,7 +2016,7 @@ in
           {
             assertion =
               (!cfg.nodes.enable || !cfg.nodes.document.enable)
-              || effectiveDocumentRoots != [];
+              || effectiveDocumentRoots != [ ];
             message = ''
               Document ingestion is enabled but no allowed roots resolved. Set
               services.sinex.nodes.document.allowedRoots explicitly or configure
@@ -2025,7 +2045,7 @@ in
       })
 
       (mkIf (cfg.enable || (cfg.database.enable && cfg.database.autoSetup) || cfg.storage.blob.enable) {
-        users.groups.${dbUser} = {};
+        users.groups.${dbUser} = { };
         users.users.${dbUser} = {
           isSystemUser = true;
           group = dbUser;
@@ -2036,7 +2056,7 @@ in
       })
 
       (mkIf ((cfg.enable || cfg.storage.blob.enable || cfg.lifecycle.maintenance.enable) && cfg.users.nodes != dbUser) {
-        users.groups.${sinexUser} = {};
+        users.groups.${sinexUser} = { };
         users.users.${sinexUser} = {
           isSystemUser = true;
           group = sinexUser;
@@ -2117,7 +2137,7 @@ in
       })
 
       (mkIf (targetHome != null) {
-        services.sinex.nodes.browser.dumpSources = mkDefault [];
+        services.sinex.nodes.browser.dumpSources = mkDefault [ ];
         services.sinex.nodes.browser.sqliteSources = mkDefault [
           {
             path = "${targetHome}/.local/share/qutebrowser/history.sqlite";

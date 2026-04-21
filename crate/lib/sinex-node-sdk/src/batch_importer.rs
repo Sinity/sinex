@@ -175,7 +175,9 @@ fn maybe_collect_file(
     };
 
     if !extensions.is_empty()
-        && !extensions.iter().any(|extension| filename.ends_with(extension))
+        && !extensions
+            .iter()
+            .any(|extension| filename.ends_with(extension))
     {
         return Ok(());
     }
@@ -416,7 +418,10 @@ mod tests {
         state.mark_processed(utf8(&path), fingerprint_for(&path), 8, 1);
 
         sleep(Duration::from_millis(5));
-        let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
         writeln!(file, "{{\"x\":2}}").unwrap();
 
         let files = scan_for_new_files(&state, utf8(dir.path()), &[".ndjson"]).unwrap();
