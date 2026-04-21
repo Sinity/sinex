@@ -1,9 +1,0 @@
-error: EventPayload can only be derived for structs
- --> tests/compile_fail/enum_not_supported.rs:5:1
-  |
-5 | / #[event_payload(source = "test-source", event_type = "test.event")]
-6 | | pub enum NotAStruct {
-7 | |     VariantA,
-8 | |     VariantB(String),
-9 | | }
-  | |_^

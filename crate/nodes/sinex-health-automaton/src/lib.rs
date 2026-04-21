@@ -12,11 +12,19 @@ use sinex_node_sdk::derived_node::{
     DerivedOutput, DerivedTriggerContext, ScopeReconcilerNodeAdapter,
 };
 use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconcilerNode};
-use sinex_primitives::JsonValue;
-use sinex_primitives::Uuid;
 use sinex_primitives::domain::SyntheticTemporalPolicy;
+use sinex_primitives::events::{
+    EventPayload,
+    payloads::{
+        HealthAggregatedAlertPayload, HealthAggregatedComponentReportPayload,
+        HealthAggregatedReportPayload, HealthAggregatedReportType, HealthAggregatedStatus,
+        HealthAggregatedSystemStatusPayload, HealthAlertSeverity, HealthAlertType,
+        HealthComponentSnapshot,
+    },
+};
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::{Duration, Timestamp};
+use sinex_primitives::{JsonValue, Uuid};
 use std::collections::HashMap;
 use std::str::FromStr;
 use tracing::warn;
@@ -185,46 +193,7 @@ pub struct HealthEvent {
     pub event_id: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ComponentHealthStatus {
-    Unknown,
-    Healthy,
-    Degraded,
-    Failed,
-}
-
-impl ComponentHealthStatus {
-    fn parse_field(input: &JsonValue, field: &str) -> Result<Self, NodeLogicError> {
-        let value = input.get(field).ok_or_else(|| {
-            NodeLogicError::InputParsing(format!(
-                "health status payload is missing required field '{field}'"
-            ))
-        })?;
-        let status = value.as_str().ok_or_else(|| {
-            NodeLogicError::InputParsing(format!("health status field '{field}' must be a string"))
-        })?;
-        Self::from_str(status).map_err(|()| {
-            NodeLogicError::InputParsing(format!(
-                "health status field '{field}' has invalid value '{status}'"
-            ))
-        })
-    }
-}
-
-impl FromStr for ComponentHealthStatus {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "unknown" => Ok(Self::Unknown),
-            "healthy" => Ok(Self::Healthy),
-            "degraded" => Ok(Self::Degraded),
-            "failed" => Ok(Self::Failed),
-            _ => Err(()),
-        }
-    }
-}
+pub type ComponentHealthStatus = HealthAggregatedStatus;
 
 #[derive(Default)]
 pub struct HealthAggregator {
@@ -234,7 +203,7 @@ pub struct HealthAggregator {
 impl ScopeReconcilerNode for HealthAggregator {
     type State = HealthState;
     type Input = JsonValue;
-    type Output = JsonValue;
+    type Output = HealthAggregatedReportPayload;
 
     fn name(&self) -> &'static str {
         "health-aggregator"
@@ -243,7 +212,11 @@ impl ScopeReconcilerNode for HealthAggregator {
         "health.status"
     }
     fn output_event_type(&self) -> &'static str {
-        "health.aggregated_report"
+        HealthAggregatedReportPayload::EVENT_TYPE.as_static_str()
+    }
+
+    fn output_event_source(&self) -> &'static str {
+        HealthAggregatedReportPayload::SOURCE.as_static_str()
     }
 
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
@@ -288,8 +261,8 @@ impl ScopeReconcilerNode for HealthAggregator {
             state.config = self.config.clone();
         }
 
-        let previous_status = ComponentHealthStatus::parse_field(&input, "previous_status")?;
-        let current_status = ComponentHealthStatus::parse_field(&input, "current_status")?;
+        let previous_status = parse_health_status_field(&input, "previous_status")?;
+        let current_status = parse_health_status_field(&input, "current_status")?;
 
         // Get or create component health tracking
         let mut immediate_alert = None;
@@ -451,18 +424,26 @@ impl HealthAggregator {
         status: ComponentHealthStatus,
         timestamp: Timestamp,
         reason: &str,
-    ) -> JsonValue {
-        serde_json::json!({
-            "alert_type": "component_status_change",
-            "component": component,
-            "status": status,
-            "timestamp": timestamp.format_rfc3339(),
-            "reason": reason,
-            "severity": if matches!(status, ComponentHealthStatus::Failed) { "critical" } else { "warning" },
+    ) -> HealthAggregatedReportPayload {
+        HealthAggregatedReportPayload::Alert(HealthAggregatedAlertPayload {
+            alert_type: HealthAlertType::ComponentStatusChange,
+            component: component.to_string(),
+            status,
+            timestamp,
+            reason: reason.to_string(),
+            severity: if matches!(status, ComponentHealthStatus::Failed) {
+                HealthAlertSeverity::Critical
+            } else {
+                HealthAlertSeverity::Warning
+            },
         })
     }
 
-    fn create_system_status(&self, state: &HealthState, timestamp: Timestamp) -> JsonValue {
+    fn create_system_status(
+        &self,
+        state: &HealthState,
+        timestamp: Timestamp,
+    ) -> HealthAggregatedReportPayload {
         let total_components = state.component_health.len();
         let healthy = state
             .component_health
@@ -491,27 +472,25 @@ impl HealthAggregator {
             ComponentHealthStatus::Unknown
         };
 
-        serde_json::json!({
-            "report_type": "system_health_status",
-            "timestamp": timestamp.format_rfc3339(),
-            "overall_status": overall_status,
-            "total_components": total_components,
-            "healthy_count": healthy,
-            "degraded_count": degraded,
-            "failed_count": failed,
-            "unknown_count": unknown,
-            "components": state
+        HealthAggregatedReportPayload::SystemStatus(HealthAggregatedSystemStatusPayload {
+            report_type: HealthAggregatedReportType::SystemHealthStatus,
+            timestamp,
+            overall_status,
+            total_components,
+            healthy_count: healthy,
+            degraded_count: degraded,
+            failed_count: failed,
+            unknown_count: unknown,
+            components: state
                 .component_health
                 .iter()
-                .map(|(name, health)| {
-                    serde_json::json!({
-                        "name": name,
-                        "status": health.current_status,
-                        "status_since": health.status_since.format_rfc3339(),
-                        "last_seen": health.last_seen.format_rfc3339(),
-                    })
+                .map(|(name, health)| HealthComponentSnapshot {
+                    name: name.clone(),
+                    status: health.current_status,
+                    status_since: health.status_since,
+                    last_seen: health.last_seen,
                 })
-                .collect::<Vec<_>>(),
+                .collect(),
         })
     }
 
@@ -519,7 +498,7 @@ impl HealthAggregator {
         &self,
         component_health: &ComponentHealth,
         timestamp: Timestamp,
-    ) -> JsonValue {
+    ) -> HealthAggregatedReportPayload {
         let window_start =
             timestamp - Duration::seconds(self.config.aggregation_window_seconds as i64);
 
@@ -535,17 +514,17 @@ impl HealthAggregator {
             .filter(|e| e.timestamp >= window_start && e.previous_status != e.current_status)
             .count();
 
-        serde_json::json!({
-            "report_type": "component_health_report",
-            "timestamp": timestamp.format_rfc3339(),
-            "component": component_health.component_name,
-            "current_status": component_health.current_status,
-            "status_since": component_health.status_since.format_rfc3339(),
-            "last_seen": component_health.last_seen.format_rfc3339(),
-            "total_transitions": component_health.transition_count,
-            "events_in_window": events_in_window,
-            "transitions_in_window": transitions_in_window,
-            "window_seconds": self.config.aggregation_window_seconds,
+        HealthAggregatedReportPayload::ComponentReport(HealthAggregatedComponentReportPayload {
+            report_type: HealthAggregatedReportType::ComponentHealthReport,
+            timestamp,
+            component: component_health.component_name.clone(),
+            current_status: component_health.current_status,
+            status_since: component_health.status_since,
+            last_seen: component_health.last_seen,
+            total_transitions: component_health.transition_count,
+            events_in_window,
+            transitions_in_window,
+            window_seconds: self.config.aggregation_window_seconds,
         })
     }
 }
@@ -568,4 +547,23 @@ fn parse_component_name(input: &JsonValue) -> Result<&str, NodeLogicError> {
         ));
     }
     Ok(component)
+}
+
+fn parse_health_status_field(
+    input: &JsonValue,
+    field: &str,
+) -> Result<ComponentHealthStatus, NodeLogicError> {
+    let value = input.get(field).ok_or_else(|| {
+        NodeLogicError::InputParsing(format!(
+            "health status payload is missing required field '{field}'"
+        ))
+    })?;
+    let status = value.as_str().ok_or_else(|| {
+        NodeLogicError::InputParsing(format!("health status field '{field}' must be a string"))
+    })?;
+    ComponentHealthStatus::from_str(status).map_err(|()| {
+        NodeLogicError::InputParsing(format!(
+            "health status field '{field}' has invalid value '{status}'"
+        ))
+    })
 }
