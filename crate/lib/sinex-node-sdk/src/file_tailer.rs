@@ -23,10 +23,17 @@ pub enum AppendOnlyFileChange {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppendOnlyFileLine {
+    pub text: String,
+    pub start_offset_bytes: u64,
+    pub end_offset_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppendOnlyFilePollResult {
     pub file_size: u64,
     pub bytes_consumed: u64,
-    pub lines: Vec<String>,
+    pub records: Vec<AppendOnlyFileLine>,
     pub state: AppendOnlyFileState,
     pub change: AppendOnlyFileChange,
 }
@@ -137,7 +144,7 @@ pub async fn poll_utf8_lines(
         return Ok(AppendOnlyFilePollResult {
             file_size,
             bytes_consumed: 0,
-            lines: Vec::new(),
+            records: Vec::new(),
             state,
             change,
         });
@@ -148,13 +155,14 @@ pub async fn poll_utf8_lines(
         return Ok(AppendOnlyFilePollResult {
             file_size,
             bytes_consumed: 0,
-            lines: Vec::new(),
+            records: Vec::new(),
             state,
             change,
         });
     }
 
-    let mut lines = Vec::new();
+    let segment_start_offset = state.offset_bytes;
+    let mut records = Vec::new();
     let mut bytes_consumed = 0u64;
 
     for line in new_segment.split_inclusive('\n') {
@@ -165,7 +173,13 @@ pub async fn poll_utf8_lines(
         let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
         bytes_consumed += line.len() as u64;
         if !trimmed.is_empty() {
-            lines.push(trimmed.to_string());
+            records.push(AppendOnlyFileLine {
+                text: trimmed.to_string(),
+                start_offset_bytes: segment_start_offset
+                    .saturating_add(bytes_consumed)
+                    .saturating_sub(line.len() as u64),
+                end_offset_bytes: segment_start_offset.saturating_add(bytes_consumed),
+            });
         }
     }
 
@@ -173,12 +187,12 @@ pub async fn poll_utf8_lines(
         state.offset_bytes = state.offset_bytes.saturating_add(bytes_consumed);
     }
 
-    if !lines.is_empty() || !matches!(change, AppendOnlyFileChange::Unchanged) {
+    if !records.is_empty() || !matches!(change, AppendOnlyFileChange::Unchanged) {
         debug!(
             path = %path,
             file_size,
             bytes_consumed,
-            lines = lines.len(),
+            lines = records.len(),
             offset = state.offset_bytes,
             change = ?change,
             "Polled append-only file progress"
@@ -188,7 +202,7 @@ pub async fn poll_utf8_lines(
     Ok(AppendOnlyFilePollResult {
         file_size,
         bytes_consumed,
-        lines,
+        records,
         state,
         change,
     })

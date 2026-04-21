@@ -15,13 +15,10 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, event
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::error_helpers::NodeErrorExt;
 use sinex_node_sdk::{
-    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
-};
-use sinex_node_sdk::{
-    NodeResult, SinexError,
+    BufferedRecordSink, NodeResult, RecordMaterializer, SinexError,
     acquisition_manager::{
-        AcquisitionManager, AppendStreamAcquirer, BufferedAppendStreamWriter,
-        BufferedAppendStreamWriterConfig, RotationPolicy, SourceRecordAnchor,
+        AcquisitionManager, AppendStreamAcquirer, BufferedAppendStreamWriterConfig, RotationPolicy,
+        SourceRecordAnchor,
     },
     ingestor_node::IngestorNode,
     runtime::stream::{
@@ -30,6 +27,9 @@ use sinex_node_sdk::{
     },
     stage_as_you_go::StageAsYouGoContext,
     wait_for_shutdown_signal,
+};
+use sinex_node_sdk::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 use sinex_primitives::{
     Seconds, Uuid,
@@ -379,7 +379,7 @@ impl EventMetrics {
 #[derive(Clone)]
 struct WatchContext {
     acquisition: Arc<AcquisitionManager>,
-    observation_writer: BufferedAppendStreamWriter,
+    observation_materializer: RecordMaterializer<BufferedRecordSink>,
     observation_source_identifier: Arc<str>,
     stage_context: StageAsYouGoContext,
     max_capture_bytes: Bytes,
@@ -560,9 +560,8 @@ impl FilesystemNode {
                 .with_acquisition_manager(Arc::clone(&acquisition));
             let observation_source_identifier =
                 Arc::<str>::from(format!("filesystem.observations:{path}"));
-            let observation_stream = AppendStreamAcquirer::new(Arc::clone(&acquisition));
-            let observation_writer = BufferedAppendStreamWriter::spawn(
-                observation_stream,
+            let observation_materializer = RecordMaterializer::new(BufferedRecordSink::spawn(
+                AppendStreamAcquirer::new(Arc::clone(&acquisition)),
                 observation_source_identifier.to_string(),
                 BufferedAppendStreamWriterConfig {
                     channel_capacity: FS_OBSERVATION_WRITER_CHANNEL_CAPACITY,
@@ -570,13 +569,13 @@ impl FilesystemNode {
                     batch_max_bytes: FS_OBSERVATION_BATCH_MAX_BYTES,
                     batch_coalesce_window: FS_OBSERVATION_BATCH_COALESCE_WINDOW,
                 },
-            );
+            ));
 
             contexts.insert(
                 path.clone(),
                 WatchContext {
                     acquisition,
-                    observation_writer,
+                    observation_materializer,
                     observation_source_identifier,
                     stage_context: stage_with_acquisition,
                     max_capture_bytes: self.config.max_capture_bytes,
@@ -1489,7 +1488,7 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
         }
     }
 
-    ctx.observation_writer
+    ctx.observation_materializer
         .finalize("filesystem watcher shutdown")
         .await?;
     Ok(())
@@ -1831,14 +1830,13 @@ async fn capture_observation_record(
         size,
         observed_at: sinex_primitives::temporal::now(),
     };
-    let mut bytes = serde_json::to_vec(&record).map_err(|error| {
-        SinexError::serialization("failed to serialize filesystem observation record")
-            .with_std_error(&error)
-    })?;
-    bytes.push(b'\n');
-    ctx.observation_writer.append(bytes).await.map_err(|error| {
-        SinexError::processing("Failed to append filesystem observation record").with_source(error)
-    })
+    ctx.observation_materializer
+        .append_json_line(&record)
+        .await
+        .map_err(|error| {
+            SinexError::processing("Failed to append filesystem observation record")
+                .with_source(error)
+        })
 }
 
 fn warn_oversized_skip(ctx: &WatchContext, path: &Path, size: u64) {
@@ -2724,7 +2722,7 @@ mod tests {
         cancel_token: CancellationToken,
     ) -> WatchContext {
         let observation_source_identifier = Arc::<str>::from("filesystem.observations:test");
-        let observation_writer = BufferedAppendStreamWriter::spawn(
+        let observation_materializer = RecordMaterializer::new(BufferedRecordSink::spawn(
             AppendStreamAcquirer::new(Arc::clone(&acquisition)),
             observation_source_identifier.to_string(),
             BufferedAppendStreamWriterConfig {
@@ -2733,10 +2731,10 @@ mod tests {
                 batch_max_bytes: FS_OBSERVATION_BATCH_MAX_BYTES,
                 batch_coalesce_window: std::time::Duration::from_millis(1),
             },
-        );
+        ));
         WatchContext {
             acquisition,
-            observation_writer,
+            observation_materializer,
             observation_source_identifier,
             stage_context,
             max_capture_bytes: Bytes::from_mebibytes(1),
