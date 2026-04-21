@@ -28,6 +28,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::Duration;
+use tempfile::NamedTempFile;
 use time::OffsetDateTime;
 
 const HISTORY_DB_SCHEMA_VERSION: i32 = 1;
@@ -177,21 +178,35 @@ fn should_run_history_integrity_check(path: &Path, now: OffsetDateTime) -> bool 
 
 fn persist_history_integrity_stamp(path: &Path, now: OffsetDateTime) -> Result<()> {
     let stamp_path = history_integrity_stamp_path(path);
-    let temp_path = stamp_path.with_extension("db.integrity.json.tmp");
-    let payload = serde_json::to_vec_pretty(&HistoryIntegrityStamp::new(now))
-        .context("failed to serialize history integrity stamp")?;
-    std::fs::write(&temp_path, payload).with_context(|| {
-        format!(
-            "failed to write temporary history integrity stamp: {}",
-            temp_path.display()
-        )
-    })?;
-    std::fs::rename(&temp_path, &stamp_path).with_context(|| {
-        format!(
-            "failed to persist history integrity stamp: {}",
+    let parent = stamp_path.parent().ok_or_else(|| {
+        color_eyre::eyre::eyre!(
+            "history integrity stamp path has no parent: {}",
             stamp_path.display()
         )
     })?;
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("failed to create history stamp directory: {}", parent.display()))?;
+    let payload = serde_json::to_vec_pretty(&HistoryIntegrityStamp::new(now))
+        .context("failed to serialize history integrity stamp")?;
+    let mut temp_file = NamedTempFile::new_in(parent).with_context(|| {
+        format!(
+            "failed to create temporary history integrity stamp in {}",
+            parent.display()
+        )
+    })?;
+    use std::io::Write as _;
+    temp_file
+        .write_all(&payload)
+        .with_context(|| "failed to write temporary history integrity stamp")?;
+    temp_file
+        .persist(&stamp_path)
+        .map_err(|error| error.error)
+        .with_context(|| {
+            format!(
+                "failed to persist history integrity stamp: {}",
+                stamp_path.display()
+            )
+        })?;
     Ok(())
 }
 
@@ -5238,6 +5253,31 @@ mod tests {
             should_run_history_integrity_check(&db_path, now),
             "stale integrity stamp should re-enable maintenance"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_integrity_stamp_persist_tolerates_parallel_refreshes() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir
+            .path()
+            .join("test-history-integrity-check-parallel-refresh.db");
+        let now = OffsetDateTime::now_utc();
+
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    for _ in 0..32 {
+                        persist_history_integrity_stamp(&db_path, now)
+                            .expect("parallel integrity stamp refresh should not race");
+                    }
+                });
+            }
+        });
+
+        let stamp = load_history_integrity_stamp(&history_integrity_stamp_path(&db_path))
+            .ok_or_else(|| color_eyre::eyre::eyre!("expected integrity stamp after refresh"))?;
+        assert_eq!(stamp.schema_version, HISTORY_DB_SCHEMA_VERSION);
         Ok(())
     }
 
