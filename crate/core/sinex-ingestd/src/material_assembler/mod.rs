@@ -591,6 +591,11 @@ impl MaterialAssembler {
             pending_write: None,
             pending_end: None,
             last_slice_received: Timestamp::now(),
+            staged_bytes_since_sync: 0,
+            wal_entries_since_sync: 0,
+            wal_bytes_since_sync: 0,
+            last_staged_sync: std::time::Instant::now(),
+            last_wal_sync: std::time::Instant::now(),
         })
     }
 

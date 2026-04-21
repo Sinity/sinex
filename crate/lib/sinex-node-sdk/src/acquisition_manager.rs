@@ -504,20 +504,84 @@ impl AcquisitionManager {
         handle: &mut SourceMaterialHandle,
         data: &[u8],
     ) -> NodeResult<()> {
+        self.append_record_batch(handle, &[data]).await?;
+        Ok(())
+    }
+
+    /// Append multiple logical source records as one physical material slice.
+    ///
+    /// Each input record receives its own byte anchor, but the transport sees one
+    /// ordered slice frame. Hot event streams should prefer this over calling
+    /// [`append_slice`](Self::append_slice) once per tiny record.
+    pub async fn append_record_batch<T>(
+        &self,
+        handle: &mut SourceMaterialHandle,
+        records: &[T],
+    ) -> NodeResult<Vec<SourceRecordAnchor>>
+    where
+        T: AsRef<[u8]>,
+    {
         self.ensure_begin_published(handle).await?;
         self.ensure_pending_slice_mirrored(handle).await?;
 
+        let material_id = handle.material_id;
         let offset_start = handle.bytes_written;
         let slice_index = handle.slice_count;
+        let mut next_offset = offset_start;
+        let mut total_bytes = 0usize;
+        let mut anchors = Vec::with_capacity(records.len());
 
-        self.publish_slice(handle.material_id, slice_index, data, offset_start)
+        for record in records {
+            let bytes = record.as_ref();
+            let record_len = i64::try_from(bytes.len()).map_err(|error| {
+                SinexError::validation("source record exceeds supported material size")
+                    .with_context("record_bytes", bytes.len().to_string())
+                    .with_std_error(&error)
+            })?;
+            let offset_end = next_offset.checked_add(record_len).ok_or_else(|| {
+                SinexError::validation("source material byte offset overflow")
+                    .with_context("bytes_written", next_offset.to_string())
+                    .with_context("record_bytes", bytes.len().to_string())
+            })?;
+            total_bytes = total_bytes.checked_add(bytes.len()).ok_or_else(|| {
+                SinexError::validation("material batch byte count overflow")
+                    .with_context("bytes_so_far", total_bytes.to_string())
+                    .with_context("record_bytes", bytes.len().to_string())
+            })?;
+            anchors.push(SourceRecordAnchor {
+                material_id,
+                offset_start: next_offset,
+                offset_end,
+            });
+            next_offset = offset_end;
+        }
+
+        if total_bytes == 0 {
+            return Ok(anchors);
+        }
+
+        if total_bytes > Self::MAX_NATS_PAYLOAD_BYTES {
+            return Err(SinexError::validation(format!(
+                "Material record batch exceeds NATS max payload ({} bytes > {} bytes). \
+                 Caller must split records into smaller batches.",
+                total_bytes,
+                Self::MAX_NATS_PAYLOAD_BYTES
+            )));
+        }
+
+        let mut data = Vec::with_capacity(total_bytes);
+        for record in records {
+            data.extend_from_slice(record.as_ref());
+        }
+
+        self.publish_slice(handle.material_id, slice_index, &data, offset_start)
             .await?;
 
-        if let Err(error) = Self::mirror_slice_to_local_stage(handle, data, offset_start).await {
+        if let Err(error) = Self::mirror_slice_to_local_stage(handle, &data, offset_start).await {
             handle.pending_published_slice = Some(PendingPublishedSlice {
                 offset: offset_start,
                 slice_index,
-                data: data.to_vec(),
+                data,
             });
             return Err(error
                 .with_context("pending_local_mirror", "true")
@@ -530,13 +594,14 @@ impl AcquisitionManager {
         debug!(
             material_id = %handle.material_id,
             slice_index,
-            bytes = data.len(),
+            records = records.len(),
+            bytes = total_bytes,
             offset_start,
             offset_end = handle.bytes_written,
-            "Appended material slice"
+            "Appended material record batch"
         );
 
-        Ok(())
+        Ok(anchors)
     }
 
     /// NATS maximum message payload size. Messages exceeding this will be rejected.
@@ -842,6 +907,30 @@ impl AppendStreamAcquirer {
         data: &[u8],
         source_identifier: &str,
     ) -> NodeResult<SourceRecordAnchor> {
+        let mut anchors = self
+            .append_many_with_anchors(&[data], source_identifier)
+            .await?;
+        anchors.pop().ok_or_else(|| {
+            SinexError::invalid_state("single-record append returned no source material anchor")
+        })
+    }
+
+    /// Append multiple logical records to the current stream material.
+    ///
+    /// The records are emitted as one physical source-material frame when they
+    /// fit in a NATS message, while preserving one byte anchor per record.
+    pub async fn append_many_with_anchors<T>(
+        &mut self,
+        records: &[T],
+        source_identifier: &str,
+    ) -> NodeResult<Vec<SourceRecordAnchor>>
+    where
+        T: AsRef<[u8]>,
+    {
+        if records.is_empty() {
+            return Ok(Vec::new());
+        }
+
         // Initialize if needed
         if self.current_handle.is_none() {
             self.begin_stream_material(source_identifier).await?;
@@ -863,8 +952,16 @@ impl AppendStreamAcquirer {
             self.begin_stream_material(source_identifier).await?;
         }
 
+        let total_bytes = records.iter().try_fold(0usize, |total, record| {
+            total.checked_add(record.as_ref().len()).ok_or_else(|| {
+                SinexError::validation("material batch byte count overflow")
+                    .with_context("bytes_so_far", total.to_string())
+                    .with_context("record_bytes", record.as_ref().len().to_string())
+            })
+        })?;
+
         // Check rotation
-        if self.should_rotate_before_append(data)? {
+        if self.should_rotate_before_append_len(total_bytes)? {
             info!("Rotating material due to size/age limits");
             let old_handle = self.current_handle.take().ok_or_else(|| {
                 SinexError::invalid_state("current_handle should exist for rotation")
@@ -878,16 +975,7 @@ impl AppendStreamAcquirer {
         let handle = self.current_handle.as_mut().ok_or_else(|| {
             SinexError::invalid_state("current_handle should exist after rotation")
         })?;
-        let material_id = handle.material_id;
-        let offset_start = handle.bytes_written;
-        self.manager.append_slice(handle, data).await?;
-        let offset_end = handle.bytes_written;
-
-        Ok(SourceRecordAnchor {
-            material_id,
-            offset_start,
-            offset_end,
-        })
+        self.manager.append_record_batch(handle, records).await
     }
 
     /// Serialize one record as JSONL, append it, and return its byte anchor.
@@ -907,7 +995,7 @@ impl AppendStreamAcquirer {
         self.append_with_anchor(&data, source_identifier).await
     }
 
-    fn should_rotate_before_append(&self, data: &[u8]) -> NodeResult<bool> {
+    fn should_rotate_before_append_len(&self, data_len: usize) -> NodeResult<bool> {
         let Some(handle) = self.current_handle.as_ref() else {
             return Ok(false);
         };
@@ -920,15 +1008,15 @@ impl AppendStreamAcquirer {
             return Ok(false);
         }
 
-        let incoming = i64::try_from(data.len()).map_err(|error| {
+        let incoming = i64::try_from(data_len).map_err(|error| {
             SinexError::validation("source record exceeds supported material size")
-                .with_context("record_bytes", data.len().to_string())
+                .with_context("record_bytes", data_len.to_string())
                 .with_std_error(&error)
         })?;
         let projected = handle.bytes_written.checked_add(incoming).ok_or_else(|| {
             SinexError::validation("source material byte offset overflow")
                 .with_context("bytes_written", handle.bytes_written.to_string())
-                .with_context("record_bytes", data.len().to_string())
+                .with_context("record_bytes", data_len.to_string())
         })?;
 
         let max_bytes =
@@ -1110,6 +1198,45 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn append_record_batch_returns_per_record_anchors(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let work_dir = tempfile::tempdir()?;
+        let manager = AcquisitionManager::with_defaults(ctx.nats_client(), "record-batch-test")
+            .with_work_dir(work_dir.path());
+        let mut handle = manager.begin_material("test://record-batch").await?;
+        let records = vec![
+            b"alpha".to_vec(),
+            b"beta".to_vec(),
+            Vec::new(),
+            b"gamma".to_vec(),
+        ];
+
+        let anchors = manager.append_record_batch(&mut handle, &records).await?;
+
+        assert_eq!(anchors.len(), 4);
+        assert_eq!(anchors[0].offset_start, 0);
+        assert_eq!(anchors[0].offset_end, 5);
+        assert_eq!(anchors[1].offset_start, 5);
+        assert_eq!(anchors[1].offset_end, 9);
+        assert_eq!(anchors[2].offset_start, 9);
+        assert_eq!(anchors[2].offset_end, 9);
+        assert_eq!(anchors[3].offset_start, 9);
+        assert_eq!(anchors[3].offset_end, 14);
+        assert!(
+            anchors
+                .iter()
+                .all(|anchor| anchor.material_id == handle.material_id)
+        );
+        assert_eq!(handle.bytes_written(), 14);
+        assert_eq!(handle.slice_count, 1);
+        assert_eq!(
+            tokio::fs::read(handle.temp_path()).await?,
+            b"alphabetagamma"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn append_stream_returns_contiguous_anchors(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
         let work_dir = tempfile::tempdir()?;
@@ -1157,6 +1284,41 @@ mod tests {
             second.offset_start < second.offset_end,
             "second record must occupy a non-empty range"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn append_stream_batches_records_into_one_slice(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let work_dir = tempfile::tempdir()?;
+        let manager = Arc::new(
+            AcquisitionManager::with_defaults(ctx.nats_client(), "append-stream-batch-test")
+                .with_work_dir(work_dir.path()),
+        );
+        let mut stream = AppendStreamAcquirer::new(manager);
+        let records = vec![b"one\n".to_vec(), b"two\n".to_vec(), b"three\n".to_vec()];
+
+        let anchors = stream
+            .append_many_with_anchors(&records, "test://batched-history")
+            .await?;
+
+        assert_eq!(anchors.len(), records.len());
+        assert_eq!(anchors[0].offset_start, 0);
+        assert_eq!(anchors[0].offset_end, 4);
+        assert_eq!(anchors[1].offset_start, 4);
+        assert_eq!(anchors[1].offset_end, 8);
+        assert_eq!(anchors[2].offset_start, 8);
+        assert_eq!(anchors[2].offset_end, 14);
+        let handle = stream
+            .current_handle
+            .as_ref()
+            .ok_or_else(|| SinexError::invalid_state("stream material should be active"))?;
+        assert_eq!(handle.slice_count, 1);
+        assert_eq!(
+            tokio::fs::read(handle.temp_path()).await?,
+            b"one\ntwo\nthree\n"
+        );
+        stream.finalize("test-complete").await?;
         Ok(())
     }
 }

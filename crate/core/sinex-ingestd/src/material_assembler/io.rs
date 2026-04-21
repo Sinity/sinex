@@ -31,9 +31,16 @@ use sinex_primitives::Timestamp;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::time::{Duration, Instant};
 use tokio::{fs, fs::File, io::AsyncReadExt, io::AsyncWriteExt};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
+
+const STAGED_FILE_SYNC_BYTES: i64 = 1024 * 1024;
+const STAGED_FILE_SYNC_INTERVAL: Duration = Duration::from_secs(1);
+const WAL_SYNC_BYTES: usize = 256 * 1024;
+const WAL_SYNC_ENTRIES: u32 = 128;
+const WAL_SYNC_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Restore persisted assembler state on startup by replaying the WAL
 ///
@@ -339,6 +346,11 @@ async fn restore_state_params(
         pending_write: state_snapshot.pending_write,
         pending_end: state_snapshot.pending_end,
         last_slice_received,
+        staged_bytes_since_sync: 0,
+        wal_entries_since_sync: 0,
+        wal_bytes_since_sync: 0,
+        last_staged_sync: Instant::now(),
+        last_wal_sync: Instant::now(),
     }))
 }
 
@@ -760,6 +772,8 @@ pub(super) async fn append_wal_entry(
     state: &mut AssemblerState,
     entry: WalEntry,
 ) -> IngestdResult<()> {
+    let force_sync = matches!(entry, WalEntry::Begin(_) | WalEntry::End(_));
+
     // Ensure WAL file is open
     if state.wal_file.is_none() {
         fs::create_dir_all(&state.state_dir)
@@ -788,6 +802,7 @@ pub(super) async fn append_wal_entry(
     let serialized = serde_json::to_string(&envelope).map_err(|e| {
         SinexError::serialization("failed to serialize WAL envelope").with_std_error(&e)
     })?;
+    let wal_bytes = serialized.len().saturating_add(1);
 
     if let Some(file) = state.wal_file.as_mut() {
         file.write_all(serialized.as_bytes())
@@ -796,12 +811,69 @@ pub(super) async fn append_wal_entry(
         file.write_all(b"\n")
             .await
             .map_err(|e| SinexError::io("WAL write newline failed").with_source(e))?;
-        // fsync for durability
-        file.sync_all()
+        file.flush()
+            .await
+            .map_err(|e| SinexError::io("WAL flush failed").with_source(e))?;
+    }
+
+    state.wal_entries_since_sync = state.wal_entries_since_sync.saturating_add(1);
+    state.wal_bytes_since_sync = state.wal_bytes_since_sync.saturating_add(wal_bytes);
+    sync_wal_if_needed(state, force_sync).await?;
+
+    Ok(())
+}
+
+async fn sync_wal_if_needed(state: &mut AssemblerState, force: bool) -> IngestdResult<()> {
+    let should_sync = force
+        || state.wal_entries_since_sync >= WAL_SYNC_ENTRIES
+        || state.wal_bytes_since_sync >= WAL_SYNC_BYTES
+        || state.last_wal_sync.elapsed() >= WAL_SYNC_INTERVAL;
+    if !should_sync {
+        return Ok(());
+    }
+
+    if let Some(file) = state.wal_file.as_mut() {
+        file.sync_data()
             .await
             .map_err(|e| SinexError::io("WAL sync failed").with_source(e))?;
     }
+    state.wal_entries_since_sync = 0;
+    state.wal_bytes_since_sync = 0;
+    state.last_wal_sync = Instant::now();
+    Ok(())
+}
 
+pub(super) async fn sync_staged_file_for_finalization(
+    state: &mut AssemblerState,
+    material_id: Uuid,
+) -> IngestdResult<()> {
+    sync_staged_file_if_needed(state, material_id, true).await
+}
+
+async fn sync_staged_file_if_needed(
+    state: &mut AssemblerState,
+    material_id: Uuid,
+    force: bool,
+) -> IngestdResult<()> {
+    let should_sync = force
+        || state.staged_bytes_since_sync >= STAGED_FILE_SYNC_BYTES
+        || state.last_staged_sync.elapsed() >= STAGED_FILE_SYNC_INTERVAL;
+    if !should_sync {
+        return Ok(());
+    }
+
+    if let Some(file) = state.temp_file.as_mut() {
+        file.flush().await.map_err(|e| {
+            SinexError::io(format!("Failed to flush staged material for {material_id}"))
+                .with_source(e)
+        })?;
+        file.sync_data().await.map_err(|e| {
+            SinexError::io(format!("Failed to sync staged material for {material_id}"))
+                .with_source(e)
+        })?;
+    }
+    state.staged_bytes_since_sync = 0;
+    state.last_staged_sync = Instant::now();
     Ok(())
 }
 
@@ -1127,8 +1199,9 @@ async fn append_slice_data(
                     SinexError::io(format!("Failed to write slice for {material_id}"))
                         .with_source(e)
                 })?;
-                file.sync_all().await.map_err(|e| {
-                    SinexError::io(format!("Failed to sync slice for {material_id}")).with_source(e)
+                file.flush().await.map_err(|e| {
+                    SinexError::io(format!("Failed to flush slice for {material_id}"))
+                        .with_source(e)
                 })?;
             }
         }
@@ -1150,6 +1223,11 @@ async fn append_slice_data(
             .with_context("actual_size", size.to_string()));
         }
     }
+
+    state.staged_bytes_since_sync = state
+        .staged_bytes_since_sync
+        .saturating_add(pending_write.len as i64);
+    sync_staged_file_if_needed(state, material_id, false).await?;
 
     append_wal_entry(
         assembler,
@@ -1386,6 +1464,63 @@ mod tests {
                 .to_string()
                 .contains("buffered slice length exceeds i64 range")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn append_slice_data_batches_staged_and_wal_sync(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, _state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let mut state = assembler.create_placeholder_state(material_id).await?;
+        state.phase = AssemblyPhase::Accumulating;
+
+        append_slice_data(&assembler, &mut state, material_id, b"small-record").await?;
+
+        assert_eq!(state.expected_offset, "small-record".len() as i64);
+        assert_eq!(state.staged_bytes_since_sync, "small-record".len() as i64);
+        assert!(
+            state.wal_entries_since_sync > 0,
+            "per-slice WAL writes should stay buffered instead of forced durable"
+        );
+
+        sync_staged_file_for_finalization(&mut state, material_id).await?;
+
+        assert_eq!(state.staged_bytes_since_sync, 0);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn material_end_wal_entry_forces_sync(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, _state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let mut state = assembler.create_placeholder_state(material_id).await?;
+
+        append_wal_entry(
+            &assembler,
+            &mut state,
+            WalEntry::Slice { offset: 0, len: 1 },
+        )
+        .await?;
+        assert_eq!(state.wal_entries_since_sync, 1);
+
+        append_wal_entry(
+            &assembler,
+            &mut state,
+            WalEntry::End(MaterialEndMessage {
+                material_id: material_id.to_string(),
+                ended_at: Timestamp::now().format_rfc3339(),
+                content_hash: blake3::hash(b"x").to_hex().to_string(),
+                total_slices: 1,
+                total_size_bytes: 1,
+                metadata: json!({}),
+            }),
+        )
+        .await?;
+
+        assert_eq!(state.wal_entries_since_sync, 0);
+        assert_eq!(state.wal_bytes_since_sync, 0);
         Ok(())
     }
 
