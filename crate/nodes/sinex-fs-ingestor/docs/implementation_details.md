@@ -23,5 +23,5 @@ The Filesystem Ingestor monitors directory trees for changes and captures file c
 ## Provenance
 
 Every event (created, modified, deleted, moved) is linked to a source material entry.
-- **Content-Rich Events**: Created and Modified events capture the actual file content.
-- **Metadata-Only Events**: Deleted and Moved events record zero-byte materials to maintain the provenance chain while reflecting that no content was available at the time of the event.
+- **Content-Rich Events**: Non-empty created and modified events capture the actual file content.
+- **Metadata-Only Events**: Deleted, moved, and empty-file created/modified events append a JSONL observation record to the filesystem observation stream. This preserves byte-range provenance without creating a fresh zero-byte material for every transient filesystem event.

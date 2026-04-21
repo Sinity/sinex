@@ -10,6 +10,11 @@ This pattern ensures zero provenance gaps for real-time streams by maintaining d
 2.  **Process & Emit**: Process data and emit events referencing this `source_material_id`.
 3.  **Finalize**: Update the source material record with complete details (size, hashes) once the stream ends.
 
+For append-style sources, prefer `AppendStreamAcquirer` instead of hand-managed
+begin/append/finalize loops. When producers emit many small logical records,
+wrap it in `BufferedAppendStreamWriter`: callers still receive exact byte
+anchors for each record, while the SDK owns batching, rotation, and finalization.
+
 ## Design Principles
 
 ### 1. Per-Material Isolation
@@ -17,6 +22,11 @@ Fine-grained locking (via material ID) ensures that concurrent operations on dif
 
 ### 2. Resource Management
 The system employs concurrency limits (via semaphores) to ensure predictable resource usage during high-volume assembly operations.
+
+High-cardinality metadata observations should be represented as records in a
+bounded append stream, not as fresh zero-byte source materials. This preserves
+material provenance while keeping lifecycle-frame count and fsync pressure tied
+to stream batches instead of event cardinality.
 
 ### 3. State Reconciliation
 A background task periodically cleans up staging resources associated with completed or abandoned operations based on activity timestamps.

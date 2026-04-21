@@ -4,8 +4,10 @@
 //!
 //! This implementation uses a Stage-as-You-Go + `AcquisitionManager` workflow:
 //! - File system events are captured via notify watchers.
-//! - Each event is staged as a dedicated source material and published to
-//!   `JetStream` using `AcquisitionManager`.
+//! - Non-empty file content is staged as dedicated source material and published
+//!   to `JetStream` using `AcquisitionManager`.
+//! - Metadata-only and empty-file observations are recorded in a bounded
+//!   append-only observation stream to avoid one zero-byte material per event.
 //! - Structured events are emitted through `StageAsYouGoContext`, referencing
 //!   the captured material for provenance.
 
@@ -17,7 +19,10 @@ use sinex_node_sdk::{
 };
 use sinex_node_sdk::{
     NodeResult, SinexError,
-    acquisition_manager::{AcquisitionManager, RotationPolicy},
+    acquisition_manager::{
+        AcquisitionManager, AppendStreamAcquirer, BufferedAppendStreamWriter,
+        BufferedAppendStreamWriterConfig, RotationPolicy, SourceRecordAnchor,
+    },
     ingestor_node::IngestorNode,
     runtime::stream::{
         Checkpoint, ContinuousStart, MaterialReplayContext, NodeCapabilities, NodeRuntimeState,
@@ -32,7 +37,9 @@ use sinex_primitives::{
     events::{
         EventPayload,
         enums::FileModificationType,
-        payloads::filesystem::{FileCreatedPayload, FileModifiedPayload},
+        payloads::filesystem::{
+            FileCreatedPayload, FileDeletedPayload, FileModifiedPayload, FileMovedPayload,
+        },
     },
     temporal::Timestamp,
     units::Bytes,
@@ -72,6 +79,11 @@ const FS_READ_RETRY_ATTEMPTS: u32 = 3; // Number of retry attempts for transient
 const FS_READ_RETRY_BASE_DELAY_MS: u64 = 100; // Base delay for exponential backoff (100ms, 500ms, 1s)
 const FS_MAX_CONCURRENT_CAPTURES: usize = 64; // Cap concurrent file reads across all watchers to avoid FD exhaustion
 const FS_OVERSIZED_LOG_BUCKET_BYTES: u64 = 1024 * 1024; // Re-log oversized files only after 1 MiB growth
+const FS_OBSERVATION_BATCH_MAX_RECORDS: usize = 64;
+const FS_OBSERVATION_BATCH_MAX_BYTES: usize = 128 * 1024;
+const FS_OBSERVATION_BATCH_COALESCE_WINDOW: std::time::Duration =
+    std::time::Duration::from_millis(20);
+const FS_OBSERVATION_WRITER_CHANNEL_CAPACITY: usize = 256;
 const DEFAULT_IGNORED_DIRECTORY_NAMES: &[&str] = &[".git", ".direnv", "node_modules", "target"];
 const INOTIFY_MAX_USER_WATCHES_PATH: &str = "/proc/sys/fs/inotify/max_user_watches";
 const MATERIAL_REASON_CREATED: &str = "fs-watcher:file-created";
@@ -367,6 +379,8 @@ impl EventMetrics {
 #[derive(Clone)]
 struct WatchContext {
     acquisition: Arc<AcquisitionManager>,
+    observation_writer: BufferedAppendStreamWriter,
+    observation_source_identifier: Arc<str>,
     stage_context: StageAsYouGoContext,
     max_capture_bytes: Bytes,
     max_watches: usize,
@@ -380,6 +394,18 @@ struct WatchContext {
     cancel_token: CancellationToken,
     /// Semaphore limiting concurrent file reads across all watchers to prevent FD exhaustion
     capture_semaphore: Arc<tokio::sync::Semaphore>,
+}
+
+#[derive(Debug, Serialize)]
+struct FilesystemObservationRecord {
+    source_identifier: String,
+    reason: String,
+    event_type: String,
+    path: String,
+    old_path: Option<String>,
+    new_path: Option<String>,
+    size: Option<u64>,
+    observed_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -532,11 +558,26 @@ impl FilesystemNode {
             let stage_with_acquisition = stage_context
                 .clone()
                 .with_acquisition_manager(Arc::clone(&acquisition));
+            let observation_source_identifier =
+                Arc::<str>::from(format!("filesystem.observations:{path}"));
+            let observation_stream = AppendStreamAcquirer::new(Arc::clone(&acquisition));
+            let observation_writer = BufferedAppendStreamWriter::spawn(
+                observation_stream,
+                observation_source_identifier.to_string(),
+                BufferedAppendStreamWriterConfig {
+                    channel_capacity: FS_OBSERVATION_WRITER_CHANNEL_CAPACITY,
+                    batch_max_records: FS_OBSERVATION_BATCH_MAX_RECORDS,
+                    batch_max_bytes: FS_OBSERVATION_BATCH_MAX_BYTES,
+                    batch_coalesce_window: FS_OBSERVATION_BATCH_COALESCE_WINDOW,
+                },
+            );
 
             contexts.insert(
                 path.clone(),
                 WatchContext {
                     acquisition,
+                    observation_writer,
+                    observation_source_identifier,
                     stage_context: stage_with_acquisition,
                     max_capture_bytes: self.config.max_capture_bytes,
                     max_watches: self.config.max_watches,
@@ -1448,6 +1489,9 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
         }
     }
 
+    ctx.observation_writer
+        .finalize("filesystem watcher shutdown")
+        .await?;
     Ok(())
 }
 
@@ -1540,8 +1584,27 @@ async fn handle_file_created(ctx: &WatchContext, _root: &str, path: &Path) -> No
     }
     clear_oversized_skip_tracking(ctx, path);
 
+    let material_anchor = if size == 0 {
+        capture_observation_record(
+            ctx,
+            MATERIAL_REASON_CREATED,
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            path,
+            None,
+            None,
+            Some(size),
+        )
+        .await?
+    } else {
+        let material_id =
+            capture_material_from_file(ctx, path, MATERIAL_REASON_CREATED, size).await?;
+        SourceRecordAnchor {
+            material_id,
+            offset_start: 0,
+            offset_end: size as i64,
+        }
+    };
     let created_at = file_created_at(&metadata, path)?;
-    let material_id = capture_material_from_file(ctx, path, MATERIAL_REASON_CREATED, size).await?;
 
     let payload = sinex_primitives::events::payloads::filesystem::FileCreatedPayload {
         path: sanitize_path(path)?,
@@ -1551,7 +1614,7 @@ async fn handle_file_created(ctx: &WatchContext, _root: &str, path: &Path) -> No
     };
 
     let event = payload
-        .from_material(material_id)
+        .from_material(material_anchor.material_id)
         .build()
         .node_err("Failed to build event")?;
 
@@ -1560,7 +1623,12 @@ async fn handle_file_created(ctx: &WatchContext, _root: &str, path: &Path) -> No
         .map_err(|e| SinexError::processing("Failed to convert to JSON event").with_source(e))?;
 
     ctx.stage_context
-        .emit_event_with_provenance(json_event, material_id, Some(0), Some(size as i64))
+        .emit_event_with_provenance(
+            json_event,
+            material_anchor.material_id,
+            Some(material_anchor.offset_start),
+            Some(material_anchor.offset_end),
+        )
         .await
         .map(|_| ())
         .map_err(|e| SinexError::processing("Failed to emit event").with_source(e))?;
@@ -1595,8 +1663,27 @@ async fn handle_file_modified(
     }
     clear_oversized_skip_tracking(ctx, path);
 
+    let material_anchor = if size == 0 {
+        capture_observation_record(
+            ctx,
+            MATERIAL_REASON_MODIFIED,
+            FileModifiedPayload::EVENT_TYPE.as_static_str(),
+            path,
+            None,
+            None,
+            Some(size),
+        )
+        .await?
+    } else {
+        let material_id =
+            capture_material_from_file(ctx, path, MATERIAL_REASON_MODIFIED, size).await?;
+        SourceRecordAnchor {
+            material_id,
+            offset_start: 0,
+            offset_end: size as i64,
+        }
+    };
     let modified_at = file_modified_at(&metadata, path)?;
-    let material_id = capture_material_from_file(ctx, path, MATERIAL_REASON_MODIFIED, size).await?;
 
     let payload = sinex_primitives::events::payloads::filesystem::FileModifiedPayload {
         path: sanitize_path(path)?,
@@ -1606,7 +1693,7 @@ async fn handle_file_modified(
     };
 
     let event = payload
-        .from_material(material_id)
+        .from_material(material_anchor.material_id)
         .build()
         .map_err(|e| SinexError::processing("Failed to build event").with_source(e))?;
 
@@ -1615,7 +1702,12 @@ async fn handle_file_modified(
         .map_err(|e| SinexError::processing("Failed to convert to JSON event").with_source(e))?;
 
     ctx.stage_context
-        .emit_event_with_provenance(json_event, material_id, Some(0), Some(size as i64))
+        .emit_event_with_provenance(
+            json_event,
+            material_anchor.material_id,
+            Some(material_anchor.offset_start),
+            Some(material_anchor.offset_end),
+        )
         .await
         .map(|_| ())
         .map_err(|e| SinexError::processing("Failed to emit event").with_source(e))?;
@@ -1627,8 +1719,18 @@ async fn handle_file_modified(
 
 async fn handle_file_deleted(ctx: &WatchContext, _root: &str, path: &Path) -> NodeResult<()> {
     clear_oversized_skip_tracking(ctx, path);
-    // For deletions no content is available; record zero-byte material.
-    let material_id = capture_material(ctx, path, MATERIAL_REASON_DELETED, None).await?;
+    // For deletions no file bytes are available. Record the observation in the
+    // filesystem metadata stream instead of creating a dedicated zero-byte material.
+    let material_anchor = capture_observation_record(
+        ctx,
+        MATERIAL_REASON_DELETED,
+        FileDeletedPayload::EVENT_TYPE.as_static_str(),
+        path,
+        None,
+        None,
+        None,
+    )
+    .await?;
 
     let payload = sinex_primitives::events::payloads::filesystem::FileDeletedPayload {
         path: sanitize_path(path)?,
@@ -1636,7 +1738,7 @@ async fn handle_file_deleted(ctx: &WatchContext, _root: &str, path: &Path) -> No
     };
 
     let event = payload
-        .from_material(material_id)
+        .from_material(material_anchor.material_id)
         .build()
         .map_err(|e| SinexError::processing("Failed to build event").with_source(e))?;
 
@@ -1645,7 +1747,12 @@ async fn handle_file_deleted(ctx: &WatchContext, _root: &str, path: &Path) -> No
         .map_err(|e| SinexError::processing("Failed to convert to JSON event").with_source(e))?;
 
     ctx.stage_context
-        .emit_event_with_provenance(json_event, material_id, Some(0), Some(0))
+        .emit_event_with_provenance(
+            json_event,
+            material_anchor.material_id,
+            Some(material_anchor.offset_start),
+            Some(material_anchor.offset_end),
+        )
         .await
         .map(|_| ())
         .map_err(|e| SinexError::processing("Failed to emit event").with_source(e))?;
@@ -1663,7 +1770,16 @@ async fn handle_file_moved(
 ) -> NodeResult<()> {
     clear_oversized_skip_tracking(ctx, old);
     clear_oversized_skip_tracking(ctx, new);
-    let material_id = capture_material(ctx, new, MATERIAL_REASON_MOVED, None).await?;
+    let material_anchor = capture_observation_record(
+        ctx,
+        MATERIAL_REASON_MOVED,
+        FileMovedPayload::EVENT_TYPE.as_static_str(),
+        new,
+        Some(old),
+        Some(new),
+        None,
+    )
+    .await?;
 
     let payload = sinex_primitives::events::payloads::filesystem::FileMovedPayload {
         old_path: sanitize_path(old)?,
@@ -1672,7 +1788,7 @@ async fn handle_file_moved(
     };
 
     let event = payload
-        .from_material(material_id)
+        .from_material(material_anchor.material_id)
         .build()
         .map_err(|e| SinexError::processing("Failed to build event").with_source(e))?;
 
@@ -1681,7 +1797,12 @@ async fn handle_file_moved(
         .map_err(|e| SinexError::processing("Failed to convert to JSON event").with_source(e))?;
 
     ctx.stage_context
-        .emit_event_with_provenance(json_event, material_id, Some(0), Some(0))
+        .emit_event_with_provenance(
+            json_event,
+            material_anchor.material_id,
+            Some(material_anchor.offset_start),
+            Some(material_anchor.offset_end),
+        )
         .await
         .map(|_| ())
         .map_err(|e| SinexError::processing("Failed to emit event").with_source(e))?;
@@ -1691,34 +1812,33 @@ async fn handle_file_moved(
     Ok(())
 }
 
-async fn capture_material(
+async fn capture_observation_record(
     ctx: &WatchContext,
-    path: &Path,
     reason: &str,
-    content: Option<&[u8]>,
-) -> NodeResult<Uuid> {
-    let identifier = observed_path_string(path)?;
-    let mut handle = ctx
-        .acquisition
-        .begin_material(&identifier)
-        .await
-        .map_err(|e| SinexError::processing("Failed to begin material").with_source(e))?;
-
-    let material_id = handle.material_id;
-
-    if let Some(bytes) = content {
-        ctx.acquisition
-            .append_slice(&mut handle, bytes)
-            .await
-            .map_err(|e| SinexError::processing("Failed to append slice").with_source(e))?;
-    }
-
-    ctx.acquisition
-        .finalize(handle, reason)
-        .await
-        .map_err(|e| SinexError::processing("Failed to finalize material").with_source(e))?;
-
-    Ok(material_id)
+    event_type: &str,
+    path: &Path,
+    old_path: Option<&Path>,
+    new_path: Option<&Path>,
+    size: Option<u64>,
+) -> NodeResult<SourceRecordAnchor> {
+    let record = FilesystemObservationRecord {
+        source_identifier: ctx.observation_source_identifier.to_string(),
+        reason: reason.to_string(),
+        event_type: event_type.to_string(),
+        path: observed_path_string(path)?,
+        old_path: old_path.map(observed_path_string).transpose()?,
+        new_path: new_path.map(observed_path_string).transpose()?,
+        size,
+        observed_at: sinex_primitives::temporal::now(),
+    };
+    let mut bytes = serde_json::to_vec(&record).map_err(|error| {
+        SinexError::serialization("failed to serialize filesystem observation record")
+            .with_std_error(&error)
+    })?;
+    bytes.push(b'\n');
+    ctx.observation_writer.append(bytes).await.map_err(|error| {
+        SinexError::processing("Failed to append filesystem observation record").with_source(error)
+    })
 }
 
 fn warn_oversized_skip(ctx: &WatchContext, path: &Path, size: u64) {
@@ -2603,8 +2723,21 @@ mod tests {
         stage_context: StageAsYouGoContext,
         cancel_token: CancellationToken,
     ) -> WatchContext {
+        let observation_source_identifier = Arc::<str>::from("filesystem.observations:test");
+        let observation_writer = BufferedAppendStreamWriter::spawn(
+            AppendStreamAcquirer::new(Arc::clone(&acquisition)),
+            observation_source_identifier.to_string(),
+            BufferedAppendStreamWriterConfig {
+                channel_capacity: FS_OBSERVATION_WRITER_CHANNEL_CAPACITY,
+                batch_max_records: FS_OBSERVATION_BATCH_MAX_RECORDS,
+                batch_max_bytes: FS_OBSERVATION_BATCH_MAX_BYTES,
+                batch_coalesce_window: std::time::Duration::from_millis(1),
+            },
+        );
         WatchContext {
             acquisition,
+            observation_writer,
+            observation_source_identifier,
             stage_context,
             max_capture_bytes: Bytes::from_mebibytes(1),
             max_watches: DEFAULT_MAX_WATCHES,
@@ -3014,6 +3147,77 @@ mod tests {
             total_bytes.is_none(),
             "temporal ledger unexpectedly persisted; ingestd should be the sole DB writer"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn zero_byte_file_events_use_observation_stream_material(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let nats_client = ctx.nats_client();
+
+        AcquisitionManager::bootstrap_streams(&nats_client).await?;
+
+        let acquisition = Arc::new(AcquisitionManager::with_defaults(nats_client, "filesystem"));
+
+        let (event_tx, mut event_rx) =
+            mpsc::channel::<SinexEvent>(sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE);
+        let stage_context =
+            StageAsYouGoContext::from_sender(Arc::clone(&acquisition), event_tx, false);
+
+        let watch_ctx = test_watch_context(acquisition, stage_context, CancellationToken::new());
+
+        let temp_root = tempdir()?;
+        let first_path = temp_root.path().join("first.lock");
+        let second_path = temp_root.path().join("second.lock");
+        tokio::fs::write(&first_path, b"").await?;
+        tokio::fs::write(&second_path, b"").await?;
+
+        let temp_root_str = temp_root
+            .path()
+            .to_str()
+            .ok_or_else(|| color_eyre::eyre::eyre!("temp root path not utf8"))?;
+        handle_file_created(&watch_ctx, temp_root_str, &first_path).await?;
+        handle_file_created(&watch_ctx, temp_root_str, &second_path).await?;
+
+        let first = timeout(Duration::from_secs(10), event_rx.recv())
+            .await?
+            .ok_or_else(|| color_eyre::eyre::eyre!("first zero-byte event not emitted"))?;
+        let second = timeout(Duration::from_secs(10), event_rx.recv())
+            .await?
+            .ok_or_else(|| color_eyre::eyre::eyre!("second zero-byte event not emitted"))?;
+
+        let Provenance::Material {
+            id: first_material,
+            offset_start: Some(first_start),
+            offset_end: Some(first_end),
+            ..
+        } = first.provenance
+        else {
+            return Err(color_eyre::eyre::eyre!(
+                "first event should use material provenance with offsets"
+            ));
+        };
+        let Provenance::Material {
+            id: second_material,
+            offset_start: Some(second_start),
+            offset_end: Some(second_end),
+            ..
+        } = second.provenance
+        else {
+            return Err(color_eyre::eyre::eyre!(
+                "second event should use material provenance with offsets"
+            ));
+        };
+
+        assert_eq!(
+            first_material, second_material,
+            "zero-byte filesystem observations should share the bounded metadata stream"
+        );
+        assert_eq!(first_end, second_start);
+        assert!(first_start < first_end);
+        assert!(second_start < second_end);
         Ok(())
     }
 
