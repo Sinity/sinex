@@ -37,12 +37,7 @@ pub struct BrowserIngestorConfig {
 impl Default for BrowserIngestorConfig {
     fn default() -> Self {
         Self {
-            dump_sources: vec![
-                Utf8PathBuf::from("/realm/data/captures/webhistory/gestalt/data"),
-                Utf8PathBuf::from(
-                    "/realm/data/captures/webhistory/gestalt/derived/full_history.ndjson",
-                ),
-            ],
+            dump_sources: Vec::new(),
             sqlite_sources: vec![
                 BrowserSqliteSourceConfig {
                     path: Utf8PathBuf::from("/home/sinity/.local/share/qutebrowser/history.sqlite"),
@@ -415,13 +410,29 @@ impl IngestorNode for BrowserNode {
 
     async fn scan_snapshot(
         &mut self,
-        state: &mut Self::State,
+        _state: &mut Self::State,
         _args: ScanArgs,
     ) -> NodeResult<ScanReport> {
         let started = std::time::Instant::now();
         let started_at = Timestamp::now();
-        let outcome = self.run_import_pass(state, None).await?;
-        Ok(Self::scan_report(outcome, started_at, started.elapsed()))
+        let successful_targets = self
+            .config
+            .dump_sources
+            .iter()
+            .map(ToString::to_string)
+            .chain(self.config.sqlite_sources.iter().map(|source| source.path.to_string()))
+            .collect();
+
+        Ok(ScanReport {
+            events_processed: 0,
+            duration: started.elapsed(),
+            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
+            time_range: Some((started_at, Timestamp::now())),
+            node_stats: HashMap::new(),
+            successful_targets,
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
+        })
     }
 
     async fn scan_historical(
@@ -477,4 +488,52 @@ impl IngestorNode for BrowserNode {
 
 fn is_appendable_dump(path: &Utf8PathBuf) -> bool {
     matches!(path.extension(), Some("jsonl" | "ndjson"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BrowserIngestorConfig, BrowserIngestorState, BrowserNode};
+    use crate::sqlite_sources::BrowserSqliteFormat;
+    use camino::Utf8PathBuf;
+    use sinex_node_sdk::{IngestorNode, runtime::stream::ScanArgs};
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn default_browser_config_keeps_live_sqlite_sources_only() -> TestResult<()> {
+        let config = BrowserIngestorConfig::default();
+        assert!(
+            config.dump_sources.is_empty(),
+            "live defaults should not replay static dump roots on startup"
+        );
+        assert_eq!(config.sqlite_sources.len(), 2);
+        assert_eq!(
+            config.sqlite_sources[0].format,
+            BrowserSqliteFormat::QutebrowserNative
+        );
+        assert_eq!(
+            config.sqlite_sources[1].format,
+            BrowserSqliteFormat::ChromiumHistory
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn scan_snapshot_reports_sources_without_importing() -> TestResult<()> {
+        let mut node = BrowserNode::default();
+        node.config = BrowserIngestorConfig {
+            dump_sources: vec![Utf8PathBuf::from("/tmp/browser-dump.jsonl")],
+            sqlite_sources: Vec::new(),
+            polling_interval_secs: sinex_primitives::Seconds::from_secs(30),
+        };
+
+        let report = node
+            .scan_snapshot(&mut BrowserIngestorState::default(), ScanArgs::default())
+            .await?;
+        assert_eq!(report.events_processed, 0);
+        assert_eq!(
+            report.successful_targets,
+            vec!["/tmp/browser-dump.jsonl".to_string()]
+        );
+        Ok(())
+    }
 }
