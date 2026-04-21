@@ -64,6 +64,10 @@ fn material_name_for_blob(blob: &Blob) -> String {
         .map_or_else(|| blob.annex_key(), ToOwned::to_owned)
 }
 
+fn content_hash_is_annex_digest(blob: &Blob) -> bool {
+    blob.annex_backend != super::LOCAL_CAS_BACKEND && !blob.content_hash.is_empty()
+}
+
 fn require_ingest_filename<'a>(
     validated_path: &'a Utf8Path,
     original_filename: Option<&'a str>,
@@ -415,7 +419,7 @@ impl BlobManager {
         // BLAKE3 checksum we always store during ingestion so tampering is
         // detected even when the annex hash is missing.
         let mut verified = false;
-        if !blob.content_hash.is_empty() {
+        if content_hash_is_annex_digest(&blob) {
             use sha2::{Digest, Sha256};
             let mut hasher = Sha256::new();
             hasher.update(&content);
@@ -614,6 +618,10 @@ impl BlobManager {
 
     /// Find content path in repository for annex key
     async fn find_symlink_path(&self, annex_key: &str) -> NodeResult<Utf8PathBuf> {
+        if let Some(path) = self.annex.local_content_path(annex_key)? {
+            return Ok(path);
+        }
+
         let output = AsyncCommand::new("git-annex")
             .arg("contentlocation")
             .arg(annex_key)
@@ -688,7 +696,7 @@ impl BlobManager {
                 total_blobs: blob_count,
                 total_size_bytes: total_size,
                 failed_verifications: failed_count,
-                storage_backend: "git-annex".to_string(),
+                storage_backend: "hybrid-local-cas-git-annex".to_string(),
             },
             material_id,
         )?;
@@ -720,8 +728,8 @@ impl BlobManager {
 #[cfg(test)]
 mod tests {
     use super::{
-        attach_verification_status_update_error, material_name_for_blob, require_ingest_filename,
-        verification_status_persist_error,
+        attach_verification_status_update_error, content_hash_is_annex_digest,
+        material_name_for_blob, require_ingest_filename, verification_status_persist_error,
     };
     use crate::SinexError;
     use camino::Utf8Path;
@@ -779,6 +787,28 @@ mod tests {
             .build();
 
         assert_eq!(material_name_for_blob(&blob), "SHA256E-s42--deadbeef");
+    }
+
+    #[test]
+    fn local_cas_content_hash_is_not_treated_as_annex_digest() {
+        let blob = Blob::builder()
+            .annex_backend("SINEXBLAKE3".to_string())
+            .content_hash("b3f00d".to_string())
+            .size_bytes(42)
+            .build();
+
+        assert!(!content_hash_is_annex_digest(&blob));
+    }
+
+    #[test]
+    fn git_annex_content_hash_is_verified_as_annex_digest() {
+        let blob = Blob::builder()
+            .annex_backend("SHA256E".to_string())
+            .content_hash("deadbeef".to_string())
+            .size_bytes(42)
+            .build();
+
+        assert!(content_hash_is_annex_digest(&blob));
     }
 
     #[test]

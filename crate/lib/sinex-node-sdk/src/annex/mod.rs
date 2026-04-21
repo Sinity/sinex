@@ -18,6 +18,10 @@ pub mod path_validator;
 pub use blob_manager::{BlobManager, BlobMetadata};
 pub use path_validator::{VerifiedPath, create_secure_temp_path, validate_and_convert_path};
 
+const LOCAL_CAS_BACKEND: &str = "SINEXBLAKE3";
+const LOCAL_CAS_DIR: &str = "sinex-cas";
+const LOCAL_CAS_MAX_BYTES: u64 = 16 * 1024 * 1024;
+
 static ANNEX_PROCESS_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
 
 fn annex_process_lock() -> &'static AsyncMutex<()> {
@@ -234,6 +238,14 @@ impl GitAnnex {
             )));
         }
 
+        let file_size = tokio::fs::metadata(&resolved_path)
+            .await
+            .map_err(SinexError::io)?
+            .len();
+        if file_size <= LOCAL_CAS_MAX_BYTES {
+            return self.add_file_local_cas(&resolved_path, file_size).await;
+        }
+
         let (ingest_path, needs_cleanup) = if resolved_path.starts_with(&self.config.repo_path) {
             (resolved_path.clone(), false)
         } else {
@@ -265,6 +277,65 @@ impl GitAnnex {
         }
 
         Ok(key)
+    }
+
+    async fn add_file_local_cas(
+        &self,
+        resolved_path: &Utf8Path,
+        file_size: u64,
+    ) -> NodeResult<AnnexKey> {
+        let hash = Self::compute_blake3_hash(resolved_path).await?;
+        let target = self.local_cas_path_for_hash(&hash);
+        if !target.exists() {
+            let parent = target.parent().ok_or_else(|| {
+                SinexError::processing(format!("Local CAS target has no parent: {target}"))
+            })?;
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(SinexError::io)?;
+
+            let tmp = parent.join(format!("{hash}.tmp-{}", Uuid::now_v7()));
+            tokio::fs::copy(resolved_path, &tmp)
+                .await
+                .map_err(SinexError::io)?;
+            let file = tokio::fs::File::open(&tmp).await.map_err(SinexError::io)?;
+            file.sync_all().await.map_err(SinexError::io)?;
+            if target.exists() {
+                tokio::fs::remove_file(&tmp).await.map_err(SinexError::io)?;
+            } else {
+                tokio::fs::rename(&tmp, &target)
+                    .await
+                    .map_err(SinexError::io)?;
+            }
+        }
+
+        Ok(AnnexKey {
+            key: format!("{LOCAL_CAS_BACKEND}-s{file_size}--{hash}"),
+            backend: LOCAL_CAS_BACKEND.to_string(),
+            size: file_size,
+            hash,
+        })
+    }
+
+    fn local_cas_path_for_hash(&self, hash: &str) -> Utf8PathBuf {
+        let prefix_a = hash.get(0..2).unwrap_or("xx");
+        let prefix_b = hash.get(2..4).unwrap_or("xx");
+        self.config
+            .repo_path
+            .join(LOCAL_CAS_DIR)
+            .join(prefix_a)
+            .join(prefix_b)
+            .join(hash)
+    }
+
+    pub fn local_content_path(&self, key: &str) -> NodeResult<Option<Utf8PathBuf>> {
+        let Ok(parsed) = AnnexKey::parse(key) else {
+            return Ok(None);
+        };
+        if parsed.backend != LOCAL_CAS_BACKEND {
+            return Ok(None);
+        }
+        Ok(Some(self.local_cas_path_for_hash(&parsed.hash)))
     }
 
     async fn add_file_direct(
@@ -355,6 +426,15 @@ impl GitAnnex {
     pub async fn get_content(&self, key_or_path: &str) -> NodeResult<()> {
         debug!("Getting content for: {key_or_path}");
 
+        if let Some(path) = self.local_content_path(key_or_path)? {
+            if path.exists() {
+                return Ok(());
+            }
+            return Err(SinexError::processing(format!(
+                "local CAS content missing for key {key_or_path}: {path}"
+            )));
+        }
+
         let (is_key, argument) = self.resolve_argument(key_or_path);
 
         let mut cmd = AsyncCommand::new("git-annex");
@@ -381,6 +461,19 @@ impl GitAnnex {
     /// Drop content if sufficient copies exist elsewhere
     pub async fn drop_content(&self, key_or_path: &str, force: bool) -> NodeResult<()> {
         debug!("Dropping content for: {key_or_path}");
+
+        if let Some(path) = self.local_content_path(key_or_path)? {
+            if !force {
+                return Err(SinexError::processing(format!(
+                    "cannot drop local CAS content without force: {key_or_path}"
+                )));
+            }
+            match tokio::fs::remove_file(&path).await {
+                Ok(()) => return Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => return Err(SinexError::io(error)),
+            }
+        }
 
         let (is_key, argument) = self.resolve_argument(key_or_path);
         let mut cmd = AsyncCommand::new("git-annex");
@@ -416,6 +509,23 @@ impl GitAnnex {
         key: Option<&str>,
     ) -> NodeResult<FsckResult> {
         info!("Running git-annex fsck");
+
+        if let Some(key) = key
+            && let Some(path) = self.local_content_path(key)?
+        {
+            let parsed = AnnexKey::parse(key)?;
+            if !path.exists() {
+                return Ok(FsckResult {
+                    output: format!("missing local CAS content for {key}"),
+                    success: false,
+                });
+            }
+            let hash = Self::compute_blake3_hash(&path).await?;
+            return Ok(FsckResult {
+                output: format!("local CAS fsck {key}"),
+                success: hash == parsed.hash,
+            });
+        }
 
         let mut cmd = AsyncCommand::new("git-annex");
         cmd.arg("fsck");
@@ -706,6 +816,38 @@ mod tests {
         assert_eq!(key.backend, "SHA256E");
         assert_eq!(key.size, 42);
         assert_eq!(key.hash, "deadbeef.txt");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn small_files_use_local_cas_without_annex_process() -> ::xtask::sandbox::TestResult<()> {
+        let repo_dir = tempfile::tempdir()?;
+        let repo_path = Utf8PathBuf::from_path_buf(repo_dir.path().to_path_buf())
+            .expect("temp path should be valid utf-8");
+        let annex = GitAnnex::new(AnnexConfig {
+            repo_path: repo_path.clone(),
+            num_copies: None,
+            large_files: None,
+        })?;
+
+        let source_path = repo_path.join("small-material.jsonl");
+        tokio::fs::write(&source_path, br#"{"event":"small"}"#).await?;
+
+        let key = annex.add_file(&source_path).await?;
+        assert_eq!(key.backend, LOCAL_CAS_BACKEND);
+        assert_eq!(key.size, 17);
+
+        let content_path = annex
+            .local_content_path(&key.key)?
+            .expect("local CAS key should resolve to a local path");
+        assert!(content_path.exists());
+        annex.get_content(&key.key).await?;
+
+        let fsck = annex.fsck(false, false, Some(&key.key)).await?;
+        assert!(fsck.success);
+
+        annex.drop_content(&key.key, true).await?;
+        assert!(!content_path.exists());
         Ok(())
     }
 }
