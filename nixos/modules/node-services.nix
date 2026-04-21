@@ -1160,7 +1160,56 @@ let
       batch = resolveBatch sat.batch;
       resources = resolveResources sat.resources;
       nodeConfig = builtins.toJSON {
+        dbus_enabled = true;
+        journal_enabled = true;
+        udev_enabled = true;
+        systemd_enabled = true;
         dbus_buses = "system";
+        journal_timeout_secs = 5;
+        systemd_config = {
+          monitor_services = true;
+          monitor_timers = true;
+          monitor_all_units = false;
+          monitor_timeout_secs = 5;
+        };
+        dbus_config = {
+          monitor_session = true;
+          monitor_system = true;
+          include_interfaces = [ ];
+          exclude_interfaces = [
+            "org.freedesktop.DBus.Introspectable"
+            "org.freedesktop.DBus.Peer"
+          ];
+          extract_notifications = true;
+          extract_media = true;
+          extract_power = true;
+          extract_hardware = true;
+          extract_session = false;
+          extract_bluetooth = true;
+          extract_network = true;
+          extract_mounts = true;
+          health_check_interval_secs = 5;
+          inactivity_timeout_secs = 30;
+        };
+        journal_config = {
+          follow = true;
+          import_on_startup = true;
+          import_hours = 0;
+          units = [ ];
+          priorities = [ ];
+          include_kernel = true;
+          include_user = true;
+          exclude_fields = [
+            "__CURSOR"
+            "__REALTIME_TIMESTAMP"
+            "__MONOTONIC_TIMESTAMP"
+            "_TRANSPORT"
+          ];
+          cursor_file = "${stateRoot}/journal.cursor";
+          batch_size = 1000;
+          cursor_flush_event_threshold = 100;
+          cursor_flush_interval_secs = 10;
+        };
       };
     in
     mkNodeUnits {
