@@ -2941,8 +2941,8 @@ mod tests {
                 .to_string();
             let material_id = Uuid::now_v7();
             let source_identifier = format!("{logical_source_identifier}#material={material_id}");
-            sqlx::query(
-                r"
+            sqlx::query!(
+                r#"
                 INSERT INTO raw.source_material_registry (
                     id,
                     material_kind,
@@ -2952,11 +2952,11 @@ mod tests {
                     metadata
                 )
                 VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime', $3::jsonb)
-                ",
+                "#,
+                material_id,
+                source_identifier,
+                json!({ "logical_source_identifier": logical_source_identifier }),
             )
-            .bind(material_id)
-            .bind(&source_identifier)
-            .bind(json!({ "logical_source_identifier": logical_source_identifier }))
             .execute(&pool)
             .await?;
             let mut event = DynamicPayload::new(source, event_type, json!({ "path": path }))

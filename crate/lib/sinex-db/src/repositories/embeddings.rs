@@ -1,6 +1,6 @@
 use super::common::DbResult;
 use sinex_primitives::Uuid;
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 
 pub struct EmbeddingRepository<'a> {
     pool: &'a PgPool,
@@ -68,22 +68,21 @@ impl<'a> EmbeddingRepository<'a> {
         embedding: &[f32],
     ) -> DbResult<Uuid> {
         let embedding_str = format_vector(embedding);
-        let row: (Uuid,) = sqlx::query_as(
-            r"
+        let row = sqlx::query!(
+            r#"
             INSERT INTO core.event_embeddings (event_id, embedding_model_id, embedded_text, embedding)
-            VALUES ($1, $2, $3, $4::vector)
+            VALUES ($1, $2, $3, $4::text::vector)
             ON CONFLICT DO NOTHING
-            RETURNING id
-            ",
+            RETURNING id as "id!"
+            "#,
+            event_id,
+            model_id,
+            embedded_text,
+            embedding_str,
         )
-        .bind(event_id)
-        .bind(model_id)
-        .bind(embedded_text)
-        .bind(&embedding_str)
         .fetch_optional(self.pool)
-        .await?
-        .unwrap_or((Uuid::now_v7(),));
-        Ok(row.0)
+        .await?;
+        Ok(row.map_or_else(Uuid::now_v7, |row| row.id))
     }
 
     pub async fn search_similar(
@@ -93,28 +92,28 @@ impl<'a> EmbeddingRepository<'a> {
         limit: i64,
     ) -> DbResult<Vec<SimilarityResult>> {
         let embedding_str = format_vector(query_embedding);
-        let rows = sqlx::query(
-            r"
-            SELECT ee.event_id, ee.embedded_text,
-                   1 - (ee.embedding <=> $1::vector) as similarity
+        let rows = sqlx::query!(
+            r#"
+            SELECT ee.event_id as "event_id!", ee.embedded_text as "embedded_text!",
+                   (1.0::float8 - (ee.embedding <=> $1::text::vector)) as "similarity!: f64"
             FROM core.event_embeddings ee
             WHERE ee.embedding_model_id = $2
-            ORDER BY ee.embedding <=> $1::vector
+            ORDER BY ee.embedding <=> $1::text::vector
             LIMIT $3
-            ",
+            "#,
+            embedding_str,
+            model_id,
+            limit,
         )
-        .bind(&embedding_str)
-        .bind(model_id)
-        .bind(limit)
         .fetch_all(self.pool)
         .await?;
 
         Ok(rows
-            .iter()
-            .map(|r| SimilarityResult {
-                event_id: r.get("event_id"),
-                embedded_text: r.get("embedded_text"),
-                similarity: r.get("similarity"),
+            .into_iter()
+            .map(|row| SimilarityResult {
+                event_id: row.event_id,
+                embedded_text: row.embedded_text,
+                similarity: row.similarity,
             })
             .collect())
     }
@@ -128,16 +127,16 @@ impl<'a> EmbeddingRepository<'a> {
         rrf_k: i64,
     ) -> DbResult<Vec<HybridSearchResult>> {
         let embedding_str = format_vector(query_embedding);
-        let rows = sqlx::query(
-            r"
+        let rows = sqlx::query!(
+            r#"
             WITH vector_results AS (
                 SELECT ee.event_id, ee.embedded_text,
-                       ROW_NUMBER() OVER (ORDER BY ee.embedding <=> $1::vector) as vector_rank,
-                       1 - (ee.embedding <=> $1::vector) as vector_similarity
+                       ROW_NUMBER() OVER (ORDER BY ee.embedding <=> $1::text::vector) as vector_rank,
+                       (1.0::float8 - (ee.embedding <=> $1::text::vector)) as vector_similarity
                 FROM core.event_embeddings ee
                 WHERE ee.embedding_model_id = $2
-                ORDER BY ee.embedding <=> $1::vector
-                LIMIT $4 * 3
+                ORDER BY ee.embedding <=> $1::text::vector
+                LIMIT $4::int8 * 3
             ),
             fts_results AS (
                 SELECT e.id as event_id,
@@ -152,59 +151,70 @@ impl<'a> EmbeddingRepository<'a> {
                 FROM core.events e
                 WHERE to_tsvector('simple', e.payload::text) @@ websearch_to_tsquery('simple', $3)
                 ORDER BY fts_score DESC
-                LIMIT $4 * 3
+                LIMIT $4::int8 * 3
             ),
             combined AS (
                 SELECT COALESCE(v.event_id, f.event_id) as event_id,
                        COALESCE(v.embedded_text, '') as embedded_text,
-                       COALESCE(1.0 / ($5 + v.vector_rank), 0) as vector_rrf,
-                       COALESCE(1.0 / ($5 + f.fts_rank), 0) as fts_rrf,
-                       COALESCE(v.vector_similarity, 0) as vector_similarity,
-                       COALESCE(f.fts_score, 0) as fts_score
+                       COALESCE(1.0::float8 / ($5::float8 + v.vector_rank::float8), 0.0::float8) as vector_rrf,
+                       COALESCE(1.0::float8 / ($5::float8 + f.fts_rank::float8), 0.0::float8) as fts_rrf,
+                       COALESCE(v.vector_similarity, 0.0::float8) as vector_similarity,
+                       COALESCE(f.fts_score::float8, 0.0::float8) as fts_score
                 FROM vector_results v
                 FULL OUTER JOIN fts_results f ON v.event_id = f.event_id
             )
-            SELECT event_id, embedded_text,
-                   vector_rrf + fts_rrf as rrf_score,
-                   vector_similarity, fts_score
+            SELECT event_id as "event_id!", embedded_text as "embedded_text!",
+                   (vector_rrf + fts_rrf) as "rrf_score!: f64",
+                   vector_similarity as "vector_similarity!: f64",
+                   fts_score as "fts_score!: f64"
             FROM combined
-            ORDER BY rrf_score DESC
-            LIMIT $4
-            ",
+            ORDER BY (vector_rrf + fts_rrf) DESC
+            LIMIT $4::int8
+            "#,
+            embedding_str,
+            model_id,
+            query_text,
+            limit,
+            rrf_k as f64,
         )
-        .bind(&embedding_str)
-        .bind(model_id)
-        .bind(query_text)
-        .bind(limit)
-        .bind(rrf_k)
         .fetch_all(self.pool)
         .await?;
 
         Ok(rows
-            .iter()
-            .map(|r| HybridSearchResult {
-                event_id: r.get("event_id"),
-                embedded_text: r.get("embedded_text"),
-                rrf_score: r.get("rrf_score"),
-                vector_similarity: r.get("vector_similarity"),
-                fts_score: f64::from(r.get::<f32, _>("fts_score")),
+            .into_iter()
+            .map(|row| HybridSearchResult {
+                event_id: row.event_id,
+                embedded_text: row.embedded_text,
+                rrf_score: row.rrf_score,
+                vector_similarity: row.vector_similarity,
+                fts_score: row.fts_score,
             })
             .collect())
     }
 
     pub async fn count_embeddings(&self) -> DbResult<i64> {
-        let count: (i64,) = sqlx::query_as("SELECT count(*) FROM core.event_embeddings")
-            .fetch_one(self.pool)
-            .await?;
-        Ok(count.0)
+        let count = sqlx::query_scalar!(
+            r#"
+            SELECT count(*) as "count!"
+            FROM core.event_embeddings
+            "#
+        )
+        .fetch_one(self.pool)
+        .await?;
+        Ok(count)
     }
 
     pub async fn count_models(&self) -> DbResult<i64> {
-        let count: (i64,) =
-            sqlx::query_as("SELECT count(*) FROM core.embedding_models WHERE is_active = true")
-                .fetch_one(self.pool)
-                .await?;
-        Ok(count.0)
+        let count = sqlx::query_scalar!(
+            r#"
+            SELECT count(*) as "count!"
+            FROM core.embedding_models
+            WHERE is_active = true
+            "#
+        )
+        .fetch_one(self.pool)
+        .await?;
+        Ok(count)
     }
 
     pub async fn check_cache(
@@ -212,22 +222,22 @@ impl<'a> EmbeddingRepository<'a> {
         text_hash: &str,
         model_id: Uuid,
     ) -> DbResult<Option<CachedEmbeddingHit>> {
-        let row = sqlx::query(
-            r"
+        let row = sqlx::query!(
+            r#"
             UPDATE core.embedding_cache
             SET use_count = use_count + 1, last_used_at = now()
             WHERE text_hash = $1 AND embedding_model_id = $2
-            RETURNING id, embedding::text as embedding_text
-            ",
+            RETURNING id as "id!", embedding::text as "embedding_text!"
+            "#,
+            text_hash,
+            model_id,
         )
-        .bind(text_hash)
-        .bind(model_id)
         .fetch_optional(self.pool)
         .await?;
 
-        Ok(row.map(|r| CachedEmbeddingHit {
-            id: r.get("id"),
-            embedding_text: r.get("embedding_text"),
+        Ok(row.map(|row| CachedEmbeddingHit {
+            id: row.id,
+            embedding_text: row.embedding_text,
         }))
     }
 
@@ -239,23 +249,23 @@ impl<'a> EmbeddingRepository<'a> {
         text_sample: Option<&str>,
     ) -> DbResult<Uuid> {
         let embedding_str = format_vector(embedding);
-        let row: (Uuid,) = sqlx::query_as(
-            r"
+        let row = sqlx::query!(
+            r#"
             INSERT INTO core.embedding_cache (text_hash, embedding_model_id, embedding, text_sample)
-            VALUES ($1, $2, $3::vector, $4)
+            VALUES ($1, $2, $3::text::vector, $4)
             ON CONFLICT (text_hash, embedding_model_id)
             DO UPDATE SET use_count = core.embedding_cache.use_count + 1,
                           last_used_at = now()
-            RETURNING id
-            ",
+            RETURNING id as "id!"
+            "#,
+            text_hash,
+            model_id,
+            embedding_str,
+            text_sample,
         )
-        .bind(text_hash)
-        .bind(model_id)
-        .bind(&embedding_str)
-        .bind(text_sample)
         .fetch_one(self.pool)
         .await?;
-        Ok(row.0)
+        Ok(row.id)
     }
 }
 

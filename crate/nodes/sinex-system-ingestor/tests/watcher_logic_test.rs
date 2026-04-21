@@ -608,7 +608,6 @@ async fn test_journal_config_custom_units_and_priorities() -> TestResult<()> {
 
     let config = sinex_system_ingestor::JournalConfig {
         follow: false,
-        import_on_startup: false,
         import_hours: 24,
         units: vec!["sshd.service".to_string(), "nginx.service".to_string()],
         priorities: vec![0, 1, 2, 3], // emergency through error
@@ -625,7 +624,6 @@ async fn test_journal_config_custom_units_and_priorities() -> TestResult<()> {
     let deserialized: sinex_system_ingestor::JournalConfig = serde_json::from_str(&json_str)?;
 
     assert!(!deserialized.follow);
-    assert!(!deserialized.import_on_startup);
     assert_eq!(deserialized.import_hours, 24);
     assert_eq!(deserialized.units.len(), 2);
     assert_eq!(deserialized.priorities, vec![0, 1, 2, 3]);
@@ -1038,7 +1036,6 @@ async fn test_system_config_from_json_value() -> TestResult<()> {
         },
         "journal_config": {
             "follow": true,
-            "import_on_startup": false,
             "import_hours": 48,
             "units": ["nginx.service"],
             "priorities": [0, 1, 2],
@@ -1065,7 +1062,6 @@ async fn test_system_config_from_json_value() -> TestResult<()> {
     assert_eq!(config.journal_timeout_secs.as_secs(), 15);
     assert!(config.systemd_config.monitor_all_units);
     assert!(!config.dbus_config.monitor_system);
-    assert!(!config.journal_config.import_on_startup);
     assert_eq!(config.journal_config.import_hours, 48);
     assert_eq!(config.journal_config.units, vec!["nginx.service"]);
     assert_eq!(config.journal_config.priorities, vec![0, 1, 2]);

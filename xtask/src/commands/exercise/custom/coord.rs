@@ -6,6 +6,7 @@ use crate::commands::exercise::runner::{GitStateGuard, exec_step};
 use crate::commands::exercise::types::{ExpectedExit, StepOutcome};
 
 /// Fresh detection: run check --bg, wait for completion, re-run — second should be "fresh".
+#[must_use]
 pub fn custom_coord_fresh_check(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 
@@ -104,6 +105,7 @@ pub fn custom_coord_fresh_check(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
 }
 
 /// Attach: start a long-running --bg build, immediately re-run — should get "attached".
+#[must_use]
 pub fn custom_coord_attach_check(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 
@@ -204,6 +206,7 @@ pub fn custom_coord_attach_check(dir: &Path, verbose: bool) -> Vec<StepOutcome> 
 }
 
 /// Scope isolation: start test --bg -p xtask, then -p sinex-primitives — should Queue.
+#[must_use]
 pub fn custom_coord_scope_isolation(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 
@@ -292,6 +295,7 @@ pub fn custom_coord_scope_isolation(dir: &Path, verbose: bool) -> Vec<StepOutcom
 }
 
 /// State update: verify that `--bg` check produces a real `job_id` (>0) and `pid` (>0).
+#[must_use]
 pub fn custom_coord_state_update(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 
@@ -383,6 +387,7 @@ pub fn custom_coord_state_update(dir: &Path, verbose: bool) -> Vec<StepOutcome> 
 
 /// Supersede: start bg build, modify tree (GitStateGuard), re-run build with
 /// same scope — coordinator should cancel stale job and start fresh.
+#[must_use]
 pub fn custom_coord_supersede(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 
@@ -572,6 +577,7 @@ pub fn custom_coord_supersede(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
 
 /// Queue no-overwrite: start a bg test, queue two different packages behind it.
 /// After completion, verify that the FIFO queue preserves both items (not just the last).
+#[must_use]
 pub fn custom_coord_queue_no_overwrite(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 

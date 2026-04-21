@@ -183,6 +183,7 @@ impl<'ctx> TestCoreStack<'ctx> {
     }
 
     /// The NATS client for direct JetStream operations.
+    #[must_use]
     pub fn nats_client(&self) -> async_nats::Client {
         self.ctx.nats_client()
     }

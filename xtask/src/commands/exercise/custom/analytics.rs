@@ -5,6 +5,7 @@ use crate::commands::exercise::runner::exec_step;
 use crate::commands::exercise::types::{ExpectedExit, StepOutcome};
 
 /// Verify that `analytics recommend --json` returns valid JSON.
+#[must_use]
 pub fn custom_analytics_recommend_runs(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 
@@ -43,6 +44,7 @@ pub fn custom_analytics_recommend_runs(dir: &Path, verbose: bool) -> Vec<StepOut
 }
 
 /// Verify that `jobs status <id> --json` exposes a `phase` field during a bg run.
+#[must_use]
 pub fn custom_live_stage_visible_during_run(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 

@@ -284,6 +284,7 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
     },
 ];
 
+#[must_use]
 pub fn render_commands_help(commands: &[CommandInfo]) -> String {
     use std::io::IsTerminal;
 
@@ -309,6 +310,7 @@ pub fn render_commands_help(commands: &[CommandInfo]) -> String {
     out
 }
 
+#[must_use]
 pub fn render_command_guide(commands: &[CommandInfo]) -> String {
     let mut out = String::new();
     out.push_str("# xtask Command Guide\n\n");
@@ -363,6 +365,7 @@ pub fn render_command_guide(commands: &[CommandInfo]) -> String {
     out
 }
 
+#[must_use]
 pub fn render_command_reference(commands: &[CommandInfo]) -> String {
     let mut out = String::new();
     out.push_str("# xtask Command Reference\n\n");

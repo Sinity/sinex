@@ -296,6 +296,28 @@ impl Default for ScanArgs {
     }
 }
 
+/// Start context for a continuous ingestion loop.
+///
+/// The SDK startup runner performs snapshot and bounded gap-fill before it
+/// constructs this value. The embedded checkpoint is a live-tail resume cursor,
+/// not permission for a node to widen continuous startup into a historical scan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContinuousStart {
+    checkpoint: Checkpoint,
+}
+
+impl ContinuousStart {
+    #[must_use]
+    pub fn from_checkpoint(checkpoint: Checkpoint) -> Self {
+        Self { checkpoint }
+    }
+
+    #[must_use]
+    pub fn checkpoint(&self) -> &Checkpoint {
+        &self.checkpoint
+    }
+}
+
 // ── Node-Dispatch Replay Wire Types ──────────────────────────────────────────
 //
 // These types implement the node-dispatch replay protocol. Instead of the

@@ -103,6 +103,7 @@ pub struct MockCallCounts {
 #[cfg(any(test, feature = "sandbox"))]
 impl MockCargoRunner {
     /// Create a runner where every call succeeds with no diagnostics.
+    #[must_use]
     pub fn clean() -> Self {
         Self {
             check_response: DiagnosticSummary {

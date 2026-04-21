@@ -6,7 +6,16 @@ use std::time::{Duration, Instant};
 
 use color_eyre::eyre::{Result, WrapErr, bail};
 
-use super::custom::*;
+use super::custom::{
+    custom_affected_clean, custom_affected_foundation, custom_affected_leaf,
+    custom_affected_transitive, custom_affected_workspace, custom_analytics_recommend_runs,
+    custom_bg_job_lifecycle, custom_coord_attach_check, custom_coord_fresh_check,
+    custom_coord_queue_no_overwrite, custom_coord_scope_isolation, custom_coord_state_update,
+    custom_coord_supersede, custom_diagnostic_delta_roundtrip, custom_history_roundtrip,
+    custom_history_stages_populated, custom_jobs_output_while_running, custom_jobs_prune,
+    custom_live_stage_visible_during_run, custom_output_format_matrix,
+    custom_preflight_stages_in_history,
+};
 use super::types::{
     ExerciseDef, ExerciseKind, ExerciseOutcome, ExerciseReport, ExpectedExit, ReportEntry,
     StepEntry, StepOutcome, StepOutput, Validation,
@@ -108,6 +117,7 @@ impl Drop for GitStateGuard {
 // Runner functions
 // ═══════════════════════════════════════════════════════════════════════════════
 
+#[must_use]
 pub fn run_xtask(args: &[&str], env: &[(&str, &str)], verbose: bool) -> StepOutput {
     let start = Instant::now();
     let mut cmd = Command::new("xtask");
@@ -169,6 +179,7 @@ pub fn save_output(dir: &Path, prefix: &str, output: &StepOutput) -> Result<()> 
     Ok(())
 }
 
+#[must_use]
 pub fn validate_step(
     output: &StepOutput,
     expected_exit: &ExpectedExit,
@@ -196,6 +207,7 @@ pub fn validate_step(
 }
 
 /// Run and validate a single step, returning both the outcome and raw output.
+#[must_use]
 pub fn exec_step(
     dir: &Path,
     idx: usize,
@@ -265,6 +277,7 @@ pub fn run_declarative_exercise(
     }
 }
 
+#[must_use]
 pub fn run_custom_exercise(def: &ExerciseDef, output_dir: &Path, verbose: bool) -> ExerciseOutcome {
     let start = Instant::now();
     let steps = match def.id.as_str() {
@@ -362,6 +375,7 @@ pub fn setup_output_dir() -> Result<PathBuf> {
     Ok(run_dir)
 }
 
+#[must_use]
 pub fn build_report(
     outcomes: &[ExerciseOutcome],
     catalog: &[ExerciseDef],
@@ -444,6 +458,7 @@ pub fn print_human_summary(outcomes: &[ExerciseOutcome], skipped: usize, total_d
     println!();
 }
 
+#[must_use]
 pub fn run_affected_exercise(
     dir: &Path,
     verbose: bool,

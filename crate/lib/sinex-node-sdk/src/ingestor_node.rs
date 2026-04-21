@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::checkpoint::{CheckpointManager, CheckpointState, decode_checkpoint_data};
 use crate::runtime::stream::{
-    Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType, ScanArgs,
-    ScanReport, TimeHorizon,
+    Checkpoint, ContinuousStart, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState,
+    NodeType, ScanArgs, ScanReport, TimeHorizon,
 };
 use crate::shutdown::ShutdownConfig;
 use crate::{
@@ -119,7 +119,7 @@ pub trait IngestorNode: Send + Sync + 'static {
     fn run_continuous(
         &mut self,
         state: &mut Self::State,
-        from: Checkpoint,
+        start: ContinuousStart,
         shutdown_rx: watch::Receiver<bool>,
     ) -> impl std::future::Future<Output = NodeResult<ScanReport>> + Send;
 
@@ -424,7 +424,11 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
                 let (tx, rx) = watch::channel(false);
                 self.shutdown_tx = Some(tx);
                 self.ingestor
-                    .run_continuous(&mut self.state.user_state, from, rx)
+                    .run_continuous(
+                        &mut self.state.user_state,
+                        ContinuousStart::from_checkpoint(from),
+                        rx,
+                    )
                     .await?
             }
         };
@@ -500,7 +504,9 @@ mod tests {
     // Inline because these cover a private shutdown-signaling helper.
     use super::{IngestorNodeAdapter, IngestorState, signal_shutdown_channel};
     use crate::checkpoint::{CheckpointManager, CheckpointState};
-    use crate::runtime::stream::{Checkpoint, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon};
+    use crate::runtime::stream::{
+        Checkpoint, ContinuousStart, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon,
+    };
     use crate::shutdown::ShutdownConfig;
     use crate::{IngestorNode, NodeResult};
     use futures::TryStreamExt;
@@ -580,13 +586,13 @@ mod tests {
         async fn run_continuous(
             &mut self,
             _state: &mut Self::State,
-            from: Checkpoint,
+            start: ContinuousStart,
             _shutdown_rx: watch::Receiver<bool>,
         ) -> NodeResult<ScanReport> {
             Ok(ScanReport {
                 events_processed: 0,
                 duration: std::time::Duration::ZERO,
-                final_checkpoint: from,
+                final_checkpoint: start.checkpoint().clone(),
                 time_range: None,
                 node_stats: HashMap::new(),
                 successful_targets: Vec::new(),

@@ -3,7 +3,7 @@ mod support;
 
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::runtime::stream::{
-    Checkpoint, Node, NodeInitContext, ScanArgs, ScanReport, TimeHorizon,
+    Checkpoint, ContinuousStart, Node, NodeInitContext, ScanArgs, ScanReport, TimeHorizon,
 };
 use sinex_node_sdk::{IngestorNode, IngestorNodeAdapter, NodeResult};
 use sinex_primitives::Timestamp;
@@ -74,13 +74,13 @@ impl IngestorNode for SnapshotCheckpointIngestor {
     async fn run_continuous(
         &mut self,
         _state: &mut Self::State,
-        from: Checkpoint,
+        start: ContinuousStart,
         _shutdown_rx: watch::Receiver<bool>,
     ) -> NodeResult<ScanReport> {
         Ok(ScanReport {
             events_processed: 0,
             duration: std::time::Duration::from_millis(0),
-            final_checkpoint: from,
+            final_checkpoint: start.checkpoint().clone(),
             time_range: None,
             node_stats: HashMap::new(),
             successful_targets: vec!["continuous".to_string()],

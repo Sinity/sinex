@@ -1044,11 +1044,11 @@ impl ResourceAccumulator {
     fn finish(&self) -> ProcessTreeMetrics {
         ProcessTreeMetrics {
             cpu_usage_avg: (self.tree_cpu_sample_count > 0)
-                .then_some(self.tree_cpu_sum_pct / self.tree_cpu_sample_count as f64),
+                .then_some(self.tree_cpu_sum_pct / f64::from(self.tree_cpu_sample_count)),
             memory_usage_max_mb: (self.sample_count > 0)
                 .then_some(self.max_tree_rss_bytes as f64 / 1024.0 / 1024.0),
             root_cpu_usage_avg: (self.root_cpu_sample_count > 0)
-                .then_some(self.root_cpu_sum_pct / self.root_cpu_sample_count as f64),
+                .then_some(self.root_cpu_sum_pct / f64::from(self.root_cpu_sample_count)),
             root_memory_usage_max_mb: (self.sample_count > 0)
                 .then_some(self.max_root_rss_bytes as f64 / 1024.0 / 1024.0),
             process_count_max: (self.sample_count > 0).then_some(self.max_process_count),
@@ -1094,7 +1094,7 @@ impl CgroupResourceAccumulator {
     }
 
     fn finish_cpu_avg(&self) -> Option<f64> {
-        (self.cpu_sample_count > 0).then_some(self.cpu_sum_pct / self.cpu_sample_count as f64)
+        (self.cpu_sample_count > 0).then_some(self.cpu_sum_pct / f64::from(self.cpu_sample_count))
     }
 
     fn finish_memory_max_mb(&self) -> Option<f64> {

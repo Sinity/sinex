@@ -20,7 +20,7 @@ use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     ingestor_node::IngestorNode,
     runtime::stream::{
-        Checkpoint, MaterialReplayContext, NodeCapabilities, NodeRuntimeState,
+        Checkpoint, ContinuousStart, MaterialReplayContext, NodeCapabilities, NodeRuntimeState,
         ResolvedReplayMaterial, ScanArgs, ScanReport, ServiceInfo, TimeHorizon,
     },
     stage_as_you_go::StageAsYouGoContext,
@@ -113,9 +113,9 @@ struct WatchBudget {
 impl WatchBudget {
     fn detect(configured_max_watches: usize) -> Self {
         let kernel_max_watches = read_kernel_inotify_watch_limit();
-        let effective_max_watches = kernel_max_watches
-            .map(|limit| limit.min(configured_max_watches))
-            .unwrap_or(configured_max_watches);
+        let effective_max_watches = kernel_max_watches.map_or(configured_max_watches, |limit| {
+            limit.min(configured_max_watches)
+        });
 
         Self {
             configured_max_watches,
@@ -869,7 +869,7 @@ impl IngestorNode for FilesystemNode {
     async fn run_continuous(
         &mut self,
         _state: &mut Self::State,
-        from: Checkpoint,
+        start: ContinuousStart,
         shutdown_rx: tokio::sync::watch::Receiver<bool>,
     ) -> NodeResult<ScanReport> {
         let handles = self.spawn_watchers()?;
@@ -898,7 +898,7 @@ impl IngestorNode for FilesystemNode {
         Ok(ScanReport {
             events_processed: 0,
             duration: std::time::Duration::from_millis(0),
-            final_checkpoint: from,
+            final_checkpoint: start.checkpoint().clone(),
             time_range: None,
             node_stats: HashMap::new(),
             successful_targets: vec!["continuous".to_string()],
@@ -2013,7 +2013,7 @@ fn handle_watcher_callback(
     match result {
         Ok(event) => match tx.try_send(event) {
             Ok(()) => {}
-            Err(TrySendError::Full(_)) | Err(TrySendError::Closed(_)) => {
+            Err(TrySendError::Full(_) | TrySendError::Closed(_)) => {
                 let dropped = drop_counter.fetch_add(1, Ordering::Relaxed) + 1;
                 if dropped == 1 || dropped.is_multiple_of(100) {
                     warn!(
@@ -2863,7 +2863,11 @@ mod tests {
 
         let report = timeout(
             Duration::from_secs(1),
-            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx),
+            node.run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(Checkpoint::None),
+                shutdown_rx,
+            ),
         )
         .await??;
         assert!(

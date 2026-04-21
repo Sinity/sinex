@@ -1456,6 +1456,7 @@ impl WorkflowGraph {
     /// let seq = WorkflowGraph::sequence_to("test");
     /// assert_eq!(seq, vec!["check", "test"]);
     /// ```
+    #[must_use]
     pub fn sequence_to(target: &str) -> Vec<String> {
         let mut result = Vec::new();
         let mut visited = std::collections::HashSet::new();

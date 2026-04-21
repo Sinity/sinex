@@ -32,9 +32,9 @@ latency. Follow this template:
 3. **Periodic commit:** on interval or shutdown, flush the buffered bytes into
    git-annex, compute the checksum, update the registry record, and create a new
    in-flight entry for the next segment.
-4. **Re-scan at boot:** continuous ingestors perform a "scan-on-startup"
-   against their watch directories since the last checkpoint before returning to
-   live mode.
+4. **Bound startup recovery:** the SDK runner performs snapshot plus bounded
+   historical gap-fill before handing a `ContinuousStart` live-tail cursor to
+   continuous mode.
 
 ## 3. Timestamp Taxonomy
 

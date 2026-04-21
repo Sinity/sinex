@@ -47,6 +47,7 @@ impl PermissionGranter {
     }
 }
 
+#[must_use]
 pub fn granted_schema_names() -> Vec<&'static str> {
     let mut schemas = vec!["public"];
     schemas.extend(

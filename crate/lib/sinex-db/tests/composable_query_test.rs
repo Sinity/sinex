@@ -16,9 +16,9 @@ use sinex_db::DynamicPayload;
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::query::{
-    AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField,
-    GroupedValueAggregation, LineageDirection, LineageQuery, NumericField, PathOp,
-    PayloadFilter, SortDirection, TimeSeriesOrder,
+    AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedValueAggregation,
+    LineageDirection, LineageQuery, NumericField, PathOp, PayloadFilter, SortDirection,
+    TimeSeriesOrder,
 };
 use xtask::sandbox::prelude::*;
 

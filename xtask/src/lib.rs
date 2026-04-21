@@ -534,40 +534,39 @@ pub async fn run_cli() -> Result<()> {
         tracks_invocation.then(process::InvocationResourceMonitor::start_for_current_process);
     let mut timed_out = false;
     let mut result = if let Some(timeout) = command_timeout {
-        match tokio::time::timeout(timeout, execute_fut).await {
-            Ok(result) => result,
-            Err(_) => {
-                timed_out = true;
-                match process::terminate_registered_process_groups("command timeout") {
-                    Ok(terminated) if terminated > 0 => {
-                        eprintln!(
-                            "⚠️  Terminated {terminated} lingering child process group(s) after {command_name} timed out"
-                        );
-                    }
-                    Ok(_) => {}
-                    Err(error) => {
-                        eprintln!(
-                            "⚠️  Failed to terminate child process groups after {command_name} timed out: {error:#}"
-                        );
-                    }
+        if let Ok(result) = tokio::time::timeout(timeout, execute_fut).await {
+            result
+        } else {
+            timed_out = true;
+            match process::terminate_registered_process_groups("command timeout") {
+                Ok(terminated) if terminated > 0 => {
+                    eprintln!(
+                        "⚠️  Terminated {terminated} lingering child process group(s) after {command_name} timed out"
+                    );
                 }
-                match process::terminate_current_process_descendants("command timeout") {
-                    Ok(terminated) if terminated > 0 => {
-                        eprintln!(
-                            "⚠️  Terminated {terminated} remaining descendant process(es) after {command_name} timed out"
-                        );
-                    }
-                    Ok(_) => {}
-                    Err(error) => {
-                        eprintln!(
-                            "⚠️  Failed to terminate descendant processes after {command_name} timed out: {error:#}"
-                        );
-                    }
+                Ok(_) => {}
+                Err(error) => {
+                    eprintln!(
+                        "⚠️  Failed to terminate child process groups after {command_name} timed out: {error:#}"
+                    );
                 }
-                Err(eyre!(
-                    "Command '{command_name}' timed out after {timeout:?}"
-                ))
             }
+            match process::terminate_current_process_descendants("command timeout") {
+                Ok(terminated) if terminated > 0 => {
+                    eprintln!(
+                        "⚠️  Terminated {terminated} remaining descendant process(es) after {command_name} timed out"
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    eprintln!(
+                        "⚠️  Failed to terminate descendant processes after {command_name} timed out: {error:#}"
+                    );
+                }
+            }
+            Err(eyre!(
+                "Command '{command_name}' timed out after {timeout:?}"
+            ))
         }
     } else {
         execute_fut.await

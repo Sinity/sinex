@@ -12,7 +12,9 @@ use sinex_node_sdk::{
     RotationPolicy, SinexError, SourceRecordAnchor, SqliteSourceCheckpointState,
     acquisition_manager::{AcquisitionManager, AppendStreamAcquirer},
     checkpointed_sqlite_source_strict, discover_importable_files_at_root,
-    runtime::stream::{Checkpoint, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon},
+    runtime::stream::{
+        Checkpoint, ContinuousStart, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon,
+    },
 };
 use sinex_primitives::{
     Seconds, Timestamp,
@@ -495,7 +497,7 @@ impl IngestorNode for BrowserNode {
     async fn run_continuous(
         &mut self,
         state: &mut Self::State,
-        _from: Checkpoint,
+        _start: ContinuousStart,
         mut shutdown_rx: watch::Receiver<bool>,
     ) -> NodeResult<ScanReport> {
         let started = std::time::Instant::now();
