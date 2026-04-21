@@ -61,11 +61,11 @@ pub fn seed_history(db: &HistoryDb, options: &SeedOptions) -> Result<()> {
     let mut rng = rand::rng();
 
     let now_unix = time::OffsetDateTime::now_utc().unix_timestamp();
-    let window_secs = (options.days as i64) * 86_400;
+    let window_secs = i64::from(options.days) * 86_400;
     let start_unix = now_unix - window_secs;
 
     // Pick timestamps spread across the window, roughly increasing.
-    let total = options.invocations as i64;
+    let total = i64::from(options.invocations);
     let avg_gap = if total > 0 { window_secs / total } else { 3600 };
 
     // Diagnostic message count per-package starts high and trends down.
@@ -146,7 +146,7 @@ pub fn seed_history(db: &HistoryDb, options: &SeedOptions) -> Result<()> {
                 for d in 0..count {
                     let (level, code, message) = synthetic_diagnostic(&mut rng, d);
                     let file_path = format!("crate/lib/{pkg}/src/lib.rs");
-                    let line: i64 = 10 + (d as i64) * 15 + rng.random_range(0i64..10);
+                    let line: i64 = 10 + i64::from(d) * 15 + rng.random_range(0i64..10);
                     let _ = db.conn.execute(
                         r"
                         INSERT OR IGNORE INTO build_diagnostics
@@ -185,7 +185,7 @@ pub fn seed_history(db: &HistoryDb, options: &SeedOptions) -> Result<()> {
                     INSERT INTO stage_timings (invocation_id, stage_name, started_at, duration_secs, success)
                     VALUES (?1, 'clippy', ?2, ?3, ?4)
                     ",
-                    params![inv_id, started_at, clippy_dur, success as i32],
+                    params![inv_id, started_at, clippy_dur, i32::from(success)],
                 );
             }
         }

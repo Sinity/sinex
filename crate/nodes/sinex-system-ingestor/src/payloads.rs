@@ -296,9 +296,7 @@ impl Default for DbusConfig {
 pub struct JournalConfig {
     /// Follow journal in real-time
     pub follow: bool,
-    /// Import historical entries on startup
-    pub import_on_startup: bool,
-    /// How far back to import (in hours, 0 = all)
+    /// Fallback historical scan window when no explicit checkpoint is supplied (0 = all)
     pub import_hours: u32,
     /// Units to monitor (empty = all)
     pub units: Vec<String>,
@@ -326,9 +324,8 @@ impl Default for JournalConfig {
     fn default() -> Self {
         Self {
             follow: true,
-            import_on_startup: true,
-            import_hours: 24, // Bound startup import; explicit scans can request more.
-            units: vec![],    // Empty = capture all units
+            import_hours: 24,
+            units: vec![],      // Empty = capture all units
             priorities: vec![], // Empty = capture all priorities
             include_kernel: true,
             include_user: true,

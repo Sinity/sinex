@@ -12,13 +12,15 @@ use sinex_node_sdk::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 use sinex_node_sdk::{
-    EventTransport, NodeResult, SinexError, stage_material_from_file,
+    EventTransport, NodeResult, SinexError,
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     ingestor_node::IngestorNode,
     runtime::stream::{
-        Checkpoint, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon,
+        Checkpoint, ContinuousStart, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport,
+        TimeHorizon,
     },
     stage_as_you_go::StageAsYouGoContext,
+    stage_material_from_file,
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::validation::validate_path_within_root;
@@ -727,7 +729,7 @@ impl IngestorNode for DocumentNode {
     async fn run_continuous(
         &mut self,
         _state: &mut Self::State,
-        _from: Checkpoint,
+        _start: ContinuousStart,
         _shutdown_rx: tokio::sync::watch::Receiver<bool>,
     ) -> NodeResult<ScanReport> {
         Err(SinexError::processing(

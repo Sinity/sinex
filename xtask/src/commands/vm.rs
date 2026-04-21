@@ -606,15 +606,7 @@ async fn execute_test(
     }
 
     // Resolve tests to run
-    let tests_to_run: Vec<&str> = if !explicit_tests.is_empty() {
-        let available: Vec<&str> = available_tests.iter().map(String::as_str).collect();
-        for t in explicit_tests {
-            if !available.contains(&t.as_str()) {
-                bail!("VM test '{t}' is not exported by this flake's checks for system {system}.");
-            }
-        }
-        explicit_tests.iter().map(String::as_str).collect()
-    } else {
+    let tests_to_run: Vec<&str> = if explicit_tests.is_empty() {
         let catalogue = match category {
             Some("smoke") => SMOKE_TESTS.to_vec(),
             Some("integration") => INTEGRATION_TESTS.to_vec(),
@@ -630,6 +622,14 @@ async fn execute_test(
             .into_iter()
             .filter(|name| available_tests.iter().any(|available| available == name))
             .collect()
+    } else {
+        let available: Vec<&str> = available_tests.iter().map(String::as_str).collect();
+        for t in explicit_tests {
+            if !available.contains(&t.as_str()) {
+                bail!("VM test '{t}' is not exported by this flake's checks for system {system}.");
+            }
+        }
+        explicit_tests.iter().map(String::as_str).collect()
     };
 
     if tests_to_run.is_empty() {

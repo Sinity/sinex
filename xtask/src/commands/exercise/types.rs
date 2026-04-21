@@ -21,6 +21,7 @@ pub enum Tier {
 }
 
 impl Tier {
+    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Tier::T1 => "T1",
@@ -30,6 +31,7 @@ impl Tier {
         }
     }
 
+    #[must_use]
     pub fn as_arg(self) -> &'static str {
         match self {
             Tier::T1 => "1",
@@ -186,6 +188,7 @@ impl QaManifest {
     pub const SCHEMA_VERSION: u32 = 1;
 
     /// Build a manifest from a completed exercise run.
+    #[must_use]
     pub fn from_report(report: &ExerciseReport) -> Self {
         Self {
             schema_version: Self::SCHEMA_VERSION,
@@ -202,6 +205,7 @@ impl QaManifest {
     }
 
     /// Detect regressions: exercises passing in `baseline` but failing in `self`.
+    #[must_use]
     pub fn regressions(&self, baseline: &QaManifest) -> Vec<String> {
         let current: std::collections::HashMap<&str, bool> = self
             .exercises
@@ -226,6 +230,7 @@ impl QaManifest {
     }
 
     /// Newly-passing exercises: failing in baseline, passing now.
+    #[must_use]
     pub fn new_passes(&self, baseline: &QaManifest) -> Vec<String> {
         let baseline_map: std::collections::HashMap<&str, bool> = baseline
             .exercises

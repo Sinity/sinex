@@ -424,30 +424,28 @@ impl TestCommand {
 
     fn resolve_execution_plan(&self, ctx: Option<&CommandContext>) -> Result<NextestExecutionPlan> {
         let explicit_packages = normalize_packages(&self.packages);
-        let inferred_packages = if !self.all {
-            if let Some(filter) = &self.filter {
-                let inferred_result = if let Some(ctx) = ctx {
-                    let stage = ctx.start_stage("scope-inference");
-                    let inferred = affected::infer_packages_for_test_filter(filter);
-                    ctx.finish_stage(stage, inferred.is_ok());
-                    inferred
-                } else {
-                    affected::infer_packages_for_test_filter(filter)
-                };
-                let inferred = normalize_packages(&inferred_result?);
-                if let Some(ctx) = ctx
-                    && ctx.is_human()
-                    && !inferred.is_empty()
-                {
-                    println!(
-                        "Inferred package scope from filter: {}",
-                        inferred.join(", ")
-                    );
-                }
+        let inferred_packages = if self.all {
+            Vec::new()
+        } else if let Some(filter) = &self.filter {
+            let inferred_result = if let Some(ctx) = ctx {
+                let stage = ctx.start_stage("scope-inference");
+                let inferred = affected::infer_packages_for_test_filter(filter);
+                ctx.finish_stage(stage, inferred.is_ok());
                 inferred
             } else {
-                Vec::new()
+                affected::infer_packages_for_test_filter(filter)
+            };
+            let inferred = normalize_packages(&inferred_result?);
+            if let Some(ctx) = ctx
+                && ctx.is_human()
+                && !inferred.is_empty()
+            {
+                println!(
+                    "Inferred package scope from filter: {}",
+                    inferred.join(", ")
+                );
             }
+            inferred
         } else {
             Vec::new()
         };
@@ -463,20 +461,20 @@ impl TestCommand {
                     affected::affected_packages()
                 };
                 let affected_packages = normalize_packages(&affected_result?);
-                if !affected_packages.is_empty() {
-                    if let Some(ctx) = ctx
-                        && ctx.is_human()
-                    {
-                        println!("{}", affected::affected_summary(&affected_packages));
-                    }
-                    Some(affected_packages)
-                } else {
+                if affected_packages.is_empty() {
                     if let Some(ctx) = ctx
                         && ctx.is_human()
                     {
                         println!("No changes detected. Running ALL tests.");
                     }
                     None
+                } else {
+                    if let Some(ctx) = ctx
+                        && ctx.is_human()
+                    {
+                        println!("{}", affected::affected_summary(&affected_packages));
+                    }
+                    Some(affected_packages)
                 }
             } else {
                 None
@@ -1571,7 +1569,7 @@ fn execute_mutants(m: &MutantsArgs, _ctx: &CommandContext) -> Result<CommandResu
     }
 
     let mut builder =
-        ProcessBuilder::new("cargo-mutants").with_timeout(std::time::Duration::from_secs(14400));
+        ProcessBuilder::new("cargo-mutants").with_timeout(std::time::Duration::from_hours(4));
     builder = builder
         .arg("--timeout")
         .arg(format!("{}", m.timeout))

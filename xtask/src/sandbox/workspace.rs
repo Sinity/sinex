@@ -77,11 +77,13 @@ impl EphemeralWorkspace {
     }
 
     /// Root directory of the ephemeral workspace. Set as `current_dir` for subprocesses.
+    #[must_use]
     pub fn dir(&self) -> &Path {
         self.workspace_dir.path()
     }
 
     /// Path to the isolated target directory.
+    #[must_use]
     pub fn target_dir(&self) -> &Path {
         self.target_dir.path()
     }
@@ -90,11 +92,13 @@ impl EphemeralWorkspace {
     ///
     /// After running a subprocess xtask command with `env_overrides()`, the
     /// history DB is at `state_dir().join("xtask-history.db")`.
+    #[must_use]
     pub fn state_dir(&self) -> &Path {
         self.state_dir.path()
     }
 
     /// Path to the history SQLite DB created by a subprocess xtask command.
+    #[must_use]
     pub fn history_db_path(&self) -> PathBuf {
         self.state_dir.path().join("xtask-history.db")
     }
@@ -103,6 +107,7 @@ impl EphemeralWorkspace {
     ///
     /// These redirect `CARGO_TARGET_DIR` and `SINEX_STATE_DIR` to isolated
     /// temp directories so the subprocess doesn't touch real workspace state.
+    #[must_use]
     pub fn env_overrides(&self) -> Vec<(String, String)> {
         vec![
             (

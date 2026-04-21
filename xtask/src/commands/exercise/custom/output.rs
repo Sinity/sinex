@@ -4,6 +4,7 @@ use crate::commands::exercise::builders::{v_empty, v_has, v_json, v_lines};
 use crate::commands::exercise::runner::exec_step;
 use crate::commands::exercise::types::{ExpectedExit, StepOutcome, Validation};
 
+#[must_use]
 pub fn custom_output_format_matrix(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 

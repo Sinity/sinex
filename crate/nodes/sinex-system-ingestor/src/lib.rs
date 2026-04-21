@@ -24,7 +24,9 @@ mod common {
     // SDK facade for common node types
     pub use sinex_node_sdk::{
         NodeResult,
-        runtime::stream::{Checkpoint, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon},
+        runtime::stream::{
+            Checkpoint, ContinuousStart, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon,
+        },
     };
 
     // External dependencies

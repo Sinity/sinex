@@ -1,4 +1,6 @@
-use super::builders::*;
+use super::builders::{
+    def, step, v_arr_min, v_contains, v_empty, v_eq, v_has, v_json, v_lines, v_stderr,
+};
 use super::types::{ExerciseDef, InfraReq, Tier};
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -6,6 +8,7 @@ use super::types::{ExerciseDef, InfraReq, Tier};
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[allow(clippy::vec_init_then_push)] // 65-item catalog is clearer with push than vec![]
+#[must_use]
 pub fn build_catalog() -> Vec<ExerciseDef> {
     use super::types::ExpectedExit::{Any, Failure};
     use Tier::{T1, T2, T3, T4};

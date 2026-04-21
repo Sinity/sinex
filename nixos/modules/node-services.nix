@@ -1216,8 +1216,7 @@ let
         };
         journal_config = {
           follow = true;
-          import_on_startup = true;
-          import_hours = 0;
+          import_hours = 24;
           units = [ ];
           priorities = [ ];
           include_kernel = true;

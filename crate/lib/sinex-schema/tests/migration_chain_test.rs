@@ -656,9 +656,7 @@ async fn operator_telemetry_does_not_register_continuous_aggregates(
 }
 
 #[sinex_test]
-async fn operator_telemetry_views_include_live_rows(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn operator_telemetry_views_include_live_rows(ctx: TestContext) -> TestResult<()> {
     sinex_schema::apply::apply(&ctx.pool).await?;
 
     let material_id = ctx.create_source_material(Some("sinex.ingestd")).await?;
@@ -703,19 +701,23 @@ async fn operator_telemetry_views_include_live_rows(
     .await?;
 
     let rows = sqlx::query_as::<_, (Option<f64>, Option<i64>, Option<i64>)>(
-        r#"
+        r"
         SELECT
             AVG(avg_batch_size::float8) AS avg_batch_size,
             MAX(batch_count) AS batch_count,
             MAX(total_deferred) AS total_deferred
         FROM sinex_telemetry.ingestd_batch_stats_1h
         WHERE batch_count > 0
-        "#,
+        ",
     )
     .fetch_all(&ctx.pool)
     .await?;
 
-    assert_eq!(rows.len(), 1, "real-time aggregate should expose the fresh batch");
+    assert_eq!(
+        rows.len(),
+        1,
+        "real-time aggregate should expose the fresh batch"
+    );
     assert_eq!(rows[0].0, Some(8.0));
     assert_eq!(rows[0].1, Some(1));
     assert_eq!(rows[0].2, Some(1));

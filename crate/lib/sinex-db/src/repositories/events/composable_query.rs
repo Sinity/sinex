@@ -366,7 +366,9 @@ impl EventRepository<'_> {
             GroupedValueAggregation::Avg => "AVG(",
         });
         push_numeric_field_expr(&mut qb, &value_field);
-        qb.push(") AS DOUBLE PRECISION) AS value, COUNT(*) AS sample_count FROM core.events WHERE TRUE");
+        qb.push(
+            ") AS DOUBLE PRECISION) AS value, COUNT(*) AS sample_count FROM core.events WHERE TRUE",
+        );
         push_filters(&mut qb, &query);
         qb.push(" AND ");
         push_numeric_field_expr(&mut qb, &value_field);

@@ -45,7 +45,9 @@ desktop activity tracker, document parser.
 
 **Key characteristics:**
 - Three scan modes: snapshot (full scan), historical (time range), continuous (live)
-- User controls the event loop in `run_continuous()`
+- User controls the live event loop in `run_continuous(ContinuousStart, ...)`
+- Continuous mode receives a live-tail resume cursor, not permission to perform
+  historical import; startup snapshot and gap-fill belong to the SDK runner
 - State is checkpointed to file + NATS KV automatically via `IngestorNodeAdapter`
 - Exploration hooks available (`get_source_state`, `get_coverage_analysis`)
 

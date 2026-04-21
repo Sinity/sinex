@@ -17,7 +17,7 @@ for downstream consumers.
 | Watcher  | Backing subsystem | What it captures | Key config knobs |
 |----------|------------------|------------------|------------------|
 | **D-Bus** | `dbus_tokio` + match rules | System/session signals (power, Bluetooth, notifications, etc.) | `SystemConfig.dbus_enabled`, `dbus_config.monitor_session`, `dbus_config.monitor_system`, interface allowlists |
-| **Journal** | `journalctl --output=json` | Historical + live journal entries with cursor tracking | `SystemConfig.journal_enabled`, `journal_config.import_on_startup`, `journal_config.import_hours`, cursor file path |
+| **Journal** | `journalctl --output=json` | Explicit historical scans + live journal entries with cursor tracking | `SystemConfig.journal_enabled`, `journal_config.import_hours`, cursor file path |
 | **udev** | `udev` monitor socket | Device attach/detach, block and network changes | `SystemConfig.udev_enabled`, future per-subsystem filters |
 | **systemd** | `sd-bus` subscriptions | Unit state changes, failures, restarts | `SystemConfig.systemd_enabled`, `systemd_config.units` |
 
