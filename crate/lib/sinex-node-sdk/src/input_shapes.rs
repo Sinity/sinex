@@ -96,7 +96,7 @@ where
     Ok(report)
 }
 
-/// Strict SQLite import variant that also advances the caller-owned row-ID cursor.
+/// Strict `SQLite` import variant that also advances the caller-owned row-ID cursor.
 pub async fn checkpointed_sqlite_history_strict<
     Entry,
     Read,
@@ -120,7 +120,7 @@ where
     Ok(report)
 }
 
-/// Lenient SQLite import variant backed by a keyed checkpoint store.
+/// Lenient `SQLite` import variant backed by a keyed checkpoint store.
 pub async fn checkpointed_sqlite_source_lenient<
     Entry,
     Warning,
@@ -160,7 +160,7 @@ where
     Ok(report)
 }
 
-/// Strict SQLite import variant backed by a keyed checkpoint store.
+/// Strict `SQLite` import variant backed by a keyed checkpoint store.
 pub async fn checkpointed_sqlite_source_strict<
     Entry,
     Read,

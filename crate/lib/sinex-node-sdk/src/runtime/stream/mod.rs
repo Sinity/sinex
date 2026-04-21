@@ -2397,6 +2397,10 @@ impl<T: Node + 'static> NodeRunner<T> {
         #[cfg(feature = "db")]
         let db_pool = handles.db_pool().cloned();
         // No db_pool variable if db feature is off
+        #[cfg(feature = "db")]
+        let db_backed_confirmations = db_pool.is_some();
+        #[cfg(not(feature = "db"))]
+        let db_backed_confirmations = false;
         let transport = handles.transport().clone();
 
         let service_name = self.service_info.as_ref().map_or_else(
@@ -2418,8 +2422,19 @@ impl<T: Node + 'static> NodeRunner<T> {
             processing_model: self.processing_model,
             batch_size: 128,
             confirmation_timeout: std::time::Duration::from_mins(1),
-            consumer_name: format!("{}-automaton", service_name.replace('.', "_")),
+            consumer_name: if db_backed_confirmations {
+                format!("{}-automaton-confirmed-v2", service_name.replace('.', "_"))
+            } else {
+                format!("{}-automaton", service_name.replace('.', "_"))
+            },
             enable_provisional_processing: false,
+            buffer_raw_events: !db_backed_confirmations,
+            accept_unbuffered_confirmations: db_backed_confirmations,
+            deliver_policy: if db_backed_confirmations {
+                async_nats::jetstream::consumer::DeliverPolicy::New
+            } else {
+                async_nats::jetstream::consumer::DeliverPolicy::All
+            },
             ..Default::default()
         };
 
