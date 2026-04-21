@@ -25,6 +25,48 @@ The service implements a strict fail-fast initialization policy:
 6. **Schema Broadcasting**: Publishes schema metadata to `JetStream` and full schema JSON to NATS KV for node-side validation.
 7. **Service Construction**: Completes the `IngestService` struct and releases the migration lock.
 
+## Event Flow (End-to-End, 23 Steps)
+
+The complete path of a single event through the system:
+
+1. Source data exists (file change, shell command, window focus, systemd event).
+2. Ingestor detects change (inotify / polling / socket / journal API).
+3. Source material registered in DB (`raw.source_material_registry`).
+4. Ingestor parses source bytes into typed payload struct.
+5. `EventPayload` trait provides `(SOURCE, EVENT_TYPE)` as compile-time constants.
+6. `.from_material(source_material_id)` sets provenance + `anchor_byte`.
+7. `.build()` creates `Event<T>` with UUIDv7 id, `ts_orig`, host, provenance.
+8. Privacy engine runs synchronously (per-event, in ingestor process).
+9. `EventBatcher` accumulates (100 events OR 1 second, whichever first).
+10. Batch published to NATS JetStream (`SINEX_RAW_EVENTS`).
+11. ingestd consumer receives batch from NATS.
+12. JSON parse + UUIDv7/RFC4122 event ID validation (fail → DLQ).
+13. Schema validation against `sinex_schemas` registry (lenient: unknown types pass).
+14. `MaterialReadySet` pre-check for FK constraint (not ready → NAK + retry).
+15. Batch routing: synthesis → REPEATABLE READ TX; material ≥50 → COPY; else → QueryBuilder.
+16. COPY path: staging table, tab-delimited SIMD-escaped rows, `INSERT ... SELECT`.
+17. XOR provenance CHECK fires at DB level (redundant with step 6, defense-in-depth).
+18. Confirmation events published to NATS Confirmations stream (per-event).
+19. SSE `SubscriptionBus` delivers to connected browser/CLI clients.
+20. `ConfirmationBuffer` delivers to automata (`DerivedNodeAdapter`).
+21. Automaton processes event → emits synthesis event with `.from_parents()`.
+22. Synthesis event re-enters pipeline at step 10 (back to NATS).
+23. Event queryable via gateway RPC.
+
+### Batch Insert Routing
+
+```
+if has_synthesis  → REPEATABLE READ + QueryBuilder (cycle detection in same TX)
+elif batch ≥ 50   → COPY protocol (staging table, SIMD-escaped, pooled transaction)
+else              → QueryBuilder VALUES (no staging overhead for small batches)
+```
+
+**Implication:** automaton-heavy workloads never hit the COPY fast path. COPY only benefits material-provenance batches from ingestors.
+
+### Ingest Semantics: Confirm-After-Commit
+
+Correctness contract: **persist → publish confirmations → ack raw messages.** After `insert_stream_batch`, ingestd publishes confirmations concurrently. If immediate confirmation publish exhausts retries, ingestd persists a durable confirmation-retry request and ACKs the raw message; only if *both* immediate confirmation publish *and* durable-retry enqueue fail does it fall back to raw-message redelivery. Idempotency is layered: JetStream message dedup + DB `ON CONFLICT (id) DO NOTHING`.
+
 ## Shutdown & Lifecycle
 
 Graceful shutdown is managed via a shared `AtomicBool` flag and cooperative cancellation:
