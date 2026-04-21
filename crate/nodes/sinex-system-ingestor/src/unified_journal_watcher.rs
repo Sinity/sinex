@@ -18,8 +18,11 @@ use nix::unistd::Pid;
 use parking_lot::Mutex;
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use sinex_node_sdk::{Checkpoint, TimeHorizon};
-use sinex_node_sdk::{NatsPublisher, NodeResult};
+use sinex_node_sdk::{
+    Checkpoint, JournalCursorCheckpoint, NatsPublisher, NodeResult, RecordProcessingOutcome,
+    RecordReadBatch, RecordReadHorizon, RecordReadItem, RecordSource, RecordSources,
+    RecordWarningDisposition, TimeHorizon, process_record_batch_lenient,
+};
 use sinex_primitives::events::{
     JournalEntryWrittenPayload as EventJournalEntryWrittenPayload,
     JournalSyncCompletedPayload as EventJournalSyncCompletedPayload, SystemdTimerTriggeredPayload,
@@ -66,6 +69,11 @@ enum FollowExitReason {
     Shutdown,
     UnexpectedEof,
     ReadError,
+}
+
+#[derive(Debug, Clone)]
+struct JournalRawRecord {
+    raw_line: String,
 }
 
 struct StreamingActivityGuard {
@@ -733,17 +741,6 @@ impl UnifiedJournalWatcher {
         Ok(true)
     }
 
-    fn record_seen_cursor(
-        first_cursor: &mut Option<String>,
-        last_cursor: &mut Option<String>,
-        cursor: &str,
-    ) {
-        if first_cursor.is_none() {
-            *first_cursor = Some(cursor.to_string());
-        }
-        *last_cursor = Some(cursor.to_string());
-    }
-
     async fn remember_processed_cursor(&mut self, cursor: &str) -> NodeResult<()> {
         self.last_cursor = Some(cursor.to_string());
         self.save_cursor(cursor).await
@@ -833,73 +830,110 @@ impl UnifiedJournalWatcher {
     }
 
     fn historical_import_args(&self, from: &Checkpoint, until: &TimeHorizon) -> Vec<String> {
+        Self::historical_import_args_from_parts(
+            from,
+            until.end_time(),
+            self.last_cursor.as_deref(),
+            self.journal_config.import_hours,
+            &self.journal_config.units,
+            &self.journal_config.priorities,
+            self.journal_config.include_kernel,
+            self.journal_config.include_user,
+        )
+    }
+
+    fn historical_import_args_from_parts(
+        from: &Checkpoint,
+        end_time: Option<Timestamp>,
+        cursor: Option<&str>,
+        import_hours: u32,
+        units: &[String],
+        priorities: &[u8],
+        include_kernel: bool,
+        include_user: bool,
+    ) -> Vec<String> {
         let mut args = vec!["--output=json".to_string(), "--no-pager".to_string()];
 
         match from {
             Checkpoint::Timestamp { timestamp, .. } => {
                 args.push(format!("--since={}", timestamp.format_rfc3339()));
             }
-            Checkpoint::None if self.journal_config.import_hours > 0 => {
-                args.push(format!("--since=-{}h", self.journal_config.import_hours));
+            Checkpoint::None if import_hours > 0 => {
+                args.push(format!("--since=-{import_hours}h"));
             }
             _ => {}
         }
 
-        if let Some(end_time) = until.end_time() {
+        if let Some(end_time) = end_time {
             args.push(format!("--until={}", end_time.format_rfc3339()));
         }
 
-        if let Some(ref cursor) = self.last_cursor {
+        if let Some(cursor) = cursor {
             args.push(format!("--after-cursor={cursor}"));
         }
 
-        for unit in &self.journal_config.units {
+        for unit in units {
             args.push(format!("--unit={unit}"));
         }
 
-        if !self.journal_config.priorities.is_empty() {
-            let priorities: Vec<String> = self
-                .journal_config
-                .priorities
+        if !priorities.is_empty() {
+            let priorities: Vec<String> = priorities
                 .iter()
                 .map(std::string::ToString::to_string)
                 .collect();
             args.push(format!("--priority={}", priorities.join("..")));
         }
 
-        if !self.journal_config.include_kernel {
+        if !include_kernel {
             args.push("--no-kernel".to_string());
         }
 
-        if !self.journal_config.include_user {
+        if !include_user {
             args.push("--system".to_string());
         }
 
         args
     }
 
-    /// Import historical journal entries with cursor tracking
-    pub(crate) async fn import_historical(
-        &mut self,
-        journal_tx: &mpsc::Sender<Event<JsonValue>>,
-        systemd_tx: &Option<mpsc::Sender<Event<JsonValue>>>,
-        material: &WatcherMaterialContext,
-        from: &Checkpoint,
-        until: &TimeHorizon,
-    ) -> NodeResult<u64> {
-        info!("Starting historical journal import");
-        let start_time = std::time::Instant::now();
+    fn checkpoint_after_raw_line(
+        raw_line: &str,
+        previous: &JournalCursorCheckpoint,
+        max_line_bytes: usize,
+    ) -> JournalCursorCheckpoint {
+        let cursor = if raw_line.len() > max_line_bytes {
+            Self::parse_oversized_line_metadata(raw_line)
+                .ok()
+                .map(|(cursor, _unit)| cursor)
+        } else {
+            serde_json::from_str::<serde_json::Value>(raw_line)
+                .ok()
+                .and_then(|entry| {
+                    entry
+                        .get("__CURSOR")
+                        .and_then(|value| value.as_str())
+                        .filter(|cursor| !cursor.is_empty())
+                        .map(std::string::ToString::to_string)
+                })
+        };
 
-        let args = self.historical_import_args(from, until);
+        cursor
+            .map(|cursor| JournalCursorCheckpoint::new(Some(cursor)))
+            .unwrap_or_else(|| previous.clone())
+    }
 
+    async fn read_journalctl_records(
+        args: Vec<String>,
+        start_checkpoint: JournalCursorCheckpoint,
+        max_line_bytes: usize,
+    ) -> NodeResult<RecordReadBatch<JournalRawRecord, JournalCursorCheckpoint>> {
         let mut child = Command::new("journalctl")
             .args(&args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| {
-                sinex_node_sdk::SinexError::processing("Failed to run journalctl").with_source(e)
+            .map_err(|error| {
+                SinexError::processing("Failed to run journalctl").with_source(error)
             })?;
 
         let stdout = child
@@ -910,10 +944,8 @@ impl UnifiedJournalWatcher {
             tokio::spawn(async move { read_stderr_preview(&mut stderr, "journalctl").await })
         });
 
-        let mut entries_count = 0u64;
-        let mut first_cursor = None;
-        let mut last_cursor = None;
-        let mut batch = Vec::new();
+        let mut final_checkpoint = start_checkpoint.clone();
+        let mut records = Vec::new();
         let mut reader = BufReader::new(stdout);
         let mut line = String::new();
 
@@ -931,47 +963,15 @@ impl UnifiedJournalWatcher {
                 continue;
             }
 
-            if raw_line.len() > self.max_line_bytes {
-                if let Some(cursor) = self.handle_oversized_line(raw_line, material).await? {
-                    Self::record_seen_cursor(&mut first_cursor, &mut last_cursor, &cursor);
-                }
-                continue;
-            }
-
-            match serde_json::from_str::<serde_json::Value>(raw_line) {
-                Ok(entry) => {
-                    // Process entry and emit both journal and systemd events if applicable
-                    if let Some(journal_event) = self.parse_journal_entry(&entry, material)? {
-                        if let Some(cursor) =
-                            journal_event.payload.get("cursor").and_then(|v| v.as_str())
-                        {
-                            Self::record_seen_cursor(&mut first_cursor, &mut last_cursor, cursor);
-                        }
-
-                        batch.push(journal_event);
-                        entries_count += 1;
-
-                        if batch.len() >= self.journal_config.batch_size {
-                            for event in batch.drain(..) {
-                                self.send_event(journal_tx, event, "journal_batch", material)
-                                    .await?;
-                            }
-                        }
-                    }
-
-                    // Check if this is a systemd event and emit systemd-specific event
-                    if self.systemd_enabled
-                        && let Some(systemd_event) = self.parse_systemd_entry(&entry, material)?
-                        && let Some(tx) = systemd_tx.as_ref()
-                    {
-                        self.send_event(tx, systemd_event, "systemd_batch", material)
-                            .await?;
-                    }
-                }
-                Err(e) => {
-                    self.record_malformed_journal_line("historical", raw_line, &e);
-                }
-            }
+            let checkpoint_after =
+                Self::checkpoint_after_raw_line(raw_line, &final_checkpoint, max_line_bytes);
+            final_checkpoint = checkpoint_after.clone();
+            records.push(RecordReadItem::new(
+                JournalRawRecord {
+                    raw_line: raw_line.to_string(),
+                },
+                checkpoint_after,
+            ));
         }
 
         let status = child.wait().await.map_err(|error| {
@@ -980,29 +980,155 @@ impl UnifiedJournalWatcher {
         let stderr = await_stderr_preview(stderr_task, "journalctl").await?;
 
         if !status.success() {
-            let mut error = sinex_node_sdk::SinexError::processing("journalctl failed")
+            let mut error = SinexError::processing("journalctl failed")
                 .with_context("exit_status", status.to_string());
             if let Some(stderr) = stderr {
                 error = error.with_context("stderr", stderr);
             }
+            return Err(error);
+        }
+
+        Ok(RecordReadBatch {
+            start_checkpoint,
+            records,
+            final_checkpoint,
+            observation: sinex_node_sdk::RecordSourceObservation::None,
+        })
+    }
+
+    async fn process_historical_raw_record(
+        &self,
+        record: JournalRawRecord,
+        journal_tx: &mpsc::Sender<Event<JsonValue>>,
+        systemd_tx: &Option<mpsc::Sender<Event<JsonValue>>>,
+        material: &WatcherMaterialContext,
+    ) -> NodeResult<RecordProcessingOutcome> {
+        let raw_line = record.raw_line.trim_end();
+        if raw_line.len() > self.max_line_bytes {
+            self.handle_oversized_line(raw_line, material).await?;
+            return Ok(RecordProcessingOutcome::Skipped);
+        }
+
+        let entry = match serde_json::from_str::<serde_json::Value>(raw_line) {
+            Ok(entry) => entry,
+            Err(error) => {
+                self.record_malformed_journal_line("historical", raw_line, &error);
+                return Ok(RecordProcessingOutcome::Skipped);
+            }
+        };
+
+        let mut emitted = false;
+        if let Some(journal_event) = self.parse_journal_entry(&entry, material)? {
+            self.send_event(journal_tx, journal_event, "journal_record_source", material)
+                .await?;
+            emitted = true;
+        }
+
+        if self.systemd_enabled
+            && let Some(systemd_event) = self.parse_systemd_entry(&entry, material)?
+            && let Some(tx) = systemd_tx.as_ref()
+        {
+            self.send_event(tx, systemd_event, "systemd_record_source", material)
+                .await?;
+            emitted = true;
+        }
+
+        Ok(if emitted {
+            RecordProcessingOutcome::Processed
+        } else {
+            RecordProcessingOutcome::Skipped
+        })
+    }
+
+    /// Import historical journal entries with cursor tracking
+    pub(crate) async fn import_historical(
+        &mut self,
+        journal_tx: &mpsc::Sender<Event<JsonValue>>,
+        systemd_tx: &Option<mpsc::Sender<Event<JsonValue>>>,
+        material: &WatcherMaterialContext,
+        from: &Checkpoint,
+        until: &TimeHorizon,
+    ) -> NodeResult<u64> {
+        info!("Starting historical journal import");
+        let start_time = std::time::Instant::now();
+
+        let initial_checkpoint = JournalCursorCheckpoint::new(self.last_cursor.clone());
+        let max_line_bytes = self.max_line_bytes;
+        let from_checkpoint = from.clone();
+        let import_hours = self.journal_config.import_hours;
+        let units = self.journal_config.units.clone();
+        let priorities = self.journal_config.priorities.clone();
+        let include_kernel = self.journal_config.include_kernel;
+        let include_user = self.journal_config.include_user;
+        let horizon = until
+            .end_time()
+            .map(RecordReadHorizon::Until)
+            .unwrap_or_default();
+        let (batch, mut checkpoint) = {
+            let source = RecordSources::journal(
+                "system-unified-journal",
+                initial_checkpoint,
+                move |checkpoint: &JournalCursorCheckpoint, horizon| {
+                    let checkpoint = checkpoint.clone();
+                    let args = Self::historical_import_args_from_parts(
+                        &from_checkpoint,
+                        horizon.end_time(),
+                        checkpoint.cursor(),
+                        import_hours,
+                        &units,
+                        &priorities,
+                        include_kernel,
+                        include_user,
+                    );
+                    async move { Self::read_journalctl_records(args, checkpoint, max_line_bytes).await }
+                },
+            );
+
+            let checkpoint = source.initial_checkpoint();
+            let batch = source
+                .read_batch(&checkpoint, horizon)
+                .await
+                .map_err(|error| {
+                    self.record_error(error.to_string());
+                    error
+                })?;
+            (batch, checkpoint)
+        };
+        let first_cursor = batch
+            .records
+            .iter()
+            .find_map(|item| item.checkpoint_after.cursor.clone());
+
+        let processor: &UnifiedJournalWatcher = self;
+        let report = process_record_batch_lenient(
+            &mut checkpoint,
+            batch,
+            |record| {
+                let processor = processor;
+                async move {
+                    processor
+                        .process_historical_raw_record(record, journal_tx, systemd_tx, material)
+                        .await
+                }
+            },
+            |_| RecordWarningDisposition::Retry,
+        )
+        .await;
+
+        if let Some(error) = report.warnings.into_iter().next() {
             self.record_error(error.to_string());
             return Err(error);
         }
 
-        // Send remaining batch
-        for event in batch {
-            self.send_event(journal_tx, event, "journal_final_batch", material)
-                .await?;
-        }
-
-        // Update cursor
-        if let Some(ref cursor) = last_cursor {
-            self.remember_processed_cursor(cursor).await?;
+        let entries_count = u64::try_from(report.processed_records).unwrap_or(u64::MAX);
+        if let Some(cursor) = checkpoint.cursor.clone() {
+            self.remember_processed_cursor(&cursor).await?;
         }
 
         // Send sync event
         if entries_count > 0 {
-            let end_cursor = Self::require_sync_end_cursor(entries_count, last_cursor)?;
+            let end_cursor =
+                Self::require_sync_end_cursor(entries_count, checkpoint.cursor.clone())?;
             let sync_payload = JournalSyncPayload {
                 sync_type: JournalSyncType::InitialImport,
                 start_cursor: first_cursor,

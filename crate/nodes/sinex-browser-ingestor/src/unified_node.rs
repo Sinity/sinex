@@ -12,9 +12,7 @@ use sinex_node_sdk::{
     NodeResult, RecordMaterializer, RecordProcessingOutcome, RecordReadHorizon, RecordSource,
     RecordSources, RotationPolicy, SinexError, SourceRecordAnchor, SqliteRowCheckpoint,
     SqliteSourceCheckpointState,
-    acquisition_manager::{
-        AcquisitionManager, AppendStreamAcquirer, BufferedAppendStreamWriterConfig,
-    },
+    acquisition_manager::{AcquisitionManager, BufferedAppendStreamWriterConfig},
     discover_importable_files_at_root, process_record_batch_lenient,
     runtime::stream::{
         Checkpoint, ContinuousStart, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon,
@@ -129,8 +127,8 @@ impl BrowserNode {
         &self,
         source_identifier: &str,
     ) -> NodeResult<RecordMaterializer<BufferedRecordSink>> {
-        Ok(RecordMaterializer::new(BufferedRecordSink::spawn(
-            AppendStreamAcquirer::new(self.acquisition()?.clone()),
+        Ok(RecordMaterializer::new(BufferedRecordSink::from_manager(
+            self.acquisition()?.clone(),
             source_identifier,
             BufferedAppendStreamWriterConfig::default(),
         )))

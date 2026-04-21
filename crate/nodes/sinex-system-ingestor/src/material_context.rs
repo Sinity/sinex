@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use sinex_db::models::{Event, OffsetKind, Provenance, SourceMaterial};
 use sinex_node_sdk::acquisition_manager::{
-    AcquisitionManager, AppendStreamAcquirer, BufferedAppendStreamWriterConfig, SourceRecordAnchor,
+    AcquisitionManager, BufferedAppendStreamWriterConfig, SourceRecordAnchor,
 };
 use sinex_node_sdk::{BufferedRecordSink, NodeResult, RecordMaterializer, SinexError};
 use sinex_primitives::{Id, JsonValue};
@@ -66,14 +66,9 @@ impl RealWatcherMaterialContext {
                 SinexError::lifecycle(format!("Failed to begin system watcher material: {e}"))
             })?;
         let material_id = Id::from_uuid(handle.material_id);
-        let stream = AppendStreamAcquirer::from_active_handle(
+        let materializer = RecordMaterializer::new(BufferedRecordSink::from_active_handle(
             Arc::clone(&acquisition),
             handle,
-            source_identifier.to_string(),
-        );
-
-        let materializer = RecordMaterializer::new(BufferedRecordSink::spawn(
-            stream,
             source_identifier.to_string(),
             BufferedAppendStreamWriterConfig {
                 channel_capacity: WRITER_CHANNEL_CAPACITY,

@@ -16,9 +16,7 @@ use sinex_node_sdk::{
 };
 use sinex_node_sdk::{
     NodeResult, SinexError, SourceRecordAnchor,
-    acquisition_manager::{
-        AcquisitionManager, AppendStreamAcquirer, BufferedAppendStreamWriterConfig, RotationPolicy,
-    },
+    acquisition_manager::{AcquisitionManager, BufferedAppendStreamWriterConfig, RotationPolicy},
     ingestor_node::IngestorNode,
     record_source::BufferedRecordSink,
     runtime::stream::{
@@ -2705,8 +2703,8 @@ impl TerminalNode {
                 .with_acquisition_manager(Arc::clone(&acquisition));
 
             let source_mode = classify_history_source(source);
-            let materializer = RecordMaterializer::new(BufferedRecordSink::spawn(
-                AppendStreamAcquirer::new(Arc::clone(&acquisition)),
+            let materializer = RecordMaterializer::new(BufferedRecordSink::from_manager(
+                Arc::clone(&acquisition),
                 source.path.as_str(),
                 BufferedAppendStreamWriterConfig::default(),
             ));
@@ -3453,8 +3451,8 @@ mod tests {
     fn test_materializer(
         acquisition: &Arc<AcquisitionManager>,
     ) -> RecordMaterializer<BufferedRecordSink> {
-        RecordMaterializer::new(BufferedRecordSink::spawn(
-            AppendStreamAcquirer::new(Arc::clone(acquisition)),
+        RecordMaterializer::new(BufferedRecordSink::from_manager(
+            Arc::clone(acquisition),
             "test://terminal-history",
             BufferedAppendStreamWriterConfig::default(),
         ))
