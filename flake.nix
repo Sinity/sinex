@@ -155,7 +155,10 @@
             echo "port = $PGPORT" >> "$PGDATA/postgresql.conf"
             echo "shared_preload_libraries = 'timescaledb'" >> "$PGDATA/postgresql.conf"
 
-            ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -w start
+            if ! ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -l "$TMPDIR/postgres.log" -w -t 180 start; then
+              cat "$TMPDIR/postgres.log" >&2 || true
+              exit 1
+            fi
 
             ${postgresForSqlx}/bin/createdb -h "$PGHOST" -p "$PGPORT" -U postgres sinex_dev || true
 
