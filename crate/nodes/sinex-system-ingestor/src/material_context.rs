@@ -55,6 +55,7 @@ struct MaterialWriteRequest {
 
 const WRITER_BATCH_MAX_RECORDS: usize = 64;
 const WRITER_BATCH_MAX_BYTES: usize = 128 * 1024;
+const WRITER_BATCH_COALESCE_WINDOW: std::time::Duration = std::time::Duration::from_millis(20);
 
 async fn append_material_batch(
     stream: &mut AppendStreamAcquirer,
@@ -121,6 +122,12 @@ async fn material_writer_task(
             Some(payload_bytes) => {
                 let mut batch_bytes = payload_bytes.len();
                 let mut batch = vec![(payload_bytes, req.reply)];
+
+                // High-volume watchers often enqueue records sequentially rather than
+                // concurrently. Give the producer a short window to fill the batch so
+                // source-material capture does not collapse into one NATS slice per
+                // logical event under load.
+                tokio::time::sleep(WRITER_BATCH_COALESCE_WINDOW).await;
 
                 while batch.len() < WRITER_BATCH_MAX_RECORDS {
                     match rx.try_recv() {
