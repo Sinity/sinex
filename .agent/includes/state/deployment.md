@@ -2,63 +2,56 @@
 
 Canonical deployment and host-activation follow-up is tracked in GitHub under:
 
-- `#308` — Core hardening follow-up, especially runtime target/status, source-material proof,
-  historical backfill, browser ingestion, VM coverage, and automata verification issues.
+- `#308` — Core hardening follow-up: SDK, test harness, runtime proof boundaries.
 
 Scratch notes are temporary investigation material only; do not treat `.agent/scratch/` as a
 durable deployment backlog.
 
-**Current state:** `sinex.enable = true; provisionDatabase = true` on `sinnix-prime`, and the
-host has been switched successfully under the checked-in NixOS module graph. The trustworthy gap
-is no longer "can the services start?" or "can the target-user bridges be established?" but
-"has the live prod stack been proven from a clean persisted-smoke/query loop?".
+**Current state as of 2026-04-21:** `sinex.enable = true; provisionDatabase = true` is deployed on
+`sinnix-prime`. The host has active systemd units for the gateway, ingest daemon, filesystem,
+system, terminal, desktop, browser, canonicalizer, analytics, health automaton, and session
+detector. Target-user access preparatory units are active/exited for desktop, terminal, browser,
+and document scan surfaces.
 
-A clean local development proof now exists: `xtask run core` plus real terminal/filesystem/gateway
-traffic were observed through `NATS -> ingestd -> Postgres -> sinexctl query` on the dev stack.
-On-host, gateway readiness is healthy, `/run/agenix/sinex-gateway-admin-token` materializes, and
-the desktop/terminal services now emit real source-material traffic under systemd hardening.
+The trustworthy gap is no longer "can the services start?" or "do target-user bridges exist?".
+The remaining deployment work is to make proof boundaries explicit and repeatable: which runtime
+target is being checked, which stack produced the evidence, which source paths were exercised, and
+whether derived outputs are current and useful.
 
-### What Works Now
+### Current Live Surface
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Compilation | 0 errors, 0 warnings | Clean workspace |
-| FS ingestor | FIXED — needs rebuild | OOM-killing at 256M; NixOS module raised to 1G |
-| System ingestor | ACTIVE in prod | 386K dbus signals in 17h on sinnix-prime |
-| ingestd | ACTIVE in prod | 225K+ events processed; sd_notify support present |
-| gateway | FIXED — needs rebuild | Was dead (empty agenix token); re-encrypted in sinnix repo |
-| Schema apply | READY | `sinex-schema-apply.service` exists in both NixOS paths |
-| sinexctl | READY | query, trace, telemetry, context, report, import subcommands |
-| Local end-to-end proof | VERIFIED | gateway + terminal + filesystem traffic persisted on the dev stack and was queried back through `sinexctl` |
-| Desktop ingestor on host | ACTIVE in prod | 163 window.focused + 100K+ unhandled dbus signals; activewindowv2 race fixed |
-| Terminal ingestor on host | ACTIVE in prod | 73K commands from Atuin in 17h on sinnix-prime |
-| Automata event bridge | FIXED | `DerivedNodeAdapter` now uses confirmation stream bridge (was stuck in invalidation-only loop) |
-| Production pipeline | PROVEN | 562K real events in sinex_prod from 3 ingestors over 17h |
+| Gateway | active | Unit is running; status/readiness should be reported through the explicit runtime target work in `#310`/`#322`. |
+| ingestd | active | Source-material frame stream ordering and hot-path batching are deployed. |
+| Filesystem node | active | Metadata-only and zero-byte observations now use SDK buffered append streams rather than one material per event. |
+| System node | active | Startup historical import is bounded off the continuous path; journal IDs are deterministic UUIDv7 with valid variant bits. |
+| Terminal node | active | Continuous watchers bootstrap from live tail and source records use SDK append-stream anchors. |
+| Desktop node | active | Target-user bridge has been proven under systemd hardening. |
+| Browser node | active | Startup replay was removed from snapshot mode; real dataset hardening remains tracked in `#320`. |
+| Automata | active | Canonicalizer, analytics, health, and session-detector units are running; output quality/lag/budget proof remains tracked in `#321`. |
+| Schema apply | active/exited | Declarative schema apply unit is present and has run under systemd. |
 
-### What's Still Blocking Trusted Production
+### Recently Closed Deployment Risks
 
-| Component | Blocker | Fix |
-|-----------|---------|-----|
-| Gateway smoke | Token was empty; token fixed in sinnix. Gateway dead until rebuild. | `nixos-rebuild switch` then `sinexctl gateway ingest → sinexctl query` |
-| FS ingestor stability | OOM-killing; MemoryMax fix in NixOS module needs rebuild. | `nixos-rebuild switch` |
-| Production historical-path proof | Terminal/desktop historical scans not yet query-verified on prod. | Re-run historical scans post-rebuild and query resulting rows. |
-| Operator telemetry rollout | The deployed host still has the stale operator telemetry schema. Root cause was invalid continuous aggregates over the `id`-partitioned hypertable, not a routing gap. | Deploy the updated schema apply that switches the six `_1h` operator surfaces to hourly `ts_coided` views. |
+| Risk | Closure |
+|------|---------|
+| Browser snapshot blocked systemd readiness with large static replay | Snapshot startup no longer performs historical replay. |
+| Material lifecycle frames arrived out of order across separate streams | SDK now publishes ordered source-material frames through one stream family. |
+| Tiny source records caused material-frame and git-annex pressure | SDK append streams batch logical records and route small materials through local CAS. |
+| Unbounded journal import and coredump pressure froze the host | Continuous startup no longer imports all journal history; system node uses bounded historical scans. |
+| Invalid producer UUIDs poisoned ingestd COPY batches | ingestd rejects malformed UUIDv7 variants; system producer emits deterministic RFC4122 UUIDv7 IDs. |
+| Duplicate BLAKE3 blob inserts caused persistence retry loops | Blob repository deduplicates by BLAKE3. |
 
-### Activation Sequence (Critical Path)
+### Remaining Proof Work
 
-```
-Phase 0: switch host with checked-in `sinex.enable = true` graph
-         Verify: managed units active, `/ready` healthy, admin token materialized
-Phase 1: prove clean local pipeline end to end
-         Verify: gateway + terminal + filesystem traffic queryable on dev stack
-Phase 2: prove host access bridges under real hardening
-         Verify: desktop/terminal create source material on `sinnix-prime`
-Phase 3: clean prod persisted smoke
-         Verify: real gateway ingest is queryable back from `sinex_prod`
-Phase 4: historical backfill on the node/runtime plane
-         Verify: desktop/terminal historical rows land through normal pipeline
-Phase 5: stabilize (monitor DLQ, batch latency, node health)
-```
+| Gap | Tracking |
+|-----|----------|
+| Explicit dev vs deployed runtime target descriptors | `#310`, `#311`, `#322` |
+| Historical backfill through the normal node/runtime plane | `#319` |
+| Browser-history real dataset and host wiring hardening | `#320` |
+| Automata derived-output quality, lag, and runtime budgets | `#321`, `#263`, `#325` |
+| Runtime/system pressure scenarios in tests and benchmarks | `#315`, `#316`, `#317`, `#318`, `#324` |
 
 ### Service User Permission Model
 
@@ -66,19 +59,9 @@ The sinex service user (uid=991) runs all services. The target user (sinity, uid
 
 | Resource | sinex access? | Why |
 |----------|---------------|-----|
-| `/realm/project/*` | YES | World-readable (755) |
-| systemd journal | YES | journald API access |
-| Hyprland socket (`/run/user/1000/hypr/`) | **YES (live host proof)** | Desktop ingestor emits real source-material traffic under the target-runtime bridge |
-| Atuin DB (`~/.local/share/atuin/history.db`) | **YES (live host proof)** | Terminal ingestor reads the target-home history paths after the ACL-mask fix |
-| `/home/sinity` | **NO** | ProtectHome=true on most services |
-
-### Evolution Phases
-
-```
-A (done)   → Activation: FS + system ingestors give file changes + journal events
-B (done)   → Full capture bridges: terminal + desktop host access proved
-C (done)   → 562K real events in prod; automata bridged to event stream
-D (next)   → Gateway smoke + FS OOM fix via rebuild; historical backfill proof
-E (days)   → Intelligence: session detector deploy; monitor automata derived output
-F (weeks)  → Semantic: embedding pipeline, hybrid search
-```
+| `/realm/project/*` | YES | World-readable project roots. |
+| systemd journal | YES | System node consumes journal data under service hardening. |
+| Hyprland socket (`/run/user/1000/hypr/`) | YES | Desktop node emits source-material traffic under the target-runtime bridge. |
+| Atuin DB (`~/.local/share/atuin/history.db`) | YES | Terminal node reads target-home history paths after ACL-mask fixes. |
+| Browser history roots | YES | Browser target-access unit is active/exited; dataset correctness remains issue-tracked. |
+| `/home/sinity` broadly | NO | ProtectHome-style restrictions remain intentional; access is via explicit bridges. |
