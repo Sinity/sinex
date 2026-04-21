@@ -1,5 +1,5 @@
 use camino::{Utf8Path, Utf8PathBuf};
-use rusqlite::{Connection, OpenFlags, OptionalExtension, Params, Row};
+use rusqlite::{Connection, OpenFlags, Params, Row};
 use sinex_primitives::Timestamp;
 use std::path::Path;
 use std::{error::Error, fmt, future::Future};
@@ -204,7 +204,7 @@ where
 
 pub fn max_row_id_for_query(path: &Utf8Path, query: &str) -> Result<i64, rusqlite::Error> {
     let conn = open_read_only(path)?;
-    let max_id: Option<i64> = conn.query_row(query, [], |row| row.get(0)).optional()?;
+    let max_id: Option<i64> = conn.query_row(query, [], |row| row.get::<_, Option<i64>>(0))?;
     Ok(max_id.unwrap_or(0))
 }
 
