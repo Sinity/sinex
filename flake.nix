@@ -689,7 +689,7 @@
                     fi
                   fi
 
-                  if [ "''${SINEX_AUTO_STATUS:-0}" = 1 ]; then
+                  if [ "''${SINEX_AUTO_STATUS:-1}" = 1 ]; then
                     # If infra was just launched, poll for readiness before status
                     # so the summary reflects actual state.
                     if [ "''${_sinex_infra_starting:-0}" -eq 1 ]; then
