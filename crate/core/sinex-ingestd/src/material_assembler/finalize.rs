@@ -2089,6 +2089,96 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn persist_finalized_material_reuses_existing_blob_by_blake3_inside_transaction(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let material_id_typed = Id::<SourceMaterialRecord>::from_uuid(material_id);
+        let content_hash = "existing-blob-blake3";
+        let annex_key = AnnexKey {
+            backend: "SINEXBLAKE3".to_string(),
+            hash: content_hash.to_string(),
+            size: 32,
+            key: format!("SINEXBLAKE3-s32--{content_hash}"),
+        };
+
+        let existing_blob = ctx
+            .pool
+            .blobs()
+            .insert(
+                Blob::builder()
+                    .annex_backend("SHA256E".to_string())
+                    .content_hash("existing-sha256-hash".to_string())
+                    .original_filename("existing-material.bin".to_string())
+                    .size_bytes(annex_key.size as i64)
+                    .checksum_blake3(content_hash.to_string())
+                    .metadata(json!({ "seeded": true }))
+                    .build(),
+            )
+            .await?;
+        let started_at = Timestamp::now();
+
+        ctx.pool
+            .source_materials()
+            .register_external_in_flight(
+                material_id,
+                "test",
+                Some("test://existing-blob-by-blake3-finalize"),
+                json!({}),
+                started_at,
+            )
+            .await?;
+        assembler
+            .record_staged_at_ledger_entry(material_id, started_at)
+            .await?;
+
+        let final_state = FinalizationState {
+            material_id,
+            temp_path: state_dir.path().join("existing-material-by-blake3.bin"),
+            expected_offset: annex_key.size as i64,
+            slice_count: 1,
+            buffered_count: 0,
+            metadata: json!({}),
+            material_kind: "test".to_string(),
+            source_identifier: "test://existing-blob-by-blake3-finalize".to_string(),
+            started_at,
+        };
+
+        let end = MaterialEndMessage {
+            material_id: material_id.to_string(),
+            total_slices: 1,
+            total_size_bytes: annex_key.size as i64,
+            content_hash: content_hash.to_string(),
+            metadata: json!({}),
+            ended_at: sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
+        };
+
+        assembler
+            .persist_finalized_material(
+                &final_state,
+                &annex_key,
+                &end,
+                json!({}),
+                status::COMPLETED,
+            )
+            .await?;
+
+        let material = ctx
+            .pool
+            .source_materials()
+            .get_by_id(material_id_typed)
+            .await?
+            .expect("material should exist");
+
+        assert_eq!(material.status.as_str(), status::COMPLETED);
+        assert_eq!(material.optional_blob_id, Some(*existing_blob.id.as_uuid()));
+
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn rollback_finalization_failure_preserves_original_error_context() -> TestResult<()> {
         let error = rollback_finalization_failure(
             SinexError::validation("original finalize failure"),
