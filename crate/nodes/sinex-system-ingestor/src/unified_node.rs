@@ -725,10 +725,8 @@ impl SystemNode {
         let (tx, rx) = mpsc::channel(DBUS_CHANNEL_CAPACITY);
         let forwarder =
             spawn_forwarder("system.dbus.signal", rx, emitter, Some(Arc::clone(&health)));
-        let mut watcher = self
-            .factory
-            .create_dbus_watcher(self.config.dbus_config.clone())
-            .await?;
+        let dbus_config = self.effective_dbus_config();
+        let mut watcher = self.factory.create_dbus_watcher(dbus_config).await?;
         let watcher_material = material.clone();
         let task = tokio::spawn(async move {
             if let Err(err) = watcher.start_streaming(tx, watcher_material).await {
@@ -739,6 +737,25 @@ impl SystemNode {
         let mut handle = handle;
         handle.start(task, Some(forwarder))?;
         Ok(handle)
+    }
+
+    fn effective_dbus_config(&self) -> crate::payloads::DbusConfig {
+        let mut config = self.config.dbus_config.clone();
+        match self.config.dbus_buses {
+            DbusBusScope::Session => {
+                config.monitor_session = true;
+                config.monitor_system = false;
+            }
+            DbusBusScope::System => {
+                config.monitor_session = false;
+                config.monitor_system = true;
+            }
+            DbusBusScope::Both => {
+                config.monitor_session = true;
+                config.monitor_system = true;
+            }
+        }
+        config
     }
 
     async fn spawn_unified_journal_task(
@@ -1491,6 +1508,26 @@ mod tests {
             IngestorNode::get_coverage_analysis(&node, &SystemPersistentState::default(), None)
                 .expect_err("system node should not fabricate coverage analysis");
         assert!(error.to_string().contains("not implemented"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn dbus_bus_scope_overrides_nested_dbus_config(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let mut node = SystemNode::new();
+        node.config.dbus_config.monitor_session = true;
+        node.config.dbus_config.monitor_system = true;
+
+        node.config.dbus_buses = DbusBusScope::System;
+        let config = node.effective_dbus_config();
+        assert!(!config.monitor_session);
+        assert!(config.monitor_system);
+
+        node.config.dbus_buses = DbusBusScope::Session;
+        let config = node.effective_dbus_config();
+        assert!(config.monitor_session);
+        assert!(!config.monitor_system);
+
         Ok(())
     }
 

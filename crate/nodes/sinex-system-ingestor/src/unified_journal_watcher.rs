@@ -1261,11 +1261,12 @@ impl UnifiedJournalWatcher {
             .with_std_error(error)
         })?;
 
+        let Some(raw_message) = obj.get("MESSAGE").and_then(|v| v.as_str()) else {
+            debug!(cursor = %cursor, "Skipping journal entry without MESSAGE");
+            return Ok(None);
+        };
         let message = privacy_engine
-            .process(
-                &Self::require_entry_string_field(obj, "MESSAGE", "Journal entry")?,
-                ProcessingContext::Journal,
-            )
+            .process(raw_message, ProcessingContext::Journal)
             .text
             .into_owned();
 
@@ -1441,9 +1442,16 @@ impl UnifiedJournalWatcher {
         let obj = entry.as_object().ok_or_else(|| {
             sinex_node_sdk::SinexError::processing("Invalid systemd journal entry".to_string())
         })?;
-        let message = Self::require_entry_string_field(obj, "MESSAGE", "Systemd journal entry")?;
         let cursor =
             Self::require_nonempty_entry_string_field(obj, "__CURSOR", "Systemd journal entry")?;
+        let Some(message) = obj.get("MESSAGE").and_then(|v| v.as_str()) else {
+            debug!(
+                cursor = %cursor,
+                unit = %unit_name,
+                "Skipping systemd journal entry without MESSAGE"
+            );
+            return Ok(None);
+        };
 
         // Filter by tracked units if configured
         if !self.systemd_units.is_empty() && !self.systemd_units.contains(unit_name) {
@@ -1463,7 +1471,7 @@ impl UnifiedJournalWatcher {
         // Note: We create typed IDs inside each branch to satisfy type inference
 
         // Construct payload based on classified systemd event kind
-        let Some(event_kind) = classify_systemd_event(entry, &message) else {
+        let Some(event_kind) = classify_systemd_event(entry, message) else {
             return Ok(None);
         };
         let event = match event_kind {
@@ -1501,7 +1509,7 @@ impl UnifiedJournalWatcher {
                 let e = Event::new(
                     SystemdUnitFailedPayload {
                         unit_name: unit_name.to_string(),
-                        message: message.clone(),
+                        message: message.to_string(),
                         cursor: cursor.clone(),
                         pid: entry["_PID"].as_str().map(String::from),
                         uid: entry["_UID"].as_str().map(String::from),
@@ -1516,7 +1524,7 @@ impl UnifiedJournalWatcher {
                 let e = Event::new(
                     SystemdUnitReloadedPayload {
                         unit_name: Some(unit_name.to_string()),
-                        message: message.clone(),
+                        message: message.to_string(),
                         cursor: cursor.clone(),
                         pid: entry["_PID"].as_str().map(String::from),
                         uid: entry["_UID"].as_str().map(String::from),
@@ -1531,7 +1539,7 @@ impl UnifiedJournalWatcher {
                 let e = Event::new(
                     SystemdTimerTriggeredPayload {
                         unit_name: Some(unit_name.to_string()),
-                        message: message.clone(),
+                        message: message.to_string(),
                         cursor: cursor.clone(),
                         pid: entry["_PID"].as_str().map(String::from),
                         uid: entry["_UID"].as_str().map(String::from),
@@ -1939,7 +1947,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn parse_journal_entry_rejects_missing_message(ctx: TestContext) -> TestResult<()> {
+    async fn parse_journal_entry_skips_missing_message(ctx: TestContext) -> TestResult<()> {
         let _ = ctx;
         let watcher = test_watcher();
         let material = test_material();
@@ -1948,11 +1956,22 @@ mod tests {
             "__REALTIME_TIMESTAMP": "1710000000000000",
         });
 
-        let error = watcher
-            .parse_journal_entry(&entry, &material)
-            .expect_err("missing journal MESSAGE must fail honestly");
+        assert!(watcher.parse_journal_entry(&entry, &material)?.is_none());
+        Ok(())
+    }
 
-        assert!(error.to_string().contains("missing required MESSAGE"));
+    #[sinex_test]
+    async fn parse_systemd_entry_skips_missing_message(ctx: TestContext) -> TestResult<()> {
+        let _ = ctx;
+        let watcher = test_watcher();
+        let material = test_material();
+        let entry = json!({
+            "__CURSOR": "s=abc;i=1;b=boot;m=1;t=1;x=1",
+            "__REALTIME_TIMESTAMP": "1710000000000000",
+            "_SYSTEMD_UNIT": "test.service",
+        });
+
+        assert!(watcher.parse_systemd_entry(&entry, &material)?.is_none());
         Ok(())
     }
 
