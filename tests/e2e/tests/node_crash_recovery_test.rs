@@ -50,7 +50,7 @@ async fn setup_ingestd(ctx: TestContext) -> Result<IngestdSetup> {
 
     let ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
 
-    // Wait for ingestd's MaterialAssembler to attach a consumer on the BEGIN stream.
+    // Wait for ingestd's MaterialAssembler to attach a consumer on the ordered frame stream.
     // start_test_ingestd_with_config already waits for the RAW_EVENTS consumer, but
     // the MaterialAssembler starts slightly after. Without this, begin_material()
     // messages may arrive before the assembler is consuming, causing wait_for_material_row
@@ -58,10 +58,13 @@ async fn setup_ingestd(ctx: TestContext) -> Result<IngestdSetup> {
     let nats = ctx.nats_handle()?;
     let js = ctx.jetstream().await?;
     let env = ctx.env();
-    let begin_stream =
-        env.nats_stream_name_with_namespace(Some(&namespace), "SOURCE_MATERIAL_BEGIN");
-    nats.wait_for_consumer_on_stream(&js, &begin_stream, Duration::from_secs(Timeouts::STANDARD))
-        .await?;
+    let material_stream = env.nats_stream_name_with_namespace(Some(&namespace), "SOURCE_MATERIAL");
+    nats.wait_for_consumer_on_stream(
+        &js,
+        &material_stream,
+        Duration::from_secs(Timeouts::STANDARD),
+    )
+    .await?;
 
     Ok(IngestdSetup {
         ctx,

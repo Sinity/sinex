@@ -1,7 +1,7 @@
 //! Pipeline management for material assembler consumers.
 //!
 //! This module contains the `JetStream` consumer spawning logic and stream
-//! bootstrapping for the three material assembly streams: begin, slices, and end.
+//! bootstrapping for the ordered material assembly frame stream.
 
 use super::state::MaterialBeginMessage;
 use super::{MaterialAssembler, MaterialEndMessage, Uuid};
@@ -9,6 +9,10 @@ use super::{MaterialAssembler, MaterialEndMessage, Uuid};
 use async_nats::jetstream;
 use futures::{FutureExt, StreamExt};
 use serde_json::json;
+use sinex_node_sdk::{
+    SOURCE_MATERIAL_BEGIN_SUBJECT, SOURCE_MATERIAL_END_SUBJECT, SOURCE_MATERIAL_FRAMES_SUBJECT,
+    SOURCE_MATERIAL_SLICE_SUBJECT_PREFIX, SOURCE_MATERIAL_STREAM,
+};
 use std::str::FromStr;
 use std::sync::{
     Arc,
@@ -19,9 +23,8 @@ use tracing::{error, info, warn};
 
 use crate::{IngestdResult, SinexError};
 
-const BATCH_PROCESSING_SEMAPHORE_PERMITS: usize = 4; // Allow up to 4 concurrent batches
-const MATERIAL_CONSUMER_BATCH_EXPIRES: std::time::Duration = std::time::Duration::from_secs(1);
-// Keep SOURCE_MATERIAL_* stream caps aligned with the Nix bootstrap path. The current
+const MATERIAL_CONSUMER_SHUTDOWN_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+// Keep SOURCE_MATERIAL stream caps aligned with the Nix bootstrap path. The current
 // nats CLI rejects --max-bytes values above signed 32-bit range.
 const JETSTREAM_BOOTSTRAP_MAX_BYTES: i64 = 2_147_483_647;
 
@@ -78,29 +81,18 @@ async fn nak_with_warning(
         })
 }
 
-/// Bootstrap `JetStream` streams for materials
+/// Bootstrap the ordered `JetStream` stream for material lifecycle frames.
 pub(super) async fn bootstrap_streams(assembler: &MaterialAssembler) -> IngestdResult<()> {
     info!("Bootstrapping material streams");
 
     assembler
         .js
         .create_or_update_stream(jetstream::stream::Config {
-            name: namespaced_stream(assembler, "SOURCE_MATERIAL_BEGIN"),
-            subjects: vec![namespaced_subject(assembler, "source_material.begin")],
-            retention: jetstream::stream::RetentionPolicy::WorkQueue,
-            storage: jetstream::stream::StorageType::File,
-            max_age: tokio::time::Duration::from_hours(72),
-            max_bytes: 1_073_741_824, // 1 GiB
-            ..Default::default()
-        })
-        .await
-        .map_err(|e| SinexError::network("Failed to create begin stream").with_source(e))?;
-
-    assembler
-        .js
-        .create_or_update_stream(jetstream::stream::Config {
-            name: namespaced_stream(assembler, "SOURCE_MATERIAL_SLICES"),
-            subjects: vec![namespaced_subject(assembler, "source_material.slices.>")],
+            name: namespaced_stream(assembler, SOURCE_MATERIAL_STREAM),
+            subjects: vec![namespaced_subject(
+                assembler,
+                SOURCE_MATERIAL_FRAMES_SUBJECT,
+            )],
             retention: jetstream::stream::RetentionPolicy::WorkQueue,
             storage: jetstream::stream::StorageType::File,
             max_age: tokio::time::Duration::from_hours(72),
@@ -109,453 +101,246 @@ pub(super) async fn bootstrap_streams(assembler: &MaterialAssembler) -> IngestdR
             ..Default::default()
         })
         .await
-        .map_err(|e| SinexError::network("Failed to create slices stream").with_source(e))?;
-
-    assembler
-        .js
-        .create_or_update_stream(jetstream::stream::Config {
-            name: namespaced_stream(assembler, "SOURCE_MATERIAL_END"),
-            subjects: vec![namespaced_subject(assembler, "source_material.end")],
-            retention: jetstream::stream::RetentionPolicy::WorkQueue,
-            storage: jetstream::stream::StorageType::File,
-            max_age: tokio::time::Duration::from_hours(72),
-            max_bytes: 1_073_741_824, // 1 GiB
-            ..Default::default()
-        })
-        .await
-        .map_err(|e| SinexError::network("Failed to create end stream").with_source(e))?;
+        .map_err(|e| SinexError::network("Failed to create material stream").with_source(e))?;
 
     info!("Material streams bootstrapped successfully");
     Ok(())
 }
 
-/// Spawn consumer for begin messages
-pub(super) fn spawn_begin_consumer(
+enum MaterialFrame {
+    Begin {
+        material_id: Uuid,
+        message: MaterialBeginMessage,
+    },
+    Slice {
+        material_id: Uuid,
+        offset: i64,
+        payload: Vec<u8>,
+    },
+    End {
+        material_id: Uuid,
+        message: MaterialEndMessage,
+    },
+}
+
+impl MaterialFrame {
+    fn material_id(&self) -> Uuid {
+        match self {
+            Self::Begin { material_id, .. }
+            | Self::Slice { material_id, .. }
+            | Self::End { material_id, .. } => *material_id,
+        }
+    }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Begin { .. } => "begin",
+            Self::Slice { .. } => "slice",
+            Self::End { .. } => "end",
+        }
+    }
+
+    fn offset(&self) -> Option<i64> {
+        match self {
+            Self::Slice { offset, .. } => Some(*offset),
+            Self::Begin { .. } | Self::End { .. } => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct MaterialFrameDecodeError {
+    reason: &'static str,
+    material_id: Option<Uuid>,
+    message: String,
+}
+
+impl MaterialFrameDecodeError {
+    fn new(reason: &'static str, material_id: Option<Uuid>, message: String) -> Self {
+        Self {
+            reason,
+            material_id,
+            message,
+        }
+    }
+}
+
+/// Spawn the single ordered consumer for material lifecycle frames.
+pub(super) async fn spawn_material_consumer(
     assembler: &MaterialAssembler,
     shutdown_flag: Arc<AtomicBool>,
-) -> JoinHandle<IngestdResult<()>> {
+) -> IngestdResult<JoinHandle<IngestdResult<()>>> {
     let js = assembler.js.clone();
     let assembler = assembler.clone_for_task();
 
-    tokio::spawn(async move {
-        let stream_name = namespaced_stream(&assembler, "SOURCE_MATERIAL_BEGIN");
-        let stream = js
-            .get_stream(&stream_name)
-            .await
-            .map_err(|e| SinexError::network("Failed to get begin stream").with_source(e))?;
+    let stream_name = namespaced_stream(&assembler, SOURCE_MATERIAL_STREAM);
+    let stream = js
+        .get_stream(&stream_name)
+        .await
+        .map_err(|e| SinexError::network("Failed to get material stream").with_source(e))?;
 
-        let consumer_name = namespaced_consumer(&assembler, "ingestd_material_begin");
-        let consumer = stream
-            .get_or_create_consumer(
-                consumer_name.as_str(),
-                jetstream::consumer::pull::Config {
-                    durable_name: Some(consumer_name.clone()),
-                    ack_policy: jetstream::consumer::AckPolicy::Explicit,
-                    // Critical for correctness: tests (and real systems) may publish before this
-                    // consumer is created on first startup; don't silently skip earlier messages.
-                    deliver_policy: jetstream::consumer::DeliverPolicy::All,
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(|e| SinexError::network("Failed to create begin consumer").with_source(e))?;
+    let consumer_name = namespaced_consumer(&assembler, "ingestd_material_frames");
+    let consumer = stream
+        .get_or_create_consumer(
+            consumer_name.as_str(),
+            jetstream::consumer::pull::Config {
+                durable_name: Some(consumer_name.clone()),
+                ack_policy: jetstream::consumer::AckPolicy::Explicit,
+                deliver_policy: jetstream::consumer::DeliverPolicy::All,
+                max_ack_pending: assembler.slices_max_ack_pending,
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|e| SinexError::network("Failed to create material consumer").with_source(e))?;
 
+    let mut messages = consumer.messages().await.map_err(|e| {
+        SinexError::network("Failed to open material frame consumer").with_source(e)
+    })?;
+
+    Ok(tokio::spawn(async move {
         loop {
             if shutdown_flag.load(Ordering::Acquire) {
                 break;
             }
-            let mut messages = consumer
-                .batch()
-                .max_messages(50)
-                .expires(MATERIAL_CONSUMER_BATCH_EXPIRES)
-                .messages()
-                .await
-                .map_err(|e| {
-                    SinexError::network("Failed to fetch begin messages").with_source(e)
-                })?;
 
-            while let Some(message) = messages.next().await {
-                if shutdown_flag.load(Ordering::Acquire) {
-                    break;
+            let message = tokio::select! {
+                maybe = messages.next() => maybe,
+                () = tokio::time::sleep(MATERIAL_CONSUMER_SHUTDOWN_POLL) => {
+                    continue;
                 }
-                let message = match message {
-                    Ok(msg) => msg,
-                    Err(e) => {
-                        warn!("Error receiving begin message: {}", e);
-                        continue;
-                    }
-                };
+            };
 
-                let (begin_message, material_id) = match decode_begin_message(&message.payload) {
-                    Ok(parsed) => parsed,
-                    Err(error) => {
-                        warn!(
-                            error = %error,
-                            payload_len = message.payload.len(),
-                            payload_preview = %String::from_utf8_lossy(&message.payload),
-                            "Failed to decode begin message payload"
-                        );
-                        ack_with_warning(&message, "begin_payload_invalid", None).await?;
-                        continue;
-                    }
-                };
+            let Some(message) = message else {
+                break;
+            };
+            let message = match message {
+                Ok(msg) => msg,
+                Err(e) => {
+                    warn!("Error receiving material frame message: {}", e);
+                    continue;
+                }
+            };
 
-                let result = std::panic::AssertUnwindSafe(async {
-                    assembler.handle_begin(material_id, begin_message).await
-                })
-                .catch_unwind()
-                .await;
-
-                match result {
-                    Ok(Ok(())) => {}
-                    Ok(Err(err)) => {
-                        error!("Failed to process begin message: {}", err);
-                        nak_with_warning(
-                            &message,
-                            None,
-                            "begin_processing_failed",
-                            Some(&material_id),
-                        )
-                        .await?;
-                        continue;
-                    }
-                    Err(panic) => {
-                        let panic_msg = describe_panic(&*panic);
-                        error!(
-                            material_id = %material_id,
-                            "Begin consumer panicked: {}",
-                            panic_msg
-                        );
+            let frame = match decode_material_frame(
+                message.subject.as_str(),
+                message.headers.as_ref(),
+                &message.payload,
+            ) {
+                Ok(frame) => frame,
+                Err(error) => {
+                    let material_id = error.material_id;
+                    warn!(
+                        subject = %message.subject,
+                        material_id = ?material_id,
+                        error = %error.message,
+                        payload_len = message.payload.len(),
+                        "Rejecting malformed material frame"
+                    );
+                    if let Some(material_id) = material_id {
                         assembler
                             .route_material_error(
                                 material_id,
-                                "begin_consumer_panic",
-                                json!({ "panic": panic_msg }),
+                                error.reason,
+                                json!({
+                                    "error": error.message,
+                                    "subject": message.subject.as_str(),
+                                }),
                             )
                             .await;
                         assembler
-                            .finalize_failed_material(material_id, "begin_consumer_panic")
+                            .finalize_failed_material(material_id, error.reason)
                             .await;
-                        nak_with_warning(
-                            &message,
-                            Some(std::time::Duration::from_millis(200)),
-                            "begin_processing_panicked",
-                            Some(&material_id),
-                        )
-                        .await?;
-                        continue;
                     }
+                    ack_with_warning(&message, error.reason, material_id.as_ref()).await?;
+                    continue;
                 }
+            };
+            let material_id = frame.material_id();
+            let frame_kind = frame.kind();
+            let frame_offset = frame.offset();
 
-                ack_with_warning(&message, "begin_processed", Some(&material_id)).await?;
-            }
-        }
-
-        Ok::<(), SinexError>(())
-    })
-}
-
-/// Spawn consumer for slice messages
-pub(super) fn spawn_slices_consumer(
-    assembler: &MaterialAssembler,
-    shutdown_flag: Arc<AtomicBool>,
-) -> JoinHandle<IngestdResult<()>> {
-    let js = assembler.js.clone();
-    let assembler = assembler.clone_for_task();
-
-    // Semaphore to limit concurrent batch processing and prevent memory exhaustion
-    let batch_semaphore = Arc::new(tokio::sync::Semaphore::new(
-        BATCH_PROCESSING_SEMAPHORE_PERMITS,
-    ));
-
-    tokio::spawn(async move {
-        let stream_name = namespaced_stream(&assembler, "SOURCE_MATERIAL_SLICES");
-        let stream = js
-            .get_stream(&stream_name)
-            .await
-            .map_err(|e| SinexError::network("Failed to get slices stream").with_source(e))?;
-
-        let consumer_name = namespaced_consumer(&assembler, "ingestd_material_slices");
-        let consumer = stream
-            .get_or_create_consumer(
-                consumer_name.as_str(),
-                jetstream::consumer::pull::Config {
-                    durable_name: Some(consumer_name.clone()),
-                    ack_policy: jetstream::consumer::AckPolicy::Explicit,
-                    // Same reasoning as begin/end: don't skip slices published before consumer creation.
-                    deliver_policy: jetstream::consumer::DeliverPolicy::All,
-                    max_ack_pending: assembler.slices_max_ack_pending,
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(|e| SinexError::network("Failed to create slices consumer").with_source(e))?;
-
-        loop {
-            if shutdown_flag.load(Ordering::Acquire) {
-                break;
-            }
-
-            // Acquire semaphore permit before fetching next batch (backpressure)
-            let _permit = batch_semaphore.acquire().await.map_err(|e| {
-                SinexError::service(format!("Failed to acquire batch semaphore: {e}"))
-            })?;
-
-            let mut messages = consumer
-                .batch()
-                .max_messages(200)
-                .expires(MATERIAL_CONSUMER_BATCH_EXPIRES)
-                .messages()
-                .await
-                .map_err(|e| {
-                    SinexError::network("Failed to fetch slice messages").with_source(e)
-                })?;
-
-            while let Some(message) = messages.next().await {
-                if shutdown_flag.load(Ordering::Acquire) {
-                    break;
+            let result = std::panic::AssertUnwindSafe(async {
+                match frame {
+                    MaterialFrame::Begin {
+                        material_id,
+                        message,
+                    } => assembler.handle_begin(material_id, message).await,
+                    MaterialFrame::Slice {
+                        material_id,
+                        offset,
+                        payload,
+                    } => assembler.handle_slice(material_id, offset, payload).await,
+                    MaterialFrame::End { message, .. } => assembler.handle_end(message).await,
                 }
-                let message = match message {
-                    Ok(msg) => msg,
-                    Err(e) => {
-                        warn!("Error receiving slice message: {}", e);
-                        continue;
-                    }
-                };
+            })
+            .catch_unwind()
+            .await;
 
-                let material_id = match parse_slice_material_id(message.subject.as_str()) {
-                    Ok(material_id) => material_id,
-                    Err(error) => {
-                        warn!(
-                            subject = %message.subject,
-                            error = %error,
-                            "Rejecting malformed slice message subject"
-                        );
-                        ack_with_warning(&message, "slice_subject_invalid", None).await?;
-                        continue;
-                    }
-                };
-
-                let offset =
-                    match parse_slice_offset(message.subject.as_str(), message.headers.as_ref()) {
-                        Ok(offset) => offset,
-                        Err(error) => {
-                            warn!(
-                                material_id = %material_id,
-                                subject = %message.subject,
-                                error = %error,
-                                "Rejecting malformed slice message"
-                            );
-                            assembler
-                                .route_material_error(
-                                    material_id,
-                                    "slice_offset_invalid",
-                                    json!({
-                                        "error": error,
-                                        "subject": message.subject.as_str(),
-                                    }),
-                                )
-                                .await;
-                            assembler
-                                .finalize_failed_material(material_id, "slice_offset_invalid")
-                                .await;
-                            ack_with_warning(&message, "slice_offset_invalid", Some(&material_id))
-                                .await?;
-                            continue;
-                        }
-                    };
-
-                let result = std::panic::AssertUnwindSafe(async {
-                    assembler
-                        .handle_slice(material_id, offset, message.payload.to_vec())
-                        .await
-                })
-                .catch_unwind()
-                .await;
-
-                match result {
-                    Ok(Ok(())) => {}
-                    Ok(Err(err)) => {
-                        error!(
-                            material_id = %material_id,
-                            "Failed to process slice message: {}",
-                            err
-                        );
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => {
+                    error!(
+                        material_id = %material_id,
+                        frame_kind,
+                        "Failed to process material frame: {}",
+                        err
+                    );
+                    if frame_kind == "slice" {
                         assembler
                             .route_material_error(
                                 material_id,
                                 "slice_processing_failed",
-                                json!({ "error": err.to_string(), "offset": offset }),
+                                json!({
+                                    "error": err.to_string(),
+                                    "offset": frame_offset,
+                                }),
                             )
                             .await;
-                        nak_with_warning(
-                            &message,
-                            None,
-                            "slice_processing_failed",
-                            Some(&material_id),
-                        )
-                        .await?;
-                        continue;
                     }
-                    Err(panic) => {
-                        let panic_msg = describe_panic(&*panic);
-                        error!(
-                            material_id = %material_id,
-                            "Slice consumer panicked: {}",
-                            panic_msg
-                        );
-                        assembler
-                            .route_material_error(
-                                material_id,
-                                "slice_consumer_panic",
-                                json!({ "panic": panic_msg, "offset": offset }),
-                            )
-                            .await;
-                        assembler
-                            .finalize_failed_material(material_id, "slice_consumer_panic")
-                            .await;
-                        nak_with_warning(
-                            &message,
-                            Some(std::time::Duration::from_millis(200)),
-                            "slice_processing_panicked",
-                            Some(&material_id),
-                        )
-                        .await?;
-                        continue;
-                    }
+                    nak_with_warning(
+                        &message,
+                        Some(std::time::Duration::from_millis(200)),
+                        "material_frame_processing_failed",
+                        Some(&material_id),
+                    )
+                    .await?;
+                    continue;
                 }
-
-                ack_with_warning(&message, "slice_processed", Some(&material_id)).await?;
-            }
-            // Permit automatically dropped here, releasing semaphore
-        }
-
-        Ok::<(), SinexError>(())
-    })
-}
-
-/// Spawn consumer for end messages
-pub(super) fn spawn_end_consumer(
-    assembler: &MaterialAssembler,
-    shutdown_flag: Arc<AtomicBool>,
-) -> JoinHandle<IngestdResult<()>> {
-    let js = assembler.js.clone();
-    let assembler = assembler.clone_for_task();
-
-    tokio::spawn(async move {
-        let stream_name = namespaced_stream(&assembler, "SOURCE_MATERIAL_END");
-        let stream = js
-            .get_stream(&stream_name)
-            .await
-            .map_err(|e| SinexError::network("Failed to get end stream").with_source(e))?;
-
-        let consumer_name = namespaced_consumer(&assembler, "ingestd_material_end");
-        let consumer = stream
-            .get_or_create_consumer(
-                consumer_name.as_str(),
-                jetstream::consumer::pull::Config {
-                    durable_name: Some(consumer_name.clone()),
-                    ack_policy: jetstream::consumer::AckPolicy::Explicit,
-                    // Ensure end messages published before consumer creation are still processed.
-                    deliver_policy: jetstream::consumer::DeliverPolicy::All,
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(|e| SinexError::network("Failed to create end consumer").with_source(e))?;
-
-        loop {
-            if shutdown_flag.load(Ordering::Acquire) {
-                break;
-            }
-            let mut messages = consumer
-                .batch()
-                .max_messages(50)
-                .expires(MATERIAL_CONSUMER_BATCH_EXPIRES)
-                .messages()
-                .await
-                .map_err(|e| SinexError::network("Failed to fetch end messages").with_source(e))?;
-
-            while let Some(message) = messages.next().await {
-                if shutdown_flag.load(Ordering::Acquire) {
-                    break;
-                }
-                let message = match message {
-                    Ok(msg) => msg,
-                    Err(e) => {
-                        warn!("Error receiving end message: {}", e);
-                        continue;
-                    }
-                };
-
-                let end_message: MaterialEndMessage = match serde_json::from_slice(&message.payload)
-                {
-                    Ok(msg) => msg,
-                    Err(e) => {
-                        warn!("Failed to decode end message payload: {}", e);
-                        ack_with_warning(&message, "end_payload_invalid", None).await?;
-                        continue;
-                    }
-                };
-
-                let material_id =
-                    parse_material_id(&end_message.material_id, "end message material_id");
-
-                let result =
-                    std::panic::AssertUnwindSafe(async { assembler.handle_end(end_message).await })
-                        .catch_unwind()
+                Err(panic) => {
+                    let panic_msg = describe_panic(&*panic);
+                    error!(
+                        material_id = %material_id,
+                        frame_kind,
+                        "Material frame consumer panicked: {}",
+                        panic_msg
+                    );
+                    assembler
+                        .route_material_error(
+                            material_id,
+                            "material_frame_consumer_panic",
+                            json!({ "panic": panic_msg, "frame_kind": frame_kind }),
+                        )
                         .await;
-
-                match result {
-                    Ok(Ok(())) => {}
-                    Ok(Err(err)) => {
-                        error!("Failed to process end message: {}", err);
-                        nak_with_warning(
-                            &message,
-                            Some(std::time::Duration::from_millis(200)),
-                            "end_processing_failed",
-                            material_id.as_ref().ok(),
-                        )
-                        .await?;
-                        continue;
-                    }
-                    Err(panic) => {
-                        let panic_msg = describe_panic(&*panic);
-                        error!(
-                            material_id = ?material_id.as_ref().ok(),
-                            material_id_error = ?material_id.as_ref().err(),
-                            "End consumer panicked: {}",
-                            panic_msg
-                        );
-                        if let Ok(material_id) = material_id {
-                            assembler
-                                .route_material_error(
-                                    material_id,
-                                    "end_consumer_panic",
-                                    json!({ "panic": panic_msg }),
-                                )
-                                .await;
-                            assembler
-                                .finalize_failed_material(material_id, "end_consumer_panic")
-                                .await;
-                        }
-                        nak_with_warning(
-                            &message,
-                            Some(std::time::Duration::from_millis(200)),
-                            "end_processing_panicked",
-                            material_id.as_ref().ok(),
-                        )
-                        .await?;
-                        continue;
-                    }
+                    assembler
+                        .finalize_failed_material(material_id, "material_frame_consumer_panic")
+                        .await;
+                    nak_with_warning(
+                        &message,
+                        Some(std::time::Duration::from_millis(200)),
+                        "material_frame_processing_panicked",
+                        Some(&material_id),
+                    )
+                    .await?;
+                    continue;
                 }
-
-                ack_with_warning(&message, "end_processed", material_id.as_ref().ok()).await?;
             }
+
+            ack_with_warning(&message, "material_frame_processed", Some(&material_id)).await?;
         }
 
         Ok::<(), SinexError>(())
-    })
+    }))
 }
 
 fn namespaced_subject(assembler: &MaterialAssembler, base: &str) -> String {
@@ -600,6 +385,72 @@ fn describe_panic(panic: &(dyn std::any::Any + Send)) -> String {
     }
 }
 
+fn subject_has_suffix(subject: &str, suffix: &str) -> bool {
+    subject == suffix
+        || subject
+            .strip_suffix(suffix)
+            .is_some_and(|prefix| prefix.ends_with('.'))
+}
+
+fn subject_is_slice(subject: &str) -> bool {
+    subject.starts_with(SOURCE_MATERIAL_SLICE_SUBJECT_PREFIX)
+        || subject.contains(&format!(".{SOURCE_MATERIAL_SLICE_SUBJECT_PREFIX}"))
+}
+
+fn decode_material_frame(
+    subject: &str,
+    headers: Option<&async_nats::HeaderMap>,
+    payload: &[u8],
+) -> Result<MaterialFrame, MaterialFrameDecodeError> {
+    if subject_has_suffix(subject, SOURCE_MATERIAL_BEGIN_SUBJECT) {
+        let (message, material_id) = decode_begin_message(payload).map_err(|message| {
+            MaterialFrameDecodeError::new("begin_payload_invalid", None, message)
+        })?;
+        return Ok(MaterialFrame::Begin {
+            material_id,
+            message,
+        });
+    }
+
+    if subject_has_suffix(subject, SOURCE_MATERIAL_END_SUBJECT) {
+        let message = serde_json::from_slice::<MaterialEndMessage>(payload).map_err(|error| {
+            MaterialFrameDecodeError::new(
+                "end_payload_invalid",
+                None,
+                format!("invalid end payload: {error}"),
+            )
+        })?;
+        let material_id = parse_material_id(&message.material_id, "end message material_id")
+            .map_err(|message| {
+                MaterialFrameDecodeError::new("end_material_id_invalid", None, message)
+            })?;
+        return Ok(MaterialFrame::End {
+            material_id,
+            message,
+        });
+    }
+
+    if subject_is_slice(subject) {
+        let material_id = parse_slice_material_id(subject).map_err(|message| {
+            MaterialFrameDecodeError::new("slice_subject_invalid", None, message)
+        })?;
+        let offset = parse_slice_offset(subject, headers).map_err(|message| {
+            MaterialFrameDecodeError::new("slice_offset_invalid", Some(material_id), message)
+        })?;
+        return Ok(MaterialFrame::Slice {
+            material_id,
+            offset,
+            payload: payload.to_vec(),
+        });
+    }
+
+    Err(MaterialFrameDecodeError::new(
+        "material_frame_subject_invalid",
+        None,
+        format!("unexpected material frame subject '{subject}'"),
+    ))
+}
+
 fn parse_material_id(raw: &str, context: &str) -> Result<Uuid, String> {
     Uuid::from_str(raw).map_err(|error| format!("invalid {context} '{raw}': {error}"))
 }
@@ -636,7 +487,7 @@ fn parse_slice_offset(
             raw_offset.as_str()
         ));
     }
-    if !subject.contains(".source_material.slices.") {
+    if !subject_is_slice(subject) {
         return Err(format!("unexpected slice subject '{subject}'"));
     }
     Ok(offset)
@@ -652,7 +503,8 @@ mod tests {
     use uuid::Uuid;
     use xtask::sandbox::sinex_test;
 
-    const SUBJECT: &str = "dev.source_material.slices.test.00000000-0000-7000-8000-000000000001";
+    const SUBJECT: &str =
+        "dev.source_material.frames.slices.test.00000000-0000-7000-8000-000000000001";
 
     // Inline because these exercise private malformed-slice parsing helpers.
     #[sinex_test]
@@ -748,7 +600,7 @@ mod tests {
 
     #[sinex_test]
     async fn parse_slice_material_id_rejects_invalid_subject() -> TestResult<()> {
-        let error = parse_slice_material_id("dev.source_material.slices.test.not-a-uuid")
+        let error = parse_slice_material_id("dev.source_material.frames.slices.test.not-a-uuid")
             .expect_err("invalid slice subject material id should fail");
         assert!(error.contains("slice subject material_id"));
         Ok(())

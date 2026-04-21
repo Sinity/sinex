@@ -1,15 +1,15 @@
 //! Shared coordination set for material→event ordering.
 //!
 //! The `MaterialReadySet` solves a cross-stream ordering problem between two independent
-//! NATS `JetStream` consumers within the same ingestd process:
+//! ingestion flows within the same ingestd process:
 //!
-//! - **`MaterialAssembler`** consumes `source_material.begin` and registers materials in Postgres.
+//! - **`MaterialAssembler`** consumes material begin frames and registers materials in Postgres.
 //! - **`JetStreamConsumer`** consumes `events.raw.>` and INSERTs events that reference materials via FK.
 //!
-//! Because these operate on separate NATS streams, events often arrive before their material's
-//! BEGIN message is processed. The `MaterialReadySet` allows the assembler to signal readiness
-//! so the event consumer can defer events whose materials aren't registered yet — without
-//! relying on noisy FK violation retries.
+//! Events and source-material frames are independent streams, so events can arrive before their
+//! material's begin frame is processed. The `MaterialReadySet` allows the assembler to signal
+//! readiness so the event consumer can defer events whose materials aren't registered yet —
+//! without relying on noisy FK violation retries.
 //!
 //! # Performance
 //!

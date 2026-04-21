@@ -4,6 +4,11 @@ use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
 use std::sync::Arc;
 use xtask::sandbox::prelude::*;
 
+async fn abort_and_join(handle: tokio::task::JoinHandle<sinex_ingestd::IngestdResult<()>>) {
+    handle.abort();
+    let _ = handle.await;
+}
+
 #[sinex_test(timeout = 30)]
 async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
@@ -32,6 +37,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
     .await?;
 
     let material_id = uuid::Uuid::now_v7();
+    let source_identifier = format!("test://wal-resume/{material_id}");
     let js = ctx
         .nats_handle()?
         .jetstream_with_client(nats_client.clone());
@@ -62,20 +68,19 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
                     .await
             }
         });
-        // Wait until streams are bootstrapped and WAL is restored before publishing
+        // Wait until streams are bootstrapped, WAL is restored, and the frame consumer is bound.
         ready_rx
             .await
             .map_err(|_| color_eyre::eyre::eyre!("Assembler ready signal dropped"))?;
-        // Brief pause to let consumers fully subscribe after readiness signal
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         // Publish Begin
         js.publish(
-            ctx.pipeline_namespace().subject("source_material.begin"),
+            ctx.pipeline_namespace()
+                .subject("source_material.frames.begin"),
             json!({
                 "material_id": material_id.to_string(),
                 "material_kind": "test-wal",
-                "source_identifier": "test://wal-resume",
+                "source_identifier": source_identifier,
                 "metadata": {"run": 1},
                 "started_at": sinex_primitives::temporal::now().format_rfc3339(),
             })
@@ -90,7 +95,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
         headers.insert("Offset", "0");
         js.publish_with_headers(
             ctx.pipeline_namespace()
-                .subject(&format!("source_material.slices.{material_id}")),
+                .subject(&format!("source_material.frames.slices.{material_id}")),
             headers,
             b"PART".to_vec().into(),
         )
@@ -116,7 +121,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
         )
         .await?;
 
-        handle.abort();
+        abort_and_join(handle).await;
     }
 
     // --- RUN 2: Resume & Complete ---
@@ -148,14 +153,13 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
         ready_rx
             .await
             .map_err(|_| color_eyre::eyre::eyre!("Assembler ready signal dropped"))?;
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         // Publish Slice 2 (bytes 4-8 "IAL!")
         let mut headers = async_nats::HeaderMap::new();
         headers.insert("Offset", "4");
         js.publish_with_headers(
             ctx.pipeline_namespace()
-                .subject(&format!("source_material.slices.{material_id}")),
+                .subject(&format!("source_material.frames.slices.{material_id}")),
             headers,
             b"IAL!".to_vec().into(),
         )
@@ -166,7 +170,8 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
         let content = b"PARTIAL!";
         let hash = blake3::hash(content).to_hex().to_string();
         js.publish(
-            ctx.pipeline_namespace().subject("source_material.end"),
+            ctx.pipeline_namespace()
+                .subject("source_material.frames.end"),
             json!({
                 "material_id": material_id.to_string(),
                 "ended_at": sinex_primitives::temporal::now().format_rfc3339(),
@@ -210,7 +215,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
         )
         .await?;
 
-        handle.abort();
+        abort_and_join(handle).await;
     }
 
     Ok(())

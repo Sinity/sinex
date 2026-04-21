@@ -306,10 +306,9 @@ impl IngestService {
     pub async fn run(&mut self) -> IngestdResult<()> {
         info!("Starting ingestion service");
 
-        // Create shared MaterialReadySet for cross-consumer coordination.
-        // This prevents FK violations when events arrive before their material's BEGIN
-        // message is processed (separate NATS streams, no cross-stream ordering) while
-        // still allowing externally-registered materials to be discovered via DB fallback.
+        // Create shared MaterialReadySet for event/material coordination. Events and
+        // source-material frames are independent streams, so event persistence can race
+        // material registration even though material frames themselves are ordered.
         let ready_set = if self.db_pool.is_some() {
             let set = MaterialReadySet::new();
             if let Some(pool) = &self.db_pool
