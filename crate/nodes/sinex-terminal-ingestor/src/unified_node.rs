@@ -9,14 +9,18 @@ use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
 use sinex_node_sdk::{
     ActivityEntry, AppendOnlyFileChange, AppendOnlyFileState, CoverageAnalysis,
-    ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState, SqliteHistoryRowOutcome,
-    SqliteHistoryWarningDisposition, TailError, checkpointed_sqlite_history_lenient,
-    poll_append_only_utf8_source,
+    ExplorationProvider, ExportFormat, IngestionHistoryEntry, RecordMaterializer,
+    RecordProcessingOutcome, RecordReadHorizon, RecordSource, RecordSourceObservation,
+    RecordSources, RecordWarningDisposition, SourceState, SqliteRowCheckpoint, TailError,
+    process_record_batch_lenient,
 };
 use sinex_node_sdk::{
     NodeResult, SinexError, SourceRecordAnchor,
-    acquisition_manager::{AcquisitionManager, AppendStreamAcquirer, RotationPolicy},
+    acquisition_manager::{
+        AcquisitionManager, AppendStreamAcquirer, BufferedAppendStreamWriterConfig, RotationPolicy,
+    },
     ingestor_node::IngestorNode,
+    record_source::BufferedRecordSink,
     runtime::stream::{
         Checkpoint, ContinuousStart, NodeRuntimeState, ScanArgs, ScanReport, ServiceInfo,
         TimeHorizon,
@@ -234,19 +238,19 @@ struct HistoryScanOutcome {
 
 #[derive(Debug, Clone)]
 struct HistorySqliteWarning {
-    disposition: SqliteHistoryWarningDisposition,
+    disposition: RecordWarningDisposition,
     message: String,
 }
 
 impl HistorySqliteWarning {
-    fn new(disposition: SqliteHistoryWarningDisposition, message: String) -> Self {
+    fn new(disposition: RecordWarningDisposition, message: String) -> Self {
         Self {
             disposition,
             message,
         }
     }
 
-    fn disposition(&self) -> SqliteHistoryWarningDisposition {
+    fn disposition(&self) -> RecordWarningDisposition {
         self.disposition
     }
 
@@ -416,7 +420,7 @@ fn normalize_shell_name(shell: &str) -> String {
 
 #[derive(Clone)]
 struct HistoryWatcherContext {
-    material_stream: Arc<Mutex<AppendStreamAcquirer>>,
+    materializer: RecordMaterializer<BufferedRecordSink>,
     stage_context: StageAsYouGoContext,
     metrics: Arc<TerminalMetrics>,
     shell: String,
@@ -820,6 +824,28 @@ impl HistoryWatcherContext {
         }
     }
 
+    async fn read_text_history_source(
+        &self,
+        file_state: &AppendOnlyFileState,
+    ) -> Result<(Vec<String>, AppendOnlyFileState, AppendOnlyFileChange, u64), TailError> {
+        let source = RecordSources::append_only_utf8_file(self.path.clone());
+        let batch = source
+            .read_batch(file_state, RecordReadHorizon::Unbounded)
+            .await?;
+        let (file_size, change) = match batch.observation {
+            RecordSourceObservation::AppendOnlyFile {
+                file_size, change, ..
+            } => (file_size, change),
+            RecordSourceObservation::None => (0, AppendOnlyFileChange::Unchanged),
+        };
+        let lines = batch
+            .records
+            .into_iter()
+            .map(|item| item.record.line)
+            .collect();
+        Ok((lines, batch.final_checkpoint, change, file_size))
+    }
+
     async fn process_tailed_text_lines(
         &self,
         lines: Vec<String>,
@@ -865,15 +891,12 @@ impl HistoryWatcherContext {
     }
 
     fn retryable_sqlite_warning(&self, detail: impl Into<String>) -> HistorySqliteWarning {
-        HistorySqliteWarning::new(
-            SqliteHistoryWarningDisposition::Retry,
-            self.strict_warning(detail),
-        )
+        HistorySqliteWarning::new(RecordWarningDisposition::Retry, self.strict_warning(detail))
     }
 
     fn skippable_sqlite_warning(&self, detail: impl Into<String>) -> HistorySqliteWarning {
         HistorySqliteWarning::new(
-            SqliteHistoryWarningDisposition::SkipRow,
+            RecordWarningDisposition::SkipRecord,
             self.strict_warning(detail),
         )
     }
@@ -1012,8 +1035,11 @@ impl HistoryWatcherContext {
 
     async fn monitor_sqlite_history<Entry, Read>(self, read: Read) -> NodeResult<()>
     where
-        Entry: SqliteShellEntry,
+        Entry: SqliteShellEntry + Send + Sync + 'static,
         Read: Copy
+            + Send
+            + Sync
+            + 'static
             + Fn(&Utf8PathBuf, i64, Option<Timestamp>) -> Result<(Vec<Entry>, i64), rusqlite::Error>,
     {
         let (mut sqlite_row_id, mut recent_hashes) = match self
@@ -1132,7 +1158,7 @@ async fn load_history_state(path: Option<&std::path::Path>) -> NodeResult<Option
 
 impl HistoryWatcherContext {
     async fn finalize_material_stream(&self, reason: &str) -> NodeResult<()> {
-        self.material_stream.lock().await.finalize(reason).await
+        self.materializer.finalize(reason).await
     }
 
     async fn finalize_material_stream_after_error(&self, reason: &str) {
@@ -1312,8 +1338,11 @@ impl HistoryWatcherContext {
         read: Read,
     ) -> HistoryScanOutcome
     where
-        Entry: SqliteShellEntry,
+        Entry: SqliteShellEntry + Send + Sync + 'static,
         Read: Copy
+            + Send
+            + Sync
+            + 'static
             + Fn(&Utf8PathBuf, i64, Option<Timestamp>) -> Result<(Vec<Entry>, i64), rusqlite::Error>,
     {
         let state = match self.resolve_state(state_override).await {
@@ -1355,36 +1384,51 @@ impl HistoryWatcherContext {
                 );
             }
         };
-        let import_result = checkpointed_sqlite_history_lenient(
-            &mut sqlite_row_id,
-            historical_end_time,
-            |from_row_id, end_time| read(&self.path, from_row_id, end_time),
+        let source = RecordSources::sqlite(
+            self.path.clone(),
+            self.checkpoint_key(),
+            move |path, from_row_id, end_time| read(path, from_row_id, end_time),
             |entry: &Entry| entry.row_id(),
-            |entry| {
-                let row_id = entry.row_id();
-                let prepared = entry.prepare_command(self, &mut recent_hashes);
-                async move {
-                    let Some(final_command) = prepared? else {
-                        return Ok(SqliteHistoryRowOutcome::Skipped);
-                    };
+        );
+        let mut checkpoint = SqliteRowCheckpoint::new(sqlite_row_id);
+        let import_result = match source
+            .read_batch(
+                &checkpoint,
+                historical_end_time.map_or(RecordReadHorizon::Unbounded, RecordReadHorizon::Until),
+            )
+            .await
+        {
+            Ok(batch) => Ok(process_record_batch_lenient(
+                &mut checkpoint,
+                batch,
+                |entry| {
+                    let row_id = entry.row_id();
+                    let prepared = entry.prepare_command(self, &mut recent_hashes);
+                    async move {
+                        let Some(final_command) = prepared? else {
+                            return Ok(RecordProcessingOutcome::Skipped);
+                        };
 
-                    entry
-                        .emit_prepared(self, final_command)
-                        .await
-                        .map(|()| SqliteHistoryRowOutcome::Processed)
-                        .map_err(|error| {
-                            let message = format!(
-                                "failed to process {} row {row_id}: {error}",
-                                Entry::SOURCE_LABEL
-                            );
-                            self.record_error(Entry::PROCESS_STAGE, &message);
-                            self.sqlite_warning_for_error(message, &error)
-                        })
-                }
-            },
-            HistorySqliteWarning::disposition,
-        )
-        .await;
+                        entry
+                            .emit_prepared(self, final_command)
+                            .await
+                            .map(|()| RecordProcessingOutcome::Processed)
+                            .map_err(|error| {
+                                let message = format!(
+                                    "failed to process {} row {row_id}: {error}",
+                                    Entry::SOURCE_LABEL
+                                );
+                                self.record_error(Entry::PROCESS_STAGE, &message);
+                                self.sqlite_warning_for_error(message, &error)
+                            })
+                    }
+                },
+                HistorySqliteWarning::disposition,
+            )
+            .await),
+            Err(error) => Err(error),
+        };
+        sqlite_row_id = checkpoint.row_id;
 
         if let Err(error) = self
             .finalize_material_stream("terminal-history-sqlite-scan")
@@ -1392,7 +1436,7 @@ impl HistoryWatcherContext {
         {
             let processed_rows = import_result
                 .as_ref()
-                .map_or(0, |report| report.processed_rows);
+                .map_or(0, |report| report.processed_records);
             self.record_poll(poll_started_at, file_size, processed_rows);
             return self.failed_outcome(
                 "finalize_source_material",
@@ -1403,9 +1447,9 @@ impl HistoryWatcherContext {
 
         match import_result {
             Ok(report) => {
-                self.record_poll(poll_started_at, file_size, report.processed_rows);
+                self.record_poll(poll_started_at, file_size, report.processed_records);
                 self.success_outcome(
-                    report.processed_rows,
+                    report.processed_records,
                     Self::sqlite_history_state(sqlite_row_id, recent_hashes),
                     report
                         .warnings
@@ -1471,11 +1515,12 @@ impl HistoryWatcherContext {
                 let mut file_size = 0u64;
                 let mut warnings = Vec::new();
 
-                match poll_append_only_utf8_source(&self.path, &mut file_state).await {
-                    Ok(polled) => {
-                        file_size = polled.file_size;
+                match self.read_text_history_source(&file_state).await {
+                    Ok((lines, next_file_state, change, next_file_size)) => {
+                        file_state = next_file_state;
+                        file_size = next_file_size;
                         if let Some(message) = self.reconcile_text_file_change(
-                            &polled.change,
+                            &change,
                             &mut line_number,
                             &mut pending_timestamp,
                         ) {
@@ -1483,7 +1528,7 @@ impl HistoryWatcherContext {
                         }
                         let processed = self
                             .process_tailed_text_lines(
-                                polled.lines,
+                                lines,
                                 &mut line_number,
                                 &mut pending_timestamp,
                                 &mut recent_hashes,
@@ -1714,23 +1759,24 @@ impl HistoryWatcherContext {
             inode: *last_inode,
         };
 
-        let result = match poll_append_only_utf8_source(&self.path, &mut file_state).await {
-            Ok(polled) => {
+        let result = match self.read_text_history_source(&file_state).await {
+            Ok((lines, next_file_state, change, file_size)) => {
+                file_state = next_file_state;
                 if let Some(message) =
-                    self.reconcile_text_file_change(&polled.change, line_number, pending_timestamp)
+                    self.reconcile_text_file_change(&change, line_number, pending_timestamp)
                 {
                     debug!(path = %self.path, "{message}");
                 }
                 let processed = self
                     .process_tailed_text_lines(
-                        polled.lines,
+                        lines,
                         line_number,
                         pending_timestamp,
                         recent_hashes,
                         None,
                     )
                     .await;
-                self.record_poll(poll_started_at, polled.file_size, processed);
+                self.record_poll(poll_started_at, file_size, processed);
                 Ok(processed)
             }
             Err(TailError::FileNotFound(_)) => {
@@ -1780,23 +1826,24 @@ impl HistoryWatcherContext {
             offset_bytes: *offset_bytes,
         };
 
-        let result = match poll_append_only_utf8_source(&self.path, &mut file_state).await {
-            Ok(polled) => {
+        let result = match self.read_text_history_source(&file_state).await {
+            Ok((lines, next_file_state, change, file_size)) => {
+                file_state = next_file_state;
                 if let Some(message) =
-                    self.reconcile_text_file_change(&polled.change, line_number, pending_timestamp)
+                    self.reconcile_text_file_change(&change, line_number, pending_timestamp)
                 {
                     debug!(path = %self.path, "{message}");
                 }
                 let processed = self
                     .process_tailed_text_lines(
-                        polled.lines,
+                        lines,
                         line_number,
                         pending_timestamp,
                         recent_hashes,
                         None,
                     )
                     .await;
-                self.record_poll(poll_started_at, polled.file_size, processed);
+                self.record_poll(poll_started_at, file_size, processed);
                 Ok(processed)
             }
             Err(TailError::FileNotFound(_)) => {
@@ -1838,8 +1885,11 @@ impl HistoryWatcherContext {
         read: Read,
     ) -> NodeResult<usize>
     where
-        Entry: SqliteShellEntry,
+        Entry: SqliteShellEntry + Send + Sync + 'static,
         Read: Copy
+            + Send
+            + Sync
+            + 'static
             + Fn(&Utf8PathBuf, i64, Option<Timestamp>) -> Result<(Vec<Entry>, i64), rusqlite::Error>,
     {
         let poll_started_at = Instant::now();
@@ -1858,49 +1908,58 @@ impl HistoryWatcherContext {
             }
         };
 
-        let processed = match checkpointed_sqlite_history_lenient(
-            sqlite_row_id,
-            None,
-            |from_row_id, end_time| read(&self.path, from_row_id, end_time),
+        let source = RecordSources::sqlite(
+            self.path.clone(),
+            self.checkpoint_key(),
+            move |path, from_row_id, end_time| read(path, from_row_id, end_time),
             |entry: &Entry| entry.row_id(),
-            |entry| {
-                let row_id = entry.row_id();
-                let prepared = entry.prepare_command(self, recent_hashes);
-                async move {
-                    let Some(final_command) = prepared? else {
-                        return Ok(SqliteHistoryRowOutcome::Skipped);
-                    };
-
-                    entry
-                        .emit_prepared(self, final_command)
-                        .await
-                        .map(|()| SqliteHistoryRowOutcome::Processed)
-                        .map_err(|error| {
-                            let message = format!(
-                                "failed to process {} row {row_id}: {error}",
-                                Entry::SOURCE_LABEL
-                            );
-                            self.record_error(Entry::PROCESS_STAGE, &message);
-                            warn!(
-                                "Failed to process {} history entry from {}: {}",
-                                Entry::SOURCE_LABEL,
-                                self.path,
-                                error
-                            );
-                            self.sqlite_warning_for_error(message, &error)
-                        })
-                }
-            },
-            HistorySqliteWarning::disposition,
-        )
-        .await
+        );
+        let mut checkpoint = SqliteRowCheckpoint::new(*sqlite_row_id);
+        let processed = match source
+            .read_batch(&checkpoint, RecordReadHorizon::Unbounded)
+            .await
         {
-            Ok(report) => {
+            Ok(batch) => {
+                let report = process_record_batch_lenient(
+                    &mut checkpoint,
+                    batch,
+                    |entry| {
+                        let row_id = entry.row_id();
+                        let prepared = entry.prepare_command(self, recent_hashes);
+                        async move {
+                            let Some(final_command) = prepared? else {
+                                return Ok(RecordProcessingOutcome::Skipped);
+                            };
+
+                            entry
+                                .emit_prepared(self, final_command)
+                                .await
+                                .map(|()| RecordProcessingOutcome::Processed)
+                                .map_err(|error| {
+                                    let message = format!(
+                                        "failed to process {} row {row_id}: {error}",
+                                        Entry::SOURCE_LABEL
+                                    );
+                                    self.record_error(Entry::PROCESS_STAGE, &message);
+                                    warn!(
+                                        "Failed to process {} history entry from {}: {}",
+                                        Entry::SOURCE_LABEL,
+                                        self.path,
+                                        error
+                                    );
+                                    self.sqlite_warning_for_error(message, &error)
+                                })
+                        }
+                    },
+                    HistorySqliteWarning::disposition,
+                )
+                .await;
+                *sqlite_row_id = checkpoint.row_id;
                 if persist_state {
                     self.persist_sqlite_state(*sqlite_row_id, recent_hashes)
                         .await?;
                 }
-                report.processed_rows
+                report.processed_records
             }
             Err(error) => {
                 self.record_error(Entry::READ_STAGE, &error.to_string());
@@ -2051,9 +2110,8 @@ async fn stage_history_json_record(
     material_record: &serde_json::Value,
     error_context: &str,
 ) -> NodeResult<SourceRecordAnchor> {
-    let mut stream = ctx.material_stream.lock().await;
-    stream
-        .append_json_line(material_record, ctx.path.as_str())
+    ctx.materializer
+        .append_json_line(material_record)
         .await
         .map_err(|error| SinexError::service(error_context).with_source(error))
 }
@@ -2647,11 +2705,14 @@ impl TerminalNode {
                 .with_acquisition_manager(Arc::clone(&acquisition));
 
             let source_mode = classify_history_source(source);
+            let materializer = RecordMaterializer::new(BufferedRecordSink::spawn(
+                AppendStreamAcquirer::new(Arc::clone(&acquisition)),
+                source.path.as_str(),
+                BufferedAppendStreamWriterConfig::default(),
+            ));
 
             contexts.push(HistoryWatcherContext {
-                material_stream: Arc::new(Mutex::new(AppendStreamAcquirer::new(Arc::clone(
-                    &acquisition,
-                )))),
+                materializer,
                 stage_context,
                 metrics: Arc::clone(&self.metrics),
                 shell: normalized_shell,
@@ -3389,6 +3450,16 @@ mod tests {
         start_test_ingestd_with_config,
     };
 
+    fn test_materializer(
+        acquisition: &Arc<AcquisitionManager>,
+    ) -> RecordMaterializer<BufferedRecordSink> {
+        RecordMaterializer::new(BufferedRecordSink::spawn(
+            AppendStreamAcquirer::new(Arc::clone(acquisition)),
+            "test://terminal-history",
+            BufferedAppendStreamWriterConfig::default(),
+        ))
+    }
+
     #[cfg(unix)]
     #[sinex_test]
     async fn history_state_temp_path_preserves_non_utf8_filenames() -> TestResult<()> {
@@ -3747,9 +3818,7 @@ mod tests {
             .with_acquisition_manager(Arc::clone(&acquisition));
 
         let watcher_ctx = HistoryWatcherContext {
-            material_stream: Arc::new(Mutex::new(AppendStreamAcquirer::new(Arc::clone(
-                &acquisition,
-            )))),
+            materializer: test_materializer(&acquisition),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "bash".to_string(),
@@ -3776,10 +3845,7 @@ mod tests {
         )
         .await?;
         watcher_ctx
-            .material_stream
-            .lock()
-            .await
-            .finalize("test-process-command")
+            .finalize_material_stream("test-process-command")
             .await?;
         assert_eq!(
             watcher_ctx
@@ -4102,9 +4168,7 @@ mod tests {
             .with_acquisition_manager(Arc::clone(&acquisition));
 
         let watcher_ctx = HistoryWatcherContext {
-            material_stream: Arc::new(Mutex::new(AppendStreamAcquirer::new(Arc::clone(
-                &acquisition,
-            )))),
+            materializer: test_materializer(&acquisition),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "atuin".to_string(),
@@ -4205,9 +4269,7 @@ mod tests {
             .map_err(|path| color_eyre::eyre::eyre!("history path not utf8: {}", path.display()))?;
 
         let mut watcher_ctx = HistoryWatcherContext {
-            material_stream: Arc::new(Mutex::new(AppendStreamAcquirer::new(Arc::clone(
-                &acquisition,
-            )))),
+            materializer: test_materializer(&acquisition),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "bash".to_string(),
@@ -4340,9 +4402,7 @@ mod tests {
             .with_acquisition_manager(Arc::clone(&acquisition));
 
         let watcher_ctx = HistoryWatcherContext {
-            material_stream: Arc::new(Mutex::new(AppendStreamAcquirer::new(Arc::clone(
-                &acquisition,
-            )))),
+            materializer: test_materializer(&acquisition),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "atuin".to_string(),
@@ -4428,9 +4488,7 @@ mod tests {
             .with_acquisition_manager(Arc::clone(&acquisition));
 
         let watcher_ctx = HistoryWatcherContext {
-            material_stream: Arc::new(Mutex::new(AppendStreamAcquirer::new(Arc::clone(
-                &acquisition,
-            )))),
+            materializer: test_materializer(&acquisition),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "fish".to_string(),
@@ -4481,9 +4539,7 @@ mod tests {
             .with_acquisition_manager(Arc::clone(&acquisition));
 
         let watcher_ctx = HistoryWatcherContext {
-            material_stream: Arc::new(Mutex::new(AppendStreamAcquirer::new(Arc::clone(
-                &acquisition,
-            )))),
+            materializer: test_materializer(&acquisition),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "atuin".to_string(),
@@ -6743,9 +6799,7 @@ mod tests {
             .map_err(|p| color_eyre::eyre::eyre!("path not utf8: {}", p.display()))?;
 
         let mut ctx = HistoryWatcherContext {
-            material_stream: Arc::new(Mutex::new(AppendStreamAcquirer::new(Arc::clone(
-                &acquisition,
-            )))),
+            materializer: test_materializer(&acquisition),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "bash".to_string(),

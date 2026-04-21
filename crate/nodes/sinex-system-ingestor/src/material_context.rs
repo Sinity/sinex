@@ -1,10 +1,9 @@
 use async_trait::async_trait;
 use sinex_db::models::{Event, OffsetKind, Provenance, SourceMaterial};
 use sinex_node_sdk::acquisition_manager::{
-    AcquisitionManager, AppendStreamAcquirer, BufferedAppendStreamWriter,
-    BufferedAppendStreamWriterConfig, SourceRecordAnchor,
+    AcquisitionManager, AppendStreamAcquirer, BufferedAppendStreamWriterConfig, SourceRecordAnchor,
 };
-use sinex_node_sdk::{NodeResult, SinexError};
+use sinex_node_sdk::{BufferedRecordSink, NodeResult, RecordMaterializer, SinexError};
 use sinex_primitives::{Id, JsonValue};
 use std::fmt;
 use std::sync::Arc;
@@ -34,7 +33,7 @@ const WRITER_BATCH_COALESCE_WINDOW: std::time::Duration = std::time::Duration::f
 #[derive(Clone)]
 pub struct RealWatcherMaterialContext {
     material_id: Id<SourceMaterial>,
-    writer: BufferedAppendStreamWriter,
+    materializer: RecordMaterializer<BufferedRecordSink>,
     event_count: Arc<AtomicU64>,
 }
 
@@ -73,7 +72,7 @@ impl RealWatcherMaterialContext {
             source_identifier.to_string(),
         );
 
-        let writer = BufferedAppendStreamWriter::spawn(
+        let materializer = RecordMaterializer::new(BufferedRecordSink::spawn(
             stream,
             source_identifier.to_string(),
             BufferedAppendStreamWriterConfig {
@@ -82,11 +81,11 @@ impl RealWatcherMaterialContext {
                 batch_max_bytes: WRITER_BATCH_MAX_BYTES,
                 batch_coalesce_window: WRITER_BATCH_COALESCE_WINDOW,
             },
-        );
+        ));
 
         Ok(Self {
             material_id,
-            writer,
+            materializer,
             event_count: Arc::new(AtomicU64::new(0)),
         })
     }
@@ -95,7 +94,9 @@ impl RealWatcherMaterialContext {
     ///
     /// Does **not** hold any mutex across the NATS write.
     async fn append_payload(&self, payload_bytes: &[u8]) -> NodeResult<SourceRecordAnchor> {
-        self.writer.append(payload_bytes.to_vec()).await
+        self.materializer
+            .append_stable_bytes(payload_bytes.to_vec())
+            .await
     }
 }
 
@@ -137,7 +138,7 @@ impl MaterialContext for RealWatcherMaterialContext {
     /// finalize the `SourceMaterialHandle`, and reply.  After this call the
     /// writer task has exited.
     async fn finalize(&self, reason: &str) -> NodeResult<()> {
-        self.writer.finalize(reason).await
+        self.materializer.finalize(reason).await
     }
 
     fn event_count(&self) -> u64 {
