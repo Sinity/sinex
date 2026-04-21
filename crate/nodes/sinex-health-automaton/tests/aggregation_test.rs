@@ -42,7 +42,22 @@ async fn process(
     let scope_keys = aggregator.scope_keys(&input, ctx);
     let mut outputs = Vec::new();
     for key in &scope_keys {
-        outputs.extend(aggregator.reconcile(state, key, input.clone(), ctx).await?);
+        let typed_outputs = aggregator.reconcile(state, key, input.clone(), ctx).await?;
+        for output in typed_outputs {
+            let payload = serde_json::to_value(output.payload).map_err(|error| {
+                NodeLogicError::Processing(format!("failed to serialize test output: {error}"))
+            })?;
+            outputs.push(DerivedOutput {
+                payload,
+                ts_orig: output.ts_orig,
+                source_event_ids: output.source_event_ids,
+                temporal_policy: output.temporal_policy,
+                semantics_version: output.semantics_version,
+                scope_key: output.scope_key,
+                equivalence_key: output.equivalence_key,
+                aggregation: output.aggregation,
+            });
+        }
     }
     Ok(outputs)
 }
@@ -130,7 +145,10 @@ async fn health_aggregator_emits_alert_on_failed_transition(ctx: TestContext) ->
 
     let alert = outputs
         .iter()
-        .find(|output| output.payload.get("alert_type").is_some())
+        .find(|output| {
+            output.payload.get("alert_type").and_then(|v| v.as_str())
+                == Some("component_status_change")
+        })
         .expect("failed transition should emit an alert");
     assert_eq!(
         alert.payload.get("alert_type").and_then(|v| v.as_str()),
@@ -864,13 +882,16 @@ async fn test_reconcile_output_has_declared_effective_policy() -> TestResult<()>
     });
 
     let ctx = make_context(Timestamp::now());
-    let scope_keys = aggregator.scope_keys(&input, &ctx);
-    let outputs = aggregator
-        .reconcile(&mut state, &scope_keys[0], input, &ctx)
-        .await?;
+    let outputs = process(&mut aggregator, &mut state, input, &ctx).await?;
     let output = outputs
         .into_iter()
-        .find(|candidate| candidate.payload.get("alert_type").is_some())
+        .find(|candidate| {
+            candidate
+                .payload
+                .get("alert_type")
+                .and_then(serde_json::Value::as_str)
+                == Some("component_status_change")
+        })
         .expect("failed transition should emit alert");
 
     assert_eq!(

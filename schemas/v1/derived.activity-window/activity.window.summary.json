@@ -9,6 +9,14 @@
       ],
       "type": "string"
     },
+    "ActivityWindowCloseReason": {
+      "enum": [
+        "gap",
+        "max_duration",
+        "max_event_count"
+      ],
+      "type": "string"
+    },
     "DateTime": {
       "description": "RFC 3339 formatted date-time string",
       "format": "date-time",
@@ -16,7 +24,7 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Completed activity session derived from trusted activity signals.",
+  "description": "Completed bounded activity window derived from trusted activity signals.",
   "properties": {
     "activity_source_counts": {
       "additionalProperties": false,
@@ -50,13 +58,13 @@
       },
       "type": "array"
     },
+    "close_reason": {
+      "$ref": "#/$defs/ActivityWindowCloseReason"
+    },
     "duration_secs": {
       "format": "uint64",
       "minimum": 0,
       "type": "integer"
-    },
-    "end_time": {
-      "$ref": "#/$defs/DateTime"
     },
     "event_count": {
       "format": "uint64",
@@ -65,9 +73,6 @@
     },
     "primary_source": {
       "$ref": "#/$defs/ActivitySourceKind"
-    },
-    "session_id": {
-      "type": "string"
     },
     "source_count": {
       "format": "uint64",
@@ -80,31 +85,32 @@
       },
       "type": "array"
     },
-    "start_time": {
+    "window_end": {
       "$ref": "#/$defs/DateTime"
     },
-    "window_count": {
-      "format": "uint64",
-      "minimum": 0,
-      "type": "integer"
+    "window_id": {
+      "type": "string"
+    },
+    "window_start": {
+      "$ref": "#/$defs/DateTime"
     }
   },
   "required": [
-    "session_id",
-    "start_time",
-    "end_time",
+    "window_id",
+    "window_start",
+    "window_end",
     "duration_secs",
     "event_count",
-    "window_count",
     "source_count",
     "sources",
     "activity_sources",
     "activity_source_counts",
-    "primary_source"
+    "primary_source",
+    "close_reason"
   ],
-  "title": "ActivitySessionBoundaryPayload",
+  "title": "ActivityWindowSummaryPayload",
   "type": "object",
-  "x-sinex-event-type": "activity.session.boundary",
-  "x-sinex-source": "derived.session-detector",
+  "x-sinex-event-type": "activity.window.summary",
+  "x-sinex-source": "derived.activity-window",
   "x-sinex-version": "1.0.0"
 }

@@ -21,7 +21,11 @@ tokio = { workspace = true }
 xtask = { path = "../../xtask" }
 
 sinex-db = { path = "../../crate/lib/sinex-db" }
+sinex-analytics-automaton = { path = "../../crate/nodes/sinex-analytics-automaton" }
 sinex-gateway = { path = "../../crate/core/sinex-gateway" }
+sinex-health-automaton = { path = "../../crate/nodes/sinex-health-automaton" }
 sinex-node-sdk = { path = "../../crate/lib/sinex-node-sdk" }
 sinex-primitives = { path = "../../crate/lib/sinex-primitives" }
 sinex-schema = { path = "../../crate/lib/sinex-schema" }
+sinex-session-detector = { path = "../../crate/nodes/sinex-session-detector" }
+sinex-terminal-command-canonicalizer = { path = "../../crate/nodes/sinex-terminal-command-canonicalizer" }
