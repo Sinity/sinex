@@ -1366,14 +1366,14 @@ async fn persist_buffered_slice(
     Ok(buffer_path)
 }
 
-/// Import the assembled material into git-annex
-pub(super) async fn import_into_annex(
+/// Import the assembled material into the SDK content store.
+pub(super) async fn import_into_content_store(
     assembler: &MaterialAssembler,
     state: &FinalizationState,
 ) -> IngestdResult<AnnexKey> {
     let staging_path = Utf8PathBuf::from_path_buf(state.temp_path.clone()).map_err(|path| {
         SinexError::io(format!(
-            "Staging path is not valid utf-8 for annex import: {}",
+            "Staging path is not valid utf-8 for content-store import: {}",
             path.display()
         ))
     })?;
@@ -1382,7 +1382,7 @@ pub(super) async fn import_into_annex(
         .annex
         .add_file(&staging_path)
         .await
-        .map_err(|e| SinexError::io("git-annex add failed").with_source(e))
+        .map_err(|e| SinexError::io("content-store import failed").with_source(e))
 }
 
 #[cfg(test)]
@@ -1456,7 +1456,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn import_into_annex_preserves_staging_file_until_cleanup(
+    async fn import_into_content_store_preserves_staging_file_until_cleanup(
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
@@ -1472,15 +1472,15 @@ mod tests {
             buffered_count: 0,
             metadata: json!({}),
             material_kind: "test".to_string(),
-            source_identifier: "test://annex".to_string(),
+            source_identifier: "test://content-store".to_string(),
             started_at: Timestamp::now(),
         };
 
-        let annex_key = import_into_annex(&assembler, &final_state).await?;
+        let annex_key = import_into_content_store(&assembler, &final_state).await?;
         assert!(!annex_key.key.is_empty());
         assert!(
             temp_path.exists(),
-            "annex import should preserve the staging file until cleanup succeeds"
+            "content-store import should preserve the staging file until cleanup succeeds"
         );
         Ok(())
     }

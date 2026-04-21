@@ -1,7 +1,7 @@
 //! Repository for blob management
 //!
 //! Provides access to core.blobs table for managing binary large objects
-//! stored in git-annex with metadata in `PostgreSQL`.
+//! stored by the SDK content store with metadata in `PostgreSQL`.
 
 use num_traits::ToPrimitive;
 use sqlx::PgPool;

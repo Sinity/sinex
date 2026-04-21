@@ -8,12 +8,12 @@ use sinex_primitives::domain::BlobVerificationStatus;
 use sinex_schema::schema::BlobRecord;
 use std::str::FromStr;
 
-/// Blob represents a binary large object stored in git-annex
+/// Blob represents a binary large object stored by the SDK content store.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Blob {
     pub id: Id<Blob>,
-    pub annex_backend: String, // e.g., "SHA256E"
-    pub content_hash: String,  // The hash value
+    pub annex_backend: String, // e.g., "SHA256E" or "SINEXBLAKE3"
+    pub content_hash: String,  // Storage-backend content identity
     pub original_filename: Option<String>,
     pub size_bytes: i64,
     pub mime_type: Option<String>,
@@ -25,7 +25,7 @@ pub struct Blob {
 }
 
 impl Blob {
-    /// Construct the git-annex key from components
+    /// Construct the storage key from components.
     /// Format: BACKEND-sSize--hash_fragment (e.g., SHA256E-s12345--abcdef123)
     #[must_use]
     pub fn annex_key(&self) -> String {
