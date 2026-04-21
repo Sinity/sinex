@@ -8,14 +8,15 @@
 use crate::{
     AppendOnlyFileChange, AppendOnlyFileState, NodeResult, SourceRecordAnchor, TailError,
     acquisition_manager::{
-        AppendStreamAcquirer, BufferedAppendStreamWriter, BufferedAppendStreamWriterConfig,
+        AcquisitionManager, AppendStreamAcquirer, BufferedAppendStreamWriter,
+        BufferedAppendStreamWriterConfig, SourceMaterialHandle,
     },
     poll_utf8_lines,
 };
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sinex_primitives::{SinexError, temporal::Timestamp};
-use std::{error::Error, fmt, future::Future, marker::PhantomData};
+use std::{error::Error, fmt, future::Future, marker::PhantomData, sync::Arc};
 
 /// Stable category for a source adapter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -363,6 +364,24 @@ impl TimestampRecordCheckpoint {
     }
 }
 
+/// Cursor checkpoint for journal-like sources.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JournalCursorCheckpoint {
+    pub cursor: Option<String>,
+}
+
+impl JournalCursorCheckpoint {
+    #[must_use]
+    pub fn new(cursor: Option<String>) -> Self {
+        Self { cursor }
+    }
+
+    #[must_use]
+    pub fn cursor(&self) -> Option<&str> {
+        self.cursor.as_deref()
+    }
+}
+
 /// Line returned by an append-only UTF-8 file source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppendOnlyTextRecord {
@@ -396,11 +415,15 @@ impl RecordSources {
     }
 
     #[must_use]
-    pub fn polling<Record, Checkpoint, Poll, PollError>(
+    pub fn polling<Record, Checkpoint, Poll, PollFuture, PollError>(
         source_identifier: impl Into<String>,
         initial_checkpoint: Checkpoint,
         poll: Poll,
-    ) -> PollingRecordSource<Record, Checkpoint, Poll, PollError> {
+    ) -> PollingRecordSource<Record, Checkpoint, Poll, PollFuture, PollError>
+    where
+        Poll: Fn(&Checkpoint, RecordReadHorizon) -> PollFuture,
+        PollFuture: Future<Output = Result<RecordReadBatch<Record, Checkpoint>, PollError>> + Send,
+    {
         PollingRecordSource::new(
             RecordSourceKind::Polling,
             source_identifier,
@@ -410,11 +433,15 @@ impl RecordSources {
     }
 
     #[must_use]
-    pub fn journal<Record, Poll, PollError>(
+    pub fn journal<Record, Checkpoint, Poll, PollFuture, PollError>(
         source_identifier: impl Into<String>,
-        initial_checkpoint: TimestampRecordCheckpoint,
+        initial_checkpoint: Checkpoint,
         poll: Poll,
-    ) -> PollingRecordSource<Record, TimestampRecordCheckpoint, Poll, PollError> {
+    ) -> PollingRecordSource<Record, Checkpoint, Poll, PollFuture, PollError>
+    where
+        Poll: Fn(&Checkpoint, RecordReadHorizon) -> PollFuture,
+        PollFuture: Future<Output = Result<RecordReadBatch<Record, Checkpoint>, PollError>> + Send,
+    {
         PollingRecordSource::new(
             RecordSourceKind::Journal,
             source_identifier,
@@ -579,14 +606,16 @@ where
     }
 }
 
-pub struct PollingRecordSource<Record, Checkpoint, Poll, PollError> {
+pub struct PollingRecordSource<Record, Checkpoint, Poll, PollFuture, PollError> {
     descriptor: RecordSourceDescriptor,
     initial_checkpoint: Checkpoint,
     poll: Poll,
-    _marker: PhantomData<(Record, PollError)>,
+    _marker: PhantomData<fn() -> (Record, PollFuture, PollError)>,
 }
 
-impl<Record, Checkpoint, Poll, PollError> PollingRecordSource<Record, Checkpoint, Poll, PollError> {
+impl<Record, Checkpoint, Poll, PollFuture, PollError>
+    PollingRecordSource<Record, Checkpoint, Poll, PollFuture, PollError>
+{
     #[must_use]
     pub fn new(
         kind: RecordSourceKind,
@@ -603,15 +632,13 @@ impl<Record, Checkpoint, Poll, PollError> PollingRecordSource<Record, Checkpoint
     }
 }
 
-impl<Record, Checkpoint, Poll, PollError> RecordSource
-    for PollingRecordSource<Record, Checkpoint, Poll, PollError>
+impl<Record, Checkpoint, Poll, PollFuture, PollError> RecordSource
+    for PollingRecordSource<Record, Checkpoint, Poll, PollFuture, PollError>
 where
     Record: Send + Sync + 'static,
     Checkpoint: Clone + DeserializeOwned + Serialize + Send + Sync + 'static,
-    Poll: Fn(&Checkpoint, RecordReadHorizon) -> Result<RecordReadBatch<Record, Checkpoint>, PollError>
-        + Send
-        + Sync
-        + 'static,
+    Poll: Fn(&Checkpoint, RecordReadHorizon) -> PollFuture + Send + Sync,
+    PollFuture: Future<Output = Result<RecordReadBatch<Record, Checkpoint>, PollError>> + Send,
     PollError: Error + Send + Sync + 'static,
 {
     type Checkpoint = Checkpoint;
@@ -633,7 +660,7 @@ where
     ) -> impl Future<Output = Result<RecordReadBatch<Self::Record, Self::Checkpoint>, Self::Error>>
     + Send
     + 'a {
-        async move { (self.poll)(checkpoint, horizon) }
+        async move { (self.poll)(checkpoint, horizon).await }
     }
 }
 
@@ -656,6 +683,32 @@ impl BufferedRecordSink {
     #[must_use]
     pub fn new(writer: BufferedAppendStreamWriter) -> Self {
         Self { writer }
+    }
+
+    #[must_use]
+    pub fn from_manager(
+        manager: Arc<AcquisitionManager>,
+        source_identifier: impl Into<String>,
+        config: BufferedAppendStreamWriterConfig,
+    ) -> Self {
+        Self::new(BufferedAppendStreamWriter::from_manager(
+            manager,
+            source_identifier,
+            config,
+        ))
+    }
+
+    #[must_use]
+    pub fn from_active_handle(
+        manager: Arc<AcquisitionManager>,
+        handle: SourceMaterialHandle,
+        source_identifier: impl Into<String>,
+        config: BufferedAppendStreamWriterConfig,
+    ) -> Self {
+        let source_identifier = source_identifier.into();
+        let stream =
+            AppendStreamAcquirer::from_active_handle(manager, handle, source_identifier.clone());
+        Self::spawn(stream, source_identifier, config)
     }
 
     #[must_use]
@@ -1003,6 +1056,49 @@ mod tests {
             SqliteRowCheckpoint::new(6)
         );
         assert_eq!(batch.records[1].record.value, "two");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn journal_source_accepts_async_cursor_poll() -> TestResult<()> {
+        let source = RecordSources::journal(
+            "test-journal",
+            JournalCursorCheckpoint::new(Some("s=start;i=1;b=boot;m=1;t=1;x=1".to_string())),
+            |checkpoint: &JournalCursorCheckpoint, horizon| {
+                let checkpoint = checkpoint.clone();
+                async move {
+                    if horizon.end_time().is_none() {
+                        return Err(TestReadError);
+                    }
+                    Ok(RecordReadBatch {
+                        start_checkpoint: checkpoint,
+                        records: vec![RecordReadItem::new(
+                            "entry",
+                            JournalCursorCheckpoint::new(Some(
+                                "s=end;i=2;b=boot;m=2;t=2;x=2".to_string(),
+                            )),
+                        )],
+                        final_checkpoint: JournalCursorCheckpoint::new(Some(
+                            "s=end;i=2;b=boot;m=2;t=2;x=2".to_string(),
+                        )),
+                        observation: RecordSourceObservation::None,
+                    })
+                }
+            },
+        );
+
+        let batch = source
+            .read_batch(
+                &source.initial_checkpoint(),
+                RecordReadHorizon::Until(Timestamp::now()),
+            )
+            .await?;
+
+        assert_eq!(batch.records[0].record, "entry");
+        assert_eq!(
+            batch.final_checkpoint.cursor(),
+            Some("s=end;i=2;b=boot;m=2;t=2;x=2")
+        );
         Ok(())
     }
 
