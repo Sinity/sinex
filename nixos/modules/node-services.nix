@@ -262,11 +262,15 @@ let
       description,
       script,
       writePaths ? [ ],
+      afterUnits ? [ ],
+      wantsUnits ? [ ],
       beforeUnits ? [ ],
     }:
     if script == null then { } else {
       "${name}" = {
         inherit description;
+        after = afterUnits;
+        wants = wantsUnits;
         before = beforeUnits;
         serviceConfig =
           {
@@ -768,6 +772,10 @@ let
         if sat.session.runtimeDir != null then sat.session.runtimeDir
         else if targetUid != null then "/run/user/${toString targetUid}"
         else null;
+      runtimeRootUnits =
+        optionals (sat.session.runtimeDir == null && targetUid != null) [
+          "user-runtime-dir@${toString targetUid}.service"
+        ];
       sessionEnv =
         optional (sat.session.runtimeDir != null) "SINEX_HYPRLAND_RUNTIME_DIR=${sat.session.runtimeDir}"
         ++ optional (sat.session.runtimeDir != null) "XDG_RUNTIME_DIR=${sat.session.runtimeDir}"
@@ -810,6 +818,8 @@ let
           SORT=${pkgs.coreutils}/bin/sort
           BASENAME=${pkgs.coreutils}/bin/basename
           DIRNAME=${pkgs.coreutils}/bin/dirname
+          SLEEP=${pkgs.coreutils}/bin/sleep
+          SYSTEMCTL=${pkgs.systemd}/bin/systemctl
           acl_failures=0
 
           record_acl_failure() {
@@ -892,6 +902,17 @@ let
               exit 1
             fi
             RUNTIME_ROOT="/run/user/$TARGET_UID"
+          fi
+
+          if [ ! -d "$RUNTIME_ROOT" ]; then
+            if [ -n "''${TARGET_UID:-}" ] && [ -z "$CONFIGURED_RUNTIME_DIR" ]; then
+              "$SYSTEMCTL" start "user-runtime-dir@$TARGET_UID.service" >/dev/null 2>&1 || true
+            fi
+            runtime_wait_attempt=0
+            while [ ! -d "$RUNTIME_ROOT" ] && [ "$runtime_wait_attempt" -lt 50 ]; do
+              runtime_wait_attempt=$((runtime_wait_attempt + 1))
+              "$SLEEP" 0.2
+            done
           fi
 
           if [ ! -d "$RUNTIME_ROOT" ]; then
@@ -989,6 +1010,8 @@ let
         description = "Prepare target-user access for the Sinex desktop node";
         script = accessSetupScript;
         writePaths = accessWritePaths;
+        afterUnits = runtimeRootUnits;
+        wantsUnits = runtimeRootUnits;
         beforeUnits = [ "sinex-preflight.service" ] ++ map (unit: "${unit}.service") (attrNames units);
       };
     in
@@ -1574,7 +1597,7 @@ in
     type = with types; listOf str;
     default = [ ];
     internal = true;
-    description = "Support units that must run before Sinex preflight verification.";
+    description = "Support units that Sinex preflight may start opportunistically.";
   };
 
   config = mkMerge [
