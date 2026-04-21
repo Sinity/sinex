@@ -63,6 +63,10 @@ Event provenance is explicit and enforced.
 - destructive operations are limited to explicit retention/archive workflows
 - declarative schema changes are validated through repository tooling before deploy
 
+### Operations Log
+
+`core.operations_log` records every significant data-altering action (replay, restore, stage) with parameters, timing, and links to affected events. Replay on its own is not inspectable from event state alone — the operations log is the separate audit trail that makes "how did this state change over time" a queryable question. It complements the append-only discipline of `core.events` rather than weakening it.
+
 ## Query Guidance
 
 - bind UUID parameters directly (`$1::uuid`, `$1::uuid[]`)
