@@ -177,7 +177,7 @@ fn is_source_material_fk_constraint_name(value: &str) -> bool {
 }
 
 fn is_uuid_v7(value: &Uuid) -> bool {
-    value.get_version_num() == 7
+    value.get_version_num() == 7 && value.get_variant() == uuid::Variant::RFC4122
 }
 
 fn is_foreign_key_violation(err: &SinexError) -> bool {
@@ -1045,13 +1045,15 @@ impl JetStreamConsumer {
                 source = %event.source,
                 event_type = %event.event_type,
                 uuid_version = parsed_id.get_version_num(),
+                uuid_variant = ?parsed_id.get_variant(),
                 "Event ID is not UUIDv7 - violates hypertable partition contract; routing to DLQ"
             );
             self.route_validation_failure(
                 &msg,
                 format!(
-                    "Invalid event ID: {parsed_id} is UUID version {}, expected UUIDv7",
-                    parsed_id.get_version_num()
+                    "Invalid event ID: {parsed_id} is UUID version {} with variant {:?}, expected RFC4122 UUIDv7",
+                    parsed_id.get_version_num(),
+                    parsed_id.get_variant()
                 ),
             )
             .await?;
@@ -2285,6 +2287,9 @@ mod tests {
     async fn uuid_v7_guard_rejects_other_uuid_versions() -> TestResult<()> {
         assert!(is_uuid_v7(&Uuid::now_v7()));
         assert!(!is_uuid_v7(&Uuid::new_v4()));
+        assert!(!is_uuid_v7(
+            &"019da690-06f8-707c-f98d-218250d05d62".parse::<Uuid>()?
+        ));
         Ok(())
     }
 
