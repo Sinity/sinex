@@ -22,6 +22,7 @@ use super::state::AssemblyPhase;
 use super::{FinalizationState, MaterialAssembler, MaterialEndMessage};
 use std::{str::FromStr, sync::Arc};
 
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy)]
 pub(super) enum PendingEndBehavior {
     Error,
@@ -1265,7 +1266,7 @@ impl MaterialAssembler {
                 .await?;
         }
 
-        self.try_finalize_pending_end(material_id, state_handle, PendingEndBehavior::Error)
+        self.try_finalize_pending_end(material_id, state_handle, PendingEndBehavior::Ignore)
             .await
     }
 }
@@ -1273,6 +1274,7 @@ impl MaterialAssembler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::material_assembler::{io, state};
     use crate::MaterialReadySet;
     use camino::Utf8PathBuf;
     use serde_json::json;
@@ -1565,6 +1567,63 @@ mod tests {
         assert!(
             !assembler.assembler_state.contains_key(&material_id),
             "missing staged material file should clean up assembler state"
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn handle_end_before_slice_waits_for_missing_slice_instead_of_failing(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, _state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let material_id_typed = Id::from_uuid(material_id);
+        let started_at = Timestamp::now();
+        let payload = b"data".to_vec();
+
+        assembler
+            .handle_end(MaterialEndMessage {
+                material_id: material_id.to_string(),
+                ended_at: sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
+                content_hash: blake3::hash(&payload).to_hex().to_string(),
+                total_slices: 1,
+                total_size_bytes: payload.len() as i64,
+                metadata: json!({}),
+            })
+            .await?;
+
+        assert!(
+            assembler.assembler_state.contains_key(&material_id),
+            "out-of-order end should keep placeholder state for later slices"
+        );
+
+        state::handle_begin(
+            &assembler,
+            material_id,
+            state::MaterialBeginMessage {
+                material_id: material_id.to_string(),
+                material_kind: "test".to_string(),
+                source_identifier: "test://out-of-order-end".to_string(),
+                metadata: json!({}),
+                started_at: sinex_primitives::temporal::format_rfc3339(started_at),
+            },
+        )
+        .await?;
+
+        io::handle_slice(&assembler, material_id, 0, payload).await?;
+
+        let material = ctx
+            .pool
+            .source_materials()
+            .get_by_id(material_id_typed)
+            .await?
+            .expect("material should exist");
+        assert_eq!(material.status.as_str(), status::COMPLETED);
+        assert!(
+            !assembler.assembler_state.contains_key(&material_id),
+            "completed out-of-order assembly should clean up in-memory state"
         );
 
         Ok(())

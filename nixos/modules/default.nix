@@ -2117,10 +2117,7 @@ in
       })
 
       (mkIf (targetHome != null) {
-        services.sinex.nodes.browser.dumpSources = mkDefault [
-          "/realm/data/captures/webhistory/gestalt/data"
-          "/realm/data/captures/webhistory/gestalt/derived/full_history.ndjson"
-        ];
+        services.sinex.nodes.browser.dumpSources = mkDefault [];
         services.sinex.nodes.browser.sqliteSources = mkDefault [
           {
             path = "${targetHome}/.local/share/qutebrowser/history.sqlite";
