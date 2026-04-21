@@ -61,6 +61,12 @@ xtask test vm --category integration
 The default GitHub Actions gate does not run the NixOS VM suite; use the VM
 commands separately when a change touches deployment/runtime behavior.
 
+Do not model source-ingestion correctness as an `xtask exercise`. Source
+material, SDK adapter, node runtime, replay, and provenance behavior belong in
+Rust tests and VM integration tests. `xtask` may orchestrate those tests, but it
+does not own their semantics. The command-plane split is documented in
+[`docs/architecture/runtime-target-boundaries.md`](docs/architecture/runtime-target-boundaries.md).
+
 ## Harness and Layout
 
 - Most Rust/package tests run through `xtask test` and the `xtask::sandbox`

@@ -1,5 +1,6 @@
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use sinex_primitives::RuntimeTargetDescriptor;
 use sinex_primitives::env as shared_env;
 use std::collections::HashMap;
 use std::fs;
@@ -56,6 +57,10 @@ pub struct Config {
     /// Editor for interactive mode
     #[serde(default = "default_editor")]
     pub editor: String,
+
+    /// Runtime target descriptor used to derive live connection settings.
+    #[serde(skip)]
+    pub runtime_target: Option<RuntimeTargetDescriptor>,
 }
 
 /// User-local `sinexctl` preferences stored in `config.toml`.
@@ -223,6 +228,28 @@ impl Config {
         }
     }
 
+    pub fn apply_runtime_target(&mut self, target: RuntimeTargetDescriptor) {
+        if let Some(base_url) = target.gateway.base_url.clone() {
+            self.rpc_url = base_url;
+        }
+        if let Some(token_file) = target.gateway.token_file.clone() {
+            self.token_file = Some(path_to_string(token_file));
+        }
+        if let Some(ca_cert) = target.gateway.ca_cert_file.clone() {
+            self.ca_cert = Some(path_to_string(ca_cert));
+        }
+        if let Some(client_cert) = target.gateway.client_cert_file.clone() {
+            self.client_cert = Some(path_to_string(client_cert));
+        }
+        if let Some(client_key) = target.gateway.client_key_file.clone() {
+            self.client_key = Some(path_to_string(client_key));
+        }
+        if target.gateway.insecure {
+            self.insecure = true;
+        }
+        self.runtime_target = Some(target);
+    }
+
     fn apply_runtime_env_overrides(&mut self) {
         env_override("SINEX_RPC_URL", &mut self.rpc_url);
         env_option_override("SINEX_RPC_TOKEN", &mut self.token);
@@ -264,8 +291,13 @@ impl Default for Config {
             aliases: HashMap::new(),
             theme: ThemeConfig::default(),
             editor: default_editor(),
+            runtime_target: None,
         }
     }
+}
+
+fn path_to_string(path: PathBuf) -> String {
+    path.to_string_lossy().into_owned()
 }
 
 fn env_override(key: &str, target: &mut String) {

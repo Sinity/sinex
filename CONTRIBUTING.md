@@ -29,6 +29,11 @@ Use raw `cargo` only for low-level Rust workflows that are not already exposed
 through `xtask`. Infrastructure orchestration, status, verification, docs, and
 agent-facing helpers should go through `xtask`.
 
+`xtask` is a development-plane tool, not the production control plane. Live
+runtime operation belongs to `sinexctl`, while host activation proof belongs to
+NixOS activation checks and VM tests. Keep these responsibilities explicit; see
+[`docs/architecture/runtime-target-boundaries.md`](docs/architecture/runtime-target-boundaries.md).
+
 ## Planning, Issues, and Source Documents
 
 Large or pre-planned work should not live only in scratch notes or chat history.

@@ -207,6 +207,10 @@ disabled (e.g. staging migrations).
   requires client TLS, the effective NATS server list, and all secret-material
   paths needed for readiness checks, including the generated gateway TLS trust
   anchor when `core.gateway.autoGenerateTls = true`.
+- The module also emits `/etc/sinex/runtime-target.json`. This narrower
+  descriptor is the runtime connection/status target for `sinexctl` and other
+  status probes: gateway URL, auth/TLS material, database URL, NATS servers,
+  state directories, managed service units, target kind, and descriptor source.
 - Pre-flight verification lives under `lifecycle.preflight`. Disable individual
   phases with `lifecycle.preflight.skip = [ "migrations" "services" ];`.
 - Coordinated updates use `lifecycle.updates` for grace periods and roll-back

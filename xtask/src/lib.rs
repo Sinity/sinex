@@ -36,6 +36,7 @@ pub mod preflight;
 pub mod process;
 pub mod resources;
 pub mod runtime_metrics;
+pub mod runtime_target;
 pub mod sandbox;
 pub use sandbox::context::Sandbox;
 pub use sandbox::events::EventPublisher;

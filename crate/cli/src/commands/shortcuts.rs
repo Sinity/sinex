@@ -6,6 +6,7 @@ use sinex_primitives::query::{
     EventQuery, EventQueryResult, PayloadFilter, SortDirection, SubscriptionFilter, TimeRange,
 };
 use sinex_primitives::temporal::{Duration, Timestamp};
+use sinex_primitives::{RuntimeTargetDescriptor, RuntimeTargetKind};
 
 use crate::client::{GatewayClient, gateway::SseClientMessage};
 
@@ -22,9 +23,35 @@ EXAMPLES:
 pub struct StatusCommand;
 
 impl StatusCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(
+        &self,
+        client: &GatewayClient,
+        runtime_target: Option<&RuntimeTargetDescriptor>,
+    ) -> Result<()> {
         println!("{}", style("System Status").bold().cyan());
         println!("{}", style("═".repeat(50)).dim());
+
+        if let Some(target) = runtime_target {
+            println!(
+                "Target:  {} {}",
+                style("●").cyan(),
+                style(format!(
+                    "{} ({})",
+                    target.name,
+                    runtime_target_kind_label(&target.kind)
+                ))
+                .cyan()
+            );
+            if let Some(source) = &target.source {
+                println!("         {}", style(format!("source: {source}")).dim());
+            }
+            if let Some(path) = &target.source_path {
+                println!(
+                    "         {}",
+                    style(format!("descriptor: {}", path.display())).dim()
+                );
+            }
+        }
 
         // Gateway connectivity
         match client.version().await {
@@ -154,6 +181,16 @@ impl StatusCommand {
         }
 
         Ok(())
+    }
+}
+
+fn runtime_target_kind_label(kind: &RuntimeTargetKind) -> &'static str {
+    match kind {
+        RuntimeTargetKind::Unknown => "unknown",
+        RuntimeTargetKind::DevCheckout => "dev_checkout",
+        RuntimeTargetKind::DeployedHost => "deployed_host",
+        RuntimeTargetKind::Vm => "vm",
+        RuntimeTargetKind::Test => "test",
     }
 }
 
