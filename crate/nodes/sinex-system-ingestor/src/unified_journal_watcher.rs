@@ -38,7 +38,7 @@ use std::process::ExitStatus;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -122,12 +122,59 @@ async fn read_child_stderr(child: &mut Child, process_name: &str) -> NodeResult<
         return Ok(None);
     };
 
-    let mut bytes = Vec::new();
-    stderr.read_to_end(&mut bytes).await.map_err(|error| {
-        SinexError::io(format!("failed to read {process_name} stderr")).with_std_error(&error)
-    })?;
+    read_stderr_preview(&mut stderr, process_name).await
+}
 
-    Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+async fn read_stderr_preview<R>(stderr: &mut R, process_name: &str) -> NodeResult<Option<String>>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut preview = Vec::new();
+    let mut truncated = false;
+    let mut buf = [0_u8; 8192];
+
+    loop {
+        let read = stderr.read(&mut buf).await.map_err(|error| {
+            SinexError::io(format!("failed to read {process_name} stderr")).with_std_error(&error)
+        })?;
+        if read == 0 {
+            break;
+        }
+
+        let remaining = JOURNAL_STDERR_PREVIEW_LIMIT.saturating_sub(preview.len());
+        if remaining > 0 {
+            let copied = read.min(remaining);
+            preview.extend_from_slice(&buf[..copied]);
+            if copied < read {
+                truncated = true;
+            }
+        } else {
+            truncated = true;
+        }
+    }
+
+    if preview.is_empty() {
+        return Ok(None);
+    }
+
+    let mut rendered = String::from_utf8_lossy(&preview).into_owned();
+    if truncated {
+        rendered.push('…');
+    }
+    Ok(Some(rendered))
+}
+
+async fn await_stderr_preview(
+    task: Option<tokio::task::JoinHandle<NodeResult<Option<String>>>>,
+    process_name: &str,
+) -> NodeResult<Option<String>> {
+    let Some(task) = task else {
+        return Ok(None);
+    };
+
+    task.await.map_err(|error| {
+        SinexError::io(format!("failed to read {process_name} stderr")).with_std_error(&error)
+    })?
 }
 
 fn follow_exit_processing_error_message(exit_reason: FollowExitReason) -> &'static str {
@@ -845,81 +892,101 @@ impl UnifiedJournalWatcher {
             args.push("--system".to_string());
         }
 
-        let output = Command::new("journalctl")
+        let mut child = Command::new("journalctl")
             .args(&args)
-            .output()
-            .await
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
             .map_err(|e| {
                 sinex_node_sdk::SinexError::processing("Failed to run journalctl").with_source(e)
             })?;
 
-        if !output.status.success() {
-            let error = sinex_node_sdk::SinexError::processing(format!(
-                "journalctl failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-            self.record_error(error.to_string());
-            return Err(error);
-        }
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| SinexError::processing("journalctl historical import has no stdout"))?;
+        let stderr_task = child.stderr.take().map(|mut stderr| {
+            tokio::spawn(async move { read_stderr_preview(&mut stderr, "journalctl").await })
+        });
 
         let mut entries_count = 0u64;
         let mut first_cursor = None;
         let mut last_cursor = None;
         let mut batch = Vec::new();
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
 
-        for line in output.stdout.split(|&b| b == b'\n') {
-            if !line.is_empty() {
-                if line.len() > self.max_line_bytes {
-                    let raw_line = String::from_utf8_lossy(line);
-                    if let Some(cursor) = self
-                        .handle_oversized_line(raw_line.as_ref(), material)
-                        .await?
-                    {
-                        Self::record_seen_cursor(&mut first_cursor, &mut last_cursor, &cursor);
-                    }
-                    continue;
+        loop {
+            line.clear();
+            let read = reader.read_line(&mut line).await.map_err(|error| {
+                SinexError::io("failed to read journalctl historical output").with_std_error(&error)
+            })?;
+            if read == 0 {
+                break;
+            }
+
+            let raw_line = line.trim_end();
+            if raw_line.is_empty() {
+                continue;
+            }
+
+            if raw_line.len() > self.max_line_bytes {
+                if let Some(cursor) = self.handle_oversized_line(raw_line, material).await? {
+                    Self::record_seen_cursor(&mut first_cursor, &mut last_cursor, &cursor);
                 }
-                match serde_json::from_slice::<serde_json::Value>(line) {
-                    Ok(entry) => {
-                        // Process entry and emit both journal and systemd events if applicable
-                        if let Some(journal_event) = self.parse_journal_entry(&entry, material)? {
-                            if let Some(cursor) =
-                                journal_event.payload.get("cursor").and_then(|v| v.as_str())
-                            {
-                                Self::record_seen_cursor(
-                                    &mut first_cursor,
-                                    &mut last_cursor,
-                                    cursor,
-                                );
-                            }
+                continue;
+            }
 
-                            batch.push(journal_event);
-                            entries_count += 1;
-
-                            if batch.len() >= self.journal_config.batch_size {
-                                for event in batch.drain(..) {
-                                    self.send_event(journal_tx, event, "journal_batch", material)
-                                        .await?;
-                                }
-                            }
-                        }
-
-                        // Check if this is a systemd event and emit systemd-specific event
-                        if self.systemd_enabled
-                            && let Some(systemd_event) =
-                                self.parse_systemd_entry(&entry, material)?
-                            && let Some(tx) = systemd_tx.as_ref()
+            match serde_json::from_str::<serde_json::Value>(raw_line) {
+                Ok(entry) => {
+                    // Process entry and emit both journal and systemd events if applicable
+                    if let Some(journal_event) = self.parse_journal_entry(&entry, material)? {
+                        if let Some(cursor) =
+                            journal_event.payload.get("cursor").and_then(|v| v.as_str())
                         {
-                            self.send_event(tx, systemd_event, "systemd_batch", material)
-                                .await?;
+                            Self::record_seen_cursor(&mut first_cursor, &mut last_cursor, cursor);
+                        }
+
+                        batch.push(journal_event);
+                        entries_count += 1;
+
+                        if batch.len() >= self.journal_config.batch_size {
+                            for event in batch.drain(..) {
+                                self.send_event(journal_tx, event, "journal_batch", material)
+                                    .await?;
+                            }
                         }
                     }
-                    Err(e) => {
-                        let raw_line = String::from_utf8_lossy(line);
-                        self.record_malformed_journal_line("historical", raw_line.as_ref(), &e);
+
+                    // Check if this is a systemd event and emit systemd-specific event
+                    if self.systemd_enabled
+                        && let Some(systemd_event) = self.parse_systemd_entry(&entry, material)?
+                        && let Some(tx) = systemd_tx.as_ref()
+                    {
+                        self.send_event(tx, systemd_event, "systemd_batch", material)
+                            .await?;
                     }
+                }
+                Err(e) => {
+                    self.record_malformed_journal_line("historical", raw_line, &e);
                 }
             }
+        }
+
+        let status = child.wait().await.map_err(|error| {
+            SinexError::io("failed to wait for journalctl historical import").with_std_error(&error)
+        })?;
+        let stderr = await_stderr_preview(stderr_task, "journalctl").await?;
+
+        if !status.success() {
+            let mut error = sinex_node_sdk::SinexError::processing("journalctl failed")
+                .with_context("exit_status", status.to_string());
+            if let Some(stderr) = stderr {
+                error = error.with_context("stderr", stderr);
+            }
+            self.record_error(error.to_string());
+            return Err(error);
         }
 
         // Send remaining batch

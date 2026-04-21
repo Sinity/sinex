@@ -29,13 +29,14 @@ impl ApiPollerState {
         }
     }
 
+    #[must_use]
     pub fn backoff_duration(&self, base_interval: Duration) -> Duration {
         if self.consecutive_empty_polls == 0 {
             return base_interval;
         }
         let multiplier = 2u32.saturating_pow(self.consecutive_empty_polls.min(6));
         let backed_off = base_interval.saturating_mul(multiplier);
-        let max = Duration::from_secs(3600);
+        let max = Duration::from_hours(1);
         backed_off.min(max)
     }
 }
@@ -67,6 +68,7 @@ impl ApiPollerConfig {
         self
     }
 
+    #[must_use]
     pub fn with_max_items(mut self, max: u32) -> Self {
         self.max_items_per_poll = max;
         self
@@ -80,6 +82,7 @@ pub struct PollResult<T> {
 }
 
 impl<T> PollResult<T> {
+    #[must_use]
     pub fn empty() -> Self {
         Self {
             items: Vec::new(),
@@ -88,6 +91,7 @@ impl<T> PollResult<T> {
         }
     }
 
+    #[must_use]
     pub fn with_items(items: Vec<T>, next_cursor: Option<String>) -> Self {
         let has_more = next_cursor.is_some();
         Self {
@@ -171,26 +175,26 @@ mod tests {
     #[test]
     fn backoff_doubles_on_empty_polls() {
         let mut state = ApiPollerState::default();
-        let base = Duration::from_secs(60);
+        let base = Duration::from_mins(1);
 
         assert_eq!(state.backoff_duration(base), base);
 
         state.consecutive_empty_polls = 1;
-        assert_eq!(state.backoff_duration(base), Duration::from_secs(120));
+        assert_eq!(state.backoff_duration(base), Duration::from_mins(2));
 
         state.consecutive_empty_polls = 2;
-        assert_eq!(state.backoff_duration(base), Duration::from_secs(240));
+        assert_eq!(state.backoff_duration(base), Duration::from_mins(4));
 
         state.consecutive_empty_polls = 3;
-        assert_eq!(state.backoff_duration(base), Duration::from_secs(480));
+        assert_eq!(state.backoff_duration(base), Duration::from_mins(8));
     }
 
     #[test]
     fn backoff_capped_at_one_hour() {
         let mut state = ApiPollerState::default();
         state.consecutive_empty_polls = 20;
-        let base = Duration::from_secs(60);
-        assert_eq!(state.backoff_duration(base), Duration::from_secs(3600));
+        let base = Duration::from_mins(1);
+        assert_eq!(state.backoff_duration(base), Duration::from_hours(1));
     }
 
     #[test]
@@ -214,12 +218,12 @@ mod tests {
 
     #[test]
     fn config_builder() {
-        let config = ApiPollerConfig::new("https://api.example.com", Duration::from_secs(300))
+        let config = ApiPollerConfig::new("https://api.example.com", Duration::from_mins(5))
             .with_auth("Authorization", "Bearer token123")
             .with_max_items(50);
 
         assert_eq!(config.base_url, "https://api.example.com");
-        assert_eq!(config.poll_interval, Duration::from_secs(300));
+        assert_eq!(config.poll_interval, Duration::from_mins(5));
         assert_eq!(config.max_items_per_poll, 50);
         assert!(config.auth_header.is_some());
     }

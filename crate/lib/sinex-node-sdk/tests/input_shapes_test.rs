@@ -133,7 +133,10 @@ async fn poll_append_only_source_updates_tracked_state(_ctx: TestContext) -> Tes
 
     let second = poll_append_only_utf8_source(&path, &mut state).await?;
     assert_eq!(second.lines, vec!["echo three"]);
-    assert_eq!(state.offset_bytes, "echo one\necho two\necho three\n".len() as u64);
+    assert_eq!(
+        state.offset_bytes,
+        "echo one\necho two\necho three\n".len() as u64
+    );
     Ok(())
 }
 
