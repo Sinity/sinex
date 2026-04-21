@@ -14,10 +14,16 @@ use crate::history::{
 use crate::infra::probe::{NatsProbe, PostgresProbe, probe_nats, probe_postgres};
 use crate::infra::stack::StackConfig;
 use crate::runtime_metrics::{IngestdStatus, RuntimeAssessment, RuntimeMetrics};
+use crate::runtime_target::{
+    RuntimeTargetSummary, checkout_runtime_target, checkout_status_snapshot, signal, warning,
+};
 use crate::session::{WatchAction, WatchLoop};
 use color_eyre::eyre::{Result, WrapErr};
 use console::style;
 use serde::Serialize;
+use sinex_primitives::{
+    RuntimeStatusSignalStatus, RuntimeStatusSnapshot, RuntimeTargetDescriptor, RuntimeTargetKind,
+};
 use std::any::Any;
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -41,6 +47,8 @@ pub struct StatusCommand {
 /// Structured status output for JSON mode
 #[derive(Debug, Serialize)]
 struct StatusOutput {
+    runtime_target: RuntimeTargetSummary,
+    runtime_snapshot: RuntimeStatusSnapshot,
     infrastructure: InfrastructureStatus,
     services: Vec<ServiceStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -357,6 +365,8 @@ struct ActivityEntry {
 /// Summary (MOTD) output structure
 #[derive(Debug, Serialize)]
 struct SummaryOutput {
+    runtime_target: RuntimeTargetSummary,
+    runtime_snapshot: RuntimeStatusSnapshot,
     health: String,
     /// Condensed single-field grade: "ok" | "warn" | "error" | "infra"
     health_indicator: String,
@@ -465,6 +475,123 @@ fn runtime_query_error_message(metrics: &RuntimeMetrics) -> Option<String> {
         .query_error
         .as_ref()
         .map(|error| format!("Runtime metrics query failed: {error}"))
+}
+
+fn fallback_checkout_runtime_target(error: impl std::fmt::Display) -> RuntimeTargetDescriptor {
+    RuntimeTargetDescriptor {
+        version: 1,
+        name: "checkout-local".to_string(),
+        kind: RuntimeTargetKind::DevCheckout,
+        source: Some("xtask checkout config".to_string()),
+        notes: vec![format!("failed to derive checkout runtime target: {error}")],
+        ..RuntimeTargetDescriptor::default()
+    }
+}
+
+fn service_signal_status(status: ServiceRunStatus) -> RuntimeStatusSignalStatus {
+    match status {
+        ServiceRunStatus::Running => RuntimeStatusSignalStatus::Healthy,
+        ServiceRunStatus::Stopped => RuntimeStatusSignalStatus::Unhealthy,
+        ServiceRunStatus::Skipped => RuntimeStatusSignalStatus::Skipped,
+        ServiceRunStatus::Unknown => RuntimeStatusSignalStatus::Unknown,
+    }
+}
+
+fn build_runtime_status_snapshot(
+    target: &RuntimeTargetDescriptor,
+    pg_probe: &PostgresProbe,
+    nats_probe: &NatsProbe,
+    services: &[ServiceStatus],
+    runtime_metrics: Option<&RuntimeMetrics>,
+    warnings: &[String],
+) -> RuntimeStatusSnapshot {
+    let mut signals = vec![
+        signal(
+            "postgres",
+            if pg_probe.ready() {
+                RuntimeStatusSignalStatus::Healthy
+            } else {
+                RuntimeStatusSignalStatus::Unhealthy
+            },
+            "checkout-local postgres probe",
+            pg_probe.message.clone(),
+        ),
+        signal(
+            "nats",
+            if nats_probe.ready() {
+                RuntimeStatusSignalStatus::Healthy
+            } else {
+                RuntimeStatusSignalStatus::Unhealthy
+            },
+            "checkout-local nats probe",
+            nats_probe.message.clone(),
+        ),
+    ];
+
+    for service in services {
+        signals.push(signal(
+            service.name.clone(),
+            service_signal_status(service.status),
+            service.probe,
+            service.message.clone(),
+        ));
+    }
+
+    if let Some(metrics) = runtime_metrics {
+        signals.push(signal(
+            "ingestd_heartbeat",
+            match metrics.ingestd_status {
+                IngestdStatus::Healthy => RuntimeStatusSignalStatus::Healthy,
+                IngestdStatus::Stale => RuntimeStatusSignalStatus::Stale,
+                IngestdStatus::Down => RuntimeStatusSignalStatus::Unhealthy,
+                IngestdStatus::Unknown => RuntimeStatusSignalStatus::Unknown,
+            },
+            "checkout-local runtime database telemetry",
+            metrics
+                .last_heartbeat_age_secs
+                .map(|age| format!("heartbeat {age}s ago"))
+                .or_else(|| metrics.query_error.clone()),
+        ));
+
+        signals.push(signal(
+            "consumer_lag",
+            if metrics.consumer_lag_is_stale() {
+                RuntimeStatusSignalStatus::Stale
+            } else if metrics.fresh_consumer_lag_pending().is_some() {
+                RuntimeStatusSignalStatus::Healthy
+            } else {
+                RuntimeStatusSignalStatus::Unknown
+            },
+            "checkout-local runtime database telemetry",
+            metrics
+                .fresh_consumer_lag_pending()
+                .map(|pending| format!("{pending:.0} pending"))
+                .or_else(|| metrics.consumer_lag_stale_note()),
+        ));
+
+        signals.push(signal(
+            "batch_latency",
+            if metrics.batch_latency_is_stale() {
+                RuntimeStatusSignalStatus::Stale
+            } else if metrics.fresh_batch_latency_ms().is_some() {
+                RuntimeStatusSignalStatus::Healthy
+            } else {
+                RuntimeStatusSignalStatus::Unknown
+            },
+            "checkout-local runtime database telemetry",
+            metrics
+                .fresh_batch_latency_ms()
+                .map(|latency| format!("{latency:.0}ms"))
+                .or_else(|| metrics.batch_latency_stale_note()),
+        ));
+    }
+
+    let attributed_warnings = warnings
+        .iter()
+        .map(|message| warning("xtask status", message.clone()))
+        .collect();
+
+    checkout_status_snapshot(target.clone(), signals, attributed_warnings)
 }
 
 #[derive(Debug, Serialize)]
@@ -820,6 +947,7 @@ impl HistorySnapshot {
 
 /// All collected summary data
 struct SummaryData {
+    runtime_target: RuntimeTargetDescriptor,
     pg_probe: PostgresProbe,
     nats_probe: NatsProbe,
     services: Vec<ServiceStatus>,
@@ -1000,7 +1128,11 @@ fn collect_history_and_jobs_snapshot(
 async fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
     let total_started_at = Instant::now();
     let cfg = config();
-    let gateway_url = cfg.gateway_url.clone();
+    let runtime_target =
+        checkout_runtime_target(&cfg).unwrap_or_else(fallback_checkout_runtime_target);
+    let gateway_url = runtime_target.gateway.base_url.clone();
+    let runtime_db_url =
+        resolve_runtime_metrics_database_url(runtime_target.database.url.as_deref());
 
     let threaded_stage_started_at = Instant::now();
     let (
@@ -1015,7 +1147,6 @@ async fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
         runtime_metrics,
         gateway_url,
     ) = std::thread::scope(|s| {
-        let runtime_db_url = resolve_runtime_metrics_database_url(cfg.database_url.as_deref());
         // Thread 1: Infrastructure
         let infra_handle = s.spawn(move || {
             let started_at = Instant::now();
@@ -1192,6 +1323,7 @@ async fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
     emit_status_profile("summary.total_collection", total_started_at);
 
     SummaryData {
+        runtime_target,
         pg_probe,
         nats_probe,
         services,
@@ -1441,6 +1573,15 @@ async fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     );
 
     let output = SummaryOutput {
+        runtime_target: RuntimeTargetSummary::from(&data.runtime_target),
+        runtime_snapshot: build_runtime_status_snapshot(
+            &data.runtime_target,
+            &data.pg_probe,
+            &data.nats_probe,
+            &data.services,
+            data.runtime_metrics.as_ref(),
+            &warnings,
+        ),
         health: health.to_string(),
         health_indicator: health_indicator.to_string(),
         summary: summary.clone(),
@@ -1554,6 +1695,9 @@ impl<'a> MotdRenderer<'a> {
         // Header (always)
         self.render_header();
 
+        // Runtime target (always)
+        self.render_target();
+
         // Infra + services (always)
         self.render_infra();
 
@@ -1640,6 +1784,30 @@ impl<'a> MotdRenderer<'a> {
 
         // Bottom border
         println!("└{}┘", "─".repeat(inner));
+    }
+
+    fn render_target(&self) {
+        let label = style("  target").dim();
+        let target = &self.output.runtime_target;
+        let kind = runtime_target_kind_label(&target.kind);
+        let source = target
+            .source
+            .as_deref()
+            .map(|source| format!(" source {source}"))
+            .unwrap_or_default();
+        let db = target
+            .database_url
+            .as_deref()
+            .map_or_else(|| "db unset".to_string(), redact_runtime_target_url);
+        let gateway = target.gateway_url.as_deref().unwrap_or("gateway unset");
+
+        println!(
+            "{label}   {} {} {} {}",
+            style(format!("{} ({kind})", target.name)).cyan(),
+            style(source).dim(),
+            style("·").dim(),
+            style(format!("{db} · {gateway}")).dim()
+        );
     }
 
     // ─── Infrastructure + Services ──────────────────────────────────────
@@ -2152,12 +2320,33 @@ fn format_age(mins: i64) -> String {
     }
 }
 
+fn redact_runtime_target_url(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    let authority_and_path = rest
+        .rsplit_once('@')
+        .map_or(rest, |(_, after_auth)| after_auth);
+    format!("{scheme}://{authority_and_path}")
+}
+
+fn runtime_target_kind_label(kind: &RuntimeTargetKind) -> &'static str {
+    match kind {
+        RuntimeTargetKind::Unknown => "unknown",
+        RuntimeTargetKind::DevCheckout => "dev_checkout",
+        RuntimeTargetKind::DeployedHost => "deployed_host",
+        RuntimeTargetKind::Vm => "vm",
+        RuntimeTargetKind::Test => "test",
+    }
+}
+
 // ─── Full Status ────────────────────────────────────────────────────────────
 
 /// Collect one round of workspace status data.
 async fn collect_status_data(
     ctx: &CommandContext,
 ) -> (
+    RuntimeTargetDescriptor,
     PostgresProbe,
     NatsProbe,
     bool,
@@ -2168,8 +2357,11 @@ async fn collect_status_data(
 ) {
     let total_started_at = Instant::now();
     let cfg = config();
-    let gateway_url = cfg.gateway_url.clone();
-    let runtime_db_url = resolve_runtime_metrics_database_url(cfg.database_url.as_deref());
+    let runtime_target =
+        checkout_runtime_target(&cfg).unwrap_or_else(fallback_checkout_runtime_target);
+    let gateway_url = runtime_target.gateway.base_url.clone();
+    let runtime_db_url =
+        resolve_runtime_metrics_database_url(runtime_target.database.url.as_deref());
     let runtime_configured = runtime_db_url
         .as_ref()
         .ok()
@@ -2178,7 +2370,6 @@ async fn collect_status_data(
 
     let threaded_stage_started_at = Instant::now();
     let (pg_probe, nats_probe, runtime_metrics, jobs, history) = std::thread::scope(|s| {
-        let runtime_db_url = resolve_runtime_metrics_database_url(cfg.database_url.as_deref());
         // Thread 1: Infrastructure
         let infra_handle = s.spawn(move || {
             let started_at = Instant::now();
@@ -2277,6 +2468,7 @@ async fn collect_status_data(
     emit_status_profile("full.total_collection", total_started_at);
 
     (
+        runtime_target,
         pg_probe,
         nats_probe,
         runtime_configured,
@@ -2289,8 +2481,16 @@ async fn collect_status_data(
 
 /// Render and optionally return one status snapshot.
 async fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<CommandResult>> {
-    let (pg_probe, nats_probe, runtime_configured, runtime_metrics, services, jobs, history) =
-        collect_status_data(ctx).await;
+    let (
+        runtime_target,
+        pg_probe,
+        nats_probe,
+        runtime_configured,
+        runtime_metrics,
+        services,
+        jobs,
+        history,
+    ) = collect_status_data(ctx).await;
     let runtime_assessment = runtime_metrics.as_ref().map(RuntimeMetrics::assessment);
     let unavailable_services: Vec<&str> = services
         .iter()
@@ -2380,6 +2580,14 @@ async fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<
     {
         warnings.extend(runtime_assessment.warnings.clone());
     }
+    let runtime_snapshot = build_runtime_status_snapshot(
+        &runtime_target,
+        &pg_probe,
+        &nats_probe,
+        &services,
+        runtime_metrics.as_ref(),
+        &warnings,
+    );
 
     // Human output
     if ctx.is_human() {
@@ -2387,6 +2595,31 @@ async fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<
             "{}",
             style("━━━━━━━━━━━━━━━━ WORKSPACE STATUS ━━━━━━━━━━━━━━━━").bold()
         );
+
+        println!("\n{}", style("Runtime Target:").bold());
+        let target_summary = RuntimeTargetSummary::from(&runtime_target);
+        println!("  {:<12} {}", "Name", target_summary.name);
+        println!(
+            "  {:<12} {}",
+            "Kind",
+            runtime_target_kind_label(&target_summary.kind)
+        );
+        if let Some(source) = &target_summary.source {
+            println!("  {:<12} {}", "Source", source);
+        }
+        if let Some(source_path) = &target_summary.source_path {
+            println!("  {:<12} {}", "Source path", source_path.display());
+        }
+        if let Some(database_url) = &target_summary.database_url {
+            println!(
+                "  {:<12} {}",
+                "Database",
+                redact_runtime_target_url(database_url)
+            );
+        }
+        if let Some(gateway_url) = &target_summary.gateway_url {
+            println!("  {:<12} {}", "Gateway", gateway_url);
+        }
 
         // Infrastructure
         println!("\n{}", style("Infrastructure:").bold());
@@ -2577,6 +2810,8 @@ async fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<
     if !watch {
         if !ctx.is_human() {
             let output = StatusOutput {
+                runtime_target: RuntimeTargetSummary::from(&runtime_target),
+                runtime_snapshot,
                 infrastructure: InfrastructureStatus {
                     postgres: ComponentStatus {
                         status: if pg_probe.ready() { "ready" } else { "offline" }.to_string(),
@@ -2867,9 +3102,43 @@ mod tests {
 
     // --- JSON shape tests: verify serialization contracts agents depend on ---
 
+    fn test_runtime_target() -> RuntimeTargetDescriptor {
+        RuntimeTargetDescriptor {
+            version: 1,
+            name: "checkout-local".into(),
+            kind: RuntimeTargetKind::DevCheckout,
+            source: Some("xtask checkout config".into()),
+            database: sinex_primitives::RuntimeTargetDatabase {
+                url: Some("postgresql:///sinex_dev?host=.sinex/run".into()),
+                ..Default::default()
+            },
+            gateway: sinex_primitives::RuntimeTargetGateway {
+                base_url: Some("https://127.0.0.1:9999".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn test_runtime_snapshot(target: &RuntimeTargetDescriptor) -> RuntimeStatusSnapshot {
+        checkout_status_snapshot(
+            target.clone(),
+            vec![signal(
+                "postgres",
+                RuntimeStatusSignalStatus::Healthy,
+                "checkout-local postgres probe",
+                None,
+            )],
+            Vec::new(),
+        )
+    }
+
     #[sinex_test]
     async fn test_status_output_json_shape() -> ::xtask::sandbox::TestResult<()> {
+        let target = test_runtime_target();
         let output = StatusOutput {
+            runtime_target: RuntimeTargetSummary::from(&target),
+            runtime_snapshot: test_runtime_snapshot(&target),
             infrastructure: InfrastructureStatus {
                 postgres: ComponentStatus {
                     status: "ready".into(),
@@ -2929,6 +3198,14 @@ mod tests {
 
         let json = serde_json::to_value(&output)?;
 
+        assert_eq!(json["runtime_target"]["name"], "checkout-local");
+        assert_eq!(json["runtime_target"]["kind"], "dev_checkout");
+        assert_eq!(json["runtime_snapshot"]["target"]["name"], "checkout-local");
+        assert_eq!(
+            json["runtime_snapshot"]["signals"][0]["source"],
+            "checkout-local postgres probe"
+        );
+
         // Infrastructure shape (agents use: .data.infrastructure.postgres.status)
         assert!(json["infrastructure"]["postgres"]["status"].is_string());
         assert!(json["infrastructure"]["postgres"]["latency_ms"].is_number());
@@ -2964,7 +3241,10 @@ mod tests {
 
     #[sinex_test]
     async fn test_summary_output_json_shape() -> ::xtask::sandbox::TestResult<()> {
+        let target = test_runtime_target();
         let output = SummaryOutput {
+            runtime_target: RuntimeTargetSummary::from(&target),
+            runtime_snapshot: test_runtime_snapshot(&target),
             health: "degraded".into(),
             health_indicator: "warn".into(),
             summary: "infra:ok jobs:1 tests:ok warns:2w fixes:1f git:dirty".into(),
@@ -3058,6 +3338,9 @@ mod tests {
 
         let json = serde_json::to_value(&output)?;
 
+        assert_eq!(json["runtime_target"]["name"], "checkout-local");
+        assert_eq!(json["runtime_snapshot"]["signals"][0]["status"], "healthy");
+
         // Original fields preserved
         assert_eq!(json["health"], "degraded");
         assert_eq!(json["health_indicator"], "warn");
@@ -3110,7 +3393,10 @@ mod tests {
     #[sinex_test]
     async fn test_summary_output_preserves_missing_commit_age() -> ::xtask::sandbox::TestResult<()>
     {
+        let target = test_runtime_target();
         let output = SummaryOutput {
+            runtime_target: RuntimeTargetSummary::from(&target),
+            runtime_snapshot: test_runtime_snapshot(&target),
             health: "healthy".into(),
             health_indicator: "ok".into(),
             summary: "infra:ok".into(),
@@ -3172,7 +3458,10 @@ mod tests {
     #[sinex_test]
     async fn test_summary_output_preserves_missing_command_duration()
     -> ::xtask::sandbox::TestResult<()> {
+        let target = test_runtime_target();
         let output = SummaryOutput {
+            runtime_target: RuntimeTargetSummary::from(&target),
+            runtime_snapshot: test_runtime_snapshot(&target),
             health: "healthy".into(),
             health_indicator: "ok".into(),
             summary: "infra:ok".into(),
@@ -3234,7 +3523,10 @@ mod tests {
     #[sinex_test]
     async fn test_status_output_preserves_missing_recent_activity_duration()
     -> ::xtask::sandbox::TestResult<()> {
+        let target = test_runtime_target();
         let output = StatusOutput {
+            runtime_target: RuntimeTargetSummary::from(&target),
+            runtime_snapshot: test_runtime_snapshot(&target),
             infrastructure: InfrastructureStatus {
                 postgres: ComponentStatus {
                     status: "online".into(),

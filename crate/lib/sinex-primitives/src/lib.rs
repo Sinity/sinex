@@ -23,6 +23,7 @@ pub mod primitives;
 pub mod privacy;
 pub mod query;
 pub mod rpc;
+pub mod runtime_target;
 pub mod temporal;
 pub mod testing;
 pub mod units;
@@ -74,6 +75,11 @@ pub use query::{
     LineageDirection, LineageNode, LineageQuery, LineageResult, Pagination, PathOp, PayloadFilter,
     QueryResultEvent, SortDirection, SourceStatsEntry, SubscriptionFilter, TimeBucketEntry,
     TimeRange, TimeSeriesOrder,
+};
+pub use runtime_target::{
+    RuntimeStatusSignal, RuntimeStatusSignalStatus, RuntimeStatusSnapshot, RuntimeStatusWarning,
+    RuntimeTargetDatabase, RuntimeTargetDescriptor, RuntimeTargetGateway, RuntimeTargetKind,
+    RuntimeTargetNats, RuntimeTargetServices, RuntimeTargetState,
 };
 pub use serde_json::Value as JsonValue;
 pub use temporal::{OffsetDateTime, now, now_utc};
