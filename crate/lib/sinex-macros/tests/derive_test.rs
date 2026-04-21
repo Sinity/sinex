@@ -215,3 +215,26 @@ async fn test_event_payload_const_generic() -> TestResult<()> {
 
     Ok(())
 }
+
+#[sinex_test]
+async fn test_event_payload_enum_derives_schema_contract() -> TestResult<()> {
+    #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
+    #[serde(untagged)]
+    #[event_payload(source = "enum-source", event_type = "enum.event")]
+    pub enum EnumPayload {
+        Text { value: String },
+        Count { count: u64 },
+    }
+
+    assert_eq!(EnumPayload::SOURCE.as_str(), "enum-source");
+    assert_eq!(EnumPayload::EVENT_TYPE.as_str(), "enum.event");
+    assert_eq!(EnumPayload::VERSION, "1.0.0");
+
+    let payload = EnumPayload::Count { count: 42 };
+    let json = serde_json::to_value(payload)?;
+    assert_eq!(
+        json.get("count").and_then(serde_json::Value::as_u64),
+        Some(42)
+    );
+    Ok(())
+}

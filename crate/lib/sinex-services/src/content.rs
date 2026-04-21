@@ -18,6 +18,7 @@ pub struct ContentService {
 }
 
 impl ContentService {
+    #[must_use]
     pub fn new(pool: DbPool, blob_manager: Arc<BlobManager>) -> Self {
         Self { blob_manager, pool }
     }

@@ -1,0 +1,228 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "HealthAggregatedAlertPayload": {
+      "description": "Immediate health alert report.",
+      "properties": {
+        "alert_type": {
+          "$ref": "#/$defs/HealthAlertType"
+        },
+        "component": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/HealthAlertSeverity"
+        },
+        "status": {
+          "$ref": "#/$defs/HealthAggregatedStatus"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/DateTime"
+        }
+      },
+      "required": [
+        "alert_type",
+        "component",
+        "status",
+        "timestamp",
+        "reason",
+        "severity"
+      ],
+      "type": "object"
+    },
+    "HealthAggregatedComponentReportPayload": {
+      "description": "Per-component health report.",
+      "properties": {
+        "component": {
+          "type": "string"
+        },
+        "current_status": {
+          "$ref": "#/$defs/HealthAggregatedStatus"
+        },
+        "events_in_window": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_seen": {
+          "$ref": "#/$defs/DateTime"
+        },
+        "report_type": {
+          "$ref": "#/$defs/HealthAggregatedReportType"
+        },
+        "status_since": {
+          "$ref": "#/$defs/DateTime"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/DateTime"
+        },
+        "total_transitions": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "transitions_in_window": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window_seconds": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "report_type",
+        "timestamp",
+        "component",
+        "current_status",
+        "status_since",
+        "last_seen",
+        "total_transitions",
+        "events_in_window",
+        "transitions_in_window",
+        "window_seconds"
+      ],
+      "type": "object"
+    },
+    "HealthAggregatedReportType": {
+      "description": "Health report discriminator for non-alert aggregate reports.",
+      "enum": [
+        "system_health_status",
+        "component_health_report"
+      ],
+      "type": "string"
+    },
+    "HealthAggregatedStatus": {
+      "description": "Health status vocabulary emitted by the health aggregator.",
+      "enum": [
+        "unknown",
+        "healthy",
+        "degraded",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "HealthAggregatedSystemStatusPayload": {
+      "description": "System-wide health summary report.",
+      "properties": {
+        "components": {
+          "items": {
+            "$ref": "#/$defs/HealthComponentSnapshot"
+          },
+          "type": "array"
+        },
+        "degraded_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failed_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "healthy_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "overall_status": {
+          "$ref": "#/$defs/HealthAggregatedStatus"
+        },
+        "report_type": {
+          "$ref": "#/$defs/HealthAggregatedReportType"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/DateTime"
+        },
+        "total_components": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unknown_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "report_type",
+        "timestamp",
+        "overall_status",
+        "total_components",
+        "healthy_count",
+        "degraded_count",
+        "failed_count",
+        "unknown_count",
+        "components"
+      ],
+      "type": "object"
+    },
+    "HealthAlertSeverity": {
+      "description": "Health alert severity.",
+      "enum": [
+        "critical",
+        "warning"
+      ],
+      "type": "string"
+    },
+    "HealthAlertType": {
+      "description": "Health alert discriminator.",
+      "enum": [
+        "component_status_change"
+      ],
+      "type": "string"
+    },
+    "HealthComponentSnapshot": {
+      "description": "Component snapshot embedded in system-wide health reports.",
+      "properties": {
+        "last_seen": {
+          "$ref": "#/$defs/DateTime"
+        },
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/HealthAggregatedStatus"
+        },
+        "status_since": {
+          "$ref": "#/$defs/DateTime"
+        }
+      },
+      "required": [
+        "name",
+        "status",
+        "status_since",
+        "last_seen"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/HealthAggregatedAlertPayload"
+    },
+    {
+      "$ref": "#/$defs/HealthAggregatedSystemStatusPayload"
+    },
+    {
+      "$ref": "#/$defs/HealthAggregatedComponentReportPayload"
+    }
+  ],
+  "description": "Reports emitted by `sinex-health-automaton`.",
+  "title": "HealthAggregatedReportPayload",
+  "x-sinex-event-type": "health.aggregated_report",
+  "x-sinex-source": "health-aggregator",
+  "x-sinex-version": "1.0.0"
+}

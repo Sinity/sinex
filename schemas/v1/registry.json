@@ -23,27 +23,6 @@
       "content_hash": "4c70aa8ddf161d5668c6eadaf4c8533e5d9f9a7526cf66aac9ed41f864b8213e"
     },
     {
-      "source": "analytics-automaton",
-      "event_type": "analytics.correlation",
-      "version": "1.0.0",
-      "path": "analytics-automaton/analytics.correlation.json",
-      "content_hash": "007bd233920b708283f87e1f4445b57069a2a287bb45f739710078f2266a45b4"
-    },
-    {
-      "source": "analytics-automaton",
-      "event_type": "analytics.frequency",
-      "version": "1.0.0",
-      "path": "analytics-automaton/analytics.frequency.json",
-      "content_hash": "c0ff8b00540d22eccfe6c2b6dea3cef0282e6ee3cacd2e62abcea89a6aeabe6f"
-    },
-    {
-      "source": "analytics-automaton",
-      "event_type": "analytics.pattern.detected",
-      "version": "1.0.0",
-      "path": "analytics-automaton/analytics.pattern.detected.json",
-      "content_hash": "316f90bfcb96e42637f83d1c733f7ab166e56e3317e8b4b6e5ca4b8971167e8b"
-    },
-    {
       "source": "blob_storage",
       "event_type": "blob.deleted",
       "version": "1.0.0",
@@ -98,27 +77,6 @@
       "version": "1.0.0",
       "path": "clipboard/clipboard.selected.json",
       "content_hash": "21449feb3e4c58028ef9d0656e5f6d8ce240e5b1c508c3596a246173077e5282"
-    },
-    {
-      "source": "content-automaton",
-      "event_type": "content.analyzed",
-      "version": "1.0.0",
-      "path": "content-automaton/content.analyzed.json",
-      "content_hash": "23c710203c28cf2e393ab93adb96ec0f48428f5249922389541cf55626d178cd"
-    },
-    {
-      "source": "content-automaton",
-      "event_type": "content.classified",
-      "version": "1.0.0",
-      "path": "content-automaton/content.classified.json",
-      "content_hash": "dc957c3dffec59e9435b0bb2e4cdd1d71d31e6df3e795418aacf4e241767aaf8"
-    },
-    {
-      "source": "content-automaton",
-      "event_type": "content.similarity_detected",
-      "version": "1.0.0",
-      "path": "content-automaton/content.similarity_detected.json",
-      "content_hash": "b0ceb8ffdc0341e998807def6f01117ef4db3eb24c2040deb6c19f1fb0a2d67b"
     },
     {
       "source": "dbus",
@@ -184,11 +142,18 @@
       "content_hash": "4f242de51a59ce26e71c43f170eab22f996868c20550b21b9c13983c86ff2e14"
     },
     {
+      "source": "derived.activity-window",
+      "event_type": "activity.window.summary",
+      "version": "1.0.0",
+      "path": "derived.activity-window/activity.window.summary.json",
+      "content_hash": "5c4ea1bacba2d42b574b42107656c2e96f52da363360b0e3e007700cdb1f751b"
+    },
+    {
       "source": "derived.session-detector",
       "event_type": "activity.session.boundary",
       "version": "1.0.0",
       "path": "derived.session-detector/activity.session.boundary.json",
-      "content_hash": "f4e5e8b3a89b2db79081e94d22899b0c4b8ac6c35836bfc0211d4eee7f88ef15"
+      "content_hash": "a32aa5f29bac8e8d742f6c4b357e8384d0ec0a04ca6963ed06d19b881de672e4"
     },
     {
       "source": "desktop",
@@ -283,31 +248,17 @@
     },
     {
       "source": "health-aggregator",
+      "event_type": "health.aggregated_report",
+      "version": "1.0.0",
+      "path": "health-aggregator/health.aggregated_report.json",
+      "content_hash": "5c97a38f016af6e19a678be79b039183cb8648e9c1293221ca40ad08c7d6977a"
+    },
+    {
+      "source": "health-aggregator",
       "event_type": "system.health_summary",
       "version": "1.0.0",
       "path": "health-aggregator/system.health_summary.json",
       "content_hash": "eb3f741ea4248e08be9ecaca32535311f46fa15122669133b4eb70c346d512fa"
-    },
-    {
-      "source": "health-automaton",
-      "event_type": "health.alert",
-      "version": "1.0.0",
-      "path": "health-automaton/health.alert.json",
-      "content_hash": "592f2c057b064d34b4717bdc85d46ddff9e4d07922abce8868ddedadae5e9e9b"
-    },
-    {
-      "source": "health-automaton",
-      "event_type": "health.component_report",
-      "version": "1.0.0",
-      "path": "health-automaton/health.component_report.json",
-      "content_hash": "ad042a8e22074438987b545e418fe2015b98d6ca18e2f32d3e1ce3c250f4d16b"
-    },
-    {
-      "source": "health-automaton",
-      "event_type": "health.system_status",
-      "version": "1.0.0",
-      "path": "health-automaton/health.system_status.json",
-      "content_hash": "2dacbb9fc11ea7951a0b99e61ac210b94a6fce559ad2b437dc38695ff0ae62b2"
     },
     {
       "source": "journald",
@@ -343,55 +294,6 @@
       "version": "1.0.0",
       "path": "log_processor/log.line.json",
       "content_hash": "7f93a38efea4cf64a1ae280b443a47aef7501974d1b1f4ae71c554213b1228b3"
-    },
-    {
-      "source": "pkm-automaton",
-      "event_type": "pkm.knowledge_extraction",
-      "version": "1.0.0",
-      "path": "pkm-automaton/pkm.knowledge_extraction.json",
-      "content_hash": "1b413443b5408580b28f22813d207a3f3dbdf94b8b1e7dc25d7e258495db6523"
-    },
-    {
-      "source": "pkm-automaton",
-      "event_type": "pkm.knowledge_graph",
-      "version": "1.0.0",
-      "path": "pkm-automaton/pkm.knowledge_graph.json",
-      "content_hash": "21c88cac520c0524fa75552eb47bf8a6cb513cd157a0ee07d3986df70cf5c55e"
-    },
-    {
-      "source": "pkm-automaton",
-      "event_type": "pkm.learning_session",
-      "version": "1.0.0",
-      "path": "pkm-automaton/pkm.learning_session.json",
-      "content_hash": "0bab3a2747e948f05e7f24a635b9b0bac0a164ea0c9221245e65efa4fcaa7d6c"
-    },
-    {
-      "source": "pkm-automaton",
-      "event_type": "pkm.workflow_pattern",
-      "version": "1.0.0",
-      "path": "pkm-automaton/pkm.workflow_pattern.json",
-      "content_hash": "2ac1f5319ee7d6217d003882ca008b150a6650dd5ebd9e6a114e568ce0b61c0a"
-    },
-    {
-      "source": "search-automaton",
-      "event_type": "search.analytics",
-      "version": "1.0.0",
-      "path": "search-automaton/search.analytics.json",
-      "content_hash": "c368f3c17ccd516c70b560034028005d55d3dea8165464f7bf8aa4f5a06efe0b"
-    },
-    {
-      "source": "search-automaton",
-      "event_type": "search.discoverability",
-      "version": "1.0.0",
-      "path": "search-automaton/search.discoverability.json",
-      "content_hash": "11772cb3a9e47ef2073b9451f492e4b639bd90318211d029e384ebc997193440"
-    },
-    {
-      "source": "search-automaton",
-      "event_type": "search.index_built",
-      "version": "1.0.0",
-      "path": "search-automaton/search.index_built.json",
-      "content_hash": "08354c3486e96f0bdbf68780a00d69d63c26ab8728647968c3fa113b624c94b0"
     },
     {
       "source": "shell.asciinema",
