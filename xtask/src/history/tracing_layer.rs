@@ -406,7 +406,7 @@ mod tests {
                             [],
                             |_| Ok(()),
                         )
-                        .map(|_| true)
+                        .map(|()| true)
                         .or_else(|error| {
                             if matches!(error, rusqlite::Error::QueryReturnedNoRows) {
                                 Ok(false)

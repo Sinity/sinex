@@ -754,9 +754,10 @@ impl<'db> HistoryAnalysis<'db> {
             .clamp(0, 100)) as u32;
         let test_score = avg_test_pass_rate.map_or(75, |avg| (avg * 100.0).round() as u32);
         let velocity_score = Self::compute_velocity_score(velocity_trends);
-        let score =
-            (build_score as f64 * 0.5 + test_score as f64 * 0.3 + velocity_score as f64 * 0.2)
-                .round() as u32;
+        let score = (f64::from(build_score) * 0.5
+            + f64::from(test_score) * 0.3
+            + f64::from(velocity_score) * 0.2)
+            .round() as u32;
 
         WorkspaceHealthReport {
             score,

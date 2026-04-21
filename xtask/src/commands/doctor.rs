@@ -1187,7 +1187,7 @@ pub(crate) fn resolve_effective_database_probe_url(
         })?;
         parsed
             .set_password(Some(&password))
-            .map_err(|_| eyre!("failed to apply database password for {purpose}"))?;
+            .map_err(|()| eyre!("failed to apply database password for {purpose}"))?;
         effective_url = parsed.to_string();
     } else if probe_target.password_required && !database_url_has_password(&effective_url) {
         return Err(eyre!(
@@ -1643,7 +1643,7 @@ fn check_terminal_sources(
         let check = validate_terminal_history_source(&label, &path);
 
         match check {
-            Ok(_) => readable.push(format!("{label}:{}", path.display())),
+            Ok(()) => readable.push(format!("{label}:{}", path.display())),
             Err(error) => unreadable.push(format!("{label}:{} ({error})", path.display())),
         }
     }
@@ -1967,15 +1967,15 @@ fn check_document_roots(
         }
     }
 
-    if !unreadable.is_empty() {
-        DeploymentReadinessItem::fail(
-            "document-roots",
-            format!("Unreadable document roots: {}", unreadable.join(", ")),
-        )
-    } else {
+    if unreadable.is_empty() {
         DeploymentReadinessItem::pass(
             "document-roots",
             format!("Readable document roots: {}", readable.join(", ")),
+        )
+    } else {
+        DeploymentReadinessItem::fail(
+            "document-roots",
+            format!("Unreadable document roots: {}", unreadable.join(", ")),
         )
     }
 }
@@ -2346,7 +2346,16 @@ async fn check_nats_streams(
         .cloned()
         .collect();
 
-    if !missing.is_empty() {
+    if missing.is_empty() {
+        DeploymentReadinessItem::pass(
+            "nats-streams",
+            format!(
+                "Connected to NATS at {}; required streams present: {}",
+                nats_config.url,
+                names.join(", ")
+            ),
+        )
+    } else {
         DeploymentReadinessItem::fail(
             "nats-streams",
             format!(
@@ -2358,15 +2367,6 @@ async fn check_nats_streams(
                 } else {
                     names.join(", ")
                 }
-            ),
-        )
-    } else {
-        DeploymentReadinessItem::pass(
-            "nats-streams",
-            format!(
-                "Connected to NATS at {}; required streams present: {}",
-                nats_config.url,
-                names.join(", ")
             ),
         )
     }

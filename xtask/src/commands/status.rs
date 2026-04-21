@@ -1471,7 +1471,9 @@ async fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         history: data.history.output(),
         // Rich fields
         health_score: data.history.health_report.as_ref().map(|r| r.score),
-        velocity: if !data.history.velocity.is_empty() {
+        velocity: if data.history.velocity.is_empty() {
+            None
+        } else {
             Some(
                 data.history
                     .velocity
@@ -1479,10 +1481,10 @@ async fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
                     .map(VelocityTrendOutput::from)
                     .collect(),
             )
-        } else {
-            None
         },
-        baseline_velocity: if !data.history.baseline_velocity.is_empty() {
+        baseline_velocity: if data.history.baseline_velocity.is_empty() {
+            None
+        } else {
             Some(
                 data.history
                     .baseline_velocity
@@ -1490,10 +1492,10 @@ async fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
                     .map(VelocityTrendOutput::from)
                     .collect(),
             )
-        } else {
-            None
         },
-        recommendations: if !data.history.recommendations.is_empty() {
+        recommendations: if data.history.recommendations.is_empty() {
+            None
+        } else {
             Some(
                 data.history
                     .recommendations
@@ -1501,8 +1503,6 @@ async fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
                     .map(RecommendationOutput::from)
                     .collect(),
             )
-        } else {
-            None
         },
         runtime: data.runtime_metrics.clone(),
         services: (!data.services.is_empty()).then(|| data.services.clone()),

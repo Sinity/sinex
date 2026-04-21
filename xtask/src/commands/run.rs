@@ -133,7 +133,7 @@ impl DevJournal {
             while let Some(line) = rx.recv().await {
                 if let Err(error) = writer
                     .write_all(line.as_bytes())
-                    .and_then(|_| writer.write_all(b"\n"))
+                    .and_then(|()| writer.write_all(b"\n"))
                 {
                     eprintln!("[run] failed to write dev journal entry: {error}");
                     break;
@@ -281,7 +281,7 @@ async fn wait_for_any_child_exit(
     children: &mut HashMap<String, Child>,
     ctx: &CommandContext,
 ) -> Option<String> {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(8 * 60 * 60);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_hours(8);
     loop {
         if tokio::time::Instant::now() >= deadline {
             if ctx.is_human() {
@@ -713,7 +713,10 @@ impl RunCommand {
             .run_tokio_status()
             .await
             .with_context(|| format!("Failed to build packages: {}", packages.join(", ")));
-        ctx.finish_stage(stage, status.as_ref().is_ok_and(|status| status.success()));
+        ctx.finish_stage(
+            stage,
+            status.as_ref().is_ok_and(std::process::ExitStatus::success),
+        );
         let status = status?;
         if !status.success() {
             bail!("Failed to build packages: {}", packages.join(", "));
@@ -1015,7 +1018,7 @@ impl RunCommand {
             .with_context(|| format!("Failed to run {package}"));
         ctx.finish_stage(
             run_stage,
-            status.as_ref().is_ok_and(|status| status.success()),
+            status.as_ref().is_ok_and(std::process::ExitStatus::success),
         );
         let status = status?;
 
@@ -1073,7 +1076,9 @@ impl RunCommand {
             .with_context(|| format!("Failed to build {package}"));
         ctx.finish_stage(
             build_stage,
-            build_status.as_ref().is_ok_and(|status| status.success()),
+            build_status
+                .as_ref()
+                .is_ok_and(std::process::ExitStatus::success),
         );
         let build_status = build_status?;
         if !build_status.success() {

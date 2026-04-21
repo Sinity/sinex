@@ -5,10 +5,10 @@
 
 // Use local facade for common types
 use crate::common::{
-    ActivityEntry, Checkpoint, ConfigAccessor, CoverageAnalysis, Deserialize, HashMap,
-    IngestionHistoryEntry, NodeCapabilities, NodeResult, NodeRuntimeState, ScanArgs, ScanReport,
-    Serialize, SinexError, SourceState, TimeHorizon, error, info, instrument, parse_config_value,
-    parse_typed_config, warn,
+    ActivityEntry, Checkpoint, ConfigAccessor, ContinuousStart, CoverageAnalysis, Deserialize,
+    HashMap, IngestionHistoryEntry, NodeCapabilities, NodeResult, NodeRuntimeState, ScanArgs,
+    ScanReport, Serialize, SinexError, SourceState, TimeHorizon, error, info, instrument,
+    parse_config_value, parse_typed_config, warn,
 };
 
 use crate::{
@@ -876,7 +876,7 @@ impl IngestorNode for DesktopNode {
     async fn run_continuous(
         &mut self,
         state: &mut Self::State,
-        _from: Checkpoint,
+        _start: ContinuousStart,
         mut shutdown_rx: watch::Receiver<bool>,
     ) -> NodeResult<ScanReport> {
         info!("Starting continuous desktop monitoring");
@@ -1516,8 +1516,12 @@ mod tests {
         let task = tokio::spawn(async move {
             let mut node = node;
             let mut state = state;
-            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
-                .await
+            node.run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(Checkpoint::None),
+                shutdown_rx,
+            )
+            .await
         });
 
         tokio::task::yield_now().await;
@@ -1558,7 +1562,11 @@ mod tests {
 
         let report = tokio::time::timeout(
             std::time::Duration::from_secs(1),
-            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx),
+            node.run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(Checkpoint::None),
+                shutdown_rx,
+            ),
         )
         .await??;
         assert!(
@@ -1593,8 +1601,12 @@ mod tests {
         let task = tokio::spawn(async move {
             let mut node = node;
             let mut state = state;
-            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
-                .await
+            node.run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(Checkpoint::None),
+                shutdown_rx,
+            )
+            .await
         });
 
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;

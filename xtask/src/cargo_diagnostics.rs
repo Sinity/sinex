@@ -208,6 +208,7 @@ fn run_cargo_with_timeout(cargo_args: &[&str]) -> color_eyre::eyre::Result<(Vec<
 /// For `-p package` args: counts the specified packages directly (instantaneous).
 /// For `--workspace`/`--all`: queries `cargo metadata --no-deps` (fast, no rustc).
 /// Returns 0 on error or when args are ambiguous (caller keeps progress indeterminate).
+#[must_use]
 pub fn estimate_package_count(package_args: &[&str]) -> usize {
     progress_target_packages(package_args).map_or(0, |targets| targets.len())
 }

@@ -5,6 +5,7 @@ use crate::commands::exercise::builders::{extract_json_field, v_json};
 use crate::commands::exercise::runner::exec_step;
 use crate::commands::exercise::types::{ExpectedExit, StepOutcome};
 
+#[must_use]
 pub fn custom_history_roundtrip(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 
@@ -57,6 +58,7 @@ pub fn custom_history_roundtrip(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
 }
 
 /// Verify that the preflight stage appears in `history stages` after a check run.
+#[must_use]
 pub fn custom_preflight_stages_in_history(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 
@@ -107,6 +109,7 @@ pub fn custom_preflight_stages_in_history(dir: &Path, verbose: bool) -> Vec<Step
 }
 
 /// Verify that `history diagnostics --json` returns valid JSON after a check run.
+#[must_use]
 pub fn custom_diagnostic_delta_roundtrip(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 
@@ -160,6 +163,7 @@ pub fn custom_diagnostic_delta_roundtrip(dir: &Path, verbose: bool) -> Vec<StepO
 }
 
 /// Verify that stage_timings are non-empty for the latest check invocation.
+#[must_use]
 pub fn custom_history_stages_populated(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 

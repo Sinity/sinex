@@ -66,6 +66,7 @@ pub struct RuntimeAssessment {
 }
 
 impl RuntimeMetrics {
+    #[must_use]
     pub fn unavailable() -> Self {
         Self {
             ingestd_status: IngestdStatus::Unknown,
@@ -85,6 +86,7 @@ impl RuntimeMetrics {
         }
     }
 
+    #[must_use]
     pub fn fresh_consumer_lag_pending(&self) -> Option<f64> {
         self.consumer_lag_pending.filter(|_| {
             self.consumer_lag_age_secs
@@ -92,10 +94,12 @@ impl RuntimeMetrics {
         })
     }
 
+    #[must_use]
     pub fn consumer_lag_is_stale(&self) -> bool {
         self.consumer_lag_pending.is_some() && self.fresh_consumer_lag_pending().is_none()
     }
 
+    #[must_use]
     pub fn fresh_batch_latency_ms(&self) -> Option<f64> {
         self.last_batch_latency_ms.filter(|_| {
             self.last_batch_latency_age_secs
@@ -103,6 +107,7 @@ impl RuntimeMetrics {
         })
     }
 
+    #[must_use]
     pub fn batch_latency_is_stale(&self) -> bool {
         self.last_batch_latency_ms.is_some() && self.fresh_batch_latency_ms().is_none()
     }
@@ -114,16 +119,19 @@ impl RuntimeMetrics {
         }
     }
 
+    #[must_use]
     pub fn consumer_lag_stale_note(&self) -> Option<String> {
         self.consumer_lag_is_stale()
             .then(|| Self::describe_sample_age(self.consumer_lag_age_secs))
     }
 
+    #[must_use]
     pub fn batch_latency_stale_note(&self) -> Option<String> {
         self.batch_latency_is_stale()
             .then(|| Self::describe_sample_age(self.last_batch_latency_age_secs))
     }
 
+    #[must_use]
     pub fn warnings(&self) -> Vec<String> {
         let mut warnings = Vec::new();
         if let Some(error) = &self.query_error {
@@ -171,6 +179,7 @@ impl RuntimeMetrics {
         warnings
     }
 
+    #[must_use]
     pub fn assessment(&self) -> RuntimeAssessment {
         let warnings = self.warnings();
         let status = if matches!(self.ingestd_status, IngestdStatus::Unknown)
@@ -188,6 +197,7 @@ impl RuntimeMetrics {
     }
 
     /// Format as a compact one-line summary fragment for status --summary
+    #[must_use]
     pub fn summary_fragment(&self) -> String {
         let ingestd = format!("ingestd:{}", self.ingestd_status);
         let lag = self.fresh_consumer_lag_pending().map_or_else(

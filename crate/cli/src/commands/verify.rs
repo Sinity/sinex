@@ -48,7 +48,7 @@ const VERIFY_GATEWAY_SOURCE: &str = "sinexctl.verify";
 const VERIFY_GATEWAY_EVENT_TYPE: &str = "test.ping";
 const DOCUMENT_INGESTOR_SOURCE: &str = "document-ingestor";
 const DOCUMENT_INGESTED_EVENT_TYPE: &str = "document.ingested";
-const SOURCE_PROOF_RECENT_WINDOW: Duration = Duration::from_secs(60 * 60);
+const SOURCE_PROOF_RECENT_WINDOW: Duration = Duration::from_hours(1);
 
 fn session_detector_output_source() -> &'static str {
     ActivitySessionBoundaryPayload::SOURCE.as_static_str()
@@ -1409,8 +1409,8 @@ fn result_kind(result: &EventQueryResult) -> &'static str {
 mod tests {
     use super::*;
     use sinex_primitives::{
-        AutomataDeploymentSurface, DeploymentSurface, DesktopDeploymentSurface,
-        DocumentDeploymentSurface, TerminalDeploymentSurface,
+        AutomataDeploymentSurface, BrowserDeploymentSurface, DeploymentSurface,
+        DesktopDeploymentSurface, DocumentDeploymentSurface, TerminalDeploymentSurface,
     };
     use xtask::sandbox::prelude::*;
 

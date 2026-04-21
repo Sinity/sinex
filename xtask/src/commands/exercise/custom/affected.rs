@@ -5,6 +5,7 @@ use crate::commands::exercise::builders::v_json;
 use crate::commands::exercise::runner::{GitStateGuard, exec_step, run_affected_exercise};
 use crate::commands::exercise::types::{ExpectedExit, StepOutcome};
 
+#[must_use]
 pub fn custom_affected_clean(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 
@@ -38,6 +39,7 @@ pub fn custom_affected_clean(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     steps
 }
 
+#[must_use]
 pub fn custom_affected_leaf(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     run_affected_exercise(
         dir,
@@ -48,6 +50,7 @@ pub fn custom_affected_leaf(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     )
 }
 
+#[must_use]
 pub fn custom_affected_foundation(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     run_affected_exercise(
         dir,
@@ -58,6 +61,7 @@ pub fn custom_affected_foundation(dir: &Path, verbose: bool) -> Vec<StepOutcome>
     )
 }
 
+#[must_use]
 pub fn custom_affected_workspace(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     run_affected_exercise(
         dir,
@@ -70,6 +74,7 @@ pub fn custom_affected_workspace(dir: &Path, verbose: bool) -> Vec<StepOutcome> 
 
 /// Affected transitive: touch sinex-db (a mid-level library), verify that
 /// transitive dependents like sinex-services and sinex-gateway appear.
+#[must_use]
 pub fn custom_affected_transitive(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     run_affected_exercise(
         dir,

@@ -39,7 +39,7 @@ const SQLITE_PERSISTENT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const SQLITE_EPHEMERAL_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const SQLITE_QUERY_BUSY_TIMEOUT: Duration = Duration::from_secs(1);
 const SQLITE_STALE_CLEANUP_BUSY_TIMEOUT: Duration = Duration::from_millis(50);
-const HISTORY_DB_INTEGRITY_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+const HISTORY_DB_INTEGRITY_CHECK_INTERVAL: Duration = Duration::from_hours(6);
 const HISTORY_DB_INTEGRITY_STAMP_EXTENSION: &str = "db.integrity.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,7 +125,7 @@ impl HistoryIntegrityStamp {
 }
 
 fn history_process_is_alive(pid: i64) -> bool {
-    if !(1..=i32::MAX as i64).contains(&pid) {
+    if !(1..=i64::from(i32::MAX)).contains(&pid) {
         return false;
     }
 
@@ -184,8 +184,12 @@ fn persist_history_integrity_stamp(path: &Path, now: OffsetDateTime) -> Result<(
             stamp_path.display()
         )
     })?;
-    std::fs::create_dir_all(parent)
-        .with_context(|| format!("failed to create history stamp directory: {}", parent.display()))?;
+    std::fs::create_dir_all(parent).with_context(|| {
+        format!(
+            "failed to create history stamp directory: {}",
+            parent.display()
+        )
+    })?;
     let payload = serde_json::to_vec_pretty(&HistoryIntegrityStamp::new(now))
         .context("failed to serialize history integrity stamp")?;
     let mut temp_file = NamedTempFile::new_in(parent).with_context(|| {
@@ -3443,7 +3447,7 @@ impl HistoryDb {
                         run_id,
                         entry.id,
                         entry.tier,
-                        entry.passed as i64,
+                        i64::from(entry.passed),
                         entry.duration_secs,
                         entry.error,
                         entry.steps.len() as i64,
@@ -4983,7 +4987,7 @@ mod tests {
             params![
                 invocation_id,
                 "check",
-                std::process::id() as i64,
+                i64::from(std::process::id()),
                 "2000-01-01T00:00:00Z"
             ],
         )?;
@@ -5081,7 +5085,7 @@ mod tests {
                 "2000-01-01T00:00:00Z",
                 "localhost",
                 "/tmp",
-                std::process::id() as i64
+                i64::from(std::process::id())
             ],
         )?;
         drop(db);
@@ -5121,7 +5125,7 @@ mod tests {
                 "2000-01-01T00:00:00Z",
                 "localhost",
                 "/tmp",
-                std::process::id() as i64
+                i64::from(std::process::id())
             ],
         )?;
         drop(db);
@@ -5170,7 +5174,7 @@ mod tests {
                 "2000-01-01T00:00:00Z",
                 "localhost",
                 "/tmp",
-                std::process::id() as i64
+                i64::from(std::process::id())
             ],
         )?;
         drop(db);
@@ -5389,7 +5393,7 @@ mod tests {
                 "check",
                 "localhost",
                 "/tmp",
-                std::process::id() as i64,
+                i64::from(std::process::id()),
                 "test"
             ],
         )?;
@@ -5413,7 +5417,7 @@ mod tests {
                 command, started_at, status, host, cwd, pid, is_background
             ) VALUES (?1, '2000-01-01T00:00:00Z', 'running', ?2, ?3, ?4, 1)
             ",
-            params!["check", "localhost", "/tmp", std::process::id() as i64],
+            params!["check", "localhost", "/tmp", i64::from(std::process::id())],
         )?;
 
         assert!(

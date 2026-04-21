@@ -2,10 +2,10 @@ use sinex_node_sdk::WindowedNode;
 use sinex_node_sdk::derived_node::{DerivedAggregationMeta, DerivedTriggerContext};
 use sinex_primitives::activity::ActivitySourceKind;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
-use sinex_primitives::events::Event;
 use sinex_primitives::events::payloads::{
     ActivitySessionBoundaryPayload, ActivityWindowCloseReason, ActivityWindowSummaryPayload,
 };
+use sinex_primitives::events::{Event, EventPayload};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue};
 use sinex_session_detector::{SessionDetector, SessionState};

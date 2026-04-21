@@ -174,9 +174,10 @@ pub use node_cli::{NodeCli, NodeCliRunner, NodeCommand, parse_checkpoint, parse_
 pub use processing::{ErrorAction, NodeLogicError};
 #[cfg(feature = "messaging")]
 pub use runtime::stream::{
-    Checkpoint, EventSender, EventStream, MaterialReplayContext, Node, NodeCapabilities,
-    NodeRunner, NodeScanAck, NodeScanCommand, NodeScanProgress, NodeType, ReplayScopeFilters,
-    ResolvedReplayMaterial, RunnerLifecycle, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
+    Checkpoint, ContinuousStart, EventSender, EventStream, MaterialReplayContext, Node,
+    NodeCapabilities, NodeRunner, NodeScanAck, NodeScanCommand, NodeScanProgress, NodeType,
+    ReplayScopeFilters, ResolvedReplayMaterial, RunnerLifecycle, ScanArgs, ScanEstimate,
+    ScanReport, TimeHorizon,
 };
 #[cfg(feature = "messaging")]
 pub use self_observation::{

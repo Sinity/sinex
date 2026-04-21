@@ -18,7 +18,8 @@ use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, AppendStreamAcquirer, RotationPolicy},
     ingestor_node::IngestorNode,
     runtime::stream::{
-        Checkpoint, NodeRuntimeState, ScanArgs, ScanReport, ServiceInfo, TimeHorizon,
+        Checkpoint, ContinuousStart, NodeRuntimeState, ScanArgs, ScanReport, ServiceInfo,
+        TimeHorizon,
     },
     stage_as_you_go::StageAsYouGoContext,
     wait_for_shutdown_signal,
@@ -3012,9 +3013,10 @@ impl IngestorNode for TerminalNode {
     async fn run_continuous(
         &mut self,
         _state: &mut Self::State,
-        from: Checkpoint,
+        start: ContinuousStart,
         shutdown_rx: watch::Receiver<bool>,
     ) -> NodeResult<ScanReport> {
+        let from = start.checkpoint().clone();
         let started_at = Timestamp::now();
         let start_time = Instant::now();
         if *shutdown_rx.borrow() {
@@ -5038,7 +5040,11 @@ mod tests {
 
         let (_, shutdown_rx) = tokio::sync::watch::channel(false);
         let error = node
-            .run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+            .run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(Checkpoint::None),
+                shutdown_rx,
+            )
             .await
             .expect_err("continuous mode should fail when no valid sources remain");
         assert!(
@@ -5083,7 +5089,11 @@ mod tests {
 
         let (_, shutdown_rx) = tokio::sync::watch::channel(false);
         let error = node
-            .run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+            .run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(Checkpoint::None),
+                shutdown_rx,
+            )
             .await
             .expect_err("continuous mode should fail when Fish history is unsupported");
         assert!(
@@ -5197,7 +5207,11 @@ mod tests {
 
         let (_, shutdown_rx) = tokio::sync::watch::channel(false);
         let error = node
-            .run_continuous(&mut state, Checkpoint::None, shutdown_rx)
+            .run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(Checkpoint::None),
+                shutdown_rx,
+            )
             .await
             .expect_err("continuous mode should fail when Elvish history is unsupported");
         assert!(
@@ -5265,9 +5279,13 @@ mod tests {
         let node_task = tokio::spawn(async move {
             let mut node = node;
             let mut state = state;
-            node.run_continuous(&mut state, incoming.clone(), shutdown_rx)
-                .await
-                .map(|report| (report, incoming))
+            node.run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(incoming.clone()),
+                shutdown_rx,
+            )
+            .await
+            .map(|report| (report, incoming))
         });
 
         tokio::task::yield_now().await;
@@ -5357,7 +5375,12 @@ mod tests {
         let task = tokio::spawn(async move {
             let mut node = node;
             let mut state = state;
-            node.run_continuous(&mut state, incoming, shutdown_rx).await
+            node.run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(incoming),
+                shutdown_rx,
+            )
+            .await
         });
 
         tokio::task::yield_now().await;
@@ -5439,8 +5462,12 @@ mod tests {
         let task = tokio::spawn(async move {
             let mut node = node;
             let mut state = state;
-            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
-                .await
+            node.run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(Checkpoint::None),
+                shutdown_rx,
+            )
+            .await
         });
 
         tokio::task::yield_now().await;
@@ -5535,8 +5562,12 @@ mod tests {
         let task = tokio::spawn(async move {
             let mut node = node;
             let mut state = state;
-            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
-                .await
+            node.run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(Checkpoint::None),
+                shutdown_rx,
+            )
+            .await
         });
 
         tokio::task::yield_now().await;
@@ -5592,8 +5623,12 @@ mod tests {
         let task = tokio::spawn(async move {
             let mut node = node;
             let mut state = state;
-            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
-                .await
+            node.run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(Checkpoint::None),
+                shutdown_rx,
+            )
+            .await
         });
 
         tokio::task::yield_now().await;
@@ -5690,7 +5725,12 @@ mod tests {
         let task = tokio::spawn(async move {
             let mut node = node;
             let mut state = state;
-            node.run_continuous(&mut state, incoming, shutdown_rx).await
+            node.run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(incoming),
+                shutdown_rx,
+            )
+            .await
         });
 
         tokio::task::yield_now().await;
@@ -5766,7 +5806,11 @@ mod tests {
 
         let (_, shutdown_rx) = tokio::sync::watch::channel(false);
         let error = node
-            .run_continuous(&mut state, invalid, shutdown_rx)
+            .run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(invalid),
+                shutdown_rx,
+            )
             .await
             .expect_err("continuous mode should reject unusable incoming checkpoints");
         assert!(
@@ -5852,7 +5896,7 @@ mod tests {
             let mut state = state;
             node.run_continuous(
                 &mut state,
-                Checkpoint::timestamp(Timestamp::now(), None),
+                ContinuousStart::from_checkpoint(Checkpoint::timestamp(Timestamp::now(), None)),
                 shutdown_rx,
             )
             .await
@@ -5937,8 +5981,12 @@ mod tests {
         let task = tokio::spawn(async move {
             let mut node = node;
             let mut state = state;
-            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
-                .await
+            node.run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(Checkpoint::None),
+                shutdown_rx,
+            )
+            .await
         });
 
         tokio::task::yield_now().await;
@@ -6039,7 +6087,11 @@ mod tests {
 
         let (_, shutdown_rx) = tokio::sync::watch::channel(false);
         let error = node
-            .run_continuous(&mut state, incoming, shutdown_rx)
+            .run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(incoming),
+                shutdown_rx,
+            )
             .await
             .expect_err(
                 "corrupt local state for an omitted source must fail instead of resetting progress",
@@ -6107,8 +6159,12 @@ mod tests {
         let task = tokio::spawn(async move {
             let mut node = node;
             let mut state = state;
-            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
-                .await
+            node.run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(Checkpoint::None),
+                shutdown_rx,
+            )
+            .await
         });
 
         tokio::task::yield_now().await;
@@ -6178,7 +6234,11 @@ mod tests {
 
         let report = tokio::time::timeout(
             std::time::Duration::from_secs(1),
-            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx),
+            node.run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(Checkpoint::None),
+                shutdown_rx,
+            ),
         )
         .await??;
         assert!(
@@ -6240,8 +6300,12 @@ mod tests {
         let task = tokio::spawn(async move {
             let mut node = node;
             let mut state = state;
-            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
-                .await
+            node.run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(Checkpoint::None),
+                shutdown_rx,
+            )
+            .await
         });
 
         tokio::task::yield_now().await;
@@ -6325,8 +6389,12 @@ mod tests {
         let task = tokio::spawn(async move {
             let mut node = node;
             let mut state = state;
-            node.run_continuous(&mut state, Checkpoint::None, shutdown_rx)
-                .await
+            node.run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(Checkpoint::None),
+                shutdown_rx,
+            )
+            .await
         });
 
         tokio::task::yield_now().await;

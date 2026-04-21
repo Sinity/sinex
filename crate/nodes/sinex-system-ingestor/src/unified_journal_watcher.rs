@@ -18,6 +18,7 @@ use nix::unistd::Pid;
 use parking_lot::Mutex;
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use sinex_node_sdk::{Checkpoint, TimeHorizon};
 use sinex_node_sdk::{NatsPublisher, NodeResult};
 use sinex_primitives::events::{
     JournalEntryWrittenPayload as EventJournalEntryWrittenPayload,
@@ -813,7 +814,7 @@ impl UnifiedJournalWatcher {
         self.systemd_units.extend(units);
     }
 
-    /// Start streaming events with optional historical import
+    /// Start streaming live journal events.
     pub(crate) async fn start_streaming(
         &mut self,
         journal_tx: mpsc::Sender<Event<JsonValue>>,
@@ -823,19 +824,6 @@ impl UnifiedJournalWatcher {
         let _activity = self.begin_streaming();
         info!("Starting unified journal monitoring");
 
-        // Import historical entries if configured
-        if self.journal_config.import_on_startup {
-            self.import_historical(&journal_tx, &systemd_tx, &material)
-                .await
-                .map_err(|error| {
-                    self.record_error(format!(
-                        "Failed to import historical journal entries: {error}"
-                    ));
-                    error.with_context("startup_phase", "historical_import".to_string())
-                })?;
-        }
-
-        // Follow journal if configured
         if self.journal_config.follow {
             self.follow_journal(journal_tx, systemd_tx, &material)
                 .await?;
@@ -844,34 +832,31 @@ impl UnifiedJournalWatcher {
         Ok(())
     }
 
-    /// Import historical journal entries with cursor tracking
-    pub(crate) async fn import_historical(
-        &mut self,
-        journal_tx: &mpsc::Sender<Event<JsonValue>>,
-        systemd_tx: &Option<mpsc::Sender<Event<JsonValue>>>,
-        material: &WatcherMaterialContext,
-    ) -> NodeResult<u64> {
-        info!("Starting historical journal import");
-        let start_time = std::time::Instant::now();
-
+    fn historical_import_args(&self, from: &Checkpoint, until: &TimeHorizon) -> Vec<String> {
         let mut args = vec!["--output=json".to_string(), "--no-pager".to_string()];
 
-        // Add time filter
-        if self.journal_config.import_hours > 0 {
-            args.push(format!("--since=-{}h", self.journal_config.import_hours));
+        match from {
+            Checkpoint::Timestamp { timestamp, .. } => {
+                args.push(format!("--since={}", timestamp.format_rfc3339()));
+            }
+            Checkpoint::None if self.journal_config.import_hours > 0 => {
+                args.push(format!("--since=-{}h", self.journal_config.import_hours));
+            }
+            _ => {}
         }
 
-        // Add cursor position if we have one
+        if let Some(end_time) = until.end_time() {
+            args.push(format!("--until={}", end_time.format_rfc3339()));
+        }
+
         if let Some(ref cursor) = self.last_cursor {
             args.push(format!("--after-cursor={cursor}"));
         }
 
-        // Add unit filters
         for unit in &self.journal_config.units {
             args.push(format!("--unit={unit}"));
         }
 
-        // Add priority filter
         if !self.journal_config.priorities.is_empty() {
             let priorities: Vec<String> = self
                 .journal_config
@@ -882,15 +867,30 @@ impl UnifiedJournalWatcher {
             args.push(format!("--priority={}", priorities.join("..")));
         }
 
-        // Add kernel filter
         if !self.journal_config.include_kernel {
             args.push("--no-kernel".to_string());
         }
 
-        // Add user filter
         if !self.journal_config.include_user {
             args.push("--system".to_string());
         }
+
+        args
+    }
+
+    /// Import historical journal entries with cursor tracking
+    pub(crate) async fn import_historical(
+        &mut self,
+        journal_tx: &mpsc::Sender<Event<JsonValue>>,
+        systemd_tx: &Option<mpsc::Sender<Event<JsonValue>>>,
+        material: &WatcherMaterialContext,
+        from: &Checkpoint,
+        until: &TimeHorizon,
+    ) -> NodeResult<u64> {
+        info!("Starting historical journal import");
+        let start_time = std::time::Instant::now();
+
+        let args = self.historical_import_args(from, until);
 
         let mut child = Command::new("journalctl")
             .args(&args)
@@ -2147,7 +2147,15 @@ mod tests {
         let (journal_tx, mut journal_rx) = mpsc::channel(1);
 
         let entries = watcher
-            .import_historical(&journal_tx, &None, &material)
+            .import_historical(
+                &journal_tx,
+                &None,
+                &material,
+                &Checkpoint::None,
+                &TimeHorizon::Historical {
+                    end_time: Timestamp::now(),
+                },
+            )
             .await?;
 
         assert_eq!(entries, 0);
@@ -2526,36 +2534,73 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn start_streaming_surfaces_historical_import_failures(
-        ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn start_streaming_never_runs_historical_import(ctx: TestContext) -> TestResult<()> {
         let _ = ctx;
         let _path = EnvGuard::set_single("PATH", "");
         let mut watcher = test_watcher();
-        watcher.journal_config.import_on_startup = true;
         watcher.journal_config.follow = false;
         let material = test_material();
         let (journal_tx, _journal_rx) = mpsc::channel(1);
 
-        let error = watcher
-            .start_streaming(journal_tx, None, material)
-            .await
-            .expect_err("historical import failure must abort startup");
+        watcher.start_streaming(journal_tx, None, material).await?;
 
-        assert!(error.to_string().contains("Failed to run journalctl"));
-        assert!(error.to_string().contains("historical_import"));
         let snapshot = watcher.health_snapshot();
-        assert!(
-            snapshot
-                .last_error
-                .as_deref()
-                .is_some_and(|value| value.contains("Failed to import historical journal entries"))
-        );
+        assert!(snapshot.last_error.is_none());
         assert!(
             !snapshot.active,
-            "failed startup must not leave the watcher marked active"
+            "non-following startup must not leave the watcher marked active"
         );
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn historical_import_args_prefer_explicit_checkpoint_window() -> TestResult<()> {
+        let mut watcher = test_watcher();
+        watcher.journal_config.import_hours = 0;
+        watcher.journal_config.units = vec!["ssh.service".to_string()];
+        watcher.journal_config.priorities = vec![3, 4];
+        watcher.journal_config.include_kernel = false;
+        watcher.journal_config.include_user = false;
+        watcher.last_cursor = Some("s=cursor;i=1;b=boot;m=1;t=1;x=1".to_string());
+
+        let since =
+            Timestamp::from_unix_timestamp(1_710_000_000).expect("test timestamp should be valid");
+        let until =
+            Timestamp::from_unix_timestamp(1_710_003_600).expect("test timestamp should be valid");
+        let args = watcher.historical_import_args(
+            &Checkpoint::timestamp(since, None),
+            &TimeHorizon::Historical { end_time: until },
+        );
+
+        assert!(args.contains(&format!("--since={}", since.format_rfc3339())));
+        assert!(args.contains(&format!("--until={}", until.format_rfc3339())));
+        assert!(args.contains(&"--after-cursor=s=cursor;i=1;b=boot;m=1;t=1;x=1".to_string()));
+        assert!(args.contains(&"--unit=ssh.service".to_string()));
+        assert!(args.contains(&"--priority=3..4".to_string()));
+        assert!(args.contains(&"--no-kernel".to_string()));
+        assert!(args.contains(&"--system".to_string()));
+        assert!(
+            !args.iter().any(|arg| arg.starts_with("--since=-")),
+            "explicit checkpoint must not be widened by import_hours"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn historical_import_args_do_not_widen_external_checkpoint() -> TestResult<()> {
+        let mut watcher = test_watcher();
+        watcher.journal_config.import_hours = 24;
+
+        let args = watcher.historical_import_args(
+            &Checkpoint::external(json!({"cursor": "journal"}), "journal cursor"),
+            &TimeHorizon::Continuous,
+        );
+
+        assert!(
+            !args.iter().any(|arg| arg.starts_with("--since=-")),
+            "explicit non-timestamp checkpoints must not be widened by import_hours"
+        );
         Ok(())
     }
 

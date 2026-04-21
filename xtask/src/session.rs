@@ -28,11 +28,13 @@ pub struct WatchLoop {
 
 impl WatchLoop {
     /// Create a new `WatchLoop` with the given interval.
+    #[must_use]
     pub fn new(interval: Duration) -> Self {
         Self { interval }
     }
 
     /// Convenience constructor: interval in whole seconds.
+    #[must_use]
     pub fn with_interval_secs(secs: u64) -> Self {
         Self::new(Duration::from_secs(secs))
     }

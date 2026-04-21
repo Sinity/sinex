@@ -22,7 +22,8 @@ mod common {
         NodeResult, SinexError,
         error_helpers::{ConfigAccessor, parse_config_value, parse_typed_config, path_utils},
         runtime::stream::{
-            Checkpoint, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon,
+            Checkpoint, ContinuousStart, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport,
+            TimeHorizon,
         },
     };
 

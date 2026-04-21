@@ -5,6 +5,7 @@ use crate::commands::exercise::builders::{extract_json_field, v_json};
 use crate::commands::exercise::runner::exec_step;
 use crate::commands::exercise::types::{ExpectedExit, StepOutcome};
 
+#[must_use]
 pub fn custom_jobs_prune(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 
@@ -25,6 +26,7 @@ pub fn custom_jobs_prune(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
 
 /// Jobs output while running: spawn a bg job, immediately read its output,
 /// then wait for completion and read again — verify output grows.
+#[must_use]
 pub fn custom_jobs_output_while_running(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 

@@ -56,6 +56,7 @@ All nodes follow a consistent startup sequence to ensure data completeness:
     *   Uses `TimeHorizon::Historical { end_time }`.
 3.  **Phase 3: Continuous Processing**
     *   Real-time event monitoring and streaming.
+    *   Receives `ContinuousStart`, whose checkpoint is only a live-tail resume cursor.
     *   Continues indefinitely until shutdown.
 
 ## 💾 Checkpoint & State Management
