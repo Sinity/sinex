@@ -22,11 +22,15 @@ use crate::{
 use camino::Utf8PathBuf;
 use serde_json::json;
 use sinex_node_sdk::{
-    EventTransport, SourceRecordAnchor, SqliteHistoryImportError, SqliteHistoryRowOutcome,
-    acquisition_manager::{AcquisitionManager, AppendStreamAcquirer, RotationPolicy},
-    checkpointed_sqlite_history_strict,
+    BufferedRecordSink, EventTransport, RecordMaterializer, RecordProcessingOutcome,
+    RecordReadHorizon, RecordSource, RecordSources, RecordWarningDisposition, SourceRecordAnchor,
+    SqliteRowCheckpoint,
+    acquisition_manager::{
+        AcquisitionManager, AppendStreamAcquirer, BufferedAppendStreamWriterConfig, RotationPolicy,
+    },
     ingestor_node::IngestorNode,
     nats_publisher::NatsPublisher,
+    process_record_batch_lenient,
     stage_as_you_go::StageAsYouGoContext,
     wait_for_shutdown_signal,
     watcher_handle::WatcherHandle,
@@ -413,8 +417,7 @@ impl DesktopNode {
     }
 
     async fn stage_activitywatch_material(
-        stream: &tokio::sync::Mutex<AppendStreamAcquirer>,
-        db_path: &Utf8PathBuf,
+        materializer: &RecordMaterializer<BufferedRecordSink>,
         entry: &ActivityWatchHistoryEntry,
     ) -> NodeResult<SourceRecordAnchor> {
         let mut material_bytes =
@@ -424,9 +427,8 @@ impl DesktopNode {
             })?;
         material_bytes.push(b'\n');
 
-        let mut stream = stream.lock().await;
-        stream
-            .append_with_anchor(&material_bytes, db_path.as_str())
+        materializer
+            .append_stable_bytes(material_bytes)
             .await
             .map_err(|error| {
                 SinexError::service("failed to append ActivityWatch material").with_source(error)
@@ -548,12 +550,11 @@ impl DesktopNode {
 
     async fn emit_activitywatch_entry(
         &self,
-        stream: &tokio::sync::Mutex<AppendStreamAcquirer>,
-        db_path: &Utf8PathBuf,
+        materializer: &RecordMaterializer<BufferedRecordSink>,
         entry: &ActivityWatchHistoryEntry,
     ) -> NodeResult<()> {
         let (_, stage_context) = self.activitywatch_runtime_handles()?;
-        let anchor = Self::stage_activitywatch_material(stream, db_path, entry).await?;
+        let anchor = Self::stage_activitywatch_material(materializer, entry).await?;
         let event = Self::build_activitywatch_event(
             entry,
             anchor.material_id,
@@ -802,56 +803,70 @@ impl IngestorNode for DesktopNode {
             Self::historical_activitywatch_start_row_for_scan(state, &from, args.replay.is_some())?;
         let mut first_ts = None;
         let mut last_ts = None;
-        let node = &*self;
         let acquisition =
             Arc::clone(self.acquisition.as_ref().ok_or_else(|| {
                 SinexError::lifecycle("Desktop acquisition manager not initialized")
             })?);
-        let stream = Arc::new(tokio::sync::Mutex::new(AppendStreamAcquirer::new(
-            acquisition,
-        )));
-        let mut row_id_cursor = start_row_id;
-        let import_result = checkpointed_sqlite_history_strict(
-            &mut row_id_cursor,
-            until.end_time(),
-            |from_row_id, end_time| read_activitywatch_history(&db_path, from_row_id, end_time),
+        let materializer = RecordMaterializer::new(BufferedRecordSink::spawn(
+            AppendStreamAcquirer::new(acquisition),
+            db_path.as_str(),
+            BufferedAppendStreamWriterConfig::default(),
+        ));
+        let source = RecordSources::sqlite(
+            db_path.clone(),
+            db_path.as_str(),
+            read_activitywatch_history,
+            |entry: &ActivityWatchHistoryEntry| entry.row_id,
+        );
+        let horizon = until
+            .end_time()
+            .map_or(RecordReadHorizon::Unbounded, RecordReadHorizon::Until);
+        let mut checkpoint = SqliteRowCheckpoint::new(start_row_id);
+        let batch = source
+            .read_batch(&checkpoint, horizon)
+            .await
+            .map_err(|error| {
+                SinexError::io(format!(
+                    "Failed to read ActivityWatch history from {db_path}: {error}"
+                ))
+            })?;
+        let node = &*self;
+        let import_report = process_record_batch_lenient(
+            &mut checkpoint,
+            batch,
             |entry| {
-                let db_path = db_path.clone();
-                let stream = Arc::clone(&stream);
                 let started_at = entry.started_at;
                 let ended_at = entry.ended_at;
+                let materializer = materializer.clone();
                 if first_ts.is_none() {
                     first_ts = Some(started_at);
                 }
                 last_ts = Some(ended_at);
                 async move {
-                    node.emit_activitywatch_entry(stream.as_ref(), &db_path, &entry)
+                    node.emit_activitywatch_entry(&materializer, &entry)
                         .await
-                        .map(|()| SqliteHistoryRowOutcome::Processed)
+                        .map(|()| RecordProcessingOutcome::Processed)
                 }
             },
+            |_| RecordWarningDisposition::Retry,
         )
         .await;
 
-        stream
-            .lock()
-            .await
+        materializer
             .finalize("desktop-activitywatch-historical")
             .await?;
 
-        let import_report = import_result.map_err(|error| match error {
-            SqliteHistoryImportError::Read(error) => SinexError::io(format!(
-                "Failed to read ActivityWatch history from {db_path}: {error}"
-            )),
-            SqliteHistoryImportError::Process(error) => error,
-        })?;
+        if let Some(error) = import_report.warnings.into_iter().next() {
+            return Err(error);
+        }
 
+        let row_id_cursor = checkpoint.row_id;
         if row_id_cursor > state.activitywatch_last_row_id {
             state.activitywatch_last_row_id = row_id_cursor;
         }
 
         Ok(ScanReport {
-            events_processed: import_report.processed_rows as u64,
+            events_processed: import_report.processed_records as u64,
             duration: start_time.elapsed(),
             final_checkpoint: Checkpoint::external(
                 json!({ "activitywatch_row_id": row_id_cursor }),
@@ -861,7 +876,7 @@ impl IngestorNode for DesktopNode {
             node_stats: HashMap::new(),
             successful_targets: vec!["desktop_activitywatch_historical".to_string()],
             failed_targets: Vec::new(),
-            warnings: if import_report.processed_rows == 0 {
+            warnings: if import_report.processed_records == 0 {
                 vec![format!(
                     "No new ActivityWatch rows found in {} beyond row {}",
                     db_path, start_row_id

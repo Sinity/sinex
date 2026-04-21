@@ -9,6 +9,14 @@ fn utf8_path(path: &std::path::Path) -> Utf8PathBuf {
         .unwrap_or_else(|path| panic!("non-utf8 path: {}", path.display()))
 }
 
+fn lines(result: &sinex_node_sdk::AppendOnlyFilePollResult) -> Vec<&str> {
+    result
+        .records
+        .iter()
+        .map(|record| record.text.as_str())
+        .collect()
+}
+
 #[sinex_test]
 async fn poll_preserves_partial_trailing_line(_ctx: TestContext) -> TestResult<()> {
     let dir = tempdir()?;
@@ -17,7 +25,9 @@ async fn poll_preserves_partial_trailing_line(_ctx: TestContext) -> TestResult<(
     fs::write(&path, "echo one\necho two").await?;
 
     let first = poll_utf8_lines(&path, AppendOnlyFileState::default()).await?;
-    assert_eq!(first.lines, vec!["echo one"]);
+    assert_eq!(lines(&first), vec!["echo one"]);
+    assert_eq!(first.records[0].start_offset_bytes, 0);
+    assert_eq!(first.records[0].end_offset_bytes, "echo one\n".len() as u64);
     assert_eq!(first.bytes_consumed, "echo one\n".len() as u64);
     assert_eq!(first.state.offset_bytes, "echo one\n".len() as u64);
     assert!(matches!(first.change, AppendOnlyFileChange::Unchanged));
@@ -27,7 +37,19 @@ async fn poll_preserves_partial_trailing_line(_ctx: TestContext) -> TestResult<(
     file.flush().await?;
 
     let second = poll_utf8_lines(&path, first.state).await?;
-    assert_eq!(second.lines, vec!["echo two", "echo three"]);
+    assert_eq!(lines(&second), vec!["echo two", "echo three"]);
+    assert_eq!(
+        second.records[0].start_offset_bytes,
+        "echo one\n".len() as u64
+    );
+    assert_eq!(
+        second.records[0].end_offset_bytes,
+        "echo one\necho two\n".len() as u64
+    );
+    assert_eq!(
+        second.records[1].end_offset_bytes,
+        "echo one\necho two\necho three\n".len() as u64
+    );
     assert_eq!(
         second.state.offset_bytes,
         "echo one\necho two\necho three\n".len() as u64
@@ -45,7 +67,7 @@ async fn poll_detects_rotation_and_restarts_from_new_file(_ctx: TestContext) -> 
 
     fs::write(&path, "echo one\necho two\n").await?;
     let first = poll_utf8_lines(&path, AppendOnlyFileState::default()).await?;
-    assert_eq!(first.lines, vec!["echo one", "echo two"]);
+    assert_eq!(lines(&first), vec!["echo one", "echo two"]);
 
     fs::rename(&path, &rotated).await?;
     fs::write(&path, "echo rotated\n").await?;
@@ -55,7 +77,7 @@ async fn poll_detects_rotation_and_restarts_from_new_file(_ctx: TestContext) -> 
         second.change,
         AppendOnlyFileChange::Rotated { .. }
     ));
-    assert_eq!(second.lines, vec!["echo rotated"]);
+    assert_eq!(lines(&second), vec!["echo rotated"]);
     assert_eq!(second.state.offset_bytes, "echo rotated\n".len() as u64);
 
     Ok(())
@@ -83,7 +105,7 @@ async fn poll_advances_to_end_after_same_inode_truncation(_ctx: TestContext) -> 
         second.change,
         AppendOnlyFileChange::TruncatedAdvancedToEnd { .. }
     ));
-    assert!(second.lines.is_empty());
+    assert!(second.records.is_empty());
     assert_eq!(second.state.offset_bytes, "replacement\n".len() as u64);
 
     Ok(())
@@ -111,7 +133,7 @@ async fn poll_restarts_from_beginning_after_truncation(_ctx: TestContext) -> Tes
         second.change,
         AppendOnlyFileChange::TruncatedRestarted { .. }
     ));
-    assert_eq!(second.lines, vec!["replacement"]);
+    assert_eq!(lines(&second), vec!["replacement"]);
 
     Ok(())
 }
