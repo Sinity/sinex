@@ -4,12 +4,10 @@ use crate::{NodeResult, SinexError};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command as AsyncCommand;
-use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -107,196 +105,9 @@ impl AnnexKey {
     }
 }
 
-struct BatchAddProcess {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-}
-
-impl BatchAddProcess {
-    fn spawn(repo_path: &Utf8Path) -> NodeResult<Self> {
-        let mut cmd = AsyncCommand::new("git-annex");
-        cmd.arg("add")
-            .arg("--json")
-            .arg("--batch")
-            .current_dir(repo_path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-
-        let mut child = cmd.spawn().map_err(|e| {
-            SinexError::processing(
-                "Failed to spawn git-annex add --batch. Is git-annex installed and available in PATH?"
-            ).with_source(e)
-        })?;
-        let stdin = child.stdin.take().ok_or_else(|| {
-            SinexError::processing("Missing stdin handle for git-annex add --batch".to_string())
-        })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
-            SinexError::processing("Missing stdout handle for git-annex add --batch".to_string())
-        })?;
-
-        Ok(Self {
-            child,
-            stdin,
-            stdout: BufReader::new(stdout),
-        })
-    }
-
-    async fn shutdown(&mut self) {
-        if let Err(error) = self.child.start_kill() {
-            warn!(error = %error, "Failed to signal git-annex batch add process shutdown");
-        }
-        if let Err(error) = self.child.wait().await {
-            warn!(error = %error, "Failed to wait for git-annex batch add process shutdown");
-        }
-    }
-}
-
-struct BatchAddState {
-    process: Option<BatchAddProcess>,
-    disabled: bool,
-    disabled_reason: Option<String>,
-}
-
-impl BatchAddState {
-    fn new() -> Self {
-        Self {
-            process: None,
-            disabled: false,
-            disabled_reason: None,
-        }
-    }
-
-    async fn add(
-        &mut self,
-        repo_path: &Utf8Path,
-        relative_path: &Utf8Path,
-    ) -> NodeResult<AnnexKey> {
-        if self.disabled {
-            let reason = self
-                .disabled_reason
-                .clone()
-                .unwrap_or_else(|| "unknown error".to_string());
-            return Err(SinexError::processing(format!(
-                "git-annex batch add disabled: {reason}"
-            )));
-        }
-
-        if self.process.is_none() {
-            self.process = Some(BatchAddProcess::spawn(repo_path)?);
-        }
-
-        let _guard = annex_process_lock().lock().await;
-
-        let process = self.process.as_mut().ok_or_else(|| {
-            SinexError::processing("git-annex batch process unavailable".to_string())
-        })?;
-
-        if let Some(status) = process.child.try_wait().map_err(SinexError::io)? {
-            let reason = format!("git-annex batch add exited with {status}");
-            self.disable(reason).await;
-            return Err(SinexError::processing(
-                "git-annex batch add exited unexpectedly".to_string(),
-            ));
-        }
-
-        let line = format!("{}\n", relative_path.as_str());
-        process
-            .stdin
-            .write_all(line.as_bytes())
-            .await
-            .map_err(SinexError::io)?;
-        process.stdin.flush().await.map_err(SinexError::io)?;
-
-        let mut output_line = String::new();
-        loop {
-            output_line.clear();
-            let bytes = process
-                .stdout
-                .read_line(&mut output_line)
-                .await
-                .map_err(SinexError::io)?;
-            if bytes == 0 {
-                let reason = "git-annex batch add closed stdout".to_string();
-                self.disable(reason).await;
-                return Err(SinexError::processing(
-                    "git-annex batch add terminated unexpectedly".to_string(),
-                ));
-            }
-            if !output_line.trim().is_empty() {
-                break;
-            }
-        }
-
-        let parsed: JsonValue = match serde_json::from_str(output_line.trim()) {
-            Ok(parsed) => parsed,
-            Err(err) => {
-                let reason = format!("git-annex batch add returned non-JSON output: {err}");
-                self.disable(reason).await;
-                return Err(SinexError::processing(
-                    "git-annex batch add returned invalid JSON".to_string(),
-                ));
-            }
-        };
-
-        if parsed.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
-            let errors = parsed
-                .get("error-messages")
-                .and_then(|val| val.as_array())
-                .map(|entries| {
-                    entries
-                        .iter()
-                        .filter_map(|entry| entry.as_str())
-                        .collect::<Vec<_>>()
-                        .join("; ")
-                });
-            let message = errors.unwrap_or_else(|| "unknown batch add error".to_string());
-            return Err(SinexError::processing(format!(
-                "git-annex batch add failed: {message}"
-            )));
-        }
-
-        let key = parsed
-            .get("key")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| SinexError::processing("git-annex batch add missing key".to_string()))?;
-
-        let parsed_key = AnnexKey::parse(key).map_err(|e| {
-            SinexError::processing(format!("git-annex batch add returned invalid key: {key}"))
-                .with_source(e)
-        })?;
-
-        Ok(parsed_key)
-    }
-
-    async fn disable(&mut self, reason: String) {
-        if !self.disabled {
-            warn!(reason = %reason, "Disabling git-annex batch add");
-        }
-        self.disabled = true;
-        self.disabled_reason = Some(reason);
-        if let Some(process) = self.process.as_mut() {
-            process.shutdown().await;
-        }
-        self.process = None;
-    }
-}
-
-impl std::fmt::Debug for BatchAddState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BatchAddState")
-            .field("disabled", &self.disabled)
-            .field("process_running", &self.process.is_some())
-            .field("disabled_reason", &self.disabled_reason)
-            .finish()
-    }
-}
-
 #[derive(Debug)]
 pub struct GitAnnex {
     pub config: AnnexConfig,
-    batch_add: AsyncMutex<BatchAddState>,
 }
 
 impl GitAnnex {
@@ -349,13 +160,11 @@ impl GitAnnex {
             }
         }
 
-        Ok(GitAnnex {
-            config,
-            batch_add: AsyncMutex::new(BatchAddState::new()),
-        })
+        Ok(GitAnnex { config })
     }
 
     /// Get the repository path
+    #[must_use]
     pub fn repo_path(&self) -> &Utf8Path {
         &self.config.repo_path
     }
@@ -441,20 +250,11 @@ impl GitAnnex {
             .unwrap_or(&ingest_path)
             .to_owned();
 
-        let key = match self.try_batch_add(&relative_path).await {
-            Ok(key) => key,
-            Err(err) => {
-                debug!(error = %err, "git-annex batch add failed; falling back");
-                self.add_file_direct(&relative_path, &resolved_path)
-                    .await
-                    .map_err(|e| {
-                        SinexError::processing(format!(
-                            "git-annex add fallback failed after batch error: {err}"
-                        ))
-                        .with_source(e)
-                    })?
-            }
-        };
+        // Keep git-annex bounded to the finalization operation. A resident
+        // add --batch process retains Haskell runtime memory inside service
+        // cgroups; source streams must reduce material cardinality before
+        // this storage boundary instead.
+        let key = self.add_file_direct(&relative_path, &resolved_path).await?;
 
         if needs_cleanup && let Err(e) = tokio::fs::remove_file(&ingest_path).await {
             warn!(
@@ -465,11 +265,6 @@ impl GitAnnex {
         }
 
         Ok(key)
-    }
-
-    async fn try_batch_add(&self, relative_path: &Utf8Path) -> NodeResult<AnnexKey> {
-        let mut batch = self.batch_add.lock().await;
-        batch.add(&self.config.repo_path, relative_path).await
     }
 
     async fn add_file_direct(

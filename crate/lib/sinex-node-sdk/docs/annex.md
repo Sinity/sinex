@@ -23,8 +23,15 @@ The `BlobManager` is the primary interface for large file operations. It orchest
 1.  **Detect**: Node detects a large file (>100KB) or raw bytes.
 2.  **Hash**: BLAKE3 hash is computed locally.
 3.  **Check**: `BlobManager` queries the database for an existing BLAKE3 match.
-4.  **Store**: If new, the file is added via `git-annex add`.
+4.  **Store**: If new, the file is added via a bounded `git-annex add --json` process.
 5.  **Register**: Metadata (MIME type, size, hashes) is persisted to `core.blobs`.
+
+`git-annex` is deliberately invoked as a short-lived process per finalized
+material. High-rate logical observations must be coalesced before this layer
+using source-material streams such as `AppendStreamAcquirer` or
+`BufferedAppendStreamWriter`; keeping a resident `git-annex add --batch`
+process in the SDK makes service cgroups retain Haskell runtime memory long
+after the actual finalization work is complete.
 
 ## 📂 Path Security
 
