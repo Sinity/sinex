@@ -1,17 +1,25 @@
-# Large File Management (Annex Subsystem)
+# Material Content Storage (Annex Subsystem)
 
-The Annex subsystem provides content-addressed storage for large binary files using `git-annex`. It ensures data deduplication and integrity across the entire Sinex ecosystem.
+The Annex subsystem provides content-addressed storage for source materials and
+larger blob payloads. It uses a small-material local CAS for hot finalized
+materials and reserves `git-annex` for larger content where the external
+backend is worth the process/runtime cost.
 
-## 🛡️ Data Integrity: Dual-Hash Verification
+## Data Integrity
 
-Sinex uses a defense-in-depth approach to data integrity:
+Sinex uses backend-aware integrity verification:
 
-1.  **BLAKE3 (Sinex-Native)**: Fast hashing used for pre-ingestion deduplication and local verification.
-2.  **SHA256 (Git-Annex Native)**: The canonical hash stored within the git-annex backend.
+1. **BLAKE3 (Sinex-native)**: Fast hashing used for pre-ingestion
+   deduplication, the local CAS key, and local-CAS retrieval verification.
+2. **SHA256 (git-annex native)**: The canonical digest stored by the
+   git-annex backend for large-file keys.
 
-Every file retrieval triggers a **Dual-Hash Verification**. If the content fails to match *either* hash, the blob is marked as `corrupted` in the database, and the retrieval fails.
+Every retrieval verifies against the strongest digest that belongs to the
+stored backend. Local-CAS content verifies through BLAKE3. Git-annex content
+verifies through the git-annex digest when available and falls back to the
+stored BLAKE3 checksum.
 
-## 🧱 The `BlobManager`
+## The `BlobManager`
 
 The `BlobManager` is the primary interface for large file operations. It orchestrates:
 - **Deduplication**: BLAKE3 hashes are checked before ingestion to prevent redundant storage.
@@ -20,37 +28,41 @@ The `BlobManager` is the primary interface for large file operations. It orchest
 
 ### Ingestion Workflow
 
-1.  **Detect**: Node detects a large file (>100KB) or raw bytes.
-2.  **Hash**: BLAKE3 hash is computed locally.
-3.  **Check**: `BlobManager` queries the database for an existing BLAKE3 match.
-4.  **Store**: If new, the file is added via a bounded `git-annex add --json` process.
-5.  **Register**: Metadata (MIME type, size, hashes) is persisted to `core.blobs`.
+1. **Detect**: Node detects a file or raw bytes.
+2. **Hash**: BLAKE3 hash is computed locally.
+3. **Check**: `BlobManager` queries the database for an existing BLAKE3 match.
+4. **Store**: Files up to 16 MiB are copied into the SDK local CAS under a
+   `SINEXBLAKE3-s<size>--<hash>` key. Larger files are added through a
+   short-lived bounded `git-annex add --json` process.
+5. **Register**: Metadata (MIME type, size, hashes) is persisted to
+   `core.blobs`.
 
-`git-annex` is deliberately invoked as a short-lived process per finalized
-material. High-rate logical observations must be coalesced before this layer
-using source-material streams such as `AppendStreamAcquirer` or
-`BufferedAppendStreamWriter`; keeping a resident `git-annex add --batch`
-process in the SDK makes service cgroups retain Haskell runtime memory long
-after the actual finalization work is complete.
+High-rate logical observations must be coalesced before this layer using
+source-material streams such as `AppendStreamAcquirer` or
+`BufferedAppendStreamWriter`. The storage boundary should see low-cardinality
+completed materials. It must not keep resident `git-annex add --batch`
+processes or spawn git-annex for every tiny source material.
 
-## 📂 Path Security
+## Path Security
 
 To prevent path traversal and symlink attacks, the Annex subsystem enforces strict rules:
 - **`VerifiedPath`**: All ingestion paths must pass through the `VerifiedPath` type, which rejects `../` patterns.
 - **Secure Temp Files**: Byte-based ingestion uses `create_secure_temp_path` with unpredictable names to prevent symlink-following vulnerabilities.
 
-## 🚦 Verification Status
+## Verification Status
 
 The system tracks the integrity status of every blob:
 - `sensing`: In-flight ingestion.
 - `verified`: Passed hash check on last retrieval.
 - `corrupted`: Failed hash check (triggering alerts).
 
-## 🛠️ Operational Tasks
+## Operational Tasks
 
 ### Cleanup
 Stale temporary buffers are automatically cleaned up after 5 minutes of inactivity via the `reconcile_inflight` mechanism.
 
 ### In-place vs. Byte Ingestion
-- **`ingest_file`**: Adds an existing file on disk to the annex (moves it to the object store).
-- **`ingest_from_bytes`**: buffers in-memory data (e.g., clipboard) to a secure temp file before annexing.
+- **`ingest_file`**: Adds an existing file on disk to the hybrid content
+  store.
+- **`ingest_from_bytes`**: buffers in-memory data (for example clipboard
+  content) to a secure temp file before content-store ingestion.
