@@ -3151,6 +3151,26 @@ mod tests {
     async fn zero_byte_file_events_use_observation_stream_material(
         ctx: TestContext,
     ) -> TestResult<()> {
+        ctx.set_proof_metadata(ProofMetadata {
+            runner_id: Some(
+                "source-material.filesystem-zero-byte-observation-stream.v1".to_string(),
+            ),
+            subject_refs: vec!["https://github.com/Sinity/sinex/issues/315".to_string()],
+            claim_ids: vec![
+                "metadata-only-filesystem-events-use-observation-stream".to_string(),
+                "zero-byte-files-do-not-create-per-path-zero-byte-materials".to_string(),
+                "observation-stream-anchors-remain-contiguous".to_string(),
+            ],
+            status: Some("asserted_by_test".to_string()),
+            reproducer: Some(
+                "xtask test -p sinex-fs-ingestor -E 'test(zero_byte_file_events_use_observation_stream_material)'"
+                    .to_string(),
+            ),
+            environment: serde_json::json!({
+                "plane": "isolated-dev",
+                "stack": ["fs-ingestor", "node-sdk", "nats"],
+            }),
+        });
         let ctx = ctx.with_nats().dedicated().await?;
         let nats_client = ctx.nats_client();
 
