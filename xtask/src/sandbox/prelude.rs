@@ -24,6 +24,14 @@ pub use super::assertions::EventAssert;
 pub use super::context::{Sandbox, SandboxFailureSnapshot};
 pub use super::db::cleanup_config::{CleanupConfig, CleanupMethod, TableCleanupStrategy};
 pub use super::db::{reset_database, verify_clean_state};
+pub use super::evidence::{
+    DbEvidenceSummary, DirectoryEvidenceSummary, EVIDENCE_SCHEMA_VERSION, EvidenceArtifactRef,
+    EvidenceBundle, EvidenceCapture, EvidenceCaptureLevel, EvidenceCollectorKind,
+    EvidenceCollectorRegistration, EvidenceCollectorStatus, EvidenceRuntimeSnapshot,
+    EvidenceTimelineEvent, FileEvidenceSummary, LogEvidenceSummary, NatsConsumerEvidence,
+    NatsEvidenceSummary, NatsStreamEvidence, ProofMetadata, SourceMaterialEvidenceRow,
+    TestEvidence,
+};
 pub use super::fs::{EnvGuard, TestTempEnv, prepare_test_temp_env};
 pub use super::nats::{EphemeralNats, EphemeralNatsBuilder, TlsConfig};
 pub use super::orchestrator::{

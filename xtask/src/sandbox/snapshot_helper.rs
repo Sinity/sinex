@@ -4,13 +4,13 @@
 //! and retrying flaky tests with context capture.
 
 use crate::sandbox::db::pool::get_pool_stats;
+use crate::sandbox::evidence;
 use crate::sandbox::prelude::*;
 use futures::Future;
 use serde::Serialize;
+use serde_json::Value as JsonValue;
 use sinex_primitives::temporal::Timestamp;
-use std::env;
 use std::fs;
-use std::path::PathBuf;
 use std::sync::LazyLock as Lazy;
 
 static SNAPSHOT_FILENAME_FORMAT: Lazy<Vec<time::format_description::BorrowedFormatItem<'static>>> =
@@ -20,17 +20,6 @@ static SNAPSHOT_FILENAME_FORMAT: Lazy<Vec<time::format_description::BorrowedForm
         )
         .expect("static format string is valid")
     });
-
-#[derive(Serialize)]
-struct FailureSnapshot {
-    test: String,
-    error: String,
-    timestamp: String,
-    pool: crate::sandbox::db::pool::PoolStats,
-    pool_detail: Option<Vec<SlotSnapshot>>,
-    context: Option<ContextSnapshot>,
-    logs: Option<Vec<String>>,
-}
 
 #[derive(Serialize)]
 struct ContextSnapshot {
@@ -59,25 +48,62 @@ pub enum FailureContext<'a> {
     Snapshot(SandboxFailureSnapshot),
 }
 
+fn to_json<T: Serialize>(value: &T) -> JsonValue {
+    serde_json::to_value(value).unwrap_or(JsonValue::Null)
+}
+
+fn attach_captured_logs(test_name: &str, logs: &[String], evidence: &mut TestEvidence) {
+    if logs.is_empty()
+        || evidence
+            .captures
+            .iter()
+            .any(|capture| capture.kind == EvidenceCollectorKind::Logs)
+    {
+        return;
+    }
+
+    let summary = LogEvidenceSummary::new(logs, 20);
+    let summary_text = format!("{} captured log line(s)", logs.len());
+    let artifact = evidence::write_json_artifact(
+        test_name,
+        "captured_logs",
+        "logs",
+        &logs,
+        Some(summary_text.clone()),
+    );
+    let capture = match artifact {
+        Ok(artifact) => EvidenceCapture::captured(
+            "captured_logs",
+            EvidenceCollectorKind::Logs,
+            Some(summary_text),
+            to_json(&summary),
+            Some(artifact),
+        ),
+        Err(error) => EvidenceCapture::failed(
+            "captured_logs",
+            EvidenceCollectorKind::Logs,
+            format!("failed to persist captured logs: {error:#}"),
+        ),
+    };
+    evidence.attach_capture(capture);
+}
+
 /// Persist contextual information about a failing test. Artifacts are written to
 /// `.sinex/test-artifacts/` by default and can be overridden via the
 /// `SINEX_TEST_FAIL_DIR` environment variable.
 pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureContext<'_>) {
-    let snapshot_dir = env::var("SINEX_TEST_FAIL_DIR").map_or_else(
-        |_| crate::config::workspace_state_root().join("test-artifacts"),
-        PathBuf::from,
-    );
+    let snapshot_dir = evidence::evidence_root();
 
     if let Err(err) = fs::create_dir_all(&snapshot_dir) {
         eprintln!(
-            "⚠️  failed to create snapshot directory {}: {err}",
+            "⚠️  failed to create evidence directory {}: {err}",
             snapshot_dir.display()
         );
         return;
     }
 
-    let (ctx_snapshot, logs) = match ctx {
-        FailureContext::None => (None, None),
+    let (ctx_snapshot, logs, mut test_evidence) = match ctx {
+        FailureContext::None => (None, None, TestEvidence::default()),
         FailureContext::Borrowed(ctx) => {
             let background = ctx.background_snapshot();
             (
@@ -90,6 +116,7 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
                     background_busy: background.busy,
                 }),
                 Some(ctx.captured_logs()),
+                ctx.evidence_snapshot(),
             )
         }
         FailureContext::Snapshot(snapshot) => {
@@ -104,9 +131,14 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
                     background_busy: background.busy,
                 }),
                 Some(snapshot.captured_logs()),
+                snapshot.evidence_snapshot(),
             )
         }
     };
+
+    if let Some(logs) = &logs {
+        attach_captured_logs(test_name, logs, &mut test_evidence);
+    }
 
     let slot_detail: Option<Vec<SlotSnapshot>> = {
         let slots = crate::sandbox::db::pool::get_slot_stats();
@@ -130,40 +162,57 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
         }
     };
 
-    let snapshot = FailureSnapshot {
-        test: test_name.to_string(),
-        error: error.into(),
-        timestamp: Timestamp::now().format_rfc3339(),
-        pool: get_pool_stats(),
-        pool_detail: slot_detail,
-        context: ctx_snapshot,
-        logs,
-    };
-
-    let sanitized = test_name.replace("::", "_");
-    let filename = format!(
-        "{}-{}.json",
+    let error = error.into();
+    let timestamp = Timestamp::now();
+    let stem = format!(
+        "{}-{}",
         Timestamp::now()
             .inner()
             .format(&*SNAPSHOT_FILENAME_FORMAT)
             .unwrap_or_else(|_| "unknown".to_string()),
-        sanitized
+        evidence::sanitize_component(test_name)
     );
-    let path = snapshot_dir.join(filename);
+    let bundle_path = snapshot_dir.join(format!("{stem}.evidence.json"));
+    let summary_path = snapshot_dir.join(format!("{stem}.summary.txt"));
+    let bundle = evidence::EvidenceBundle::failed(
+        test_name,
+        error.clone(),
+        timestamp.format_rfc3339(),
+        ctx_snapshot.as_ref().map_or(JsonValue::Null, to_json),
+        to_json(&get_pool_stats()),
+        slot_detail.as_ref().map_or(JsonValue::Null, to_json),
+        EvidenceRuntimeSnapshot {
+            process_id: std::process::id(),
+            process_tree: evidence::current_process_tree_json(std::time::Duration::ZERO),
+        },
+        test_evidence,
+    );
+    let summary = evidence::render_human_summary(&bundle);
 
-    match serde_json::to_vec_pretty(&snapshot) {
+    match serde_json::to_vec_pretty(&bundle) {
         Ok(data) => {
-            if let Err(err) = fs::write(&path, data) {
+            if let Err(err) = fs::write(&bundle_path, data) {
                 eprintln!(
-                    "⚠️  failed to write failure snapshot {}: {err}",
-                    path.display()
+                    "⚠️  failed to write evidence bundle {}: {err}",
+                    bundle_path.display()
                 );
             } else {
-                eprintln!("SNAPSHOT: {} ({})", path.display(), snapshot.error);
+                if let Err(err) = fs::write(&summary_path, summary) {
+                    eprintln!(
+                        "⚠️  failed to write evidence summary {}: {err}",
+                        summary_path.display()
+                    );
+                }
+                eprintln!(
+                    "EVIDENCE: {} SUMMARY: {} ({})",
+                    bundle_path.display(),
+                    summary_path.display(),
+                    error
+                );
             }
         }
         Err(err) => {
-            eprintln!("⚠️  failed to serialize failure snapshot for {test_name}: {err}");
+            eprintln!("⚠️  failed to serialize evidence bundle for {test_name}: {err}");
         }
     }
 }
@@ -184,5 +233,53 @@ where
             persist_failure(test_name, err.to_string(), FailureContext::Borrowed(ctx));
             Err(err)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value as JsonValue;
+
+    #[test]
+    fn persist_failure_writes_evidence_bundle_and_summary() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let _guard = EnvGuard::set_single("SINEX_TEST_FAIL_DIR", dir.path().as_os_str());
+
+        persist_failure(
+            "sample::evidence_failure",
+            "assertion exploded",
+            FailureContext::None,
+        );
+
+        let files = fs::read_dir(dir.path())?.collect::<std::result::Result<Vec<_>, _>>()?;
+        let bundle_path = files
+            .iter()
+            .map(std::fs::DirEntry::path)
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.ends_with(".evidence.json"))
+            })
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing evidence bundle"))?;
+        let summary_path = files
+            .iter()
+            .map(std::fs::DirEntry::path)
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.ends_with(".summary.txt"))
+            })
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing evidence summary"))?;
+
+        let bundle: JsonValue = serde_json::from_slice(&fs::read(&bundle_path)?)?;
+        let summary = fs::read_to_string(summary_path)?;
+
+        assert_eq!(bundle["schema_version"], EVIDENCE_SCHEMA_VERSION);
+        assert_eq!(bundle["kind"], "sinex.test.evidence");
+        assert_eq!(bundle["status"], "failed");
+        assert_eq!(bundle["error"], "assertion exploded");
+        assert!(summary.contains("assertion exploded"));
+        Ok(())
     }
 }

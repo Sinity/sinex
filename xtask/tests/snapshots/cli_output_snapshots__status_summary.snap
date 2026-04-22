@@ -1,6 +1,6 @@
 ---
 source: xtask/tests/cli_output_snapshots.rs
-assertion_line: 149
+assertion_line: 152
 expression: json
 ---
 {
@@ -19,6 +19,8 @@ expression: json
     "last_commands": "[volatile]",
     "last_commit": "[volatile]",
     "runtime": "[volatile]",
+    "runtime_snapshot": "[volatile]",
+    "runtime_target": "[volatile]",
     "services": "[volatile]",
     "summary": "[volatile]",
     "uncommitted_count": "[volatile]",
