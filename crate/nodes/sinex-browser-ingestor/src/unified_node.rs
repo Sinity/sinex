@@ -29,6 +29,7 @@ use tokio::sync::watch;
 use tracing::info;
 
 const DEFAULT_POLLING_INTERVAL_SECS: u64 = 30;
+const BROWSER_HISTORY_CHECKPOINT_DESCRIPTION: &str = "browser history source progress";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserIngestorConfig {
@@ -431,16 +432,51 @@ impl BrowserNode {
         Ok(outcome)
     }
 
+    fn apply_historical_checkpoint(
+        state: &mut BrowserIngestorState,
+        checkpoint: &Checkpoint,
+    ) -> NodeResult<()> {
+        match checkpoint {
+            Checkpoint::None => {
+                *state = BrowserIngestorState::default();
+                Ok(())
+            }
+            Checkpoint::External { position, .. } => {
+                *state = serde_json::from_value(position.clone()).map_err(|error| {
+                    SinexError::serialization("failed to parse browser history checkpoint state")
+                        .with_std_error(&error)
+                })?;
+                Ok(())
+            }
+            _ => Err(SinexError::checkpoint(
+                "browser history requires an external source-progress checkpoint",
+            )
+            .with_context("checkpoint", checkpoint.description())),
+        }
+    }
+
+    fn checkpoint_from_state(state: &BrowserIngestorState) -> NodeResult<Checkpoint> {
+        let position = serde_json::to_value(state).map_err(|error| {
+            SinexError::serialization("failed to encode browser history checkpoint state")
+                .with_std_error(&error)
+        })?;
+        Ok(Checkpoint::external(
+            position,
+            BROWSER_HISTORY_CHECKPOINT_DESCRIPTION,
+        ))
+    }
+
     fn scan_report(
         outcome: ImportPassOutcome,
         started_at: Timestamp,
         duration: Duration,
+        final_checkpoint: Checkpoint,
     ) -> ScanReport {
         let finished_at = Timestamp::now();
         ScanReport {
             events_processed: outcome.processed,
             duration,
-            final_checkpoint: Checkpoint::timestamp(finished_at, None),
+            final_checkpoint,
             time_range: Some((started_at, finished_at)),
             node_stats: HashMap::new(),
             successful_targets: outcome.successful_targets,
@@ -520,14 +556,21 @@ impl IngestorNode for BrowserNode {
     async fn scan_historical(
         &mut self,
         state: &mut Self::State,
-        _from: Checkpoint,
+        from: Checkpoint,
         until: TimeHorizon,
         _args: ScanArgs,
     ) -> NodeResult<ScanReport> {
         let started = std::time::Instant::now();
         let started_at = Timestamp::now();
+        Self::apply_historical_checkpoint(state, &from)?;
         let outcome = self.run_import_pass(state, until.end_time()).await?;
-        Ok(Self::scan_report(outcome, started_at, started.elapsed()))
+        let final_checkpoint = Self::checkpoint_from_state(state)?;
+        Ok(Self::scan_report(
+            outcome,
+            started_at,
+            started.elapsed(),
+            final_checkpoint,
+        ))
     }
 
     async fn run_continuous(
@@ -564,6 +607,7 @@ impl IngestorNode for BrowserNode {
             accumulated,
             started_at,
             started.elapsed(),
+            Self::checkpoint_from_state(state)?,
         ))
     }
 }
@@ -574,11 +618,213 @@ fn is_appendable_dump(path: &Utf8PathBuf) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{BrowserIngestorConfig, BrowserIngestorState, BrowserNode};
-    use crate::sqlite_sources::BrowserSqliteFormat;
+    use super::*;
+    use crate::sqlite_sources::{BrowserSqliteFormat, BrowserSqliteSourceConfig};
     use camino::Utf8PathBuf;
-    use sinex_node_sdk::{IngestorNode, runtime::stream::ScanArgs};
-    use xtask::sandbox::prelude::*;
+    use serde::Serialize;
+    use serde_json::json;
+    use sinex_db::{DbPool, DbPoolExt};
+    use sinex_node_sdk::{
+        IngestorNodeAdapter, NatsPublisher, NodeRunner, ShutdownConfig, runtime::stream::ScanArgs,
+    };
+    use sinex_primitives::{
+        Pagination, Uuid,
+        domain::{EventSource, EventType},
+        events::Provenance,
+    };
+    use std::sync::Arc;
+    use xtask::sandbox::{
+        TestContext, TestIngestdConfig, TestResult, prelude::*, start_test_ingestd_with_config,
+        timing::Timeouts,
+    };
+
+    fn raw_node_config<T: Serialize>(config: &T) -> TestResult<HashMap<String, serde_json::Value>> {
+        let value = serde_json::to_value(config)?;
+        let serde_json::Value::Object(object) = value else {
+            return Err(color_eyre::eyre::eyre!(
+                "node config must serialize to a JSON object"
+            ));
+        };
+        Ok(object.into_iter().collect())
+    }
+
+    fn tune_batcher_for_runtime_proof(
+        config: &mut HashMap<String, serde_json::Value>,
+        service_prefix: &str,
+    ) -> String {
+        let suffix = Uuid::now_v7();
+        let service_name = format!("{service_prefix}-{suffix}");
+        config.insert("batch_size".to_string(), json!(1));
+        config.insert("batch_timeout_ms".to_string(), json!(20));
+        config.insert(
+            "consumer_group".to_string(),
+            json!(format!("proof-{suffix}")),
+        );
+        service_name
+    }
+
+    async fn wait_for_source_material_consumer(ctx: &TestContext) -> TestResult<()> {
+        let env = sinex_primitives::environment::environment();
+        let nats = ctx.nats_handle()?;
+        let js = nats.jetstream_with_client(ctx.nats_client());
+        let stream = env.nats_stream_name("SOURCE_MATERIAL");
+        nats.wait_for_consumer_on_stream(
+            &js,
+            &stream,
+            std::time::Duration::from_secs(Timeouts::STANDARD),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn wait_for_event_count(
+        pool: DbPool,
+        source: &'static str,
+        event_type: &'static str,
+        expected_count: i64,
+    ) -> TestResult<()> {
+        let source = EventSource::new(source)?;
+        let event_type = EventType::new(event_type)?;
+        xtask::sandbox::timing::WaitHelpers::wait_for_condition(
+            move || {
+                let pool = pool.clone();
+                let source = source.clone();
+                let event_type = event_type.clone();
+                async move {
+                    let count = pool
+                        .events()
+                        .count_by_source_and_event_type(&source, &event_type)
+                        .await
+                        .map_err(|error| color_eyre::eyre::eyre!("database error: {error}"))?;
+                    Ok::<bool, color_eyre::eyre::Report>(count == expected_count)
+                }
+            },
+            Timeouts::STANDARD,
+        )
+        .await
+    }
+
+    async fn persisted_browser_events(
+        pool: &DbPool,
+    ) -> TestResult<Vec<sinex_primitives::events::Event<serde_json::Value>>> {
+        let source = EventSource::new("webhistory")?;
+        let event_type = EventType::new("page.visited")?;
+        let mut events = pool
+            .events()
+            .get_by_source(&source, Pagination::new(Some(100), None))
+            .await?;
+        events.retain(|event| event.event_type == event_type);
+        events.sort_by_key(|event| (event.ts_orig, event.id));
+        Ok(events)
+    }
+
+    fn assert_material_provenance_rows(
+        rows: &[sinex_primitives::events::Event<serde_json::Value>],
+    ) -> TestResult<()> {
+        for (index, event) in rows.iter().enumerate() {
+            match event.provenance() {
+                Provenance::Material { anchor_byte, .. } if *anchor_byte >= 0 => {}
+                other => {
+                    return Err(color_eyre::eyre::eyre!(
+                        "browser history row {index} has invalid provenance: {other:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn write_browser_dump_fixtures(root: &Utf8PathBuf) -> TestResult<()> {
+        tokio::fs::create_dir_all(root.as_std_path()).await?;
+        tokio::fs::write(
+            root.join("chrome_history.json").as_std_path(),
+            r#"[{"visitId":"chrome-1","url":"https://example.com/chrome?utm_source=drop&keep=1","title":"Chrome example","visitTime":1700000004000,"transition":"link"}]"#,
+        )
+        .await?;
+        tokio::fs::write(
+            root.join("firefox_history.jsonl").as_std_path(),
+            "{\"url\":\"https://example.com/firefox\",\"title\":\"Firefox example\",\"iso_time\":\"2023-11-14T22:13:25Z\",\"transition\":\"typed\"}\n",
+        )
+        .await?;
+        tokio::fs::write(
+            root.join("qutebrowser_dump.ndjson").as_std_path(),
+            "{\"url\":\"https://example.com/qute-dump\",\"title\":\"Qutebrowser dump\",\"time\":1700000006}\n",
+        )
+        .await?;
+        tokio::fs::write(
+            root.join("edge_history.csv").as_std_path(),
+            "DateTime,NavigatedToUrl,PageTitle\n2023-11-14T22:13:27Z,https://example.com/edge,Edge example\n",
+        )
+        .await?;
+        Ok(())
+    }
+
+    fn write_qutebrowser_fixture(path: &Utf8PathBuf) -> TestResult<()> {
+        let conn = rusqlite::Connection::open(path.as_std_path())?;
+        conn.execute_batch(
+            "
+            CREATE TABLE History (
+                url TEXT NOT NULL,
+                title TEXT NOT NULL,
+                atime INTEGER NOT NULL,
+                redirect INTEGER NOT NULL
+            );
+            INSERT INTO History (url, title, atime, redirect) VALUES
+                ('https://example.com/qute-one?utm_source=drop', 'Qute one', 1700000000, 0),
+                ('https://example.com/qute-two', 'Qute two', 1700000001, 1);
+            ",
+        )?;
+        Ok(())
+    }
+
+    fn chromium_timestamp_micros(unix_secs: i64) -> i64 {
+        (11_644_473_600_i64 + unix_secs) * 1_000_000_i64
+    }
+
+    fn write_chromium_fixture(path: &Utf8PathBuf) -> TestResult<()> {
+        let conn = rusqlite::Connection::open(path.as_std_path())?;
+        let first_visit = chromium_timestamp_micros(1_700_000_002);
+        let second_visit = chromium_timestamp_micros(1_700_000_003);
+        conn.execute_batch(&format!(
+            "
+            CREATE TABLE urls (
+                id INTEGER PRIMARY KEY,
+                url TEXT NOT NULL,
+                title TEXT NOT NULL
+            );
+            CREATE TABLE visits (
+                id INTEGER PRIMARY KEY,
+                url INTEGER NOT NULL,
+                visit_time INTEGER NOT NULL,
+                external_referrer_url TEXT,
+                transition INTEGER NOT NULL,
+                visit_duration INTEGER NOT NULL
+            );
+            INSERT INTO urls (id, url, title) VALUES
+                (1, 'https://example.com/chromium-one?utm_campaign=drop', 'Chromium one'),
+                (2, 'https://example.com/chromium-two', 'Chromium two');
+            INSERT INTO visits (id, url, visit_time, external_referrer_url, transition, visit_duration) VALUES
+                (1, 1, {first_visit}, NULL, 805306368, 250000),
+                (2, 2, {second_visit}, 'https://referrer.example', 268435456, 1000000);
+            "
+        ))?;
+        Ok(())
+    }
+
+    fn browser_count(
+        rows: &[sinex_primitives::events::Event<serde_json::Value>],
+        browser: &str,
+    ) -> usize {
+        rows.iter()
+            .filter(|event| {
+                event
+                    .payload
+                    .get("browser")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(browser)
+            })
+            .count()
+    }
 
     #[sinex_test]
     async fn default_browser_config_keeps_live_sqlite_sources_only() -> TestResult<()> {
@@ -616,6 +862,179 @@ mod tests {
             report.successful_targets,
             vec!["/tmp/browser-dump.jsonl".to_string()]
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn browser_historical_checkpoint_rejects_non_external_state() -> TestResult<()> {
+        let mut state = BrowserIngestorState::default();
+        let checkpoint = Checkpoint::timestamp(Timestamp::now(), None);
+        let error = BrowserNode::apply_historical_checkpoint(&mut state, &checkpoint)
+            .expect_err("timestamp checkpoint should not drive browser source progress");
+
+        assert!(
+            error
+                .to_string()
+                .contains("requires an external source-progress checkpoint"),
+            "unexpected error: {error}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn scan_historical_persists_browser_history_through_node_runtime(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let temp_dir = tempfile::tempdir()?;
+
+        let dump_root =
+            Utf8PathBuf::from_path_buf(temp_dir.path().join("browser-dumps")).map_err(|path| {
+                color_eyre::eyre::eyre!("browser dump root is not UTF-8: {}", path.display())
+            })?;
+        write_browser_dump_fixtures(&dump_root).await?;
+
+        let qutebrowser_path = Utf8PathBuf::from_path_buf(temp_dir.path().join("qute.sqlite"))
+            .map_err(|path| {
+                color_eyre::eyre::eyre!("qutebrowser fixture path is not UTF-8: {}", path.display())
+            })?;
+        write_qutebrowser_fixture(&qutebrowser_path)?;
+
+        let chromium_path = Utf8PathBuf::from_path_buf(temp_dir.path().join("ChromiumHistory"))
+            .map_err(|path| {
+                color_eyre::eyre::eyre!("Chromium fixture path is not UTF-8: {}", path.display())
+            })?;
+        write_chromium_fixture(&chromium_path)?;
+
+        let nats = ctx.nats_handle()?;
+        let ingest_config = TestIngestdConfig {
+            nats: nats.connection_config(),
+            database_url: ctx.database_url().to_string(),
+            work_dir: Some(temp_dir.path().join("ingestd")),
+            ..Default::default()
+        };
+        let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
+        wait_for_source_material_consumer(&ctx).await?;
+
+        let config = BrowserIngestorConfig {
+            dump_sources: vec![dump_root],
+            sqlite_sources: vec![
+                BrowserSqliteSourceConfig {
+                    path: qutebrowser_path,
+                    browser: "qutebrowser".to_string(),
+                    format: BrowserSqliteFormat::QutebrowserNative,
+                },
+                BrowserSqliteSourceConfig {
+                    path: chromium_path,
+                    browser: "chromium".to_string(),
+                    format: BrowserSqliteFormat::ChromiumHistory,
+                },
+            ],
+            polling_interval_secs: Seconds::from_secs(1),
+        };
+
+        let mut raw_config = raw_node_config(&config)?;
+        let service_name =
+            tune_batcher_for_runtime_proof(&mut raw_config, "browser-historical-runtime-proof");
+        let publisher = Arc::new(NatsPublisher::new(ctx.nats_client()));
+        let adapter =
+            IngestorNodeAdapter::new(BrowserNode::default()).with_shutdown_config(ShutdownConfig {
+                checkpoint_path: Some(
+                    temp_dir
+                        .path()
+                        .join("browser-runtime-proof.checkpoint.json"),
+                ),
+                ..ShutdownConfig::default()
+            });
+        let mut runner = NodeRunner::new(adapter);
+        runner
+            .initialize_with_transport(
+                service_name,
+                raw_config,
+                Some(ctx.pool.clone()),
+                EventTransport::Nats(publisher),
+                temp_dir.path().join("runner"),
+                false,
+            )
+            .await?;
+
+        let report = runner
+            .run_scan(
+                Checkpoint::None,
+                TimeHorizon::Historical {
+                    end_time: Timestamp::now(),
+                },
+                ScanArgs::default(),
+            )
+            .await?;
+        assert_eq!(report.events_processed, 8);
+        assert!(matches!(
+            report.final_checkpoint,
+            Checkpoint::External { .. }
+        ));
+
+        wait_for_event_count(ctx.pool.clone(), "webhistory", "page.visited", 8).await?;
+        let rows = persisted_browser_events(&ctx.pool).await?;
+        assert_eq!(rows.len(), 8);
+        assert_material_provenance_rows(&rows)?;
+        assert_eq!(browser_count(&rows, "qutebrowser"), 3);
+        assert_eq!(browser_count(&rows, "chromium"), 2);
+        assert_eq!(browser_count(&rows, "chrome"), 1);
+        assert_eq!(browser_count(&rows, "firefox"), 1);
+        assert_eq!(browser_count(&rows, "edge"), 1);
+        assert!(
+            rows.iter().any(|event| {
+                event
+                    .payload
+                    .get("normalized_url")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("https://example.com/chrome?keep=1")
+            }),
+            "Chrome dump row should preserve non-tracking query params and drop tracking params"
+        );
+
+        let mut rerun_config = raw_node_config(&config)?;
+        let rerun_service_name = tune_batcher_for_runtime_proof(
+            &mut rerun_config,
+            "browser-historical-runtime-proof-rerun",
+        );
+        let rerun_publisher = Arc::new(NatsPublisher::new(ctx.nats_client()));
+        let rerun_adapter =
+            IngestorNodeAdapter::new(BrowserNode::default()).with_shutdown_config(ShutdownConfig {
+                checkpoint_path: Some(
+                    temp_dir
+                        .path()
+                        .join("browser-runtime-proof-rerun.checkpoint.json"),
+                ),
+                ..ShutdownConfig::default()
+            });
+        let mut rerun_runner = NodeRunner::new(rerun_adapter);
+        rerun_runner
+            .initialize_with_transport(
+                rerun_service_name,
+                rerun_config,
+                Some(ctx.pool.clone()),
+                EventTransport::Nats(rerun_publisher),
+                temp_dir.path().join("rerun-runner"),
+                false,
+            )
+            .await?;
+
+        let rerun_report = rerun_runner
+            .run_scan(
+                report.final_checkpoint.clone(),
+                TimeHorizon::Historical {
+                    end_time: Timestamp::now(),
+                },
+                ScanArgs::default(),
+            )
+            .await?;
+        assert_eq!(rerun_report.events_processed, 0);
+        assert_eq!(persisted_browser_events(&ctx.pool).await?.len(), 8);
+
+        rerun_runner.shutdown().await?;
+        runner.shutdown().await?;
+        ingest_handle.stop().await?;
         Ok(())
     }
 }
