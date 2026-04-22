@@ -13,7 +13,7 @@
 
 use serde_json::json;
 use sinex_db::DynamicPayload;
-use sinex_db::repositories::DbPoolExt;
+use sinex_db::repositories::{DbPoolExt, source_material_relation_types};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedValueAggregation,
@@ -1666,6 +1666,56 @@ async fn test_lineage_descendants(ctx: TestContext) -> TestResult<()> {
         2,
         "Should have 2 direct descendants (B and C)"
     );
+
+    Ok(())
+}
+
+/// Test: Material evidence links are included alongside event lineage.
+#[sinex_test]
+async fn test_lineage_includes_source_material_links(ctx: TestContext) -> TestResult<()> {
+    let row_stream = ctx
+        .create_source_material(Some("lineage-row-stream"))
+        .await?;
+    let snapshot = ctx.create_source_material(Some("lineage-snapshot")).await?;
+
+    ctx.pool
+        .source_materials()
+        .link_backing_material(
+            row_stream.to_uuid(),
+            snapshot.to_uuid(),
+            json!({"snapshot": "atuin.sqlite"}),
+        )
+        .await?;
+
+    let event = ctx
+        .pool
+        .events()
+        .insert(
+            DynamicPayload::new("test-source", "test.type", json!({"label": "row"}))
+                .from_material(row_stream)
+                .build()?,
+        )
+        .await?;
+
+    let result = ctx
+        .pool
+        .events()
+        .lineage(LineageQuery {
+            event_id: event.id.unwrap(),
+            direction: LineageDirection::Both,
+            max_depth: 10,
+        })
+        .await?;
+
+    assert_eq!(result.material_links.len(), 1);
+    let link = &result.material_links[0];
+    assert_eq!(link.from_material_id, row_stream.to_uuid());
+    assert_eq!(link.to_material_id, snapshot.to_uuid());
+    assert_eq!(
+        link.relation_type,
+        source_material_relation_types::BACKED_BY
+    );
+    assert_eq!(link.metadata["snapshot"], "atuin.sqlite");
 
     Ok(())
 }
