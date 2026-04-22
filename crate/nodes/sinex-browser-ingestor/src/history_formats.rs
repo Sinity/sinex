@@ -353,6 +353,27 @@ mod tests {
     }
 
     #[test]
+    fn parse_csv_dump_rejects_rows_without_usable_timestamp() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("edge_history.csv");
+        std::fs::write(
+            &path,
+            "NavigatedToUrl,PageTitle\nhttps://example.com,Example\n",
+        )
+        .unwrap();
+
+        let file = test_file(path.to_str().unwrap(), ImportFileChangeKind::New);
+        let error = match parse_csv_dump(&file, None) {
+            Ok(_) => panic!("CSV row without timestamp should be rejected"),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains("missing a usable timestamp"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
     fn parse_append_only_ndjson_starts_at_prior_line_count() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("full_history.ndjson");
