@@ -1,4 +1,7 @@
-use crate::{BatchImporterState, DiscoveredFile, ScanError, scan_for_new_files};
+use crate::{
+    BatchImporterState, DiscoveredFile, ScanError, scan_for_new_files,
+    sqlite_source::SqliteSnapshotState,
+};
 use camino::Utf8Path;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -29,6 +32,29 @@ impl SqliteSourceCheckpointState {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.row_ids.is_empty()
+    }
+}
+
+/// Shared snapshot-evidence state for multiple SQLite-backed acquisition sources.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct SqliteSnapshotCheckpointState {
+    #[serde(default)]
+    snapshots: BTreeMap<String, SqliteSnapshotState>,
+}
+
+impl SqliteSnapshotCheckpointState {
+    pub fn state_mut(&mut self, key: impl Into<String>) -> &mut SqliteSnapshotState {
+        self.snapshots.entry(key.into()).or_default()
+    }
+
+    #[must_use]
+    pub fn state(&self, key: &str) -> Option<&SqliteSnapshotState> {
+        self.snapshots.get(key)
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.snapshots.is_empty()
     }
 }
 

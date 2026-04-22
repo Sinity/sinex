@@ -9,7 +9,7 @@ fn utf8_path(path: &std::path::Path) -> Utf8PathBuf {
 }
 
 #[sinex_test]
-async fn sqlite_source_checkpoint_state_tracks_keyed_cursors(_ctx: TestContext) -> TestResult<()> {
+async fn sqlite_source_checkpoint_state_tracks_keyed_cursors() -> TestResult<()> {
     let mut state = SqliteSourceCheckpointState::default();
 
     state.set_cursor("browser::/tmp/history.sqlite", 2);
@@ -23,7 +23,26 @@ async fn sqlite_source_checkpoint_state_tracks_keyed_cursors(_ctx: TestContext) 
 }
 
 #[sinex_test]
-async fn discover_importable_files_remembers_scan_root(_ctx: TestContext) -> TestResult<()> {
+async fn sqlite_snapshot_checkpoint_state_tracks_keyed_evidence_state() -> TestResult<()> {
+    let mut state = sinex_node_sdk::SqliteSnapshotCheckpointState::default();
+
+    state
+        .state_mut("browser::/tmp/history.sqlite")
+        .record_success(sinex_primitives::temporal::Timestamp::now(), 42);
+
+    assert_eq!(
+        state
+            .state("browser::/tmp/history.sqlite")
+            .and_then(|state| state.last_snapshot_row_id),
+        Some(42)
+    );
+    assert!(state.state("missing").is_none());
+    assert!(!state.is_empty());
+    Ok(())
+}
+
+#[sinex_test]
+async fn discover_importable_files_remembers_scan_root() -> TestResult<()> {
     let dir = tempdir()?;
     let path = utf8_path(&dir.path().join("history.jsonl"));
     std::fs::write(path.as_std_path(), "{\"url\":\"https://example.com\"}\n")?;
