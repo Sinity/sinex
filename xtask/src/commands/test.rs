@@ -18,6 +18,13 @@ use crate::process::ProcessBuilder;
 use console::style;
 
 const HEAVY_TEST_THREAD_CAP: usize = 4;
+const INGESTD_RUNTIME_TEST_PACKAGES: &[&str] = &["sinex-ingestd", "sinex-node-sdk"];
+
+#[derive(Debug, Clone, Copy)]
+struct RuntimeBinaryRequirement {
+    package: &'static str,
+    binary: &'static str,
+}
 
 fn failing_test_details_issue(ctx: &CommandContext, error: Option<&color_eyre::Report>) -> String {
     match error {
@@ -546,6 +553,80 @@ fn resolve_nextest_execution_plan(
     }
 }
 
+fn runtime_binary_requirements_for_plan(
+    execution_plan: &NextestExecutionPlan,
+) -> Vec<RuntimeBinaryRequirement> {
+    if workload_scope_includes_any(
+        &execution_plan.workload_scope,
+        INGESTD_RUNTIME_TEST_PACKAGES,
+    ) {
+        return vec![RuntimeBinaryRequirement {
+            package: "sinex-ingestd",
+            binary: "sinex-ingestd",
+        }];
+    }
+    Vec::new()
+}
+
+fn workload_scope_includes_any(scope: &WorkloadScope, packages: &[&str]) -> bool {
+    match scope {
+        WorkloadScope::Workspace => true,
+        WorkloadScope::Packages(selected) | WorkloadScope::Affected(selected) => selected
+            .iter()
+            .any(|package| packages.iter().any(|candidate| package == candidate)),
+    }
+}
+
+fn prepare_runtime_binaries_for_plan(
+    ctx: &CommandContext,
+    execution_plan: &NextestExecutionPlan,
+) -> Result<Vec<serde_json::Value>> {
+    let requirements = runtime_binary_requirements_for_plan(execution_plan);
+    if requirements.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let workspace_root = crate::sandbox::orchestrator::find_workspace_root()?;
+    let mut reports = Vec::new();
+    for requirement in requirements {
+        let before = crate::sandbox::orchestrator::check_runtime_binary_freshness(
+            &workspace_root,
+            requirement.package,
+            requirement.binary,
+        )?;
+        if ctx.is_human() && !before.is_fresh() {
+            eprintln!(
+                "→ Preparing stale/missing runtime binary for tests: {} ({})",
+                requirement.binary,
+                before.status.as_str()
+            );
+        }
+        if !before.is_fresh() {
+            ProcessBuilder::cargo()
+                .args(["build", "-p", requirement.package])
+                .with_description(format!(
+                    "building test runtime binary {}",
+                    requirement.binary
+                ))
+                .run_ok()?;
+        }
+        let after = crate::sandbox::orchestrator::check_runtime_binary_freshness(
+            &workspace_root,
+            requirement.package,
+            requirement.binary,
+        )?;
+        after.ensure_fresh()?;
+        reports.push(serde_json::json!({
+            "binary": after.binary_name,
+            "package": after.package,
+            "before": before.to_json(),
+            "after": after.to_json(),
+            "rebuilt": !before.is_fresh(),
+        }));
+    }
+    Ok(reports)
+}
+
 impl XtaskCommand for TestCommand {
     fn name(&self) -> &'static str {
         "test"
@@ -835,6 +916,16 @@ impl XtaskCommand for TestCommand {
             return Ok(CommandResult::success().with_detail("tests listed"));
         }
 
+        let runtime_binary_reports =
+            if runtime_binary_requirements_for_plan(&execution_plan).is_empty() {
+                Vec::new()
+            } else {
+                let runtime_stage = ctx.start_stage("runtime-binaries");
+                let result = prepare_runtime_binaries_for_plan(ctx, &execution_plan);
+                ctx.finish_stage(runtime_stage, result.is_ok());
+                result?
+            };
+
         // Prime database pool — pre-provision all slots upfront
         if self.prime {
             println!("{}", style("Priming test database pool...").cyan());
@@ -934,6 +1025,7 @@ impl XtaskCommand for TestCommand {
                 "passed": stats.passed,
                 "failed": stats.failed,
                 "ignored": stats.ignored,
+                "runtime_binaries": runtime_binary_reports.clone(),
                 "failures": failures,
                 "failure_details_issue": failure_details_issue.clone(),
                 "analysis": analysis,
@@ -997,6 +1089,7 @@ impl XtaskCommand for TestCommand {
                     "passed": stats.passed,
                     "failed": stats.failed,
                     "ignored": stats.ignored,
+                    "runtime_binaries": runtime_binary_reports.clone(),
                     "flaky": flaky,
                     "flaky_issue": flaky_issue.clone(),
                     "analysis": analysis,
@@ -1218,6 +1311,47 @@ mod tests {
                 workload_scope: WorkloadScope::Packages(vec!["sinex-e2e-tests".into()]),
             }
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_binary_requirements_include_ingestd_for_workspace()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = NextestExecutionPlan {
+            runner_packages: Vec::new(),
+            workload_scope: WorkloadScope::Workspace,
+        };
+
+        let requirements = runtime_binary_requirements_for_plan(&plan);
+        assert_eq!(requirements.len(), 1);
+        assert_eq!(requirements[0].package, "sinex-ingestd");
+        assert_eq!(requirements[0].binary, "sinex-ingestd");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_binary_requirements_include_ingestd_for_node_sdk_tests()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = NextestExecutionPlan {
+            runner_packages: vec!["sinex-node-sdk".to_string()],
+            workload_scope: WorkloadScope::Packages(vec!["sinex-node-sdk".to_string()]),
+        };
+
+        let requirements = runtime_binary_requirements_for_plan(&plan);
+        assert_eq!(requirements.len(), 1);
+        assert_eq!(requirements[0].package, "sinex-ingestd");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_binary_requirements_skip_unrelated_package_tests()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = NextestExecutionPlan {
+            runner_packages: vec!["xtask".to_string()],
+            workload_scope: WorkloadScope::Packages(vec!["xtask".to_string()]),
+        };
+
+        assert!(runtime_binary_requirements_for_plan(&plan).is_empty());
         Ok(())
     }
 
