@@ -3,7 +3,7 @@ use sinex_db::models::{Event, OffsetKind, Provenance, SourceMaterial};
 use sinex_node_sdk::acquisition_manager::{
     AcquisitionManager, BufferedAppendStreamWriterConfig, SourceRecordAnchor,
 };
-use sinex_node_sdk::{BufferedRecordSink, NodeResult, RecordMaterializer, SinexError};
+use sinex_node_sdk::{BufferedRecordMaterializer, NodeResult, SinexError};
 use sinex_primitives::{Id, JsonValue};
 use std::fmt;
 use std::sync::Arc;
@@ -33,7 +33,7 @@ const WRITER_BATCH_COALESCE_WINDOW: std::time::Duration = std::time::Duration::f
 #[derive(Clone)]
 pub struct RealWatcherMaterialContext {
     material_id: Id<SourceMaterial>,
-    materializer: RecordMaterializer<BufferedRecordSink>,
+    materializer: BufferedRecordMaterializer,
     event_count: Arc<AtomicU64>,
 }
 
@@ -66,7 +66,7 @@ impl RealWatcherMaterialContext {
                 SinexError::lifecycle(format!("Failed to begin system watcher material: {e}"))
             })?;
         let material_id = Id::from_uuid(handle.material_id);
-        let materializer = RecordMaterializer::new(BufferedRecordSink::from_active_handle(
+        let materializer = BufferedRecordMaterializer::from_active_handle(
             Arc::clone(&acquisition),
             handle,
             source_identifier.to_string(),
@@ -76,7 +76,7 @@ impl RealWatcherMaterialContext {
                 batch_max_bytes: WRITER_BATCH_MAX_BYTES,
                 batch_coalesce_window: WRITER_BATCH_COALESCE_WINDOW,
             },
-        ));
+        );
 
         Ok(Self {
             material_id,
