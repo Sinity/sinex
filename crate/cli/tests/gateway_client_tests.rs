@@ -231,6 +231,7 @@ async fn test_gateway_client_creation_with_token() -> TestResult<()> {
     let config = ClientConfig {
         url: "https://localhost:9999".to_string(),
         token_file: Some(token_path.to_string_lossy().to_string()),
+        token_role: None,
         insecure: true,
         ..Default::default()
     };
@@ -249,6 +250,7 @@ async fn test_gateway_client_creation_without_token_fails() -> TestResult<()> {
         url: "https://localhost:9999".to_string(),
         token: None,
         token_file: None,
+        token_role: None,
         insecure: true,
         ..Default::default()
     };

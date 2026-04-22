@@ -9,6 +9,7 @@ use std::env;
 use std::path::Path;
 
 use common::{TestDir, TlsFixture, TokenFixture};
+use sinex_primitives::RuntimeTargetGatewayTokenRole;
 use sinexctl::auth::{load_client_cert, load_root_ca, load_token};
 use xtask::sandbox::{sinex_serial_test, sinex_test};
 
@@ -18,7 +19,7 @@ use xtask::sandbox::{sinex_serial_test, sinex_test};
 
 #[sinex_serial_test]
 async fn test_load_token_from_explicit_value() -> TestResult<()> {
-    let token = load_token(Some("explicit-token-value"), None).unwrap();
+    let token = load_token(Some("explicit-token-value"), None, None).unwrap();
     assert_eq!(token, "explicit-token-value");
     Ok(())
 }
@@ -29,7 +30,7 @@ async fn test_load_token_explicit_takes_precedence_over_env() -> TestResult<()> 
     unsafe { env::set_var("SINEX_RPC_TOKEN", "env-token") };
 
     // Explicit token should win
-    let token = load_token(Some("explicit-token"), None).unwrap();
+    let token = load_token(Some("explicit-token"), None, None).unwrap();
     assert_eq!(token, "explicit-token");
 
     unsafe { env::remove_var("SINEX_RPC_TOKEN") };
@@ -40,7 +41,7 @@ async fn test_load_token_explicit_takes_precedence_over_env() -> TestResult<()> 
 async fn test_load_token_from_env_var() -> TestResult<()> {
     unsafe { env::set_var("SINEX_RPC_TOKEN", "token-from-env") };
 
-    let token = load_token(None, None).unwrap();
+    let token = load_token(None, None, None).unwrap();
     assert_eq!(token, "token-from-env");
 
     unsafe { env::remove_var("SINEX_RPC_TOKEN") };
@@ -52,7 +53,7 @@ async fn test_load_token_empty_env_var_is_skipped() -> TestResult<()> {
     unsafe { env::set_var("SINEX_RPC_TOKEN", "") };
 
     // Empty env var should be skipped, causing error (no other source)
-    let result = load_token(None, None);
+    let result = load_token(None, None, None);
     assert!(result.is_err());
 
     unsafe { env::remove_var("SINEX_RPC_TOKEN") };
@@ -67,7 +68,7 @@ async fn test_load_token_from_file() -> TestResult<()> {
     let dir = TestDir::new();
     let token_path = dir.create_file("token", TokenFixture::valid());
 
-    let token = load_token(None, Some(token_path.as_path())).unwrap();
+    let token = load_token(None, Some(token_path.as_path()), None).unwrap();
     assert_eq!(token, TokenFixture::valid());
     Ok(())
 }
@@ -81,8 +82,25 @@ async fn test_load_token_file_trims_whitespace() -> TestResult<()> {
     let token_with_whitespace = format!("  {}  \n\n", TokenFixture::valid());
     let token_path = dir.create_file("token", &token_with_whitespace);
 
-    let token = load_token(None, Some(token_path.as_path())).unwrap();
+    let token = load_token(None, Some(token_path.as_path()), None).unwrap();
     assert_eq!(token, TokenFixture::valid());
+    Ok(())
+}
+
+#[sinex_serial_test]
+async fn test_load_token_applies_runtime_role_to_raw_secret() -> TestResult<()> {
+    unsafe { env::remove_var("SINEX_RPC_TOKEN") };
+
+    let dir = TestDir::new();
+    let token_path = dir.create_file("token", "raw-secret\n");
+
+    let token = load_token(
+        None,
+        Some(token_path.as_path()),
+        Some(RuntimeTargetGatewayTokenRole::Admin),
+    )
+    .unwrap();
+    assert_eq!(token, "raw-secret:admin");
     Ok(())
 }
 
@@ -94,7 +112,7 @@ async fn test_load_token_env_takes_precedence_over_file() -> TestResult<()> {
     unsafe { env::set_var("SINEX_RPC_TOKEN", "env-token") };
 
     // Env var should win over file
-    let token = load_token(None, Some(token_path.as_path())).unwrap();
+    let token = load_token(None, Some(token_path.as_path()), None).unwrap();
     assert_eq!(token, "env-token");
 
     unsafe { env::remove_var("SINEX_RPC_TOKEN") };
@@ -107,7 +125,7 @@ async fn test_load_token_missing_file_fails() -> TestResult<()> {
     unsafe { env::remove_var("SINEX_RPC_TOKEN") };
 
     let nonexistent = Path::new("/nonexistent/path/to/token");
-    let result = load_token(None, Some(nonexistent));
+    let result = load_token(None, Some(nonexistent), None);
 
     // Should fail since file doesn't exist and no other source
     assert!(result.is_err());
@@ -122,7 +140,7 @@ async fn test_load_token_with_special_chars() -> TestResult<()> {
     let dir = TestDir::new();
     let token_path = dir.create_file("token", TokenFixture::with_special_chars());
 
-    let token = load_token(None, Some(token_path.as_path())).unwrap();
+    let token = load_token(None, Some(token_path.as_path()), None).unwrap();
     assert_eq!(token, TokenFixture::with_special_chars());
     Ok(())
 }
@@ -136,7 +154,7 @@ async fn test_load_token_long_token() -> TestResult<()> {
     let long_token = TokenFixture::long();
     let token_path = dir.create_file("token", &long_token);
 
-    let token = load_token(None, Some(token_path.as_path())).unwrap();
+    let token = load_token(None, Some(token_path.as_path()), None).unwrap();
     assert_eq!(token, long_token);
     Ok(())
 }
@@ -146,7 +164,7 @@ async fn test_load_token_no_source_fails() -> TestResult<()> {
     // Clear all possible sources
     unsafe { env::remove_var("SINEX_RPC_TOKEN") };
 
-    let result = load_token(None, None);
+    let result = load_token(None, None, None);
     assert!(result.is_err());
 
     let err = result.unwrap_err().to_string();
@@ -162,16 +180,16 @@ async fn test_load_token_precedence_cli_over_env_over_file() -> TestResult<()> {
     unsafe { env::set_var("SINEX_RPC_TOKEN", "env-token") };
 
     // CLI > env > file
-    let token = load_token(Some("cli-token"), Some(token_path.as_path())).unwrap();
+    let token = load_token(Some("cli-token"), Some(token_path.as_path()), None).unwrap();
     assert_eq!(token, "cli-token");
 
     // env > file (when CLI is None)
-    let token = load_token(None, Some(token_path.as_path())).unwrap();
+    let token = load_token(None, Some(token_path.as_path()), None).unwrap();
     assert_eq!(token, "env-token");
 
     // file (when CLI and env are None)
     unsafe { env::remove_var("SINEX_RPC_TOKEN") };
-    let token = load_token(None, Some(token_path.as_path())).unwrap();
+    let token = load_token(None, Some(token_path.as_path()), None).unwrap();
     assert_eq!(token, "file-token");
     Ok(())
 }
@@ -323,7 +341,7 @@ async fn test_load_token_file_permission_denied() -> TestResult<()> {
     // Make file unreadable
     std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o000)).unwrap();
 
-    let result = load_token(None, Some(token_path.as_path()));
+    let result = load_token(None, Some(token_path.as_path()), None);
 
     // Restore permissions for cleanup BEFORE the assertion (for proper cleanup even if assertion fails)
     std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o644)).unwrap();
