@@ -4,8 +4,12 @@ use crate::{NodeResult, SinexError};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use std::ffi::OsStr;
 use std::process::Command;
-use std::sync::OnceLock;
+use std::sync::{
+    OnceLock,
+    atomic::{AtomicU64, Ordering},
+};
 use std::time::Duration;
 use tokio::process::Command as AsyncCommand;
 use tokio::sync::Mutex as AsyncMutex;
@@ -21,11 +25,138 @@ pub use path_validator::{VerifiedPath, create_secure_temp_path, validate_and_con
 const LOCAL_CAS_BACKEND: &str = "SINEXBLAKE3";
 const LOCAL_CAS_DIR: &str = "sinex-cas";
 const LOCAL_CAS_MAX_BYTES: u64 = 16 * 1024 * 1024;
+const ANNEX_PROCESS_COUNTERS_PATH_ENV: &str = "SINEX_ANNEX_PROCESS_COUNTERS_PATH";
 
 static ANNEX_PROCESS_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
+static ANNEX_PROCESS_COUNTERS: OnceLock<AnnexProcessCounterState> = OnceLock::new();
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AnnexProcessCounters {
+    pub blocking_commands: u64,
+    pub async_commands: u64,
+    pub git_commands: u64,
+    pub git_annex_commands: u64,
+}
+
+impl AnnexProcessCounters {
+    #[must_use]
+    pub fn saturating_delta_since(self, baseline: Self) -> Self {
+        Self {
+            blocking_commands: self
+                .blocking_commands
+                .saturating_sub(baseline.blocking_commands),
+            async_commands: self.async_commands.saturating_sub(baseline.async_commands),
+            git_commands: self.git_commands.saturating_sub(baseline.git_commands),
+            git_annex_commands: self
+                .git_annex_commands
+                .saturating_sub(baseline.git_annex_commands),
+        }
+    }
+}
+
+#[derive(Default)]
+struct AnnexProcessCounterState {
+    blocking_commands: AtomicU64,
+    async_commands: AtomicU64,
+    git_commands: AtomicU64,
+    git_annex_commands: AtomicU64,
+}
 
 fn annex_process_lock() -> &'static AsyncMutex<()> {
     ANNEX_PROCESS_LOCK.get_or_init(|| AsyncMutex::new(()))
+}
+
+fn annex_process_counters() -> &'static AnnexProcessCounterState {
+    ANNEX_PROCESS_COUNTERS.get_or_init(AnnexProcessCounterState::default)
+}
+
+#[must_use]
+pub fn annex_process_counters_snapshot() -> AnnexProcessCounters {
+    let counters = annex_process_counters();
+    AnnexProcessCounters {
+        blocking_commands: counters.blocking_commands.load(Ordering::Relaxed),
+        async_commands: counters.async_commands.load(Ordering::Relaxed),
+        git_commands: counters.git_commands.load(Ordering::Relaxed),
+        git_annex_commands: counters.git_annex_commands.load(Ordering::Relaxed),
+    }
+}
+
+pub fn reset_annex_process_counters() {
+    let counters = annex_process_counters();
+    counters.blocking_commands.store(0, Ordering::Relaxed);
+    counters.async_commands.store(0, Ordering::Relaxed);
+    counters.git_commands.store(0, Ordering::Relaxed);
+    counters.git_annex_commands.store(0, Ordering::Relaxed);
+    persist_annex_process_counters_snapshot(annex_process_counters_snapshot());
+}
+
+fn persist_annex_process_counters_snapshot(snapshot: AnnexProcessCounters) {
+    let Some(path) = std::env::var_os(ANNEX_PROCESS_COUNTERS_PATH_ENV) else {
+        return;
+    };
+    let path = std::path::PathBuf::from(path);
+    if let Some(parent) = path.parent()
+        && let Err(error) = std::fs::create_dir_all(parent)
+    {
+        warn!(
+            path = %parent.display(),
+            error = %error,
+            "Failed to create annex process counter snapshot directory"
+        );
+        return;
+    }
+
+    let temp_path = path.with_extension(format!("json.tmp-{}", std::process::id()));
+    let bytes = match serde_json::to_vec_pretty(&snapshot) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            warn!(
+                error = %error,
+                "Failed to serialize annex process counter snapshot"
+            );
+            return;
+        }
+    };
+    if let Err(error) = std::fs::write(&temp_path, bytes) {
+        warn!(
+            path = %temp_path.display(),
+            error = %error,
+            "Failed to write annex process counter snapshot"
+        );
+        return;
+    }
+    if let Err(error) = std::fs::rename(&temp_path, &path) {
+        warn!(
+            source = %temp_path.display(),
+            target = %path.display(),
+            error = %error,
+            "Failed to publish annex process counter snapshot"
+        );
+    }
+}
+
+fn record_process_invocation(program: &OsStr, blocking: bool) {
+    let counters = annex_process_counters();
+    if blocking {
+        counters.blocking_commands.fetch_add(1, Ordering::Relaxed);
+    } else {
+        counters.async_commands.fetch_add(1, Ordering::Relaxed);
+    }
+
+    let command_name = std::path::Path::new(program)
+        .file_name()
+        .unwrap_or(program)
+        .to_string_lossy();
+    match command_name.as_ref() {
+        "git" => {
+            counters.git_commands.fetch_add(1, Ordering::Relaxed);
+        }
+        "git-annex" => {
+            counters.git_annex_commands.fetch_add(1, Ordering::Relaxed);
+        }
+        _ => {}
+    }
+    persist_annex_process_counters_snapshot(annex_process_counters_snapshot());
 }
 
 fn run_command_blocking(
@@ -38,6 +169,7 @@ fn run_command_blocking(
         }
         std::thread::sleep(Duration::from_millis(50));
     };
+    record_process_invocation(cmd.get_program(), true);
     cmd.output()
         .map_err(|e| SinexError::processing(context).with_source(e))
 }
@@ -47,6 +179,7 @@ async fn run_command_async(
     context: &'static str,
 ) -> NodeResult<std::process::Output> {
     let _guard = annex_process_lock().lock().await;
+    record_process_invocation(cmd.as_std().get_program(), false);
     cmd.output()
         .await
         .map_err(|e| SinexError::processing(context).with_source(e))
@@ -829,6 +962,7 @@ mod tests {
             num_copies: None,
             large_files: None,
         })?;
+        reset_annex_process_counters();
 
         let source_path = repo_path.join("small-material.jsonl");
         tokio::fs::write(&source_path, br#"{"event":"small"}"#).await?;
@@ -836,6 +970,11 @@ mod tests {
         let key = annex.add_file(&source_path).await?;
         assert_eq!(key.backend, LOCAL_CAS_BACKEND);
         assert_eq!(key.size, 17);
+        let counters = annex_process_counters_snapshot();
+        assert_eq!(
+            counters.git_annex_commands, 0,
+            "small-file storage should stay on local CAS and avoid git-annex subprocesses"
+        );
 
         let content_path = annex
             .local_content_path(&key.key)?

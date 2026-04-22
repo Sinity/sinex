@@ -22,6 +22,11 @@ xtask test --list-scenarios
 xtask test --scenario-tag row_stream
 xtask test --scenario-category source_material
 xtask test --scenario-lane heavy --heavy
+
+# Source-material resource profiles
+xtask test -p sinex-node-sdk --scenario-tag frame_amplification
+xtask test -p sinex-node-sdk --scenario-tag duplicate_content
+xtask test -p sinex-node-sdk --scenario-tag storage_profile --heavy
 ```
 
 `xtask test` is the primary test entrypoint. It handles the repo's preflight and
@@ -29,6 +34,9 @@ nextest wiring; use `xtask test --help` for the current option surface.
 Scenario selectors discover `#[sinex_test(... scenario = ...)]` metadata and
 compile it down to ordinary nextest package/filter arguments. Scenario semantics
 belong in Rust tests and evidence bundles, not in product-runtime xtask commands.
+Resource-shape scenarios emit machine-readable JSON artifacts under
+`.sinex/test-artifacts/`; these are observed/advisory benchmark records unless a
+specific scenario assertion encodes a correctness invariant.
 
 ## CI-Parity Validation
 
