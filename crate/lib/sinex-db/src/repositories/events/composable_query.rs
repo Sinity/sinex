@@ -9,16 +9,18 @@ use super::queries::extract_plan_rows;
 use crate::EventRecord;
 use crate::JsonValue;
 use crate::models::Event;
+use crate::repositories::DbPoolExt;
 use crate::repositories::common::{DbResult, db_error};
 use sinex_primitives::query::{
     AggregationMode, Cursor, CursorAnchor, EventQuery, EventQueryResult, GroupByField,
     GroupedCount, GroupedValue, GroupedValueAggregation, LineageDirection, LineageNode,
     LineageQuery, LineageResult, NumericField, PathOp, PayloadFilter, QueryResultEvent,
-    SortDirection, SourceStatsEntry, TimeBucketEntry, TimeSeriesOrder,
+    SortDirection, SourceMaterialLinkInfo, SourceStatsEntry, TimeBucketEntry, TimeSeriesOrder,
 };
-use sinex_primitives::{Id, Pagination, SinexError, Timestamp};
+use sinex_primitives::{Id, Pagination, Provenance, SinexError, Timestamp, Uuid};
 use sqlx::postgres::types::PgInterval;
 use sqlx::{FromRow, Postgres, QueryBuilder};
+use std::collections::BTreeSet;
 use tracing::instrument;
 
 use super::persistence::EventRepository;
@@ -93,10 +95,27 @@ impl EventRepository<'_> {
             Vec::new()
         };
 
+        let material_ids = collect_lineage_material_ids(&root, &ancestors, &descendants);
+        let material_links = self
+            .pool
+            .source_materials()
+            .links_for_materials(&material_ids)
+            .await?
+            .into_iter()
+            .map(|row| SourceMaterialLinkInfo {
+                from_material_id: row.from_material_id,
+                to_material_id: row.to_material_id,
+                relation_type: row.relation_type,
+                metadata: row.metadata,
+                created_at: row.created_at,
+            })
+            .collect();
+
         Ok(LineageResult {
             root,
             ancestors,
             descendants,
+            material_links,
         })
     }
 }
@@ -931,6 +950,28 @@ fn rows_to_lineage_nodes(rows: Vec<LineageRow>) -> DbResult<Vec<LineageNode>> {
         });
     }
     Ok(nodes)
+}
+
+fn collect_lineage_material_ids(
+    root: &Event<JsonValue>,
+    ancestors: &[LineageNode],
+    descendants: &[LineageNode],
+) -> Vec<Uuid> {
+    let mut ids = BTreeSet::new();
+    collect_event_material_id(root, &mut ids);
+    for node in ancestors {
+        collect_event_material_id(&node.event, &mut ids);
+    }
+    for node in descendants {
+        collect_event_material_id(&node.event, &mut ids);
+    }
+    ids.into_iter().collect()
+}
+
+fn collect_event_material_id(event: &Event<JsonValue>, ids: &mut BTreeSet<Uuid>) {
+    if let Provenance::Material { id, .. } = &event.provenance {
+        ids.insert(id.to_uuid());
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────

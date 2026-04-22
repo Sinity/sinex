@@ -35,8 +35,9 @@ pub use schema_management::{
     NewEventSchema, SchemaManagementRepository, SchemaStatistics, ValidationError, ValidationResult,
 };
 pub use source_materials::{
-    SourceMaterial, SourceMaterialExt, SourceMaterialRepository, TemporalLedgerEntry,
-    material_kinds, material_types, status as material_status, timing_info_types,
+    SourceMaterial, SourceMaterialExt, SourceMaterialLink, SourceMaterialLinkRecord,
+    SourceMaterialRepository, TemporalLedgerEntry, material_kinds, material_types,
+    relation_types as source_material_relation_types, status as material_status, timing_info_types,
 };
 pub use state::{
     Operation, OperationRecord, OperationStatistics, StateRepository, SystemHealthReport,

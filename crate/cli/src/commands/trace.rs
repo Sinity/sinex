@@ -1,6 +1,7 @@
 use clap::{Args, ValueEnum};
 use console::style;
 use serde_json::Value as JsonValue;
+use sinex_primitives::Uuid;
 use sinex_primitives::events::{Event, Provenance};
 use sinex_primitives::ids::Id;
 use sinex_primitives::query::{LineageDirection, LineageNode, LineageQuery, LineageResult};
@@ -146,8 +147,24 @@ fn render_tree(result: &LineageResult) {
         render_nodes(&result.descendants);
     }
 
-    if result.ancestors.is_empty() && result.descendants.is_empty() {
+    if result.ancestors.is_empty()
+        && result.descendants.is_empty()
+        && result.material_links.is_empty()
+    {
         println!("  {}", style("No provenance links found.").dim());
+    }
+
+    if !result.material_links.is_empty() {
+        println!("  {}:", style("Material evidence").cyan().bold());
+        for link in &result.material_links {
+            println!(
+                "    {} {} {} {}",
+                style(short_uuid(link.from_material_id)).yellow(),
+                style("--").dim(),
+                style(&link.relation_type).blue(),
+                style(format!("--> {}", short_uuid(link.to_material_id))).yellow(),
+            );
+        }
     }
 }
 
@@ -201,6 +218,18 @@ fn format_provenance_tag(event: &Event<JsonValue>) -> String {
         Provenance::Material { .. } => style("(material)").blue().to_string(),
         Provenance::Synthesis { .. } => style("(synthesis)").magenta().to_string(),
     }
+}
+
+fn event_material_id(event: &Event<JsonValue>) -> Option<Uuid> {
+    match &event.provenance {
+        Provenance::Material { id, .. } => Some(id.to_uuid()),
+        Provenance::Synthesis { .. } => None,
+    }
+}
+
+fn short_uuid(id: Uuid) -> String {
+    let value = id.to_string();
+    value[..8.min(value.len())].to_string()
 }
 
 /// Render the lineage result as a Graphviz DOT graph.
@@ -283,6 +312,42 @@ fn render_dot(result: &LineageResult) -> String {
             .map_or_else(|| "unknown".to_string(), std::string::ToString::to_string);
         out.push_str(&format!(
             "  \"{root_id}\" -> \"{desc_id}\" [label=\"synthesis\"];\n"
+        ));
+    }
+
+    for event in std::iter::once(&result.root)
+        .chain(result.ancestors.iter().map(|node| &node.event))
+        .chain(result.descendants.iter().map(|node| &node.event))
+    {
+        if let Some(material_id) = event_material_id(event) {
+            let event_id = event
+                .id
+                .as_ref()
+                .map_or_else(|| "unknown".to_string(), std::string::ToString::to_string);
+            out.push_str(&format!(
+                "  \"material:{material_id}\" [label=\"material\\n{}\" shape=note style=filled fillcolor=lightcyan];\n",
+                short_uuid(material_id)
+            ));
+            out.push_str(&format!(
+                "  \"material:{material_id}\" -> \"{event_id}\" [label=\"material\" style=dotted];\n"
+            ));
+        }
+    }
+
+    for link in &result.material_links {
+        out.push_str(&format!(
+            "  \"material:{}\" [label=\"material\\n{}\" shape=note style=filled fillcolor=lightcyan];\n",
+            link.from_material_id,
+            short_uuid(link.from_material_id)
+        ));
+        out.push_str(&format!(
+            "  \"material:{}\" [label=\"material\\n{}\" shape=note style=filled fillcolor=lightcyan];\n",
+            link.to_material_id,
+            short_uuid(link.to_material_id)
+        ));
+        out.push_str(&format!(
+            "  \"material:{}\" -> \"material:{}\" [label=\"{}\" style=dashed color=gray50];\n",
+            link.from_material_id, link.to_material_id, link.relation_type
         ));
     }
 
