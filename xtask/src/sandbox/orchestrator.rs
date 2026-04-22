@@ -7,9 +7,15 @@
 
 use crate::sandbox::prelude::*;
 use color_eyre::eyre::WrapErr;
+use guppy::MetadataCommand;
+use guppy::graph::PackageGraph;
+use serde_json::json;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::process::Command;
+use walkdir::WalkDir;
 
 pub use crate::orchestrator::{DevOrchestrator, RunArgs, run_binary};
 
@@ -332,7 +338,7 @@ async fn wait_for_gateway_tcp(addr: &std::net::SocketAddr) -> Result<()> {
 }
 
 /// Find the workspace root by traversing up from current directory
-fn find_workspace_root() -> Result<PathBuf> {
+pub(crate) fn find_workspace_root() -> Result<PathBuf> {
     find_workspace_root_from(std::env::current_dir()?)
 }
 
@@ -358,25 +364,300 @@ fn find_workspace_root_from(mut current: PathBuf) -> Result<PathBuf> {
     }
 }
 
-pub async fn start_test_ingestd_with_config(
-    config: TestIngestdConfig,
-    ctx: Option<&crate::sandbox::context::Sandbox>,
-) -> Result<TestIngestdHandle> {
-    let workspace_root = find_workspace_root()?;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuntimeBinaryFreshnessStatus {
+    Fresh,
+    Missing,
+    Stale,
+}
+
+impl RuntimeBinaryFreshnessStatus {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Fresh => "fresh",
+            Self::Missing => "missing",
+            Self::Stale => "stale",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct RuntimeBinaryFreshnessReport {
+    pub(crate) package: String,
+    pub(crate) binary_name: String,
+    pub(crate) binary_path: PathBuf,
+    pub(crate) status: RuntimeBinaryFreshnessStatus,
+    pub(crate) binary_modified_at: Option<SystemTime>,
+    pub(crate) newest_input_path: Option<PathBuf>,
+    pub(crate) newest_input_modified_at: Option<SystemTime>,
+    pub(crate) input_count: usize,
+    pub(crate) build_command: String,
+}
+
+impl RuntimeBinaryFreshnessReport {
+    pub(crate) fn is_fresh(&self) -> bool {
+        self.status == RuntimeBinaryFreshnessStatus::Fresh
+    }
+
+    pub(crate) fn ensure_fresh(&self) -> Result<()> {
+        if self.is_fresh() {
+            return Ok(());
+        }
+        color_eyre::eyre::bail!("{}", self.error_message())
+    }
+
+    pub(crate) fn error_message(&self) -> String {
+        match self.status {
+            RuntimeBinaryFreshnessStatus::Fresh => {
+                format!("{} is fresh", self.binary_name)
+            }
+            RuntimeBinaryFreshnessStatus::Missing => format!(
+                "{} binary not found at {}. Run `{}` before launching tests that spawn this runtime binary.",
+                self.binary_name,
+                self.binary_path.display(),
+                self.build_command,
+            ),
+            RuntimeBinaryFreshnessStatus::Stale => {
+                let newest = self.newest_input_path.as_ref().map_or_else(
+                    || "<unknown>".to_string(),
+                    |path| path.display().to_string(),
+                );
+                format!(
+                    "{} binary at {} is stale: newest source input {} is newer than the binary. Run `{}` before launching tests that spawn this runtime binary.",
+                    self.binary_name,
+                    self.binary_path.display(),
+                    newest,
+                    self.build_command,
+                )
+            }
+        }
+    }
+
+    pub(crate) fn to_json(&self) -> serde_json::Value {
+        json!({
+            "package": self.package,
+            "binary_name": self.binary_name,
+            "binary_path": self.binary_path.display().to_string(),
+            "status": self.status.as_str(),
+            "binary_modified_at_epoch_secs": system_time_epoch_secs(self.binary_modified_at),
+            "newest_input_path": self.newest_input_path.as_ref().map(|path| path.display().to_string()),
+            "newest_input_modified_at_epoch_secs": system_time_epoch_secs(self.newest_input_modified_at),
+            "input_count": self.input_count,
+            "build_command": self.build_command,
+        })
+    }
+}
+
+pub(crate) fn runtime_binary_path(workspace_root: &std::path::Path, binary_name: &str) -> PathBuf {
     let profile = if cfg!(debug_assertions) {
         "debug"
     } else {
         "release"
     };
-    let target_dir = crate::orchestrator::get_target_dir(&workspace_root);
-    let binary_path = target_dir.join(profile).join("sinex-ingestd");
+    crate::orchestrator::get_target_dir(workspace_root)
+        .join(profile)
+        .join(binary_name)
+}
 
-    if !binary_path.exists() {
-        bail!(
-            "sinex-ingestd binary not found at {:?}. Please build it first.",
-            binary_path
+pub(crate) fn check_runtime_binary_freshness(
+    workspace_root: &std::path::Path,
+    package: &str,
+    binary_name: &str,
+) -> Result<RuntimeBinaryFreshnessReport> {
+    let binary_path = runtime_binary_path(workspace_root, binary_name);
+    let build_command = format!("xtask build -p {package}");
+    let input_paths = collect_runtime_binary_input_paths(workspace_root, package)?;
+    runtime_binary_freshness_from_inputs(
+        package,
+        binary_name,
+        binary_path,
+        input_paths,
+        build_command,
+    )
+}
+
+pub(crate) fn runtime_binary_freshness_from_inputs(
+    package: &str,
+    binary_name: &str,
+    binary_path: PathBuf,
+    input_paths: Vec<PathBuf>,
+    build_command: String,
+) -> Result<RuntimeBinaryFreshnessReport> {
+    let binary_modified_at = std::fs::metadata(&binary_path)
+        .and_then(|metadata| metadata.modified())
+        .ok();
+    let newest_input = newest_modified_input(&input_paths)?;
+    let status = match (binary_modified_at, newest_input.as_ref()) {
+        (None, _) => RuntimeBinaryFreshnessStatus::Missing,
+        (Some(_), None) => RuntimeBinaryFreshnessStatus::Fresh,
+        (Some(binary_mtime), Some((_, input_mtime))) if binary_mtime >= *input_mtime => {
+            RuntimeBinaryFreshnessStatus::Fresh
+        }
+        (Some(_), Some(_)) => RuntimeBinaryFreshnessStatus::Stale,
+    };
+    Ok(RuntimeBinaryFreshnessReport {
+        package: package.to_string(),
+        binary_name: binary_name.to_string(),
+        binary_path,
+        status,
+        binary_modified_at,
+        newest_input_path: newest_input.as_ref().map(|(path, _)| path.clone()),
+        newest_input_modified_at: newest_input.map(|(_, modified_at)| modified_at),
+        input_count: input_paths.len(),
+        build_command,
+    })
+}
+
+fn collect_runtime_binary_input_paths(
+    workspace_root: &std::path::Path,
+    package: &str,
+) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    for root in workspace_dependency_roots(workspace_root, package)? {
+        paths.push(root.join("Cargo.toml"));
+        let build_rs = root.join("build.rs");
+        if build_rs.exists() {
+            paths.push(build_rs);
+        }
+        let src = root.join("src");
+        if src.exists() {
+            collect_source_files(&src, &mut paths);
+        }
+    }
+    let workspace_manifest = workspace_root.join("Cargo.toml");
+    if workspace_manifest.exists() {
+        paths.push(workspace_manifest);
+    }
+    let lockfile = workspace_root.join("Cargo.lock");
+    if lockfile.exists() {
+        paths.push(lockfile);
+    }
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+fn workspace_dependency_roots(
+    workspace_root: &std::path::Path,
+    package: &str,
+) -> Result<Vec<PathBuf>> {
+    let mut command = MetadataCommand::new();
+    command
+        .current_dir(workspace_root.to_path_buf())
+        .manifest_path(workspace_root.join("Cargo.toml"));
+    let metadata = command
+        .exec()
+        .context("failed to execute cargo metadata for runtime binary freshness")?;
+    let graph =
+        PackageGraph::from_metadata(metadata).context("failed to build cargo package graph")?;
+    let root = workspace_root
+        .canonicalize()
+        .unwrap_or_else(|_| workspace_root.to_path_buf());
+    let package_metadata = graph
+        .packages()
+        .find(|candidate| candidate.name() == package)
+        .ok_or_else(|| color_eyre::eyre::eyre!("package '{package}' not found in workspace"))?;
+    let mut roots = Vec::new();
+    let mut seen_roots = HashSet::new();
+    let mut visited = HashSet::new();
+    let mut stack = vec![package_metadata];
+    while let Some(metadata) = stack.pop() {
+        if !visited.insert(metadata.id().clone()) {
+            continue;
+        }
+        if !push_workspace_package_root(&root, metadata, &mut seen_roots, &mut roots) {
+            continue;
+        }
+        for link in metadata.direct_links() {
+            if link.normal().is_present() || link.build().is_present() {
+                stack.push(link.to());
+            }
+        }
+    }
+    Ok(roots)
+}
+
+fn push_workspace_package_root(
+    workspace_root: &std::path::Path,
+    package: guppy::graph::PackageMetadata<'_>,
+    seen: &mut HashSet<PathBuf>,
+    roots: &mut Vec<PathBuf>,
+) -> bool {
+    let manifest = package.manifest_path().as_std_path();
+    let Some(package_root) = manifest.parent() else {
+        return false;
+    };
+    let normalized = package_root
+        .canonicalize()
+        .unwrap_or_else(|_| package_root.to_path_buf());
+    if !normalized.starts_with(workspace_root) {
+        return false;
+    }
+    if seen.insert(normalized.clone()) {
+        roots.push(normalized);
+    }
+    true
+}
+
+fn collect_source_files(root: &std::path::Path, paths: &mut Vec<PathBuf>) {
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        if entry.file_type().is_file()
+            && entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "rs")
+        {
+            paths.push(entry.path().to_path_buf());
+        }
+    }
+}
+
+fn newest_modified_input(paths: &[PathBuf]) -> Result<Option<(PathBuf, SystemTime)>> {
+    let mut newest = None;
+    for path in paths {
+        let Ok(metadata) = std::fs::metadata(path) else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        let modified_at = metadata
+            .modified()
+            .wrap_err_with(|| format!("failed to inspect mtime for {}", path.display()))?;
+        if newest
+            .as_ref()
+            .is_none_or(|(_, newest_mtime)| modified_at > *newest_mtime)
+        {
+            newest = Some((path.clone(), modified_at));
+        }
+    }
+    Ok(newest)
+}
+
+fn system_time_epoch_secs(time: Option<SystemTime>) -> Option<u64> {
+    time.and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs())
+}
+
+pub async fn start_test_ingestd_with_config(
+    config: TestIngestdConfig,
+    ctx: Option<&crate::sandbox::context::Sandbox>,
+) -> Result<TestIngestdHandle> {
+    let workspace_root = find_workspace_root()?;
+    let freshness =
+        check_runtime_binary_freshness(&workspace_root, "sinex-ingestd", "sinex-ingestd")?;
+    if let Some(sandbox) = ctx {
+        sandbox.record_evidence_event(
+            "runtime_binary.freshness",
+            "checked runtime binary freshness before launching test ingestd",
+            freshness.to_json(),
         );
     }
+    freshness.ensure_fresh()?;
+    let binary_path = freshness.binary_path.clone();
 
     // Capture both stdout and stderr to a debug log file.
     // tracing_subscriber::fmt() defaults to stdout in 0.3.x, so we need >{file} 2>&1.
@@ -476,7 +757,102 @@ pub async fn start_test_ingestd_with_config(
 mod tests {
     use super::*;
     use std::fs;
+    use std::time::Duration;
     use tokio::process::Command;
+
+    fn write_file_at(
+        path: &std::path::Path,
+        content: &str,
+        modified_at: SystemTime,
+    ) -> TestResult<()> {
+        fs::write(path, content)?;
+        let file = fs::OpenOptions::new().write(true).open(path)?;
+        file.set_times(std::fs::FileTimes::new().set_modified(modified_at))?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_binary_freshness_reports_missing_binary() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let report = runtime_binary_freshness_from_inputs(
+            "sinex-ingestd",
+            "sinex-ingestd",
+            tempdir.path().join("target/debug/sinex-ingestd"),
+            Vec::new(),
+            "xtask build -p sinex-ingestd".to_string(),
+        )?;
+
+        assert_eq!(report.status, RuntimeBinaryFreshnessStatus::Missing);
+        let message = report.error_message();
+        assert!(message.contains("sinex-ingestd binary not found"));
+        assert!(message.contains("xtask build -p sinex-ingestd"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_binary_freshness_reports_stale_binary() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let binary = tempdir.path().join("sinex-ingestd");
+        let source = tempdir.path().join("src.rs");
+        write_file_at(&binary, "binary", UNIX_EPOCH + Duration::from_secs(1_000))?;
+        write_file_at(&source, "source", UNIX_EPOCH + Duration::from_secs(2_000))?;
+
+        let report = runtime_binary_freshness_from_inputs(
+            "sinex-ingestd",
+            "sinex-ingestd",
+            binary,
+            vec![source.clone()],
+            "xtask build -p sinex-ingestd".to_string(),
+        )?;
+
+        assert_eq!(report.status, RuntimeBinaryFreshnessStatus::Stale);
+        assert_eq!(report.newest_input_path.as_deref(), Some(source.as_path()));
+        let message = report.error_message();
+        assert!(message.contains("is stale"));
+        assert!(message.contains(source.display().to_string().as_str()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_binary_freshness_accepts_newer_binary() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let binary = tempdir.path().join("sinex-ingestd");
+        let source = tempdir.path().join("src.rs");
+        write_file_at(&source, "source", UNIX_EPOCH + Duration::from_secs(1_000))?;
+        write_file_at(&binary, "binary", UNIX_EPOCH + Duration::from_secs(2_000))?;
+
+        let report = runtime_binary_freshness_from_inputs(
+            "sinex-ingestd",
+            "sinex-ingestd",
+            binary,
+            vec![source],
+            "xtask build -p sinex-ingestd".to_string(),
+        )?;
+
+        assert_eq!(report.status, RuntimeBinaryFreshnessStatus::Fresh);
+        report.ensure_fresh()?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_binary_inputs_exclude_dev_only_xtask_sources() -> TestResult<()> {
+        let workspace = find_workspace_root()?;
+        let inputs = collect_runtime_binary_input_paths(&workspace, "sinex-ingestd")?;
+        let ingestd_main = workspace.join("crate/core/sinex-ingestd/src/main.rs");
+
+        assert!(
+            inputs.iter().any(|path| path == &ingestd_main),
+            "runtime binary inputs should include the target binary source"
+        );
+        assert!(
+            inputs.iter().all(|path| {
+                let relative = path.strip_prefix(&workspace).unwrap_or(path);
+                !relative.starts_with("xtask/src")
+            }),
+            "runtime binary inputs must not include xtask dev-dependency sources: {inputs:#?}"
+        );
+        Ok(())
+    }
 
     #[sinex_test]
     async fn captured_output_stdout_json_lines_surfaces_invalid_json() -> TestResult<()> {
