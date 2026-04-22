@@ -7,29 +7,30 @@ Canonical deployment and host-activation follow-up is tracked in GitHub under:
 Scratch notes are temporary investigation material only; do not treat `.agent/scratch/` as a
 durable deployment backlog.
 
-**Current state as of 2026-04-21:** `sinex.enable = true; provisionDatabase = true` is deployed on
+**Current state as of 2026-04-22:** `sinex.enable = true; provisionDatabase = true` is deployed on
 `sinnix-prime`. The host has active systemd units for the gateway, ingest daemon, filesystem,
 system, terminal, desktop, browser, canonicalizer, analytics, health automaton, and session
 detector. Target-user access preparatory units are active/exited for desktop, terminal, browser,
 and document scan surfaces.
 
 The trustworthy gap is no longer "can the services start?" or "do target-user bridges exist?".
-The remaining deployment work is to make proof boundaries explicit and repeatable: which runtime
-target is being checked, which stack produced the evidence, which source paths were exercised, and
-whether derived outputs are current and useful.
+Runtime-target descriptors, proof-carrying scenarios, evidence bundles, and resource-shape
+benchmarks now exist as the repeatable proof spine. Remaining deployment work is narrower:
+operator-visible derived-node telemetry, VM coverage representative of the deployed hardening
+model, and the next transport/failure-policy decisions before broader source growth.
 
 ### Current Live Surface
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Gateway | active | Unit is running; status/readiness should be reported through the explicit runtime target work in `#310`/`#322`. |
+| Gateway | active | Unit is running; status/readiness belongs to the explicit runtime-target/status snapshot surface from `#310`/`#322`. |
 | ingestd | active | Source-material frame stream ordering and hot-path batching are deployed. |
 | Filesystem node | active | Metadata-only and zero-byte observations now use SDK buffered append streams rather than one material per event. |
 | System node | active | Startup historical import is bounded off the continuous path; journal IDs are deterministic UUIDv7 with valid variant bits. |
 | Terminal node | active | Continuous watchers bootstrap from live tail and source records use SDK append-stream anchors. |
 | Desktop node | active | Target-user bridge has been proven under systemd hardening. |
-| Browser node | active | Startup replay was removed from snapshot mode; real dataset hardening remains tracked in `#320`. |
-| Automata | active | Canonicalizer, analytics, health, and session-detector units are running; output quality/lag/budget proof remains tracked in `#321`. |
+| Browser node | active | Startup replay was removed from snapshot mode; real dataset and host wiring hardening landed in `#320`. |
+| Automata | active | Canonicalizer, analytics, health, and session-detector units are running; output quality/lag/budget proof landed in `#321`, operator-visible telemetry remains `#334`. |
 | Schema apply | active/exited | Declarative schema apply unit is present and has run under systemd. |
 
 ### Recently Closed Deployment Risks
@@ -42,16 +43,19 @@ whether derived outputs are current and useful.
 | Unbounded journal import and coredump pressure froze the host | Continuous startup no longer imports all journal history; system node uses bounded historical scans. |
 | Invalid producer UUIDs poisoned ingestd COPY batches | ingestd rejects malformed UUIDv7 variants; system producer emits deterministic RFC4122 UUIDv7 IDs. |
 | Duplicate BLAKE3 blob inserts caused persistence retry loops | Blob repository deduplicates by BLAKE3. |
+| Checkout-local status confused dev/prod health | Runtime targets and consolidated status snapshots landed through `#310`/`#311`/`#322`. |
+| Historical/browser proof relied on host forensics | `#319`/`#320` proved those paths through the normal node/runtime plane. |
+| Runtime incidents lacked reusable evidence | `#485`/`#316`/`#315`/`#317` added proof catalog, evidence bundles, source scenarios, and resource-shape benchmarks. |
 
 ### Remaining Proof Work
 
 | Gap | Tracking |
 |-----|----------|
-| Explicit dev vs deployed runtime target descriptors | `#310`, `#311`, `#322` |
-| Historical backfill through the normal node/runtime plane | `#319` |
-| Browser-history real dataset and host wiring hardening | `#320` |
-| Automata derived-output quality, lag, and runtime budgets | `#321`, `#263`, `#325` |
-| Runtime/system pressure scenarios in tests and benchmarks | `#315`, `#316`, `#317`, `#318`, `#324` |
+| Operator-visible derived-node health and telemetry | `#334` |
+| Session detector deployment/readiness follow-through | `#329` |
+| Deployment-hardening and target-user bridge VM coverage | `#318`, `#234` |
+| Publish intent, DLQ/failure routing, and drain semantics | `#326`, `#327`, `#338` |
+| Schema-source bundle and late-arriving temporal decisions | `#233`, `#325` |
 
 ### Service User Permission Model
 
