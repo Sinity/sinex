@@ -6,6 +6,7 @@
 //! temporal ledger, and routing failures to the DLQ. State is persisted on disk
 //! so that in-flight assemblies can survive process restarts.
 
+mod durability;
 mod finalize;
 mod io;
 mod pipeline;
@@ -19,6 +20,8 @@ const _DISK_SPACE_CHECK_INTERVAL: std::time::Duration = std::time::Duration::fro
 use async_nats::{Client as NatsClient, jetstream};
 use blake3::Hasher;
 use dashmap::DashMap;
+use durability::DefaultDurabilityPolicy;
+pub(crate) use durability::DurabilityThresholds;
 use sinex_db::{DbPool, DbPoolExt};
 use sinex_node_sdk::annex::GitAnnex;
 use sinex_node_sdk::{SelfObservationError, SelfObserver};
@@ -255,6 +258,8 @@ pub struct MaterialAssembler {
     pub(super) slice_arrival_timeout: std::time::Duration,
     /// Age threshold for orphaned temp files (from config)
     pub(super) orphaned_file_age_threshold: std::time::Duration,
+    /// WAL and staged-material flush/fsync policy.
+    durability_policy: DefaultDurabilityPolicy,
 }
 
 impl MaterialAssembler {
@@ -272,6 +277,38 @@ impl MaterialAssembler {
         slice_timeout_secs: u64,
         orphan_threshold_secs: u64,
         disk_threshold_percent: u8,
+    ) -> IngestdResult<Self> {
+        Self::new_with_durability_thresholds(
+            nats_client,
+            pool,
+            annex,
+            state_root,
+            namespace,
+            slices_max_ack_pending,
+            ready_set,
+            max_buffered_slices,
+            max_material_size_bytes,
+            slice_timeout_secs,
+            orphan_threshold_secs,
+            disk_threshold_percent,
+            DurabilityThresholds::default_checked()?,
+        )
+    }
+
+    pub(crate) fn new_with_durability_thresholds(
+        nats_client: NatsClient,
+        pool: DbPool,
+        annex: Arc<GitAnnex>,
+        state_root: PathBuf,
+        namespace: Option<String>,
+        slices_max_ack_pending: i64,
+        ready_set: Option<MaterialReadySet>,
+        max_buffered_slices: usize,
+        max_material_size_bytes: u64,
+        slice_timeout_secs: u64,
+        orphan_threshold_secs: u64,
+        disk_threshold_percent: u8,
+        durability_thresholds: DurabilityThresholds,
     ) -> IngestdResult<Self> {
         if let Err(e) = std::fs::create_dir_all(&state_root) {
             return Err(SinexError::io(format!(
@@ -314,6 +351,7 @@ impl MaterialAssembler {
             max_material_size_bytes,
             slice_arrival_timeout: std::time::Duration::from_secs(slice_timeout_secs),
             orphaned_file_age_threshold: std::time::Duration::from_secs(orphan_threshold_secs),
+            durability_policy: DefaultDurabilityPolicy::new(durability_thresholds),
         })
     }
 
@@ -678,6 +716,7 @@ impl MaterialAssembler {
             max_material_size_bytes: self.max_material_size_bytes,
             slice_arrival_timeout: self.slice_arrival_timeout,
             orphaned_file_age_threshold: self.orphaned_file_age_threshold,
+            durability_policy: self.durability_policy,
         }
     }
 
