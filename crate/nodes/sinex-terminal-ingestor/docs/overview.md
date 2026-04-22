@@ -40,3 +40,8 @@ captures shell-history materials first and emits events from that staged input.
 Atuin historical import now belongs to the terminal node path itself rather than a
 separate direct-write CLI. Kitty, recording, and richer terminal-session capture
 are not wired through this node yet.
+
+Runtime-plane historical proof is covered by
+`scan_historical_persists_terminal_history_through_node_runtime`, which exercises
+Atuin `SQLite` and line-oriented text history through `NodeRunner`, NATS,
+`sinex-ingestd`, and persisted `core.events` material provenance.

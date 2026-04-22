@@ -286,7 +286,7 @@ impl FromStr for WindowManagerType {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "hyprland" {
+        if s.trim().eq_ignore_ascii_case("hyprland") {
             Ok(WindowManagerType::Hyprland)
         } else {
             Err(format!("Unsupported window manager type: {s}"))

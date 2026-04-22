@@ -3517,7 +3517,10 @@ impl ExplorationProvider for TerminalNode {
 mod tests {
     use super::*;
     use sinex_db::repositories::source_material_relation_types;
-    use sinex_node_sdk::{AcquisitionManager, acquisition_manager::RotationPolicy};
+    use sinex_node_sdk::{
+        AcquisitionManager, EventTransport, IngestorNodeAdapter, NatsPublisher, NodeRunner,
+        ShutdownConfig, acquisition_manager::RotationPolicy,
+    };
     use sinex_primitives::Id;
     use sinex_primitives::events::Provenance;
     use std::sync::Arc;
@@ -3539,6 +3542,104 @@ mod tests {
             "test://terminal-history",
             BufferedAppendStreamWriterConfig::default(),
         )
+    }
+
+    fn raw_node_config<T: Serialize>(config: &T) -> TestResult<HashMap<String, serde_json::Value>> {
+        let value = serde_json::to_value(config)?;
+        let serde_json::Value::Object(object) = value else {
+            return Err(color_eyre::eyre::eyre!(
+                "node config must serialize to a JSON object"
+            ));
+        };
+        Ok(object.into_iter().collect())
+    }
+
+    fn tune_batcher_for_runtime_proof(
+        config: &mut HashMap<String, serde_json::Value>,
+        service_prefix: &str,
+    ) -> String {
+        let suffix = Uuid::now_v7();
+        let service_name = format!("{service_prefix}-{suffix}");
+        config.insert("batch_size".to_string(), json!(1));
+        config.insert("batch_timeout_ms".to_string(), json!(20));
+        config.insert(
+            "consumer_group".to_string(),
+            json!(format!("proof-{suffix}")),
+        );
+        service_name
+    }
+
+    async fn wait_for_source_material_consumer(ctx: &TestContext) -> TestResult<()> {
+        let env = sinex_primitives::environment::environment();
+        let nats = ctx.nats_handle()?;
+        let js = nats.jetstream_with_client(ctx.nats_client());
+        let stream = env.nats_stream_name("SOURCE_MATERIAL");
+        nats.wait_for_consumer_on_stream(&js, &stream, Duration::from_secs(Timeouts::STANDARD))
+            .await?;
+        Ok(())
+    }
+
+    async fn wait_for_event_count(
+        pool: sqlx::PgPool,
+        source: &'static str,
+        event_type: &'static str,
+        expected_count: i64,
+    ) -> TestResult<()> {
+        xtask::sandbox::timing::WaitHelpers::wait_for_condition(
+            move || {
+                let pool = pool.clone();
+                async move {
+                    let count: i64 = sqlx::query_scalar(
+                        "SELECT COUNT(*)::bigint FROM core.events WHERE source = $1 AND event_type = $2",
+                    )
+                    .bind(source)
+                    .bind(event_type)
+                    .fetch_one(&pool)
+                    .await
+                    .map_err(|error| color_eyre::eyre::eyre!("database error: {error}"))?;
+                    Ok::<bool, color_eyre::eyre::Report>(count == expected_count)
+                }
+            },
+            Timeouts::STANDARD,
+        )
+        .await
+    }
+
+    async fn persisted_events(
+        pool: &sqlx::PgPool,
+        source: &str,
+        event_type: &str,
+    ) -> TestResult<Vec<(Option<Uuid>, Option<i64>, serde_json::Value)>> {
+        sqlx::query_as(
+            "SELECT source_material_id, anchor_byte, payload
+             FROM core.events
+             WHERE source = $1 AND event_type = $2
+             ORDER BY ts_orig, id",
+        )
+        .bind(source)
+        .bind(event_type)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| color_eyre::eyre::eyre!("database error: {error}"))
+    }
+
+    fn assert_material_provenance_rows(
+        rows: &[(Option<Uuid>, Option<i64>, serde_json::Value)],
+        label: &str,
+    ) -> TestResult<()> {
+        for (index, (source_material_id, anchor_byte, _)) in rows.iter().enumerate() {
+            if source_material_id.is_none() {
+                return Err(color_eyre::eyre::eyre!(
+                    "{label} row {index} has no source_material_id"
+                ));
+            }
+            if anchor_byte.is_none_or(|anchor| anchor < 0) {
+                return Err(color_eyre::eyre::eyre!(
+                    "{label} row {index} has invalid anchor_byte: {anchor_byte:?}"
+                ));
+            }
+        }
+        Ok(())
     }
 
     #[cfg(unix)]
@@ -4663,6 +4764,159 @@ mod tests {
             .await
             .expect_err("negative Atuin row ids must fail honestly");
         assert!(error.to_string().contains("invalid negative sqlite row id"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn scan_historical_persists_terminal_history_through_node_runtime(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let temp_dir = tempfile::tempdir()?;
+        let atuin_path = temp_dir.path().join("atuin-history.db");
+        {
+            let conn = rusqlite::Connection::open(&atuin_path)?;
+            conn.execute_batch(
+                "
+                CREATE TABLE history (
+                    id TEXT PRIMARY KEY,
+                    timestamp INTEGER NOT NULL,
+                    command TEXT NOT NULL,
+                    cwd TEXT,
+                    exit INTEGER,
+                    duration INTEGER,
+                    hostname TEXT,
+                    session TEXT,
+                    deleted_at INTEGER
+                );
+                INSERT INTO history (
+                    id, timestamp, command, cwd, exit, duration, hostname, session, deleted_at
+                ) VALUES
+                    ('h1', 1700100000000000000, 'echo atuin one', '/realm/project/sinex', 0, 1000000, 'host-a:user-a', 'session-a', NULL),
+                    ('h2', 1700100001000000000, 'echo atuin two', '/realm/project/sinex', 0, 2000000, 'host-a:user-a', 'session-a', NULL);
+                ",
+            )?;
+        }
+        let text_history_path = temp_dir.path().join("bash_history");
+        tokio::fs::write(&text_history_path, "#1700100002\necho text historical\n").await?;
+        let atuin_path = Utf8PathBuf::from_path_buf(atuin_path).map_err(|path| {
+            color_eyre::eyre::eyre!("Atuin temp path is not UTF-8: {}", path.display())
+        })?;
+        let text_history_path = Utf8PathBuf::from_path_buf(text_history_path).map_err(|path| {
+            color_eyre::eyre::eyre!("text history temp path is not UTF-8: {}", path.display())
+        })?;
+
+        let nats = ctx.nats_handle()?;
+        let ingest_work_dir = temp_dir.path().join("ingestd");
+        let ingest_config = TestIngestdConfig {
+            nats: nats.connection_config(),
+            database_url: ctx.database_url().to_string(),
+            work_dir: Some(ingest_work_dir),
+            ..Default::default()
+        };
+        let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
+        wait_for_source_material_consumer(&ctx).await?;
+
+        let config = TerminalConfig {
+            history_sources: vec![
+                HistorySourceConfig {
+                    path: atuin_path.clone(),
+                    shell: "atuin".to_string(),
+                },
+                HistorySourceConfig {
+                    path: text_history_path.clone(),
+                    shell: "bash".to_string(),
+                },
+            ],
+            polling_interval_secs: Seconds::from_secs(1),
+            max_capture_bytes: Bytes::from_bytes(4096),
+        };
+        let mut raw_config = raw_node_config(&config)?;
+        let service_name =
+            tune_batcher_for_runtime_proof(&mut raw_config, "terminal-historical-runtime-proof");
+
+        let publisher = Arc::new(NatsPublisher::new(ctx.nats_client()));
+        let checkpoint_path = temp_dir
+            .path()
+            .join("terminal-runtime-proof.checkpoint.json");
+        let adapter =
+            IngestorNodeAdapter::new(TerminalNode::new()).with_shutdown_config(ShutdownConfig {
+                checkpoint_path: Some(checkpoint_path),
+                ..ShutdownConfig::default()
+            });
+        let mut runner = NodeRunner::new(adapter);
+        runner
+            .initialize_with_transport(
+                service_name,
+                raw_config,
+                Some(ctx.pool.clone()),
+                EventTransport::Nats(publisher),
+                temp_dir.path().join("runner"),
+                false,
+            )
+            .await?;
+
+        let report = runner
+            .run_scan(
+                Checkpoint::None,
+                TimeHorizon::Historical {
+                    end_time: Timestamp::now(),
+                },
+                ScanArgs::default(),
+            )
+            .await?;
+        assert_eq!(report.events_processed, 3);
+
+        wait_for_event_count(ctx.pool.clone(), "shell.atuin", "command.executed", 2).await?;
+        wait_for_event_count(ctx.pool.clone(), "shell.history", "command.imported", 1).await?;
+
+        let atuin_rows = persisted_events(&ctx.pool, "shell.atuin", "command.executed").await?;
+        assert_material_provenance_rows(&atuin_rows, "Atuin historical")?;
+        assert_eq!(
+            atuin_rows
+                .iter()
+                .filter_map(|(_, _, payload)| payload
+                    .get("command_string")
+                    .and_then(serde_json::Value::as_str))
+                .collect::<Vec<_>>(),
+            vec!["echo atuin one", "echo atuin two"]
+        );
+
+        let text_rows = persisted_events(&ctx.pool, "shell.history", "command.imported").await?;
+        assert_material_provenance_rows(&text_rows, "text historical")?;
+        assert_eq!(
+            text_rows
+                .first()
+                .and_then(|(_, _, payload)| payload.get("command"))
+                .and_then(serde_json::Value::as_str),
+            Some("echo text historical")
+        );
+
+        let rerun_report = runner
+            .run_scan(
+                report.final_checkpoint.clone(),
+                TimeHorizon::Historical {
+                    end_time: Timestamp::now(),
+                },
+                ScanArgs::default(),
+            )
+            .await?;
+        assert_eq!(rerun_report.events_processed, 0);
+        assert_eq!(
+            persisted_events(&ctx.pool, "shell.atuin", "command.executed")
+                .await?
+                .len(),
+            2
+        );
+        assert_eq!(
+            persisted_events(&ctx.pool, "shell.history", "command.imported")
+                .await?
+                .len(),
+            1
+        );
+
+        runner.shutdown().await?;
+        ingest_handle.stop().await?;
         Ok(())
     }
 
