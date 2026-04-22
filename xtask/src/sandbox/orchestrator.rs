@@ -695,6 +695,10 @@ pub async fn start_test_ingestd_with_config(
         // surface is SINEX_ASSEMBLER_STATE_DIR plus SINEX_ANNEX_PATH.
         cmd.env("SINEX_ASSEMBLER_STATE_DIR", wd.join("assembler_state"));
         cmd.env("SINEX_ANNEX_PATH", wd.join("annex"));
+        cmd.env(
+            "SINEX_ANNEX_PROCESS_COUNTERS_PATH",
+            wd.join("annex-process-counters.json"),
+        );
     }
     cmd.env(
         "SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES",

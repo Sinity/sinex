@@ -2,8 +2,8 @@ use futures::{StreamExt, future::try_join_all};
 use sinex_db::repositories::{DbPoolExt, material_status};
 use sinex_node_sdk::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy, SOURCE_MATERIAL_BEGIN_SUBJECT,
-    SOURCE_MATERIAL_END_SUBJECT, SOURCE_MATERIAL_STREAM, source_material_slice_subject,
-    stage_material,
+    SOURCE_MATERIAL_END_SUBJECT, SOURCE_MATERIAL_STREAM, annex::AnnexProcessCounters,
+    source_material_slice_subject, stage_material, stage_material_from_file,
 };
 use sinex_primitives::error::SinexError;
 use sinex_primitives::ids::Id;
@@ -11,7 +11,7 @@ use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::units::{Bytes, Seconds};
 use std::io::ErrorKind;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{DEFAULT_WAIT_SECS, INTEGRATION_WAIT_SECS, Timeouts, WaitHelpers};
@@ -22,13 +22,27 @@ use xtask::sandbox::{
 async fn wait_for_material_assembler_ready(
     nats: &EphemeralNats,
     nats_client: &async_nats::Client,
+    namespace: &str,
 ) -> Result<()> {
     let env = sinex_primitives::environment::environment();
     let js_check = nats.jetstream_with_client(nats_client.clone());
-    let stream = env.nats_stream_name(SOURCE_MATERIAL_STREAM);
+    let stream = env.nats_stream_name_with_namespace(Some(namespace), SOURCE_MATERIAL_STREAM);
     nats.wait_for_consumer_on_stream(&js_check, &stream, Duration::from_secs(Timeouts::STANDARD))
         .await?;
     Ok(())
+}
+
+fn material_manager(
+    ctx: &TestContext,
+    nats_client: async_nats::Client,
+    source_type: impl Into<String>,
+) -> AcquisitionManager {
+    AcquisitionManager::new_with_namespace(
+        nats_client,
+        RotationPolicy::default(),
+        source_type.into(),
+        Some(ctx.pipeline_namespace().prefix().to_string()),
+    )
 }
 
 async fn fetch_realtime_capture_bytes(
@@ -64,26 +78,45 @@ where
     let ctx = ctx.with_nats().dedicated().await?;
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
 
     let mut ingest_config = TestIngestdConfig {
         nats: nats.connection_config(),
         database_url: ctx.database_url().to_string(),
         work_dir,
+        namespace: Some(namespace.clone()),
         ..Default::default()
     };
     configure(&mut ingest_config);
 
     let ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
-    AcquisitionManager::bootstrap_streams(&nats_client).await?;
-    wait_for_material_assembler_ready(&nats, &nats_client).await?;
+    AcquisitionManager::bootstrap_streams_with_namespace(&nats_client, Some(&namespace)).await?;
+    wait_for_material_assembler_ready(&nats, &nats_client, &namespace).await?;
 
     Ok((ctx, nats, nats_client, ingest_handle))
 }
 
 fn source_material_proof(runner_id: &str, claim_ids: &[&str], reproducer: &str) -> ProofMetadata {
+    source_material_proof_with_subjects(
+        runner_id,
+        &["https://github.com/Sinity/sinex/issues/315"],
+        claim_ids,
+        reproducer,
+    )
+}
+
+fn source_material_proof_with_subjects(
+    runner_id: &str,
+    subject_refs: &[&str],
+    claim_ids: &[&str],
+    reproducer: &str,
+) -> ProofMetadata {
     ProofMetadata {
         runner_id: Some(runner_id.to_string()),
-        subject_refs: vec!["https://github.com/Sinity/sinex/issues/315".to_string()],
+        subject_refs: subject_refs
+            .iter()
+            .map(|subject| (*subject).to_string())
+            .collect(),
         claim_ids: claim_ids.iter().map(|claim| (*claim).to_string()).collect(),
         status: Some("asserted_by_test".to_string()),
         reproducer: Some(reproducer.to_string()),
@@ -94,6 +127,113 @@ fn source_material_proof(runner_id: &str, claim_ids: &[&str], reproducer: &str) 
     }
 }
 
+async fn fetch_material_blob_summary(
+    pool: &sqlx::PgPool,
+    material_id: Uuid,
+) -> Result<(Uuid, String, i64)> {
+    let row = sqlx::query(
+        r"
+        SELECT
+            m.optional_blob_id::uuid AS blob_id,
+            b.annex_backend,
+            b.size_bytes
+        FROM raw.source_material_registry m
+        JOIN core.blobs b ON b.id = m.optional_blob_id
+        WHERE m.id = $1::uuid
+        ",
+    )
+    .bind(material_id)
+    .fetch_one(pool)
+    .await?;
+
+    Ok((
+        sqlx::Row::get(&row, "blob_id"),
+        sqlx::Row::get(&row, "annex_backend"),
+        sqlx::Row::get(&row, "size_bytes"),
+    ))
+}
+
+async fn read_ingestd_annex_process_counters(
+    work_dir: &std::path::Path,
+) -> Result<AnnexProcessCounters> {
+    let path = work_dir.join("annex-process-counters.json");
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Ok(AnnexProcessCounters::default());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    serde_json::from_slice(&bytes).map_err(Into::into)
+}
+
+async fn wait_for_completed_material(
+    pool: &sqlx::PgPool,
+    material_id: Uuid,
+    expected_bytes: i64,
+) -> Result<(Uuid, String, i64)> {
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = pool.clone();
+            async move {
+                let row = sqlx::query(
+                    r"
+                    SELECT status, total_bytes, optional_blob_id::uuid AS optional_blob_id
+                    FROM raw.source_material_registry
+                    WHERE id = $1::uuid
+                    ",
+                )
+                .bind(material_id)
+                .fetch_optional(&pool)
+                .await?;
+                let Some(row) = row else {
+                    return Ok::<bool, sqlx::Error>(false);
+                };
+                let status: String = sqlx::Row::get(&row, "status");
+                let total_bytes: Option<i64> = sqlx::Row::get(&row, "total_bytes");
+                let blob_id: Option<Uuid> = sqlx::Row::get(&row, "optional_blob_id");
+                Ok::<bool, sqlx::Error>(
+                    status == material_status::COMPLETED
+                        && total_bytes == Some(expected_bytes)
+                        && blob_id.is_some(),
+                )
+            }
+        },
+        INTEGRATION_WAIT_SECS,
+    )
+    .await?;
+
+    fetch_material_blob_summary(pool, material_id).await
+}
+
+fn nats_redelivery_count(summary: &NatsEvidenceSummary) -> usize {
+    summary
+        .streams
+        .iter()
+        .flat_map(|stream| stream.consumers.iter())
+        .map(|consumer| consumer.num_redelivered)
+        .sum()
+}
+
+fn source_material_stream_summary(summary: &NatsEvidenceSummary) -> Option<&NatsStreamEvidence> {
+    summary.streams.iter().find(|stream| {
+        stream
+            .subjects
+            .iter()
+            .any(|subject| subject.contains("source_material.frames."))
+    })
+}
+
+fn source_material_consumer_summary(
+    summary: &NatsEvidenceSummary,
+) -> Option<&NatsConsumerEvidence> {
+    source_material_stream_summary(summary).and_then(|stream| stream.consumers.first())
+}
+
+fn source_material_redelivery_count(summary: &NatsEvidenceSummary) -> usize {
+    source_material_consumer_summary(summary).map_or(0, |consumer| consumer.num_redelivered)
+}
+
 /// Test basic material acquisition flow: begin → append slices → finalize
 #[sinex_test]
 async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
@@ -102,7 +242,7 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
         setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
 
     // Create AcquisitionManager
-    let manager = AcquisitionManager::with_defaults(nats_client.clone(), "test-source");
+    let manager = material_manager(&ctx, nats_client.clone(), "test-source");
 
     // Begin material
     let mut handle = manager.begin_material("test-identifier").await?;
@@ -223,13 +363,13 @@ async fn source_material_scenario_batches_row_stream_records_with_stable_anchors
         setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
     let mut slice_sub = nats_client
         .subscribe(
-            sinex_primitives::environment::environment()
-                .nats_subject("source_material.frames.slices.>"),
+            ctx.pipeline_namespace()
+                .subject("source_material.frames.slices.>"),
         )
         .await?;
 
     let manager = Arc::new(
-        AcquisitionManager::with_defaults(nats_client.clone(), "scenario-row-stream")
+        material_manager(&ctx, nats_client.clone(), "scenario-row-stream")
             .with_work_dir(work_dir.path().join("writer")),
     );
     let mut stream = AppendStreamAcquirer::new(manager);
@@ -343,14 +483,163 @@ async fn source_material_scenario_batches_row_stream_records_with_stable_anchors
     Ok(())
 }
 
+/// Scenario: source-material batching exposes a trendable resource profile for
+/// tiny logical record bursts without hard-coding arbitrary performance gates.
+#[sinex_test(
+    timeout = 120,
+    scenario = "source-material.resource-frame-amplification.v1",
+    category = "source_material",
+    lane = "fast",
+    cost_tier = "integration",
+    tags = "source_material,row_stream,resource_shape,frame_amplification",
+    fixtures = "postgres,nats,ingestd,material_spool",
+    subjects = "issue:317,issue:324,node-sdk:source-material",
+    claims = "tiny-record-burst-uses-single-slice-frame,frame-amplification-profile-is-machine-readable,material-ledger-total-bytes-matches-record-burst",
+    reproducer = "xtask test -p sinex-node-sdk --scenario-tag frame_amplification"
+)]
+async fn source_material_resource_frame_amplification_profile(ctx: TestContext) -> Result<()> {
+    ctx.set_proof_metadata(source_material_proof_with_subjects(
+        "source-material.resource-frame-amplification.v1",
+        &[
+            "https://github.com/Sinity/sinex/issues/317",
+            "https://github.com/Sinity/sinex/issues/324",
+        ],
+        &[
+            "tiny-record-burst-uses-single-slice-frame",
+            "frame-amplification-profile-is-machine-readable",
+            "material-ledger-total-bytes-matches-record-burst",
+        ],
+        "xtask test -p sinex-node-sdk --scenario-tag frame_amplification",
+    ));
+
+    let work_dir = tempfile::tempdir()?;
+    let (ctx, _nats, nats_client, mut ingest_handle) =
+        setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
+    let mut slice_sub = nats_client
+        .subscribe(
+            ctx.pipeline_namespace()
+                .subject("source_material.frames.slices.>"),
+        )
+        .await?;
+
+    let manager = Arc::new(
+        material_manager(&ctx, nats_client.clone(), "resource-frame-profile")
+            .with_work_dir(work_dir.path().join("writer")),
+    );
+    let mut stream = AppendStreamAcquirer::new(manager);
+    let records = (0..256)
+        .map(|idx| format!("{{\"idx\":{idx},\"event\":\"tiny\"}}\n").into_bytes())
+        .collect::<Vec<_>>();
+    let expected_payload = records.concat();
+    let logical_bytes = expected_payload.len();
+
+    let started = Instant::now();
+    let anchors = stream
+        .append_many_with_anchors(&records, "scenario://resource-frame-profile")
+        .await?;
+    let append_elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let material_id = anchors
+        .first()
+        .ok_or_else(|| color_eyre::eyre::eyre!("resource append returned no anchors"))?
+        .material_id;
+
+    let slice_msg = tokio::time::timeout(Duration::from_secs(Timeouts::SHORT), slice_sub.next())
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing resource profile slice frame"))?;
+    assert_eq!(
+        slice_msg.payload.as_ref(),
+        expected_payload.as_slice(),
+        "resource profile should emit one physical slice for the tiny-record burst"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), slice_sub.next())
+            .await
+            .is_err(),
+        "tiny-record burst should not amplify into one slice frame per record"
+    );
+
+    stream.finalize("resource frame profile complete").await?;
+    let expected_bytes = i64::try_from(logical_bytes)?;
+    let (_blob_id, blob_backend, blob_size_bytes) =
+        wait_for_completed_material(&ctx.pool, material_id, expected_bytes).await?;
+    let nats_summary = ctx.capture_nats_evidence("source-material-nats").await?;
+    let db_summary = ctx.capture_db_evidence("source-material-db").await?;
+    let spool_summary =
+        ctx.capture_material_directory_evidence("source-material-spool", work_dir.path())?;
+    let source_stream = source_material_stream_summary(&nats_summary);
+    let source_consumer = source_material_consumer_summary(&nats_summary);
+    let stream_current_messages = source_stream.map_or(0, |stream| stream.messages);
+    let stream_current_bytes = source_stream.map_or(0, |stream| stream.bytes);
+    let stream_ack_floor_sequence =
+        source_consumer.map_or(0, |consumer| consumer.ack_floor_stream_sequence);
+    let stream_delivered_sequence =
+        source_consumer.map_or(0, |consumer| consumer.delivered_stream_sequence);
+
+    let slice_frame_count = 1_u64;
+    let logical_record_count = u64::try_from(records.len())?;
+    let published_frame_count = 3_u64; // begin + one coalesced slice + end
+    ctx.write_evidence_json(
+        "resource-frame-amplification",
+        "source_material_resource_profile",
+        &serde_json::json!({
+            "schema_version": 1,
+            "issue": 317,
+            "profile": "frame_amplification",
+            "interpretation": "observed_advisory",
+            "material_id": material_id.to_string(),
+            "logical_record_count": logical_record_count,
+            "logical_payload_bytes": logical_bytes,
+            "slice_frame_count": slice_frame_count,
+            "published_frame_count": published_frame_count,
+            "slice_frames_per_logical_record": slice_frame_count as f64 / logical_record_count as f64,
+            "published_frames_per_logical_record": published_frame_count as f64 / logical_record_count as f64,
+            "source_material_stream_current_messages": stream_current_messages,
+            "source_material_stream_current_bytes": stream_current_bytes,
+            "source_material_stream_ack_floor_sequence": stream_ack_floor_sequence,
+            "source_material_stream_delivered_sequence": stream_delivered_sequence,
+            "source_material_stream_pending": source_consumer.map_or(0, |consumer| consumer.num_pending),
+            "source_material_stream_ack_pending": source_consumer.map_or(0, |consumer| consumer.num_ack_pending),
+            "append_elapsed_ms": append_elapsed_ms,
+            "blob_backend": blob_backend,
+            "blob_size_bytes": blob_size_bytes,
+            "nats_redeliveries": nats_redelivery_count(&nats_summary),
+            "source_material_redeliveries": source_material_redelivery_count(&nats_summary),
+            "db_source_material_count": db_summary.source_material_count,
+            "spool_file_count": spool_summary.file_count,
+        }),
+        Some(format!(
+            "{logical_record_count} logical record(s) -> {slice_frame_count} slice frame(s)"
+        )),
+    )?;
+
+    ingest_handle.stop().await?;
+    Ok(())
+}
+
 /// Scenario: duplicate source bytes captured through independent material IDs
 /// converge on the same `BLAKE3` blob identity through normal ingestd finalization.
-#[sinex_test(timeout = 120)]
+#[sinex_test(
+    timeout = 120,
+    scenario = "source-material.resource-duplicate-finalization.v1",
+    category = "source_material",
+    lane = "fast",
+    cost_tier = "integration",
+    tags = "source_material,resource_shape,duplicate_content,redelivery,blob_dedup",
+    fixtures = "postgres,nats,ingestd,material_spool",
+    subjects = "issue:315,issue:317,issue:324,node-sdk:source-material",
+    claims = "duplicate-content-reuses-one-blob,duplicate-finalization-has-no-redelivery-loop,duplicate-finalization-profile-is-machine-readable",
+    reproducer = "xtask test -p sinex-node-sdk --scenario-tag duplicate_content"
+)]
 async fn source_material_scenario_duplicate_content_reuses_blob_identity(
     ctx: TestContext,
 ) -> Result<()> {
-    ctx.set_proof_metadata(source_material_proof(
+    ctx.set_proof_metadata(source_material_proof_with_subjects(
         "source-material.duplicate-content-blob-identity.v1",
+        &[
+            "https://github.com/Sinity/sinex/issues/315",
+            "https://github.com/Sinity/sinex/issues/317",
+            "https://github.com/Sinity/sinex/issues/324",
+        ],
         &[
             "duplicate-content-reuses-blake3-blob",
             "source-material-ids-remain-distinct",
@@ -367,7 +656,7 @@ async fn source_material_scenario_duplicate_content_reuses_blob_identity(
     let work_dir = tempfile::tempdir()?;
     let (ctx, _nats, nats_client, mut ingest_handle) =
         setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
-    let manager = AcquisitionManager::with_defaults(nats_client, "scenario-duplicate-content")
+    let manager = material_manager(&ctx, nats_client, "scenario-duplicate-content")
         .with_work_dir(work_dir.path().join("writer"));
     let payload = b"same logical export bytes\n";
 
@@ -459,19 +748,40 @@ async fn source_material_scenario_duplicate_content_reuses_blob_identity(
         "duplicate material finalization should not create duplicate blob rows"
     );
 
+    let nats_summary = ctx.capture_nats_evidence("source-material-nats").await?;
+    let redeliveries = source_material_redelivery_count(&nats_summary);
+    assert_eq!(
+        redeliveries, 0,
+        "normal duplicate-content finalization should not need source-material redelivery"
+    );
+    let source_stream = source_material_stream_summary(&nats_summary);
+    let source_consumer = source_material_consumer_summary(&nats_summary);
+
     ctx.write_evidence_json(
         "duplicate-content-materials",
         "source_material_blob_identity",
         &serde_json::json!({
+            "schema_version": 1,
+            "issue": 317,
+            "profile": "duplicate_finalization",
+            "interpretation": "observed_advisory",
             "first_material_id": first_id.to_string(),
             "second_material_id": second_id.to_string(),
             "shared_blob_id": first_blob.map(|id| id.to_string()),
             "checksum_blake3": blake3::hash(payload).to_hex().to_string(),
+            "source_material_stream_current_messages": source_stream.map_or(0, |stream| stream.messages),
+            "source_material_stream_current_bytes": source_stream.map_or(0, |stream| stream.bytes),
+            "source_material_stream_ack_floor_sequence": source_consumer.map_or(0, |consumer| consumer.ack_floor_stream_sequence),
+            "source_material_stream_delivered_sequence": source_consumer.map_or(0, |consumer| consumer.delivered_stream_sequence),
+            "source_material_stream_pending": source_consumer.map_or(0, |consumer| consumer.num_pending),
+            "source_material_stream_ack_pending": source_consumer.map_or(0, |consumer| consumer.num_ack_pending),
+            "source_material_redeliveries": redeliveries,
+            "nats_redeliveries_all_streams": nats_redelivery_count(&nats_summary),
+            "blob_count_for_checksum": blob_count.unwrap_or_default(),
         }),
         Some("2 material(s), 1 shared blob".to_string()),
     )?;
     ctx.capture_db_evidence("source-material-db").await?;
-    ctx.capture_nats_evidence("source-material-nats").await?;
     ctx.capture_material_directory_evidence("source-material-spool", work_dir.path())?;
     ctx.record_evidence_event(
         "scenario.complete",
@@ -486,6 +796,150 @@ async fn source_material_scenario_duplicate_content_reuses_blob_identity(
     Ok(())
 }
 
+/// Scenario: material storage chooses local CAS for small material and git-annex
+/// for large material, with subprocess counts measured at the SDK boundary.
+#[sinex_test(
+    timeout = 240,
+    serial,
+    scenario = "source-material.resource-storage-backends.v1",
+    category = "source_material",
+    lane = "heavy",
+    cost_tier = "heavy",
+    tags = "source_material,resource_shape,storage_profile,local_cas,git_annex",
+    fixtures = "postgres,nats,ingestd,material_spool,git_annex",
+    subjects = "issue:317,issue:324,node-sdk:source-material,node-sdk:annex",
+    claims = "small-material-uses-local-cas-without-git-annex-subprocess,large-material-uses-git-annex-with-observed-subprocess-count,storage-backend-profile-is-machine-readable",
+    reproducer = "xtask test -p sinex-node-sdk --scenario-tag storage_profile --heavy"
+)]
+async fn source_material_resource_storage_backend_profile(ctx: TestContext) -> Result<()> {
+    ctx.set_proof_metadata(source_material_proof_with_subjects(
+        "source-material.resource-storage-backends.v1",
+        &[
+            "https://github.com/Sinity/sinex/issues/317",
+            "https://github.com/Sinity/sinex/issues/324",
+        ],
+        &[
+            "small-material-uses-local-cas-without-git-annex-subprocess",
+            "large-material-uses-git-annex-with-observed-subprocess-count",
+            "storage-backend-profile-is-machine-readable",
+        ],
+        "xtask test -p sinex-node-sdk --scenario-tag storage_profile --heavy",
+    ));
+
+    let work_dir = tempfile::tempdir()?;
+    let (ctx, _nats, nats_client, mut ingest_handle) =
+        setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
+    let manager = material_manager(&ctx, nats_client.clone(), "resource-storage")
+        .with_work_dir(work_dir.path().join("writer"));
+
+    let small_payload = vec![b's'; 4 * 1024];
+    let small_counter_baseline = read_ingestd_annex_process_counters(work_dir.path()).await?;
+    let small_started = Instant::now();
+    let small_material_id = stage_material(
+        &manager,
+        "scenario://storage/small-local-cas",
+        &small_payload,
+        "resource storage small local-cas profile",
+        Some(serde_json::json!({ "scenario": "storage-profile", "size": "small" })),
+    )
+    .await?;
+    let small_stage_elapsed_ms = small_started.elapsed().as_secs_f64() * 1000.0;
+    let (_small_blob_id, small_backend, small_blob_bytes) = wait_for_completed_material(
+        &ctx.pool,
+        small_material_id,
+        i64::try_from(small_payload.len())?,
+    )
+    .await?;
+    let small_counters = read_ingestd_annex_process_counters(work_dir.path())
+        .await?
+        .saturating_delta_since(small_counter_baseline);
+    assert_eq!(
+        small_backend, "SINEXBLAKE3",
+        "small material should use local CAS storage"
+    );
+    assert_eq!(
+        small_counters.git_annex_commands, 0,
+        "small material should not cross the git-annex subprocess boundary"
+    );
+
+    let large_path = work_dir.path().join("large-storage-profile.bin");
+    let large_payload_len = 17 * 1024 * 1024;
+    tokio::fs::write(&large_path, vec![b'l'; large_payload_len]).await?;
+    let large_utf8_path = camino::Utf8PathBuf::from_path_buf(large_path)
+        .map_err(|path| color_eyre::eyre::eyre!("large profile path is not UTF-8: {path:?}"))?;
+
+    let large_counter_baseline = read_ingestd_annex_process_counters(work_dir.path()).await?;
+    let large_started = Instant::now();
+    let (large_material_id, large_streamed_bytes) = stage_material_from_file(
+        &manager,
+        &large_utf8_path,
+        "resource storage large git-annex profile",
+        Some(serde_json::json!({ "scenario": "storage-profile", "size": "large" })),
+    )
+    .await?;
+    let large_stage_elapsed_ms = large_started.elapsed().as_secs_f64() * 1000.0;
+    let (_large_blob_id, large_backend, large_blob_bytes) =
+        wait_for_completed_material(&ctx.pool, large_material_id, large_streamed_bytes).await?;
+    let large_counters = read_ingestd_annex_process_counters(work_dir.path())
+        .await?
+        .saturating_delta_since(large_counter_baseline);
+    assert_ne!(
+        large_backend, "SINEXBLAKE3",
+        "large material should cross into git-annex-backed storage"
+    );
+    assert!(
+        large_counters.git_annex_commands > 0,
+        "large material should record at least one git-annex subprocess"
+    );
+
+    let nats_summary = ctx.capture_nats_evidence("source-material-nats").await?;
+    let source_stream = source_material_stream_summary(&nats_summary);
+    let source_consumer = source_material_consumer_summary(&nats_summary);
+    ctx.write_evidence_json(
+        "resource-storage-backends",
+        "source_material_resource_profile",
+        &serde_json::json!({
+            "schema_version": 1,
+            "issue": 317,
+            "profile": "storage_backend",
+            "interpretation": "observed_advisory",
+            "small": {
+                "material_id": small_material_id.to_string(),
+                "payload_bytes": small_payload.len(),
+                "blob_backend": small_backend,
+                "blob_size_bytes": small_blob_bytes,
+                "stage_elapsed_ms": small_stage_elapsed_ms,
+                "ingestd_annex_process_counter_delta": small_counters,
+            },
+            "large": {
+                "material_id": large_material_id.to_string(),
+                "payload_bytes": large_streamed_bytes,
+                "blob_backend": large_backend,
+                "blob_size_bytes": large_blob_bytes,
+                "stage_elapsed_ms": large_stage_elapsed_ms,
+                "ingestd_annex_process_counter_delta": large_counters,
+            },
+            "source_material_stream_current_messages": source_stream.map_or(0, |stream| stream.messages),
+            "source_material_stream_current_bytes": source_stream.map_or(0, |stream| stream.bytes),
+            "source_material_stream_ack_floor_sequence": source_consumer.map_or(0, |consumer| consumer.ack_floor_stream_sequence),
+            "source_material_stream_delivered_sequence": source_consumer.map_or(0, |consumer| consumer.delivered_stream_sequence),
+            "source_material_stream_pending": source_consumer.map_or(0, |consumer| consumer.num_pending),
+            "source_material_stream_ack_pending": source_consumer.map_or(0, |consumer| consumer.num_ack_pending),
+            "source_material_redeliveries": source_material_redelivery_count(&nats_summary),
+            "nats_redeliveries_all_streams": nats_redelivery_count(&nats_summary),
+        }),
+        Some(format!(
+            "small local-cas subprocesses={}, large git-annex subprocesses={}",
+            small_counters.git_annex_commands, large_counters.git_annex_commands
+        )),
+    )?;
+    ctx.capture_db_evidence("source-material-db").await?;
+    ctx.capture_material_directory_evidence("source-material-spool", work_dir.path())?;
+
+    ingest_handle.stop().await?;
+    Ok(())
+}
+
 /// Reusing the same logical source must create distinct registry identifiers per observation.
 #[sinex_test]
 async fn material_acquisition_reuses_logical_source_without_aliasing_material_ids(
@@ -495,7 +949,7 @@ async fn material_acquisition_reuses_logical_source_without_aliasing_material_id
     let (ctx, _nats, nats_client, mut ingest_handle) =
         setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
 
-    let manager = AcquisitionManager::with_defaults(nats_client.clone(), "test-source");
+    let manager = material_manager(&ctx, nats_client.clone(), "test-source");
     let logical_source = "same-logical-source";
 
     let mut first = manager.begin_material(logical_source).await?;
@@ -595,7 +1049,7 @@ async fn material_acquisition_drop_before_first_slice_does_not_publish_orphan(
     let (ctx, _nats, nats_client, mut ingest_handle) =
         setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
 
-    let manager = AcquisitionManager::with_defaults(nats_client.clone(), "drop-source");
+    let manager = material_manager(&ctx, nats_client.clone(), "drop-source");
 
     let handle = manager.begin_material("drop-before-first-slice").await?;
     let material_id = handle.material_id;
@@ -648,7 +1102,7 @@ async fn material_acquisition_empty_finalize_still_publishes_begin(ctx: TestCont
         sinex_primitives::environment::environment().nats_subject("events.dlq.ingestd");
     let mut dlq_sub = nats_client.subscribe(dlq_subject).await?;
 
-    let manager = AcquisitionManager::with_defaults(nats_client.clone(), "empty-source");
+    let manager = material_manager(&ctx, nats_client.clone(), "empty-source");
 
     let handle = manager.begin_material("empty-finalize").await?;
     let material_id = handle.material_id;
@@ -701,7 +1155,7 @@ async fn material_acquisition_cancel_mid_slice(ctx: TestContext) -> Result<()> {
     let (ctx, _nats, nats_client, mut ingest_handle) =
         setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
 
-    let manager = AcquisitionManager::with_defaults(nats_client.clone(), "cancel-source");
+    let manager = material_manager(&ctx, nats_client.clone(), "cancel-source");
 
     let mut handle = manager.begin_material("cancel-identifier").await?;
     let material_id = handle.material_id;
@@ -1057,6 +1511,7 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
     // `TestContext` is acquired from a pool and cleaned for us; don't do extra per-test DB resets.
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
     let js = nats.jetstream_with_client(nats_client.clone());
     let run_suffix = Uuid::now_v7();
 
@@ -1067,6 +1522,7 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
         nats: nats.connection_config(),
         database_url: ctx.database_url().to_string(),
         work_dir: Some(work_dir_path.clone()),
+        namespace: Some(namespace.clone()),
         consumer_fetch_timeout_ms: 50,
         ..Default::default()
     };
@@ -1078,9 +1534,9 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
         Duration::from_secs(Timeouts::SHORT),
     )
     .await?;
-    wait_for_material_assembler_ready(&nats, &nats_client).await?;
+    wait_for_material_assembler_ready(&nats, &nats_client, &namespace).await?;
 
-    let manager = AcquisitionManager::with_defaults(nats_client.clone(), "restart-test");
+    let manager = material_manager(&ctx, nats_client.clone(), "restart-test");
 
     let mut handle = manager
         .begin_material(&format!("restart-session-{run_suffix}"))
@@ -1122,7 +1578,7 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
         Duration::from_secs(Timeouts::SHORT),
     )
     .await?;
-    wait_for_material_assembler_ready(&nats, &nats_client).await?;
+    wait_for_material_assembler_ready(&nats, &nats_client, &namespace).await?;
 
     manager.append_slice(&mut handle, b"second-chunk").await?;
     manager
@@ -1194,8 +1650,7 @@ async fn material_acquisition_concurrent_sessions_isolated(ctx: TestContext) -> 
     .await?;
 
     let futures = (0..4).map(|idx| {
-        let manager =
-            AcquisitionManager::with_defaults(nats_client.clone(), format!("concurrent-{idx}"));
+        let manager = material_manager(&ctx, nats_client.clone(), format!("concurrent-{idx}"));
         let synchronizer = synchronizer.clone();
         async move {
             let session_id = format!("session-{idx}");
@@ -1278,7 +1733,7 @@ async fn material_acquisition_rotation_by_size(ctx: TestContext) -> Result<()> {
         max_age_seconds: Seconds::from_secs(3600),
     };
 
-    let manager = AcquisitionManager::with_defaults(nats_client.clone(), "test-rotation");
+    let manager = material_manager(&ctx, nats_client.clone(), "test-rotation");
 
     // Use AppendStreamAcquirer for automatic rotation
     let mut acquirer = sinex_node_sdk::AppendStreamAcquirer::new(std::sync::Arc::new(manager));

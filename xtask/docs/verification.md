@@ -34,6 +34,20 @@ Useful options:
 - `--threads 12,24` sweeps concurrency settings.
 - `--target <pkg|workspace>` narrows the benchmark scope.
 
+Product/runtime resource-shape benchmarks can also live as proof-carrying
+scenario tests when the important output is a structured measurement artifact
+rather than the wall-clock duration of a whole nextest run. For example:
+
+```bash
+xtask test -p sinex-node-sdk --scenario-tag frame_amplification
+xtask test -p sinex-node-sdk --scenario-tag storage_profile --heavy
+```
+
+These scenario artifacts are observed/advisory by default. Promote a resource
+metric into `xtask/config/perf-contracts.toml` only when the threshold is tied
+to a documented correctness or operational invariant rather than a local timing
+sample.
+
 ## Non-Perf Verification
 
 Use `xtask docs schema-bundle` for the checked-in contract bundle, and the `ci`
