@@ -279,7 +279,7 @@ pub struct RecordProcessReport<Checkpoint, Warning = String> {
 /// `checkpoint_after`; retryable warnings stop processing before advancing.
 /// When the whole returned batch is handled without retry, the checkpoint
 /// advances to the source read frontier so source-level internal skips, such as
-/// malformed SQLite rows filtered by the reader, are acknowledged exactly once.
+/// malformed `SQLite` rows filtered by the reader, are acknowledged exactly once.
 pub async fn process_record_batch_lenient<
     Record,
     Checkpoint,

@@ -245,6 +245,20 @@ xtask test --scenario-category source_material
 xtask test --scenario-lane heavy --heavy
 ```
 
+Resource-shape benchmarks should use the same scenario surface when the metric
+belongs to product/runtime behavior rather than the xtask command runner. Keep
+the test assertions limited to correctness invariants, and write measured
+resource profiles as JSON evidence artifacts:
+
+```bash
+xtask test -p sinex-node-sdk --scenario-tag frame_amplification
+xtask test -p sinex-node-sdk --scenario-tag duplicate_content
+xtask test -p sinex-node-sdk --scenario-tag storage_profile --heavy
+```
+
+Those artifacts are trendable input records. They are not perf contracts unless
+a later change deliberately promotes a measured metric into a documented gate.
+
 Migration note: the source-material row-stream and restart-recovery slice is
 now represented by `sinex-node-sdk` scenario tests, not `xtask exercise`.
 Future `xtask exercise` entries that validate product/runtime behavior rather
