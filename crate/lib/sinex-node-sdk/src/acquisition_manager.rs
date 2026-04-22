@@ -1088,6 +1088,7 @@ impl Default for BufferedAppendStreamWriterConfig {
 struct BufferedAppendRequest {
     payload: Option<Vec<u8>>,
     reason: Option<String>,
+    continue_after_finalize: bool,
     reply: oneshot::Sender<NodeResult<Option<SourceRecordAnchor>>>,
 }
 
@@ -1153,6 +1154,7 @@ async fn buffered_append_writer_task(
                                 pending_request = Some(BufferedAppendRequest {
                                     payload: Some(next_payload),
                                     reason: next.reason,
+                                    continue_after_finalize: next.continue_after_finalize,
                                     reply: next.reply,
                                 });
                                 break;
@@ -1163,6 +1165,7 @@ async fn buffered_append_writer_task(
                             pending_request = Some(BufferedAppendRequest {
                                 payload: None,
                                 reason: next.reason,
+                                continue_after_finalize: next.continue_after_finalize,
                                 reply: next.reply,
                             });
                             break;
@@ -1189,7 +1192,9 @@ async fn buffered_append_writer_task(
                     ))
                 });
             let _ = request.reply.send(result);
-            return;
+            if !request.continue_after_finalize {
+                return;
+            }
         }
     }
 
@@ -1245,6 +1250,7 @@ impl BufferedAppendStreamWriter {
             .send(BufferedAppendRequest {
                 payload: Some(payload),
                 reason: None,
+                continue_after_finalize: false,
                 reply,
             })
             .await
@@ -1274,6 +1280,7 @@ impl BufferedAppendStreamWriter {
             .send(BufferedAppendRequest {
                 payload: None,
                 reason: Some(reason.to_string()),
+                continue_after_finalize: false,
                 reply,
             })
             .await;
@@ -1288,6 +1295,30 @@ impl BufferedAppendStreamWriter {
                 SinexError::processing(
                     "buffered append writer dropped finalize reply channel".to_string(),
                 )
+            })?
+            .map(|_| ())
+    }
+
+    pub async fn flush(&self, reason: &str) -> NodeResult<()> {
+        let (reply, response) = oneshot::channel();
+        let send_result = self
+            .writer_tx
+            .send(BufferedAppendRequest {
+                payload: None,
+                reason: Some(reason.to_string()),
+                continue_after_finalize: true,
+                reply,
+            })
+            .await;
+
+        if send_result.is_err() {
+            return Ok(());
+        }
+
+        response
+            .await
+            .map_err(|_| {
+                SinexError::processing("buffered append writer dropped flush reply channel")
             })?
             .map(|_| ())
     }
@@ -1644,6 +1675,42 @@ mod tests {
         assert_eq!((first.offset_start, first.offset_end), (0, 3));
         assert_eq!((second.offset_start, second.offset_end), (3, 6));
         assert_eq!(first.material_id, second.material_id);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn buffered_append_writer_flushes_material_without_stopping(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let namespace = format!("buffered-append-flush-{}", Uuid::now_v7());
+        let work_dir = tempfile::tempdir()?;
+        let manager = Arc::new(
+            AcquisitionManager::new_with_namespace(
+                ctx.nats_client(),
+                RotationPolicy::default(),
+                "buffered-writer-flush-test".to_string(),
+                Some(namespace),
+            )
+            .with_work_dir(work_dir.path()),
+        );
+        let writer = BufferedAppendStreamWriter::from_manager(
+            manager,
+            "test://buffered-writer-flush",
+            BufferedAppendStreamWriterConfig {
+                batch_coalesce_window: std::time::Duration::from_millis(1),
+                ..BufferedAppendStreamWriterConfig::default()
+            },
+        );
+
+        let first = writer.append(b"one".to_vec()).await?;
+        writer.flush("snapshot-evidence-boundary").await?;
+        let second = writer.append(b"two".to_vec()).await?;
+        writer.finalize("test-complete").await?;
+
+        assert_ne!(first.material_id, second.material_id);
+        assert_eq!((first.offset_start, first.offset_end), (0, 3));
+        assert_eq!((second.offset_start, second.offset_end), (0, 3));
         Ok(())
     }
 }

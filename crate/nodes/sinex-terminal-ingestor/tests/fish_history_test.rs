@@ -1,11 +1,19 @@
 use camino::Utf8PathBuf;
 use color_eyre::eyre::Context;
 use rusqlite::Connection;
+use serde_json::json;
+use sinex_db::repositories::{DbPoolExt, source_material_relation_types};
+use sinex_node_sdk::{
+    AcquisitionManager, BufferedRecordSourceHarness, RecordProcessingOutcome, RecordReadHorizon,
+    RecordSources, RecordWarningDisposition, SqliteRowCheckpoint, SqliteSnapshotLinker,
+    SqliteSnapshotPolicy, SqliteSnapshotState,
+};
 use sinex_primitives::Timestamp;
 use sinex_terminal_ingestor::fish_history::{
     ensure_fish_sqlite_history, get_max_row_id, read_fish_history,
 };
 use std::fs;
+use std::sync::Arc;
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
 
@@ -83,6 +91,91 @@ async fn test_read_fish_history_returns_all_entries() -> TestResult<()> {
     assert_eq!(entries[1].command, "ls -la");
     assert_eq!(entries[2].command, "cd /tmp");
     assert_eq!(last_row_id, 3);
+    Ok(())
+}
+
+#[sinex_test]
+async fn fish_history_snapshot_scenario_links_row_stream_to_sqlite_evidence(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let temp_dir = tempfile::tempdir().wrap_err("create tempdir")?;
+    let history_path = create_test_fish_history(&temp_dir)?;
+    let source = RecordSources::sqlite(
+        history_path.clone(),
+        "terminal.fish_sqlite://history",
+        read_fish_history,
+        |entry: &sinex_terminal_ingestor::fish_history::FishHistoryEntry| entry.row_id,
+    )
+    .with_snapshot_policy(SqliteSnapshotPolicy::disabled().with_first_observation(true));
+    let ctx = ctx.with_nats().shared().await?;
+    let scope = PipelineScope::new(&ctx).await?;
+    let acquisition = Arc::new(AcquisitionManager::new_with_namespace(
+        ctx.nats_client(),
+        sinex_node_sdk::RotationPolicy::default(),
+        "fish-sqlite-evidence-scenario".to_string(),
+        Some(ctx.pipeline_namespace().prefix().to_string()),
+    ));
+    let harness = BufferedRecordSourceHarness::buffered_default(source, acquisition.clone());
+    let mut checkpoint = SqliteRowCheckpoint::default();
+    let mut snapshot_state = SqliteSnapshotState::default();
+
+    let mut report = harness
+        .read_process_lenient_with_snapshot(
+            &mut checkpoint,
+            RecordReadHorizon::Unbounded,
+            &mut snapshot_state,
+            &acquisition,
+            |entry, material| async move {
+                material
+                    .append_json_line(&json!({
+                        "row_id": entry.row_id,
+                        "command": entry.command,
+                        "when": entry.when,
+                    }))
+                    .await?;
+                Ok::<_, sinex_primitives::SinexError>(RecordProcessingOutcome::Processed)
+            },
+            |_| RecordWarningDisposition::Retry,
+        )
+        .await?;
+    harness
+        .finalize_with_snapshot_evidence(
+            "fish-sqlite-evidence-scenario",
+            &mut report,
+            Some(SqliteSnapshotLinker::new(ctx.pool())),
+        )
+        .await?;
+
+    assert_eq!(checkpoint, SqliteRowCheckpoint::new(3));
+    assert_eq!(report.processed_records, 3);
+    assert_eq!(report.material_anchors.len(), 3);
+    let snapshot = report
+        .sqlite_snapshot
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing Fish snapshot evidence report"))?;
+    let snapshot_material_id = snapshot
+        .snapshot_material_id
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing Fish snapshot material id"))?;
+    assert_eq!(snapshot.failure, None);
+    assert_eq!(snapshot.linked_material_count, 1);
+    assert!(snapshot.link_errors.is_empty());
+
+    let links = ctx
+        .pool()
+        .source_materials()
+        .links_from(report.material_anchors[0].material_id)
+        .await?;
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].to_material_id, snapshot_material_id);
+    assert_eq!(
+        links[0].relation_type,
+        source_material_relation_types::BACKED_BY
+    );
+    assert_eq!(links[0].metadata["evidence_role"], "sqlite_snapshot");
+    assert_eq!(
+        links[0].metadata["source_identifier"],
+        "terminal.fish_sqlite://history"
+    );
+    scope.shutdown().await?;
     Ok(())
 }
 

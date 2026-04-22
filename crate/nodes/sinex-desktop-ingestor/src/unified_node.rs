@@ -823,7 +823,7 @@ impl IngestorNode for DesktopNode {
         let runtime = self.runtime.as_ref().ok_or_else(|| {
             SinexError::lifecycle("Desktop runtime not initialized for ActivityWatch import")
         })?;
-        let import_report = harness
+        let mut import_report = harness
             .read_process_lenient_with_snapshot(
                 &mut checkpoint,
                 horizon,
@@ -831,7 +831,6 @@ impl IngestorNode for DesktopNode {
                 self.acquisition.as_ref().ok_or_else(|| {
                     SinexError::lifecycle("Desktop acquisition manager not initialized")
                 })?,
-                Some(SqliteSnapshotLinker::new(runtime.db_pool())),
                 |entry, ctx| {
                     let started_at = entry.started_at;
                     let ended_at = entry.ended_at;
@@ -854,7 +853,13 @@ impl IngestorNode for DesktopNode {
                 ))
             })?;
 
-        harness.finalize("desktop-activitywatch-historical").await?;
+        harness
+            .finalize_with_snapshot_evidence(
+                "desktop-activitywatch-historical",
+                &mut import_report,
+                Some(SqliteSnapshotLinker::new(runtime.db_pool())),
+            )
+            .await?;
 
         if let Some(error) = import_report.warnings.into_iter().next() {
             return Err(error);

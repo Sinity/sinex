@@ -272,10 +272,128 @@ fn chromium_timestamp_bound(end_time: Timestamp) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_db::repositories::{DbPoolExt, source_material_relation_types};
+    use sinex_node_sdk::{
+        AcquisitionManager, BufferedRecordSourceHarness, RecordProcessingOutcome,
+        RecordReadHorizon, RecordSources, RecordWarningDisposition, SqliteRowCheckpoint,
+        SqliteSnapshotLinker, SqliteSnapshotPolicy, SqliteSnapshotState,
+    };
+    use std::sync::Arc;
+    use xtask::sandbox::prelude::*;
 
     #[test]
     fn chromium_visit_timestamp_converts_epoch() {
         let timestamp = chromium_visit_timestamp(133_869_418_254_638_00).unwrap();
         assert_eq!(timestamp.format_rfc3339(), "2025-03-20T10:57:05.4638Z");
+    }
+
+    #[sinex_test]
+    async fn qutebrowser_snapshot_scenario_links_row_stream_to_sqlite_evidence(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let temp = tempfile::NamedTempFile::new()?;
+        let path = Utf8PathBuf::from_path_buf(temp.path().to_path_buf())
+            .map_err(|path| color_eyre::eyre::eyre!("non-utf8 temp path: {path:?}"))?;
+        let conn = rusqlite::Connection::open(path.as_std_path())?;
+        conn.execute_batch(
+            "
+            CREATE TABLE History (
+                url TEXT NOT NULL,
+                title TEXT NOT NULL,
+                atime INTEGER NOT NULL,
+                redirect INTEGER NOT NULL
+            );
+            INSERT INTO History (url, title, atime, redirect) VALUES
+                ('https://example.com/?utm_source=drop', 'Example', 1700000000, 0),
+                ('https://sinex.local/docs', 'Sinex docs', 1700000100, 1);
+            ",
+        )?;
+        drop(conn);
+
+        let config = BrowserSqliteSourceConfig {
+            path: path.clone(),
+            browser: "qutebrowser".to_string(),
+            format: BrowserSqliteFormat::QutebrowserNative,
+        };
+        let read_config = config.clone();
+        let source = RecordSources::sqlite(
+            path,
+            config.checkpoint_key(),
+            move |_path, from_row_id, end_time| {
+                read_browser_sqlite_history(&read_config, from_row_id, end_time)
+            },
+            |visit: &BrowserVisitRecord| {
+                visit
+                    .db_row_id
+                    .and_then(|row_id| i64::try_from(row_id).ok())
+                    .unwrap_or_default()
+            },
+        )
+        .with_snapshot_policy(SqliteSnapshotPolicy::disabled().with_first_observation(true));
+        let ctx = ctx.with_nats().shared().await?;
+        let scope = PipelineScope::new(&ctx).await?;
+        let acquisition = Arc::new(AcquisitionManager::new_with_namespace(
+            ctx.nats_client(),
+            sinex_node_sdk::RotationPolicy::default(),
+            "qutebrowser-sqlite-evidence-scenario".to_string(),
+            Some(ctx.pipeline_namespace().prefix().to_string()),
+        ));
+        let harness = BufferedRecordSourceHarness::buffered_default(source, acquisition.clone());
+        let mut checkpoint = SqliteRowCheckpoint::default();
+        let mut snapshot_state = SqliteSnapshotState::default();
+
+        let mut report = harness
+            .read_process_lenient_with_snapshot(
+                &mut checkpoint,
+                RecordReadHorizon::Unbounded,
+                &mut snapshot_state,
+                &acquisition,
+                |visit, material| async move {
+                    material.append_stable_bytes(visit.material_bytes).await?;
+                    Ok::<_, sinex_primitives::SinexError>(RecordProcessingOutcome::Processed)
+                },
+                |_| RecordWarningDisposition::Retry,
+            )
+            .await?;
+        harness
+            .finalize_with_snapshot_evidence(
+                "qutebrowser-sqlite-evidence-scenario",
+                &mut report,
+                Some(SqliteSnapshotLinker::new(ctx.pool())),
+            )
+            .await?;
+
+        assert_eq!(checkpoint, SqliteRowCheckpoint::new(2));
+        assert_eq!(report.processed_records, 2);
+        assert_eq!(report.material_anchors.len(), 2);
+        let snapshot = report
+            .sqlite_snapshot
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing qutebrowser snapshot report"))?;
+        let snapshot_material_id = snapshot
+            .snapshot_material_id
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing qutebrowser snapshot material id"))?;
+        assert_eq!(snapshot.failure, None);
+        assert_eq!(snapshot.linked_material_count, 1);
+        assert!(snapshot.link_errors.is_empty());
+        assert_eq!(snapshot_state.last_snapshot_row_id, Some(2));
+
+        let links = ctx
+            .pool()
+            .source_materials()
+            .links_from(report.material_anchors[0].material_id)
+            .await?;
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].to_material_id, snapshot_material_id);
+        assert_eq!(
+            links[0].relation_type,
+            source_material_relation_types::BACKED_BY
+        );
+        assert_eq!(links[0].metadata["evidence_role"], "sqlite_snapshot");
+        assert_eq!(
+            links[0].metadata["source_identifier"],
+            config.checkpoint_key()
+        );
+        scope.shutdown().await?;
+        Ok(())
     }
 }

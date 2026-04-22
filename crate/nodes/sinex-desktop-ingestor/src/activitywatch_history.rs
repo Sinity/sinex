@@ -260,7 +260,15 @@ mod tests {
     use camino::Utf8PathBuf;
     use color_eyre::eyre::eyre;
     use rusqlite::Connection;
+    use sinex_db::repositories::{DbPoolExt, source_material_relation_types};
+    use sinex_node_sdk::{
+        AcquisitionManager, BufferedRecordSourceHarness, RecordProcessingOutcome,
+        RecordReadHorizon, RecordSources, RecordWarningDisposition, SqliteRowCheckpoint,
+        SqliteSnapshotLinker, SqliteSnapshotPolicy, SqliteSnapshotState,
+    };
+    use std::sync::Arc;
     use tempfile::NamedTempFile;
+    use xtask::sandbox::prelude::PipelineScope;
     use xtask::sandbox::{TestResult, sinex_test};
 
     fn fixture_db() -> TestResult<Utf8PathBuf> {
@@ -337,6 +345,87 @@ mod tests {
             Some("afk")
         );
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn activitywatch_snapshot_scenario_links_row_stream_to_sqlite_evidence(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let path = fixture_db()?;
+        let source = RecordSources::sqlite(
+            path.clone(),
+            "desktop.activitywatch://sqlite.db",
+            read_activitywatch_history,
+            |entry: &super::ActivityWatchHistoryEntry| entry.row_id,
+        )
+        .with_snapshot_policy(SqliteSnapshotPolicy::disabled().with_first_observation(true));
+        let ctx = ctx.with_nats().shared().await?;
+        let scope = PipelineScope::new(&ctx).await?;
+        let acquisition = Arc::new(AcquisitionManager::new_with_namespace(
+            ctx.nats_client(),
+            sinex_node_sdk::RotationPolicy::default(),
+            "activitywatch-sqlite-evidence-scenario".to_string(),
+            Some(ctx.pipeline_namespace().prefix().to_string()),
+        ));
+        let harness = BufferedRecordSourceHarness::buffered_default(source, acquisition.clone());
+        let mut checkpoint = SqliteRowCheckpoint::default();
+        let mut snapshot_state = SqliteSnapshotState::default();
+
+        let mut report = harness
+            .read_process_lenient_with_snapshot(
+                &mut checkpoint,
+                RecordReadHorizon::Unbounded,
+                &mut snapshot_state,
+                &acquisition,
+                |entry, material| async move {
+                    material
+                        .append_json_line(&entry.raw_material_payload())
+                        .await?;
+                    Ok::<_, sinex_primitives::SinexError>(RecordProcessingOutcome::Processed)
+                },
+                |_| RecordWarningDisposition::Retry,
+            )
+            .await?;
+        harness
+            .finalize_with_snapshot_evidence(
+                "activitywatch-sqlite-evidence-scenario",
+                &mut report,
+                Some(SqliteSnapshotLinker::new(ctx.pool())),
+            )
+            .await?;
+
+        assert_eq!(checkpoint, SqliteRowCheckpoint::new(3));
+        assert_eq!(report.processed_records, 3);
+        assert_eq!(report.material_anchors.len(), 3);
+        let snapshot = report
+            .sqlite_snapshot
+            .ok_or_else(|| eyre!("missing ActivityWatch snapshot evidence report"))?;
+        let snapshot_material_id = snapshot
+            .snapshot_material_id
+            .ok_or_else(|| eyre!("missing ActivityWatch snapshot material id"))?;
+        assert_eq!(snapshot.failure, None);
+        assert_eq!(snapshot.linked_material_count, 1);
+        assert!(snapshot.link_errors.is_empty());
+        assert_eq!(snapshot_state.last_snapshot_row_id, Some(3));
+
+        let links = ctx
+            .pool()
+            .source_materials()
+            .links_from(report.material_anchors[0].material_id)
+            .await?;
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].to_material_id, snapshot_material_id);
+        assert_eq!(
+            links[0].relation_type,
+            source_material_relation_types::BACKED_BY
+        );
+        assert_eq!(links[0].metadata["evidence_role"], "sqlite_snapshot");
+        assert_eq!(
+            links[0].metadata["source_identifier"],
+            "desktop.activitywatch://sqlite.db"
+        );
+        scope.shutdown().await?;
         Ok(())
     }
 
