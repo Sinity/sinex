@@ -33,9 +33,17 @@ The checked-in runtime proofs cover:
   `activitywatch / window.active`,
   `activitywatch / browser.tab.active`, and
   `activitywatch / afk.changed`
+- Browser history rows:
+  `webhistory / page.visited` from qutebrowser native SQLite, Chromium
+  `History` SQLite, and browser exports in `json`, `jsonl`, `ndjson`, and
+  `csv` formats
 
 These sources all flow through `NodeRunner<IngestorNodeAdapter<_>>` in tests and
 assert persisted `core.events` rows with material provenance.
+
+The browser runtime proof intentionally keeps the established
+`webhistory / page.visited` event namespace. Renaming this into a broader
+`browser.*` taxonomy is event-taxonomy work, not part of the backfill proof.
 
 ## Checkpoints
 
@@ -45,7 +53,10 @@ records and should not create duplicate persisted events.
 
 For terminal history, the checkpoint is per source. Text sources track byte and
 line progress; SQLite sources track row IDs. For ActivityWatch, the checkpoint
-tracks the last observed SQLite row ID.
+tracks the last observed SQLite row ID. For browser history, the checkpoint is a
+node-owned external source-progress object containing dump-import fingerprints,
+line progress for append-only JSONL/NDJSON dumps, SQLite row cursors, and SQLite
+snapshot evidence state.
 
 ## Explicit Rewind And Rescan
 
@@ -67,6 +78,7 @@ The useful local proof shape is:
 xtask build -p sinex-ingestd
 xtask test -p sinex-terminal-ingestor -E 'test(scan_historical_persists_terminal_history_through_node_runtime)'
 xtask test -p sinex-desktop-ingestor -E 'test(scan_historical_persists_activitywatch_through_node_runtime)'
+xtask test -p sinex-browser-ingestor -E 'test(scan_historical_persists_browser_history_through_node_runtime)'
 ```
 
 The first command is required when tests spawn `sinex-ingestd`; the sandbox
