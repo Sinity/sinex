@@ -736,7 +736,7 @@
                     fi
                   fi
 
-                  if [ "''${SINEX_AUTO_STATUS:-1}" = 1 ]; then
+                  if [ "''${SINEX_AUTO_STATUS:-0}" = 1 ]; then
                     # If infra was just launched, poll for readiness before status
                     # so the summary reflects actual state.
                     if [ "''${_sinex_infra_starting:-0}" -eq 1 ]; then
@@ -750,6 +750,8 @@
                       done
                     fi
                     xtask status --summary || true
+                  elif [ "''${SINEX_SHELL_BANNER:-1}" = 1 ]; then
+                    echo "sinex devshell ready; live status: xtask status --summary; auto status: SINEX_AUTO_STATUS=1" >&2
                   fi
                 fi
               '';
