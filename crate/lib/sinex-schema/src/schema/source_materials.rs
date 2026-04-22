@@ -44,6 +44,23 @@ pub enum SourceMaterialRegistry {
     TotalBytes,
 }
 
+/// **Table: `raw.source_material_links`**
+///
+/// Directional evidence links between source materials. These links are not
+/// event provenance and deliberately do not weaken the `core.events`
+/// material/synthesis XOR invariant. They record auxiliary evidence such as
+/// "this row-stream material is backed by that `SQLite` snapshot material".
+#[derive(Iden, Copy, Clone)]
+pub enum SourceMaterialLinks {
+    Table,
+    Id,
+    FromMaterialId,
+    ToMaterialId,
+    RelationType,
+    Metadata,
+    CreatedAt,
+}
+
 impl TableDef for SourceMaterialRegistry {
     fn table_name() -> &'static str {
         "source_material_registry"
@@ -74,6 +91,17 @@ pub struct SourceMaterialRecord {
     /// Total size of the source material in bytes, set during finalization.
     /// NULL until finalization completes. Used for `anchor_byte` plausibility checks.
     pub total_bytes: Option<i64>,
+}
+
+/// The Rust struct representation of a row from `raw.source_material_links`.
+#[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
+pub struct SourceMaterialLinkRecord {
+    pub id: Uuid,
+    pub from_material_id: Uuid,
+    pub to_material_id: Uuid,
+    pub relation_type: String,
+    pub metadata: JsonValue,
+    pub created_at: Timestamp,
 }
 
 impl SourceMaterialRegistry {
@@ -171,6 +199,117 @@ impl SourceMaterialRegistry {
                 .table(Self::table_iden())
                 .col(SourceMaterialRegistry::OptionalBlobId)
                 .cond_where(Expr::col(SourceMaterialRegistry::OptionalBlobId).is_not_null())
+                .to_owned(),
+        ]
+    }
+}
+
+impl TableDef for SourceMaterialLinks {
+    fn table_name() -> &'static str {
+        "source_material_links"
+    }
+    fn schema_name() -> &'static str {
+        "raw"
+    }
+    fn primary_key() -> &'static str {
+        "id"
+    }
+}
+
+impl SourceMaterialLinks {
+    /// Generates the `CREATE TABLE` statement for `raw.source_material_links`.
+    #[must_use]
+    pub fn create_table_statement() -> TableCreateStatement {
+        Table::create()
+            .table(Self::table_iden())
+            .if_not_exists()
+            .col(
+                ColumnDef::new(SourceMaterialLinks::Id)
+                    .custom(Alias::new("UUID"))
+                    .primary_key()
+                    .extra("DEFAULT uuidv7()"),
+            )
+            .col(
+                ColumnDef::new(SourceMaterialLinks::FromMaterialId)
+                    .custom(Alias::new("UUID"))
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(SourceMaterialLinks::ToMaterialId)
+                    .custom(Alias::new("UUID"))
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(SourceMaterialLinks::RelationType)
+                    .text()
+                    .not_null()
+                    .check(Expr::cust("relation_type ~ '^[a-z][a-z0-9_.-]*$'")),
+            )
+            .col(
+                ColumnDef::new(SourceMaterialLinks::Metadata)
+                    .json_binary()
+                    .not_null()
+                    .default(Expr::cust("'{}'::jsonb")),
+            )
+            .col(
+                ColumnDef::new(SourceMaterialLinks::CreatedAt)
+                    .timestamp_with_time_zone()
+                    .not_null()
+                    .default(Expr::current_timestamp()),
+            )
+            .foreign_key(
+                ForeignKey::create()
+                    .from(Self::table_iden(), SourceMaterialLinks::FromMaterialId)
+                    .to(
+                        SourceMaterialRegistry::table_iden(),
+                        SourceMaterialRegistry::Id,
+                    )
+                    .on_delete(ForeignKeyAction::Cascade),
+            )
+            .foreign_key(
+                ForeignKey::create()
+                    .from(Self::table_iden(), SourceMaterialLinks::ToMaterialId)
+                    .to(
+                        SourceMaterialRegistry::table_iden(),
+                        SourceMaterialRegistry::Id,
+                    )
+                    .on_delete(ForeignKeyAction::Cascade),
+            )
+            .check(Expr::cust("from_material_id <> to_material_id"))
+            .to_owned()
+    }
+
+    /// Generates indexes for `raw.source_material_links`.
+    #[must_use]
+    pub fn create_indexes() -> Vec<IndexCreateStatement> {
+        vec![
+            Index::create()
+                .if_not_exists()
+                .name("uk_source_material_links_edge")
+                .table(Self::table_iden())
+                .col(SourceMaterialLinks::FromMaterialId)
+                .col(SourceMaterialLinks::ToMaterialId)
+                .col(SourceMaterialLinks::RelationType)
+                .unique()
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("ix_source_material_links_from")
+                .table(Self::table_iden())
+                .col(SourceMaterialLinks::FromMaterialId)
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("ix_source_material_links_to")
+                .table(Self::table_iden())
+                .col(SourceMaterialLinks::ToMaterialId)
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("ix_source_material_links_relation_created")
+                .table(Self::table_iden())
+                .col(SourceMaterialLinks::RelationType)
+                .col((SourceMaterialLinks::CreatedAt, IndexOrder::Desc))
                 .to_owned(),
         ]
     }

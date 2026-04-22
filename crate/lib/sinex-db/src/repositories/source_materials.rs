@@ -7,7 +7,8 @@ use crate::schema::SourceMaterialRegistry;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use sinex_primitives::domain::{TemporalClock, TemporalPrecision, TemporalSourceType};
-use sinex_primitives::{Id, Timestamp, events::OffsetKind};
+use sinex_primitives::{Id, SinexError, Timestamp, events::OffsetKind};
+pub use sinex_schema::schema::records::SourceMaterialLinkRecord;
 use sinex_schema::schema::records::SourceMaterialRecord;
 use sqlx::PgPool;
 use time::format_description;
@@ -39,6 +40,13 @@ pub mod material_types {
     pub const BLOB_BINARY: &str = "blob.binary";
     pub const BLOB_TEXT: &str = "blob.text";
     pub const CHUNK: &str = "chunk";
+}
+/// Canonical relation types for source-material evidence links.
+pub mod relation_types {
+    /// The source material on the left is backed by auxiliary evidence on the right.
+    ///
+    /// Example: a JSONL row-stream material backed by a `SQLite` snapshot material.
+    pub const BACKED_BY: &str = "backed_by";
 }
 /// Source material registration payload
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -234,6 +242,43 @@ impl SourceMaterial {
         self
     }
 }
+/// Directional evidence link between two source materials.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceMaterialLink {
+    pub from_material_id: Uuid,
+    pub to_material_id: Uuid,
+    pub relation_type: String,
+    pub metadata: JsonValue,
+}
+
+impl SourceMaterialLink {
+    /// Create a source-material link with empty metadata.
+    pub fn new(
+        from_material_id: impl Into<Uuid>,
+        to_material_id: impl Into<Uuid>,
+        relation_type: impl Into<String>,
+    ) -> Self {
+        Self {
+            from_material_id: from_material_id.into(),
+            to_material_id: to_material_id.into(),
+            relation_type: relation_type.into(),
+            metadata: json!({}),
+        }
+    }
+
+    /// Create a canonical `backed_by` evidence link.
+    pub fn backed_by(from_material_id: impl Into<Uuid>, to_material_id: impl Into<Uuid>) -> Self {
+        Self::new(from_material_id, to_material_id, relation_types::BACKED_BY)
+    }
+
+    /// Merge additional metadata into this link payload.
+    #[must_use]
+    pub fn with_metadata(mut self, metadata: JsonValue) -> Self {
+        self.metadata = metadata;
+        self
+    }
+}
+
 /// Entry for the `raw.temporal_ledger` table.
 ///
 /// Tracks timing metadata for source materials, including capture windows
@@ -318,6 +363,156 @@ impl<'a> EnhancedRepository<'a> for SourceMaterialRepository<'a> {
     type Table = SourceMaterialRegistry;
 }
 impl SourceMaterialRepository<'_> {
+    fn validate_link(link: &SourceMaterialLink) -> DbResult<()> {
+        if link.from_material_id == link.to_material_id {
+            return Err(SinexError::validation(
+                "source material links cannot point to the same material",
+            )
+            .with_context("material_id", link.from_material_id));
+        }
+
+        if !is_valid_relation_type(&link.relation_type) {
+            return Err(SinexError::validation(
+                "source material relation_type must match ^[a-z][a-z0-9_.-]*$",
+            )
+            .with_context("relation_type", link.relation_type.clone()));
+        }
+
+        Ok(())
+    }
+
+    /// Create or update a directional source-material evidence link.
+    ///
+    /// The natural key is `(from_material_id, to_material_id, relation_type)`;
+    /// repeated calls preserve the original row identity and deep-merge metadata.
+    pub async fn link_materials(
+        &self,
+        link: SourceMaterialLink,
+    ) -> DbResult<SourceMaterialLinkRecord> {
+        Self::validate_link(&link)?;
+
+        sqlx::query_as::<_, SourceMaterialLinkRecord>(
+            r"
+            INSERT INTO raw.source_material_links (
+                from_material_id,
+                to_material_id,
+                relation_type,
+                metadata
+            ) VALUES ($1::uuid, $2::uuid, $3, $4)
+            ON CONFLICT (from_material_id, to_material_id, relation_type)
+            DO UPDATE SET
+                metadata = core.jsonb_merge_deep(raw.source_material_links.metadata, EXCLUDED.metadata)
+            RETURNING
+                id,
+                from_material_id,
+                to_material_id,
+                relation_type,
+                metadata,
+                created_at
+            ",
+        )
+        .bind(link.from_material_id)
+        .bind(link.to_material_id)
+        .bind(link.relation_type)
+        .bind(link.metadata)
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "link source materials"))
+    }
+
+    /// Create or update a canonical `backed_by` evidence link.
+    pub async fn link_backing_material(
+        &self,
+        from_material_id: impl Into<Uuid>,
+        to_material_id: impl Into<Uuid>,
+        metadata: JsonValue,
+    ) -> DbResult<SourceMaterialLinkRecord> {
+        self.link_materials(
+            SourceMaterialLink::backed_by(from_material_id, to_material_id).with_metadata(metadata),
+        )
+        .await
+    }
+
+    /// List links where `material_id` is the source side.
+    pub async fn links_from(
+        &self,
+        material_id: impl Into<Uuid>,
+    ) -> DbResult<Vec<SourceMaterialLinkRecord>> {
+        sqlx::query_as::<_, SourceMaterialLinkRecord>(
+            r"
+            SELECT
+                id,
+                from_material_id,
+                to_material_id,
+                relation_type,
+                metadata,
+                created_at
+            FROM raw.source_material_links
+            WHERE from_material_id = $1::uuid
+            ORDER BY created_at ASC, id ASC
+            ",
+        )
+        .bind(material_id.into())
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "list source material links from material"))
+    }
+
+    /// List links where `material_id` is the evidence/target side.
+    pub async fn links_to(
+        &self,
+        material_id: impl Into<Uuid>,
+    ) -> DbResult<Vec<SourceMaterialLinkRecord>> {
+        sqlx::query_as::<_, SourceMaterialLinkRecord>(
+            r"
+            SELECT
+                id,
+                from_material_id,
+                to_material_id,
+                relation_type,
+                metadata,
+                created_at
+            FROM raw.source_material_links
+            WHERE to_material_id = $1::uuid
+            ORDER BY created_at ASC, id ASC
+            ",
+        )
+        .bind(material_id.into())
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "list source material links to material"))
+    }
+
+    /// List all source-material links touching any supplied material ID.
+    pub async fn links_for_materials(
+        &self,
+        material_ids: &[Uuid],
+    ) -> DbResult<Vec<SourceMaterialLinkRecord>> {
+        if material_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        sqlx::query_as::<_, SourceMaterialLinkRecord>(
+            r"
+            SELECT
+                id,
+                from_material_id,
+                to_material_id,
+                relation_type,
+                metadata,
+                created_at
+            FROM raw.source_material_links
+            WHERE from_material_id = ANY($1::uuid[])
+               OR to_material_id = ANY($1::uuid[])
+            ORDER BY created_at ASC, id ASC
+            ",
+        )
+        .bind(material_ids)
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "list source material links for materials"))
+    }
+
     async fn update_material_state<'e, E>(
         &self,
         executor: E,
@@ -1202,6 +1397,18 @@ impl SourceMaterialRepository<'_> {
         .map_err(|e| db_error(e, "append temporal ledger entry"))?;
         Ok(())
     }
+}
+
+fn is_valid_relation_type(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+
+    first.is_ascii_lowercase()
+        && chars.all(|ch| {
+            ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '_' | '.' | '-')
+        })
 }
 /// Extension trait for `SourceMaterial` terminal methods
 pub trait SourceMaterialExt {

@@ -172,11 +172,13 @@ The snapshot relation makes the proof chain explainable:
 ## Schema and API Implications
 
 The current `raw.source_material_registry.metadata` field can hold snapshot
-metadata, but relation queries need a real first-class link. A follow-up should
-add a material relation surface, for example:
+metadata, but relation queries need a real first-class link. Issue
+[#494](https://github.com/Sinity/sinex/issues/494) adds this material relation
+surface:
 
 ```text
 raw.source_material_links(
+  id uuid primary key default uuidv7(),
   from_material_id uuid not null,
   to_material_id uuid not null,
   relation_type text not null,
@@ -185,10 +187,9 @@ raw.source_material_links(
 )
 ```
 
-For this decision, the important invariant is direction:
+The important invariant is direction:
 
 - `row_stream_material --backed_by--> sqlite_snapshot_material`
-- `sqlite_snapshot_material --supports_source--> logical_source_identifier`
 
 The SDK API should make the relationship automatic for SQLite source units that
 enable snapshots. Node code should not manually insert these links.
@@ -209,7 +210,8 @@ Implementation should split into three slices:
 
 - SDK SQLite source-unit descriptors with snapshot policy and snapshot evidence
   capture.
-- Schema/API support for material-to-material evidence links and query surfaces.
+- Source-material evidence links and lineage/trace query exposure
+  ([#494](https://github.com/Sinity/sinex/issues/494)).
 - Scenario coverage proving row-stream anchoring, snapshot creation/linking,
   retention behavior, and snapshot-backed reinterpretation against representative
   Atuin, ActivityWatch, and browser fixtures.

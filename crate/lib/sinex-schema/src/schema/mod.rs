@@ -38,7 +38,7 @@ pub mod records {
     pub use super::entities::EntityRecord;
     pub use super::events::{EventRecord, EventReplacementRecord};
     pub use super::sinex_schemas::{EventPayloadSchemaRecord, NodeManifestRecord, NodeRunRecord};
-    pub use super::source_materials::SourceMaterialRecord;
+    pub use super::source_materials::{SourceMaterialLinkRecord, SourceMaterialRecord};
     pub use super::temporal_ledger::TemporalLedgerRecord;
 }
 
@@ -244,6 +244,14 @@ const ALL_TABLES: &[TableMeta] = &[
         schema: "raw",
         name: "source_material_registry",
         qualified_name: "raw.source_material_registry",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "raw",
+        name: "source_material_links",
+        qualified_name: "raw.source_material_links",
         is_hypertable: false,
         has_triggers: false,
         cleanup_protected: false,
