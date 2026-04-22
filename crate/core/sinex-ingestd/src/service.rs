@@ -802,9 +802,11 @@ impl IngestService {
         let slice_timeout_secs = self.config.slice_timeout_secs;
         let orphan_threshold_secs = self.config.orphan_threshold_secs;
         let disk_threshold_percent = self.config.disk_threshold_percent;
+        let durability_thresholds = self.config.material_durability_thresholds();
 
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         let handle = tokio::spawn(async move {
+            let durability_thresholds = durability_thresholds?;
             let annex_config = AnnexConfig {
                 repo_path: annex_repo_path.clone(),
                 num_copies: None,
@@ -827,7 +829,7 @@ impl IngestService {
 
             let state_dir: PathBuf = assembler_state_dir.into();
 
-            let assembler = match crate::MaterialAssembler::new(
+            let assembler = match crate::MaterialAssembler::new_with_durability_thresholds(
                 nats_client,
                 pool,
                 git_annex,
@@ -840,6 +842,7 @@ impl IngestService {
                 slice_timeout_secs,
                 orphan_threshold_secs,
                 disk_threshold_percent,
+                durability_thresholds,
             ) {
                 Ok(assembler) => assembler.with_observer(observer),
                 Err(e) => {
