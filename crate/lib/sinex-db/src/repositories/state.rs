@@ -1220,17 +1220,17 @@ impl StateRepository<'_> {
                 nr.started_at as "started_at: sinex_primitives::temporal::Timestamp",
                 COALESCE(nr.last_heartbeat_at, nm.last_heartbeat_at)
                     as "last_heartbeat_at: sinex_primitives::temporal::Timestamp",
-                processed.events_processed_current_run,
-                checkpoint.checkpoint_kind,
-                checkpoint.checkpoint_position,
-                checkpoint.checkpoint_revision,
+                processed.events_processed_current_run as "events_processed_current_run?",
+                checkpoint.checkpoint_kind as "checkpoint_kind?",
+                checkpoint.checkpoint_position as "checkpoint_position?",
+                checkpoint.checkpoint_revision as "checkpoint_revision?",
                 checkpoint.checkpoint_recorded_at
-                    as "checkpoint_recorded_at: sinex_primitives::temporal::Timestamp",
-                pending.pending_invalidation_count,
-                error_rate.error_rate_5m,
+                    as "checkpoint_recorded_at?: sinex_primitives::temporal::Timestamp",
+                pending.pending_invalidation_count as "pending_invalidation_count?",
+                error_rate.error_rate_5m as "error_rate_5m?",
                 COALESCE(outputs.recent_output_count, 0)::bigint as "recent_output_count!",
-                outputs.last_output_at as "last_output_at: sinex_primitives::temporal::Timestamp",
-                outputs.last_replay_at as "last_replay_at: sinex_primitives::temporal::Timestamp"
+                outputs.last_output_at as "last_output_at?: sinex_primitives::temporal::Timestamp",
+                outputs.last_replay_at as "last_replay_at?: sinex_primitives::temporal::Timestamp"
             FROM core.node_manifests nm
             LEFT JOIN LATERAL (
                 SELECT
@@ -1256,7 +1256,7 @@ impl StateRepository<'_> {
                   AND e.payload->>'name' = 'derived.events_processed.run'
                   AND e.payload->'labels'->>'node' = nm.node_name::text
                   AND (nr.id IS NULL OR e.payload->'labels'->>'node_run_id' = nr.id::text)
-                ORDER BY e.ts_coided DESC
+                ORDER BY e.id DESC
                 LIMIT 1
             ) processed ON true
             LEFT JOIN LATERAL (
@@ -1271,7 +1271,7 @@ impl StateRepository<'_> {
                   AND e.payload->>'name' = 'derived.checkpoint.revision'
                   AND e.payload->'labels'->>'node' = nm.node_name::text
                   AND (nr.id IS NULL OR e.payload->'labels'->>'node_run_id' = nr.id::text)
-                ORDER BY e.ts_coided DESC
+                ORDER BY e.id DESC
                 LIMIT 1
             ) checkpoint ON true
             LEFT JOIN LATERAL (
@@ -1284,7 +1284,7 @@ impl StateRepository<'_> {
                   AND e.payload->>'name' = 'derived.invalidations.pending'
                   AND e.payload->'labels'->>'node' = nm.node_name::text
                   AND (nr.id IS NULL OR e.payload->'labels'->>'node_run_id' = nr.id::text)
-                ORDER BY e.ts_coided DESC
+                ORDER BY e.id DESC
                 LIMIT 1
             ) pending ON true
             LEFT JOIN LATERAL (
@@ -1296,7 +1296,7 @@ impl StateRepository<'_> {
                   AND e.payload->>'name' = 'derived.error_rate_5m'
                   AND e.payload->'labels'->>'node' = nm.node_name::text
                   AND (nr.id IS NULL OR e.payload->'labels'->>'node_run_id' = nr.id::text)
-                ORDER BY e.ts_coided DESC
+                ORDER BY e.id DESC
                 LIMIT 1
             ) error_rate ON true
             LEFT JOIN LATERAL (
