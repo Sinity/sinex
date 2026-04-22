@@ -380,30 +380,31 @@ pub fn build_registry() -> RpcRegistry {
 
 fn build_registry_impl() -> RpcRegistry {
     use crate::handlers::{
-        handle_audit_get, handle_coordination_get_leader, handle_coordination_instance_health,
-        handle_coordination_list_instances, handle_create_entities, handle_create_note,
-        handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue,
-        handle_events_ingest, handle_events_lineage, handle_events_query,
-        handle_gitops_create_source, handle_gitops_delete_source, handle_gitops_list_sources,
-        handle_gitops_trigger_sync, handle_lifecycle_archive, handle_lifecycle_restore,
-        handle_lifecycle_status, handle_link_entities, handle_nodes_drain, handle_nodes_health,
-        handle_nodes_list, handle_nodes_list_active, handle_nodes_resume, handle_nodes_set_horizon,
-        handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start,
-        handle_replay_approve_operation, handle_replay_cancel_operation,
-        handle_replay_create_operation, handle_replay_execute_operation,
-        handle_replay_list_operations, handle_replay_operation_status,
-        handle_replay_preview_operation, handle_replay_submit_operation, handle_retrieve_blob,
-        handle_shadow_create, handle_shadow_delete, handle_shadow_list, handle_store_blob,
-        handle_system_health, handle_system_ping, handle_system_version,
-        handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
-        handle_telemetry_current_device_state, handle_telemetry_current_health,
-        handle_telemetry_file_activity, handle_telemetry_gateway_stats,
-        handle_telemetry_ingestd_batch_stats, handle_telemetry_ingestd_validation,
-        handle_telemetry_metric_counters, handle_telemetry_node_stats,
-        handle_telemetry_recent_activity, handle_telemetry_stream_stats,
-        handle_telemetry_system_state, handle_telemetry_window_focus, handle_tombstone_approve,
-        handle_tombstone_cancel, handle_tombstone_create, handle_tombstone_list,
-        handle_tombstone_preview, handle_tombstone_status,
+        handle_audit_get, handle_automata_status, handle_coordination_get_leader,
+        handle_coordination_instance_health, handle_coordination_list_instances,
+        handle_create_entities, handle_create_note, handle_dlq_list, handle_dlq_peek,
+        handle_dlq_purge, handle_dlq_requeue, handle_events_ingest, handle_events_lineage,
+        handle_events_query, handle_gitops_create_source, handle_gitops_delete_source,
+        handle_gitops_list_sources, handle_gitops_trigger_sync, handle_lifecycle_archive,
+        handle_lifecycle_restore, handle_lifecycle_status, handle_link_entities,
+        handle_nodes_drain, handle_nodes_health, handle_nodes_list, handle_nodes_list_active,
+        handle_nodes_resume, handle_nodes_set_horizon, handle_ops_cancel, handle_ops_get,
+        handle_ops_list, handle_ops_start, handle_replay_approve_operation,
+        handle_replay_cancel_operation, handle_replay_create_operation,
+        handle_replay_execute_operation, handle_replay_list_operations,
+        handle_replay_operation_status, handle_replay_preview_operation,
+        handle_replay_submit_operation, handle_retrieve_blob, handle_shadow_create,
+        handle_shadow_delete, handle_shadow_list, handle_store_blob, handle_system_health,
+        handle_system_ping, handle_system_version, handle_telemetry_assembly_stats,
+        handle_telemetry_command_frequency, handle_telemetry_current_device_state,
+        handle_telemetry_current_health, handle_telemetry_file_activity,
+        handle_telemetry_gateway_stats, handle_telemetry_ingestd_batch_stats,
+        handle_telemetry_ingestd_validation, handle_telemetry_metric_counters,
+        handle_telemetry_node_stats, handle_telemetry_recent_activity,
+        handle_telemetry_stream_stats, handle_telemetry_system_state,
+        handle_telemetry_window_focus, handle_tombstone_approve, handle_tombstone_cancel,
+        handle_tombstone_create, handle_tombstone_list, handle_tombstone_preview,
+        handle_tombstone_status,
     };
 
     RpcRegistry::new()
@@ -492,6 +493,11 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_nodes_list_active),
         )
         .pool_rpc("nodes.health", Role::ReadOnly, boxed!(handle_nodes_health))
+        .pool_rpc(
+            methods::AUTOMATA_STATUS,
+            Role::ReadOnly,
+            boxed!(handle_automata_status),
+        )
         // GitOps source listing (ReadOnly)
         .pool_rpc(
             methods::GITOPS_LIST_SOURCES,
