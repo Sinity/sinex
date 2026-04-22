@@ -97,6 +97,7 @@ let
       # Always include pg_jsonschema, even if it's not present under
       # postgresql18Packages in this particular pkgs set.
       ++ [ pgJsonschema ]
+      ++ db.extensionCompatibilityPackages
     );
 
   postgresqlPkg =
@@ -276,7 +277,12 @@ SQL
           local dbName="$1"
           local extName="$2"
           echo "[sinex] ensuring extension ''${extName} for ''${dbName}"
-          psql -v ON_ERROR_STOP=1 -d "$dbName" -c "CREATE EXTENSION IF NOT EXISTS \"$extName\"" >/dev/null
+          psql -v ON_ERROR_STOP=1 \
+            --set=sinex_ext_name="$extName" \
+            -d "$dbName" <<'SQL' >/dev/null
+CREATE EXTENSION IF NOT EXISTS :"sinex_ext_name";
+ALTER EXTENSION :"sinex_ext_name" UPDATE;
+SQL
         }
 
         for dbName in ${concatStringsSep " " (map escapeShellArg allDatabases)}; do
