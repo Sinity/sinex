@@ -7,20 +7,12 @@
 use super::{
     MaterialAssembler,
     finalize::PendingEndBehavior,
+    restore_plan::{
+        ReplayedState, RestoreClassification, RestorePlan, RestorePlanInput, derive_restore_plan,
+    },
     state::{
-        AssemblerState,
-        AssemblyPhase,
-        BUFFER_DIR_NAME,
-        FinalizationState,
-        // MaterialBeginMessage removed (unused)
-        MaterialEndMessage,
-        PendingWrite,
-        PersistedState,
-
-        TEMP_FILE_NAME,
-        WAL_FILE_NAME,
-        WalEntry,
-        WalEntryEnvelope,
+        AssemblerState, AssemblyPhase, BUFFER_DIR_NAME, FinalizationState, PendingWrite,
+        PersistedState, TEMP_FILE_NAME, WAL_FILE_NAME, WalEntry, WalEntryEnvelope,
         parse_material_started_at,
     },
 };
@@ -96,12 +88,10 @@ pub(super) async fn restore_state(assembler: &MaterialAssembler) -> IngestdResul
         };
 
         match restore_state_params(assembler, material_id, &path).await {
-            Ok(Some(state)) => {
-                let should_finalize_pending_end =
-                    state.phase != AssemblyPhase::PendingBegin && state.pending_end.is_some();
-                let state_handle = assembler.insert_state_handle(material_id, state);
+            Ok(Some(restored)) => {
+                let state_handle = assembler.insert_state_handle(material_id, restored.state);
                 info!(material_id = %material_id, "Restored in-flight material state from WAL");
-                if should_finalize_pending_end {
+                if restored.should_finalize_pending_end {
                     assembler
                         .try_finalize_pending_end(
                             material_id,
@@ -127,6 +117,11 @@ pub(super) async fn restore_state(assembler: &MaterialAssembler) -> IngestdResul
     Ok(())
 }
 
+struct RestoredAssemblerState {
+    state: AssemblerState,
+    should_finalize_pending_end: bool,
+}
+
 fn parse_material_state_folder(path: &std::path::Path) -> IngestdResult<Uuid> {
     let folder_name = path.file_name().ok_or_else(|| {
         SinexError::invalid_state(format!(
@@ -150,17 +145,70 @@ fn parse_material_state_folder(path: &std::path::Path) -> IngestdResult<Uuid> {
     })
 }
 
+fn state_path_has_recoverable_artifacts(state_dir: &Path, temp_path: &Path) -> bool {
+    temp_path.exists() || state_dir.join(BUFFER_DIR_NAME).exists()
+}
+
+fn log_restore_plan(plan: &RestorePlan) {
+    let trace = plan
+        .trace
+        .iter()
+        .map(|entry| format!("{}={}", entry.code, entry.detail))
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    info!(
+        material_id = %plan.material_id,
+        classification = %plan.classification,
+        trace,
+        "Derived material restore plan"
+    );
+}
+
+async fn apply_non_restoring_plan(
+    assembler: &MaterialAssembler,
+    plan: &RestorePlan,
+) -> IngestdResult<Option<RestoredAssemblerState>> {
+    match &plan.classification {
+        RestoreClassification::Discard { .. } if plan.cleanup_state() => {
+            cleanup_state(assembler, plan.material_id).await;
+        }
+        RestoreClassification::Quarantine { reason } => {
+            warn!(
+                material_id = %plan.material_id,
+                reason = ?reason,
+                "Quarantining persisted material state for operator review"
+            );
+        }
+        _ => {}
+    }
+
+    Ok(None)
+}
+
 async fn restore_state_params(
     assembler: &MaterialAssembler,
     material_id: Uuid,
     state_dir: &std::path::Path,
-) -> IngestdResult<Option<AssemblerState>> {
+) -> IngestdResult<Option<RestoredAssemblerState>> {
     let wal_path = state_dir.join(WAL_FILE_NAME);
     let temp_path = state_dir.join(TEMP_FILE_NAME);
 
     if !wal_path.exists() {
-        // If neither exists, verify if we should just clean up (e.g. empty dir)
-        return Ok(None);
+        let plan = derive_restore_plan(RestorePlanInput {
+            material_id,
+            wal_present: false,
+            has_state_artifacts: state_path_has_recoverable_artifacts(state_dir, &temp_path),
+            replay_corrupted: false,
+            has_envelope_entries: false,
+            has_non_empty_lines: false,
+            material_terminal: false,
+            file_progress_error: None,
+            stale: false,
+            replayed_state: None,
+        });
+        log_restore_plan(&plan);
+        return apply_non_restoring_plan(assembler, &plan).await;
     }
 
     // Open WAL for reading
@@ -241,8 +289,20 @@ async fn restore_state_params(
             material_id = %material_id,
             "WAL replay encountered corruption; cleaning up incompatible persisted state"
         );
-        cleanup_state(assembler, material_id).await;
-        return Ok(None);
+        let plan = derive_restore_plan(RestorePlanInput {
+            material_id,
+            wal_present: true,
+            has_state_artifacts: true,
+            replay_corrupted: true,
+            has_envelope_entries,
+            has_non_empty_lines,
+            material_terminal: false,
+            file_progress_error: None,
+            stale: false,
+            replayed_state: None,
+        });
+        log_restore_plan(&plan);
+        return apply_non_restoring_plan(assembler, &plan).await;
     }
 
     if !has_envelope_entries {
@@ -252,8 +312,20 @@ async fn restore_state_params(
                 "WAL contains no valid envelope entries; cleaning up incompatible or corrupt state"
             );
         }
-        cleanup_state(assembler, material_id).await;
-        return Ok(None);
+        let plan = derive_restore_plan(RestorePlanInput {
+            material_id,
+            wal_present: true,
+            has_state_artifacts: true,
+            replay_corrupted: false,
+            has_envelope_entries: false,
+            has_non_empty_lines,
+            material_terminal: false,
+            file_progress_error: None,
+            stale: false,
+            replayed_state: None,
+        });
+        log_restore_plan(&plan);
+        return apply_non_restoring_plan(assembler, &plan).await;
     }
 
     if assembler.material_is_terminal(material_id).await? {
@@ -261,8 +333,12 @@ async fn restore_state_params(
             material_id = %material_id,
             "Persisted assembler state belongs to an already terminal material; cleaning it up"
         );
-        cleanup_state(assembler, material_id).await;
-        return Ok(None);
+        let plan = derive_restore_plan(RestorePlanInput {
+            material_terminal: true,
+            ..RestorePlanInput::from_replayed(material_id, &state_snapshot)
+        });
+        log_restore_plan(&plan);
+        return apply_non_restoring_plan(assembler, &plan).await;
     }
 
     // Resume sequence numbering from where the WAL left off
@@ -270,13 +346,18 @@ async fn restore_state_params(
     match reconcile_replayed_file_progress(material_id, &temp_path, &mut state_snapshot).await {
         Ok(()) => {}
         Err(error) => {
+            let error_message = error.to_string();
             warn!(
                 material_id = %material_id,
                 error = %error,
                 "Persisted material file progress is inconsistent with WAL; cleaning it up"
             );
-            cleanup_state(assembler, material_id).await;
-            return Ok(None);
+            let plan = derive_restore_plan(RestorePlanInput {
+                file_progress_error: Some(error_message),
+                ..RestorePlanInput::from_replayed(material_id, &state_snapshot)
+            });
+            log_restore_plan(&plan);
+            return apply_non_restoring_plan(assembler, &plan).await;
         }
     }
 
@@ -319,50 +400,60 @@ async fn restore_state_params(
         state_snapshot.last_slice_received.as_deref(),
     )?;
 
-    if restored_state_is_stale(
+    let stale = restored_state_is_stale(
         &state_snapshot,
         &buffered_slices,
         last_slice_received,
         assembler.slice_arrival_timeout,
-    ) {
+    );
+    let plan = derive_restore_plan(RestorePlanInput {
+        stale,
+        ..RestorePlanInput::from_replayed(material_id, &state_snapshot)
+    });
+    log_restore_plan(&plan);
+    if !plan.restores_state() {
         info!(
             material_id = %material_id,
             elapsed_secs = (Timestamp::now() - last_slice_received).whole_seconds(),
-            "Restored assembly already exceeds slice arrival timeout; cleaning it up before startup"
+            "Restored assembly does not resume from persisted state"
         );
-        cleanup_state(assembler, material_id).await;
-        return Ok(None);
+        return apply_non_restoring_plan(assembler, &plan).await;
     }
+    let should_finalize_pending_end =
+        matches!(plan.classification, RestoreClassification::Finalize { .. });
 
-    Ok(Some(AssemblerState {
-        material_id,
-        temp_path,
-        temp_file,
-        wal_file: Some(wal_append),
-        wal_seq: next_seq,
-        expected_offset: state_snapshot.expected_offset,
-        slice_count: state_snapshot.slice_count,
-        buffered_slices,
-        buffered_bytes,
-        state_dir: state_dir.to_path_buf(),
-        started_at: parse_material_started_at(
+    Ok(Some(RestoredAssemblerState {
+        state: AssemblerState {
             material_id,
-            &state_snapshot.started_at,
-            "restored WAL state",
-        )?,
-        material_kind: state_snapshot.material_kind,
-        source_identifier: state_snapshot.source_identifier,
-        metadata: state_snapshot.metadata,
-        phase: state_snapshot.phase,
-        hasher,
-        pending_write: state_snapshot.pending_write,
-        pending_end: state_snapshot.pending_end,
-        last_slice_received,
-        staged_bytes_since_sync: 0,
-        wal_entries_since_sync: 0,
-        wal_bytes_since_sync: 0,
-        last_staged_sync: Instant::now(),
-        last_wal_sync: Instant::now(),
+            temp_path,
+            temp_file,
+            wal_file: Some(wal_append),
+            wal_seq: next_seq,
+            expected_offset: state_snapshot.expected_offset,
+            slice_count: state_snapshot.slice_count,
+            buffered_slices,
+            buffered_bytes,
+            state_dir: state_dir.to_path_buf(),
+            started_at: parse_material_started_at(
+                material_id,
+                &state_snapshot.started_at,
+                "restored WAL state",
+            )?,
+            material_kind: state_snapshot.material_kind,
+            source_identifier: state_snapshot.source_identifier,
+            metadata: state_snapshot.metadata,
+            phase: state_snapshot.phase,
+            hasher,
+            pending_write: state_snapshot.pending_write,
+            pending_end: state_snapshot.pending_end,
+            last_slice_received,
+            staged_bytes_since_sync: 0,
+            wal_entries_since_sync: 0,
+            wal_bytes_since_sync: 0,
+            last_staged_sync: Instant::now(),
+            last_wal_sync: Instant::now(),
+        },
+        should_finalize_pending_end,
     }))
 }
 
@@ -481,57 +572,6 @@ fn wal_line_preview(line: &str) -> String {
         preview.push('…');
     }
     preview
-}
-
-#[derive(Default)]
-struct ReplayedState {
-    expected_offset: i64,
-    slice_count: usize,
-    started_at: String,
-    last_slice_received: Option<String>,
-    material_kind: String,
-    source_identifier: String,
-    metadata: serde_json::Value,
-    phase: AssemblyPhase,
-    pending_write: Option<PendingWrite>,
-    pending_end: Option<MaterialEndMessage>,
-}
-
-impl ReplayedState {
-    fn apply(&mut self, entry: WalEntry) {
-        match entry {
-            WalEntry::Begin(msg) => {
-                self.phase = AssemblyPhase::Accumulating;
-                self.started_at = msg.started_at;
-                self.material_kind = msg.material_kind;
-                self.source_identifier = msg.source_identifier;
-                self.metadata = msg.metadata;
-            }
-            WalEntry::Slice { offset: _, len } => {
-                // WAL implies this slice was processed successfully (written to temp file)
-                self.expected_offset += len as i64;
-                self.slice_count += 1;
-                self.pending_write = None;
-            }
-            WalEntry::End(msg) => {
-                self.pending_end = Some(msg);
-            }
-            WalEntry::Checkpoint(state) => {
-                // Checkpoint overrides everything previous
-                self.expected_offset = state.expected_offset;
-                self.slice_count = state.slice_count;
-                self.started_at = state.started_at;
-                self.last_slice_received = state.last_slice_received;
-                self.material_kind = state.material_kind;
-                self.source_identifier = state.source_identifier;
-                self.metadata = state.metadata;
-                self.phase = state.phase;
-                self.pending_write = state.pending_write;
-                self.pending_end = state.pending_end;
-            }
-            _ => {} // Buffer events don't change core state reconstruction directly
-        }
-    }
 }
 
 async fn reconcile_replayed_file_progress(
@@ -1389,6 +1429,7 @@ pub(super) async fn import_into_content_store(
 mod tests {
     use super::*;
     use crate::MaterialReadySet;
+    use crate::material_assembler::state::MaterialEndMessage;
     use camino::Utf8PathBuf;
     use serde_json::json;
     use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};

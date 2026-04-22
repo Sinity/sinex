@@ -9,6 +9,7 @@
 mod finalize;
 mod io;
 mod pipeline;
+mod restore_plan;
 mod state;
 
 const STALE_ASSEMBLY_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(1); // 1 minute
