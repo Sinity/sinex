@@ -165,7 +165,9 @@ pub use health_reporter::{HealthMetrics, HealthReporter, HealthThresholds};
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatLogSink, HeartbeatMetrics};
 #[cfg(feature = "messaging")]
 pub use ingestor_node::{IngestorNode, IngestorNodeAdapter, IngestorState};
-pub use input_shapes::{SqliteSourceCheckpointState, discover_importable_files_at_root};
+pub use input_shapes::{
+    SqliteSnapshotCheckpointState, SqliteSourceCheckpointState, discover_importable_files_at_root,
+};
 #[cfg(feature = "messaging")]
 pub use jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig};
 #[cfg(feature = "messaging")]
@@ -173,6 +175,8 @@ pub use nats_publisher::NatsPublisher;
 #[cfg(all(feature = "db", feature = "messaging"))]
 pub use node_cli::{NodeCli, NodeCliRunner, NodeCommand, parse_checkpoint, parse_time_horizon};
 pub use processing::{ErrorAction, NodeLogicError};
+#[cfg(all(feature = "db", feature = "messaging"))]
+pub use record_source::SqliteSnapshotLinker;
 #[cfg(feature = "messaging")]
 pub use record_source::{
     AppendOnlyTextRecord, AppendOnlyUtf8FileSource, BufferedRecordMaterializer, BufferedRecordSink,
@@ -200,8 +204,10 @@ pub use shutdown::{ShutdownConfig, default_checkpoint_path};
 #[cfg(feature = "messaging")]
 pub use source_material::{stage_material, stage_material_from_file};
 pub use sqlite_source::{
-    SqliteTableCheckError, ensure_sqlite_with_tables, max_row_id_for_query, read_rows_after,
-    read_rows_with_params,
+    SqliteSnapshotCapture, SqliteSnapshotError, SqliteSnapshotEvidenceReport,
+    SqliteSnapshotMetadata, SqliteSnapshotPolicy, SqliteSnapshotState, SqliteSnapshotTrigger,
+    SqliteTableCheckError, capture_sqlite_snapshot, ensure_sqlite_with_tables,
+    max_row_id_for_query, read_rows_after, read_rows_with_params,
 };
 #[cfg(feature = "messaging")]
 pub use systemd_notify::{notify_ready, notify_stopping, spawn_watchdog, stop_watchdog};
