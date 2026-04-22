@@ -2,7 +2,8 @@ use crate::schema::{
     ArchivedEvents, Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations,
     EventAnnotations, EventClusterMembers, EventClusters, EventEmbeddings, EventPayloadSchemas,
     EventReplacements, EventTombstones, Events, GitopsSchemaSources, NodeManifests, NodeRuns,
-    OperationsLog, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger, ValidationCache,
+    OperationsLog, SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger,
+    ValidationCache,
 };
 use crate::schema_registry;
 use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement};
@@ -379,6 +380,7 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         render_table(&OperationsLog::create_table_statement()),
         render_table(&Tags::create_table_statement()),
         render_table(&SourceMaterialRegistry::create_table_statement()),
+        render_table(&SourceMaterialLinks::create_table_statement()),
         render_table(&NodeManifests::create_table_statement()),
         render_table(&NodeRuns::create_table_statement()),
         render_table(&Events::create_table_statement()),
@@ -407,6 +409,7 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
 async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     let mut index_sql = Vec::new();
     index_sql.extend(render_indexes(SourceMaterialRegistry::create_indexes()));
+    index_sql.extend(render_indexes(SourceMaterialLinks::create_indexes()));
     index_sql.extend(render_indexes(Events::create_indexes()));
     index_sql.extend(Events::create_gin_indexes_sql());
     index_sql.extend(ArchivedEvents::create_indexes_sql());

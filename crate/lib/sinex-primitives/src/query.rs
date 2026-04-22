@@ -1,8 +1,8 @@
-use crate::Timestamp;
 use crate::domain::{EventSource, EventType, HostName};
 use crate::error::SinexError;
 use crate::events::Event;
 use crate::ids::Id;
+use crate::{Timestamp, Uuid};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -883,6 +883,10 @@ pub struct LineageResult {
     pub root: Event<JsonValue>,
     pub ancestors: Vec<LineageNode>,
     pub descendants: Vec<LineageNode>,
+    /// Auxiliary source-material evidence links touching material-provenance
+    /// events in this lineage result. These are not event edges.
+    #[serde(default)]
+    pub material_links: Vec<SourceMaterialLinkInfo>,
 }
 
 /// A single node in the provenance graph with its depth from the root.
@@ -890,4 +894,14 @@ pub struct LineageResult {
 pub struct LineageNode {
     pub event: Event<JsonValue>,
     pub depth: u32,
+}
+
+/// Directional evidence link between source materials.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SourceMaterialLinkInfo {
+    pub from_material_id: Uuid,
+    pub to_material_id: Uuid,
+    pub relation_type: String,
+    pub metadata: JsonValue,
+    pub created_at: Timestamp,
 }

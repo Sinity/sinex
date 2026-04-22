@@ -102,5 +102,6 @@ For mutable SQLite stores, the row-stream material produced by this framework is
 the event's canonical acquisition payload. Events should cite byte ranges inside
 that stable stream, not the live external database file. Stronger epistemic
 backing should be modeled as complementary snapshot evidence linked to the
-row-stream material. See
+row-stream material through `raw.source_material_links` using the canonical
+`backed_by` relation. See
 [`docs/architecture/sqlite-evidence-lane.md`](../../../../docs/architecture/sqlite-evidence-lane.md).

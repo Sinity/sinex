@@ -829,6 +829,7 @@ impl UnifiedJournalWatcher {
         Ok(())
     }
 
+    #[cfg(test)]
     fn historical_import_args(&self, from: &Checkpoint, until: &TimeHorizon) -> Vec<String> {
         Self::historical_import_args_from_parts(
             from,

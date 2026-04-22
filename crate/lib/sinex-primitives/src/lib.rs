@@ -45,8 +45,8 @@ pub mod prelude {
     pub use crate::query::{
         AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,
         LineageDirection, LineageNode, LineageQuery, LineageResult, Pagination, PayloadFilter,
-        QueryResultEvent, SortDirection, SourceStatsEntry, SubscriptionFilter, TimeBucketEntry,
-        TimeRange, TimeSeriesOrder,
+        QueryResultEvent, SortDirection, SourceMaterialLinkInfo, SourceStatsEntry,
+        SubscriptionFilter, TimeBucketEntry, TimeRange, TimeSeriesOrder,
     };
     pub use crate::temporal::OffsetDateTime;
 }
@@ -73,8 +73,8 @@ pub use primitives::Uuid;
 pub use query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,
     LineageDirection, LineageNode, LineageQuery, LineageResult, Pagination, PathOp, PayloadFilter,
-    QueryResultEvent, SortDirection, SourceStatsEntry, SubscriptionFilter, TimeBucketEntry,
-    TimeRange, TimeSeriesOrder,
+    QueryResultEvent, SortDirection, SourceMaterialLinkInfo, SourceStatsEntry, SubscriptionFilter,
+    TimeBucketEntry, TimeRange, TimeSeriesOrder,
 };
 pub use runtime_target::{
     RuntimeStatusSignal, RuntimeStatusSignalStatus, RuntimeStatusSnapshot, RuntimeStatusWarning,
