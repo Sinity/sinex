@@ -1279,6 +1279,11 @@ fn scenario_setup_tokens(scenario: Option<&ScenarioAttr>) -> proc_macro2::TokenS
     let fixtures = &scenario.fixtures;
     let subject_refs = &scenario.subject_refs;
     let claim_ids = &scenario.claim_ids;
+    let proof_reproducer = scenario
+        .reproducer
+        .as_ref()
+        .map(|reproducer| quote!(::std::option::Option::Some(::std::string::String::from(#reproducer))))
+        .unwrap_or_else(|| quote!(::std::option::Option::None));
     let reproducer = scenario
         .reproducer
         .as_ref()
@@ -1295,6 +1300,16 @@ fn scenario_setup_tokens(scenario: Option<&ScenarioAttr>) -> proc_macro2::TokenS
                 .with_claim_ids(::std::vec![#(::std::string::String::from(#claim_ids)),*])
                 #reproducer
         );
+        ctx.set_proof_metadata(::xtask::sandbox::ProofMetadata {
+            runner_id: ::std::option::Option::Some(
+                ::std::string::String::from("runner:rust.nextest.scenario")
+            ),
+            subject_refs: ::std::vec![#(::std::string::String::from(#subject_refs)),*],
+            claim_ids: ::std::vec![#(::std::string::String::from(#claim_ids)),*],
+            status: ::std::option::Option::None,
+            reproducer: #proof_reproducer,
+            environment: ::xtask::sandbox::prelude::JsonValue::Null,
+        });
     }
 }
 

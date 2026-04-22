@@ -21,6 +21,7 @@ pub mod nats;
 pub mod non_empty;
 pub mod primitives;
 pub mod privacy;
+pub mod proof;
 pub mod query;
 pub mod rpc;
 pub mod runtime_target;
@@ -70,6 +71,11 @@ pub use events::payload::DynamicPayload;
 pub use events::{Event, SourceMaterial, Timestamp};
 pub use ids::Id;
 pub use primitives::Uuid;
+pub use proof::{
+    Claim, EvidenceEnvelope, Exemption, PROOF_CATALOG_SCHEMA_VERSION, ProofClaimKind,
+    ProofObligation, ProofObligationLevel, RunnerBinding, RuntimeUnitDescriptor, SubjectQuery,
+    SubjectRef,
+};
 pub use query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,
     LineageDirection, LineageNode, LineageQuery, LineageResult, Pagination, PathOp, PayloadFilter,
