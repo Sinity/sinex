@@ -1,14 +1,14 @@
 use async_nats::jetstream;
 use serde_json::json;
 use sinex_ingestd::{
-    validator::EventValidator, IngestdResult, JetStreamConsumer, JetStreamTopology,
+    IngestdResult, JetStreamConsumer, JetStreamTopology, validator::EventValidator,
 };
-use xtask::sandbox::timing::{Timeouts, WaitHelpers};
-use xtask::sandbox::{prelude::*, TestNodePublisher};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
+use xtask::sandbox::timing::{Timeouts, WaitHelpers};
+use xtask::sandbox::{TestNodePublisher, prelude::*};
 
 async fn start_ingestd(
     ctx: &TestContext,

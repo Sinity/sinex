@@ -178,11 +178,14 @@ impl ContentService {
 
     /// Verify content integrity by content-store key.
     pub async fn verify_content(&self, content_key: &str) -> Result<bool> {
-        self.content_store.verify_blob(content_key).await.map_err(|e| {
-            SinexError::service(format!("Content verification failed: {e}"))
-                .with_operation("content_store.verify_blob")
-                .with_context("content_key", content_key)
-        })
+        self.content_store
+            .verify_blob(content_key)
+            .await
+            .map_err(|e| {
+                SinexError::service(format!("Content verification failed: {e}"))
+                    .with_operation("content_store.verify_blob")
+                    .with_context("content_key", content_key)
+            })
     }
 }
 

@@ -1934,8 +1934,8 @@ impl From<String> for RecordedPath {
 #[cfg(feature = "sqlx")]
 mod sqlx_impls {
     use super::{
-        ContentKey, BlobVerificationStatus, BranchName, CommandText, CommitHash, ConsumerGroup,
-        ConsumerName, DataTier, DerivedNodeModel, EntityTypeName, EventSource, EventType,
+        BlobVerificationStatus, BranchName, CommandText, CommitHash, ConsumerGroup, ConsumerName,
+        ContentKey, DataTier, DerivedNodeModel, EntityTypeName, EventSource, EventType,
         GlobPattern, HealthStatus, HostName, InstanceId, InvalidationAction, IpAddress, JobId,
         NatsSubject, NodeId, NodeName, NodeState, NodeType, OperationStatus, ProcessingMode,
         RecordedPath, RegexPattern, RelationType, RemoteName, SanitizedPath, SchemaName,

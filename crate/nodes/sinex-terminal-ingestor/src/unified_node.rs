@@ -3610,17 +3610,27 @@ mod tests {
         source: &str,
         event_type: &str,
     ) -> TestResult<Vec<(Option<Uuid>, Option<i64>, serde_json::Value)>> {
-        sqlx::query_as(
-            "SELECT source_material_id, anchor_byte, payload
-             FROM core.events
-             WHERE source = $1 AND event_type = $2
-             ORDER BY ts_orig, id",
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                source_material_id::uuid as "source_material_id: uuid::Uuid",
+                anchor_byte,
+                payload as "payload!: serde_json::Value"
+            FROM core.events
+            WHERE source = $1 AND event_type = $2
+            ORDER BY ts_orig, id
+            "#,
+            source,
+            event_type,
         )
-        .bind(source)
-        .bind(event_type)
         .fetch_all(pool)
         .await
-        .map_err(|error| color_eyre::eyre::eyre!("database error: {error}"))
+        .map_err(|error| color_eyre::eyre::eyre!("database error: {error}"))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.source_material_id, row.anchor_byte, row.payload))
+            .collect())
     }
 
     fn assert_material_provenance_rows(

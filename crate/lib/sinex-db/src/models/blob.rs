@@ -138,7 +138,9 @@ impl BlobBuilder {
     pub fn build(self) -> Blob {
         Blob {
             id: Id::new(),
-            storage_backend: self.storage_backend.unwrap_or_else(|| "SHA256E".to_string()),
+            storage_backend: self
+                .storage_backend
+                .unwrap_or_else(|| "SHA256E".to_string()),
             content_hash: self.content_hash.unwrap_or_default(),
             original_filename: self.original_filename,
             size_bytes: self.size_bytes.unwrap_or(0),
@@ -244,8 +246,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn content_key_parser_rejects_missing_hash_fragment(
-    ) -> ::xtask::sandbox::TestResult<()> {
+    async fn content_key_parser_rejects_missing_hash_fragment() -> ::xtask::sandbox::TestResult<()>
+    {
         let err = Blob::parse_content_store_key("SHA256E-s42")
             .expect_err("missing backend digest fragment must fail honestly");
         assert!(err.contains("missing hash fragment"));

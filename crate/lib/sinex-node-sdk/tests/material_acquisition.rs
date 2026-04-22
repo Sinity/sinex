@@ -2,8 +2,9 @@ use futures::{StreamExt, future::try_join_all};
 use sinex_db::repositories::{DbPoolExt, material_status};
 use sinex_node_sdk::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy, SOURCE_MATERIAL_BEGIN_SUBJECT,
-    SOURCE_MATERIAL_END_SUBJECT, SOURCE_MATERIAL_STREAM, content_store::ContentStoreProcessCounters,
-    source_material_slice_subject, stage_material, stage_material_from_file,
+    SOURCE_MATERIAL_END_SUBJECT, SOURCE_MATERIAL_STREAM,
+    content_store::ContentStoreProcessCounters, source_material_slice_subject, stage_material,
+    stage_material_from_file,
 };
 use sinex_primitives::error::SinexError;
 use sinex_primitives::ids::Id;
@@ -834,7 +835,8 @@ async fn source_material_resource_storage_backend_profile(ctx: TestContext) -> R
         .with_work_dir(work_dir.path().join("writer"));
 
     let small_payload = vec![b's'; 4 * 1024];
-    let small_counter_baseline = read_ingestd_content_store_process_counters(work_dir.path()).await?;
+    let small_counter_baseline =
+        read_ingestd_content_store_process_counters(work_dir.path()).await?;
     let small_started = Instant::now();
     let small_material_id = stage_material(
         &manager,
@@ -869,7 +871,8 @@ async fn source_material_resource_storage_backend_profile(ctx: TestContext) -> R
     let large_utf8_path = camino::Utf8PathBuf::from_path_buf(large_path)
         .map_err(|path| color_eyre::eyre::eyre!("large profile path is not UTF-8: {path:?}"))?;
 
-    let large_counter_baseline = read_ingestd_content_store_process_counters(work_dir.path()).await?;
+    let large_counter_baseline =
+        read_ingestd_content_store_process_counters(work_dir.path()).await?;
     let large_started = Instant::now();
     let (large_material_id, large_streamed_bytes) = stage_material_from_file(
         &manager,
@@ -1264,7 +1267,8 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
         "started_at": Timestamp::now().format_rfc3339(),
     });
     js.publish(
-        ctx.pipeline_namespace().subject(SOURCE_MATERIAL_BEGIN_SUBJECT),
+        ctx.pipeline_namespace()
+            .subject(SOURCE_MATERIAL_BEGIN_SUBJECT),
         serde_json::to_vec(&begin_msg)?.into(),
     )
     .await?
@@ -1312,7 +1316,8 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
         "total_size_bytes": expected_size,
     });
     js.publish(
-        ctx.pipeline_namespace().subject(SOURCE_MATERIAL_END_SUBJECT),
+        ctx.pipeline_namespace()
+            .subject(SOURCE_MATERIAL_END_SUBJECT),
         serde_json::to_vec(&end_msg)?.into(),
     )
     .await?
@@ -1405,7 +1410,8 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
         "total_size_bytes": expected_size,
     });
     js.publish(
-        ctx.pipeline_namespace().subject(SOURCE_MATERIAL_END_SUBJECT),
+        ctx.pipeline_namespace()
+            .subject(SOURCE_MATERIAL_END_SUBJECT),
         serde_json::to_vec(&end_msg)?.into(),
     )
     .await?
@@ -1422,7 +1428,8 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
         "started_at": Timestamp::now().format_rfc3339(),
     });
     js.publish(
-        ctx.pipeline_namespace().subject(SOURCE_MATERIAL_BEGIN_SUBJECT),
+        ctx.pipeline_namespace()
+            .subject(SOURCE_MATERIAL_BEGIN_SUBJECT),
         serde_json::to_vec(&begin_msg)?.into(),
     )
     .await?

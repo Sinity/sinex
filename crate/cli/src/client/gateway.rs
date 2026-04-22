@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use sinex_primitives::domain::EventSource;
 use sinex_primitives::rpc::{
     JsonRpcError,
+    automata::{AutomataStatusRequest, AutomataStatusResponse},
     coordination::{
         InstanceHealthRequest, InstanceHealthResponse, InstanceInfo, ListInstancesRequest,
         ListInstancesResponse,
@@ -457,6 +458,22 @@ impl GatewayClient {
     }
 
     // ==================== Node Commands ====================
+
+    /// List derived-node/automata status.
+    pub async fn automata_status(
+        &self,
+        stale_after_secs: u64,
+        recent_window_secs: u64,
+    ) -> Result<AutomataStatusResponse> {
+        let req = AutomataStatusRequest {
+            stale_after_secs,
+            recent_window_secs,
+        };
+        let result = self
+            .call_rpc(methods::AUTOMATA_STATUS, serde_json::to_value(&req)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
 
     /// List all nodes
     pub async fn list_nodes(&self, _role: Option<NodeRole>) -> Result<Vec<InstanceInfo>> {

@@ -7,11 +7,11 @@
 //! - Capacity warnings work correctly
 
 use proptest::prelude::*;
-use sinex_node_sdk::{EventId, EventSource, EventType, Uuid};
 use sinex_node_sdk::{ConfirmationBuffer, EventConfirmation, ProvisionalEvent};
+use sinex_node_sdk::{EventId, EventSource, EventType, Uuid};
 use sinex_primitives::temporal::Timestamp;
-use xtask::sandbox::{sinex_prop, TestContext, TestResult};
 use std::time::Duration;
+use xtask::sandbox::{TestContext, TestResult, sinex_prop};
 
 // =============================================================================
 // Strategies
@@ -19,15 +19,16 @@ use std::time::Duration;
 
 /// Strategy for generating provisional events
 fn arb_provisional_event() -> impl Strategy<Value = ProvisionalEvent> {
-    ("[a-z][a-z0-9._]{2,20}", "[a-z][a-z0-9._]{2,20}")
-        .prop_map(|(source, event_type)| ProvisionalEvent {
+    ("[a-z][a-z0-9._]{2,20}", "[a-z][a-z0-9._]{2,20}").prop_map(|(source, event_type)| {
+        ProvisionalEvent {
             event_id: EventId::from_uuid(Uuid::now_v7()),
             source: source.into(),
             event_type: event_type.into(),
             payload: serde_json::json!({"test": "data"}),
             ts_orig: Timestamp::now(),
             received_at: Timestamp::now(),
-        })
+        }
+    })
 }
 
 // Note: The actual API uses `confirm(event_id: EventId)` not `confirm(EventConfirmation)`
@@ -103,7 +104,8 @@ async fn property_confirmed_events_were_provisional(
     // Buffer should be empty now
     let pending_count = buffer.len().await;
     prop_assert_eq!(
-        pending_count, 0,
+        pending_count,
+        0,
         "All events confirmed but buffer still has {} pending",
         pending_count
     );
@@ -141,7 +143,8 @@ async fn property_out_of_order_confirmations_eventually_match(
     // All should be confirmed
     let pending_count = buffer.len().await;
     prop_assert_eq!(
-        pending_count, 0,
+        pending_count,
+        0,
         "All events should be confirmed but {} still pending",
         pending_count
     );
@@ -191,7 +194,8 @@ async fn property_pending_count_is_accurate(
 
         let actual_count = buffer.len().await;
         prop_assert_eq!(
-            actual_count, expected_count,
+            actual_count,
+            expected_count,
             "Pending count mismatch after adding event"
         );
     }
@@ -203,7 +207,8 @@ async fn property_pending_count_is_accurate(
 
         let actual_count = buffer.len().await;
         prop_assert_eq!(
-            actual_count, expected_count,
+            actual_count,
+            expected_count,
             "Pending count mismatch after confirming event"
         );
     }

@@ -69,7 +69,10 @@ async fn gateway_config_rejects_invalid_numeric_env_overrides() -> TestResult<()
 async fn gateway_config_load_with_database_url_keeps_manual_env_overrides() -> TestResult<()> {
     let mut env = EnvGuard::new();
     env.set("SINEX_NATS_URL", "nats://127.0.0.1:4555");
-    env.set("SINEX_GATEWAY_CONTENT_STORE_PATH", "/tmp/sinex-content-store-test");
+    env.set(
+        "SINEX_GATEWAY_CONTENT_STORE_PATH",
+        "/tmp/sinex-content-store-test",
+    );
 
     let config = GatewayConfig::load_with_database_url("postgresql://gateway-helper/sinex")?;
 
@@ -83,12 +86,21 @@ async fn gateway_config_load_with_database_url_keeps_manual_env_overrides() -> T
 async fn gateway_config_prefers_gateway_specific_content_store_override() -> TestResult<()> {
     let mut env = EnvGuard::new();
     env.set("DATABASE_URL", "postgresql://gateway-config/sinex");
-    env.set("SINEX_CONTENT_STORE_PATH", "/tmp/sinex-content-store-shared");
-    env.set("SINEX_GATEWAY_CONTENT_STORE_PATH", "/tmp/sinex-content-store-gateway");
+    env.set(
+        "SINEX_CONTENT_STORE_PATH",
+        "/tmp/sinex-content-store-shared",
+    );
+    env.set(
+        "SINEX_GATEWAY_CONTENT_STORE_PATH",
+        "/tmp/sinex-content-store-gateway",
+    );
 
     let config = GatewayConfig::load()?;
 
-    assert_eq!(config.content_store_path, "/tmp/sinex-content-store-gateway");
+    assert_eq!(
+        config.content_store_path,
+        "/tmp/sinex-content-store-gateway"
+    );
     Ok(())
 }
 
