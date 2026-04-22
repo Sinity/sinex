@@ -95,3 +95,12 @@ substrate. New node code should not assemble these directly for ordinary
 checkpointed materialization. Use them only when implementing a new harness,
 sink, source adapter, or a pipeline whose materialization context is deliberately
 shared with another live path.
+
+## Mutable SQLite Evidence
+
+For mutable SQLite stores, the row-stream material produced by this framework is
+the event's canonical acquisition payload. Events should cite byte ranges inside
+that stable stream, not the live external database file. Stronger epistemic
+backing should be modeled as complementary snapshot evidence linked to the
+row-stream material. See
+[`docs/architecture/sqlite-evidence-lane.md`](../../../../docs/architecture/sqlite-evidence-lane.md).
