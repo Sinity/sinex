@@ -211,8 +211,181 @@ pub struct ProofMetadata {
     pub environment: JsonValue,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScenarioCategory {
+    SourceMaterial,
+    Replay,
+    Runtime,
+    NodeAdapter,
+    Gateway,
+    Schema,
+    CommandContract,
+    DeploymentBoundary,
+}
+
+impl ScenarioCategory {
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::SourceMaterial => "source_material",
+            Self::Replay => "replay",
+            Self::Runtime => "runtime",
+            Self::NodeAdapter => "node_adapter",
+            Self::Gateway => "gateway",
+            Self::Schema => "schema",
+            Self::CommandContract => "command_contract",
+            Self::DeploymentBoundary => "deployment_boundary",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScenarioLane {
+    Fast,
+    Heavy,
+    Soak,
+    Vm,
+}
+
+impl ScenarioLane {
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Fast => "fast",
+            Self::Heavy => "heavy",
+            Self::Soak => "soak",
+            Self::Vm => "vm",
+        }
+    }
+
+    #[must_use]
+    pub fn default_cost_tier(&self) -> ScenarioCostTier {
+        match self {
+            Self::Fast => ScenarioCostTier::Fast,
+            Self::Heavy => ScenarioCostTier::Heavy,
+            Self::Soak => ScenarioCostTier::Soak,
+            Self::Vm => ScenarioCostTier::Vm,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScenarioCostTier {
+    Fast,
+    Integration,
+    Heavy,
+    Soak,
+    Vm,
+}
+
+impl ScenarioCostTier {
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Fast => "fast",
+            Self::Integration => "integration",
+            Self::Heavy => "heavy",
+            Self::Soak => "soak",
+            Self::Vm => "vm",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ScenarioMetadata {
+    pub id: String,
+    pub category: ScenarioCategory,
+    pub lane: ScenarioLane,
+    pub cost_tier: ScenarioCostTier,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fixtures: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subject_refs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub claim_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reproducer: Option<String>,
+}
+
+impl ScenarioMetadata {
+    #[must_use]
+    pub fn new(id: impl Into<String>, category: ScenarioCategory, lane: ScenarioLane) -> Self {
+        let cost_tier = lane.default_cost_tier();
+        Self {
+            id: id.into(),
+            category,
+            lane,
+            cost_tier,
+            tags: Vec::new(),
+            fixtures: Vec::new(),
+            subject_refs: Vec::new(),
+            claim_ids: Vec::new(),
+            reproducer: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_cost_tier(mut self, cost_tier: ScenarioCostTier) -> Self {
+        self.cost_tier = cost_tier;
+        self
+    }
+
+    #[must_use]
+    pub fn with_tags<I, S>(mut self, tags: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.tags = tags.into_iter().map(Into::into).collect();
+        self
+    }
+
+    #[must_use]
+    pub fn with_fixtures<I, S>(mut self, fixtures: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.fixtures = fixtures.into_iter().map(Into::into).collect();
+        self
+    }
+
+    #[must_use]
+    pub fn with_subject_refs<I, S>(mut self, subject_refs: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.subject_refs = subject_refs.into_iter().map(Into::into).collect();
+        self
+    }
+
+    #[must_use]
+    pub fn with_claim_ids<I, S>(mut self, claim_ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.claim_ids = claim_ids.into_iter().map(Into::into).collect();
+        self
+    }
+
+    #[must_use]
+    pub fn with_reproducer(mut self, reproducer: impl Into<String>) -> Self {
+        self.reproducer = Some(reproducer.into());
+        self
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct TestEvidence {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scenario: Option<ScenarioMetadata>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub timeline: Vec<EvidenceTimelineEvent>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -268,6 +441,10 @@ impl TestEvidence {
 
     pub fn set_proof(&mut self, proof: ProofMetadata) {
         self.proof = Some(proof);
+    }
+
+    pub fn set_scenario(&mut self, scenario: ScenarioMetadata) {
+        self.scenario = Some(scenario);
     }
 
     pub fn add_note(&mut self, note: impl Into<String>) {
@@ -620,6 +797,20 @@ pub fn render_human_summary(bundle: &EvidenceBundle) -> String {
         }
     }
 
+    if let Some(scenario) = &bundle.evidence.scenario {
+        lines.push("scenario:".to_string());
+        lines.push(format!("  - id: {}", scenario.id));
+        lines.push(format!("  - category: {}", scenario.category.as_str()));
+        lines.push(format!("  - lane: {}", scenario.lane.as_str()));
+        lines.push(format!("  - cost: {}", scenario.cost_tier.as_str()));
+        if !scenario.tags.is_empty() {
+            lines.push(format!("  - tags: {}", scenario.tags.join(", ")));
+        }
+        if !scenario.fixtures.is_empty() {
+            lines.push(format!("  - fixtures: {}", scenario.fixtures.join(", ")));
+        }
+    }
+
     lines.join("\n")
 }
 
@@ -671,6 +862,19 @@ mod tests {
             reproducer: Some("xtask test -p xtask".to_string()),
             environment: json!({"profile": "fast"}),
         });
+        evidence.set_scenario(
+            ScenarioMetadata::new(
+                "source-material.example",
+                ScenarioCategory::SourceMaterial,
+                ScenarioLane::Fast,
+            )
+            .with_cost_tier(ScenarioCostTier::Integration)
+            .with_tags(["source_material", "anchors"])
+            .with_fixtures(["postgres", "nats"])
+            .with_subject_refs(["subject:node/terminal"])
+            .with_claim_ids(["claim:material-provenance"])
+            .with_reproducer("xtask test -p xtask -E 'test(name)'"),
+        );
 
         let bundle = EvidenceBundle::failed(
             "sample_test",
@@ -694,12 +898,23 @@ mod tests {
             rendered["proof"]["claim_ids"][0],
             "claim:material-provenance"
         );
+        assert_eq!(rendered["scenario"]["id"], "source-material.example");
+        assert_eq!(rendered["scenario"]["category"], "source_material");
+        assert_eq!(rendered["scenario"]["cost_tier"], "integration");
     }
 
     #[test]
     fn human_summary_mentions_key_artifacts() {
         let mut evidence = TestEvidence::default();
         evidence.record_event(1, "start", "fixture initialized", JsonValue::Null);
+        evidence.set_scenario(
+            ScenarioMetadata::new(
+                "runtime.restart",
+                ScenarioCategory::Runtime,
+                ScenarioLane::Heavy,
+            )
+            .with_tags(["restart"]),
+        );
         evidence.attach_artifact(EvidenceArtifactRef::new(
             "db",
             "database",
@@ -724,6 +939,8 @@ mod tests {
         let summary = render_human_summary(&bundle);
 
         assert!(summary.contains("timeline:"));
+        assert!(summary.contains("scenario:"));
+        assert!(summary.contains("runtime.restart"));
         assert!(summary.contains("/tmp/db.json"));
     }
 }

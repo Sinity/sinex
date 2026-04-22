@@ -29,8 +29,8 @@ pub use super::evidence::{
     EvidenceBundle, EvidenceCapture, EvidenceCaptureLevel, EvidenceCollectorKind,
     EvidenceCollectorRegistration, EvidenceCollectorStatus, EvidenceRuntimeSnapshot,
     EvidenceTimelineEvent, FileEvidenceSummary, LogEvidenceSummary, NatsConsumerEvidence,
-    NatsEvidenceSummary, NatsStreamEvidence, ProofMetadata, SourceMaterialEvidenceRow,
-    TestEvidence,
+    NatsEvidenceSummary, NatsStreamEvidence, ProofMetadata, ScenarioCategory, ScenarioCostTier,
+    ScenarioLane, ScenarioMetadata, SourceMaterialEvidenceRow, TestEvidence,
 };
 pub use super::fs::{EnvGuard, TestTempEnv, prepare_test_temp_env};
 pub use super::nats::{EphemeralNats, EphemeralNatsBuilder, TlsConfig};

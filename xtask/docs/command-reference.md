@@ -93,6 +93,10 @@ Run the repo's primary nextest-backed test workflows
 | `--prime` | no | no | Prime database before testing |
 | `-l, --list` | no | no | List tests instead of running |
 | `-E, --filter` | yes | no | Filter tests by name pattern (nextest -E filter) |
+| `--scenario-tag` | yes | no | Run tests whose sinex_test scenario metadata includes this tag |
+| `--scenario-category` | yes | no | Run tests whose sinex_test scenario metadata uses this category |
+| `--scenario-lane` | yes | no | Run tests whose sinex_test scenario metadata uses this lane |
+| `--list-scenarios` | no | no | List discovered sinex_test scenarios instead of running tests |
 | `-p, --package` | yes | no | Run tests for specific package(s) |
 | `--dry-run` | no | no | Print what would happen |
 | `--skip-preflight` | no | no | Skip automatic infrastructure setup (preflight is ON by default) |
