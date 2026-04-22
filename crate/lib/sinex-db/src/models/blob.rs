@@ -12,8 +12,8 @@ use std::str::FromStr;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Blob {
     pub id: Id<Blob>,
-    pub annex_backend: String, // e.g., "SHA256E" or "SINEXBLAKE3"
-    pub content_hash: String,  // Storage-backend content identity
+    pub storage_backend: String, // e.g., "SHA256E" or "SINEXBLAKE3"
+    pub content_hash: String,    // Storage-backend content identity
     pub original_filename: Option<String>,
     pub size_bytes: i64,
     pub mime_type: Option<String>,
@@ -28,7 +28,7 @@ impl Blob {
     /// Construct the storage key from components.
     /// Format: BACKEND-sSize--hash_fragment (e.g., SHA256E-s12345--abcdef123)
     #[must_use]
-    pub fn annex_key(&self) -> String {
+    pub fn content_key(&self) -> String {
         let hash_fragment = if self.content_hash.is_empty() {
             self.original_filename
                 .as_deref()
@@ -40,31 +40,31 @@ impl Blob {
 
         format!(
             "{}-s{}--{}",
-            self.annex_backend, self.size_bytes, hash_fragment
+            self.storage_backend, self.size_bytes, hash_fragment
         )
     }
 
-    /// Parse an annex key into its components
-    pub fn parse_annex_key(key: &str) -> Result<(String, i64, String), String> {
+    /// Parse a content-store key into its components.
+    pub fn parse_content_store_key(key: &str) -> Result<(String, i64, String), String> {
         let mut segments = key.splitn(2, "--");
-        let prefix = segments
-            .next()
-            .ok_or_else(|| format!("invalid annex key `{key}`: missing backend/size prefix"))?;
+        let prefix = segments.next().ok_or_else(|| {
+            format!("invalid content-store key `{key}`: missing backend/size prefix")
+        })?;
         let hash_fragment = segments
             .next()
-            .ok_or_else(|| format!("invalid annex key `{key}`: missing hash fragment"))?
+            .ok_or_else(|| format!("invalid content-store key `{key}`: missing hash fragment"))?
             .to_string();
 
         let mut prefix_parts = prefix.splitn(2, "-s");
         let backend = prefix_parts
             .next()
-            .ok_or_else(|| format!("invalid annex key `{key}`: missing backend"))?
+            .ok_or_else(|| format!("invalid content-store key `{key}`: missing backend"))?
             .to_string();
         let size_str = prefix_parts
             .next()
-            .ok_or_else(|| format!("invalid annex key `{key}`: missing size segment"))?;
+            .ok_or_else(|| format!("invalid content-store key `{key}`: missing size segment"))?;
         let size = size_str.parse::<i64>().map_err(|error| {
-            format!("invalid annex key `{key}`: invalid size `{size_str}`: {error}")
+            format!("invalid content-store key `{key}`: invalid size `{size_str}`: {error}")
         })?;
 
         Ok((backend, size, hash_fragment))
@@ -82,7 +82,7 @@ impl Blob {
 /// Builder for creating new Blob instances
 #[derive(Default)]
 pub struct BlobBuilder {
-    annex_backend: Option<String>,
+    storage_backend: Option<String>,
     content_hash: Option<String>,
     original_filename: Option<String>,
     size_bytes: Option<i64>,
@@ -93,8 +93,8 @@ pub struct BlobBuilder {
 
 impl BlobBuilder {
     #[must_use]
-    pub fn annex_backend(mut self, backend: String) -> Self {
-        self.annex_backend = Some(backend);
+    pub fn storage_backend(mut self, backend: String) -> Self {
+        self.storage_backend = Some(backend);
         self
     }
 
@@ -138,7 +138,7 @@ impl BlobBuilder {
     pub fn build(self) -> Blob {
         Blob {
             id: Id::new(),
-            annex_backend: self.annex_backend.unwrap_or_else(|| "SHA256E".to_string()),
+            storage_backend: self.storage_backend.unwrap_or_else(|| "SHA256E".to_string()),
             content_hash: self.content_hash.unwrap_or_default(),
             original_filename: self.original_filename,
             size_bytes: self.size_bytes.unwrap_or(0),
@@ -157,7 +157,7 @@ impl From<Blob> for BlobRecord {
     fn from(blob: Blob) -> Self {
         BlobRecord {
             id: blob.id.into(), // Convert Id<Blob> to Uuid
-            annex_backend: blob.annex_backend,
+            annex_backend: blob.storage_backend,
             content_hash: blob.content_hash,
             original_filename: blob.original_filename.unwrap_or_default(),
             size_bytes: blob.size_bytes,
@@ -180,7 +180,7 @@ impl TryFrom<BlobRecord> for Blob {
     fn try_from(record: BlobRecord) -> Result<Self, Self::Error> {
         Ok(Blob {
             id: Id::from_uuid(record.id),
-            annex_backend: record.annex_backend,
+            storage_backend: record.annex_backend,
             content_hash: record.content_hash,
             original_filename: if record.original_filename.is_empty() {
                 None
@@ -236,17 +236,18 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn annex_key_parser_rejects_invalid_size() -> ::xtask::sandbox::TestResult<()> {
-        let err = Blob::parse_annex_key("SHA256E-sabc--deadbeef")
-            .expect_err("invalid annex size must fail honestly");
+    async fn content_key_parser_rejects_invalid_size() -> ::xtask::sandbox::TestResult<()> {
+        let err = Blob::parse_content_store_key("SHA256E-sabc--deadbeef")
+            .expect_err("invalid content-store size must fail honestly");
         assert!(err.contains("invalid size `abc`"));
         Ok(())
     }
 
     #[sinex_test]
-    async fn annex_key_parser_rejects_missing_hash_fragment() -> ::xtask::sandbox::TestResult<()> {
-        let err = Blob::parse_annex_key("SHA256E-s42")
-            .expect_err("missing annex hash fragment must fail honestly");
+    async fn content_key_parser_rejects_missing_hash_fragment(
+    ) -> ::xtask::sandbox::TestResult<()> {
+        let err = Blob::parse_content_store_key("SHA256E-s42")
+            .expect_err("missing backend digest fragment must fail honestly");
         assert!(err.contains("missing hash fragment"));
         Ok(())
     }

@@ -71,13 +71,13 @@ Schemas:
 │  - material_type (text, binary, structured)                           │
 │  - content_hash (SHA256)                                              │
 │  - size_bytes                                                         │
-│  - storage_path (Git Annex key)                                       │
+│  - storage_path (content-store key)                                    │
 │  - created_at                                                         │
 │                                                                       │
-│  Storage Backend: Git Annex                                           │
-│  - Large files (>1MB) stored in annex                                 │
+│  Storage Backend: Content Store                                       │
+│  - Small files stored in local CAS; large files use large-object backend│
 │  - Deduplication via content hash                                     │
-│  - Symlinks in .git/annex/objects/                                    │
+│  - Backend-specific storage path hidden from callers                  │
 └───────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────┐

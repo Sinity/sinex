@@ -1070,14 +1070,14 @@ define_string_type!(
 );
 
 define_validated_string_type!(
-    #[doc = "Git-annex keys"]
-    AnnexKey,
+    #[doc = "Content-store keys"]
+    ContentKey,
     custom_from_static
 );
 
-/// Parsed view of a git-annex key.
+/// Parsed view of a content-store key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AnnexKeyComponents<'a> {
+pub struct ContentKeyComponents<'a> {
     /// Full prefix before `--` (backend plus optional metadata modifiers).
     pub prefix: &'a str,
     /// Backend token (prefix up to first `-`, or full prefix if no metadata modifiers).
@@ -1086,14 +1086,14 @@ pub struct AnnexKeyComponents<'a> {
     pub name: &'a str,
 }
 
-impl AnnexKey {
-    /// Create a const instance with compile-time annex key validation.
+impl ContentKey {
+    /// Create a const instance with compile-time content key validation.
     ///
     /// Validates: non-empty, contains `--` separator with non-empty prefix and suffix.
     #[must_use]
     pub const fn from_static(s: &'static str) -> Self {
         let bytes = s.as_bytes();
-        assert!(!bytes.is_empty(), "AnnexKey cannot be empty");
+        assert!(!bytes.is_empty(), "ContentKey cannot be empty");
         // Find `--` separator
         let mut found_sep = false;
         let mut sep_pos = 0;
@@ -1107,30 +1107,30 @@ impl AnnexKey {
             }
             i += 1;
         }
-        assert!(found_sep, "AnnexKey must contain '--' separator");
+        assert!(found_sep, "ContentKey must contain '--' separator");
         assert!(
             sep_pos != 0,
-            "AnnexKey must have a backend prefix before '--'"
+            "ContentKey must have a backend prefix before '--'"
         );
         assert!(
             sep_pos + 2 < bytes.len(),
-            "AnnexKey must have a name after '--'"
+            "ContentKey must have a name after '--'"
         );
         Self(Cow::Borrowed(s))
     }
 
-    /// Parse the annex key into prefix/backend/name components.
+    /// Parse the content key into prefix/backend/name components.
     ///
-    /// This method is infallible for valid `AnnexKey` values.
+    /// This method is infallible for valid `ContentKey` values.
     #[must_use]
-    pub fn parse_components(&self) -> AnnexKeyComponents<'_> {
+    pub fn parse_components(&self) -> ContentKeyComponents<'_> {
         let raw = self.as_str();
         let Some((prefix, name)) = raw.split_once("--") else {
-            // AnnexKey construction validates the `--` separator; this branch is unreachable.
-            unreachable!("AnnexKey invariant violated: missing '--' separator");
+            // ContentKey construction validates the `--` separator; this branch is unreachable.
+            unreachable!("ContentKey invariant violated: missing '--' separator");
         };
         let backend = prefix.split('-').next().unwrap_or(prefix);
-        AnnexKeyComponents {
+        ContentKeyComponents {
             prefix,
             backend,
             name,
@@ -1934,7 +1934,7 @@ impl From<String> for RecordedPath {
 #[cfg(feature = "sqlx")]
 mod sqlx_impls {
     use super::{
-        AnnexKey, BlobVerificationStatus, BranchName, CommandText, CommitHash, ConsumerGroup,
+        ContentKey, BlobVerificationStatus, BranchName, CommandText, CommitHash, ConsumerGroup,
         ConsumerName, DataTier, DerivedNodeModel, EntityTypeName, EventSource, EventType,
         GlobPattern, HealthStatus, HostName, InstanceId, InvalidationAction, IpAddress, JobId,
         NatsSubject, NodeId, NodeName, NodeState, NodeType, OperationStatus, ProcessingMode,
@@ -1973,7 +1973,7 @@ mod sqlx_impls {
     // Register validated string types
     impl_sqlx_for_validated_string_type!(SanitizedPath);
     impl_sqlx_for_validated_string_type!(RecordedPath);
-    impl_sqlx_for_validated_string_type!(AnnexKey);
+    impl_sqlx_for_validated_string_type!(ContentKey);
     impl_sqlx_for_validated_string_type!(NatsSubject);
 
     // Register enum types (use Display for encoding, FromStr for decoding)
@@ -1995,37 +1995,37 @@ mod sqlx_impls {
     impl_sqlx_for_enum_type!(InvalidationAction);
 }
 
-impl AnnexKey {
-    /// Validate git-annex key format.
+impl ContentKey {
+    /// Validate content-store key format.
     ///
-    /// Git-annex keys have the form `BACKEND[-sNNN][-mNNN]--FILENAME`, where
+    /// Content-store keys have the form `BACKEND[-sNNN][-mNNN]--FILENAME`, where
     /// `--` separates the backend/metadata prefix from the key name.
     pub fn validate(key: &str) -> Result<(), String> {
         if key.is_empty() {
-            return Err("Annex key cannot be empty".into());
+            return Err("Content key cannot be empty".into());
         }
 
         // Must contain exactly one `--` separator
         let parts: Vec<&str> = key.splitn(3, "--").collect();
         if parts.len() < 2 {
-            return Err("Annex key must contain '--' separator".into());
+            return Err("Content key must contain '--' separator".into());
         }
         if parts[0].is_empty() {
-            return Err("Annex key must have a backend prefix before '--'".into());
+            return Err("Content key must have a backend prefix before '--'".into());
         }
         if parts[1].is_empty() {
-            return Err("Annex key must have a name after '--'".into());
+            return Err("Content key must have a name after '--'".into());
         }
         // Reject multiple `--` separators
         if parts.len() > 2 {
-            return Err("Annex key must contain exactly one '--' separator".into());
+            return Err("Content key must contain exactly one '--' separator".into());
         }
 
         Ok(())
     }
 }
 
-impl FromStr for AnnexKey {
+impl FromStr for ContentKey {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {

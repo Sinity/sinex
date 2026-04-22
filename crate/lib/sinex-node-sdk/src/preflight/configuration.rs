@@ -126,7 +126,7 @@ fn verify_environment_variables(messages: &mut Vec<String>) -> NodeResult<Value>
 
     // Optional but recommended environment variables
     let optional_vars = vec![
-        ("SINEX_ANNEX_PATH", "Git-annex blob storage path"),
+        ("SINEX_CONTENT_STORE_PATH", "Hybrid content storage path"),
         ("SINEX_INSTANCE_ID", "Unique instance identifier"),
     ];
 

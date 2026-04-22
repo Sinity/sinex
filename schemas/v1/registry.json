@@ -69,14 +69,14 @@
       "event_type": "clipboard.copied",
       "version": "1.0.0",
       "path": "clipboard/clipboard.copied.json",
-      "content_hash": "d9b13199e7f58d1ad303eaf20969f02f1843c95a049a47add2e9b332036f85ec"
+      "content_hash": "3f87dc153cbe36e17e27d6b0241cd7711f3db5bc937976a7104d9a574fdf17a0"
     },
     {
       "source": "clipboard",
       "event_type": "clipboard.selected",
       "version": "1.0.0",
       "path": "clipboard/clipboard.selected.json",
-      "content_hash": "21449feb3e4c58028ef9d0656e5f6d8ce240e5b1c508c3596a246173077e5282"
+      "content_hash": "4424036cc5de933f08f2d4b4e57a3fbc572529a6ce88d52b0c7e8990a8957f94"
     },
     {
       "source": "dbus",
@@ -300,7 +300,7 @@
       "event_type": "shell.session_ended",
       "version": "1.0.0",
       "path": "shell.asciinema/shell.session_ended.json",
-      "content_hash": "aea0f61af0456221482781cb926ba52fbb7cf4d50a49fcc45833ca56af05a65b"
+      "content_hash": "e4665a2ac8d899f149efd870396846c9512de8cb2bcb92657ee49465a679dffb"
     },
     {
       "source": "shell.asciinema",
@@ -391,7 +391,7 @@
       "event_type": "shell.output_captured",
       "version": "1.0.0",
       "path": "shell.scrollback/shell.output_captured.json",
-      "content_hash": "10f571e2541d07f267491ee152a2db3697fa3e41a4a56f4fd35f4c1d8cbb0c9e"
+      "content_hash": "65b3623f16f344d16d2557784a42752a7fa2051afd8217d4f2ed8ea3dbe6b53d"
     },
     {
       "source": "sinex",

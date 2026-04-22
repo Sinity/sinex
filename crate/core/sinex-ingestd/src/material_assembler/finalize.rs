@@ -671,7 +671,7 @@ impl MaterialAssembler {
         };
         let final_status = final_material_status(&finalize_metadata);
 
-        let annex_key = match self.import_into_content_store(&final_state).await {
+        let content_key = match self.import_into_content_store(&final_state).await {
             Ok(result) => result,
             Err(e) => {
                 let e = e.with_context(
@@ -692,7 +692,7 @@ impl MaterialAssembler {
         let finalized = match FinalizationTransaction::new(self)
             .finalize(FinalizationRequest {
                 final_state: &final_state,
-                annex_key: &annex_key,
+                content_key: &content_key,
                 content_hash: &end.content_hash,
                 total_size_bytes: end.total_size_bytes,
                 metadata: finalize_metadata,
@@ -757,7 +757,7 @@ impl MaterialAssembler {
 
             info!(
                 material_id = %material_id,
-                annex_key = %annex_key.key,
+                content_key = %content_key.key,
                 size_bytes = end.total_size_bytes,
                 slices = slice_count,
                 duration_ms = duration_ms,
@@ -777,7 +777,7 @@ impl MaterialAssembler {
 
             info!(
                 material_id = %material_id,
-                annex_key = %annex_key.key,
+                content_key = %content_key.key,
                 size_bytes = end.total_size_bytes,
                 slices = slice_count,
                 duration_ms = duration_ms,
@@ -892,7 +892,7 @@ mod tests {
         models::blob::Blob,
         repositories::{DbPoolExt, source_materials::status},
     };
-    use sinex_node_sdk::annex::{AnnexConfig, AnnexKey, GitAnnex};
+    use sinex_node_sdk::content_store::{ContentStoreConfig, ContentStoreKey, MaterialContentStore};
     use std::sync::Arc;
     use tokio::time::timeout;
     use tokio_stream::StreamExt;
@@ -901,12 +901,12 @@ mod tests {
     async fn test_assembler(
         ctx: &TestContext,
     ) -> TestResult<(MaterialAssembler, tempfile::TempDir, tempfile::TempDir)> {
-        let annex_dir = tempfile::tempdir()?;
-        let repo_path = Utf8PathBuf::from_path_buf(annex_dir.path().to_path_buf())
+        let content_store_dir = tempfile::tempdir()?;
+        let repo_path = Utf8PathBuf::from_path_buf(content_store_dir.path().to_path_buf())
             .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
-        GitAnnex::init(&repo_path, Some("finalize-test")).await?;
-        let annex = Arc::new(GitAnnex::new(AnnexConfig {
-            repo_path,
+        MaterialContentStore::init(&repo_path, Some("finalize-test")).await?;
+        let content_store = Arc::new(MaterialContentStore::new(ContentStoreConfig {
+            root_path: repo_path,
             num_copies: None,
             large_files: None,
         })?);
@@ -915,7 +915,7 @@ mod tests {
         let assembler = MaterialAssembler::new(
             ctx.nats_client(),
             ctx.pool.clone(),
-            annex,
+            content_store,
             state_dir.path().to_path_buf(),
             Some(ctx.pipeline_namespace().prefix().to_string()),
             1_000,
@@ -927,7 +927,7 @@ mod tests {
             90,
         )?;
 
-        Ok((assembler, annex_dir, state_dir))
+        Ok((assembler, content_store_dir, state_dir))
     }
 
     #[sinex_test]
@@ -935,7 +935,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, _state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
 
         ctx.pool
@@ -973,7 +973,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, _state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let material_id_typed = Id::from_uuid(material_id);
 
@@ -1011,7 +1011,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, _state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
 
         let mut state = assembler.create_placeholder_state(material_id).await?;
@@ -1054,7 +1054,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, _state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let material_id_typed = Id::from_uuid(material_id);
         let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
@@ -1119,7 +1119,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, _state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let material_id_typed = Id::from_uuid(material_id);
         let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
@@ -1190,7 +1190,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, _state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let material_id_typed = Id::from_uuid(material_id);
         let started_at = Timestamp::now();
@@ -1247,25 +1247,20 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let material_id_typed = Id::from_uuid(material_id);
-        let annex_key = AnnexKey {
-            key: "SHA256E-s4--hash".to_string(),
-            backend: "SHA256E".to_string(),
-            size: 4,
-            hash: "hash".to_string(),
-        };
+        let content_key = ContentStoreKey::parse("SHA256E-s4--hash")?;
 
         let blob = ctx
             .pool
             .blobs()
             .insert(
                 Blob::builder()
-                    .annex_backend(annex_key.backend.clone())
-                    .content_hash(annex_key.hash.clone())
+                    .storage_backend(content_key.storage_backend().to_string())
+                    .content_hash(content_key.digest.clone())
                     .original_filename("material.bin".to_string())
-                    .size_bytes(annex_key.size as i64)
+                    .size_bytes(content_key.size as i64)
                     .checksum_blake3("hash".to_string())
                     .metadata(json!({ "material_id": material_id }))
                     .build(),
@@ -1289,14 +1284,14 @@ mod tests {
                 Some(blob.id),
                 None,
                 None,
-                Some(annex_key.size as i64),
+                Some(content_key.size as i64),
             )
             .await?;
         ctx.pool
             .source_materials()
             .append_temporal_ledger(TemporalLedgerEntry::realtime_capture(
                 material_id,
-                annex_key.size as i64,
+                content_key.size as i64,
                 Timestamp::now(),
             ))
             .await?;
@@ -1304,7 +1299,7 @@ mod tests {
         let final_state = FinalizationState {
             material_id,
             temp_path: state_dir.path().join("material.bin"),
-            expected_offset: annex_key.size as i64,
+            expected_offset: content_key.size as i64,
             slice_count: 1,
             buffered_count: 0,
             metadata: json!({}),
@@ -1316,7 +1311,7 @@ mod tests {
         let end = MaterialEndMessage {
             material_id: material_id.to_string(),
             total_slices: 1,
-            total_size_bytes: annex_key.size as i64,
+            total_size_bytes: content_key.size as i64,
             content_hash: "hash".to_string(),
             metadata: json!({}),
             ended_at: sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
@@ -1332,7 +1327,7 @@ mod tests {
         let handle = FinalizationTransaction::new(&assembler)
             .finalize(FinalizationRequest {
                 final_state: &final_state,
-                annex_key: &annex_key,
+                content_key: &content_key,
                 content_hash: &end.content_hash,
                 total_size_bytes: end.total_size_bytes,
                 metadata: json!({}),
@@ -1371,7 +1366,7 @@ mod tests {
     #[sinex_test]
     async fn record_staged_at_ledger_entry_is_idempotent(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, _state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let started_at = Timestamp::now();
 
@@ -1418,15 +1413,10 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let material_id_typed = Id::<SourceMaterialRecord>::from_uuid(material_id);
-        let annex_key = AnnexKey {
-            backend: "SHA256E".to_string(),
-            hash: "rollback-blob-hash".to_string(),
-            size: 32,
-            key: "SHA256E-s32--rollback-blob-hash".to_string(),
-        };
+        let content_key = ContentStoreKey::parse("SHA256E-s32--rollback-blob-hash")?;
         let started_at = Timestamp::now();
 
         ctx.pool
@@ -1443,7 +1433,7 @@ mod tests {
         let final_state = FinalizationState {
             material_id,
             temp_path: state_dir.path().join("rollback-material.bin"),
-            expected_offset: annex_key.size as i64,
+            expected_offset: content_key.size as i64,
             slice_count: 1,
             buffered_count: 0,
             metadata: json!({ "original": true }),
@@ -1455,7 +1445,7 @@ mod tests {
         let error = FinalizationTransaction::new(&assembler)
             .finalize(FinalizationRequest {
                 final_state: &final_state,
-                annex_key: &annex_key,
+                content_key: &content_key,
                 content_hash: "rollback-blake3",
                 total_size_bytes: -1,
                 metadata: json!({ "finalized": true }),
@@ -1484,7 +1474,11 @@ mod tests {
         let blob = ctx
             .pool
             .blobs()
-            .get_by_content(&annex_key.backend, &annex_key.hash, annex_key.size as i64)
+            .get_by_content(
+                content_key.storage_backend(),
+                &content_key.digest,
+                content_key.size as i64,
+            )
             .await?;
         assert!(
             blob.is_none(),
@@ -1514,25 +1508,20 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let material_id_typed = Id::<SourceMaterialRecord>::from_uuid(material_id);
-        let annex_key = AnnexKey {
-            backend: "SHA256E".to_string(),
-            hash: "existing-blob-hash".to_string(),
-            size: 32,
-            key: "SHA256E-s32--existing-blob-hash".to_string(),
-        };
+        let content_key = ContentStoreKey::parse("SHA256E-s32--existing-blob-hash")?;
 
         let existing_blob = ctx
             .pool
             .blobs()
             .insert(
                 Blob::builder()
-                    .annex_backend(annex_key.backend.clone())
-                    .content_hash(annex_key.hash.clone())
+                    .storage_backend(content_key.storage_backend().to_string())
+                    .content_hash(content_key.digest.clone())
                     .original_filename("existing-material.bin".to_string())
-                    .size_bytes(annex_key.size as i64)
+                    .size_bytes(content_key.size as i64)
                     .checksum_blake3("existing-blob-blake3".to_string())
                     .metadata(json!({ "seeded": true }))
                     .build(),
@@ -1557,7 +1546,7 @@ mod tests {
         let final_state = FinalizationState {
             material_id,
             temp_path: state_dir.path().join("existing-material.bin"),
-            expected_offset: annex_key.size as i64,
+            expected_offset: content_key.size as i64,
             slice_count: 1,
             buffered_count: 0,
             metadata: json!({}),
@@ -1569,7 +1558,7 @@ mod tests {
         let end = MaterialEndMessage {
             material_id: material_id.to_string(),
             total_slices: 1,
-            total_size_bytes: annex_key.size as i64,
+            total_size_bytes: content_key.size as i64,
             content_hash: "existing-blob-blake3".to_string(),
             metadata: json!({}),
             ended_at: sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
@@ -1578,7 +1567,7 @@ mod tests {
         let handle = FinalizationTransaction::new(&assembler)
             .finalize(FinalizationRequest {
                 final_state: &final_state,
-                annex_key: &annex_key,
+                content_key: &content_key,
                 content_hash: &end.content_hash,
                 total_size_bytes: end.total_size_bytes,
                 metadata: json!({}),
@@ -1624,26 +1613,21 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let material_id_typed = Id::<SourceMaterialRecord>::from_uuid(material_id);
         let content_hash = "existing-blob-blake3";
-        let annex_key = AnnexKey {
-            backend: "SINEXBLAKE3".to_string(),
-            hash: content_hash.to_string(),
-            size: 32,
-            key: format!("SINEXBLAKE3-s32--{content_hash}"),
-        };
+        let content_key = ContentStoreKey::parse(&format!("SINEXBLAKE3-s32--{content_hash}"))?;
 
         let existing_blob = ctx
             .pool
             .blobs()
             .insert(
                 Blob::builder()
-                    .annex_backend("SHA256E".to_string())
+                    .storage_backend("SHA256E".to_string())
                     .content_hash("existing-sha256-hash".to_string())
                     .original_filename("existing-material.bin".to_string())
-                    .size_bytes(annex_key.size as i64)
+                    .size_bytes(content_key.size as i64)
                     .checksum_blake3(content_hash.to_string())
                     .metadata(json!({ "seeded": true }))
                     .build(),
@@ -1668,7 +1652,7 @@ mod tests {
         let final_state = FinalizationState {
             material_id,
             temp_path: state_dir.path().join("existing-material-by-blake3.bin"),
-            expected_offset: annex_key.size as i64,
+            expected_offset: content_key.size as i64,
             slice_count: 1,
             buffered_count: 0,
             metadata: json!({}),
@@ -1680,7 +1664,7 @@ mod tests {
         let end = MaterialEndMessage {
             material_id: material_id.to_string(),
             total_slices: 1,
-            total_size_bytes: annex_key.size as i64,
+            total_size_bytes: content_key.size as i64,
             content_hash: content_hash.to_string(),
             metadata: json!({}),
             ended_at: sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
@@ -1689,7 +1673,7 @@ mod tests {
         let handle = FinalizationTransaction::new(&assembler)
             .finalize(FinalizationRequest {
                 final_state: &final_state,
-                annex_key: &annex_key,
+                content_key: &content_key,
                 content_hash: &end.content_hash,
                 total_size_bytes: end.total_size_bytes,
                 metadata: json!({}),

@@ -72,7 +72,7 @@ async fn clipboard_copied_payload_serde_roundtrip() -> TestResult<()> {
         window_title: Some("Example Page - Mozilla Firefox".to_string()),
         content_hash: hash.clone(),
         original_hash: None,
-        annex_key: None,
+        content_key: None,
         blob_id: None,
     };
 
@@ -92,7 +92,7 @@ async fn clipboard_copied_payload_serde_roundtrip() -> TestResult<()> {
     assert!(deserialized.file_count.is_none());
     assert!(deserialized.file_paths.is_none());
     assert!(deserialized.original_hash.is_none());
-    assert!(deserialized.annex_key.is_none());
+    assert!(deserialized.content_key.is_none());
     assert!(deserialized.blob_id.is_none());
 
     Ok(())
@@ -118,7 +118,7 @@ async fn clipboard_copied_payload_with_files() -> TestResult<()> {
         window_title: Some("Files".to_string()),
         content_hash: hash,
         original_hash: None,
-        annex_key: None,
+        content_key: None,
         blob_id: None,
     };
 
@@ -185,7 +185,7 @@ async fn clipboard_selected_payload_serde_roundtrip() -> TestResult<()> {
         source_app: Some("alacritty".to_string()),
         content_hash: hash.clone(),
         original_hash: None,
-        annex_key: None,
+        content_key: None,
         blob_id: None,
     };
 
@@ -253,7 +253,7 @@ async fn clipboard_payload_zero_size_content() -> TestResult<()> {
         window_title: None,
         content_hash: hash,
         original_hash: None,
-        annex_key: None,
+        content_key: None,
         blob_id: None,
     };
 
@@ -281,7 +281,7 @@ async fn clipboard_payload_large_content_size_recorded() -> TestResult<()> {
         window_title: None,
         content_hash: "abcdef".to_string(),
         original_hash: None,
-        annex_key: None,
+        content_key: None,
         blob_id: None,
     };
 
@@ -349,7 +349,7 @@ async fn clipboard_payload_original_hash_tracks_dedup_reference() -> TestResult<
         window_title: None,
         content_hash: first_hash.clone(),
         original_hash: Some(first_hash.clone()),
-        annex_key: None,
+        content_key: None,
         blob_id: None,
     };
 

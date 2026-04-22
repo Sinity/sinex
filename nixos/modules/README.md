@@ -13,7 +13,7 @@ to a systemd unit, CLI argument, or generated configuration file.
 | `services.sinex.users` | `target` (captured workstation user) and `nodes` (service account). |
 | `services.sinex.database` | PostgreSQL provisioning, connection pool sizing, and migrations. |
 | `services.sinex.nats` | NATS/JetStream provisioning and stream bootstrap. |
-| `services.sinex.storage` | Dead-letter queue handling and git-annex backed blob store. |
+| `services.sinex.storage` | Dead-letter queue handling and content-store backed blob storage. |
 | `services.sinex.core` | Ingestion (`sinex-ingestd`) and gateway service configuration. |
 | `services.sinex.nodes` | Filesystem/terminal/browser/desktop/system collectors plus automata. |
 | `services.sinex.observability` | Prometheus/Grafana/exporters and structured log retention. |
@@ -90,8 +90,8 @@ disabled (e.g. staging migrations).
 - DLQ cleanup runs via `sinex-dlq-cleanup.timer`; schedule, max age, and max file
   count come from `storage.dlq.cleanup`.
 - Blob repository lives at `storage.blob.repositoryPath` (default:
-  `${stateRoot}/blob-repository`). `autoInit = true` creates the git-annex repo
-  on boot.
+  `${stateRoot}/blob-repository`). `autoInit = true` creates the content-store
+  root on boot.
 - `storage.blob.maintenance` controls GC/fsck timers. Enable health checks to log
   repository size warnings.
 - `nats.bootstrapStreams.enable` bootstraps standard JetStream streams via the `nats`
@@ -230,7 +230,7 @@ disabled (e.g. staging migrations).
   DLQ timer).
 - `database.nix` – PostgreSQL provisioning when `database.autoSetup = true`.
 - `nats.nix` – NATS/JetStream provisioning and stream bootstrap when enabled.
-- `blob-storage.nix` – git-annex initialization and maintenance timers.
+- `blob-storage.nix` – content-store backend initialization and maintenance timers.
 - `monitoring.nix` – Prometheus/Grafana/exporter configuration.
 - `preflight-verification.nix` – `sinex-preflight` and `sinex-update` units.
 - `node-services.nix` – Core ingest/gateway and node/automata units.

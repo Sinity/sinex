@@ -23,7 +23,7 @@ use super::{
 use crate::{IngestdResult, SinexError};
 use blake3::Hasher;
 use camino::Utf8PathBuf;
-use sinex_node_sdk::annex::AnnexKey;
+use sinex_node_sdk::content_store::ContentStoreKey;
 use sinex_primitives::Timestamp;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -1402,7 +1402,7 @@ async fn persist_buffered_slice(
 pub(super) async fn import_into_content_store(
     assembler: &MaterialAssembler,
     state: &FinalizationState,
-) -> IngestdResult<AnnexKey> {
+) -> IngestdResult<ContentStoreKey> {
     let staging_path = Utf8PathBuf::from_path_buf(state.temp_path.clone()).map_err(|path| {
         SinexError::io(format!(
             "Staging path is not valid utf-8 for content-store import: {}",
@@ -1411,8 +1411,8 @@ pub(super) async fn import_into_content_store(
     })?;
 
     assembler
-        .annex
-        .add_file(&staging_path)
+        .content_store
+        .store_file(&staging_path)
         .await
         .map_err(|e| SinexError::io("content-store import failed").with_source(e))
 }
@@ -1424,7 +1424,7 @@ mod tests {
     use crate::material_assembler::state::MaterialEndMessage;
     use camino::Utf8PathBuf;
     use serde_json::json;
-    use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
+    use sinex_node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
     use std::sync::Arc;
@@ -1442,12 +1442,12 @@ mod tests {
         ctx: &TestContext,
         slice_timeout_secs: u64,
     ) -> TestResult<(MaterialAssembler, tempfile::TempDir, tempfile::TempDir)> {
-        let annex_dir = tempfile::tempdir()?;
-        let repo_path = Utf8PathBuf::from_path_buf(annex_dir.path().to_path_buf())
+        let content_store_dir = tempfile::tempdir()?;
+        let repo_path = Utf8PathBuf::from_path_buf(content_store_dir.path().to_path_buf())
             .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
-        GitAnnex::init(&repo_path, Some("io-test")).await?;
-        let annex = Arc::new(GitAnnex::new(AnnexConfig {
-            repo_path,
+        MaterialContentStore::init(&repo_path, Some("io-test")).await?;
+        let content_store = Arc::new(MaterialContentStore::new(ContentStoreConfig {
+            root_path: repo_path,
             num_copies: None,
             large_files: None,
         })?);
@@ -1456,7 +1456,7 @@ mod tests {
         let assembler = MaterialAssembler::new(
             ctx.nats_client(),
             ctx.pool.clone(),
-            annex,
+            content_store,
             state_dir.path().to_path_buf(),
             Some(ctx.pipeline_namespace().prefix().to_string()),
             1_000,
@@ -1468,7 +1468,7 @@ mod tests {
             90,
         )?;
 
-        Ok((assembler, annex_dir, state_dir))
+        Ok((assembler, content_store_dir, state_dir))
     }
 
     async fn write_wal_entry(wal_path: &std::path::Path, entry: WalEntry) -> TestResult<()> {
@@ -1493,7 +1493,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, state_dir) = test_assembler(&ctx).await?;
         let temp_path = state_dir.path().join("assembled.bin");
         tokio::fs::write(&temp_path, b"staged-content").await?;
 
@@ -1509,8 +1509,8 @@ mod tests {
             started_at: Timestamp::now(),
         };
 
-        let annex_key = import_into_content_store(&assembler, &final_state).await?;
-        assert!(!annex_key.key.is_empty());
+        let content_key = import_into_content_store(&assembler, &final_state).await?;
+        assert!(!content_key.key.is_empty());
         assert!(
             temp_path.exists(),
             "content-store import should preserve the staging file until cleanup succeeds"
@@ -1534,7 +1534,7 @@ mod tests {
     #[sinex_test]
     async fn append_slice_data_batches_staged_and_wal_sync(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, _state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let mut state = assembler.create_placeholder_state(material_id).await?;
         state.phase = AssemblyPhase::Accumulating;
@@ -1557,7 +1557,7 @@ mod tests {
     #[sinex_test]
     async fn material_end_wal_entry_forces_sync(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, _state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let mut state = assembler.create_placeholder_state(material_id).await?;
 
@@ -1606,12 +1606,12 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let annex_dir = tempfile::tempdir()?;
-        let repo_path = Utf8PathBuf::from_path_buf(annex_dir.path().to_path_buf())
+        let content_store_dir = tempfile::tempdir()?;
+        let repo_path = Utf8PathBuf::from_path_buf(content_store_dir.path().to_path_buf())
             .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
-        GitAnnex::init(&repo_path, Some("io-test")).await?;
-        let annex = Arc::new(GitAnnex::new(AnnexConfig {
-            repo_path,
+        MaterialContentStore::init(&repo_path, Some("io-test")).await?;
+        let content_store = Arc::new(MaterialContentStore::new(ContentStoreConfig {
+            root_path: repo_path,
             num_copies: None,
             large_files: None,
         })?);
@@ -1620,7 +1620,7 @@ mod tests {
         let assembler = MaterialAssembler::new(
             ctx.nats_client(),
             ctx.pool.clone(),
-            annex,
+            content_store,
             state_dir.path().to_path_buf(),
             Some(ctx.pipeline_namespace().prefix().to_string()),
             1_000,
@@ -1651,12 +1651,12 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let annex_dir = tempfile::tempdir()?;
-        let repo_path = Utf8PathBuf::from_path_buf(annex_dir.path().to_path_buf())
+        let content_store_dir = tempfile::tempdir()?;
+        let repo_path = Utf8PathBuf::from_path_buf(content_store_dir.path().to_path_buf())
             .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
-        GitAnnex::init(&repo_path, Some("io-test")).await?;
-        let annex = Arc::new(GitAnnex::new(AnnexConfig {
-            repo_path,
+        MaterialContentStore::init(&repo_path, Some("io-test")).await?;
+        let content_store = Arc::new(MaterialContentStore::new(ContentStoreConfig {
+            root_path: repo_path,
             num_copies: None,
             large_files: None,
         })?);
@@ -1665,7 +1665,7 @@ mod tests {
         let assembler = MaterialAssembler::new(
             ctx.nats_client(),
             ctx.pool.clone(),
-            annex,
+            content_store,
             state_dir.path().to_path_buf(),
             Some(ctx.pipeline_namespace().prefix().to_string()),
             1_000,
@@ -1693,12 +1693,12 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let annex_dir = tempfile::tempdir()?;
-        let repo_path = Utf8PathBuf::from_path_buf(annex_dir.path().to_path_buf())
+        let content_store_dir = tempfile::tempdir()?;
+        let repo_path = Utf8PathBuf::from_path_buf(content_store_dir.path().to_path_buf())
             .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
-        GitAnnex::init(&repo_path, Some("io-test")).await?;
-        let annex = Arc::new(GitAnnex::new(AnnexConfig {
-            repo_path,
+        MaterialContentStore::init(&repo_path, Some("io-test")).await?;
+        let content_store = Arc::new(MaterialContentStore::new(ContentStoreConfig {
+            root_path: repo_path,
             num_copies: None,
             large_files: None,
         })?);
@@ -1707,7 +1707,7 @@ mod tests {
         let assembler = MaterialAssembler::new(
             ctx.nats_client(),
             ctx.pool.clone(),
-            annex,
+            content_store,
             state_dir.path().to_path_buf(),
             Some(ctx.pipeline_namespace().prefix().to_string()),
             1_000,
@@ -1797,7 +1797,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let material_dir = state_dir.path().join(material_id.to_string());
         tokio::fs::create_dir_all(&material_dir).await?;
@@ -1830,7 +1830,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let material_dir = state_dir.path().join(material_id.to_string());
         tokio::fs::create_dir_all(&material_dir).await?;
@@ -1875,7 +1875,7 @@ mod tests {
     #[sinex_test]
     async fn restore_state_promotes_fully_staged_pending_write(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let material_dir = state_dir.path().join(material_id.to_string());
         tokio::fs::create_dir_all(&material_dir).await?;
@@ -1920,7 +1920,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let material_id_typed = Id::from_uuid(material_id);
         let material_dir = state_dir.path().join(material_id.to_string());
@@ -1981,7 +1981,7 @@ mod tests {
     #[sinex_test]
     async fn restore_state_finalizes_complete_pending_end(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let material_dir = state_dir.path().join(material_id.to_string());
         tokio::fs::create_dir_all(&material_dir).await?;
@@ -2049,7 +2049,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, state_dir) = test_assembler_with_config(&ctx, 1).await?;
+        let (assembler, _content_store_dir, state_dir) = test_assembler_with_config(&ctx, 1).await?;
         let material_id = Uuid::now_v7();
         let material_dir = state_dir.path().join(material_id.to_string());
         tokio::fs::create_dir_all(&material_dir).await?;
@@ -2085,7 +2085,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, state_dir) = test_assembler_with_config(&ctx, 1).await?;
+        let (assembler, _content_store_dir, state_dir) = test_assembler_with_config(&ctx, 1).await?;
         let material_id = Uuid::now_v7();
         let material_dir = state_dir.path().join(material_id.to_string());
         tokio::fs::create_dir_all(&material_dir).await?;
@@ -2139,7 +2139,7 @@ mod tests {
     #[sinex_test]
     async fn restore_state_cleans_up_invalid_started_at_in_wal(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let material_dir = state_dir.path().join(material_id.to_string());
         tokio::fs::create_dir_all(&material_dir).await?;
@@ -2174,7 +2174,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let material_dir = state_dir.path().join(material_id.to_string());
         tokio::fs::create_dir_all(material_dir.join(BUFFER_DIR_NAME)).await?;
@@ -2215,7 +2215,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::now_v7();
         let material_dir = state_dir.path().join(material_id.to_string());
         tokio::fs::create_dir_all(&material_dir).await?;

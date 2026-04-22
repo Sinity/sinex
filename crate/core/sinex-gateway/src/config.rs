@@ -43,9 +43,9 @@ pub struct GatewayConfig {
     #[serde(default = "default_pool_acquire_timeout_secs")]
     pub pool_acquire_timeout_secs: u64,
 
-    /// git-annex storage path.
-    #[serde(default = "default_annex_path")]
-    pub annex_path: String,
+    /// Content-store root path.
+    #[serde(default = "default_content_store_path")]
+    pub content_store_path: String,
 
     /// Bearer token used for RPC authentication.
     #[serde(default)]
@@ -164,15 +164,15 @@ fn default_tcp_listen() -> String {
     crate::rpc_server::DEFAULT_TCP_LISTEN.to_string()
 }
 
-fn default_annex_path() -> String {
+fn default_content_store_path() -> String {
     std::env::var("HOME").map_or_else(
         |_| {
             sinex_primitives::environment::environment()
-                .work_directory("annex")
+                .work_directory("content-store")
                 .to_string_lossy()
                 .into_owned()
         },
-        |home| format!("{home}/.local/share/sinex/annex"),
+        |home| format!("{home}/.local/share/sinex/content-store"),
     )
 }
 
@@ -253,7 +253,7 @@ impl Default for GatewayConfig {
             pool_max_connections: default_pool_max_connections(),
             pool_min_connections: default_pool_min_connections(),
             pool_acquire_timeout_secs: default_pool_acquire_timeout_secs(),
-            annex_path: default_annex_path(),
+            content_store_path: default_content_store_path(),
             rpc_token: None,
             rpc_token_file: None,
             admin_token_file: None,
@@ -314,7 +314,7 @@ impl GatewayConfig {
     /// Load defaults and environment overrides, then force a specific database URL.
     ///
     /// This is used by tests and helper binaries that need the normal runtime wiring
-    /// (NATS, TLS, annex, auth) but provide the database URL out-of-band.
+    /// (NATS, TLS, content store, auth) but provide the database URL out-of-band.
     pub fn load_with_database_url(database_url: impl Into<String>) -> Result<Self, SinexError> {
         let mut config = Self::load_with_optional_database_url(Some(database_url.into()))?;
         if config.database_url.trim().is_empty() {
@@ -357,10 +357,10 @@ impl GatewayConfig {
         config
     }
 
-    /// Resolve and validate the annex path.
-    pub fn resolve_annex_path(&self) -> Result<Utf8PathBuf, SinexError> {
-        let sanitized = SanitizedPath::from_str_validated(&self.annex_path)
-            .map_err(|e| SinexError::validation(format!("Invalid annex_path: {e}")))?;
+    /// Resolve and validate the content-store path.
+    pub fn resolve_content_store_path(&self) -> Result<Utf8PathBuf, SinexError> {
+        let sanitized = SanitizedPath::from_str_validated(&self.content_store_path)
+            .map_err(|e| SinexError::validation(format!("Invalid content_store_path: {e}")))?;
         Ok(Utf8PathBuf::from(sanitized.as_str()))
     }
 
@@ -470,7 +470,10 @@ impl GatewayConfig {
             "SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS",
             self.pool_acquire_timeout_secs,
         )?;
-        self.annex_path = env_string_override("SINEX_GATEWAY_ANNEX_PATH", self.annex_path.clone())?;
+        self.content_store_path = env_string_override(
+            "SINEX_GATEWAY_CONTENT_STORE_PATH",
+            self.content_store_path.clone(),
+        )?;
         self.tls_cert = env_option_override("SINEX_GATEWAY_TLS_CERT", self.tls_cert.take())?;
         self.tls_key = env_option_override("SINEX_GATEWAY_TLS_KEY", self.tls_key.take())?;
         self.tls_client_ca =
@@ -492,7 +495,10 @@ impl GatewayConfig {
 
     fn apply_manual_env_overrides(&mut self) -> Result<(), SinexError> {
         self.database_url = env_string_override("DATABASE_URL", self.database_url.clone())?;
-        self.annex_path = env_string_override("SINEX_ANNEX_PATH", self.annex_path.clone())?;
+        self.content_store_path = env_string_override(
+            "SINEX_CONTENT_STORE_PATH",
+            self.content_store_path.clone(),
+        )?;
         self.rpc_token = env_var_optional("SINEX_RPC_TOKEN")?
             .map(|v| v.trim().to_string())
             .or(self.rpc_token.take());

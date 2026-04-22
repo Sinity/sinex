@@ -1,7 +1,7 @@
 use camino::Utf8PathBuf;
 use color_eyre::eyre::WrapErr;
 use sinex_gateway::ServiceContainer;
-use sinex_node_sdk::annex::GitAnnex;
+use sinex_node_sdk::content_store::MaterialContentStore;
 use sinex_primitives::SinexError;
 use tempfile::TempDir;
 use which::which;
@@ -22,9 +22,9 @@ async fn blob_routes_do_not_persist_events(ctx: TestContext) -> TestResult<()> {
     env_guard.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
     let temp_dir = TempDir::new()?;
     let repo_path = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
-        .map_err(|_| color_eyre::eyre::eyre!("annex path is not valid UTF-8"))?;
-    GitAnnex::init(&repo_path, Some("gateway-blob-forwarding")).await?;
-    env_guard.set("SINEX_ANNEX_PATH", repo_path.as_str());
+        .map_err(|_| color_eyre::eyre::eyre!("content-store path is not valid UTF-8"))?;
+    MaterialContentStore::init(&repo_path, Some("gateway-blob-forwarding")).await?;
+    env_guard.set("SINEX_CONTENT_STORE_PATH", repo_path.as_str());
     let _env_guard = env_guard;
 
     let initial_count: i64 = sqlx::query_scalar!(

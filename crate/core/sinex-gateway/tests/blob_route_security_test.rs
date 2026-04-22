@@ -9,7 +9,7 @@ use sinex_gateway::{
     rpc_server::RpcAuthContext,
     service_container::ServiceContainer,
 };
-use sinex_node_sdk::annex::GitAnnex;
+use sinex_node_sdk::content_store::MaterialContentStore;
 use sinex_primitives::rpc::content::{RetrieveBlobResponse, StoreBlobResponse};
 use sinex_primitives::temporal;
 use tempfile::TempDir;
@@ -37,30 +37,30 @@ async fn blob_test_services(
     max_blob_bytes: usize,
 ) -> TestResult<(TestContext, TempDir, ServiceContainer)> {
     let ctx = ctx.with_nats().shared().await?;
-    let annex_dir = TempDir::new()?;
-    let repo_path = annex_dir.path().join(repo_name);
+    let content_store_dir = TempDir::new()?;
+    let repo_path = content_store_dir.path().join(repo_name);
     let repo_utf8 = Utf8PathBuf::from_path_buf(repo_path.clone())
-        .map_err(|_| color_eyre::eyre::eyre!("annex path is not valid UTF-8"))?;
+        .map_err(|_| color_eyre::eyre::eyre!("content-store path is not valid UTF-8"))?;
 
-    GitAnnex::init(&repo_utf8, Some(repo_name)).await?;
+    MaterialContentStore::init(&repo_utf8, Some(repo_name)).await?;
 
     let mut config = GatewayConfig::default().with_cli_overrides(
         Some(ctx.database_url().to_string()),
         None,
         None,
     );
-    config.annex_path = repo_utf8.to_string();
+    config.content_store_path = repo_utf8.to_string();
     config.max_blob_bytes = max_blob_bytes;
     config.nats.url = ctx.nats_handle()?.client_url().to_string();
 
     let services = ServiceContainer::new(&config).await?;
-    Ok((ctx, annex_dir, services))
+    Ok((ctx, content_store_dir, services))
 }
 
 #[sinex_test]
 async fn blob_routes_should_enforce_auth_and_quota(ctx: TestContext) -> TestResult<()> {
     require_git_annex()?;
-    let (_ctx, _annex_dir, services) =
+    let (_ctx, _content_store_dir, services) =
         blob_test_services(ctx, "gateway-blob-test", 1024 * 1024).await?;
     let auth = write_auth();
 
@@ -87,7 +87,7 @@ async fn blob_routes_should_enforce_auth_and_quota(ctx: TestContext) -> TestResu
 #[sinex_test]
 async fn content_store_blob_does_not_insert_events(ctx: TestContext) -> TestResult<()> {
     require_git_annex()?;
-    let (_ctx, _annex_dir, services) =
+    let (_ctx, _content_store_dir, services) =
         blob_test_services(ctx, "gateway-blob-no-events", 5 * 1024 * 1024).await?;
     let pool = services.pool().clone();
     let auth = write_auth();
@@ -118,7 +118,7 @@ async fn content_store_blob_does_not_insert_events(ctx: TestContext) -> TestResu
 #[sinex_test]
 async fn content_store_blob_rejects_malformed_optional_fields(ctx: TestContext) -> TestResult<()> {
     require_git_annex()?;
-    let (_ctx, _annex_dir, services) =
+    let (_ctx, _content_store_dir, services) =
         blob_test_services(ctx, "gateway-blob-malformed-params", 5 * 1024 * 1024).await?;
     let auth = write_auth();
 
@@ -141,7 +141,7 @@ async fn content_store_blob_uses_authenticated_actor_for_operations_log(
     ctx: TestContext,
 ) -> TestResult<()> {
     require_git_annex()?;
-    let (_ctx, _annex_dir, services) =
+    let (_ctx, _content_store_dir, services) =
         blob_test_services(ctx, "gateway-blob-operator-audit", 5 * 1024 * 1024).await?;
     let pool = services.pool().clone();
     let auth = write_auth();
@@ -173,7 +173,7 @@ async fn content_blob_rpc_uses_typed_request_and_response_contracts(
     ctx: TestContext,
 ) -> TestResult<()> {
     require_git_annex()?;
-    let (_ctx, _annex_dir, services) =
+    let (_ctx, _content_store_dir, services) =
         blob_test_services(ctx, "gateway-blob-contracts", 5 * 1024 * 1024).await?;
     let auth = write_auth();
 

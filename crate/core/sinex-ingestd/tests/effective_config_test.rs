@@ -236,7 +236,7 @@ async fn from_args_rejects_invalid_direct_path_overrides() -> TestResult<()> {
         None,
         None,
         false,
-        Some("../../bad-annex".to_string()),
+        Some("../../bad-content-store".to_string()),
         Some("../../bad-assembler-state".to_string()),
         None,
     )
@@ -244,6 +244,6 @@ async fn from_args_rejects_invalid_direct_path_overrides() -> TestResult<()> {
 
     let message = error.to_string();
     assert!(message.contains("invalid path value"));
-    assert!(message.contains("annex repository path"));
+    assert!(message.contains("content-store path"));
     Ok(())
 }

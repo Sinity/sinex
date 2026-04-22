@@ -5,7 +5,7 @@ use blake3::Hasher;
 use futures::future::join_all;
 use serde_json::json;
 use sinex_ingestd::{IngestdResult, MaterialAssembler, MaterialReadySet};
-use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
+use sinex_node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
 use sinex_primitives::{Uuid, temporal};
 use sqlx::Row;
 use std::sync::Arc;
@@ -13,17 +13,17 @@ use std::time::Duration;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{DEFAULT_WAIT_SECS, WaitHelpers};
 
-async fn fake_annex() -> TestResult<(Arc<GitAnnex>, tempfile::TempDir)> {
+async fn fake_content_store() -> TestResult<(Arc<MaterialContentStore>, tempfile::TempDir)> {
     let dir = tempfile::tempdir()?;
     let repo_path = camino::Utf8PathBuf::from_path_buf(dir.path().to_path_buf())
         .map_err(|_| color_eyre::eyre::eyre!("tempdir not utf8"))?;
-    GitAnnex::init(&repo_path, Some("assembler-concurrency")).await?;
-    let annex = GitAnnex::new(AnnexConfig {
-        repo_path,
+    MaterialContentStore::init(&repo_path, Some("assembler-concurrency")).await?;
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: repo_path,
         num_copies: None,
         large_files: None,
     })?;
-    Ok((Arc::new(annex), dir))
+    Ok((Arc::new(content_store), dir))
 }
 
 async fn start_assembler(
@@ -38,12 +38,12 @@ async fn start_assembler(
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
     let js = nats.jetstream_with_client(nats_client.clone());
-    let (annex, annex_dir) = fake_annex().await?;
+    let (content_store, content_store_dir) = fake_content_store().await?;
     let state_dir = tempfile::tempdir()?;
     let assembler = MaterialAssembler::new(
         nats_client.clone(),
         ctx.pool.clone(),
-        annex,
+        content_store,
         state_dir.path().to_path_buf(),
         Some(namespace.to_string()),
         1_000,
@@ -56,7 +56,7 @@ async fn start_assembler(
     )?;
 
     let handle = tokio::spawn(async move { assembler.run().await });
-    Ok((handle, js, annex_dir, state_dir))
+    Ok((handle, js, content_store_dir, state_dir))
 }
 
 #[sinex_test(timeout = 120, trace = true)]
@@ -66,7 +66,8 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     let ctx = ctx.with_nats().shared().await?;
     let _nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
-    let (handle, js, _annex_guard, _state_guard) = start_assembler(&ctx, &namespace).await?;
+    let (handle, js, _content_store_guard, _state_guard) =
+        start_assembler(&ctx, &namespace).await?;
     let material_stream = ctx.pipeline_namespace().stream("SOURCE_MATERIAL");
 
     // Prepare three materials with predictable hashes/offsets.

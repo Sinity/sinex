@@ -6,11 +6,11 @@ use xtask::sandbox::{EnvGuard, sinex_test};
 async fn service_container_should_fail_when_replay_control_unavailable(
     ctx: TestContext,
 ) -> TestResult<()> {
-    let annex_dir = TempDir::new()?;
+    let content_store_dir = TempDir::new()?;
     let mut env = EnvGuard::new();
     env.set(
-        "SINEX_ANNEX_PATH",
-        annex_dir
+        "SINEX_CONTENT_STORE_PATH",
+        content_store_dir
             .path()
             .to_str()
             .expect("path should be valid UTF-8"),

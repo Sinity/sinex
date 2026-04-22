@@ -375,16 +375,16 @@ in
           blob = mkOption {
             type = submodule {
               options = {
-                enable = mkOption {
-                  type = bool;
-                  default = true;
-                  description = "Enable git-annex backed blob storage.";
-                };
+	                enable = mkOption {
+	                  type = bool;
+	                  default = true;
+	                  description = "Enable content-store backed blob storage.";
+	                };
                 repositoryPath = mkOption {
                   type = path;
                   default = cfg.stateRoot + "/blob-repository";
                   defaultText = literalExpression "config.services.sinex.stateRoot + \"/blob-repository\"";
-                  description = "Path to the git-annex repository.";
+	                  description = "Path to the content-store root.";
                 };
                 autoInit = mkOption {
                   type = bool;

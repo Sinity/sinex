@@ -2,7 +2,7 @@
 
 The document ingestor node pulls documents from configured sources,
 normalises them, and forwards events into the ingestion pipeline. It leverages
-the shared annex storage helpers from `sinex-node-sdk`.
+the shared content-store helpers from `sinex-node-sdk`.
 
 - Crawls file systems, remote endpoints, or APIs as configured.
 - Normalises metadata and persists source material.

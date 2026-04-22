@@ -14,7 +14,7 @@
 ## Architecture & Deep Dives
 
 - `ingestion_pipeline.md` – `JetStream` consumer, batch persistence, confirmation logic, and DLQ (NEW)
-- `material_assembly.md` – Source material reconstruction, WAL-based recovery, and git-annex integration (NEW)
+- `material_assembly.md` – Source material reconstruction, WAL-based recovery, and content-store integration (NEW)
 - `architecture.md` – Service role and separation rationale
 - `diagrams.md` – Visual architecture diagrams (NATS topology, pipeline flow)
 

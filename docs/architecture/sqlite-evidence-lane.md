@@ -135,9 +135,9 @@ Expected storage profile:
   cadence, row-count thresholds, and retention windows.
 
 Snapshots go through the normal source-material storage path. Small snapshots
-benefit from local CAS by BLAKE3; larger snapshots route to annex according to
-the existing blob policy. Retention should be metadata-driven and source-specific
-instead of hard-coded into source nodes.
+benefit from local CAS by BLAKE3; larger snapshots route to the large-object
+backend according to the existing content-store policy. Retention should be
+metadata-driven and source-specific instead of hard-coded into source nodes.
 
 Recommended initial retention:
 

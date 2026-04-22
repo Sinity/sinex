@@ -17,7 +17,7 @@ pub struct ClipboardCopiedPayload {
     pub window_title: Option<String>,
     pub content_hash: String,
     pub original_hash: Option<String>,
-    pub annex_key: Option<String>,
+    pub content_key: Option<String>,
     pub blob_id: Option<String>,
 }
 
@@ -31,7 +31,7 @@ pub struct ClipboardSelectedPayload {
     pub source_app: Option<String>,
     pub content_hash: String,
     pub original_hash: Option<String>,
-    pub annex_key: Option<String>,
+    pub content_key: Option<String>,
     pub blob_id: Option<String>,
 }
 
@@ -50,7 +50,7 @@ impl ClipboardCopiedPayload {
             window_title: None,
             content_hash: content_hash.into(),
             original_hash: None,
-            annex_key: None,
+            content_key: None,
             blob_id: None,
         }
     }
@@ -68,7 +68,7 @@ impl ClipboardSelectedPayload {
             source_app: None,
             content_hash: content_hash.into(),
             original_hash: None,
-            annex_key: None,
+            content_key: None,
             blob_id: None,
         }
     }
