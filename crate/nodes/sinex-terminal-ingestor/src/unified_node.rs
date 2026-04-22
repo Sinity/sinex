@@ -8,17 +8,16 @@ use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
 use sinex_node_sdk::{
-    ActivityEntry, AppendOnlyFileChange, AppendOnlyFileState, CoverageAnalysis,
-    ExplorationProvider, ExportFormat, IngestionHistoryEntry, RecordMaterializer,
-    RecordProcessingOutcome, RecordReadHorizon, RecordSource, RecordSourceObservation,
-    RecordSources, RecordWarningDisposition, SourceState, SqliteRowCheckpoint, TailError,
-    process_record_batch_lenient,
+    ActivityEntry, AppendOnlyFileChange, AppendOnlyFileState, BufferedRecordMaterializer,
+    BufferedRecordSourceHarness, CoverageAnalysis, ExplorationProvider, ExportFormat,
+    IngestionHistoryEntry, RecordProcessingOutcome, RecordReadHorizon, RecordSource,
+    RecordSourceObservation, RecordSources, RecordWarningDisposition, SourceState,
+    SqliteRowCheckpoint, TailError,
 };
 use sinex_node_sdk::{
     NodeResult, SinexError, SourceRecordAnchor,
     acquisition_manager::{AcquisitionManager, BufferedAppendStreamWriterConfig, RotationPolicy},
     ingestor_node::IngestorNode,
-    record_source::BufferedRecordSink,
     runtime::stream::{
         Checkpoint, ContinuousStart, NodeRuntimeState, ScanArgs, ScanReport, ServiceInfo,
         TimeHorizon,
@@ -418,7 +417,7 @@ fn normalize_shell_name(shell: &str) -> String {
 
 #[derive(Clone)]
 struct HistoryWatcherContext {
-    materializer: RecordMaterializer<BufferedRecordSink>,
+    materializer: BufferedRecordMaterializer,
     stage_context: StageAsYouGoContext,
     metrics: Arc<TerminalMetrics>,
     shell: String,
@@ -1388,18 +1387,13 @@ impl HistoryWatcherContext {
             move |path, from_row_id, end_time| read(path, from_row_id, end_time),
             |entry: &Entry| entry.row_id(),
         );
+        let harness = BufferedRecordSourceHarness::new(source, self.materializer.clone());
         let mut checkpoint = SqliteRowCheckpoint::new(sqlite_row_id);
-        let import_result = match source
-            .read_batch(
-                &checkpoint,
-                historical_end_time.map_or(RecordReadHorizon::Unbounded, RecordReadHorizon::Until),
-            )
-            .await
-        {
-            Ok(batch) => Ok(process_record_batch_lenient(
+        let import_result = harness
+            .read_process_lenient(
                 &mut checkpoint,
-                batch,
-                |entry| {
+                historical_end_time.map_or(RecordReadHorizon::Unbounded, RecordReadHorizon::Until),
+                |entry, _ctx| {
                     let row_id = entry.row_id();
                     let prepared = entry.prepare_command(self, &mut recent_hashes);
                     async move {
@@ -1423,9 +1417,7 @@ impl HistoryWatcherContext {
                 },
                 HistorySqliteWarning::disposition,
             )
-            .await),
-            Err(error) => Err(error),
-        };
+            .await;
         sqlite_row_id = checkpoint.row_id;
 
         if let Err(error) = self
@@ -1912,46 +1904,45 @@ impl HistoryWatcherContext {
             move |path, from_row_id, end_time| read(path, from_row_id, end_time),
             |entry: &Entry| entry.row_id(),
         );
+        let harness = BufferedRecordSourceHarness::new(source, self.materializer.clone());
         let mut checkpoint = SqliteRowCheckpoint::new(*sqlite_row_id);
-        let processed = match source
-            .read_batch(&checkpoint, RecordReadHorizon::Unbounded)
+        let processed = match harness
+            .read_process_lenient(
+                &mut checkpoint,
+                RecordReadHorizon::Unbounded,
+                |entry, _ctx| {
+                    let row_id = entry.row_id();
+                    let prepared = entry.prepare_command(self, recent_hashes);
+                    async move {
+                        let Some(final_command) = prepared? else {
+                            return Ok(RecordProcessingOutcome::Skipped);
+                        };
+
+                        entry
+                            .emit_prepared(self, final_command)
+                            .await
+                            .map(|()| RecordProcessingOutcome::Processed)
+                            .map_err(|error| {
+                                let message = format!(
+                                    "failed to process {} row {row_id}: {error}",
+                                    Entry::SOURCE_LABEL
+                                );
+                                self.record_error(Entry::PROCESS_STAGE, &message);
+                                warn!(
+                                    "Failed to process {} history entry from {}: {}",
+                                    Entry::SOURCE_LABEL,
+                                    self.path,
+                                    error
+                                );
+                                self.sqlite_warning_for_error(message, &error)
+                            })
+                    }
+                },
+                HistorySqliteWarning::disposition,
+            )
             .await
         {
-            Ok(batch) => {
-                let report = process_record_batch_lenient(
-                    &mut checkpoint,
-                    batch,
-                    |entry| {
-                        let row_id = entry.row_id();
-                        let prepared = entry.prepare_command(self, recent_hashes);
-                        async move {
-                            let Some(final_command) = prepared? else {
-                                return Ok(RecordProcessingOutcome::Skipped);
-                            };
-
-                            entry
-                                .emit_prepared(self, final_command)
-                                .await
-                                .map(|()| RecordProcessingOutcome::Processed)
-                                .map_err(|error| {
-                                    let message = format!(
-                                        "failed to process {} row {row_id}: {error}",
-                                        Entry::SOURCE_LABEL
-                                    );
-                                    self.record_error(Entry::PROCESS_STAGE, &message);
-                                    warn!(
-                                        "Failed to process {} history entry from {}: {}",
-                                        Entry::SOURCE_LABEL,
-                                        self.path,
-                                        error
-                                    );
-                                    self.sqlite_warning_for_error(message, &error)
-                                })
-                        }
-                    },
-                    HistorySqliteWarning::disposition,
-                )
-                .await;
+            Ok(report) => {
                 *sqlite_row_id = checkpoint.row_id;
                 if persist_state {
                     self.persist_sqlite_state(*sqlite_row_id, recent_hashes)
@@ -2703,11 +2694,11 @@ impl TerminalNode {
                 .with_acquisition_manager(Arc::clone(&acquisition));
 
             let source_mode = classify_history_source(source);
-            let materializer = RecordMaterializer::new(BufferedRecordSink::from_manager(
+            let materializer = BufferedRecordMaterializer::buffered(
                 Arc::clone(&acquisition),
                 source.path.as_str(),
                 BufferedAppendStreamWriterConfig::default(),
-            ));
+            );
 
             contexts.push(HistoryWatcherContext {
                 materializer,
@@ -3448,14 +3439,12 @@ mod tests {
         start_test_ingestd_with_config,
     };
 
-    fn test_materializer(
-        acquisition: &Arc<AcquisitionManager>,
-    ) -> RecordMaterializer<BufferedRecordSink> {
-        RecordMaterializer::new(BufferedRecordSink::from_manager(
+    fn test_materializer(acquisition: &Arc<AcquisitionManager>) -> BufferedRecordMaterializer {
+        BufferedRecordMaterializer::buffered(
             Arc::clone(acquisition),
             "test://terminal-history",
             BufferedAppendStreamWriterConfig::default(),
-        ))
+        )
     }
 
     #[cfg(unix)]

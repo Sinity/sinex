@@ -8,12 +8,12 @@ use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use sinex_node_sdk::{
-    BatchImporterState, BufferedRecordSink, EventTransport, ImportFileChangeKind, IngestorNode,
-    NodeResult, RecordMaterializer, RecordProcessingOutcome, RecordReadHorizon, RecordSource,
+    BatchImporterState, BufferedRecordMaterializer, BufferedRecordSourceHarness, EventTransport,
+    ImportFileChangeKind, IngestorNode, NodeResult, RecordProcessingOutcome, RecordReadHorizon,
     RecordSources, RotationPolicy, SinexError, SourceRecordAnchor, SqliteRowCheckpoint,
     SqliteSourceCheckpointState,
     acquisition_manager::{AcquisitionManager, BufferedAppendStreamWriterConfig},
-    discover_importable_files_at_root, process_record_batch_lenient,
+    discover_importable_files_at_root,
     runtime::stream::{
         Checkpoint, ContinuousStart, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon,
     },
@@ -123,15 +123,12 @@ impl BrowserNode {
             .ok_or_else(|| SinexError::lifecycle("browser stage context not initialized"))
     }
 
-    fn materializer(
-        &self,
-        source_identifier: &str,
-    ) -> NodeResult<RecordMaterializer<BufferedRecordSink>> {
-        Ok(RecordMaterializer::new(BufferedRecordSink::from_manager(
+    fn materializer(&self, source_identifier: &str) -> NodeResult<BufferedRecordMaterializer> {
+        Ok(BufferedRecordMaterializer::buffered(
             self.acquisition()?.clone(),
             source_identifier,
             BufferedAppendStreamWriterConfig::default(),
-        )))
+        ))
     }
 
     fn redact_document(value: &str) -> NodeResult<String> {
@@ -146,7 +143,7 @@ impl BrowserNode {
     }
 
     async fn append_visit_material(
-        materializer: &RecordMaterializer<BufferedRecordSink>,
+        materializer: &BufferedRecordMaterializer,
         visit: &BrowserVisitRecord,
     ) -> NodeResult<SourceRecordAnchor> {
         let mut material_bytes = visit.material_bytes.clone();
@@ -163,7 +160,7 @@ impl BrowserNode {
     async fn emit_visit(
         &self,
         visit: BrowserVisitRecord,
-        materializer: &RecordMaterializer<BufferedRecordSink>,
+        materializer: &BufferedRecordMaterializer,
     ) -> NodeResult<()> {
         let anchor = Self::append_visit_material(materializer, &visit).await?;
         let payload = PageVisitedPayload {
@@ -333,7 +330,6 @@ impl BrowserNode {
         }
 
         let checkpoint_key = source.checkpoint_key();
-        let materializer = self.materializer(source.path.as_str())?;
         let source_config = source.clone();
         let record_source = RecordSources::sqlite(
             source.path.clone(),
@@ -348,34 +344,25 @@ impl BrowserNode {
                     .unwrap_or_default()
             },
         );
+        let harness = BufferedRecordSourceHarness::buffered_default(
+            record_source,
+            self.acquisition()?.clone(),
+        );
         let mut checkpoint = SqliteRowCheckpoint::new(state.sqlite_sources.cursor(&checkpoint_key));
-        let batch = record_source
-            .read_batch(
-                &checkpoint,
+        let report = harness
+            .read_process_lenient(
+                &mut checkpoint,
                 historical_end_time.map_or(RecordReadHorizon::Unbounded, RecordReadHorizon::Until),
-            )
-            .await
-            .map_err(|error| {
-                SinexError::processing("failed to read browser sqlite history")
-                    .with_context("source", source.path.to_string())
-                    .with_std_error(&error)
-            })?;
-        let report = process_record_batch_lenient(
-            &mut checkpoint,
-            batch,
-            |visit| {
-                let materializer = materializer.clone();
-                async move {
-                    self.emit_visit(visit, &materializer)
+                |visit, ctx| async move {
+                    self.emit_visit(visit, ctx.materializer())
                         .await
                         .map(|()| RecordProcessingOutcome::Processed)
-                }
-            },
-            |_| sinex_node_sdk::RecordWarningDisposition::Retry,
-        )
-        .await;
+                },
+                |_| sinex_node_sdk::RecordWarningDisposition::Retry,
+            )
+            .await?;
 
-        materializer.finalize("browser-sqlite-import").await?;
+        harness.finalize("browser-sqlite-import").await?;
         if let Some(error) = report.warnings.into_iter().next() {
             return Err(error);
         }
