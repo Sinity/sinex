@@ -163,6 +163,9 @@ interpretation of preserved external evidence. Existing events remain immutable;
 the replay/archive machinery decides which old events and derived descendants
 are superseded.
 
+Runtime-plane historical scan semantics are documented in
+`docs/architecture/historical-backfill-runtime-plane.md`.
+
 The snapshot relation makes the proof chain explainable:
 
 1. Event `E` cites row-stream material `R` at byte range `[a, b)`.
