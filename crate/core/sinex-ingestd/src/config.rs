@@ -2,7 +2,7 @@
 
 //! Configuration helpers for the ingestion daemon.
 
-use crate::{IngestdResult, SinexError};
+use crate::{IngestdResult, SinexError, material_assembler::DurabilityThresholds};
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::{
@@ -11,6 +11,7 @@ use sinex_primitives::{
     units::{Bytes, Milliseconds},
     validation::deserialize_validated_utf8_path,
 };
+use std::time::Duration;
 use tracing::{debug, error, info, warn};
 use validator::{Validate, ValidationError};
 
@@ -191,6 +192,47 @@ pub struct IngestdConfig {
     #[validate(custom(function = "validate_material_size_limit"))]
     pub max_material_size_bytes: Bytes,
 
+    /// Bytes of staged material writes buffered before the assembler forces
+    /// `flush + fsync` on the staged file.
+    ///
+    /// Set via: `SINEX_INGESTD_MATERIAL_STAGED_SYNC_BYTES=1048576`
+    #[serde(default = "default_material_staged_sync_bytes")]
+    #[builder(default = default_material_staged_sync_bytes())]
+    #[validate(custom(function = "validate_positive_bytes"))]
+    pub material_staged_sync_bytes: Bytes,
+
+    /// Maximum elapsed time between staged-file `flush + fsync` operations.
+    ///
+    /// Set via: `SINEX_INGESTD_MATERIAL_STAGED_SYNC_INTERVAL_MS=1000`
+    #[serde(default = "default_material_staged_sync_interval_ms")]
+    #[builder(default = default_material_staged_sync_interval_ms())]
+    #[validate(custom(function = "validate_positive_milliseconds"))]
+    pub material_staged_sync_interval_ms: Milliseconds,
+
+    /// Bytes of WAL writes buffered before the assembler forces WAL fsync.
+    ///
+    /// Set via: `SINEX_INGESTD_MATERIAL_WAL_SYNC_BYTES=262144`
+    #[serde(default = "default_material_wal_sync_bytes")]
+    #[builder(default = default_material_wal_sync_bytes())]
+    #[validate(custom(function = "validate_positive_bytes"))]
+    pub material_wal_sync_bytes: Bytes,
+
+    /// WAL entries buffered before the assembler forces WAL fsync.
+    ///
+    /// Set via: `SINEX_INGESTD_MATERIAL_WAL_SYNC_ENTRIES=128`
+    #[serde(default = "default_material_wal_sync_entries")]
+    #[builder(default = default_material_wal_sync_entries())]
+    #[validate(range(min = 1, max = 100000))]
+    pub material_wal_sync_entries: u32,
+
+    /// Maximum elapsed time between WAL fsync operations.
+    ///
+    /// Set via: `SINEX_INGESTD_MATERIAL_WAL_SYNC_INTERVAL_MS=1000`
+    #[serde(default = "default_material_wal_sync_interval_ms")]
+    #[builder(default = default_material_wal_sync_interval_ms())]
+    #[validate(custom(function = "validate_positive_milliseconds"))]
+    pub material_wal_sync_interval_ms: Milliseconds,
+
     /// Enable `GitOps` schema sync service
     ///
     /// When enabled, ingestd periodically fetches configured Git repositories
@@ -351,6 +393,32 @@ impl IngestdConfig {
 
         self
     }
+
+    pub(crate) fn material_durability_thresholds(&self) -> IngestdResult<DurabilityThresholds> {
+        let staged_bytes =
+            i64::try_from(self.material_staged_sync_bytes.as_u64()).map_err(|_| {
+                SinexError::configuration("staged material sync byte threshold exceeds i64 range")
+                    .with_context(
+                        "material_staged_sync_bytes",
+                        self.material_staged_sync_bytes.as_u64().to_string(),
+                    )
+            })?;
+        let wal_bytes = usize::try_from(self.material_wal_sync_bytes.as_u64()).map_err(|_| {
+            SinexError::configuration("WAL sync byte threshold exceeds usize range").with_context(
+                "material_wal_sync_bytes",
+                self.material_wal_sync_bytes.as_u64().to_string(),
+            )
+        })?;
+
+        DurabilityThresholds::try_new(
+            staged_bytes,
+            Duration::from_millis(self.material_staged_sync_interval_ms.as_millis()),
+            wal_bytes,
+            self.material_wal_sync_entries,
+            Duration::from_millis(self.material_wal_sync_interval_ms.as_millis()),
+        )
+    }
+
     /// Validate the configuration
     pub async fn validate(&self) -> IngestdResult<()> {
         use validator::Validate as ValidateTrait;
@@ -586,6 +654,11 @@ impl Default for IngestdConfig {
             orphan_threshold_secs: default_orphan_threshold_secs(),
             disk_threshold_percent: default_disk_threshold_percent(),
             max_material_size_bytes: default_max_material_size_bytes(),
+            material_staged_sync_bytes: default_material_staged_sync_bytes(),
+            material_staged_sync_interval_ms: default_material_staged_sync_interval_ms(),
+            material_wal_sync_bytes: default_material_wal_sync_bytes(),
+            material_wal_sync_entries: default_material_wal_sync_entries(),
+            material_wal_sync_interval_ms: default_material_wal_sync_interval_ms(),
             gitops_enabled: false,
             gitops_work_dir: default_gitops_work_dir(),
             schema_reload_interval_secs: default_schema_reload_interval_secs(),
@@ -819,6 +892,20 @@ fn validate_material_size_limit(value: &Bytes) -> Result<(), ValidationError> {
     Ok(())
 }
 
+fn validate_positive_bytes(value: &Bytes) -> Result<(), ValidationError> {
+    if value.as_u64() == 0 {
+        return Err(ValidationError::new("range"));
+    }
+    Ok(())
+}
+
+fn validate_positive_milliseconds(value: &Milliseconds) -> Result<(), ValidationError> {
+    if value.as_millis() == 0 {
+        return Err(ValidationError::new("range"));
+    }
+    Ok(())
+}
+
 fn validate_fetch_timeout(value: &Milliseconds) -> Result<(), ValidationError> {
     let ms = value.as_millis();
     if !(1..=60_000).contains(&ms) {
@@ -904,6 +991,81 @@ fn default_max_material_size_bytes() -> Bytes {
     }
 }
 
+fn default_material_staged_sync_bytes() -> Bytes {
+    match env_parsed("SINEX_INGESTD_MATERIAL_STAGED_SYNC_BYTES") {
+        Ok(Some(value)) => Bytes::from_bytes(value),
+        Ok(None) => Bytes::from_mebibytes(1),
+        Err(error) => {
+            error!(
+                env = "SINEX_INGESTD_MATERIAL_STAGED_SYNC_BYTES",
+                %error,
+                "Invalid env override for staged material sync bytes; using default"
+            );
+            Bytes::from_mebibytes(1)
+        }
+    }
+}
+
+fn default_material_staged_sync_interval_ms() -> Milliseconds {
+    match env_parsed("SINEX_INGESTD_MATERIAL_STAGED_SYNC_INTERVAL_MS") {
+        Ok(Some(value)) => Milliseconds::from_millis(value),
+        Ok(None) => Milliseconds::from_millis(1000),
+        Err(error) => {
+            error!(
+                env = "SINEX_INGESTD_MATERIAL_STAGED_SYNC_INTERVAL_MS",
+                %error,
+                "Invalid env override for staged material sync interval; using default"
+            );
+            Milliseconds::from_millis(1000)
+        }
+    }
+}
+
+fn default_material_wal_sync_bytes() -> Bytes {
+    match env_parsed("SINEX_INGESTD_MATERIAL_WAL_SYNC_BYTES") {
+        Ok(Some(value)) => Bytes::from_bytes(value),
+        Ok(None) => Bytes::from_kibibytes(256),
+        Err(error) => {
+            error!(
+                env = "SINEX_INGESTD_MATERIAL_WAL_SYNC_BYTES",
+                %error,
+                "Invalid env override for material WAL sync bytes; using default"
+            );
+            Bytes::from_kibibytes(256)
+        }
+    }
+}
+
+fn default_material_wal_sync_entries() -> u32 {
+    match env_parsed("SINEX_INGESTD_MATERIAL_WAL_SYNC_ENTRIES") {
+        Ok(Some(value)) => value,
+        Ok(None) => 128,
+        Err(error) => {
+            error!(
+                env = "SINEX_INGESTD_MATERIAL_WAL_SYNC_ENTRIES",
+                %error,
+                "Invalid env override for material WAL sync entries; using default"
+            );
+            128
+        }
+    }
+}
+
+fn default_material_wal_sync_interval_ms() -> Milliseconds {
+    match env_parsed("SINEX_INGESTD_MATERIAL_WAL_SYNC_INTERVAL_MS") {
+        Ok(Some(value)) => Milliseconds::from_millis(value),
+        Ok(None) => Milliseconds::from_millis(1000),
+        Err(error) => {
+            error!(
+                env = "SINEX_INGESTD_MATERIAL_WAL_SYNC_INTERVAL_MS",
+                %error,
+                "Invalid env override for material WAL sync interval; using default"
+            );
+            Milliseconds::from_millis(1000)
+        }
+    }
+}
+
 fn default_gitops_work_dir() -> Utf8PathBuf {
     if let Some(validated) =
         env_validated_path("SINEX_INGESTD_GITOPS_WORK_DIR", "gitops work directory")
@@ -930,7 +1092,7 @@ fn default_stats_log_interval_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        IngestdConfig, default_annex_repo_path, default_assembler_state_dir,
+        DurabilityThresholds, IngestdConfig, default_annex_repo_path, default_assembler_state_dir,
         default_gitops_work_dir, default_path_base_dir, default_work_dir, env_validated_path,
     };
     use camino::Utf8PathBuf;
@@ -942,6 +1104,25 @@ mod tests {
     use xtask::sandbox::sinex_serial_test;
 
     use xtask::sandbox::EnvGuard;
+
+    #[sinex_serial_test]
+    async fn material_durability_thresholds_match_policy_defaults() -> xtask::sandbox::TestResult<()>
+    {
+        let mut env = EnvGuard::new();
+        env.set("SINEX_INGESTD_MATERIAL_STAGED_SYNC_BYTES", "1048576");
+        env.set("SINEX_INGESTD_MATERIAL_STAGED_SYNC_INTERVAL_MS", "1000");
+        env.set("SINEX_INGESTD_MATERIAL_WAL_SYNC_BYTES", "262144");
+        env.set("SINEX_INGESTD_MATERIAL_WAL_SYNC_ENTRIES", "128");
+        env.set("SINEX_INGESTD_MATERIAL_WAL_SYNC_INTERVAL_MS", "1000");
+
+        let config = IngestdConfig::default();
+
+        assert_eq!(
+            config.material_durability_thresholds()?,
+            DurabilityThresholds::default_checked()?
+        );
+        Ok(())
+    }
 
     #[sinex_serial_test]
     async fn default_work_dir_ignores_invalid_override() -> xtask::sandbox::TestResult<()> {

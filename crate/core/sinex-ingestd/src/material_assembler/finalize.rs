@@ -931,7 +931,7 @@ impl MaterialAssembler {
             })?;
 
             if let Err(e) =
-                super::io::sync_staged_file_for_finalization(&mut state, material_id).await
+                super::io::sync_staged_file_for_finalization(self, &mut state, material_id).await
             {
                 warn!(
                     material_id = %material_id,
