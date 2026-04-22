@@ -12,7 +12,7 @@ use serde::Serialize;
 use sinex_primitives::events::schema_registry::get_all_payloads;
 use sinex_primitives::proof::{
     self, Claim, Exemption, PROOF_CATALOG_SCHEMA_VERSION, ProofObligation, RunnerBinding,
-    RuntimeUnitDescriptor,
+    RuntimeUnitDescriptor, SourceUnitDescriptor,
 };
 
 use crate::command_catalog::{CommandInfo, collect_command_catalog};
@@ -22,6 +22,7 @@ use crate::commands::test::{ScenarioCatalogEntry, discover_scenario_catalog};
 pub struct ProofCatalog {
     pub schema_version: u32,
     pub runtime_units: Vec<RuntimeUnitDescriptor>,
+    pub source_units: Vec<SourceUnitDescriptor>,
     pub claims: Vec<Claim>,
     pub runner_bindings: Vec<RunnerBinding>,
     pub obligations: Vec<ProofObligation>,
@@ -69,6 +70,11 @@ pub fn build_proof_catalog(workspace_root: &Path) -> Result<ProofCatalog> {
         .collect::<Vec<_>>();
     runtime_units.sort_by(|left, right| left.subject.as_str().cmp(right.subject.as_str()));
 
+    let mut source_units = proof::source_unit_descriptors()
+        .copied()
+        .collect::<Vec<_>>();
+    source_units.sort_by(|left, right| left.subject.as_str().cmp(right.subject.as_str()));
+
     let mut claims = proof::claims().copied().collect::<Vec<_>>();
     claims.sort_by(|left, right| left.id.cmp(right.id));
 
@@ -84,6 +90,7 @@ pub fn build_proof_catalog(workspace_root: &Path) -> Result<ProofCatalog> {
     Ok(ProofCatalog {
         schema_version: PROOF_CATALOG_SCHEMA_VERSION,
         runtime_units,
+        source_units,
         claims,
         runner_bindings,
         obligations,
@@ -190,6 +197,12 @@ mod tests {
         );
         assert!(
             catalog
+                .source_units
+                .iter()
+                .any(|unit| unit.subject.as_str() == "source_unit:terminal.atuin-history")
+        );
+        assert!(
+            catalog
                 .claims
                 .iter()
                 .any(|claim| claim.id == "claim:source_material.material_provenance")
@@ -213,6 +226,7 @@ mod tests {
 
         assert_eq!(json["schema_version"], PROOF_CATALOG_SCHEMA_VERSION);
         assert!(json["runtime_units"].is_array());
+        assert!(json["source_units"].is_array());
         assert!(json["event_payloads"].is_array());
         assert!(json["xtask_commands"].is_array());
         assert!(json["scenarios"].is_array());

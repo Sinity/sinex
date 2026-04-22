@@ -53,6 +53,26 @@ impl NodeRuntimeState {
     }
 
     #[must_use]
+    pub fn source_unit_id(&self) -> Option<&str> {
+        self.service_info.source_unit_id()
+    }
+
+    #[must_use]
+    pub fn runner_pack(&self) -> Option<&str> {
+        self.service_info.runner_pack()
+    }
+
+    #[must_use]
+    pub fn checkpoint_identity(&self) -> &str {
+        self.service_info.checkpoint_identity()
+    }
+
+    #[must_use]
+    pub fn control_identity(&self) -> &str {
+        self.service_info.control_identity()
+    }
+
+    #[must_use]
     pub fn instance_id(&self) -> &str {
         self.service_info.instance_id()
     }

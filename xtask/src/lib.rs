@@ -53,7 +53,7 @@ use command::{CommandContext, HistoryAccessMode, XtaskCommand};
 use commands::{
     AnalyticsCommand, BuildCommand, CheckCommand, DoctorCommand, FixCommand, GitStackCommand,
     JobsCommand, PrivacyCommand, ResetCommand, StatusCommand, TestCommand, WorkCommand,
-    ci::CiCommand, completions::CompletionsCommand,
+    ci::CiCommand, completions::CompletionsCommand, source_units::SourceUnitsCommand,
 };
 use config::config;
 use history::HistoryDb;
@@ -299,6 +299,8 @@ enum Commands {
     // ─── Generation ────────────────────────────────────────────────
     #[command(hide = true)]
     Docs(commands::DocsCommand),
+    #[command(hide = true)]
+    SourceUnits(SourceUnitsCommand),
 
     // ─── Maintenance ───────────────────────────────────────────────
     #[command(hide = true)]
@@ -405,6 +407,7 @@ pub async fn run_cli() -> Result<()> {
         Commands::Analytics(cmd) => ("analytics", None, None, cmd.metadata()),
         Commands::GitStack(cmd) => ("git-stack", None, None, cmd.metadata()),
         Commands::Docs(cmd) => ("docs", None, None, cmd.metadata()),
+        Commands::SourceUnits(cmd) => ("source-units", None, None, cmd.metadata()),
         Commands::Doctor(cmd) => ("doctor", None, None, cmd.metadata()),
         Commands::Privacy(cmd) => ("privacy", None, None, cmd.metadata()),
         Commands::Exercise(cmd) => ("exercise", None, None, cmd.metadata()),
@@ -522,6 +525,7 @@ pub async fn run_cli() -> Result<()> {
             Commands::Analytics(cmd) => cmd.execute(&ctx).await,
             Commands::GitStack(cmd) => cmd.execute(&ctx).await,
             Commands::Docs(cmd) => cmd.execute(&ctx).await,
+            Commands::SourceUnits(cmd) => cmd.execute(&ctx).await,
             Commands::Doctor(cmd) => cmd.execute(&ctx).await,
             Commands::Privacy(cmd) => cmd.execute(&ctx).await,
             Commands::Exercise(cmd) => cmd.execute(&ctx).await,

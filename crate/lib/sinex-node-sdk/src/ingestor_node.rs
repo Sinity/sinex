@@ -199,6 +199,13 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
     pub fn ingestor(&self) -> &I {
         &self.ingestor
     }
+
+    fn checkpoint_file_identity(&self) -> &str {
+        self.runtime
+            .as_ref()
+            .map(NodeRuntimeState::checkpoint_identity)
+            .unwrap_or_else(|| self.ingestor.name())
+    }
 }
 
 impl<I: IngestorNode + Default> Default for IngestorNodeAdapter<I> {
@@ -270,7 +277,9 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
     }
 
     async fn load_state(&mut self) -> NodeResult<()> {
-        let checkpoint_path = self.shutdown_config.checkpoint_path(self.ingestor.name());
+        let checkpoint_path = self
+            .shutdown_config
+            .checkpoint_path(self.checkpoint_file_identity());
         let mut invalid_hot_reload_file = None;
 
         // 1. Try file (hot reload)
@@ -367,7 +376,9 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
         };
 
         if is_shutdown && self.shutdown_config.save_state_on_shutdown {
-            let path = self.shutdown_config.checkpoint_path(self.ingestor.name());
+            let path = self
+                .shutdown_config
+                .checkpoint_path(self.checkpoint_file_identity());
             ckpt_state
                 .save_to_file(&path)
                 .await

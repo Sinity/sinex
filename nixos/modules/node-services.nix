@@ -224,6 +224,15 @@ let
     if nodesCfg.document.allowedRoots != [ ] then nodesCfg.document.allowedRoots
     else if targetHome == null then [ ]
     else [ "${targetHome}/Documents" ];
+  terminalSourceUnitIdForShell = shell:
+    let
+      normalized = toLower shell;
+    in
+    if normalized == "atuin" then "terminal.atuin-history"
+    else if normalized == "zsh" then "terminal.zsh-history"
+    else if normalized == "fish" then "terminal.fish-history"
+    else if normalized == "bash" then "terminal.bash-history"
+    else "terminal.${normalized}-history";
 
   mkBaseServiceConfig = resources: env: extra:
     {
@@ -595,21 +604,33 @@ let
             shell = "fish";
           }
         ];
-      nodeConfig = builtins.toJSON {
+      historySourcesWithUnits =
+        map
+          (source: source // {
+            sourceUnitId =
+              if source.sourceUnitId != null then source.sourceUnitId
+              else terminalSourceUnitIdForShell source.shell;
+          })
+          effectiveHistorySources;
+      sourceUnitGroups =
+        mapAttrsToList
+          (sourceUnitId: sources: { inherit sourceUnitId sources; })
+          (groupBy (source: source.sourceUnitId) historySourcesWithUnits);
+      mkSourceUnitNodeConfig = group: builtins.toJSON {
         history_sources = map
           (source: {
             path = source.path;
             shell = source.shell;
           })
-          effectiveHistorySources;
+          group.sources;
         polling_interval_secs = 5;
         max_capture_bytes = 32768;
       };
-      derivedArgs =
-        optional (effectiveHistorySources != [ ]) "--node-config ${escapeShellArg nodeConfig}";
       sqliteHistoryPaths =
         unique (
-          map (source: source.path) (filter (source: source.shell == "atuin") effectiveHistorySources)
+          map
+            (source: source.path)
+            (filter (source: elem (toLower source.shell) [ "atuin" "fish" ]) effectiveHistorySources)
         );
       sqliteHistoryDirs = unique (map builtins.dirOf sqliteHistoryPaths);
       accessAclPaths =
@@ -624,8 +645,51 @@ let
             "${targetHome}/.local"
             "${targetHome}/.local/share"
             "${targetHome}/.local/share/atuin"
+            "${targetHome}/.local/share/fish"
           ]
         );
+      sourceUnitServiceName = sourceUnitId: "sinex-source@${sourceUnitId}";
+      mkTerminalSourceUnit = group:
+        let
+          sourceUnitId = group.sourceUnitId;
+          serviceName = sourceUnitServiceName sourceUnitId;
+          nodeConfig = mkSourceUnitNodeConfig group;
+          execArgs = concatStringsSep " " (
+            [
+              "--service-name ${escapeShellArg serviceName}"
+              "--source-unit ${escapeShellArg sourceUnitId}"
+              "--runner-pack terminal"
+              "--node-config ${escapeShellArg nodeConfig}"
+            ] ++ sat.extraArgs ++ [ "service" ]
+          );
+          env = mkServiceEnv ([ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env);
+          afterUnits = schemaApplyUnits ++ optionals coreEnabled [ "sinex-ingestd.service" ];
+          requireUnits = schemaApplyUnits;
+          wantsUnits = optionals coreEnabled [ "sinex-ingestd.service" ];
+        in
+        {
+          description = "Terminal source unit ${sourceUnitId}";
+          wantedBy = [ "multi-user.target" ];
+          after = afterUnits;
+          requires = requireUnits;
+          wants = wantsUnits;
+          unitConfig = restartRateLimits // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
+          serviceConfig = mkBaseServiceConfig resources env ({
+            ExecStart = mkDatabasePasswordExec {
+              name = sourceUnitId;
+              command = "${sinexPackage}/bin/sinex-terminal-ingestor ${execArgs}";
+              passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
+            };
+            WorkingDirectory = stateRoot;
+            # The terminal ingestor needs read access to the target user's shell history.
+            ProtectHome = lib.mkForce "read-only";
+            ReadWritePaths = readWritePaths ++ accessWritePaths;
+          } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
+            BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
+          } // optionalAttrs (accessSetupScript != null) {
+            ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
+          });
+        };
       accessSetupScript =
         if accessAclPaths == [ ] then null else
         pkgs.writeShellScript "sinex-terminal-target-access" ''
@@ -729,25 +793,13 @@ let
             exit 1
           fi
         '';
-      units = mkNodeUnits {
-        name = "terminal";
-        binary = "terminal-ingestor";
-        description = "Terminal node";
-        inherit instances batch resources;
-        extraArgs = derivedArgs ++ sat.extraArgs;
-        env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
-        serviceConfig = {
-          # The terminal ingestor needs read access to the target user's shell history
-          # (Atuin DB, bash_history, zsh_history). ProtectHome blocks /home entirely,
-          # so we use read-only mode to allow reading history files without write access.
-          ProtectHome = lib.mkForce "read-only";
-          ReadWritePaths = readWritePaths ++ accessWritePaths;
-        } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
-          BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
-        } // optionalAttrs (accessSetupScript != null) {
-          ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
-        };
-      };
+      units =
+        if instances <= 0 then { } else
+        listToAttrs (
+          map
+            (group: nameValuePair (sourceUnitServiceName group.sourceUnitId) (mkTerminalSourceUnit group))
+            sourceUnitGroups
+        );
       supportUnits = mkAccessSetupUnit {
         name = "sinex-terminal-target-access";
         description = "Prepare target-user access for the Sinex terminal node";

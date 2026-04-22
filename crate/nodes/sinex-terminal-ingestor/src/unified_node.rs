@@ -59,6 +59,11 @@ const DEFAULT_POLLING_INTERVAL: Seconds = Seconds::from_secs(5);
 const DEFAULT_MAX_CAPTURE_BYTES: Bytes = Bytes::from_bytes(32 * 1024); // 32 KiB
 const ENV_POLLING_INTERVAL: &str = "SINEX_TERMINAL_POLLING_INTERVAL_SECS";
 const TERMINAL_ACTIVITY_CAPACITY: usize = 32;
+pub const TERMINAL_ATUIN_SOURCE_UNIT_ID: &str = "terminal.atuin-history";
+pub const TERMINAL_BASH_SOURCE_UNIT_ID: &str = "terminal.bash-history";
+pub const TERMINAL_ZSH_SOURCE_UNIT_ID: &str = "terminal.zsh-history";
+pub const TERMINAL_FISH_SOURCE_UNIT_ID: &str = "terminal.fish-history";
+pub const TERMINAL_TEXT_SOURCE_UNIT_ID: &str = "terminal.text-history";
 
 /// Configuration for a shell history source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,6 +134,28 @@ fn default_history_sources(home: Option<&Utf8PathBuf>) -> Vec<HistorySourceConfi
 }
 
 impl TerminalConfig {
+    pub fn filter_for_source_unit(mut self, source_unit_id: &str) -> NodeResult<Self> {
+        let requested = source_unit_id.trim();
+        if requested.is_empty() {
+            return Err(SinexError::configuration(
+                "terminal source_unit_id cannot be empty".to_string(),
+            ));
+        }
+
+        let before = self.history_sources.len();
+        self.history_sources
+            .retain(|source| terminal_source_unit_id_for_shell(&source.shell) == requested);
+
+        if self.history_sources.is_empty() {
+            return Err(SinexError::configuration(format!(
+                "terminal source unit '{requested}' matched no configured history sources"
+            ))
+            .with_context("configured_sources", before.to_string()));
+        }
+
+        Ok(self)
+    }
+
     pub fn validate_config(&self) -> NodeResult<()> {
         if self.history_sources.is_empty() {
             return Err(SinexError::configuration(
@@ -161,6 +188,16 @@ impl TerminalConfig {
         }
 
         Ok(())
+    }
+}
+
+fn terminal_source_unit_id_for_shell(shell: &str) -> &'static str {
+    match normalize_shell_name(shell).as_str() {
+        "atuin" => TERMINAL_ATUIN_SOURCE_UNIT_ID,
+        "bash" => TERMINAL_BASH_SOURCE_UNIT_ID,
+        "zsh" => TERMINAL_ZSH_SOURCE_UNIT_ID,
+        "fish" => TERMINAL_FISH_SOURCE_UNIT_ID,
+        _ => TERMINAL_TEXT_SOURCE_UNIT_ID,
     }
 }
 
@@ -2715,7 +2752,7 @@ impl TerminalNode {
     #[allow(dead_code)] // Used by runtime initialization
     async fn initialise_from_runtime(
         &mut self,
-        config: TerminalConfig,
+        mut config: TerminalConfig,
         runtime: NodeRuntimeState,
     ) -> NodeResult<()> {
         let service_info = runtime.service_info();
@@ -2725,6 +2762,9 @@ impl TerminalNode {
             "Initialising terminal node"
         );
 
+        if let Some(source_unit_id) = runtime.source_unit_id() {
+            config = config.filter_for_source_unit(source_unit_id)?;
+        }
         config.validate_config()?;
 
         Self::bootstrap_streams_for_runtime(&runtime).await?;
@@ -3001,11 +3041,14 @@ impl IngestorNode for TerminalNode {
 
     async fn initialize(
         &mut self,
-        config: Self::Config,
+        mut config: Self::Config,
         runtime: &NodeRuntimeState,
         _state: &mut Self::State,
     ) -> NodeResult<()> {
         let service_info = runtime.service_info();
+        if let Some(source_unit_id) = runtime.source_unit_id() {
+            config = config.filter_for_source_unit(source_unit_id)?;
+        }
         config.validate_config().map_err(|e| {
             SinexError::configuration("Terminal configuration validation failed").with_source(e)
         })?;
@@ -3702,6 +3745,49 @@ mod tests {
         };
 
         assert!(config.validate_config().is_err());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn terminal_config_filters_to_requested_source_unit() -> TestResult<()> {
+        let config = TerminalConfig {
+            history_sources: vec![
+                HistorySourceConfig {
+                    path: Utf8PathBuf::from("/tmp/history.db"),
+                    shell: "atuin".to_string(),
+                },
+                HistorySourceConfig {
+                    path: Utf8PathBuf::from("/tmp/.zsh_history"),
+                    shell: "zsh".to_string(),
+                },
+            ],
+            polling_interval_secs: Seconds::from_secs(30),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let filtered = config.filter_for_source_unit(TERMINAL_ATUIN_SOURCE_UNIT_ID)?;
+
+        assert_eq!(filtered.history_sources.len(), 1);
+        assert_eq!(filtered.history_sources[0].shell, "atuin");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn terminal_config_rejects_unknown_source_unit_selector() -> TestResult<()> {
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: Utf8PathBuf::from("/tmp/.zsh_history"),
+                shell: "zsh".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(30),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        let error = config
+            .filter_for_source_unit(TERMINAL_ATUIN_SOURCE_UNIT_ID)
+            .expect_err("unmatched source unit must fail configuration");
+
+        assert!(error.to_string().contains("matched no configured history sources"));
         Ok(())
     }
 

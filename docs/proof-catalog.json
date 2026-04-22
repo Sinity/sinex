@@ -20,6 +20,136 @@
       ]
     }
   ],
+  "source_units": [
+    {
+      "subject": "source_unit:terminal.atuin-history",
+      "id": "terminal.atuin-history",
+      "domain": "terminal",
+      "role": "source_adapter",
+      "modes": [
+        "historical",
+        "continuous"
+      ],
+      "acquisition_shape": "sqlite_row_stream",
+      "material_policy": "canonical_json_lines",
+      "checkpoint_policy": "sqlite_row_id",
+      "occurrence_policy": "natural_key:atuin.history.id",
+      "output_event_type": "shell.atuin/command.executed",
+      "privacy_context": "command_line_history",
+      "resource_profile": "bounded_sqlite_polling:256M",
+      "access_policy": "target_home_read:.local/share/atuin/history.db",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "terminal",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:terminal",
+      "proof_obligations": [
+        "obligation:source_unit.material_provenance",
+        "obligation:source_unit.package_impact_rationale"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:terminal.bash-history",
+      "id": "terminal.bash-history",
+      "domain": "terminal",
+      "role": "source_adapter",
+      "modes": [
+        "historical",
+        "continuous"
+      ],
+      "acquisition_shape": "append_only_file",
+      "material_policy": "canonical_json_lines",
+      "checkpoint_policy": "byte_offset_and_line",
+      "occurrence_policy": "material_anchor",
+      "output_event_type": "shell.history/command.imported",
+      "privacy_context": "command_line_history",
+      "resource_profile": "bounded_file_polling:256M",
+      "access_policy": "target_home_read:.bash_history",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "terminal",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:terminal",
+      "proof_obligations": [
+        "obligation:source_unit.material_provenance",
+        "obligation:source_unit.package_impact_rationale"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:terminal.fish-history",
+      "id": "terminal.fish-history",
+      "domain": "terminal",
+      "role": "source_adapter",
+      "modes": [
+        "historical",
+        "continuous"
+      ],
+      "acquisition_shape": "sqlite_row_stream",
+      "material_policy": "canonical_json_lines",
+      "checkpoint_policy": "sqlite_row_id",
+      "occurrence_policy": "sqlite_row_id",
+      "output_event_type": "shell.history.fish/command.executed",
+      "privacy_context": "command_line_history",
+      "resource_profile": "bounded_sqlite_polling:256M",
+      "access_policy": "target_home_read:.local/share/fish/fish_history",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "terminal",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:terminal",
+      "proof_obligations": [
+        "obligation:source_unit.material_provenance",
+        "obligation:source_unit.package_impact_rationale"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:terminal.zsh-history",
+      "id": "terminal.zsh-history",
+      "domain": "terminal",
+      "role": "source_adapter",
+      "modes": [
+        "historical",
+        "continuous"
+      ],
+      "acquisition_shape": "append_only_file",
+      "material_policy": "canonical_json_lines",
+      "checkpoint_policy": "byte_offset_and_line",
+      "occurrence_policy": "material_anchor",
+      "output_event_type": "shell.history/command.imported",
+      "privacy_context": "command_line_history",
+      "resource_profile": "bounded_file_polling:256M",
+      "access_policy": "target_home_read:.zsh_history",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "terminal",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:terminal",
+      "proof_obligations": [
+        "obligation:source_unit.material_provenance",
+        "obligation:source_unit.package_impact_rationale"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    }
+  ],
   "claims": [
     {
       "id": "claim:record_source.cursor_and_anchor_laws",
@@ -44,6 +174,18 @@
       "kind": "invariant",
       "subject": "runtime_unit:*",
       "statement": "runtime units that ingest external records must produce material provenance with stable anchors"
+    },
+    {
+      "id": "claim:source_unit.identity_axes_are_decoupled",
+      "kind": "invariant",
+      "subject": "source_unit:*",
+      "statement": "source-unit identity must not imply a new Cargo package, Rust binary target, Nix output, or independent derivation by default"
+    },
+    {
+      "id": "claim:source_unit.package_impact_visible",
+      "kind": "command_contract",
+      "subject": "source_unit:*",
+      "statement": "source-unit manifests expose crate, binary, package-output, derivation, SQLx validation, and service-instance impact"
     },
     {
       "id": "claim:xtask.command_catalog_introspection",
@@ -89,6 +231,16 @@
         "claim:xtask.command_catalog_introspection"
       ],
       "command": "xtask test -p xtask --scenario-tag command_contract"
+    },
+    {
+      "id": "runner:xtask.source_units",
+      "runner": "xtask",
+      "subject": "source_unit:*",
+      "claims": [
+        "claim:source_unit.identity_axes_are_decoupled",
+        "claim:source_unit.package_impact_visible"
+      ],
+      "command": "xtask source-units check"
     }
   ],
   "obligations": [
@@ -115,6 +267,22 @@
       "claim_id": "claim:scenario.evidence_envelope",
       "runner_binding_id": "runner:rust.nextest.scenario",
       "reason": "scenario failures must carry enough context to avoid host forensics"
+    },
+    {
+      "id": "obligation:source_unit.material_provenance",
+      "level": "required",
+      "subject": "source_unit:*",
+      "claim_id": "claim:source_material.material_provenance",
+      "runner_binding_id": "runner:rust.sdk.source_laws",
+      "reason": "source units are the semantic leaves that must carry replayable material provenance"
+    },
+    {
+      "id": "obligation:source_unit.package_impact_rationale",
+      "level": "required",
+      "subject": "source_unit:*",
+      "claim_id": "claim:source_unit.package_impact_visible",
+      "runner_binding_id": "runner:xtask.source_units",
+      "reason": "new source units must make build/cache/service impact visible before adding more physical artifacts"
     },
     {
       "id": "obligation:xtask.command_catalog_introspection",
@@ -1476,6 +1644,21 @@
       "subject": "xtask_command:run.tether",
       "path": "run.tether",
       "about": "Connect to a remote environment via The Tether"
+    },
+    {
+      "subject": "xtask_command:source-units",
+      "path": "source-units",
+      "about": "Source-unit manifest operations"
+    },
+    {
+      "subject": "xtask_command:source-units.check",
+      "path": "source-units.check",
+      "about": "Validate source-unit descriptors and the generated manifest"
+    },
+    {
+      "subject": "xtask_command:source-units.render",
+      "path": "source-units.render",
+      "about": "Render the source-unit manifest"
     },
     {
       "subject": "xtask_command:status",
