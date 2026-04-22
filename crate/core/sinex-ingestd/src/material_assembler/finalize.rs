@@ -1,14 +1,11 @@
 //! Material finalization methods for `MaterialAssembler`.
 //!
-//! This module contains database finalization, blob management, error routing,
-//! and cleanup logic that executes when a material assembly completes (or fails).
+//! This module contains finalization orchestration, error routing, and cleanup
+//! logic that executes when a material assembly completes or fails. The durable
+//! source-material/blob/ledger commit boundary lives in `finalization_transaction`.
 
 use serde::Serialize;
-use sinex_db::{
-    models::blob::Blob,
-    repositories::{DbPoolExt, TemporalLedgerEntry, material_status},
-};
-use sinex_node_sdk::annex::AnnexKey;
+use sinex_db::repositories::{DbPoolExt, TemporalLedgerEntry, material_status};
 use sinex_primitives::Timestamp;
 use sinex_primitives::{Id, JsonValue, Uuid};
 use sinex_schema::schema::records::SourceMaterialRecord;
@@ -17,8 +14,9 @@ use tracing::{debug, error, info, warn};
 
 use crate::{IngestdResult, SinexError};
 
+use super::finalization_transaction::{FinalizationRequest, FinalizationTransaction};
 use super::state::AssemblyPhase;
-use super::{FinalizationState, MaterialAssembler, MaterialEndMessage};
+use super::{MaterialAssembler, MaterialEndMessage};
 use std::{str::FromStr, sync::Arc};
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -26,56 +24,6 @@ use std::{str::FromStr, sync::Arc};
 pub(super) enum PendingEndBehavior {
     Error,
     Ignore,
-}
-
-enum FinalizationCommitOutcome {
-    Landed,
-    NotLanded,
-    Unknown(SinexError),
-}
-
-fn finalization_commit_outcome_unknown(error: &SinexError) -> bool {
-    error
-        .context_map()
-        .get("commit_outcome")
-        .is_some_and(|value| value == "unknown")
-}
-
-fn finalization_unknown_commit_error(
-    commit_error: SinexError,
-    reconcile_error: &SinexError,
-    material_id: Uuid,
-    annex_key: &AnnexKey,
-    final_status: &str,
-) -> SinexError {
-    commit_error
-        .with_context("commit_outcome", "unknown")
-        .with_context(
-            "recovery",
-            "finalization retry is safe once database reachability is restored",
-        )
-        .with_context("retry_state_preserved", "true")
-        .with_context("terminal_failure_routed", "false")
-        .with_context("material_id", material_id.to_string())
-        .with_context("annex_key", annex_key.key.clone())
-        .with_context("final_status", final_status.to_string())
-        .with_context("reconcile_error", reconcile_error.to_string())
-}
-
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "Internal error helper: error chain context"
-)]
-fn rollback_finalization_failure(
-    original_error: SinexError,
-    rollback_error: impl std::fmt::Display,
-    stage: &'static str,
-) -> SinexError {
-    SinexError::database("Failed to rollback material finalization transaction")
-        .with_source(rollback_error.to_string())
-        .with_context("stage", stage)
-        .with_context("original_error", original_error.to_string())
-        .with_operation("persist_finalized_material")
 }
 
 fn final_material_status(metadata: &JsonValue) -> &'static str {
@@ -183,412 +131,6 @@ impl MaterialAssembler {
         state.phase = AssemblyPhase::Accumulating;
         state.pending_end = Some(end);
         // WAL is immutable — End message remains. In-memory state reverted.
-    }
-
-    /// Insert or fetch blob metadata for the assembled material.
-    ///
-    /// # BLAKE3 Hash Collision Handling
-    ///
-    /// This function uses BLAKE3 hashes for content addressing. BLAKE3 collision resistance
-    /// makes collisions cryptographically infeasible (2^128 security for 256-bit hashes).
-    ///
-    /// Collision handling strategy:
-    /// - Primary deduplication: BLAKE3 checksum when present, matching the database uniqueness
-    ///   invariant.
-    /// - Legacy/no-checksum rows use the storage backend key (`annex_backend`, `content_hash`).
-    /// - If a collision occurred (astronomically unlikely), the existing blob would be reused.
-    /// - This is acceptable: a true collision means identical content by cryptographic assumption.
-    ///
-    /// The theoretical collision risk is negligible compared to hardware/cosmic ray bit flips.
-    pub(super) async fn upsert_blob_with_executor(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        state: &FinalizationState,
-        annex_key: &AnnexKey,
-        content_hash: &str,
-    ) -> IngestdResult<Id<Blob>> {
-        let repo = self.pool.blobs();
-
-        // No pre-check: insert_with_executor handles duplicates via unique-violation
-        // fallback. A separate pre-read outside the transaction would create a TOCTOU
-        // window where a concurrent delete could invalidate the returned blob ID.
-        let metadata = serde_json::json!({
-            "material_id": state.material_id.to_string(),
-            "source_identifier": state.source_identifier,
-            "material_kind": state.material_kind,
-            "total_slices": state.slice_count,
-        });
-
-        let blob = Blob::builder()
-            .annex_backend(annex_key.backend.clone())
-            .content_hash(annex_key.hash.clone())
-            .original_filename(state.source_identifier.clone())
-            .size_bytes(annex_key.size as i64)
-            .checksum_blake3(content_hash.to_string())
-            .metadata(metadata)
-            .build();
-
-        let stored = repo
-            .insert_with_executor(&mut **tx, blob)
-            .await
-            .map_err(|e| {
-                error!(
-                    material_id = %state.material_id,
-                    backend = %annex_key.backend,
-                    hash = %annex_key.hash,
-                    size = annex_key.size,
-                    error = %e,
-                    error_debug = ?e,
-                    "Failed to insert blob metadata"
-                );
-                SinexError::database("Failed to insert blob metadata").with_source(e)
-            })?;
-
-        Ok(stored.id)
-    }
-
-    /// Finalize source material registry and ledger
-    pub(super) async fn finalize_material_record_with_executor(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        state: &FinalizationState,
-        final_status: &str,
-        blob_id: Id<Blob>,
-        total_size_bytes: i64,
-        metadata: JsonValue,
-    ) -> IngestdResult<()> {
-        let repo = self.pool.source_materials();
-        let id: Id<SourceMaterialRecord> = Id::from_uuid(state.material_id);
-
-        repo.update_metadata_with_executor(&mut **tx, id, metadata.clone())
-            .await
-            .map_err(|e| {
-                SinexError::database("Failed to update material metadata").with_source(e)
-            })?;
-
-        let encoding_hint = metadata
-            .as_object()
-            .and_then(|map| map.get("encoding"))
-            .and_then(|value| value.as_str())
-            .map(std::string::ToString::to_string);
-        let content_preview_hint = metadata
-            .as_object()
-            .and_then(|map| map.get("content_preview"))
-            .and_then(|value| value.as_str())
-            .map(std::string::ToString::to_string);
-
-        repo.finalize_in_flight_as(
-            &mut **tx,
-            Id::from_uuid(state.material_id),
-            final_status,
-            Some(blob_id),
-            encoding_hint.as_deref(),
-            content_preview_hint.clone(),
-            Some(total_size_bytes),
-        )
-        .await
-        .map_err(|e| SinexError::database("Failed to finalize material").with_source(e))
-    }
-
-    /// Append a `realtime_capture` entry in `raw.temporal_ledger` at finalization.
-    ///
-    /// This records the precise byte coverage of the assembled material. A coarser
-    /// `staged_at` entry is written earlier at begin-time by
-    /// [`record_staged_at_ledger_entry`] so that `LedgerReader::derive_ts_orig()`
-    /// never needs to fall back to ephemeral `Timestamp::now()`.
-    pub(super) async fn record_ledger_entry_with_executor(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        state: &FinalizationState,
-    ) -> IngestdResult<()> {
-        let entry = TemporalLedgerEntry::realtime_capture(
-            state.material_id,
-            state.expected_offset,
-            state.started_at,
-        );
-
-        self.pool
-            .source_materials()
-            .append_temporal_ledger_with_executor(&mut **tx, entry)
-            .await
-            .map_err(|e| {
-                SinexError::database("Failed to append temporal ledger entry").with_source(e)
-            })?;
-
-        Ok(())
-    }
-
-    async fn cleanup_annex_import_failure(&self, annex_key: &AnnexKey) {
-        match self
-            .pool
-            .blobs()
-            .get_by_content(&annex_key.backend, &annex_key.hash, annex_key.size as i64)
-            .await
-        {
-            Ok(Some(_)) => {}
-            Ok(None) => {
-                if let Err(error) = self.annex.drop_content(&annex_key.key, true).await {
-                    warn!(
-                        annex_key = %annex_key.key,
-                        error = %error,
-                        "Failed to roll back annex content after transactional finalization failure"
-                    );
-                }
-            }
-            Err(error) => {
-                warn!(
-                    annex_key = %annex_key.key,
-                    error = %error,
-                    "Failed to inspect blob metadata before annex rollback"
-                );
-            }
-        }
-    }
-
-    async fn finalization_commit_landed(
-        &self,
-        final_state: &FinalizationState,
-        annex_key: &AnnexKey,
-        final_status: &str,
-    ) -> IngestdResult<bool> {
-        let material = self
-            .pool
-            .source_materials()
-            .get_by_id(Id::from_uuid(final_state.material_id))
-            .await
-            .map_err(|error| {
-                SinexError::database("Failed to inspect material state after commit error")
-                    .with_source(error)
-            })?;
-
-        let Some(material) = material else {
-            return Ok(false);
-        };
-
-        if material.status != final_status {
-            return Ok(false);
-        }
-
-        let Some(material_blob_id) = material.optional_blob_id else {
-            return Ok(false);
-        };
-
-        let blob = self
-            .pool
-            .blobs()
-            .get_by_content(&annex_key.backend, &annex_key.hash, annex_key.size as i64)
-            .await
-            .map_err(|error| {
-                SinexError::database("Failed to inspect blob state after commit error")
-                    .with_source(error)
-            })?;
-
-        Ok(blob.is_some_and(|blob| *blob.id.as_uuid() == material_blob_id))
-    }
-
-    async fn finalization_commit_outcome(
-        &self,
-        final_state: &FinalizationState,
-        annex_key: &AnnexKey,
-        final_status: &str,
-    ) -> FinalizationCommitOutcome {
-        match self
-            .finalization_commit_landed(final_state, annex_key, final_status)
-            .await
-        {
-            Ok(true) => FinalizationCommitOutcome::Landed,
-            Ok(false) => FinalizationCommitOutcome::NotLanded,
-            Err(error) => FinalizationCommitOutcome::Unknown(error),
-        }
-    }
-
-    async fn ensure_material_record_present_with_executor(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        final_state: &FinalizationState,
-    ) -> IngestdResult<()> {
-        let repo = self.pool.source_materials();
-        let material_id = Id::from_uuid(final_state.material_id);
-
-        if let Some(existing) = repo
-            .get_by_id_with_executor(&mut **tx, material_id)
-            .await
-            .map_err(|error| {
-                SinexError::database("Failed to inspect source material before finalization")
-                    .with_source(error)
-            })?
-        {
-            if existing.source_identifier != final_state.source_identifier {
-                return Err(SinexError::invalid_state(
-                    "Source material source_identifier changed before finalization",
-                )
-                .with_context("material_id", final_state.material_id.to_string())
-                .with_context("expected_source_identifier", &final_state.source_identifier)
-                .with_context("actual_source_identifier", &existing.source_identifier));
-            }
-            return Ok(());
-        }
-
-        repo.register_external_in_flight_with_executor(
-            &mut **tx,
-            final_state.material_id,
-            &final_state.material_kind,
-            Some(&final_state.source_identifier),
-            final_state.metadata.clone(),
-            final_state.started_at,
-        )
-        .await
-        .map(|_| ())
-        .map_err(|error| {
-            SinexError::database("Failed to register source material for finalization")
-                .with_source(error)
-        })
-    }
-
-    async fn persist_finalized_material(
-        &self,
-        final_state: &FinalizationState,
-        annex_key: &AnnexKey,
-        end: &MaterialEndMessage,
-        finalize_metadata: JsonValue,
-        final_status: &str,
-    ) -> IngestdResult<()> {
-        match self
-            .finalization_commit_outcome(final_state, annex_key, final_status)
-            .await
-        {
-            FinalizationCommitOutcome::Landed => {
-                info!(
-                    material_id = %final_state.material_id,
-                    annex_key = %annex_key.key,
-                    "Material finalization already persisted; skipping duplicate finalization"
-                );
-                return Ok(());
-            }
-            FinalizationCommitOutcome::NotLanded => {}
-            FinalizationCommitOutcome::Unknown(error) => {
-                warn!(
-                    material_id = %final_state.material_id,
-                    annex_key = %annex_key.key,
-                    error = %error,
-                    "Unable to confirm material state before finalization; attempting transactional write"
-                );
-            }
-        }
-
-        let mut tx = self.pool.begin().await.map_err(|e| {
-            SinexError::database("Failed to begin material finalization transaction").with_source(e)
-        })?;
-
-        if let Err(error) = self
-            .ensure_material_record_present_with_executor(&mut tx, final_state)
-            .await
-        {
-            let error = match tx.rollback().await {
-                Ok(()) => error,
-                Err(rollback_error) => rollback_finalization_failure(
-                    error,
-                    rollback_error,
-                    "ensure_material_record_present",
-                ),
-            };
-            self.cleanup_annex_import_failure(annex_key).await;
-            return Err(error);
-        }
-
-        let blob_id = match self
-            .upsert_blob_with_executor(&mut tx, final_state, annex_key, &end.content_hash)
-            .await
-        {
-            Ok(id) => id,
-            Err(error) => {
-                let error = match tx.rollback().await {
-                    Ok(()) => error,
-                    Err(rollback_error) => {
-                        rollback_finalization_failure(error, rollback_error, "upsert_blob")
-                    }
-                };
-                self.cleanup_annex_import_failure(annex_key).await;
-                return Err(error);
-            }
-        };
-
-        if let Err(error) = self
-            .finalize_material_record_with_executor(
-                &mut tx,
-                final_state,
-                final_status,
-                blob_id,
-                end.total_size_bytes,
-                finalize_metadata,
-            )
-            .await
-        {
-            let error = match tx.rollback().await {
-                Ok(()) => error,
-                Err(rollback_error) => {
-                    rollback_finalization_failure(error, rollback_error, "finalize_material_record")
-                }
-            };
-            self.cleanup_annex_import_failure(annex_key).await;
-            return Err(error);
-        }
-
-        if let Err(error) = self
-            .record_ledger_entry_with_executor(&mut tx, final_state)
-            .await
-        {
-            let error = match tx.rollback().await {
-                Ok(()) => error,
-                Err(rollback_error) => {
-                    rollback_finalization_failure(error, rollback_error, "record_ledger_entry")
-                }
-            };
-            self.cleanup_annex_import_failure(annex_key).await;
-            return Err(error);
-        }
-
-        match tx.commit().await {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                let commit_error =
-                    SinexError::database("Failed to commit material finalization transaction")
-                        .with_source(error);
-
-                match self
-                    .finalization_commit_outcome(final_state, annex_key, final_status)
-                    .await
-                {
-                    FinalizationCommitOutcome::Landed => {
-                        warn!(
-                            material_id = %final_state.material_id,
-                            annex_key = %annex_key.key,
-                            "Material finalization commit returned an error, but the committed state was reconciled successfully"
-                        );
-                        Ok(())
-                    }
-                    FinalizationCommitOutcome::NotLanded => {
-                        self.cleanup_annex_import_failure(annex_key).await;
-                        Err(commit_error)
-                    }
-                    FinalizationCommitOutcome::Unknown(reconcile_error) => {
-                        warn!(
-                            material_id = %final_state.material_id,
-                            annex_key = %annex_key.key,
-                            error = %reconcile_error,
-                            "Failed to reconcile material finalization after commit error"
-                        );
-                        Err(finalization_unknown_commit_error(
-                            commit_error,
-                            &reconcile_error,
-                            final_state.material_id,
-                            annex_key,
-                            final_status,
-                        ))
-                    }
-                }
-            }
-        }
     }
 
     /// Write an early `staged_at` ledger entry at material-begin time.
@@ -1126,33 +668,46 @@ impl MaterialAssembler {
             }
         };
 
-        if let Err(e) = self
-            .persist_finalized_material(
-                &final_state,
-                &annex_key,
-                &end,
-                finalize_metadata,
+        let finalized = match FinalizationTransaction::new(self)
+            .finalize(FinalizationRequest {
+                final_state: &final_state,
+                annex_key: &annex_key,
+                content_hash: &end.content_hash,
+                total_size_bytes: end.total_size_bytes,
+                metadata: finalize_metadata,
                 final_status,
-            )
+            })
             .await
         {
-            if finalization_commit_outcome_unknown(&e) {
-                warn!(
-                    material_id = %material_id,
-                    error = %e,
-                    "Material finalization commit outcome is unknown; preserving retry state without routing a terminal failure"
-                );
-            } else {
-                self.route_material_error(
-                    material_id,
-                    "material_persist_failed",
-                    serde_json::json!({ "error": e.to_string() }),
-                )
-                .await;
+            Ok(handle) => handle,
+            Err(e) => {
+                let commit_outcome_unknown = e.is_commit_outcome_unknown();
+                let e = e.into_inner();
+                if commit_outcome_unknown {
+                    warn!(
+                        material_id = %material_id,
+                        error = %e,
+                        "Material finalization commit outcome is unknown; preserving retry state without routing a terminal failure"
+                    );
+                } else {
+                    self.route_material_error(
+                        material_id,
+                        "material_persist_failed",
+                        serde_json::json!({ "error": e.to_string() }),
+                    )
+                    .await;
+                }
+                Self::revert_finalization_start(&state_handle, end).await;
+                return Err(e);
             }
-            Self::revert_finalization_start(&state_handle, end).await;
-            return Err(e);
-        }
+        };
+
+        debug!(
+            material_id = %material_id,
+            blob_id = %finalized.blob_id.as_uuid(),
+            reused_existing_commit = finalized.reused_existing_commit,
+            "Material finalization transaction landed"
+        );
 
         // Signal readiness only after the material registration/finalization transaction has
         // committed, so FK waiters never observe a phantom in-memory-ready state.
@@ -1275,11 +830,18 @@ impl MaterialAssembler {
 mod tests {
     use super::*;
     use crate::MaterialReadySet;
+    use crate::material_assembler::FinalizationState;
+    use crate::material_assembler::finalization_transaction::{
+        FinalizationErrorKind, FinalizationRequest, FinalizationTransaction,
+    };
     use crate::material_assembler::{io, state};
     use camino::Utf8PathBuf;
     use serde_json::json;
-    use sinex_db::repositories::{DbPoolExt, source_materials::status};
-    use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
+    use sinex_db::{
+        models::blob::Blob,
+        repositories::{DbPoolExt, source_materials::status},
+    };
+    use sinex_node_sdk::annex::{AnnexConfig, AnnexKey, GitAnnex};
     use std::sync::Arc;
     use tokio::time::timeout;
     use tokio_stream::StreamExt;
@@ -1630,197 +1192,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn finalization_commit_landed_detects_completed_material_with_blob(
-        ctx: TestContext,
-    ) -> TestResult<()> {
-        let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
-        let material_id = Uuid::now_v7();
-        let annex_key = AnnexKey {
-            key: "SHA256E-s4--hash".to_string(),
-            backend: "SHA256E".to_string(),
-            size: 4,
-            hash: "hash".to_string(),
-        };
-
-        let blob = ctx
-            .pool
-            .blobs()
-            .insert(
-                Blob::builder()
-                    .annex_backend(annex_key.backend.clone())
-                    .content_hash(annex_key.hash.clone())
-                    .original_filename("material.bin".to_string())
-                    .size_bytes(annex_key.size as i64)
-                    .checksum_blake3("hash".to_string())
-                    .metadata(json!({ "material_id": material_id }))
-                    .build(),
-            )
-            .await?;
-
-        ctx.pool
-            .source_materials()
-            .register_external_in_flight(
-                material_id,
-                "test",
-                Some("test://commit-landed"),
-                json!({}),
-                Timestamp::now(),
-            )
-            .await?;
-        ctx.pool
-            .source_materials()
-            .finalize_in_flight(
-                Id::from_uuid(material_id),
-                Some(blob.id),
-                None,
-                None,
-                Some(annex_key.size as i64),
-            )
-            .await?;
-
-        let final_state = FinalizationState {
-            material_id,
-            temp_path: state_dir.path().join("material.bin"),
-            expected_offset: annex_key.size as i64,
-            slice_count: 1,
-            buffered_count: 0,
-            metadata: json!({}),
-            material_kind: "test".to_string(),
-            source_identifier: "test://commit-landed".to_string(),
-            started_at: Timestamp::now(),
-        };
-
-        assert!(
-            assembler
-                .finalization_commit_landed(&final_state, &annex_key, status::COMPLETED)
-                .await?,
-            "completed material with matching blob metadata should reconcile as committed"
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn finalization_commit_landed_detects_cancelled_material_with_blob(
-        ctx: TestContext,
-    ) -> TestResult<()> {
-        let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
-        let material_id = Uuid::now_v7();
-        let annex_key = AnnexKey {
-            key: "SHA256E-s4--hash".to_string(),
-            backend: "SHA256E".to_string(),
-            size: 4,
-            hash: "hash".to_string(),
-        };
-
-        let blob = ctx
-            .pool
-            .blobs()
-            .insert(
-                Blob::builder()
-                    .annex_backend(annex_key.backend.clone())
-                    .content_hash(annex_key.hash.clone())
-                    .original_filename("material.bin".to_string())
-                    .size_bytes(annex_key.size as i64)
-                    .checksum_blake3("hash".to_string())
-                    .metadata(json!({ "material_id": material_id }))
-                    .build(),
-            )
-            .await?;
-
-        ctx.pool
-            .source_materials()
-            .register_external_in_flight(
-                material_id,
-                "test",
-                Some("test://commit-cancelled"),
-                json!({ "cancelled": true }),
-                Timestamp::now(),
-            )
-            .await?;
-        ctx.pool
-            .source_materials()
-            .finalize_in_flight_as(
-                &ctx.pool,
-                Id::from_uuid(material_id),
-                status::CANCELLED,
-                Some(blob.id),
-                None,
-                None,
-                Some(annex_key.size as i64),
-            )
-            .await?;
-
-        let final_state = FinalizationState {
-            material_id,
-            temp_path: state_dir.path().join("material.bin"),
-            expected_offset: annex_key.size as i64,
-            slice_count: 1,
-            buffered_count: 0,
-            metadata: json!({ "cancelled": true }),
-            material_kind: "test".to_string(),
-            source_identifier: "test://commit-cancelled".to_string(),
-            started_at: Timestamp::now(),
-        };
-
-        assert!(
-            assembler
-                .finalization_commit_landed(&final_state, &annex_key, status::CANCELLED)
-                .await?,
-            "cancelled material with matching blob metadata should reconcile as committed"
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn finalization_commit_landed_rejects_non_terminal_material(
-        ctx: TestContext,
-    ) -> TestResult<()> {
-        let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
-        let material_id = Uuid::now_v7();
-        let annex_key = AnnexKey {
-            key: "SHA256E-s4--hash".to_string(),
-            backend: "SHA256E".to_string(),
-            size: 4,
-            hash: "hash".to_string(),
-        };
-
-        ctx.pool
-            .source_materials()
-            .register_external_in_flight(
-                material_id,
-                "test",
-                Some("test://commit-pending"),
-                json!({}),
-                Timestamp::now(),
-            )
-            .await?;
-
-        let final_state = FinalizationState {
-            material_id,
-            temp_path: state_dir.path().join("material.bin"),
-            expected_offset: annex_key.size as i64,
-            slice_count: 1,
-            buffered_count: 0,
-            metadata: json!({}),
-            material_kind: "test".to_string(),
-            source_identifier: "test://commit-pending".to_string(),
-            started_at: Timestamp::now(),
-        };
-
-        assert!(
-            !assembler
-                .finalization_commit_landed(&final_state, &annex_key, status::COMPLETED)
-                .await?,
-            "non-terminal material state should not reconcile as a landed commit"
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn persist_finalized_material_is_idempotent_after_commit_lands(
+    async fn finalization_transaction_is_idempotent_after_commit_lands(
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
@@ -1906,15 +1278,21 @@ mod tests {
         .fetch_one(&ctx.pool)
         .await?;
 
-        assembler
-            .persist_finalized_material(
-                &final_state,
-                &annex_key,
-                &end,
-                json!({}),
-                status::COMPLETED,
-            )
+        let handle = FinalizationTransaction::new(&assembler)
+            .finalize(FinalizationRequest {
+                final_state: &final_state,
+                annex_key: &annex_key,
+                content_hash: &end.content_hash,
+                total_size_bytes: end.total_size_bytes,
+                metadata: json!({}),
+                final_status: status::COMPLETED,
+            })
             .await?;
+        assert_eq!(*handle.blob_id.as_uuid(), *blob.id.as_uuid());
+        assert!(
+            handle.reused_existing_commit,
+            "retrying a landed commit should report a reused committed handle"
+        );
 
         let material = ctx
             .pool
@@ -1985,7 +1363,103 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn persist_finalized_material_reuses_existing_blob_inside_transaction(
+    async fn finalization_transaction_rolls_back_blob_material_and_ledger_on_finalize_failure(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::now_v7();
+        let material_id_typed = Id::<SourceMaterialRecord>::from_uuid(material_id);
+        let annex_key = AnnexKey {
+            backend: "SHA256E".to_string(),
+            hash: "rollback-blob-hash".to_string(),
+            size: 32,
+            key: "SHA256E-s32--rollback-blob-hash".to_string(),
+        };
+        let started_at = Timestamp::now();
+
+        ctx.pool
+            .source_materials()
+            .register_external_in_flight(
+                material_id,
+                "test",
+                Some("test://rollback-finalize"),
+                json!({ "original": true }),
+                started_at,
+            )
+            .await?;
+
+        let final_state = FinalizationState {
+            material_id,
+            temp_path: state_dir.path().join("rollback-material.bin"),
+            expected_offset: annex_key.size as i64,
+            slice_count: 1,
+            buffered_count: 0,
+            metadata: json!({ "original": true }),
+            material_kind: "test".to_string(),
+            source_identifier: "test://rollback-finalize".to_string(),
+            started_at,
+        };
+
+        let error = FinalizationTransaction::new(&assembler)
+            .finalize(FinalizationRequest {
+                final_state: &final_state,
+                annex_key: &annex_key,
+                content_hash: "rollback-blake3",
+                total_size_bytes: -1,
+                metadata: json!({ "finalized": true }),
+                final_status: status::COMPLETED,
+            })
+            .await
+            .expect_err("negative total_bytes should fail source-material finalization");
+
+        assert_eq!(error.kind(), FinalizationErrorKind::FinalizeMaterialRecord);
+        assert!(
+            error.to_string().contains("Failed to finalize material"),
+            "unexpected error: {error}"
+        );
+
+        let material = ctx
+            .pool
+            .source_materials()
+            .get_by_id(material_id_typed)
+            .await?
+            .expect("material should still exist");
+        assert_eq!(material.status.as_str(), status::SENSING);
+        assert_eq!(material.optional_blob_id, None);
+        assert_eq!(material.metadata["original"], true);
+        assert_eq!(material.metadata.get("finalized"), None);
+
+        let blob = ctx
+            .pool
+            .blobs()
+            .get_by_content(&annex_key.backend, &annex_key.hash, annex_key.size as i64)
+            .await?;
+        assert!(
+            blob.is_none(),
+            "blob insert must roll back when finalization fails"
+        );
+
+        let ledger_entries = sqlx::query_scalar!(
+            r#"
+            SELECT COUNT(*) as "count!: i64"
+            FROM raw.temporal_ledger
+            WHERE source_material_id = $1
+            "#,
+            material_id
+        )
+        .fetch_one(&ctx.pool)
+        .await?;
+        assert_eq!(
+            ledger_entries, 0,
+            "ledger write must not escape a failed transaction"
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn finalization_transaction_reuses_existing_blob_inside_transaction(
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
@@ -2050,15 +1524,21 @@ mod tests {
             ended_at: sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
         };
 
-        assembler
-            .persist_finalized_material(
-                &final_state,
-                &annex_key,
-                &end,
-                json!({}),
-                status::COMPLETED,
-            )
+        let handle = FinalizationTransaction::new(&assembler)
+            .finalize(FinalizationRequest {
+                final_state: &final_state,
+                annex_key: &annex_key,
+                content_hash: &end.content_hash,
+                total_size_bytes: end.total_size_bytes,
+                metadata: json!({}),
+                final_status: status::COMPLETED,
+            })
             .await?;
+        assert_eq!(*handle.blob_id.as_uuid(), *existing_blob.id.as_uuid());
+        assert!(
+            !handle.reused_existing_commit,
+            "first successful transaction should not be reported as a pre-existing committed state"
+        );
 
         let material = ctx
             .pool
@@ -2089,7 +1569,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn persist_finalized_material_reuses_existing_blob_by_blake3_inside_transaction(
+    async fn finalization_transaction_reuses_existing_blob_by_blake3_inside_transaction(
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
@@ -2155,15 +1635,17 @@ mod tests {
             ended_at: sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
         };
 
-        assembler
-            .persist_finalized_material(
-                &final_state,
-                &annex_key,
-                &end,
-                json!({}),
-                status::COMPLETED,
-            )
+        let handle = FinalizationTransaction::new(&assembler)
+            .finalize(FinalizationRequest {
+                final_state: &final_state,
+                annex_key: &annex_key,
+                content_hash: &end.content_hash,
+                total_size_bytes: end.total_size_bytes,
+                metadata: json!({}),
+                final_status: status::COMPLETED,
+            })
             .await?;
+        assert_eq!(*handle.blob_id.as_uuid(), *existing_blob.id.as_uuid());
 
         let material = ctx
             .pool
@@ -2175,71 +1657,6 @@ mod tests {
         assert_eq!(material.status.as_str(), status::COMPLETED);
         assert_eq!(material.optional_blob_id, Some(*existing_blob.id.as_uuid()));
 
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn rollback_finalization_failure_preserves_original_error_context() -> TestResult<()> {
-        let error = rollback_finalization_failure(
-            SinexError::validation("original finalize failure"),
-            "rollback broke too",
-            "record_ledger_entry",
-        );
-
-        let rendered = error.to_string();
-        assert!(rendered.contains("Failed to rollback material finalization transaction"));
-        assert!(rendered.contains("rollback broke too"));
-        assert!(rendered.contains("original finalize failure"));
-        assert!(rendered.contains("record_ledger_entry"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn finalization_unknown_commit_error_preserves_retry_context() -> TestResult<()> {
-        let annex_key = AnnexKey {
-            key: "SHA256E-s4--retry".to_string(),
-            backend: "SHA256E".to_string(),
-            size: 4,
-            hash: "retry".to_string(),
-        };
-        let error = finalization_unknown_commit_error(
-            SinexError::database("commit failed"),
-            &SinexError::database("reconcile failed"),
-            Uuid::now_v7(),
-            &annex_key,
-            status::COMPLETED,
-        );
-
-        assert!(finalization_commit_outcome_unknown(&error));
-        assert_eq!(
-            error.context_map().get("retry_state_preserved"),
-            Some(&"true".to_string())
-        );
-        assert_eq!(
-            error.context_map().get("terminal_failure_routed"),
-            Some(&"false".to_string())
-        );
-        assert_eq!(
-            error.context_map().get("final_status"),
-            Some(&status::COMPLETED.to_string())
-        );
-        assert_eq!(error.context_map().get("annex_key"), Some(&annex_key.key),);
-        assert!(
-            error
-                .context_map()
-                .get("reconcile_error")
-                .is_some_and(|value| value.contains("reconcile failed"))
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn finalization_commit_outcome_unknown_ignores_unflagged_errors() -> TestResult<()> {
-        let error = SinexError::database("ordinary failure");
-        assert!(
-            !finalization_commit_outcome_unknown(&error),
-            "only explicitly flagged commit-reconciliation failures should preserve retry state"
-        );
         Ok(())
     }
 }

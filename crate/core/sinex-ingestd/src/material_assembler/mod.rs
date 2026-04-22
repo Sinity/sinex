@@ -7,6 +7,7 @@
 //! so that in-flight assemblies can survive process restarts.
 
 mod durability;
+mod finalization_transaction;
 mod finalize;
 mod io;
 mod pipeline;
