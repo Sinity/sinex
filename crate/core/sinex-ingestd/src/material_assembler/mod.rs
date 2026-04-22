@@ -6,6 +6,7 @@
 //! temporal ledger, and routing failures to the DLQ. State is persisted on disk
 //! so that in-flight assemblies can survive process restarts.
 
+mod assembly_state_machine;
 mod durability;
 mod finalization_transaction;
 mod finalize;
@@ -156,9 +157,10 @@ struct AssemblyStatsSnapshot {
 }
 
 use crate::{IngestdResult, SinexError, material_ready_set::MaterialReadySet};
+use assembly_state_machine::{AssemblyLogicalState, AssemblyStateMachine};
 use state::{
     AssemblerState, AssemblyPhase, DLQ_CONSUMER, FinalizationState, MaterialEndMessage,
-    TEMP_FILE_NAME, is_terminal_status,
+    TEMP_FILE_NAME,
 };
 
 /// Disk space monitor for backpressure
@@ -532,6 +534,13 @@ impl MaterialAssembler {
     }
 
     async fn material_is_terminal(&self, material_id: Uuid) -> IngestdResult<bool> {
+        Ok(self.material_terminal_state(material_id).await?.is_some())
+    }
+
+    async fn material_terminal_state(
+        &self,
+        material_id: Uuid,
+    ) -> IngestdResult<Option<AssemblyLogicalState>> {
         let record = self
             .pool
             .source_materials()
@@ -542,7 +551,9 @@ impl MaterialAssembler {
                     .with_source(e)
             })?;
 
-        Ok(record.is_some_and(|record| is_terminal_status(record.status.as_str())))
+        Ok(record.and_then(|record| {
+            AssemblyStateMachine::terminal_state_for_status(record.status.as_str())
+        }))
     }
 
     /// Fetch a handle to an existing assembler state for a material.
