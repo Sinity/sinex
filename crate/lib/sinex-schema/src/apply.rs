@@ -26,6 +26,8 @@ const EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_events_payload_gin",
     "ix_events_scope_key",
     "ix_events_created_by_operation_id",
+    "ix_events_sinex_metric_gauge_latest",
+    "ix_events_node_run_synthesis_latest",
 ];
 const ARCHIVED_EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_archived_events_ts_orig",
@@ -477,6 +479,29 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     execute_sql(
         pool,
         "CREATE INDEX IF NOT EXISTS ix_events_sinex_telemetry ON core.events (source, event_type, id DESC) WHERE source LIKE 'sinex.%'",
+    )
+    .await?;
+    execute_sql(
+        pool,
+        r#"
+        CREATE INDEX IF NOT EXISTS ix_events_sinex_metric_gauge_latest
+        ON core.events (
+            (payload->>'name'),
+            ((payload->'labels'->>'node')),
+            ((payload->'labels'->>'node_run_id')),
+            id DESC
+        )
+        WHERE source = 'sinex' AND event_type = 'metric.gauge'
+        "#,
+    )
+    .await?;
+    execute_sql(
+        pool,
+        r#"
+        CREATE INDEX IF NOT EXISTS ix_events_node_run_synthesis_latest
+        ON core.events (node_run_id, id DESC)
+        WHERE node_run_id IS NOT NULL AND source_event_ids IS NOT NULL
+        "#,
     )
     .await?;
 
