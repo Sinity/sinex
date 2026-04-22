@@ -12,7 +12,12 @@ use tokio::fs::File;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use super::MaterialAssembler;
+use super::{
+    MaterialAssembler,
+    assembly_state_machine::{
+        AssemblyInput, AssemblyLogicalState, AssemblyStateMachine, AssemblyTransition,
+    },
+};
 use crate::{IngestdResult, SinexError};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy, Default)]
@@ -247,17 +252,6 @@ pub(super) fn merge_metadata(base: &JsonValue, updates: &JsonValue) -> JsonValue
     merged
 }
 
-pub(super) fn is_terminal_status(status: &str) -> bool {
-    use sinex_db::repositories::material_status;
-    matches!(
-        status,
-        material_status::COMPLETED
-            | material_status::CANCELLED
-            | material_status::FAILED
-            | material_status::RECOVERED_PARTIAL
-    )
-}
-
 pub(super) fn build_finalize_metadata(
     state: &FinalizationState,
     end_metadata: &JsonValue,
@@ -325,13 +319,28 @@ pub(super) async fn handle_begin(
     let state_handle = if let Some(existing) = assembler.get_state_handle(&material_id) {
         existing
     } else {
-        if assembler.material_is_terminal(material_id).await? {
+        let transition = if let Some(terminal_state) =
+            assembler.material_terminal_state(material_id).await?
+        {
+            AssemblyStateMachine::transition(terminal_state, AssemblyInput::BeginFrame)
+        } else {
+            AssemblyStateMachine::transition(AssemblyLogicalState::Idle, AssemblyInput::BeginFrame)
+        }
+        .map_err(|error| error.into_sinex_error(material_id))?;
+
+        if matches!(transition, AssemblyTransition::IgnoreTerminalFrame) {
             info!(
                 material_id = %material_id,
-                "Begin message received after completion; skipping"
+                transition = ?transition,
+                "Begin message received after terminal material; skipping"
             );
             return Ok(());
         }
+        debug!(
+            material_id = %material_id,
+            transition = ?transition,
+            "Assembly state machine accepted begin for new material state"
+        );
 
         let mut state = assembler.create_placeholder_state(material_id).await?;
         state.material_kind.clone_from(&material_kind);
@@ -353,13 +362,23 @@ pub(super) async fn handle_begin(
         }
         let hold_start = std::time::Instant::now();
 
-        if state.phase == AssemblyPhase::Finalizing {
+        let transition =
+            AssemblyStateMachine::transition_for_state(&state, AssemblyInput::BeginFrame)
+                .map_err(|error| error.into_sinex_error(material_id))?;
+
+        if matches!(transition, AssemblyTransition::IgnoreFinalizingFrame) {
             debug!(
                 material_id = %material_id,
+                transition = ?transition,
                 "Ignoring begin message while material is finalizing"
             );
             return Ok(());
         }
+        debug!(
+            material_id = %material_id,
+            transition = ?transition,
+            "Assembly state machine accepted begin for existing material state"
+        );
 
         state.material_kind.clone_from(&material_kind);
         state.source_identifier.clone_from(&source_identifier);

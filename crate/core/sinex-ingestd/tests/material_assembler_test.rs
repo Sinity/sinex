@@ -544,6 +544,93 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
 }
 
 #[sinex_test]
+async fn assembler_accepts_duplicate_end_frames(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let nats_client = ctx.nats_client();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let (handle, js, _annex_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
+
+    sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
+        &nats_client,
+        Some(&namespace),
+    )
+    .await?;
+
+    let material_id = uuid::Uuid::now_v7();
+    let data = b"duplicate end payload";
+    let hash = blake3::hash(data).to_hex().to_string();
+
+    js.publish(
+        ctx.pipeline_namespace()
+            .subject("source_material.frames.begin"),
+        json!({
+            "material_id": material_id.to_string(),
+            "material_kind": "test",
+            "source_identifier": "test://duplicate-end",
+            "metadata": {},
+            "started_at": temporal::now().format_rfc3339(),
+        })
+        .to_string()
+        .into(),
+    )
+    .await?
+    .await?;
+
+    let mut slice_headers = async_nats::HeaderMap::new();
+    slice_headers.insert("Offset", "0");
+    slice_headers.insert("Chunk-Hash", hash.as_str());
+    js.publish_with_headers(
+        ctx.pipeline_namespace()
+            .subject(&format!("source_material.frames.slices.{material_id}")),
+        slice_headers,
+        data.to_vec().into(),
+    )
+    .await?
+    .await?;
+
+    let end_payload = json!({
+        "material_id": material_id.to_string(),
+        "ended_at": temporal::now().format_rfc3339(),
+        "content_hash": hash,
+        "total_slices": 1,
+        "total_size_bytes": data.len() as i64,
+    })
+    .to_string();
+
+    for _ in 0..2 {
+        js.publish(
+            ctx.pipeline_namespace()
+                .subject("source_material.frames.end"),
+            end_payload.clone().into(),
+        )
+        .await?
+        .await?;
+    }
+
+    let pool = ctx.pool.clone();
+    xtask::sandbox::timing::WaitHelpers::wait_for_condition(
+        || {
+            let pool = pool.clone();
+            async move {
+                let material = pool
+                    .source_materials()
+                    .get_by_id(sinex_primitives::Id::from_uuid(material_id))
+                    .await?
+                    .ok_or_else(|| sinex_primitives::error::SinexError::database("missing"))?;
+                Ok::<bool, sinex_primitives::error::SinexError>(
+                    material.status.as_str() == "completed",
+                )
+            }
+        },
+        10,
+    )
+    .await?;
+
+    handle.abort();
+    Ok(())
+}
+
+#[sinex_test]
 
 async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;

@@ -6,6 +6,9 @@
 
 use super::{
     MaterialAssembler,
+    assembly_state_machine::{
+        AssemblyInput, AssemblyLogicalState, AssemblyStateMachine, AssemblyTransition,
+    },
     durability::DurabilityPolicy,
     finalize::PendingEndBehavior,
     restore_plan::{
@@ -965,14 +968,30 @@ pub(super) async fn handle_slice(
     let state_handle = if let Some(existing) = assembler.get_state_handle(&material_id) {
         existing
     } else {
-        if assembler.material_is_terminal(material_id).await? {
+        let transition = if let Some(terminal_state) =
+            assembler.material_terminal_state(material_id).await?
+        {
+            AssemblyStateMachine::transition(terminal_state, AssemblyInput::SliceFrame)
+        } else {
+            AssemblyStateMachine::transition(AssemblyLogicalState::Idle, AssemblyInput::SliceFrame)
+        }
+        .map_err(|error| error.into_sinex_error(material_id))?;
+
+        if matches!(transition, AssemblyTransition::IgnoreTerminalFrame) {
             debug!(
                 material_id = %material_id,
                 offset,
-                "Dropping slice for material already completed"
+                transition = ?transition,
+                "Dropping slice for terminal material"
             );
             return Ok(());
         }
+        debug!(
+            material_id = %material_id,
+            offset,
+            transition = ?transition,
+            "Assembly state machine accepted slice for new material state"
+        );
         let placeholder = assembler.create_placeholder_state(material_id).await?;
         assembler.insert_state_handle(material_id, placeholder)
     };
@@ -986,10 +1005,24 @@ pub(super) async fn handle_slice(
     }
     let hold_start = std::time::Instant::now();
 
-    if state.phase == AssemblyPhase::Finalizing {
-        debug!(material_id = %material_id, offset, "Ignoring slice received while material is finalizing");
+    let transition = AssemblyStateMachine::transition_for_state(&state, AssemblyInput::SliceFrame)
+        .map_err(|error| error.into_sinex_error(material_id))?;
+
+    if matches!(transition, AssemblyTransition::IgnoreFinalizingFrame) {
+        debug!(
+            material_id = %material_id,
+            offset,
+            transition = ?transition,
+            "Ignoring slice received while material is finalizing"
+        );
         return Ok(());
     }
+    debug!(
+        material_id = %material_id,
+        offset,
+        transition = ?transition,
+        "Assembly state machine accepted slice for existing material state"
+    );
 
     // Update last slice received timestamp
     state.last_slice_received = Timestamp::now();
