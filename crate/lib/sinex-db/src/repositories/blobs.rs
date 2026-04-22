@@ -166,7 +166,7 @@ impl BlobRepository {
             .transpose()
     }
 
-    /// Get a blob by content hash and backend (reconstruct annex key)
+    /// Get a blob by content hash and backend (reconstruct content-store key)
     #[instrument(skip(self))]
     pub async fn get_by_content(
         &self,

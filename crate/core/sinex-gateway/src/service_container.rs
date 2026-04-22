@@ -5,7 +5,7 @@ use crate::replay_control::{ReplayControlClient, ReplayControlError, spawn_repla
 use color_eyre::eyre::Result;
 use sinex_db::create_pool_with_config;
 use sinex_db::replay::state_machine::ReplayStateMachine;
-use sinex_node_sdk::annex::BlobManager;
+use sinex_node_sdk::content_store::{ContentStoreConfig, ContentStoreManager};
 use sinex_primitives::{
     coordination::CoordinationKvClient, environment as sinex_environment, error::SinexError,
 };
@@ -110,25 +110,28 @@ impl ServiceContainer {
                     .with_source(e.to_string())
             })?;
 
-        // Create blob manager for content service
-        let annex_path = config.resolve_annex_path()?;
+        // Create content store for content service
+        let content_store_path = config.resolve_content_store_path()?;
 
-        // Ensure the annex directory exists
-        tokio::fs::create_dir_all(&annex_path).await.map_err(|e| {
-            SinexError::io("Failed to create annex directory")
-                .with_path(&annex_path)
+        // Ensure the content-store root exists
+        tokio::fs::create_dir_all(&content_store_path).await.map_err(|e| {
+            SinexError::io("Failed to create content-store root")
+                .with_path(&content_store_path)
                 .with_source(e.to_string())
         })?;
 
-        let annex_config = sinex_node_sdk::annex::AnnexConfig {
-            repo_path: annex_path,
+        let content_store_config = ContentStoreConfig {
+            root_path: content_store_path,
             num_copies: None,
             large_files: None,
         };
-        let blob_manager = Arc::new(
-            BlobManager::new(annex_config, content_pool.clone(), None).map_err(|e| {
-                SinexError::service("Failed to create blob manager").with_source(e.to_string())
-            })?,
+        let content_store = Arc::new(
+            ContentStoreManager::new(content_store_config, content_pool.clone(), None).map_err(
+                |e| {
+                    SinexError::service("Failed to create content store")
+                        .with_source(e.to_string())
+                },
+            )?,
         );
 
         let replay = Arc::new(ReplayStateMachine::new(content_pool.clone()));
@@ -177,7 +180,7 @@ impl ServiceContainer {
             .iter()
             .map(|value| *value as usize)
             .sum(),
-            content: Arc::new(ContentService::new(content_pool, blob_manager)),
+            content: Arc::new(ContentService::new(content_pool, content_store)),
             pkm: Arc::new(PkmService::new(pkm_pool)),
             replay_control: control_client,
             coordination: coordination_client,

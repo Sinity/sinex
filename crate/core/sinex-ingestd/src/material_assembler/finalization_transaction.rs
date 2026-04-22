@@ -9,7 +9,7 @@ use sinex_db::{
     models::blob::Blob,
     repositories::{DbPoolExt, TemporalLedgerEntry},
 };
-use sinex_node_sdk::annex::AnnexKey;
+use sinex_node_sdk::content_store::ContentStoreKey;
 use sinex_primitives::{Id, JsonValue, Uuid};
 use sinex_schema::schema::records::SourceMaterialRecord;
 use tracing::{error, info, warn};
@@ -87,7 +87,7 @@ enum FinalizationCommitOutcome {
 
 pub(super) struct FinalizationRequest<'a> {
     pub final_state: &'a FinalizationState,
-    pub annex_key: &'a AnnexKey,
+    pub content_key: &'a ContentStoreKey,
     pub content_hash: &'a str,
     pub total_size_bytes: i64,
     pub metadata: JsonValue,
@@ -116,7 +116,7 @@ impl<'a> FinalizationTransaction<'a> {
         match self
             .finalization_commit_outcome(
                 request.final_state,
-                request.annex_key,
+                request.content_key,
                 request.final_status,
             )
             .await
@@ -124,7 +124,7 @@ impl<'a> FinalizationTransaction<'a> {
             FinalizationCommitOutcome::Landed(handle) => {
                 info!(
                     material_id = %request.final_state.material_id,
-                    annex_key = %request.annex_key.key,
+                    content_key = %request.content_key.key,
                     "Material finalization already persisted; skipping duplicate finalization"
                 );
                 return Ok(handle);
@@ -133,7 +133,7 @@ impl<'a> FinalizationTransaction<'a> {
             FinalizationCommitOutcome::Unknown(error) => {
                 warn!(
                     material_id = %request.final_state.material_id,
-                    annex_key = %request.annex_key.key,
+                    content_key = %request.content_key.key,
                     error = %error,
                     "Unable to confirm material state before finalization; attempting transactional write"
                 );
@@ -160,7 +160,7 @@ impl<'a> FinalizationTransaction<'a> {
                     "ensure_material_record_present",
                 ),
             };
-            self.cleanup_annex_import_failure(request.annex_key).await;
+            self.cleanup_content_import_failure(request.content_key).await;
             return Err(FinalizationError::new(
                 FinalizationErrorKind::EnsureMaterialRecord,
                 error,
@@ -171,7 +171,7 @@ impl<'a> FinalizationTransaction<'a> {
             .upsert_blob_with_executor(
                 &mut tx,
                 request.final_state,
-                request.annex_key,
+                request.content_key,
                 request.content_hash,
             )
             .await
@@ -184,7 +184,7 @@ impl<'a> FinalizationTransaction<'a> {
                         rollback_finalization_failure(error, rollback_error, "upsert_blob")
                     }
                 };
-                self.cleanup_annex_import_failure(request.annex_key).await;
+                self.cleanup_content_import_failure(request.content_key).await;
                 return Err(FinalizationError::new(
                     FinalizationErrorKind::UpsertBlob,
                     error,
@@ -209,7 +209,7 @@ impl<'a> FinalizationTransaction<'a> {
                     rollback_finalization_failure(error, rollback_error, "finalize_material_record")
                 }
             };
-            self.cleanup_annex_import_failure(request.annex_key).await;
+            self.cleanup_content_import_failure(request.content_key).await;
             return Err(FinalizationError::new(
                 FinalizationErrorKind::FinalizeMaterialRecord,
                 error,
@@ -226,7 +226,7 @@ impl<'a> FinalizationTransaction<'a> {
                     rollback_finalization_failure(error, rollback_error, "record_ledger_entry")
                 }
             };
-            self.cleanup_annex_import_failure(request.annex_key).await;
+            self.cleanup_content_import_failure(request.content_key).await;
             return Err(FinalizationError::new(
                 FinalizationErrorKind::RecordLedgerEntry,
                 error,
@@ -246,7 +246,7 @@ impl<'a> FinalizationTransaction<'a> {
                 match self
                     .finalization_commit_outcome(
                         request.final_state,
-                        request.annex_key,
+                        request.content_key,
                         request.final_status,
                     )
                     .await
@@ -254,13 +254,13 @@ impl<'a> FinalizationTransaction<'a> {
                     FinalizationCommitOutcome::Landed(handle) => {
                         warn!(
                             material_id = %request.final_state.material_id,
-                            annex_key = %request.annex_key.key,
+                            content_key = %request.content_key.key,
                             "Material finalization commit returned an error, but the committed state was reconciled successfully"
                         );
                         Ok(handle)
                     }
                     FinalizationCommitOutcome::NotLanded => {
-                        self.cleanup_annex_import_failure(request.annex_key).await;
+                        self.cleanup_content_import_failure(request.content_key).await;
                         Err(FinalizationError::new(
                             FinalizationErrorKind::Commit,
                             commit_error,
@@ -269,7 +269,7 @@ impl<'a> FinalizationTransaction<'a> {
                     FinalizationCommitOutcome::Unknown(reconcile_error) => {
                         warn!(
                             material_id = %request.final_state.material_id,
-                            annex_key = %request.annex_key.key,
+                            content_key = %request.content_key.key,
                             error = %reconcile_error,
                             "Failed to reconcile material finalization after commit error"
                         );
@@ -279,7 +279,7 @@ impl<'a> FinalizationTransaction<'a> {
                                 commit_error,
                                 &reconcile_error,
                                 request.final_state.material_id,
-                                request.annex_key,
+                                request.content_key,
                                 request.final_status,
                             ),
                         ))
@@ -298,7 +298,7 @@ impl<'a> FinalizationTransaction<'a> {
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         state: &FinalizationState,
-        annex_key: &AnnexKey,
+        content_key: &ContentStoreKey,
         content_hash: &str,
     ) -> IngestdResult<Id<Blob>> {
         let repo = self.assembler.pool.blobs();
@@ -311,10 +311,10 @@ impl<'a> FinalizationTransaction<'a> {
         });
 
         let blob = Blob::builder()
-            .annex_backend(annex_key.backend.clone())
-            .content_hash(annex_key.hash.clone())
+            .storage_backend(content_key.storage_backend().to_string())
+            .content_hash(content_key.digest.clone())
             .original_filename(state.source_identifier.clone())
-            .size_bytes(annex_key.size as i64)
+            .size_bytes(content_key.size as i64)
             .checksum_blake3(content_hash.to_string())
             .metadata(metadata)
             .build();
@@ -325,9 +325,9 @@ impl<'a> FinalizationTransaction<'a> {
             .map_err(|e| {
                 error!(
                     material_id = %state.material_id,
-                    backend = %annex_key.backend,
-                    hash = %annex_key.hash,
-                    size = annex_key.size,
+                    backend = %content_key.storage_backend(),
+                    digest = %content_key.digest,
+                    size = content_key.size,
                     error = %e,
                     error_debug = ?e,
                     "Failed to insert blob metadata"
@@ -403,34 +403,38 @@ impl<'a> FinalizationTransaction<'a> {
         Ok(())
     }
 
-    async fn cleanup_annex_import_failure(&self, annex_key: &AnnexKey) {
+    async fn cleanup_content_import_failure(&self, content_key: &ContentStoreKey) {
         match self
             .assembler
             .pool
             .blobs()
-            .get_by_content(&annex_key.backend, &annex_key.hash, annex_key.size as i64)
+            .get_by_content(
+                content_key.storage_backend(),
+                &content_key.digest,
+                content_key.size as i64,
+            )
             .await
         {
             Ok(Some(_)) => {}
             Ok(None) => {
                 if let Err(error) = self
                     .assembler
-                    .annex
-                    .drop_content(&annex_key.key, true)
+                    .content_store
+                    .drop_content(&content_key.key, true)
                     .await
                 {
                     warn!(
-                        annex_key = %annex_key.key,
+                        content_key = %content_key.key,
                         error = %error,
-                        "Failed to roll back annex content after transactional finalization failure"
+                        "Failed to roll back content-store entry after transactional finalization failure"
                     );
                 }
             }
             Err(error) => {
                 warn!(
-                    annex_key = %annex_key.key,
+                    content_key = %content_key.key,
                     error = %error,
-                    "Failed to inspect blob metadata before annex rollback"
+                    "Failed to inspect blob metadata before content-store rollback"
                 );
             }
         }
@@ -439,7 +443,7 @@ impl<'a> FinalizationTransaction<'a> {
     async fn committed_handle(
         &self,
         final_state: &FinalizationState,
-        annex_key: &AnnexKey,
+        content_key: &ContentStoreKey,
         final_status: &str,
     ) -> IngestdResult<Option<FinalizedHandle>> {
         let material = self
@@ -469,7 +473,11 @@ impl<'a> FinalizationTransaction<'a> {
             .assembler
             .pool
             .blobs()
-            .get_by_content(&annex_key.backend, &annex_key.hash, annex_key.size as i64)
+            .get_by_content(
+                content_key.storage_backend(),
+                &content_key.digest,
+                content_key.size as i64,
+            )
             .await
             .map_err(|error| {
                 SinexError::database("Failed to inspect blob state after commit error")
@@ -491,11 +499,11 @@ impl<'a> FinalizationTransaction<'a> {
     async fn finalization_commit_outcome(
         &self,
         final_state: &FinalizationState,
-        annex_key: &AnnexKey,
+        content_key: &ContentStoreKey,
         final_status: &str,
     ) -> FinalizationCommitOutcome {
         match self
-            .committed_handle(final_state, annex_key, final_status)
+            .committed_handle(final_state, content_key, final_status)
             .await
         {
             Ok(Some(handle)) => FinalizationCommitOutcome::Landed(handle),
@@ -559,7 +567,7 @@ fn finalization_unknown_commit_error(
     commit_error: SinexError,
     reconcile_error: &SinexError,
     material_id: Uuid,
-    annex_key: &AnnexKey,
+    content_key: &ContentStoreKey,
     final_status: &str,
 ) -> SinexError {
     commit_error
@@ -571,7 +579,7 @@ fn finalization_unknown_commit_error(
         .with_context("retry_state_preserved", "true")
         .with_context("terminal_failure_routed", "false")
         .with_context("material_id", material_id.to_string())
-        .with_context("annex_key", annex_key.key.clone())
+        .with_context("content_key", content_key.key.clone())
         .with_context("final_status", final_status.to_string())
         .with_context("reconcile_error", reconcile_error.to_string())
 }
@@ -595,7 +603,7 @@ fn rollback_finalization_failure(
 #[cfg(test)]
 mod tests {
     use sinex_db::repositories::source_materials::status;
-    use sinex_node_sdk::annex::AnnexKey;
+    use sinex_node_sdk::content_store::ContentStoreKey;
     use sinex_primitives::Uuid;
     use xtask::sandbox::prelude::*;
 
@@ -619,17 +627,12 @@ mod tests {
 
     #[sinex_test]
     async fn finalization_unknown_commit_error_preserves_retry_context() -> TestResult<()> {
-        let annex_key = AnnexKey {
-            key: "SHA256E-s4--retry".to_string(),
-            backend: "SHA256E".to_string(),
-            size: 4,
-            hash: "retry".to_string(),
-        };
+        let content_key = ContentStoreKey::parse("SHA256E-s4--retry")?;
         let error = finalization_unknown_commit_error(
             SinexError::database("commit failed"),
             &SinexError::database("reconcile failed"),
             Uuid::now_v7(),
-            &annex_key,
+            &content_key,
             status::COMPLETED,
         );
 
@@ -646,7 +649,7 @@ mod tests {
             error.context_map().get("final_status"),
             Some(&status::COMPLETED.to_string())
         );
-        assert_eq!(error.context_map().get("annex_key"), Some(&annex_key.key),);
+        assert_eq!(error.context_map().get("content_key"), Some(&content_key.key),);
         assert!(
             error
                 .context_map()

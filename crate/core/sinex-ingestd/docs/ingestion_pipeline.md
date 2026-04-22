@@ -1,6 +1,6 @@
 # Ingestd Service Orchestrator
 
-The `IngestService` is the central orchestrator for the `sinex-ingestd` daemon. it coordinates high-throughput event ingestion from NATS into `PostgreSQL` and assembles large binary source materials for storage in git-annex.
+The `IngestService` is the central orchestrator for the `sinex-ingestd` daemon. it coordinates high-throughput event ingestion from NATS into `PostgreSQL` and assembles source materials for storage in the SDK content store.
 
 ## Service Architecture
 
@@ -9,7 +9,7 @@ The service follows a task-based architecture where critical and non-critical op
 | Task | Type | Purpose |
 |------|------|---------|
 | **`JetStream` Consumer** | Critical | NATS -> DB event pipeline |
-| **Material Assembler** | Critical | NATS -> git-annex blob assembly |
+| **Material Assembler** | Critical | NATS -> content-store material assembly |
 | **Stats Logger** | Non-Critical | Periodic metrics logging & self-observation |
 | **Schema Reloader** | Non-Critical | Syncing schema cache with database every 5 min |
 

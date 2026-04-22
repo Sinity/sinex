@@ -1,4 +1,4 @@
-//! Path validation utilities for blob manager operations
+//! Path validation utilities for content-store operations
 //!
 //! This module provides secure path validation to prevent directory traversal
 //! attacks and ensure all file paths are properly sanitized before use.

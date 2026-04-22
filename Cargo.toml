@@ -40,7 +40,6 @@ members = [
   "tests/workspace",
 
   # Disabled/folded crates
-  # "crate/sinex-annex", # Folded into sinex-node-sdk
   # "crate/sinex-preflight", # Folded into sinex-node-sdk
   # "crate/sinex-nats", # Folded into sinex-node-sdk
 ]

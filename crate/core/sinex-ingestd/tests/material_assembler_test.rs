@@ -3,7 +3,7 @@
 use async_nats::jetstream;
 use serde_json::json;
 use sinex_ingestd::{IngestdResult, MaterialAssembler, MaterialReadySet};
-use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
+use sinex_node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
 use sinex_primitives::temporal;
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,17 +11,17 @@ use tokio::time::timeout;
 use tokio_stream::StreamExt;
 use xtask::sandbox::prelude::*;
 
-async fn fake_annex() -> TestResult<(Arc<GitAnnex>, tempfile::TempDir)> {
+async fn fake_content_store() -> TestResult<(Arc<MaterialContentStore>, tempfile::TempDir)> {
     let dir = tempfile::tempdir()?;
     let repo_path = camino::Utf8PathBuf::from_path_buf(dir.path().to_path_buf())
-        .map_err(|_| color_eyre::eyre::eyre!("tempdir not valid utf-8 path for git-annex repo"))?;
-    GitAnnex::init(&repo_path, Some("assembler-test")).await?;
-    let annex = GitAnnex::new(AnnexConfig {
-        repo_path,
+        .map_err(|_| color_eyre::eyre::eyre!("content-store root path must be valid UTF-8"))?;
+    MaterialContentStore::init(&repo_path, Some("assembler-test")).await?;
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: repo_path,
         num_copies: None,
         large_files: None,
     })?;
-    Ok((Arc::new(annex), dir))
+    Ok((Arc::new(content_store), dir))
 }
 
 async fn start_assembler(
@@ -38,7 +38,7 @@ async fn start_assembler(
     let nats_client = ctx.nats_client();
     let js = nats.jetstream_with_client(nats_client.clone());
 
-    let (annex, annex_dir) = fake_annex().await?;
+    let (content_store, content_store_dir) = fake_content_store().await?;
 
     let (state_guard, state_path) = if let Some(path) = existing_state_path {
         (None, path)
@@ -51,7 +51,7 @@ async fn start_assembler(
     let assembler = MaterialAssembler::new(
         nats_client.clone(),
         ctx.pool.clone(),
-        annex,
+        content_store,
         state_path.clone(),
         Some(ctx.pipeline_namespace().prefix().to_string()),
         1_000,
@@ -64,7 +64,7 @@ async fn start_assembler(
     )?;
 
     let handle = tokio::spawn(async move { assembler.run().await });
-    Ok((handle, js, annex_dir, state_guard, state_path))
+    Ok((handle, js, content_store_dir, state_guard, state_path))
 }
 
 #[sinex_test]
@@ -72,7 +72,7 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
     let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
-    let (handle, js, _annex_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
+    let (handle, js, _content_store_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
 
     let material_id = uuid::Uuid::now_v7();
     let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
@@ -173,7 +173,8 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
     let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
-    let (handle, js, _annex_guard, state_guard, state_path) = start_assembler(&ctx, None).await?;
+    let (handle, js, _content_store_guard, state_guard, state_path) =
+        start_assembler(&ctx, None).await?;
 
     // Ensure streams are bootstrapped before publishing
     sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
@@ -292,7 +293,7 @@ async fn assembler_routes_empty_material_to_dlq(ctx: TestContext) -> TestResult<
     let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
-    let (handle, js, _annex_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
+    let (handle, js, _content_store_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
 
     let material_id = uuid::Uuid::now_v7();
     let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
@@ -365,7 +366,8 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
     let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
-    let (handle, js, _annex_guard, state_guard, state_path) = start_assembler(&ctx, None).await?;
+    let (handle, js, _content_store_guard, state_guard, state_path) =
+        start_assembler(&ctx, None).await?;
 
     let material_id = uuid::Uuid::now_v7();
     let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
@@ -466,7 +468,8 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
     let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
-    let (handle, js, _annex_guard, _state_guard, state_path) = start_assembler(&ctx, None).await?;
+    let (handle, js, _content_store_guard, _state_guard, state_path) =
+        start_assembler(&ctx, None).await?;
 
     let material_id = uuid::Uuid::now_v7();
     sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
@@ -548,7 +551,7 @@ async fn assembler_accepts_duplicate_end_frames(ctx: TestContext) -> TestResult<
     let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
-    let (handle, js, _annex_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
+    let (handle, js, _content_store_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
 
     sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
         &nats_client,
@@ -636,7 +639,7 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
     let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
-    let (handle, js, _annex_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
+    let (handle, js, _content_store_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
 
     sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
         &nats_client,

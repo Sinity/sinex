@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use color_eyre::eyre::eyre;
 use sinex_primitives::domain::{
-    AnnexKey, EventSource, EventType, HostName, JobId, NatsSubject, SanitizedPath, SchemaVersion,
+    ContentKey, EventSource, EventType, HostName, JobId, NatsSubject, SanitizedPath, SchemaVersion,
     ServiceName,
 };
 use sinex_primitives::events::EventPayload;
@@ -113,26 +113,26 @@ async fn sanitized_path_validation_blocks_traversal() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn annex_key_validation_and_parsing() -> TestResult<()> {
-    assert!(AnnexKey::from_str("SHA256E-s12345--filename.txt").is_ok());
-    assert!(AnnexKey::from_str("BLAKE2B--somefile").is_ok());
-    assert!(AnnexKey::from_str("SHA1-s1024-m1234567890--document.pdf").is_ok());
+async fn content_key_validation_and_parsing() -> TestResult<()> {
+    assert!(ContentKey::from_str("SHA256E-s12345--filename.txt").is_ok());
+    assert!(ContentKey::from_str("BLAKE2B--somefile").is_ok());
+    assert!(ContentKey::from_str("SHA1-s1024-m1234567890--document.pdf").is_ok());
 
-    assert!(AnnexKey::from_str("").is_err());
-    assert!(AnnexKey::from_str("no-double-dash").is_err());
-    assert!(AnnexKey::from_str("--no-prefix").is_err());
-    assert!(AnnexKey::from_str("prefix--").is_err());
-    assert!(AnnexKey::from_str("multiple--double--dashes").is_err());
+    assert!(ContentKey::from_str("").is_err());
+    assert!(ContentKey::from_str("no-double-dash").is_err());
+    assert!(ContentKey::from_str("--no-prefix").is_err());
+    assert!(ContentKey::from_str("prefix--").is_err());
+    assert!(ContentKey::from_str("multiple--double--dashes").is_err());
 
-    let key = AnnexKey::from_str("SHA256E-s12345-m1234567890--filename.txt")
-        .map_err(|err| eyre!("invalid annex key: {err}"))?;
+    let key = ContentKey::from_str("SHA256E-s12345-m1234567890--filename.txt")
+        .map_err(|err| eyre!("invalid content key: {err}"))?;
     let components = key.parse_components();
     assert_eq!(components.prefix, "SHA256E-s12345-m1234567890");
     assert_eq!(components.backend, "SHA256E");
     assert_eq!(components.name, "filename.txt");
 
-    let simple_key = AnnexKey::from_str("BLAKE2B--document.pdf")
-        .map_err(|err| eyre!("invalid annex key: {err}"))?;
+    let simple_key = ContentKey::from_str("BLAKE2B--document.pdf")
+        .map_err(|err| eyre!("invalid content key: {err}"))?;
     let simple_components = simple_key.parse_components();
     assert_eq!(simple_components.prefix, "BLAKE2B");
     assert_eq!(simple_components.backend, "BLAKE2B");

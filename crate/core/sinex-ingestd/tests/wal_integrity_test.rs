@@ -1,6 +1,6 @@
 use serde_json::json;
 use sinex_ingestd::{MaterialAssembler, MaterialReadySet};
-use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
+use sinex_node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
 use std::sync::Arc;
 use xtask::sandbox::prelude::*;
 
@@ -19,12 +19,13 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
     let state_dir = tempfile::tempdir()?;
     let state_path = state_dir.path().to_path_buf();
 
-    // Setup Annex (shared across restarts)
-    let annex_dir = tempfile::tempdir()?;
-    let repo_path = camino::Utf8PathBuf::from_path_buf(annex_dir.path().to_path_buf()).unwrap();
-    GitAnnex::init(&repo_path, Some("wal-test")).await?;
-    let annex = Arc::new(GitAnnex::new(AnnexConfig {
-        repo_path,
+    // Setup content store (shared across restarts)
+    let content_store_dir = tempfile::tempdir()?;
+    let repo_path =
+        camino::Utf8PathBuf::from_path_buf(content_store_dir.path().to_path_buf()).unwrap();
+    MaterialContentStore::init(&repo_path, Some("wal-test")).await?;
+    let content_store = Arc::new(MaterialContentStore::new(ContentStoreConfig {
+        root_path: repo_path,
         num_copies: None,
         large_files: None,
     })?);
@@ -47,7 +48,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
         let assembler = MaterialAssembler::new(
             nats_client.clone(),
             ctx.pool.clone(),
-            annex.clone(),
+            content_store.clone(),
             state_path.clone(),
             Some(namespace.clone()),
             1_000,
@@ -129,7 +130,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
         let assembler = MaterialAssembler::new(
             nats_client.clone(),
             ctx.pool.clone(),
-            annex.clone(),
+            content_store.clone(),
             state_path.clone(),
             Some(namespace.clone()),
             1_000,

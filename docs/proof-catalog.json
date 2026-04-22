@@ -1670,7 +1670,7 @@
         "issue:317",
         "issue:324",
         "node-sdk:source-material",
-        "node-sdk:annex"
+        "node-sdk:content-store"
       ],
       "claim_ids": [
         "small-material-uses-local-cas-without-git-annex-subprocess",

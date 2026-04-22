@@ -8,7 +8,7 @@ This pattern allows ingestors to register a stable ID for events before the enti
 
 1. **Registration (`SENSING`)**: At the start of a capture, an entry is created with a `sensing` status. This provides a UUIDv7 that can be used immediately by event generators.
 2. **Streaming**: Data is captured and streamed to NATS. All resulting events reference the Material ID.
-3. **Finalization (`COMPLETED`)**: Once the capture is done, the data is moved to blob storage (git-annex), and the registry entry is updated with the `blob_id` and `completed` status.
+3. **Finalization (`COMPLETED`)**: Once the capture is done, the data is moved to content storage, and the registry entry is updated with the `blob_id` and `completed` status.
 4. **Failure (`FAILED`)**: If the capture is interrupted, the entry is marked as `failed` with a recorded reason, preserving the audit trail for any partial events that were generated.
 
 ## Temporal Ledger
@@ -22,5 +22,5 @@ The `temporal_ledger` is a specialized table that provides high-precision ground
 ## Implementation Details
 
 - **Uniqueness**: The `source_identifier` (usually a URI or path) must be unique across the entire registry.
-- **Storage**: Most materials are backed by the `annex` storage backend, linking the registry metadata to actual binary content in git-annex.
+- **Storage**: Completed materials are backed by content-store keys, linking registry metadata to actual binary content through `core.blobs`.
 - **Idempotency**: The registration methods use `ON CONFLICT DO UPDATE` patterns to handle distributed retries safely.

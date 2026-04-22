@@ -204,7 +204,8 @@ pub struct ResolvedReplayMaterial {
     /// Stable registry identity of the source material.
     pub source_material_id: Uuid,
 
-    /// Material kind (for example `annex` or `git`).
+    /// Stored source-material class. Current persisted values still include
+    /// legacy storage-shaped names such as `annex`.
     pub material_kind: String,
 
     /// Source identifier (for example file path or upstream URI).

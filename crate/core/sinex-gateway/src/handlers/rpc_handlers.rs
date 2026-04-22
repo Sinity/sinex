@@ -332,7 +332,7 @@ pub(crate) fn parse_replay_state(value: &str) -> Result<ReplayState> {
 
 pub(crate) fn blob_response_payload(
     content: &[u8],
-    metadata: &sinex_node_sdk::annex::BlobMetadata,
+    metadata: &sinex_node_sdk::content_store::BlobMetadata,
 ) -> Result<RetrieveBlobResponse> {
     let size = u64::try_from(metadata.size_bytes).map_err(|_| {
         eyre!(
@@ -361,7 +361,7 @@ mod tests {
     #[sinex_test]
     async fn blob_response_payload_encodes_base64() -> TestResult<()> {
         let blob = Blob::builder()
-            .annex_backend("SHA256".into())
+            .storage_backend("SHA256".into())
             .content_hash("deadbeef".into())
             .original_filename("blob.bin".into())
             .size_bytes(2)
