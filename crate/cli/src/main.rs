@@ -3,11 +3,11 @@ use color_eyre::eyre::eyre;
 use sinex_primitives::{RuntimeTargetDescriptor, strict_env_filter_source};
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
-    AuditCommand, BlobCommands, CompletionsCommand, ConfigCommands, ContextCommand, CoreCommands,
-    DemoCommand, DlqCommands, ErrorsCommand, ExplainCommand, GatewayCommands, GitOpsCommands,
-    LifecycleCommands, NodeCommands, OpsCommands, QueryCommand, RecentCommand, ReplayCommands,
-    ReportCommands, StatusCommand, TelemetryCommands, TraceCommand, TuiCommand, VerifyCommand,
-    WatchCommand,
+    AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand, ConfigCommands,
+    ContextCommand, CoreCommands, DemoCommand, DlqCommands, ErrorsCommand, ExplainCommand,
+    GatewayCommands, GitOpsCommands, LifecycleCommands, NodeCommands, OpsCommands, QueryCommand,
+    RecentCommand, ReplayCommands, ReportCommands, StatusCommand, TelemetryCommands, TraceCommand,
+    TuiCommand, VerifyCommand, WatchCommand,
 };
 use sinexctl::model::OutputFormat;
 use sinexctl::{Config, default_rpc_url};
@@ -113,6 +113,9 @@ enum Commands {
         #[command(subcommand)]
         cmd: NodeCommands,
     },
+
+    /// Derived-node and automata status
+    Automata(AutomataCommand),
 
     /// Replay operations
     Replay {
@@ -271,6 +274,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Blob { .. } => unreachable!("Blob command handled above"),
                 Commands::Core { cmd } => cmd.execute(&client, format).await?,
                 Commands::Node { cmd } => cmd.execute(&client).await?,
+                Commands::Automata(cmd) => cmd.execute(&client).await?,
                 Commands::Replay { cmd } => cmd.execute(&client).await?,
                 Commands::Dlq { cmd } => cmd.execute(&client).await?,
                 Commands::Query(cmd) => cmd.execute(&client).await?,
@@ -410,6 +414,17 @@ mod tests {
         assert_eq!(
             explicit_cli.rpc_url.as_deref(),
             Some(explicit_default.as_str())
+        );
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn automata_command_is_registered() -> TestResult<()> {
+        let (_matches, cli) = parse_cli(&["sinexctl", "automata"])?;
+
+        assert!(
+            matches!(cli.command, Commands::Automata(_)),
+            "automata command must remain exposed as a top-level operator surface"
         );
         Ok(())
     }

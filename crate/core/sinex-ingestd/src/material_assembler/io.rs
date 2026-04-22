@@ -2049,7 +2049,8 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _content_store_dir, state_dir) = test_assembler_with_config(&ctx, 1).await?;
+        let (assembler, _content_store_dir, state_dir) =
+            test_assembler_with_config(&ctx, 1).await?;
         let material_id = Uuid::now_v7();
         let material_dir = state_dir.path().join(material_id.to_string());
         tokio::fs::create_dir_all(&material_dir).await?;
@@ -2085,7 +2086,8 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _content_store_dir, state_dir) = test_assembler_with_config(&ctx, 1).await?;
+        let (assembler, _content_store_dir, state_dir) =
+            test_assembler_with_config(&ctx, 1).await?;
         let material_id = Uuid::now_v7();
         let material_dir = state_dir.path().join(material_id.to_string());
         tokio::fs::create_dir_all(&material_dir).await?;

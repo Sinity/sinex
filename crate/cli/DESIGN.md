@@ -28,7 +28,7 @@ CLI flags still win so one-off overrides remain possible.
 ## Command Families
 
 - Gateway/system: `gateway`, `core`
-- Query/inspection: `query`, `verify` (passive trust checks plus optional active gateway/automata/document deployment smoke and descriptor-aware collector-surface evidence, distinguishing recent emission from merely historical persisted rows, with local deployment-descriptor awareness for managed oneshot surfaces), `status`, `recent`, `errors`, `watch`, `tui`
+- Query/inspection: `query`, `verify` (passive trust checks plus optional active gateway/automata/document deployment smoke and descriptor-aware collector-surface evidence, distinguishing recent emission from merely historical persisted rows, with local deployment-descriptor awareness for managed oneshot surfaces), `automata`, `status`, `recent`, `errors`, `watch`, `tui`
 - Operations: `ops`, `audit`, `node`, `replay`, `dlq`, `lifecycle`, `gitops`
 - Local tooling: `config`, `completions`
 

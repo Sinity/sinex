@@ -25,6 +25,7 @@ pub struct JsonRpcError {
 }
 
 pub mod audit;
+pub mod automata;
 pub mod content;
 pub mod coordination;
 pub mod dlq;
@@ -44,6 +45,7 @@ pub mod telemetry;
 pub mod prelude {
     pub use super::JsonRpcError;
     pub use super::audit::*;
+    pub use super::automata::*;
     pub use super::content::*;
     pub use super::coordination::*;
     pub use super::dlq::*;

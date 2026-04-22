@@ -495,10 +495,8 @@ impl GatewayConfig {
 
     fn apply_manual_env_overrides(&mut self) -> Result<(), SinexError> {
         self.database_url = env_string_override("DATABASE_URL", self.database_url.clone())?;
-        self.content_store_path = env_string_override(
-            "SINEX_CONTENT_STORE_PATH",
-            self.content_store_path.clone(),
-        )?;
+        self.content_store_path =
+            env_string_override("SINEX_CONTENT_STORE_PATH", self.content_store_path.clone())?;
         self.rpc_token = env_var_optional("SINEX_RPC_TOKEN")?
             .map(|v| v.trim().to_string())
             .or(self.rpc_token.take());

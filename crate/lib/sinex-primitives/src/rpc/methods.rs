@@ -46,6 +46,9 @@ pub const NODES_DRAIN: &str = "nodes.drain";
 pub const NODES_RESUME: &str = "nodes.resume";
 pub const NODES_SET_HORIZON: &str = "nodes.set_horizon";
 
+// Automata
+pub const AUTOMATA_STATUS: &str = "automata.status";
+
 // Ops
 pub const OPS_START: &str = "ops.start";
 pub const OPS_LIST: &str = "ops.list";

@@ -125,6 +125,9 @@ where
     /// Consecutive checkpoint save failures. Reset to 0 on any successful save.
     /// When this reaches 3, processing is halted to prevent silent progress loss.
     consecutive_checkpoint_failures: u32,
+    /// Inputs processed since this process/run started. This intentionally
+    /// differs from persisted checkpoint totals, which survive restarts.
+    run_events_processed: u64,
     #[cfg(feature = "messaging")]
     health_reporter: Option<Arc<crate::health_reporter::HealthReporter>>,
     #[cfg(feature = "messaging")]
@@ -185,6 +188,7 @@ where
             last_revision: 0,
             pending_hot_reload_cleanup: None,
             consecutive_checkpoint_failures: 0,
+            run_events_processed: 0,
             #[cfg(feature = "messaging")]
             health_reporter: None,
             #[cfg(feature = "messaging")]
@@ -552,6 +556,7 @@ where
             .await?;
         self.events_since_checkpoint = 0;
         self.last_checkpoint_time = Instant::now();
+        self.observe_checkpoint_state(&checkpoint_state).await;
 
         debug!(
             node = %self.node.name(),
@@ -589,11 +594,136 @@ where
         self.persisted_state.last_input_event_id = Some(*event_id.as_uuid());
         self.persisted_state.events_processed += 1;
         self.events_since_checkpoint += 1;
+        self.run_events_processed = self.run_events_processed.saturating_add(1);
     }
 
     fn record_state_mutation(&mut self) {
         self.events_since_checkpoint += 1;
     }
+
+    #[cfg(feature = "messaging")]
+    fn derived_metric_labels(&self) -> HashMap<String, String> {
+        let mut labels = HashMap::new();
+        labels.insert("node".to_string(), self.node.name().to_string());
+        labels.insert("node_model".to_string(), self.node.node_model().to_string());
+        if let Some(node_run_id) = self
+            .runtime
+            .as_ref()
+            .and_then(NodeRuntimeState::node_run_id)
+        {
+            labels.insert("node_run_id".to_string(), node_run_id.to_string());
+        }
+        labels
+    }
+
+    #[cfg(feature = "messaging")]
+    fn checkpoint_labels(&self, checkpoint: &Checkpoint) -> HashMap<String, String> {
+        let mut labels = self.derived_metric_labels();
+        let (kind, position) = match checkpoint {
+            Checkpoint::None => ("none", None),
+            Checkpoint::External {
+                position,
+                description,
+            } => ("external", Some(format!("{description}:{}", position))),
+            Checkpoint::Internal {
+                event_id,
+                message_count,
+            } => ("internal", Some(format!("{event_id}:#{message_count}"))),
+            Checkpoint::Stream {
+                message_id,
+                event_id,
+            } => (
+                "stream",
+                Some(match event_id {
+                    Some(event_id) => format!("{message_id}:{event_id}"),
+                    None => message_id.clone(),
+                }),
+            ),
+            Checkpoint::Timestamp { timestamp, .. } => {
+                ("timestamp", Some(timestamp.format_rfc3339()))
+            }
+        };
+        labels.insert("checkpoint_kind".to_string(), kind.to_string());
+        if let Some(position) = position {
+            labels.insert("checkpoint_position".to_string(), position);
+        }
+        labels
+    }
+
+    #[cfg(feature = "messaging")]
+    async fn observe_runtime_snapshot(&self) {
+        let Some(obs) = self.self_observer.as_ref() else {
+            return;
+        };
+
+        let labels = self.derived_metric_labels();
+        if let Err(error) = obs
+            .emit_gauge(
+                "derived.events_processed.run",
+                self.run_events_processed as f64,
+                Some(labels.clone()),
+            )
+            .await
+        {
+            log_self_observation_failure(self.node.name(), "derived.events_processed.run", &error);
+        }
+
+        if let Some(reporter) = self.health_reporter.as_ref() {
+            let error_rate = reporter.metrics().error_rate(300);
+            if let Err(error) = obs
+                .emit_gauge("derived.error_rate_5m", error_rate, Some(labels))
+                .await
+            {
+                log_self_observation_failure(self.node.name(), "derived.error_rate_5m", &error);
+            }
+        }
+    }
+
+    #[cfg(not(feature = "messaging"))]
+    async fn observe_runtime_snapshot(&self) {}
+
+    #[cfg(feature = "messaging")]
+    async fn observe_checkpoint_state(&self, state: &CheckpointState) {
+        let Some(obs) = self.self_observer.as_ref() else {
+            return;
+        };
+
+        let labels = self.checkpoint_labels(&state.checkpoint);
+        if let Err(error) = obs
+            .emit_gauge(
+                "derived.checkpoint.revision",
+                state.revision as f64,
+                Some(labels),
+            )
+            .await
+        {
+            log_self_observation_failure(self.node.name(), "derived.checkpoint.revision", &error);
+        }
+    }
+
+    #[cfg(not(feature = "messaging"))]
+    async fn observe_checkpoint_state(&self, _state: &CheckpointState) {}
+
+    #[cfg(feature = "messaging")]
+    async fn observe_pending_invalidations(&self, count: usize) {
+        let Some(obs) = self.self_observer.as_ref() else {
+            return;
+        };
+
+        if let Err(error) = obs
+            .emit_gauge(
+                "derived.invalidations.pending",
+                count as f64,
+                Some(self.derived_metric_labels()),
+            )
+            .await
+        {
+            log_self_observation_failure(self.node.name(), "derived.invalidations.pending", &error);
+        }
+    }
+
+    #[cfg(not(feature = "messaging"))]
+    async fn observe_pending_invalidations(&self, _count: usize) {}
 
     fn validate_output_batch(
         &self,
@@ -657,7 +787,7 @@ where
 
         #[cfg(feature = "messaging")]
         if let Some(obs) = self.self_observer.as_ref() {
-            let mut labels = HashMap::new();
+            let mut labels = self.derived_metric_labels();
             labels.insert("phase".to_string(), phase.to_string());
             labels.insert(
                 "output_event_type".to_string(),
@@ -778,6 +908,7 @@ where
                 let output_events =
                     self.build_output_events(outputs, Some(source_event_id), &context)?;
                 self.record_processed_input(source_event_id);
+                self.observe_runtime_snapshot().await;
                 Ok(output_events)
             }
             Err(e) => {
@@ -786,11 +917,13 @@ where
                     ErrorAction::Skip => {
                         warn!(node = %self.node.name(), error = %e, "Skipping event");
                         self.record_processed_input(source_event_id);
+                        self.observe_runtime_snapshot().await;
                         Ok(Vec::new())
                     }
                     ErrorAction::SendToDLQ => {
                         self.send_to_dlq_or_fail(&event, &e).await?;
                         self.record_processed_input(source_event_id);
+                        self.observe_runtime_snapshot().await;
                         Ok(Vec::new())
                     }
                     ErrorAction::Retry => Err(e.into()),
@@ -1568,6 +1701,7 @@ where
                                 invalidations_processed += 1;
                             }
                         }
+                        self.observe_pending_invalidations(0).await;
                         break;
                     }
                 }
@@ -1576,6 +1710,7 @@ where
                 payload = recv_invalidation(&mut invalidation_sub) => {
                     if let Some(payload) = payload {
                         pending_invalidations.push(payload);
+                        self.observe_pending_invalidations(pending_invalidations.len()).await;
                         debounce_deadline = Some(tokio::time::Instant::now() + debounce_duration);
                     }
                 }
@@ -1599,6 +1734,7 @@ where
                             invalidations_processed += 1;
                         }
                     }
+                    self.observe_pending_invalidations(0).await;
                     debounce_deadline = None;
                 }
 
@@ -1804,6 +1940,7 @@ where
                 }
                 events_processed += 1;
                 self.record_processed_input(trigger_event_id);
+                self.observe_runtime_snapshot().await;
             }
 
             if self.should_checkpoint() {
@@ -3225,6 +3362,18 @@ mod tests {
             .expect("emitting node should produce one output event");
 
         assert_eq!(output.node_run_id, Some(node_run_id));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn process_one_tracks_run_local_processed_count() -> TestResult<()> {
+        let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(EmittingDerivedNode));
+
+        adapter.process_one(make_input_event("emit")?).await?;
+        adapter.process_one(make_input_event("emit")?).await?;
+
+        assert_eq!(adapter.run_events_processed, 2);
+        assert_eq!(adapter.persisted_state.events_processed, 2);
         Ok(())
     }
 

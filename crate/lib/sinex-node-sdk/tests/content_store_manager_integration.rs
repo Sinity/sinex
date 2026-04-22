@@ -41,10 +41,11 @@ async fn manager_deduplicates_content(ctx: TestContext) -> color_eyre::Result<()
         .ingest_from_bytes(TEST_BYTES, "dedupe-b.txt", "text/plain")
         .await?;
 
-    ctx.assert("dedupe should return same content-store key").that(
-        first.content_key() == second.content_key(),
-        "Content-store keys must match",
-    )?;
+    ctx.assert("dedupe should return same content-store key")
+        .that(
+            first.content_key() == second.content_key(),
+            "Content-store keys must match",
+        )?;
     ctx.assert("stored checksum should be reused").that(
         first.checksum_blake3 == second.checksum_blake3,
         "Checksums must match",

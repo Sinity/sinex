@@ -1092,8 +1092,9 @@ fn default_stats_log_interval_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        DurabilityThresholds, IngestdConfig, default_content_store_path, default_assembler_state_dir,
-        default_gitops_work_dir, default_path_base_dir, default_work_dir, env_validated_path,
+        DurabilityThresholds, IngestdConfig, default_assembler_state_dir,
+        default_content_store_path, default_gitops_work_dir, default_path_base_dir,
+        default_work_dir, env_validated_path,
     };
     use camino::Utf8PathBuf;
     use sinex_primitives::environment::environment;

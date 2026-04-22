@@ -3,9 +3,7 @@ use clap::{Parser, Subcommand};
 use color_eyre::eyre::{WrapErr, eyre};
 use serde::Serialize;
 use sinex_db::{DbPoolExt, create_pool};
-use sinex_node_sdk::content_store::{
-    ContentStoreConfig, MaterialContentStore, UnusedContentEntry,
-};
+use sinex_node_sdk::content_store::{ContentStoreConfig, MaterialContentStore, UnusedContentEntry};
 
 use crate::Result;
 use crate::fmt::CommandOutput;
@@ -87,13 +85,16 @@ impl BlobSweepOrphansCommand {
         let mut db_backed_entries = 0usize;
         let mut orphaned_unused = Vec::new();
         for entry in unused_entries {
-            let size_bytes = i64::try_from(entry.key.size)
-                .wrap_err_with(|| format!("content-store key size does not fit i64: {}", entry.key.key))?;
+            let size_bytes = i64::try_from(entry.key.size).wrap_err_with(|| {
+                format!("content-store key size does not fit i64: {}", entry.key.key)
+            })?;
             if pool
                 .blobs()
                 .get_by_content(entry.key.storage_backend(), &entry.key.digest, size_bytes)
                 .await
-                .wrap_err_with(|| format!("lookup blob row for content-store key {}", entry.key.key))?
+                .wrap_err_with(|| {
+                    format!("lookup blob row for content-store key {}", entry.key.key)
+                })?
                 .is_some()
             {
                 db_backed_entries += 1;

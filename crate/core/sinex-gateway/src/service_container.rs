@@ -114,11 +114,13 @@ impl ServiceContainer {
         let content_store_path = config.resolve_content_store_path()?;
 
         // Ensure the content-store root exists
-        tokio::fs::create_dir_all(&content_store_path).await.map_err(|e| {
-            SinexError::io("Failed to create content-store root")
-                .with_path(&content_store_path)
-                .with_source(e.to_string())
-        })?;
+        tokio::fs::create_dir_all(&content_store_path)
+            .await
+            .map_err(|e| {
+                SinexError::io("Failed to create content-store root")
+                    .with_path(&content_store_path)
+                    .with_source(e.to_string())
+            })?;
 
         let content_store_config = ContentStoreConfig {
             root_path: content_store_path,
@@ -128,8 +130,7 @@ impl ServiceContainer {
         let content_store = Arc::new(
             ContentStoreManager::new(content_store_config, content_pool.clone(), None).map_err(
                 |e| {
-                    SinexError::service("Failed to create content store")
-                        .with_source(e.to_string())
+                    SinexError::service("Failed to create content store").with_source(e.to_string())
                 },
             )?,
         );
