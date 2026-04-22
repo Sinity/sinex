@@ -1,12 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
-    "annex_key": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
     "blob_id": {
       "type": [
         "string",
@@ -15,6 +9,12 @@
     },
     "content_hash": {
       "type": "string"
+    },
+    "content_key": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "content_size": {
       "format": "uint",

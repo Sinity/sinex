@@ -4,8 +4,8 @@
 //! and migration code, ensuring protection against path traversal attacks.
 
 use camino::Utf8PathBuf;
-use sinex_node_sdk::annex::{
-    AnnexConfig, BlobManager, VerifiedPath, blob_manager::BLOB_EVENT_CHANNEL_CAPACITY,
+use sinex_node_sdk::content_store::{
+    ContentStoreConfig, ContentStoreManager, VerifiedPath, manager::BLOB_EVENT_CHANNEL_CAPACITY,
 };
 use sinex_primitives::{Event, JsonValue, validate_path};
 use std::path::Path;
@@ -75,22 +75,22 @@ async fn test_path_validation_allows_safe_paths(ctx: TestContext) -> TestResult<
 }
 
 #[sinex_test]
-async fn test_blob_manager_path_validation(ctx: TestContext) -> TestResult<()> {
+async fn test_manager_path_validation(ctx: TestContext) -> TestResult<()> {
     system_test_preflight()?;
     // Create temporary directory and files for testing
     let temp_dir = TempDir::new()?;
-    let annex_path = temp_dir.path().join("test-annex");
-    init_annex_repo(&annex_path).await?;
+    let content_store_path = temp_dir.path().join("test-content-store");
+    init_content_store_root(&content_store_path).await?;
 
     let temp_file = temp_dir.path().join("test_file.txt");
     fs::write(&temp_file, b"test content").await?;
 
-    let repo_utf8 = Utf8PathBuf::from_path_buf(annex_path.clone())
-        .map_err(|_| color_eyre::eyre::eyre!("annex path not valid UTF-8"))?;
+    let repo_utf8 = Utf8PathBuf::from_path_buf(content_store_path.clone())
+        .map_err(|_| color_eyre::eyre::eyre!("content-store path not valid UTF-8"))?;
 
-    // Create blob manager
-    let annex_config = AnnexConfig {
-        repo_path: repo_utf8,
+    // Create content-store manager
+    let content_store_config = ContentStoreConfig {
+        root_path: repo_utf8,
         num_copies: Some(1),
         large_files: Some("anything".to_string()),
     };
@@ -98,7 +98,7 @@ async fn test_blob_manager_path_validation(ctx: TestContext) -> TestResult<()> {
     let (event_tx, mut event_rx) = mpsc::channel::<Event<JsonValue>>(BLOB_EVENT_CHANNEL_CAPACITY);
     tokio::spawn(async move { while event_rx.recv().await.is_some() {} });
 
-    let blob_manager = BlobManager::new(annex_config, ctx.pool().clone(), Some(event_tx))?;
+    let manager = ContentStoreManager::new(content_store_config, ctx.pool().clone(), Some(event_tx))?;
 
     // Test with safe path - should work if file exists
     let safe_path = camino::Utf8PathBuf::try_from(temp_file)?;
@@ -106,12 +106,12 @@ async fn test_blob_manager_path_validation(ctx: TestContext) -> TestResult<()> {
     // This might fail due to git-annex setup, but it should fail with a different error
     // than path validation (it should pass path validation)
     let verified = VerifiedPath::parse(safe_path.as_str())?;
-    let result = blob_manager.ingest_file(&verified, None).await;
+    let result = manager.ingest_file(&verified, None).await;
 
     // Check that the error is NOT a path validation error
     if let Err(e) = result {
         let error_msg = e.to_string();
-        ctx.assert("blob manager error should not be path validation")
+        ctx.assert("content-store manager error should not be path validation")
             .that(
                 !error_msg.contains("Invalid file path") && !error_msg.contains("path traversal"),
                 "Error should not be about path validation",
@@ -122,24 +122,24 @@ async fn test_blob_manager_path_validation(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn blob_manager_rejects_percent_encoded_traversal(ctx: TestContext) -> TestResult<()> {
+async fn manager_rejects_percent_encoded_traversal(ctx: TestContext) -> TestResult<()> {
     system_test_preflight()?;
     let temp_dir = TempDir::new()?;
-    let annex_path = temp_dir.path().join("percent-encoded-annex");
+    let content_store_path = temp_dir.path().join("percent-encoded-content-store");
 
-    let repo_utf8 = Utf8PathBuf::from_path_buf(annex_path)
-        .map_err(|_| color_eyre::eyre::eyre!("annex path not valid UTF-8"))?;
+    let repo_utf8 = Utf8PathBuf::from_path_buf(content_store_path)
+        .map_err(|_| color_eyre::eyre::eyre!("content-store path not valid UTF-8"))?;
 
     let (event_tx, mut event_rx) = mpsc::channel::<Event<JsonValue>>(BLOB_EVENT_CHANNEL_CAPACITY);
     tokio::spawn(async move { while event_rx.recv().await.is_some() {} });
 
-    let annex_config = AnnexConfig {
-        repo_path: repo_utf8,
+    let content_store_config = ContentStoreConfig {
+        root_path: repo_utf8,
         num_copies: None,
         large_files: None,
     };
 
-    let _blob_manager = BlobManager::new(annex_config, ctx.pool().clone(), Some(event_tx))?;
+    let _manager = ContentStoreManager::new(content_store_config, ctx.pool().clone(), Some(event_tx))?;
 
     let encoded_path = Utf8PathBuf::from("%2e%2e%2fetc%2fpasswd");
     let verification = VerifiedPath::parse(encoded_path.as_str());
@@ -154,7 +154,7 @@ async fn blob_manager_rejects_percent_encoded_traversal(ctx: TestContext) -> Tes
     Ok(())
 }
 
-async fn init_annex_repo(path: &Path) -> TestResult<()> {
+async fn init_content_store_root(path: &Path) -> TestResult<()> {
     fs::create_dir_all(path).await?;
 
     let output = Command::new("git")

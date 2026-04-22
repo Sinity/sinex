@@ -16,7 +16,7 @@ Services are intentionally thin, stateless facades around database pools and spe
 | Service | Responsibility | Key Workflows |
 |---------|----------------|---------------|
 | [`AnalyticsService`](./analytics.md) | Read-only rollups | Event counts, time-series bucketing, heatmaps, source statistics. |
-| [`ContentService`](./content.md) | Binary blob orchestration | Content-addressed storage (git-annex), operations logging, integrity checks. |
+| [`ContentService`](./content.md) | Binary blob orchestration | Content-addressed storage, operations logging, integrity checks. |
 | [`PkmService`](./pkm.md) | Knowledge Graph & Provenance | Entity/Relation creation, source material registry, stage-as-you-go workflows. |
 | [`SearchService`](./search.md) | Multi-dimensional search | Full-text event search, multi-field filtering, snippet extraction. |
 

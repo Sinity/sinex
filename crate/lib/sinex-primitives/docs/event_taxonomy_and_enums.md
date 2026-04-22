@@ -15,7 +15,7 @@ The system defines over 20 specialized enums across several domains:
 
 ### Filesystem & Storage
 - **FileModificationType**: Categorizes changes into `content`, `metadata`, `permissions`, etc.
-- **AnnexBackend**: Identifies the hashing backend used by git-annex (e.g., `SHA256E`).
+- **Content backend**: Identifies the storage/hash backend used by a content key (e.g., `SHA256E`).
 
 ### System & Lifecycle
 - **ShutdownReason**: Documents why a node or system stopped (`requested`, `crashed`, `signal`).

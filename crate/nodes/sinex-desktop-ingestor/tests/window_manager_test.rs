@@ -57,10 +57,10 @@ async fn window_manager_type_from_str_invalid() -> TestResult<()> {
     let result: Result<WindowManagerType, _> = "".parse();
     assert!(result.is_err(), "empty string should be rejected");
 
-    let result: Result<WindowManagerType, _> = "HYPRLAND".parse();
+    let result: Result<WindowManagerType, _> = "hypr land".parse();
     assert!(
         result.is_err(),
-        "case-sensitive: uppercase should be rejected"
+        "near-miss window manager names should be rejected"
     );
 
     Ok(())

@@ -122,14 +122,14 @@ pub struct IngestdConfig {
     #[serde(default)]
     pub nats_namespace: Option<String>,
 
-    /// git-annex repository path for assembled materials
+    /// Content-store root path for assembled materials
     #[serde(deserialize_with = "deserialize_validated_utf8_path")]
     #[validate(custom(
-        function = "validate_annex_path",
-        message = "Invalid annex repository path"
+        function = "validate_content_store_path",
+        message = "Invalid content-store path"
     ))]
-    #[builder(default = default_annex_repo_path())]
-    pub annex_repo_path: Utf8PathBuf,
+    #[builder(default = default_content_store_path())]
+    pub content_store_path: Utf8PathBuf,
 
     /// Directory used to persist in-flight assembler state between restarts
     #[serde(deserialize_with = "deserialize_validated_utf8_path")]
@@ -284,14 +284,14 @@ impl IngestdConfig {
         consumer_max_ack_pending: Option<i64>,
         material_slices_max_ack_pending: Option<i64>,
         dry_run: bool,
-        annex_repo_path: Option<String>,
+        content_store_path: Option<String>,
         assembler_state_dir: Option<String>,
         namespace: Option<String>,
     ) -> IngestdResult<Self> {
         let work_dir_override =
             strict_env_validated_path("SINEX_INGESTD_WORK_DIR", "ingestd work dir")?;
-        let annex_repo_env_override =
-            strict_env_validated_path("SINEX_ANNEX_PATH", "annex repository path")?;
+        let content_store_env_override =
+            strict_env_validated_path("SINEX_CONTENT_STORE_PATH", "content-store path")?;
         let assembler_state_dir_env_override =
             strict_env_validated_path("SINEX_ASSEMBLER_STATE_DIR", "assembler state directory")?;
         let gitops_work_dir_override =
@@ -344,8 +344,8 @@ impl IngestdConfig {
         if let Some(path) = work_dir_override {
             config.work_dir = path;
         }
-        if let Some(path) = annex_repo_env_override {
-            config.annex_repo_path = path;
+        if let Some(path) = content_store_env_override {
+            config.content_store_path = path;
         }
         if let Some(path) = gitops_work_dir_override {
             config.gitops_work_dir = path;
@@ -370,8 +370,8 @@ impl IngestdConfig {
             config.material_slices_max_ack_pending = pending;
         }
 
-        if let Some(path) = annex_repo_path {
-            config.annex_repo_path = validated_path_override(&path, "annex repository path")?;
+        if let Some(path) = content_store_path {
+            config.content_store_path = validated_path_override(&path, "content-store path")?;
         }
 
         if let Some(path) = assembler_state_dir {
@@ -452,10 +452,10 @@ impl IngestdConfig {
             }
         }
 
-        if tokio::fs::metadata(&self.annex_repo_path).await.is_err() {
+        if tokio::fs::metadata(&self.content_store_path).await.is_err() {
             warn!(
-                path = %self.annex_repo_path,
-                "Annex repository path does not exist; git-annex will attempt initialization"
+                path = %self.content_store_path,
+                "Content-store path does not exist; git-annex backend will attempt initialization"
             );
         }
 
@@ -646,7 +646,7 @@ impl Default for IngestdConfig {
             nats_stream_name: default_nats_stream_name(),
             nats_consumer_name: format!("ingestd-{}", env.name()),
             nats_namespace: None,
-            annex_repo_path: default_annex_repo_path(),
+            content_store_path: default_content_store_path(),
             assembler_state_dir: default_assembler_state_dir(),
             strict_validation: false,
             max_buffered_slices: default_max_buffered_slices(),
@@ -834,16 +834,16 @@ fn validate_work_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationErro
         .map_err(|_| validator::ValidationError::new("invalid_work_dir"))
 }
 
-fn default_annex_repo_path() -> Utf8PathBuf {
-    if let Some(validated) = env_validated_path("SINEX_ANNEX_PATH", "annex repository path") {
+fn default_content_store_path() -> Utf8PathBuf {
+    if let Some(validated) = env_validated_path("SINEX_CONTENT_STORE_PATH", "content-store path") {
         return validated;
     }
 
-    let annex = default_work_dir().join("annex");
+    let content_store = default_work_dir().join("content-store");
     validated_path_or_fallback(
-        &annex,
-        Utf8PathBuf::from("/tmp/sinex/ingestd/annex"),
-        "annex repository path",
+        &content_store,
+        Utf8PathBuf::from("/tmp/sinex/ingestd/content-store"),
+        "content-store path",
     )
 }
 
@@ -862,11 +862,11 @@ fn default_assembler_state_dir() -> Utf8PathBuf {
     )
 }
 
-fn validate_annex_path(path: &Utf8PathBuf) -> Result<(), validator::ValidationError> {
+fn validate_content_store_path(path: &Utf8PathBuf) -> Result<(), validator::ValidationError> {
     use sinex_primitives::validation::validate_path;
     validate_path(path.as_str())
         .map(|_| ())
-        .map_err(|_| validator::ValidationError::new("invalid_annex_path"))
+        .map_err(|_| validator::ValidationError::new("invalid_content_store_path"))
 }
 
 fn validate_state_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationError> {
@@ -1092,7 +1092,7 @@ fn default_stats_log_interval_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        DurabilityThresholds, IngestdConfig, default_annex_repo_path, default_assembler_state_dir,
+        DurabilityThresholds, IngestdConfig, default_content_store_path, default_assembler_state_dir,
         default_gitops_work_dir, default_path_base_dir, default_work_dir, env_validated_path,
     };
     use camino::Utf8PathBuf;
@@ -1143,13 +1143,13 @@ mod tests {
     async fn derived_default_paths_ignore_invalid_overrides() -> xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
         env.set("SINEX_INGESTD_WORK_DIR", "/tmp/sinex-ingestd-config-root");
-        env.set("SINEX_ANNEX_PATH", "../../bad-annex");
+        env.set("SINEX_CONTENT_STORE_PATH", "../../bad-content-store");
         env.set("SINEX_ASSEMBLER_STATE_DIR", "../../bad-state-dir");
         env.set("SINEX_INGESTD_GITOPS_WORK_DIR", "../../bad-gitops");
 
         assert_eq!(
-            default_annex_repo_path(),
-            Utf8PathBuf::from("/tmp/sinex-ingestd-config-root/annex")
+            default_content_store_path(),
+            Utf8PathBuf::from("/tmp/sinex-ingestd-config-root/content-store")
         );
         assert_eq!(
             default_assembler_state_dir(),

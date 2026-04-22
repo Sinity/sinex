@@ -42,7 +42,7 @@ The RPC server implements a **defense-in-depth** strategy with 7 layers of prote
 - `pkm.link_entities` – link entities together.
 
 ### Content & Blobs
-- `content.store_blob` – store base64 payloads in git-annex.
+- `content.store_blob` – store base64 payloads in the content store.
 - `content.retrieve_blob` – fetch stored blobs.
 
 ### Replay Control

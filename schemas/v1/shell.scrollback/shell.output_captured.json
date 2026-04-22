@@ -51,20 +51,20 @@
         "null"
       ]
     },
+    "content_key": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "content_store_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "cwd": {
       "type": "string"
-    },
-    "git_annex_key": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "git_annex_path": {
-      "type": [
-        "string",
-        "null"
-      ]
     },
     "has_ansi_codes": {
       "type": "boolean"

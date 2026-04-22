@@ -688,16 +688,16 @@ pub async fn start_test_ingestd_with_config(
         cmd.env("SINEX_NAMESPACE", ns);
     }
     if let Some(wd) = &config.work_dir {
-        // Set assembler state dir and annex path to the per-test work directory.
+        // Set assembler state and content-store roots to the per-test work directory.
         // These env vars are part of the canonical env-first runtime contract;
         // the binary reads them directly into its typed config.
         // Do NOT use SINEX_INGESTD_WORK_DIR here: ingestd's effective config
-        // surface is SINEX_ASSEMBLER_STATE_DIR plus SINEX_ANNEX_PATH.
+        // surface is SINEX_ASSEMBLER_STATE_DIR plus SINEX_CONTENT_STORE_PATH.
         cmd.env("SINEX_ASSEMBLER_STATE_DIR", wd.join("assembler_state"));
-        cmd.env("SINEX_ANNEX_PATH", wd.join("annex"));
+        cmd.env("SINEX_CONTENT_STORE_PATH", wd.join("content-store"));
         cmd.env(
-            "SINEX_ANNEX_PROCESS_COUNTERS_PATH",
-            wd.join("annex-process-counters.json"),
+            "SINEX_CONTENT_STORE_PROCESS_COUNTERS_PATH",
+            wd.join("content-store-process-counters.json"),
         );
     }
     cmd.env(

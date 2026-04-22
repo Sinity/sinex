@@ -12,7 +12,7 @@ use async_nats::{Client as NatsClient, jetstream};
 use serde::Serialize;
 use sinex_db::DbPoolExt;
 use sinex_db::advisory_lock::AdvisoryLock;
-use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
+use sinex_node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
 use sinex_node_sdk::heartbeat::HeartbeatEmitter;
 use sinex_node_sdk::systemd_notify;
 use sinex_node_sdk::{SelfObserver, SelfObserverConfig};
@@ -793,7 +793,7 @@ impl IngestService {
         let shutdown_flag = self.shutdown_flag.clone();
         let shutdown_notify = self.shutdown_notify.clone();
         let observer = self.observer.clone();
-        let annex_repo_path = self.config.annex_repo_path.clone();
+        let content_store_path = self.config.content_store_path.clone();
         let assembler_state_dir = self.config.assembler_state_dir.clone();
         let namespace = self.config.nats_namespace.clone();
         let slices_max_ack_pending = self.config.material_slices_max_ack_pending;
@@ -807,22 +807,22 @@ impl IngestService {
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         let handle = tokio::spawn(async move {
             let durability_thresholds = durability_thresholds?;
-            let annex_config = AnnexConfig {
-                repo_path: annex_repo_path.clone(),
+            let content_store_config = ContentStoreConfig {
+                root_path: content_store_path.clone(),
                 num_copies: None,
                 large_files: None,
             };
 
-            let git_annex = match GitAnnex::new(annex_config) {
-                Ok(annex) => Arc::new(annex),
+            let content_store = match MaterialContentStore::new(content_store_config) {
+                Ok(content_store) => Arc::new(content_store),
                 Err(e) => {
                     error!(
-                        path = %annex_repo_path,
+                        path = %content_store_path,
                         error = %e,
-                        "Failed to initialize git-annex repository"
+                        "Failed to initialize content-store root"
                     );
                     return Err(SinexError::service(format!(
-                        "Failed to initialize git-annex at {annex_repo_path}: {e}"
+                        "Failed to initialize content store at {content_store_path}: {e}"
                     )));
                 }
             };
@@ -832,7 +832,7 @@ impl IngestService {
             let assembler = match crate::MaterialAssembler::new_with_durability_thresholds(
                 nats_client,
                 pool,
-                git_annex,
+                content_store,
                 state_dir,
                 namespace.clone(),
                 slices_max_ack_pending,

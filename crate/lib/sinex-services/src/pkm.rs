@@ -418,7 +418,7 @@ impl PkmService {
 
         // Create a blob record
         let blob = Blob::builder()
-            .annex_backend("SHA256E".to_string())
+            .storage_backend("SHA256E".to_string())
             .content_hash(sha256_checksum.clone())
             .original_filename("inline-content".to_string())
             .size_bytes(content.len() as i64)

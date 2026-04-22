@@ -1,15 +1,15 @@
 use camino::Utf8Path;
-use sinex_node_sdk::annex::blob_manager::BlobManager;
+use sinex_node_sdk::content_store::manager::ContentStoreManager;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 async fn detect_mime_type_matches_extension() -> TestResult<()> {
     assert_eq!(
-        BlobManager::detect_mime_type(Utf8Path::new("test.txt"))?,
+        ContentStoreManager::detect_mime_type(Utf8Path::new("test.txt"))?,
         "text/plain"
     );
     assert_eq!(
-        BlobManager::detect_mime_type(Utf8Path::new("image.jpg"))?,
+        ContentStoreManager::detect_mime_type(Utf8Path::new("image.jpg"))?,
         "image/jpeg"
     );
     Ok(())

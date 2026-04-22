@@ -26,7 +26,7 @@
 //!
 //! ### Data Integrity & Provenance
 //! - **Single-Writer Pattern**: Nodes submit provisional events to NATS; `sinex-ingestd` ensures durable database persistence.
-//! - **Dual-Hash Verification**: Large files managed by the [`annex`] subsystem are verified using both BLAKE3 and SHA256.
+//! - **Dual-Hash Verification**: Content-store entries are verified using backend-aware digests plus BLAKE3.
 //! - **Lineage Tracking**: Automatic synthesis provenance links derived events to their source.
 //!
 //! ### Distributed Coordination
@@ -52,7 +52,7 @@
 #[cfg(feature = "messaging")]
 pub mod acquisition_manager;
 #[cfg(feature = "db")]
-pub mod annex;
+pub mod content_store;
 pub mod api_poller;
 #[cfg(feature = "messaging")]
 pub mod automaton_base;
@@ -215,11 +215,12 @@ pub use version::{NodeInstance, NodeVersion};
 #[cfg(feature = "messaging")]
 pub use watcher_handle::{WatcherHandle, WatcherHealth, WatcherState};
 
-// Re-export commonly used annex types
-
 // Re-export preflight utilities
 #[cfg(feature = "db")]
-pub use annex::{AnnexConfig, AnnexKey, BlobManager, BlobMetadata, GitAnnex};
+pub use content_store::{
+    BlobMetadata, ContentBackend, ContentStoreConfig, ContentStoreKey, ContentStoreManager,
+    MaterialContentStore,
+};
 #[cfg(feature = "preflight")]
 pub use preflight::{VerificationStatus, verify_service_dependencies};
 

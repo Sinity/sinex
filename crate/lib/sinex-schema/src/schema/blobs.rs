@@ -1,8 +1,8 @@
 //! The Canonical Database Schema for Content-Addressed Storage (`core.blobs`).
 //!
-//! This module defines the schema for managing metadata about large binary objects
-//! (blobs) that are stored externally, primarily in git-annex. It acts as a
-//! high-performance index and metadata cache for the content-addressed store.
+//! This module defines the schema for managing metadata about binary objects
+//! (blobs) stored by the SDK content store. It acts as a high-performance index
+//! and metadata cache for the content-addressed store.
 
 use crate::primitives::{Timestamp, Uuid};
 use crate::schema::{SourceMaterialRegistry, TableDef};
@@ -19,29 +19,29 @@ use sqlx::FromRow;
 
 /// **Table: `core.blobs`**
 ///
-/// This table stores metadata for large binary objects. The actual content is stored
-/// in an external content-addressed system like git-annex. This table provides a
+/// This table stores metadata for binary objects. The actual content is stored
+/// in the SDK content store. This table provides a
 ///
 /// fast, queryable index into that store.
 ///
 /// **Design Rationale:**
 /// - **Surrogate vs. Natural Key:** A `UUID` surrogate key (`id`) is used as the
 ///   primary key for performance. `UUID`s (which `UUIDv7` IDs are stored as) are fixed-size
-///   (16 bytes) and excellent for join performance. The `annex_key` is a long,
-///   variable-length string, making it a poor choice for a primary key that will
-///   be referenced by many foreign keys.
-/// - **Decomposed `annex_key`:** The `annex_key` string is decomposed into its
-///   constituent parts (`annex_backend`, `content_hash`, `size_bytes`) to allow for
+///   (16 bytes) and excellent for join performance. The full content-store key is
+///   variable-length, making it a poor choice for a primary key that will be
+///   referenced by many foreign keys.
+/// - **Decomposed content key:** The content-store key is decomposed into its
+///   stored legacy columns (`annex_backend`, `content_hash`, `size_bytes`) to allow
 ///   typed storage and efficient, direct querying on these attributes. A `UNIQUE`
 ///   constraint on `(annex_backend, content_hash)` preserves the natural key's integrity.
-/// - **Dual Checksums:** The table stores both a cryptographic hash (from the annex
-///   key) for integrity and a faster, non-cryptographic hash (`checksum_blake3`)
-///   for high-speed deduplication checks during ingestion.
+/// - **Dual Checksums:** The table stores both the backend digest for integrity and
+///   a BLAKE3 checksum (`checksum_blake3`) for high-speed deduplication checks
+///   during ingestion.
 #[derive(Iden, Copy, Clone)]
 pub enum Blobs {
     Table,
     Id,
-    // Decomposed annex key components
+    // Decomposed content-store key components. The column name is legacy schema.
     AnnexBackend,
     ContentHash,
     SizeBytes,
@@ -139,7 +139,7 @@ impl Blobs {
     #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![
-            // The true natural key of the annexed content is the combination of its hashing algorithm and the resulting hash.
+            // The true natural key is the combination of backend identifier and digest.
             Index::create()
                 .if_not_exists()
                 .name("uk_blobs_annex_backend_content_hash")

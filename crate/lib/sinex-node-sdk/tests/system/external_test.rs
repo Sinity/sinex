@@ -1,14 +1,14 @@
 // # External System Integration Tests
 //
 // Integration tests with external systems and services:
-// - Git Annex for blob storage
+// - Content-store git-annex backend
 // - PostgreSQL with TimescaleDB extensions
 // - Operating system interfaces
 // - External command execution
 //
 // ## Test Categories
 //
-// - **Git Annex Integration**: File storage, retrieval, and deduplication
+// - **Content Store Integration**: File storage, retrieval, and deduplication
 // - **External Command Execution**: System interaction validation
 // - **Database Integration**: External database service integration
 //
@@ -16,54 +16,58 @@
 //
 // - **Individual tests**: 10-60 seconds
 // - **Resource usage**: Significant disk I/O, external process spawning
-// - **Dependencies**: Git Annex, external command tools, filesystem access
+// - **Dependencies**: git-annex backend, external command tools, filesystem access
 
-use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
-use xtask::sandbox::prelude::*;
-use xtask::sandbox::TestResult;
+use camino::Utf8PathBuf;
+use sinex_node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
 use sqlx::Row;
 use tempfile::TempDir;
 use tokio::fs;
+use xtask::sandbox::TestResult;
+use xtask::sandbox::prelude::*;
 
-// ==================== GIT ANNEX INTEGRATION TESTS ====================
+// ==================== CONTENT STORE INTEGRATION TESTS ====================
 
-async fn setup_test_annex(
-) -> AnyhowResult<(GitAnnex, tempfile::TempDir), Box<dyn std::error::Error + Send + Sync>> {
+async fn setup_test_content_store(
+) -> AnyhowResult<(MaterialContentStore, tempfile::TempDir), Box<dyn std::error::Error + Send + Sync>> {
     let temp_dir = TempDir::new()?;
-    let repo_path = temp_dir.path().to_path_buf();
+    let repo_path = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+        .map_err(|_| color_eyre::eyre::eyre!("content-store root path must be valid UTF-8"))?;
 
     // Initialize git-annex repository
-    GitAnnex::init(&repo_path, Some("test-repo")).await?;
+    MaterialContentStore::init(&repo_path, Some("test-repo")).await?;
 
-    let config = AnnexConfig {
-        repo_path: repo_path.clone(),
+    let config = ContentStoreConfig {
+        root_path: repo_path.clone(),
         num_copies: Some(1),
         large_files: None,
     };
 
-    let annex = GitAnnex::new(config)?;
+    let content_store = MaterialContentStore::new(config)?;
 
-    Ok((annex, temp_dir))
+    Ok((content_store, temp_dir))
 }
 
 #[sinex_test]
 async fn test_file_add_and_retrieve(ctx: TestContext) -> TestResult<()> {
-    let (annex, temp_dir) = setup_test_annex().await?;
+    let (content_store, temp_dir) = setup_test_content_store().await?;
 
     // Create a test file
     let test_file = temp_dir.path().join("test.txt");
-    let content = b"Hello, git-annex!";
+    let content = b"Hello, content store!";
     fs::write(&test_file, content).await?;
 
-    // Add file to annex
-    let annex_key = annex.add_file(&test_file).await?;
+    // Add file to content store
+    let content_key = content_store.store_file(&test_file).await?;
 
     // Verify key was generated
-    assert!(!annex_key.key.is_empty());
-    pretty_assertions::assert_eq!(annex_key.size, content.len() as u64);
+    assert!(!content_key.key.is_empty());
+    pretty_assertions::assert_eq!(content_key.size, content.len() as u64);
 
     // Ensure content is available
-    annex.get_content(&test_file.to_string_lossy()).await?;
+    content_store
+        .ensure_content_local(&test_file.to_string_lossy())
+        .await?;
 
     // Verify file still exists and is a symlink
     assert!(test_file.exists());
@@ -73,83 +77,83 @@ async fn test_file_add_and_retrieve(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn test_large_file_handling(ctx: TestContext) -> TestResult<()> {
-    let (annex, temp_dir) = setup_test_annex().await?;
+    let (content_store, temp_dir) = setup_test_content_store().await?;
 
     // Create 1MB of data
     let content = vec![0u8; 1024 * 1024];
     let large_file = temp_dir.path().join("large.bin");
     fs::write(&large_file, &content).await?;
 
-    // Add large file to annex
-    let annex_key = annex.add_file(&large_file).await?;
+    // Add large file to content store
+    let content_key = content_store.store_file(&large_file).await?;
 
     // Verify git-annex handled it
-    pretty_assertions::assert_eq!(annex_key.size, content.len() as u64);
-    assert!(!annex_key.backend.is_empty());
+    pretty_assertions::assert_eq!(content_key.size, content.len() as u64);
+    assert!(!content_key.storage_backend().is_empty());
 
     // Check status
-    let status = annex.status().await?;
+    let status = content_store.status().await?;
     assert!(status.contains("1 file"));
 
     Ok(())
 }
 
 #[sinex_test]
-async fn test_annex_key_lookup(ctx: TestContext) -> TestResult<()> {
-    let (annex, temp_dir) = setup_test_annex().await?;
+async fn test_content_key_lookup(ctx: TestContext) -> TestResult<()> {
+    let (content_store, temp_dir) = setup_test_content_store().await?;
 
     // Create a test file with known content
     let test_file = temp_dir.path().join("lookup_test.txt");
     let content = b"Content for key lookup test";
     fs::write(&test_file, content).await?;
 
-    // Add to annex
-    let original_key = annex.add_file(&test_file).await?;
+    // Add to content store
+    let original_key = content_store.store_file(&test_file).await?;
 
     // Look up the key again
-    let looked_up_key = annex.get_key(&test_file).await?;
+    let looked_up_key = content_store.lookup_content_key(&test_file).await?;
 
     // Keys should match
     pretty_assertions::assert_eq!(original_key.key, looked_up_key.key);
     pretty_assertions::assert_eq!(original_key.size, looked_up_key.size);
-    pretty_assertions::assert_eq!(original_key.backend, looked_up_key.backend);
+    pretty_assertions::assert_eq!(original_key.storage_backend(), looked_up_key.storage_backend());
 
     Ok(())
 }
 
 #[sinex_test]
 async fn test_drop_content(ctx: TestContext) -> TestResult<()> {
-    let (annex, temp_dir) = setup_test_annex().await?;
+    let (content_store, temp_dir) = setup_test_content_store().await?;
 
     // Create and add a file
     let test_file = temp_dir.path().join("drop_test.txt");
     fs::write(&test_file, b"Content to drop").await?;
 
-    let key = annex.add_file(&test_file).await?;
+    let key = content_store.store_file(&test_file).await?;
 
     // Try to drop content (will fail without force since we only have 1 copy)
-    let drop_result = annex.drop_content(&key.key, false).await;
+    let drop_result = content_store.drop_content(&key.key, false).await;
     assert!(drop_result.is_err());
 
     // Force drop
-    annex.drop_content(&key.key, true).await?;
+    content_store.drop_content(&key.key, true).await?;
 
     Ok(())
 }
 
 #[sinex_test]
 async fn test_fsck(ctx: TestContext) -> TestResult<()> {
-    let (annex, temp_dir) = setup_test_annex().await?;
+    let (content_store, temp_dir) = setup_test_content_store().await?;
 
     // Add some files
     for i in 0..3 {
         let file = temp_dir.path().join(format!("file_{}.txt", i));
         fs::write(&file, format!("Content {}", i)).await?;
-        annex.add_file(&file).await?;
+        content_store.store_file(&file).await?;
     }
 
     // Run filesystem check
-    let fsck_output = annex.fsck(true, false, None).await?;
+    let fsck_output = content_store.verify_key(true, false, None).await?;
 
     // Should complete without errors
     assert!(fsck_output.success);
@@ -161,19 +165,20 @@ async fn test_fsck(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_git_annex_configuration(ctx: TestContext) -> TestResult<()> {
     let temp_dir = TempDir::new()?;
-    let repo_path = temp_dir.path().to_path_buf();
+    let repo_path = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+        .map_err(|_| color_eyre::eyre::eyre!("content-store root path must be valid UTF-8"))?;
 
     // Initialize with configuration
-    GitAnnex::init(&repo_path, Some("configured-repo")).await?;
+    MaterialContentStore::init(&repo_path, Some("configured-repo")).await?;
 
-    let config = AnnexConfig {
-        repo_path: repo_path.clone(),
+    let config = ContentStoreConfig {
+        root_path: repo_path.clone(),
         num_copies: Some(2),
         large_files: Some("*.bin".to_string()),
     };
 
-    let annex = GitAnnex::new(config)?;
-    annex.configure().await?;
+    let content_store = MaterialContentStore::new(config)?;
+    content_store.configure().await?;
 
     // Verify configuration was applied
     let output = tokio::process::Command::new("git")
@@ -190,13 +195,13 @@ async fn test_git_annex_configuration(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test(timeout = 30)]
 async fn test_concurrent_file_operations(ctx: TestContext) -> TestResult<()> {
-    let (annex, temp_dir) = setup_test_annex().await?;
-    let annex = std::sync::Arc::new(annex);
+    let (content_store, temp_dir) = setup_test_content_store().await?;
+    let content_store = std::sync::Arc::new(content_store);
     let mut handles = vec![];
 
     // Spawn multiple concurrent operations
     for i in 0..5 {
-        let annex = annex.clone();
+        let content_store = content_store.clone();
         let temp_path = temp_dir.path().to_path_buf();
 
         let handle = tokio::spawn(async move {
@@ -206,8 +211,8 @@ async fn test_concurrent_file_operations(ctx: TestContext) -> TestResult<()> {
             // Write file
             fs::write(&file_path, content.as_bytes()).await?;
 
-            // Add to annex
-            let key = annex.add_file(&file_path).await?;
+            // Add to content store
+            let key = content_store.store_file(&file_path).await?;
 
             Ok::<_, color_eyre::eyre::Error>(key)
         });
@@ -233,7 +238,7 @@ async fn test_concurrent_file_operations(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn test_files_in_subdirectories(ctx: TestContext) -> TestResult<()> {
-    let (annex, temp_dir) = setup_test_annex().await?;
+    let (content_store, temp_dir) = setup_test_content_store().await?;
 
     // Create subdirectory structure
     let sub_dir = temp_dir.path().join("nested").join("path");
@@ -244,22 +249,24 @@ async fn test_files_in_subdirectories(ctx: TestContext) -> TestResult<()> {
     let content = br#"{"nested": "json", "data": true}"#;
     fs::write(&nested_file, content).await?;
 
-    // Add to annex
-    let key = annex.add_file(&nested_file).await?;
+    // Add to content store
+    let key = content_store.store_file(&nested_file).await?;
 
     // Verify path structure
     assert!(nested_file.exists());
     pretty_assertions::assert_eq!(key.size, content.len() as u64);
 
     // Get content to ensure it's accessible
-    annex.get_content(&nested_file.to_string_lossy()).await?;
+    content_store
+        .ensure_content_local(&nested_file.to_string_lossy())
+        .await?;
 
     Ok(())
 }
 
 #[sinex_test(timeout = 30)]
-async fn test_annex_deduplication(ctx: TestContext) -> TestResult<()> {
-    let (annex, temp_dir) = setup_test_annex().await?;
+async fn test_content_store_deduplication(ctx: TestContext) -> TestResult<()> {
+    let (content_store, temp_dir) = setup_test_content_store().await?;
 
     let content = b"Duplicate content for dedup test";
 
@@ -270,9 +277,9 @@ async fn test_annex_deduplication(ctx: TestContext) -> TestResult<()> {
     fs::write(&file1, content).await?;
     fs::write(&file2, content).await?;
 
-    // Add both to annex
-    let key1 = annex.add_file(&file1).await?;
-    let key2 = annex.add_file(&file2).await?;
+    // Add both to content store
+    let key1 = content_store.store_file(&file1).await?;
+    let key2 = content_store.store_file(&file2).await?;
 
     // Both files should exist
     assert!(file1.exists());
@@ -280,7 +287,7 @@ async fn test_annex_deduplication(ctx: TestContext) -> TestResult<()> {
 
     // Keys should be identical (git-annex deduplicates by content)
     pretty_assertions::assert_eq!(key1.key, key2.key);
-    pretty_assertions::assert_eq!(key1.hash, key2.hash);
+    pretty_assertions::assert_eq!(key1.digest, key2.digest);
 
     // Check that git-annex recognizes the deduplication
     let output = tokio::process::Command::new("git")
