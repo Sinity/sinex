@@ -77,9 +77,9 @@ struct Args {
     #[arg(long)]
     validate_config: bool,
 
-    /// Path to the git-annex repository for material storage
-    #[arg(long, env = "SINEX_ANNEX_PATH")]
-    annex_path: Option<String>,
+    /// Path to the content-store root for material storage
+    #[arg(long, env = "SINEX_CONTENT_STORE_PATH")]
+    content_store_path: Option<String>,
 
     /// Directory used to persist assembler state between restarts
     #[arg(long, env = "SINEX_ASSEMBLER_STATE_DIR")]
@@ -160,7 +160,7 @@ async fn load_runtime_config(args: &Args) -> Result<IngestdConfig> {
         args.consumer_max_ack_pending,
         args.material_slices_max_ack_pending,
         args.dry_run,
-        args.annex_path.clone(),
+        args.content_store_path.clone(),
         args.assembler_state_dir.clone(),
         args.namespace.clone(),
     )?;
@@ -310,7 +310,7 @@ mod tests {
             tokio_console: false,
             dry_run: false,
             validate_config: false,
-            annex_path: None,
+            content_store_path: None,
             assembler_state_dir: None,
             namespace: None,
         }

@@ -16,7 +16,7 @@ health/self-observation.
 
 ### Implementation Guides
 - [**Distributed Coordination**](coordination.md) – Leadership election, handoff protocol, and strict lock ordering rules for reliability.
-- [**Annex Subsystem**](annex.md) – Large file management via git-annex, dual-hash verification, and deduplication.
+- [**Material Content Store**](content_store.md) – Hybrid local-CAS/large-object storage, dual-hash verification, and deduplication.
 - [**Stage-as-You-Go**](stage_as_you_go.md) – Real-time provenance tracking for streaming data.
 - [**Record Source Framework**](record_source.md) – Common source acquisition API for `SQLite` rows, append-only histories, and observation streams.
 - [**Preflight Verification**](preflight.md) – Fail-fast safety checks for deployment readiness.

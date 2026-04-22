@@ -1,38 +1,38 @@
-//! Integration tests that exercise the current `BlobManager` API surface.
+//! Integration tests that exercise the current `ContentStoreManager` API surface.
 //!
 //! These scenarios ensure deduplication, round-tripping, and integrity
-//! verification keep working against git-annex.
+//! verification keep working against the current large-object backend.
 
 use camino::Utf8PathBuf;
-use sinex_node_sdk::annex::{AnnexConfig, BlobManager};
+use sinex_node_sdk::content_store::{ContentStoreConfig, ContentStoreManager};
 use std::os::unix::fs::PermissionsExt;
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
 
-const TEST_BYTES: &[u8] = b"sinex-blob-manager-integration";
+const TEST_BYTES: &[u8] = b"sinex-content-store-manager-integration";
 
 #[allow(clippy::unused_async)]
-async fn blob_manager_fixture(ctx: &TestContext) -> color_eyre::Result<(BlobManager, TempDir)> {
+async fn manager_fixture(ctx: &TestContext) -> color_eyre::Result<(ContentStoreManager, TempDir)> {
     system_test_preflight()?;
     let temp_dir = TempDir::new()?;
-    let annex_path = temp_dir.path().join("annex");
-    let repo_utf8 = Utf8PathBuf::from_path_buf(annex_path)
-        .map_err(|_| color_eyre::eyre::eyre!("annex path must be valid UTF-8"))?;
+    let content_store_path = temp_dir.path().join("content-store");
+    let repo_utf8 = Utf8PathBuf::from_path_buf(content_store_path)
+        .map_err(|_| color_eyre::eyre::eyre!("content-store path must be valid UTF-8"))?;
 
-    let annex_config = AnnexConfig {
-        repo_path: repo_utf8,
+    let content_store_config = ContentStoreConfig {
+        root_path: repo_utf8,
         num_copies: Some(1),
         large_files: Some("anything".to_string()),
     };
 
-    let manager = BlobManager::new(annex_config, ctx.pool().clone(), None)?;
+    let manager = ContentStoreManager::new(content_store_config, ctx.pool().clone(), None)?;
     Ok((manager, temp_dir))
 }
 
 #[sinex_test]
 #[ignore = "external"]
-async fn blob_manager_deduplicates_content(ctx: TestContext) -> color_eyre::Result<()> {
-    let (manager, _tmp) = blob_manager_fixture(&ctx).await?;
+async fn manager_deduplicates_content(ctx: TestContext) -> color_eyre::Result<()> {
+    let (manager, _tmp) = manager_fixture(&ctx).await?;
 
     let first = manager
         .ingest_from_bytes(TEST_BYTES, "dedupe-a.txt", "text/plain")
@@ -41,9 +41,9 @@ async fn blob_manager_deduplicates_content(ctx: TestContext) -> color_eyre::Resu
         .ingest_from_bytes(TEST_BYTES, "dedupe-b.txt", "text/plain")
         .await?;
 
-    ctx.assert("dedupe should return same annex key").that(
-        first.annex_key() == second.annex_key(),
-        "Annex keys must match",
+    ctx.assert("dedupe should return same content-store key").that(
+        first.content_key() == second.content_key(),
+        "Content-store keys must match",
     )?;
     ctx.assert("stored checksum should be reused").that(
         first.checksum_blake3 == second.checksum_blake3,
@@ -55,12 +55,12 @@ async fn blob_manager_deduplicates_content(ctx: TestContext) -> color_eyre::Resu
 
 #[sinex_test]
 #[ignore = "external"]
-async fn blob_manager_round_trips_content(ctx: TestContext) -> color_eyre::Result<()> {
-    let (manager, _tmp) = blob_manager_fixture(&ctx).await?;
+async fn manager_round_trips_content(ctx: TestContext) -> color_eyre::Result<()> {
+    let (manager, _tmp) = manager_fixture(&ctx).await?;
     let blob = manager
         .ingest_from_bytes(TEST_BYTES, "roundtrip.txt", "text/plain")
         .await?;
-    let key = blob.annex_key();
+    let key = blob.content_key();
 
     let retrieved = manager.retrieve_content(&key).await?;
     ctx.assert("round trip payload should match").that(
@@ -73,8 +73,8 @@ async fn blob_manager_round_trips_content(ctx: TestContext) -> color_eyre::Resul
 
 #[sinex_test]
 #[ignore = "external"]
-async fn blob_manager_detects_corruption_on_retrieve(ctx: TestContext) -> color_eyre::Result<()> {
-    let (manager, _tmp) = blob_manager_fixture(&ctx).await?;
+async fn manager_detects_corruption_on_retrieve(ctx: TestContext) -> color_eyre::Result<()> {
+    let (manager, _tmp) = manager_fixture(&ctx).await?;
     let blob = manager
         .ingest_from_bytes(
             b"integrity-check",
@@ -82,9 +82,9 @@ async fn blob_manager_detects_corruption_on_retrieve(ctx: TestContext) -> color_
             "application/octet-stream",
         )
         .await?;
-    let key = blob.annex_key();
+    let key = blob.content_key();
 
-    // Force git-annex to materialize the content, then tamper with it.
+    // Force the backend to materialize the content, then tamper with it.
     let _ = manager.retrieve_content(&key).await?;
     let blob_path = manager.get_blob_path(&key).await?;
     let perms = std::fs::Permissions::from_mode(0o644);

@@ -43,6 +43,8 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
+    "content_key": true,
+    "content_store_path": true,
     "duration_seconds": {
       "format": "double",
       "type": "number"
@@ -63,8 +65,6 @@
         "null"
       ]
     },
-    "git_annex_key": true,
-    "git_annex_path": true,
     "recording_file": {
       "type": "string"
     },

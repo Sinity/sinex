@@ -1,11 +1,11 @@
 //! Integration tests for `ContentService`.
 //!
-//! Full roundtrip tests (store → retrieve → verify) require `git-annex` on PATH
+//! Full roundtrip tests (store -> retrieve -> verify) require `git-annex` on PATH
 //! and are gated behind `#[ignore = "external"]`. Logic-level tests (error
 //! wrapping, operation logging, helpers) run unconditionally.
 
 use camino::Utf8PathBuf;
-use sinex_node_sdk::annex::{AnnexConfig, BlobManager};
+use sinex_node_sdk::content_store::{ContentStoreConfig, ContentStoreManager};
 use sinex_services::ContentService;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -29,18 +29,18 @@ fn require_git_annex() -> TestResult<()> {
 async fn content_service_fixture(ctx: &TestContext) -> TestResult<(ContentService, TempDir)> {
     require_git_annex()?;
     let temp_dir = TempDir::new()?;
-    let annex_path = temp_dir.path().join("annex");
-    let repo_utf8 = Utf8PathBuf::from_path_buf(annex_path)
-        .map_err(|_| color_eyre::eyre::eyre!("annex path must be valid UTF-8"))?;
+    let content_store_path = temp_dir.path().join("content-store");
+    let repo_utf8 = Utf8PathBuf::from_path_buf(content_store_path)
+        .map_err(|_| color_eyre::eyre::eyre!("content-store path must be valid UTF-8"))?;
 
-    let annex_config = AnnexConfig {
-        repo_path: repo_utf8,
+    let content_store_config = ContentStoreConfig {
+        root_path: repo_utf8,
         num_copies: Some(1),
         large_files: Some("anything".to_string()),
     };
 
-    let blob_manager = BlobManager::new(annex_config, ctx.pool().clone(), None)?;
-    let service = ContentService::new(ctx.pool().clone(), Arc::new(blob_manager));
+    let content_store = ContentStoreManager::new(content_store_config, ctx.pool().clone(), None)?;
+    let service = ContentService::new(ctx.pool().clone(), Arc::new(content_store));
     Ok((service, temp_dir))
 }
 
@@ -54,7 +54,7 @@ async fn content_store_retrieve_roundtrip(ctx: TestContext) -> TestResult<()> {
     let (service, _tmp) = content_service_fixture(&ctx).await?;
 
     let payload = b"sinex content roundtrip test payload";
-    let annex_key = service
+    let content_key = service
         .store_content(
             payload,
             "roundtrip.txt",
@@ -64,10 +64,10 @@ async fn content_store_retrieve_roundtrip(ctx: TestContext) -> TestResult<()> {
         )
         .await?;
 
-    assert!(!annex_key.is_empty(), "annex key should be non-empty");
+    assert!(!content_key.is_empty(), "content-store key should be non-empty");
 
     // Retrieve and compare
-    let retrieved = service.retrieve_content(&annex_key).await?;
+    let retrieved = service.retrieve_content(&content_key).await?;
     assert_eq!(
         retrieved.as_slice(),
         payload,
@@ -83,7 +83,7 @@ async fn content_verify_after_store(ctx: TestContext) -> TestResult<()> {
     let (service, _tmp) = content_service_fixture(&ctx).await?;
 
     let payload = b"verify me";
-    let annex_key = service
+    let content_key = service
         .store_content(
             payload,
             "verify.bin",
@@ -93,7 +93,7 @@ async fn content_verify_after_store(ctx: TestContext) -> TestResult<()> {
         )
         .await?;
 
-    let ok = service.verify_content(&annex_key).await?;
+    let ok = service.verify_content(&content_key).await?;
     assert!(ok, "freshly stored content should verify successfully");
 
     Ok(())
@@ -105,7 +105,7 @@ async fn content_metadata_after_store(ctx: TestContext) -> TestResult<()> {
     let (service, _tmp) = content_service_fixture(&ctx).await?;
 
     let payload = b"metadata test";
-    let annex_key = service
+    let content_key = service
         .store_content(
             payload,
             "meta.txt",
@@ -115,7 +115,7 @@ async fn content_metadata_after_store(ctx: TestContext) -> TestResult<()> {
         )
         .await?;
 
-    let meta = service.get_content_metadata(&annex_key).await?;
+    let meta = service.get_content_metadata(&content_key).await?;
     assert_eq!(meta.size_bytes, payload.len() as i64);
     assert!(
         meta.checksum_blake3.is_some(),
@@ -153,7 +153,7 @@ async fn content_deduplication(ctx: TestContext) -> TestResult<()> {
 
     assert_eq!(
         key_a, key_b,
-        "identical content should produce the same annex key"
+        "identical content should produce the same content-store key"
     );
 
     Ok(())
@@ -198,11 +198,11 @@ async fn content_store_logs_operation(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn retrieve_nonexistent_key_returns_service_error(ctx: TestContext) -> TestResult<()> {
-    // ContentService needs a BlobManager. For error-path tests we can still
+    // ContentService needs a ContentStoreManager. For error-path tests we can still
     // construct one with a valid temp dir — the retrieve will fail because
-    // the key doesn't exist in the annex, which is the error path we want.
+    // the key doesn't exist in storage, which is the error path we want.
     if which::which("git-annex").is_err() {
-        // Can't construct BlobManager without git-annex at all — skip gracefully.
+        // Can't construct ContentStoreManager without git-annex at all — skip gracefully.
         // This test only validates error wrapping, so skipping is acceptable.
         return Ok(());
     }

@@ -2,7 +2,7 @@ use futures::{StreamExt, future::try_join_all};
 use sinex_db::repositories::{DbPoolExt, material_status};
 use sinex_node_sdk::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy, SOURCE_MATERIAL_BEGIN_SUBJECT,
-    SOURCE_MATERIAL_END_SUBJECT, SOURCE_MATERIAL_STREAM, annex::AnnexProcessCounters,
+    SOURCE_MATERIAL_END_SUBJECT, SOURCE_MATERIAL_STREAM, content_store::ContentStoreProcessCounters,
     source_material_slice_subject, stage_material, stage_material_from_file,
 };
 use sinex_primitives::error::SinexError;
@@ -135,7 +135,7 @@ async fn fetch_material_blob_summary(
         r"
         SELECT
             m.optional_blob_id::uuid AS blob_id,
-            b.annex_backend,
+            b.annex_backend AS storage_backend,
             b.size_bytes
         FROM raw.source_material_registry m
         JOIN core.blobs b ON b.id = m.optional_blob_id
@@ -148,19 +148,19 @@ async fn fetch_material_blob_summary(
 
     Ok((
         sqlx::Row::get(&row, "blob_id"),
-        sqlx::Row::get(&row, "annex_backend"),
+        sqlx::Row::get(&row, "storage_backend"),
         sqlx::Row::get(&row, "size_bytes"),
     ))
 }
 
-async fn read_ingestd_annex_process_counters(
+async fn read_ingestd_content_store_process_counters(
     work_dir: &std::path::Path,
-) -> Result<AnnexProcessCounters> {
-    let path = work_dir.join("annex-process-counters.json");
+) -> Result<ContentStoreProcessCounters> {
+    let path = work_dir.join("content-store-process-counters.json");
     let bytes = match tokio::fs::read(&path).await {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == ErrorKind::NotFound => {
-            return Ok(AnnexProcessCounters::default());
+            return Ok(ContentStoreProcessCounters::default());
         }
         Err(error) => return Err(error.into()),
     };
@@ -796,8 +796,9 @@ async fn source_material_scenario_duplicate_content_reuses_blob_identity(
     Ok(())
 }
 
-/// Scenario: material storage chooses local CAS for small material and git-annex
-/// for large material, with subprocess counts measured at the SDK boundary.
+/// Scenario: material storage chooses local CAS for small material and the
+/// large-object backend for large material, with subprocess counts measured at
+/// the SDK boundary.
 #[sinex_test(
     timeout = 240,
     serial,
@@ -807,7 +808,7 @@ async fn source_material_scenario_duplicate_content_reuses_blob_identity(
     cost_tier = "heavy",
     tags = "source_material,resource_shape,storage_profile,local_cas,git_annex",
     fixtures = "postgres,nats,ingestd,material_spool,git_annex",
-    subjects = "issue:317,issue:324,node-sdk:source-material,node-sdk:annex",
+    subjects = "issue:317,issue:324,node-sdk:source-material,node-sdk:content-store",
     claims = "small-material-uses-local-cas-without-git-annex-subprocess,large-material-uses-git-annex-with-observed-subprocess-count,storage-backend-profile-is-machine-readable",
     reproducer = "xtask test -p sinex-node-sdk --scenario-tag storage_profile --heavy"
 )]
@@ -833,7 +834,7 @@ async fn source_material_resource_storage_backend_profile(ctx: TestContext) -> R
         .with_work_dir(work_dir.path().join("writer"));
 
     let small_payload = vec![b's'; 4 * 1024];
-    let small_counter_baseline = read_ingestd_annex_process_counters(work_dir.path()).await?;
+    let small_counter_baseline = read_ingestd_content_store_process_counters(work_dir.path()).await?;
     let small_started = Instant::now();
     let small_material_id = stage_material(
         &manager,
@@ -850,7 +851,7 @@ async fn source_material_resource_storage_backend_profile(ctx: TestContext) -> R
         i64::try_from(small_payload.len())?,
     )
     .await?;
-    let small_counters = read_ingestd_annex_process_counters(work_dir.path())
+    let small_counters = read_ingestd_content_store_process_counters(work_dir.path())
         .await?
         .saturating_delta_since(small_counter_baseline);
     assert_eq!(
@@ -868,7 +869,7 @@ async fn source_material_resource_storage_backend_profile(ctx: TestContext) -> R
     let large_utf8_path = camino::Utf8PathBuf::from_path_buf(large_path)
         .map_err(|path| color_eyre::eyre::eyre!("large profile path is not UTF-8: {path:?}"))?;
 
-    let large_counter_baseline = read_ingestd_annex_process_counters(work_dir.path()).await?;
+    let large_counter_baseline = read_ingestd_content_store_process_counters(work_dir.path()).await?;
     let large_started = Instant::now();
     let (large_material_id, large_streamed_bytes) = stage_material_from_file(
         &manager,
@@ -880,7 +881,7 @@ async fn source_material_resource_storage_backend_profile(ctx: TestContext) -> R
     let large_stage_elapsed_ms = large_started.elapsed().as_secs_f64() * 1000.0;
     let (_large_blob_id, large_backend, large_blob_bytes) =
         wait_for_completed_material(&ctx.pool, large_material_id, large_streamed_bytes).await?;
-    let large_counters = read_ingestd_annex_process_counters(work_dir.path())
+    let large_counters = read_ingestd_content_store_process_counters(work_dir.path())
         .await?
         .saturating_delta_since(large_counter_baseline);
     assert_ne!(
@@ -909,7 +910,7 @@ async fn source_material_resource_storage_backend_profile(ctx: TestContext) -> R
                 "blob_backend": small_backend,
                 "blob_size_bytes": small_blob_bytes,
                 "stage_elapsed_ms": small_stage_elapsed_ms,
-                "ingestd_annex_process_counter_delta": small_counters,
+                "ingestd_content_store_process_counter_delta": small_counters,
             },
             "large": {
                 "material_id": large_material_id.to_string(),
@@ -917,7 +918,7 @@ async fn source_material_resource_storage_backend_profile(ctx: TestContext) -> R
                 "blob_backend": large_backend,
                 "blob_size_bytes": large_blob_bytes,
                 "stage_elapsed_ms": large_stage_elapsed_ms,
-                "ingestd_annex_process_counter_delta": large_counters,
+                "ingestd_content_store_process_counter_delta": large_counters,
             },
             "source_material_stream_current_messages": source_stream.map_or(0, |stream| stream.messages),
             "source_material_stream_current_bytes": source_stream.map_or(0, |stream| stream.bytes),
@@ -1098,8 +1099,7 @@ async fn material_acquisition_empty_finalize_still_publishes_begin(ctx: TestCont
     let work_dir = tempfile::tempdir()?;
     let (ctx, _nats, nats_client, mut ingest_handle) =
         setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
-    let dlq_subject =
-        sinex_primitives::environment::environment().nats_subject("events.dlq.ingestd");
+    let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
     let mut dlq_sub = nats_client.subscribe(dlq_subject).await?;
 
     let manager = material_manager(&ctx, nats_client.clone(), "empty-source");
@@ -1238,7 +1238,6 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     // Manually publish slices out of order to test MaterialAssembler's buffering
     let material_id = Uuid::now_v7();
     let js = nats.jetstream_with_client(nats_client.clone());
-    let env = sinex_primitives::environment::environment();
 
     // Ensure the registry already contains the material id we are about to stream so the assembler
     // can finalize without waiting on implicit creation.
@@ -1265,7 +1264,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
         "started_at": Timestamp::now().format_rfc3339(),
     });
     js.publish(
-        env.nats_subject(SOURCE_MATERIAL_BEGIN_SUBJECT),
+        ctx.pipeline_namespace().subject(SOURCE_MATERIAL_BEGIN_SUBJECT),
         serde_json::to_vec(&begin_msg)?.into(),
     )
     .await?
@@ -1286,7 +1285,8 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
         headers.insert("Chunk-Hash", chunk_hash.as_str());
 
         js.publish_with_headers(
-            env.nats_subject(&source_material_slice_subject(material_id)),
+            ctx.pipeline_namespace()
+                .subject(&source_material_slice_subject(material_id)),
             headers,
             data.into(),
         )
@@ -1312,7 +1312,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
         "total_size_bytes": expected_size,
     });
     js.publish(
-        env.nats_subject(SOURCE_MATERIAL_END_SUBJECT),
+        ctx.pipeline_namespace().subject(SOURCE_MATERIAL_END_SUBJECT),
         serde_json::to_vec(&end_msg)?.into(),
     )
     .await?
@@ -1382,7 +1382,6 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
 
     let material_id = Uuid::now_v7();
     let js = nats.jetstream_with_client(nats_client.clone());
-    let env = sinex_primitives::environment::environment();
 
     let slices = vec![
         (0i64, b"slice 0 data".to_vec()),
@@ -1406,7 +1405,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
         "total_size_bytes": expected_size,
     });
     js.publish(
-        env.nats_subject(SOURCE_MATERIAL_END_SUBJECT),
+        ctx.pipeline_namespace().subject(SOURCE_MATERIAL_END_SUBJECT),
         serde_json::to_vec(&end_msg)?.into(),
     )
     .await?
@@ -1423,7 +1422,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
         "started_at": Timestamp::now().format_rfc3339(),
     });
     js.publish(
-        env.nats_subject(SOURCE_MATERIAL_BEGIN_SUBJECT),
+        ctx.pipeline_namespace().subject(SOURCE_MATERIAL_BEGIN_SUBJECT),
         serde_json::to_vec(&begin_msg)?.into(),
     )
     .await?
@@ -1437,7 +1436,8 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
         headers.insert("Chunk-Hash", chunk_hash.as_str());
 
         js.publish_with_headers(
-            env.nats_subject(&source_material_slice_subject(material_id)),
+            ctx.pipeline_namespace()
+                .subject(&source_material_slice_subject(material_id)),
             headers,
             data.into(),
         )

@@ -125,13 +125,13 @@ async fn gateway_tls_accepts_handshake(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let temp = TempDir::new()?;
     let bundle = write_tls_bundle(temp.path())?;
-    let annex_path = temp.path().join("annex");
-    let annex_path = annex_path.to_string_lossy().to_string();
+    let content_store_path = temp.path().join("content-store");
+    let content_store_path = content_store_path.to_string_lossy().to_string();
 
     let mut env = EnvGuard::new();
     env.set("SINEX_RPC_TOKEN", "test-token");
     env.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
-    env.set("SINEX_ANNEX_PATH", &annex_path);
+    env.set("SINEX_CONTENT_STORE_PATH", &content_store_path);
     // Ensure host environment CA settings don't bleed into the test
     env.clear("SINEX_GATEWAY_TLS_CLIENT_CA");
     env.set(

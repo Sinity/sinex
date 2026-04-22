@@ -23,7 +23,7 @@ PHASE 1: CAPTURE (Node)
                ↓
   ┌──────────────────────────┐
   │ Stage source material     │
-  │ (copy to annex)           │
+  │ (copy to content store)   │
   └────────────┬─────────────┘
                │
                ↓

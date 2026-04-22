@@ -26,7 +26,7 @@ use dashmap::DashMap;
 use durability::DefaultDurabilityPolicy;
 pub(crate) use durability::DurabilityThresholds;
 use sinex_db::{DbPool, DbPoolExt};
-use sinex_node_sdk::annex::GitAnnex;
+use sinex_node_sdk::content_store::MaterialContentStore;
 use sinex_node_sdk::{SelfObservationError, SelfObserver};
 use sinex_primitives::Timestamp;
 use sinex_primitives::{Id, JsonValue, Uuid, environment::SinexEnvironment};
@@ -210,7 +210,7 @@ pub struct MaterialAssembler {
     pool: DbPool,
     env: SinexEnvironment,
     namespace: Option<String>,
-    annex: Arc<GitAnnex>,
+    content_store: Arc<MaterialContentStore>,
     assembler_state: Arc<DashMap<Uuid, Arc<Mutex<AssemblerState>>>>,
     state_root: PathBuf,
     dlq_subject: String,
@@ -239,7 +239,7 @@ impl MaterialAssembler {
     pub fn new(
         nats_client: NatsClient,
         pool: DbPool,
-        annex: Arc<GitAnnex>,
+        content_store: Arc<MaterialContentStore>,
         state_root: PathBuf,
         namespace: Option<String>,
         slices_max_ack_pending: i64,
@@ -253,7 +253,7 @@ impl MaterialAssembler {
         Self::new_with_durability_thresholds(
             nats_client,
             pool,
-            annex,
+            content_store,
             state_root,
             namespace,
             slices_max_ack_pending,
@@ -270,7 +270,7 @@ impl MaterialAssembler {
     pub(crate) fn new_with_durability_thresholds(
         nats_client: NatsClient,
         pool: DbPool,
-        annex: Arc<GitAnnex>,
+        content_store: Arc<MaterialContentStore>,
         state_root: PathBuf,
         namespace: Option<String>,
         slices_max_ack_pending: i64,
@@ -310,7 +310,7 @@ impl MaterialAssembler {
             pool,
             env,
             namespace,
-            annex,
+            content_store,
             assembler_state: Arc::new(DashMap::new()),
             state_root,
             dlq_subject,
@@ -647,7 +647,7 @@ impl MaterialAssembler {
     async fn import_into_content_store(
         &self,
         state: &FinalizationState,
-    ) -> IngestdResult<sinex_node_sdk::annex::AnnexKey> {
+    ) -> IngestdResult<sinex_node_sdk::content_store::ContentStoreKey> {
         io::import_into_content_store(self, state).await
     }
 
@@ -684,7 +684,7 @@ impl MaterialAssembler {
             pool: self.pool.clone(),
             env: self.env.clone(),
             namespace: self.namespace.clone(),
-            annex: self.annex.clone(),
+            content_store: self.content_store.clone(),
             assembler_state: self.assembler_state.clone(),
             state_root: self.state_root.clone(),
             dlq_subject: self.dlq_subject.clone(),
@@ -820,7 +820,7 @@ mod tests {
     use super::{MaterialAssembler, maintenance::MaterialTaskOutcome, signal_ready};
     use crate::MaterialReadySet;
     use camino::Utf8PathBuf;
-    use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
+    use sinex_node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
     use std::sync::Arc;
@@ -831,12 +831,12 @@ mod tests {
     async fn test_assembler(
         ctx: &TestContext,
     ) -> TestResult<(MaterialAssembler, tempfile::TempDir, tempfile::TempDir)> {
-        let annex_dir = tempfile::tempdir()?;
-        let repo_path = Utf8PathBuf::from_path_buf(annex_dir.path().to_path_buf())
+        let content_store_dir = tempfile::tempdir()?;
+        let repo_path = Utf8PathBuf::from_path_buf(content_store_dir.path().to_path_buf())
             .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
-        GitAnnex::init(&repo_path, Some("orphan-cleanup-test")).await?;
-        let annex = Arc::new(GitAnnex::new(AnnexConfig {
-            repo_path,
+        MaterialContentStore::init(&repo_path, Some("orphan-cleanup-test")).await?;
+        let content_store = Arc::new(MaterialContentStore::new(ContentStoreConfig {
+            root_path: repo_path,
             num_copies: None,
             large_files: None,
         })?);
@@ -845,7 +845,7 @@ mod tests {
         let assembler = MaterialAssembler::new(
             ctx.nats_client(),
             ctx.pool.clone(),
-            annex,
+            content_store,
             state_dir.path().to_path_buf(),
             Some(ctx.pipeline_namespace().prefix().to_string()),
             1_000,
@@ -857,13 +857,13 @@ mod tests {
             90,
         )?;
 
-        Ok((assembler, annex_dir, state_dir))
+        Ok((assembler, content_store_dir, state_dir))
     }
 
     #[sinex_test]
     async fn check_orphaned_folder_rejects_non_uuid_name(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, state_dir) = test_assembler(&ctx).await?;
         let path = state_dir.path().join("not-a-uuid");
         tokio::fs::create_dir_all(&path).await?;
 
@@ -879,7 +879,7 @@ mod tests {
     #[sinex_test]
     async fn check_orphaned_folder_rejects_non_utf8_name(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, state_dir) = test_assembler(&ctx).await?;
         let invalid_name = std::ffi::OsString::from_vec(vec![0xff, 0xfe, b'x']);
         let path = state_dir.path().join(invalid_name);
         tokio::fs::create_dir_all(&path).await?;
@@ -969,12 +969,12 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let annex_dir = tempfile::tempdir()?;
-        let repo_path = Utf8PathBuf::from_path_buf(annex_dir.path().to_path_buf())
+        let content_store_dir = tempfile::tempdir()?;
+        let repo_path = Utf8PathBuf::from_path_buf(content_store_dir.path().to_path_buf())
             .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
-        GitAnnex::init(&repo_path, Some("oversized-config-test")).await?;
-        let annex = Arc::new(GitAnnex::new(AnnexConfig {
-            repo_path,
+        MaterialContentStore::init(&repo_path, Some("oversized-config-test")).await?;
+        let content_store = Arc::new(MaterialContentStore::new(ContentStoreConfig {
+            root_path: repo_path,
             num_copies: None,
             large_files: None,
         })?);
@@ -983,7 +983,7 @@ mod tests {
         let error = MaterialAssembler::new(
             ctx.nats_client(),
             ctx.pool.clone(),
-            annex,
+            content_store,
             state_dir.path().to_path_buf(),
             Some(ctx.pipeline_namespace().prefix().to_string()),
             1_000,
@@ -1010,7 +1010,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let (assembler, _annex_dir, _state_dir) = test_assembler(&ctx).await?;
+        let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
         let material_id = Uuid::new_v4();
 
         let mut state = assembler.create_placeholder_state(material_id).await?;

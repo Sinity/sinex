@@ -160,9 +160,9 @@ let
     "SINEX_DLQ_PATH=${dlqPath}"
     "SINEX_NATS_URL=${natsUrl}"
     "SINEX_NATS_MONITORING_PORT=${toString nodesCfg.nats.monitoringPort}"
-    # Both ingestd and gateway access the same git-annex blob repository; set here
+    # Both ingestd and gateway access the same content-store root; set here
     # so all core services share a consistent path without per-service repetition.
-    "SINEX_ANNEX_PATH=${blobDir}"
+    "SINEX_CONTENT_STORE_PATH=${blobDir}"
   ]
     ++ optional inferredNatsTls "SINEX_NATS_REQUIRE_TLS=1"
     ++ optional (effectiveNatsCaCertFile != null) "SINEX_NATS_CA_CERT=${toString effectiveNatsCaCertFile}"

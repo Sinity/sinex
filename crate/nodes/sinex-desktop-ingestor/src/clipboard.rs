@@ -480,7 +480,7 @@ impl ClipboardWatcher {
                 source_app: content.source_app.clone(),
                 content_hash: safe_hash.clone(),
                 original_hash: safe_original_hash.clone(),
-                annex_key: None,
+                content_key: None,
                 blob_id: None,
             }
             .from_material(material_id)
@@ -506,7 +506,7 @@ impl ClipboardWatcher {
                 window_title: redacted_window_title.clone(),
                 content_hash: safe_hash.clone(),
                 original_hash: safe_original_hash.clone(),
-                annex_key: None,
+                content_key: None,
                 blob_id: None,
             }
             .from_material(material_id)

@@ -5,7 +5,7 @@
 use sinex_db::DbPool;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::state::Operation;
-use sinex_node_sdk::annex::BlobManager;
+use sinex_node_sdk::content_store::{BlobMetadata, ContentStoreManager};
 use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::error::{Result, SinexError};
 use std::sync::Arc;
@@ -13,14 +13,17 @@ use std::time::Instant;
 use tracing::warn;
 
 pub struct ContentService {
-    blob_manager: Arc<BlobManager>,
+    content_store: Arc<ContentStoreManager>,
     pool: DbPool,
 }
 
 impl ContentService {
     #[must_use]
-    pub fn new(pool: DbPool, blob_manager: Arc<BlobManager>) -> Self {
-        Self { blob_manager, pool }
+    pub fn new(pool: DbPool, content_store: Arc<ContentStoreManager>) -> Self {
+        Self {
+            content_store,
+            pool,
+        }
     }
 
     /// Get the database pool
@@ -55,9 +58,9 @@ impl ContentService {
             .map(|_| ())
     }
 
-    /// Store content as blob and return annex key
+    /// Store content as blob and return content-store key.
     ///
-    /// All content is stored via the blob manager regardless of size, providing
+    /// All content is stored via the content store regardless of size, providing
     /// consistent storage, deduplication, and source material tracking.
     pub async fn store_content(
         &self,
@@ -76,7 +79,7 @@ impl ContentService {
         });
 
         let blob_metadata = match self
-            .blob_manager
+            .content_store
             .ingest_from_bytes(content, filename, content_type)
             .await
         {
@@ -108,7 +111,7 @@ impl ContentService {
                 warn!(filename = %filename, error = %debug_error, "Blob ingestion error");
                 return Err(
                     SinexError::service(format!("Blob storage failed: {debug_error}"))
-                        .with_operation("blob_manager.ingest_from_bytes")
+                        .with_operation("content_store.ingest_from_bytes")
                         .with_context("filename", filename)
                         .with_context("content_type", content_type),
                 );
@@ -117,7 +120,7 @@ impl ContentService {
 
         let duration_ms = elapsed_ms(started.elapsed());
         let preview = serde_json::json!({
-            "annex_key": blob_metadata.annex_key(),
+            "content_key": blob_metadata.content_key(),
             "size_bytes": blob_metadata.size_bytes,
             "content_hash": blob_metadata.content_hash,
             "checksum_blake3": blob_metadata.checksum_blake3,
@@ -143,45 +146,42 @@ impl ContentService {
             );
         }
 
-        Ok(blob_metadata.annex_key())
+        Ok(blob_metadata.content_key())
     }
 
-    /// Retrieve content by annex key
-    pub async fn retrieve_content(&self, annex_key: &str) -> Result<Vec<u8>> {
-        self.blob_manager
-            .retrieve_content(annex_key)
+    /// Retrieve content by content-store key.
+    pub async fn retrieve_content(&self, content_key: &str) -> Result<Vec<u8>> {
+        self.content_store
+            .retrieve_content(content_key)
             .await
             .map_err(|e| {
                 SinexError::service(format!("Content retrieval failed: {e}"))
-                    .with_operation("blob_manager.retrieve_content")
-                    .with_context("annex_key", annex_key)
+                    .with_operation("content_store.retrieve_content")
+                    .with_context("content_key", content_key)
             })
     }
 
-    /// Get content metadata by annex key
-    pub async fn get_content_metadata(
-        &self,
-        annex_key: &str,
-    ) -> Result<sinex_node_sdk::annex::BlobMetadata> {
+    /// Get content metadata by content-store key.
+    pub async fn get_content_metadata(&self, content_key: &str) -> Result<BlobMetadata> {
         let blob_metadata = self
-            .blob_manager
-            .get_blob_metadata(annex_key)
+            .content_store
+            .get_blob_metadata(content_key)
             .await
             .map_err(|e| {
                 SinexError::service(format!("Failed to get blob metadata: {e}"))
-                    .with_operation("blob_manager.get_blob_metadata")
-                    .with_context("annex_key", annex_key)
+                    .with_operation("content_store.get_blob_metadata")
+                    .with_context("content_key", content_key)
             })?;
 
         Ok(blob_metadata)
     }
 
-    /// Verify content integrity by annex key
-    pub async fn verify_content(&self, annex_key: &str) -> Result<bool> {
-        self.blob_manager.verify_blob(annex_key).await.map_err(|e| {
+    /// Verify content integrity by content-store key.
+    pub async fn verify_content(&self, content_key: &str) -> Result<bool> {
+        self.content_store.verify_blob(content_key).await.map_err(|e| {
             SinexError::service(format!("Content verification failed: {e}"))
-                .with_operation("blob_manager.verify_blob")
-                .with_context("annex_key", annex_key)
+                .with_operation("content_store.verify_blob")
+                .with_context("content_key", content_key)
         })
     }
 }

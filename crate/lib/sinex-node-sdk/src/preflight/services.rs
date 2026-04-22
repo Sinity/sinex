@@ -302,7 +302,7 @@ async fn verify_binary_availability(messages: &mut Vec<String>) -> NodeResult<Va
     // Optional but recommended binaries
     let optional_binaries = vec![
         ("git", "Git version control"),
-        ("git-annex", "Git-annex blob storage"),
+        ("git-annex", "Hybrid content storage"),
         ("kitty", "Kitty terminal emulator"),
         ("hyprctl", "Hyprland control"),
         ("atuin", "Shell history"),

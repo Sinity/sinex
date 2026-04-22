@@ -151,8 +151,10 @@ mod help_tests {
             .args(["blob", "sweep-orphans", "--help"])
             .assert()
             .success()
-            .stdout(predicate::str::contains("Reclaim unused git-annex keys"))
-            .stdout(predicate::str::contains("--repo-path"))
+            .stdout(predicate::str::contains(
+                "Reclaim unused content-store keys",
+            ))
+            .stdout(predicate::str::contains("--content-store-path"))
             .stdout(predicate::str::contains("--apply"));
         Ok(())
     }

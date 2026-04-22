@@ -41,7 +41,7 @@ process_material(event_id);
 ### Common Identifiers
 - `Id<Event>`: Primary identifier for all events.
 - `Id<SourceMaterial>`: Used for provenance and raw data registry.
-- `Id<Blob>`: Identifies binary objects in git-annex.
+- `Id<Blob>`: Identifies binary objects in the content store.
 - `Id<Entity>`: Identifies nodes in the Knowledge Graph.
 
 ## Serialization & Interop

@@ -30,8 +30,8 @@ latency. Follow this template:
    `offset_start`, `offset_end`, and `anchor_byte` columns to point to the exact
    byte range.
 3. **Periodic commit:** on interval or shutdown, flush the buffered bytes into
-   git-annex, compute the checksum, update the registry record, and create a new
-   in-flight entry for the next segment.
+   the content store, compute the checksum, update the registry record, and
+   create a new in-flight entry for the next segment.
 4. **Bound startup recovery:** the SDK runner performs snapshot plus bounded
    historical gap-fill before handing a `ContinuousStart` live-tail cursor to
    continuous mode.

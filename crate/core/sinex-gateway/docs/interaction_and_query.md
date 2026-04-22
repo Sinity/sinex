@@ -40,7 +40,7 @@
   * `SINEX_GATEWAY_MAX_CONCURRENCY` (default 100).
   * `SINEX_GATEWAY_REQUEST_TIMEOUT_SECS` (default 30 seconds).
   * `SINEX_GATEWAY_MAX_BODY_BYTES` (default 2 MiB).
-  * `SINEX_GATEWAY_MAX_BLOB_BYTES` (default 5 MiB) limits decoded blob payloads before writing to git-annex.
+  * `SINEX_GATEWAY_MAX_BLOB_BYTES` (default 5 MiB) limits decoded blob payloads before writing to the content store.
 * NixOS deployments should set these via `services.sinex.core.gateway.limits` rather than ad-hoc env vars.
 * Requests that exceed these guards receive JSON-RPC errors (`401` for missing token, `429/504/413` for the respective limits).
 
@@ -82,7 +82,7 @@ Gateway handlers delegate to `sinex-services`, which provides cohesive APIs over
 * **Analytics (`analytics.rs`)** – timed aggregates over `core.events`.
 * **Search (`search.rs`)** – filtered event queries with pagination.
 * **PKM (`pkm.rs`)** – CRUD operations for knowledge-management entities.
-* **Content (`content.rs`)** – blob storage/retrieval via annex.
+* **Content (`content.rs`)** – blob storage/retrieval via the content store.
 
 These modules run synchronously and use shared database pools. Keep transactions small to avoid blocking other RPCs.
 

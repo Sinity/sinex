@@ -9,18 +9,18 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
 
-fn set_annex_path(env: &mut EnvGuard, annex_path: &std::path::Path) {
-    let annex_path = annex_path.to_string_lossy();
-    env.set("SINEX_ANNEX_PATH", annex_path.as_ref());
+fn set_content_store_path(env: &mut EnvGuard, content_store_path: &std::path::Path) {
+    let content_store_path = content_store_path.to_string_lossy();
+    env.set("SINEX_CONTENT_STORE_PATH", content_store_path.as_ref());
 }
 
 fn configure_gateway_env(
     env: &mut EnvGuard,
     ctx: &TestContext,
-    annex_path: &std::path::Path,
+    content_store_path: &std::path::Path,
 ) -> TestResult<()> {
     env.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
-    set_annex_path(env, annex_path);
+    set_content_store_path(env, content_store_path);
     Ok(())
 }
 
@@ -75,7 +75,7 @@ async fn test_service_container_env_database_url(ctx: TestContext) -> TestResult
 async fn test_service_container_invalid_database_url(_ctx: TestContext) -> TestResult<()> {
     let mut env = EnvGuard::new();
     let temp_dir = TempDir::new()?;
-    set_annex_path(&mut env, temp_dir.path());
+    set_content_store_path(&mut env, temp_dir.path());
 
     let result = ServiceContainer::from_database_url("not-a-postgres-url").await;
 
@@ -100,7 +100,7 @@ async fn test_service_container_no_database_url(_ctx: TestContext) -> TestResult
     let mut env = EnvGuard::new();
     env.clear("DATABASE_URL");
     let temp_dir = TempDir::new()?;
-    set_annex_path(&mut env, temp_dir.path());
+    set_content_store_path(&mut env, temp_dir.path());
 
     let result = ServiceContainer::from_database_url("").await;
 
@@ -141,16 +141,16 @@ async fn test_service_container_clone(ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
-/// Test annex path configuration
+/// Test content-store path configuration
 #[sinex_test]
-async fn test_service_container_annex_path_config(ctx: TestContext) -> TestResult<()> {
+async fn test_service_container_content_store_path_config(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let mut env = EnvGuard::new();
     env.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
 
-    // Test with custom annex path
+    // Test with custom content-store path
     let custom_dir = TempDir::new()?;
-    set_annex_path(&mut env, custom_dir.path());
+    set_content_store_path(&mut env, custom_dir.path());
 
     let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
     assert!(
@@ -158,8 +158,8 @@ async fn test_service_container_annex_path_config(ctx: TestContext) -> TestResul
         "Content service should be initialized"
     );
 
-    // Test with default annex path
-    env.clear("SINEX_ANNEX_PATH");
+    // Test with default content-store path
+    env.clear("SINEX_CONTENT_STORE_PATH");
     let container2 = ServiceContainer::from_database_url(ctx.database_url()).await?;
     assert!(
         Arc::strong_count(&container2.content) > 0,
