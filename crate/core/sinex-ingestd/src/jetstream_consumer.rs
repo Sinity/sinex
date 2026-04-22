@@ -255,6 +255,7 @@ const DEFAULT_BATCH_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
 const DEFAULT_MAX_ACK_PENDING: i64 = 100;
 const MAIN_CONSUMER_JETSTREAM_MAX_DELIVER: i64 = -1;
 const MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD: i64 = 10;
+const SOURCE_MATERIAL_READY_DLQ_THRESHOLD: i64 = MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD;
 const DLQ_PUBLISH_MAX_ATTEMPTS: usize = 3;
 const DLQ_PUBLISH_BACKOFF_BASE: Duration = Duration::from_millis(200);
 const DLQ_PUBLISH_BACKOFF_MAX: Duration = Duration::from_secs(2);
@@ -346,6 +347,12 @@ struct PreparedEvent {
     message: jetstream::Message,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceMaterialSettlement {
+    Deferred,
+    RoutedToDlq,
+}
+
 fn dlq_publish_msg_id(
     msg: &jetstream::Message,
     original_nats_msg_id: Option<&str>,
@@ -362,6 +369,26 @@ fn dlq_publish_msg_id(
         hasher.update(msg.subject.as_str().as_bytes());
         hasher.update(&msg.payload);
         format!("dlq.hash.{}", hasher.finalize().to_hex())
+    }
+}
+
+fn source_material_unavailable_error(
+    prepared: &PreparedEvent,
+    material_id: Option<Uuid>,
+    persistence_error: Option<&SinexError>,
+) -> String {
+    let material = material_id
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let base = format!(
+        "Source material {material} was not registered after {SOURCE_MATERIAL_READY_DLQ_THRESHOLD} deliveries for event {} (source={}, event_type={})",
+        prepared.parsed_id, prepared.event.source, prepared.event.event_type
+    );
+
+    if let Some(error) = persistence_error {
+        format!("{base}; persistence error: {error}")
+    } else {
+        base
     }
 }
 
@@ -1099,23 +1126,29 @@ impl JetStreamConsumer {
                     ready = ready.len(),
                     "Deferring events whose source material is not yet registered"
                 );
+                let mut settlement_errors = Vec::new();
+                let mut deferred_count = 0_u64;
                 for prepared in &not_ready {
-                    if let Err(err) = prepared
-                        .message
-                        .ack_with(jetstream::AckKind::Nak(Some(FK_VIOLATION_RETRY_DELAY)))
+                    let material_id = match &prepared.event.provenance {
+                        Provenance::Material { id, .. } => Some(*id.as_uuid()),
+                        Provenance::Synthesis { .. } => None,
+                    };
+                    match self
+                        .settle_unready_source_material_event(prepared, material_id, None)
                         .await
                     {
-                        warn!(
-                            event_id = %prepared.parsed_id,
-                            error = %err,
-                            "Failed to NAK deferred event"
-                        );
-                        self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
+                        Ok(SourceMaterialSettlement::Deferred) => deferred_count += 1,
+                        Ok(SourceMaterialSettlement::RoutedToDlq) => {}
+                        Err(err) => settlement_errors.push((prepared.parsed_id, err)),
                     }
                 }
+                Self::collapse_settlement_errors(
+                    "source-material readiness settlement",
+                    settlement_errors,
+                )?;
                 self.stats
                     .events_deferred
-                    .fetch_add(not_ready.len() as u64, Ordering::Relaxed);
+                    .fetch_add(deferred_count, Ordering::Relaxed);
             }
 
             if ready.is_empty() {
@@ -1276,36 +1309,36 @@ impl JetStreamConsumer {
                         is_source_material_fk_violation_for_prepared_batch(&e, &batch);
                     if is_fk_error {
                         let mut settlement_errors = Vec::new();
+                        let mut deferred_count = 0_u64;
                         debug!(
                             batch_size = batch.len(),
-                            "FK violation on batch - source material likely still registering; NAKing with delay"
+                            "FK violation on batch - source material likely still registering"
                         );
                         for prepared in &batch {
-                            if let Err(err) = prepared
-                                .message
-                                .ack_with(jetstream::AckKind::Nak(Some(FK_VIOLATION_RETRY_DELAY)))
+                            let material_id = match &prepared.event.provenance {
+                                Provenance::Material { id, .. } => Some(*id.as_uuid()),
+                                Provenance::Synthesis { .. } => None,
+                            };
+                            match self
+                                .settle_unready_source_material_event(
+                                    prepared,
+                                    material_id,
+                                    Some(&e),
+                                )
                                 .await
                             {
-                                warn!(
-                                    event_id = %prepared.parsed_id,
-                                    error = %err,
-                                    "Failed to NAK after FK violation"
-                                );
-                                self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
-                                settlement_errors.push((
-                                    prepared.parsed_id,
-                                    Self::message_settlement_failure(
-                                        "failed to NAK after FK violation",
-                                        prepared.parsed_id,
-                                        &err,
-                                    ),
-                                ));
+                                Ok(SourceMaterialSettlement::Deferred) => deferred_count += 1,
+                                Ok(SourceMaterialSettlement::RoutedToDlq) => {}
+                                Err(err) => settlement_errors.push((prepared.parsed_id, err)),
                             }
                         }
                         Self::collapse_settlement_errors(
                             "FK violation retry settlement",
                             settlement_errors,
                         )?;
+                        self.stats
+                            .events_deferred
+                            .fetch_add(deferred_count, Ordering::Relaxed);
                         // Don't count as failed - this is a transient condition
                         continue;
                     }
@@ -1636,6 +1669,72 @@ impl JetStreamConsumer {
             .map(|info| info.delivered)
             .map_err(|error| error.to_string());
         Self::should_route_persistence_failure(self.route_db_errors_to_dlq, delivery_attempt, err)
+    }
+
+    fn source_material_delivery_attempt(&self, msg: &jetstream::Message) -> IngestdResult<i64> {
+        msg.info().map(|info| info.delivered).map_err(|error| {
+            SinexError::processing(
+                "Failed to inspect JetStream delivery metadata for source-material readiness",
+            )
+            .with_context("delivery_metadata_error", error.to_string())
+        })
+    }
+
+    async fn settle_unready_source_material_event(
+        &self,
+        prepared: &PreparedEvent,
+        material_id: Option<Uuid>,
+        persistence_error: Option<&SinexError>,
+    ) -> IngestdResult<SourceMaterialSettlement> {
+        let delivery_attempt = if self.route_db_errors_to_dlq {
+            None
+        } else {
+            Some(self.source_material_delivery_attempt(&prepared.message)?)
+        };
+        let should_dlq = self.route_db_errors_to_dlq
+            || delivery_attempt
+                .is_some_and(|attempt| attempt >= SOURCE_MATERIAL_READY_DLQ_THRESHOLD);
+
+        if should_dlq {
+            warn!(
+                event_id = %prepared.parsed_id,
+                material_id = ?material_id,
+                delivery_attempt = ?delivery_attempt,
+                threshold = SOURCE_MATERIAL_READY_DLQ_THRESHOLD,
+                "Source material remained unavailable after retry budget; routing event to DLQ"
+            );
+            self.route_to_dlq_and_ack(
+                &prepared.message,
+                source_material_unavailable_error(prepared, material_id, persistence_error),
+            )
+            .await?;
+            self.stats.events_failed.fetch_add(1, Ordering::Relaxed);
+            if let Some(ref handle) = self.heartbeat_handle {
+                handle.record_error("source material unresolved");
+            }
+            return Ok(SourceMaterialSettlement::RoutedToDlq);
+        }
+
+        if let Err(err) = prepared
+            .message
+            .ack_with(jetstream::AckKind::Nak(Some(FK_VIOLATION_RETRY_DELAY)))
+            .await
+        {
+            warn!(
+                event_id = %prepared.parsed_id,
+                material_id = ?material_id,
+                error = %err,
+                "Failed to NAK deferred source-material event"
+            );
+            self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
+            return Err(Self::message_settlement_failure(
+                "failed to NAK deferred source-material event",
+                prepared.parsed_id,
+                &err,
+            ));
+        }
+
+        Ok(SourceMaterialSettlement::Deferred)
     }
 
     fn should_route_persistence_failure(
