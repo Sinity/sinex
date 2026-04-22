@@ -744,6 +744,12 @@ pub struct RecordMaterializer<Sink> {
     sink: Sink,
 }
 
+/// Default materializer for node-owned record streams.
+pub type BufferedRecordMaterializer = RecordMaterializer<BufferedRecordSink>;
+
+/// Default harness for checkpointed record sources backed by SDK buffering.
+pub type BufferedRecordSourceHarness<Source> = RecordSourceHarness<Source, BufferedRecordSink>;
+
 impl<Sink> RecordMaterializer<Sink>
 where
     Sink: RecordMaterialSink,
@@ -776,6 +782,71 @@ where
 
     pub async fn finalize(&self, reason: &str) -> NodeResult<()> {
         self.sink.finalize(reason).await
+    }
+}
+
+impl RecordMaterializer<BufferedRecordSink> {
+    #[must_use]
+    pub fn buffered(
+        manager: Arc<AcquisitionManager>,
+        source_identifier: impl Into<String>,
+        config: BufferedAppendStreamWriterConfig,
+    ) -> Self {
+        Self::new(BufferedRecordSink::from_manager(
+            manager,
+            source_identifier,
+            config,
+        ))
+    }
+
+    #[must_use]
+    pub fn buffered_default(
+        manager: Arc<AcquisitionManager>,
+        source_identifier: impl Into<String>,
+    ) -> Self {
+        Self::buffered(
+            manager,
+            source_identifier,
+            BufferedAppendStreamWriterConfig::default(),
+        )
+    }
+
+    #[must_use]
+    pub fn from_active_handle(
+        manager: Arc<AcquisitionManager>,
+        handle: SourceMaterialHandle,
+        source_identifier: impl Into<String>,
+        config: BufferedAppendStreamWriterConfig,
+    ) -> Self {
+        Self::new(BufferedRecordSink::from_active_handle(
+            manager,
+            handle,
+            source_identifier,
+            config,
+        ))
+    }
+}
+
+impl<Source> RecordSourceHarness<Source, BufferedRecordSink>
+where
+    Source: RecordSource,
+{
+    #[must_use]
+    pub fn buffered(
+        source: Source,
+        manager: Arc<AcquisitionManager>,
+        config: BufferedAppendStreamWriterConfig,
+    ) -> Self {
+        let source_identifier = source.descriptor().source_identifier.clone();
+        Self::new(
+            source,
+            BufferedRecordMaterializer::buffered(manager, source_identifier, config),
+        )
+    }
+
+    #[must_use]
+    pub fn buffered_default(source: Source, manager: Arc<AcquisitionManager>) -> Self {
+        Self::buffered(source, manager, BufferedAppendStreamWriterConfig::default())
     }
 }
 
@@ -861,7 +932,64 @@ where
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::future::ready;
+    use std::sync::{Arc, Mutex};
     use xtask::sandbox::prelude::*;
+
+    #[derive(Clone, Default)]
+    struct CapturingRecordSink {
+        records: Arc<Mutex<Vec<Vec<u8>>>>,
+        finalize_reasons: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl RecordMaterialSink for CapturingRecordSink {
+        fn append_record(
+            &self,
+            bytes: Vec<u8>,
+        ) -> impl Future<Output = NodeResult<SourceRecordAnchor>> + Send + '_ {
+            let result = (|| {
+                let mut records = self
+                    .records
+                    .lock()
+                    .map_err(|_| SinexError::processing("capturing record sink lock poisoned"))?;
+                let offset_start = records.iter().try_fold(0_i64, |offset, record| {
+                    let len = i64::try_from(record.len()).map_err(|error| {
+                        SinexError::validation("captured record length exceeded i64")
+                            .with_std_error(&error)
+                    })?;
+                    offset.checked_add(len).ok_or_else(|| {
+                        SinexError::validation("captured record offsets overflowed i64")
+                    })
+                })?;
+                let len = i64::try_from(bytes.len()).map_err(|error| {
+                    SinexError::validation("captured record length exceeded i64")
+                        .with_std_error(&error)
+                })?;
+                let offset_end = offset_start.checked_add(len).ok_or_else(|| {
+                    SinexError::validation("captured record offsets overflowed i64")
+                })?;
+                records.push(bytes);
+                Ok(SourceRecordAnchor {
+                    material_id: sinex_primitives::Uuid::now_v7(),
+                    offset_start,
+                    offset_end,
+                })
+            })();
+            ready(result)
+        }
+
+        fn finalize<'a>(
+            &'a self,
+            reason: &'a str,
+        ) -> impl Future<Output = NodeResult<()>> + Send + 'a {
+            let result = self
+                .finalize_reasons
+                .lock()
+                .map_err(|_| SinexError::processing("capturing record sink lock poisoned"))
+                .map(|mut reasons| reasons.push(reason.to_string()));
+            ready(result)
+        }
+    }
 
     #[sinex_test]
     async fn lenient_processor_advances_on_success_and_skip_but_not_retry() -> TestResult<()> {
@@ -962,6 +1090,60 @@ mod tests {
         assert_eq!(report.final_checkpoint, 9);
         assert_eq!(report.processed_records, 0);
         assert!(report.warnings.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn harness_materializes_records_and_finalizes_sink() -> TestResult<()> {
+        let sink = CapturingRecordSink::default();
+        let source = MockRecordSource::new(
+            "test://record-framework",
+            0_u64,
+            vec![RecordReadBatch {
+                start_checkpoint: 0,
+                records: vec![
+                    RecordReadItem::new(json!({ "row": 1 }), 1),
+                    RecordReadItem::new(json!({ "row": 2 }), 2),
+                ],
+                final_checkpoint: 2,
+                observation: RecordSourceObservation::None,
+            }],
+        );
+        let harness = RecordSourceHarness::new(source, RecordMaterializer::new(sink.clone()));
+        let mut checkpoint = 0_u64;
+
+        let report = harness
+            .read_process_lenient(
+                &mut checkpoint,
+                RecordReadHorizon::Unbounded,
+                |record, ctx| async move {
+                    assert_eq!(
+                        ctx.descriptor().source_identifier,
+                        "test://record-framework"
+                    );
+                    let anchor = ctx.append_json_line(&record).await?;
+                    assert!(anchor.offset_end > anchor.offset_start);
+                    Ok::<_, SinexError>(RecordProcessingOutcome::Processed)
+                },
+                |_| RecordWarningDisposition::Retry,
+            )
+            .await?;
+        harness.finalize("test-complete").await?;
+
+        assert_eq!(checkpoint, 2);
+        assert_eq!(report.final_checkpoint, 2);
+        assert_eq!(report.processed_records, 2);
+        assert!(report.warnings.is_empty());
+        let records = sink.records.lock().map_err(|error| {
+            color_eyre::eyre::eyre!("capturing record sink lock poisoned: {error}")
+        })?;
+        assert_eq!(records.len(), 2);
+        assert_eq!(std::str::from_utf8(&records[0])?, "{\"row\":1}\n");
+        assert_eq!(std::str::from_utf8(&records[1])?, "{\"row\":2}\n");
+        let finalize_reasons = sink.finalize_reasons.lock().map_err(|error| {
+            color_eyre::eyre::eyre!("capturing record sink lock poisoned: {error}")
+        })?;
+        assert_eq!(finalize_reasons.as_slice(), ["test-complete"]);
         Ok(())
     }
 
