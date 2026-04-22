@@ -159,6 +159,65 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
 }
 
 #[sinex_test]
+async fn automata_status_handles_live_run_without_metric_events(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let pool = ctx.pool();
+    let node_name = NodeName::new("session-detector-test");
+    let manifest = pool
+        .state()
+        .register_node(
+            &node_name,
+            NodeType::Automaton,
+            "1.0.0-test",
+            Some("detects activity sessions"),
+        )
+        .await?;
+    let run = pool
+        .state()
+        .start_node_run(
+            manifest.id,
+            "sinex-session-detector-test",
+            "instance-a",
+            "test-host",
+            None,
+            None,
+        )
+        .await?;
+
+    let response = handle_automata_status(
+        pool,
+        json!({
+            "stale_after_secs": 300,
+            "recent_window_secs": 300,
+        }),
+    )
+    .await?;
+    let automata = response["automata"]
+        .as_array()
+        .expect("automata should be an array");
+    assert_eq!(automata.len(), 1);
+    let status = &automata[0];
+    let run_id = run.id.to_string();
+
+    assert_eq!(status["node_name"].as_str(), Some("session-detector-test"));
+    assert_eq!(status["live"].as_bool(), Some(true));
+    assert_eq!(status["node_run_id"].as_str(), Some(run_id.as_str()));
+    assert!(status["events_processed_current_run"].is_null());
+    assert!(status["pending_invalidation_count"].is_null());
+    assert!(status["checkpoint_kind"].is_null());
+    assert!(status["checkpoint_position"].is_null());
+    assert!(status["checkpoint_revision"].is_null());
+    assert!(status["checkpoint_recorded_at"].is_null());
+    assert!(status["error_rate_5m"].is_null());
+    assert_eq!(status["recent_output_count"].as_i64(), Some(0));
+    assert!(status["last_output_at"].is_null());
+    assert!(status["last_replay_at"].is_null());
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn automata_status_rejects_malformed_params(ctx: TestContext) -> TestResult<()> {
     let result = handle_automata_status(ctx.pool(), json!({ "stale_after_secs": "soon" })).await;
 
