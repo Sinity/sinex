@@ -76,6 +76,7 @@ pub fn checkout_runtime_target(cfg: &Config) -> Result<RuntimeTargetDescriptor> 
         gateway: RuntimeTargetGateway {
             base_url: cfg.gateway_url.clone(),
             token_file: None,
+            token_role: None,
             ca_cert_file: None,
             client_cert_file: None,
             client_key_file: None,

@@ -1936,6 +1936,7 @@ in
         gateway = {
           base_url = gatewayProbeBaseUrl;
           token_file = gatewayAdminTokenFile;
+          token_role = "admin";
           ca_cert_file = gatewayTlsTrustAnchorFile;
           client_cert_file = null;
           client_key_file = null;

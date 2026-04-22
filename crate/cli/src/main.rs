@@ -494,6 +494,7 @@ mod tests {
               "gateway": {
                 "base_url": "https://127.0.0.1:9999",
                 "token_file": "/run/agenix/sinex-gateway-admin-token",
+                "token_role": "admin",
                 "ca_cert_file": "/var/lib/sinex/run/gateway-ca.pem"
               }
             }"#,
@@ -508,6 +509,10 @@ mod tests {
         assert_eq!(
             config.token_file.as_deref(),
             Some("/run/agenix/sinex-gateway-admin-token")
+        );
+        assert_eq!(
+            config.token_role,
+            Some(sinex_primitives::RuntimeTargetGatewayTokenRole::Admin)
         );
         assert_eq!(
             config.ca_cert.as_deref(),
