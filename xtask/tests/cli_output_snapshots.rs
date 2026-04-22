@@ -132,6 +132,8 @@ async fn snapshot_status_summary_json() -> ::xtask::sandbox::TestResult<()> {
         &["data", "baseline_velocity"],
         &["data", "history"],
         &["data", "runtime"],
+        &["data", "runtime_snapshot"],
+        &["data", "runtime_target"],
         // Working tree state: varies by uncommitted files, stash, last commit
         &["data", "uncommitted_count"],
         &["data", "stash_count"],

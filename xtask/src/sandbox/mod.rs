@@ -22,6 +22,7 @@ pub mod coordination;
 pub mod dataset_seeds;
 pub mod db;
 pub mod events;
+pub mod evidence;
 pub mod fs;
 pub mod hooks;
 pub mod nats;
@@ -40,6 +41,14 @@ pub mod workspace;
 
 // Re-export types referenced by proc macro expansion (`::xtask::sandbox::TestResult`, etc.)
 pub use db::pool::{acquire_process_test_guard, acquire_workspace_test_guard};
+pub use evidence::{
+    DbEvidenceSummary, DirectoryEvidenceSummary, EVIDENCE_SCHEMA_VERSION, EvidenceArtifactRef,
+    EvidenceBundle, EvidenceCapture, EvidenceCaptureLevel, EvidenceCollectorKind,
+    EvidenceCollectorRegistration, EvidenceCollectorStatus, EvidenceRuntimeSnapshot,
+    EvidenceTimelineEvent, FileEvidenceSummary, LogEvidenceSummary, NatsConsumerEvidence,
+    NatsEvidenceSummary, NatsStreamEvidence, ProofMetadata, SourceMaterialEvidenceRow,
+    TestEvidence,
+};
 
 // Re-export key types used by internal sandbox submodules via `super::` / `crate::sandbox::`
 pub use context::Sandbox;

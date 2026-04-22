@@ -189,10 +189,36 @@ assert!(logs.iter().any(|l| l.contains("expected message")));
 ctx.assert_logged("checkpoint saved")?;
 ```
 
-When a test fails, the harness records a JSON artifact under `.sinex/test-artifacts/` containing:
-- Error message and backtrace
-- Pool statistics at failure time
-- Captured tracing logs (when TestContext is present)
+When a test fails, the harness records structured evidence under
+`.sinex/test-artifacts/` and prints:
+
+```text
+EVIDENCE: <path>.evidence.json SUMMARY: <path>.summary.txt (<error>)
+```
+
+The evidence bundle contains the failing test, error, pool state, context state,
+process snapshot, timeline events, proof metadata, capture summaries, and
+artifact references. Captured tracing logs are attached automatically when
+present. Tests can opt into richer collectors before failing:
+
+```rust
+ctx.record_evidence_event("fixture", "created source material", json!({"source": "terminal"}));
+ctx.set_proof_metadata(ProofMetadata {
+    runner_id: Some("runner:terminal-source-material".into()),
+    subject_refs: vec!["subject:node/terminal".into()],
+    claim_ids: vec!["claim:source-material-provenance".into()],
+    status: Some("failed".into()),
+    reproducer: Some("xtask test -p xtask -E 'test(name)'".into()),
+    environment: json!({"profile": "fast"}),
+});
+ctx.capture_db_evidence("db").await?;
+ctx.capture_nats_evidence("nats").await?;
+ctx.capture_material_directory_evidence("spool", spool_dir)?;
+```
+
+Use named collectors for source-material, NATS, DB, logs, process, and custom
+scenario evidence. `xtask test` only surfaces the artifact paths; scenario
+semantics live in Rust tests and the evidence bundle schema.
 
 Override the artifact directory with `SINEX_TEST_FAIL_DIR`.
 

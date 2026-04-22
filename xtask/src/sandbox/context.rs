@@ -51,6 +51,7 @@ use crate::sandbox::coordination::PipelineScope;
 use crate::sandbox::db::pool::{TestDatabase, acquire_test_database};
 use crate::sandbox::db::{reset_database, verify_clean_state};
 use crate::sandbox::events::{CreatedEventInfo, EventPublisher, cleanup_created_records};
+use crate::sandbox::evidence;
 use crate::sandbox::nats::EphemeralNats;
 use crate::sandbox::nats::NatsSetup;
 use crate::sandbox::nats::create_or_open_kv_store;
@@ -145,6 +146,7 @@ pub struct Sandbox {
     created_events: Arc<Mutex<Vec<CreatedEventInfo>>>,
     background: Arc<AsyncMutex<BackgroundRegistry>>,
     captured_logs: Arc<Mutex<Vec<String>>>,
+    evidence: Arc<Mutex<TestEvidence>>,
     baseline_events: i64,
     _tracing_enabled: bool,
     nats: Option<Arc<EphemeralNats>>,
@@ -240,6 +242,7 @@ pub struct SandboxFailureSnapshot {
     baseline_events: i64,
     start_time: Instant,
     captured_logs: Arc<Mutex<Vec<String>>>,
+    evidence: Arc<Mutex<TestEvidence>>,
     background: Arc<AsyncMutex<BackgroundRegistry>>,
 }
 
@@ -267,6 +270,11 @@ impl SandboxFailureSnapshot {
     #[must_use]
     pub fn background_snapshot(&self) -> BackgroundSnapshot {
         snapshot_background_registry(&self.background)
+    }
+
+    #[must_use]
+    pub fn evidence_snapshot(&self) -> TestEvidence {
+        self.evidence.lock().clone()
     }
 }
 
@@ -394,6 +402,7 @@ impl Sandbox {
             created_events: Arc::new(Mutex::new(Vec::new())),
             background: Arc::new(AsyncMutex::new(BackgroundRegistry::default())),
             captured_logs: Arc::new(Mutex::new(Vec::new())),
+            evidence: Arc::new(Mutex::new(TestEvidence::default())),
             baseline_events,
             _tracing_enabled: false,
             nats: None,
@@ -632,6 +641,359 @@ impl Sandbox {
         self.captured_logs.lock().clone()
     }
 
+    /// Get the current structured evidence accumulated by this test.
+    #[must_use]
+    pub fn evidence_snapshot(&self) -> TestEvidence {
+        self.evidence.lock().clone()
+    }
+
+    fn elapsed_ms_u64(&self) -> u64 {
+        u64::try_from(self.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    /// Record a structured timeline event for failure evidence.
+    pub fn record_evidence_event(
+        &self,
+        label: impl Into<String>,
+        message: impl Into<String>,
+        fields: JsonValue,
+    ) {
+        self.evidence
+            .lock()
+            .record_event(self.elapsed_ms_u64(), label, message, fields);
+    }
+
+    /// Register a named evidence collector that a scenario expects to capture.
+    pub fn register_evidence_collector(
+        &self,
+        name: impl Into<String>,
+        kind: EvidenceCollectorKind,
+        level: EvidenceCaptureLevel,
+    ) {
+        self.evidence.lock().register_collector(name, kind, level);
+    }
+
+    /// Attach proof/scenario metadata to the eventual evidence envelope.
+    pub fn set_proof_metadata(&self, proof: ProofMetadata) {
+        self.evidence.lock().set_proof(proof);
+    }
+
+    /// Add a human note to the evidence envelope.
+    pub fn add_evidence_note(&self, note: impl Into<String>) {
+        self.evidence.lock().add_note(note);
+    }
+
+    /// Attach an already-created artifact reference to the evidence envelope.
+    pub fn attach_evidence_artifact(&self, artifact: EvidenceArtifactRef) {
+        self.evidence.lock().attach_artifact(artifact);
+    }
+
+    /// Write JSON under this test's artifact directory and attach it to evidence.
+    pub fn write_evidence_json<T: serde::Serialize>(
+        &self,
+        name: &str,
+        kind: &str,
+        value: &T,
+        summary: Option<String>,
+    ) -> TestResult<EvidenceArtifactRef> {
+        let artifact = evidence::write_json_artifact(&self.test_name, name, kind, value, summary)?;
+        self.attach_evidence_artifact(artifact.clone());
+        Ok(artifact)
+    }
+
+    /// Capture sandbox logs as a compact summary plus raw-log artifact.
+    pub fn capture_logs_evidence(&self, name: &str) -> TestResult<LogEvidenceSummary> {
+        self.register_evidence_collector(
+            name,
+            EvidenceCollectorKind::Logs,
+            EvidenceCaptureLevel::Summary,
+        );
+        let logs = self.captured_logs();
+        let summary = LogEvidenceSummary::new(&logs, 20);
+        let artifact = evidence::write_json_artifact(
+            &self.test_name,
+            name,
+            "logs",
+            &logs,
+            Some(format!("{} captured log line(s)", logs.len())),
+        )?;
+        self.evidence
+            .lock()
+            .attach_capture(EvidenceCapture::captured(
+                name,
+                EvidenceCollectorKind::Logs,
+                Some(format!("{} captured log line(s)", logs.len())),
+                serde_json::to_value(&summary)?,
+                Some(artifact),
+            ));
+        Ok(summary)
+    }
+
+    /// Capture compact database evidence for event/material/provenance tests.
+    pub async fn capture_db_evidence(&self, name: &str) -> TestResult<DbEvidenceSummary> {
+        self.register_evidence_collector(
+            name,
+            EvidenceCollectorKind::Database,
+            EvidenceCaptureLevel::Summary,
+        );
+        let counts = sqlx::query(
+            r"
+                SELECT
+                    (SELECT COUNT(*) FROM core.events) AS event_count,
+                    (SELECT COUNT(*) FROM core.events WHERE source_material_id IS NOT NULL) AS material_event_count,
+                    (SELECT COUNT(*) FROM core.events WHERE source_event_ids IS NOT NULL) AS synthesis_event_count,
+                    (SELECT COUNT(*) FROM raw.source_material_registry) AS source_material_count,
+                    (SELECT COUNT(*) FROM core.blobs) AS blob_count
+            ",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        let material_rows = sqlx::query(
+            r"
+                SELECT
+                    id::text AS id,
+                    material_kind,
+                    source_identifier,
+                    status,
+                    total_bytes
+                FROM raw.source_material_registry
+                ORDER BY staged_at DESC
+                LIMIT 20
+            ",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let created = self.created_events.lock().clone();
+        let created_materials = created
+            .iter()
+            .filter_map(|event| event.material_id)
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        let summary = DbEvidenceSummary {
+            database_name: self.database_name().to_string(),
+            event_count: sqlx::Row::get::<i64, _>(&counts, "event_count"),
+            material_event_count: sqlx::Row::get::<i64, _>(&counts, "material_event_count"),
+            synthesis_event_count: sqlx::Row::get::<i64, _>(&counts, "synthesis_event_count"),
+            source_material_count: sqlx::Row::get::<i64, _>(&counts, "source_material_count"),
+            blob_count: sqlx::Row::get::<i64, _>(&counts, "blob_count"),
+            created_event_count: created.len(),
+            created_material_count: created_materials,
+            recent_source_materials: material_rows
+                .into_iter()
+                .map(|row| SourceMaterialEvidenceRow {
+                    id: sqlx::Row::get::<String, _>(&row, "id"),
+                    material_kind: sqlx::Row::get::<String, _>(&row, "material_kind"),
+                    source_identifier: sqlx::Row::get::<String, _>(&row, "source_identifier"),
+                    status: sqlx::Row::get::<String, _>(&row, "status"),
+                    total_bytes: sqlx::Row::get::<Option<i64>, _>(&row, "total_bytes"),
+                })
+                .collect(),
+        };
+        let artifact = evidence::write_json_artifact(
+            &self.test_name,
+            name,
+            "database",
+            &summary,
+            Some(format!(
+                "{} event(s), {} source material(s)",
+                summary.event_count, summary.source_material_count
+            )),
+        )?;
+        self.evidence
+            .lock()
+            .attach_capture(EvidenceCapture::captured(
+                name,
+                EvidenceCollectorKind::Database,
+                Some(format!(
+                    "{} event(s), {} source material(s)",
+                    summary.event_count, summary.source_material_count
+                )),
+                serde_json::to_value(&summary)?,
+                Some(artifact),
+            ));
+        Ok(summary)
+    }
+
+    /// Capture all namespaced JetStream streams and consumers for this test.
+    pub async fn capture_nats_evidence(&self, name: &str) -> TestResult<NatsEvidenceSummary> {
+        self.register_evidence_collector(
+            name,
+            EvidenceCollectorKind::Nats,
+            EvidenceCaptureLevel::Summary,
+        );
+        let namespace = self.pipeline_namespace.prefix().to_string();
+        let Some(client) = self.nats_client.clone().or_else(|| {
+            self.lazy_shared_nats
+                .get()
+                .map(|(_, client)| client.clone())
+        }) else {
+            let summary = NatsEvidenceSummary {
+                enabled: false,
+                namespace,
+                streams: Vec::new(),
+            };
+            self.evidence
+                .lock()
+                .attach_capture(EvidenceCapture::unavailable(
+                    name,
+                    EvidenceCollectorKind::Nats,
+                    "NATS not initialized for this test",
+                ));
+            return Ok(summary);
+        };
+
+        let js = jetstream::new(client);
+        let mut streams = js.streams();
+        let mut stream_summaries = Vec::new();
+        let namespace_stream_token = namespace
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() {
+                    ch.to_ascii_uppercase()
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        while let Some(result) = streams.next().await {
+            let info = result?;
+            let stream_name = info.config.name.clone();
+            let subjects_match = info
+                .config
+                .subjects
+                .iter()
+                .any(|subject| subject.contains(&namespace));
+            let stream_name_matches = stream_name.contains(&namespace_stream_token);
+            if !subjects_match && !stream_name_matches {
+                continue;
+            }
+            let mut consumer_summaries = Vec::new();
+            if let Ok(stream) = js.get_stream(&stream_name).await {
+                let mut consumers = stream.consumers();
+                while let Some(result) = consumers.next().await {
+                    let consumer = result?;
+                    consumer_summaries.push(NatsConsumerEvidence {
+                        name: consumer.name,
+                        durable_name: consumer.config.durable_name,
+                        filter_subject: consumer.config.filter_subject,
+                        num_pending: consumer.num_pending,
+                        num_ack_pending: consumer.num_ack_pending,
+                        num_redelivered: consumer.num_redelivered,
+                        num_waiting: consumer.num_waiting,
+                        delivered_stream_sequence: consumer.delivered.stream_sequence,
+                        ack_floor_stream_sequence: consumer.ack_floor.stream_sequence,
+                    });
+                }
+            }
+            stream_summaries.push(NatsStreamEvidence {
+                name: stream_name,
+                subjects: info.config.subjects,
+                messages: info.state.messages,
+                bytes: info.state.bytes,
+                first_sequence: info.state.first_sequence,
+                last_sequence: info.state.last_sequence,
+                consumer_count: info.state.consumer_count,
+                consumers: consumer_summaries,
+            });
+        }
+        stream_summaries.sort_by(|a, b| a.name.cmp(&b.name));
+        let summary = NatsEvidenceSummary {
+            enabled: true,
+            namespace,
+            streams: stream_summaries,
+        };
+        let artifact = evidence::write_json_artifact(
+            &self.test_name,
+            name,
+            "nats",
+            &summary,
+            Some(format!("{} stream(s)", summary.streams.len())),
+        )?;
+        self.evidence
+            .lock()
+            .attach_capture(EvidenceCapture::captured(
+                name,
+                EvidenceCollectorKind::Nats,
+                Some(format!("{} stream(s)", summary.streams.len())),
+                serde_json::to_value(&summary)?,
+                Some(artifact),
+            ));
+        Ok(summary)
+    }
+
+    /// Capture process-tree resource evidence for the current test process.
+    pub fn capture_process_evidence(&self, name: &str) -> TestResult<EvidenceRuntimeSnapshot> {
+        self.register_evidence_collector(
+            name,
+            EvidenceCollectorKind::Process,
+            EvidenceCaptureLevel::Summary,
+        );
+        let summary = EvidenceRuntimeSnapshot {
+            process_id: std::process::id(),
+            process_tree: evidence::current_process_tree_json(Duration::ZERO),
+        };
+        let artifact = evidence::write_json_artifact(
+            &self.test_name,
+            name,
+            "process",
+            &summary,
+            Some(format!("process tree for pid {}", summary.process_id)),
+        )?;
+        self.evidence
+            .lock()
+            .attach_capture(EvidenceCapture::captured(
+                name,
+                EvidenceCollectorKind::Process,
+                Some(format!("process tree for pid {}", summary.process_id)),
+                serde_json::to_value(&summary)?,
+                Some(artifact),
+            ));
+        Ok(summary)
+    }
+
+    /// Capture material spool or WAL directory shape for source-material tests.
+    pub fn capture_material_directory_evidence(
+        &self,
+        name: &str,
+        path: impl AsRef<std::path::Path>,
+    ) -> TestResult<DirectoryEvidenceSummary> {
+        self.register_evidence_collector(
+            name,
+            EvidenceCollectorKind::MaterialSpool,
+            EvidenceCaptureLevel::Summary,
+        );
+        let summary = evidence::summarize_directory(path.as_ref());
+        let artifact = evidence::write_json_artifact(
+            &self.test_name,
+            name,
+            "material_spool",
+            &summary,
+            Some(format!(
+                "{} file(s), {} WAL file(s), {} bytes",
+                summary.file_count,
+                summary.wal_files.len(),
+                summary.total_bytes
+            )),
+        )?;
+        self.evidence
+            .lock()
+            .attach_capture(EvidenceCapture::captured(
+                name,
+                EvidenceCollectorKind::MaterialSpool,
+                Some(format!(
+                    "{} file(s), {} WAL file(s), {} bytes",
+                    summary.file_count,
+                    summary.wal_files.len(),
+                    summary.total_bytes
+                )),
+                serde_json::to_value(&summary)?,
+                Some(artifact),
+            ));
+        Ok(summary)
+    }
+
     /// Get test name for fixture scoping
     #[must_use]
     pub fn test_name(&self) -> &str {
@@ -703,6 +1065,7 @@ impl Sandbox {
             baseline_events: self.baseline_events,
             start_time: self.start_time,
             captured_logs: Arc::clone(&self.captured_logs),
+            evidence: Arc::clone(&self.evidence),
             background: self.background.clone(),
         }
     }
@@ -1318,5 +1681,79 @@ mod tests {
                 busy: false,
             }
         );
+    }
+
+    #[sinex_test]
+    async fn db_evidence_captures_source_material_registry(ctx: Sandbox) -> TestResult<()> {
+        let material_id = ctx
+            .create_source_material(Some("evidence-material"))
+            .await?;
+
+        let summary = ctx.capture_db_evidence("db").await?;
+
+        assert!(summary.source_material_count >= 1);
+        assert!(
+            summary
+                .recent_source_materials
+                .iter()
+                .any(|material| material.id == material_id.to_uuid().to_string())
+        );
+        assert!(
+            ctx.evidence_snapshot().captures.iter().any(|capture| {
+                capture.kind == EvidenceCollectorKind::Database
+                    && capture.status == EvidenceCollectorStatus::Captured
+            }),
+            "database capture should be attached to test evidence"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn nats_evidence_captures_namespaced_streams(ctx: Sandbox) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let _helper = crate::sandbox::nats::JetStreamTestHelper::new(&ctx, "evidence").await?;
+
+        let summary = ctx.capture_nats_evidence("nats").await?;
+
+        assert!(summary.enabled);
+        assert!(
+            summary
+                .streams
+                .iter()
+                .any(|stream| stream.name.contains("SINEX_RAW_EVENTS_evidence")),
+            "expected helper-created events stream in evidence: {:?}",
+            summary.streams
+        );
+        assert!(
+            ctx.evidence_snapshot().captures.iter().any(|capture| {
+                capture.kind == EvidenceCollectorKind::Nats
+                    && capture.status == EvidenceCollectorStatus::Captured
+            }),
+            "NATS capture should be attached to test evidence"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn material_directory_evidence_reports_wal_files(ctx: Sandbox) -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let wal_path = temp.path().join("state.wal");
+        std::fs::write(&wal_path, b"wal-entry")?;
+        std::fs::write(temp.path().join("payload.jsonl"), b"{}\n")?;
+
+        let summary = ctx.capture_material_directory_evidence("spool", temp.path())?;
+
+        assert!(summary.exists);
+        assert_eq!(summary.file_count, 2);
+        assert_eq!(summary.wal_files.len(), 1);
+        assert_eq!(summary.wal_files[0].path, wal_path.display().to_string());
+        assert!(
+            ctx.evidence_snapshot().captures.iter().any(|capture| {
+                capture.kind == EvidenceCollectorKind::MaterialSpool
+                    && capture.status == EvidenceCollectorStatus::Captured
+            }),
+            "material spool capture should be attached to test evidence"
+        );
+        Ok(())
     }
 }
