@@ -149,6 +149,9 @@ authors = ["Sinex Exocortex Contributors"]
 repository = "https://github.com/sinex/exocortex"
 license = "MIT"
 
+[workspace.metadata.crane]
+name = "sinex"
+
 # cargo-machete false positives (deps used in build.rs, conditional, platform-specific)
 [workspace.metadata.cargo-machete]
 ignored = [
