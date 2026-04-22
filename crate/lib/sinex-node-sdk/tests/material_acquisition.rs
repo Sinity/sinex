@@ -185,7 +185,18 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
 
 /// Scenario: tiny logical row-stream records travel as one physical source frame
 /// while preserving per-record byte anchors all the way to persisted material state.
-#[sinex_test(timeout = 120)]
+#[sinex_test(
+    timeout = 120,
+    scenario = "source-material.row-stream-batched-anchors.v1",
+    category = "source_material",
+    lane = "fast",
+    cost_tier = "integration",
+    tags = "source_material,row_stream,anchors,material_spool",
+    fixtures = "postgres,nats,ingestd,material_spool",
+    subjects = "issue:315,issue:324,node-sdk:source-material",
+    claims = "tiny-logical-records-batched,per-record-byte-anchors-preserved,material-ledger-total-bytes-matches-source-frame",
+    reproducer = "xtask test -p sinex-node-sdk --scenario-tag row_stream"
+)]
 async fn source_material_scenario_batches_row_stream_records_with_stable_anchors(
     ctx: TestContext,
 ) -> Result<()> {
@@ -1017,7 +1028,18 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
 }
 
 /// Ensure material assembly resumes correctly after ingestd restart
-#[sinex_test(timeout = 90)]
+#[sinex_test(
+    timeout = 90,
+    scenario = "runtime.material-acquisition-restart-recovery.v1",
+    category = "runtime",
+    lane = "heavy",
+    cost_tier = "integration",
+    tags = "runtime,restart,recovery,source_material",
+    fixtures = "postgres,nats,ingestd,material_spool",
+    subjects = "issue:324,node-sdk:material-acquisition,component:ingestd",
+    claims = "restart-with-pending-material-state-recovers,material-ledger-total-bytes-match-post-restart-finalization",
+    reproducer = "xtask test -p sinex-node-sdk --scenario-tag restart --heavy"
+)]
 async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
     ctx.set_proof_metadata(source_material_proof(
         "source-material.restart-recovery.v1",
