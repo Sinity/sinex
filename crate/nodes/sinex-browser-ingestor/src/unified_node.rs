@@ -11,6 +11,7 @@ use sinex_node_sdk::{
     BatchImporterState, BufferedRecordMaterializer, BufferedRecordSourceHarness, EventTransport,
     ImportFileChangeKind, IngestorNode, NodeResult, RecordProcessingOutcome, RecordReadHorizon,
     RecordSources, RotationPolicy, SinexError, SourceRecordAnchor, SqliteRowCheckpoint,
+    SqliteSnapshotCheckpointState, SqliteSnapshotLinker, SqliteSnapshotPolicy,
     SqliteSourceCheckpointState,
     acquisition_manager::{AcquisitionManager, BufferedAppendStreamWriterConfig},
     discover_importable_files_at_root,
@@ -81,6 +82,8 @@ pub struct BrowserIngestorState {
     pub dump_imports: BatchImporterState,
     #[serde(default)]
     pub sqlite_sources: SqliteSourceCheckpointState,
+    #[serde(default)]
+    pub sqlite_snapshots: SqliteSnapshotCheckpointState,
 }
 
 #[derive(Default)]
@@ -88,6 +91,7 @@ pub struct BrowserNode {
     config: BrowserIngestorConfig,
     stage_context: Option<StageAsYouGoContext>,
     acquisition: Option<Arc<AcquisitionManager>>,
+    runtime: Option<NodeRuntimeState>,
 }
 
 #[derive(Default)]
@@ -115,6 +119,12 @@ impl BrowserNode {
         self.acquisition
             .as_ref()
             .ok_or_else(|| SinexError::lifecycle("browser acquisition manager not initialized"))
+    }
+
+    fn runtime(&self) -> NodeResult<&NodeRuntimeState> {
+        self.runtime
+            .as_ref()
+            .ok_or_else(|| SinexError::lifecycle("browser runtime not initialized"))
     }
 
     fn stage_context(&self) -> NodeResult<&StageAsYouGoContext> {
@@ -343,16 +353,20 @@ impl BrowserNode {
                     .and_then(|row_id| i64::try_from(row_id).ok())
                     .unwrap_or_default()
             },
-        );
+        )
+        .with_snapshot_policy(SqliteSnapshotPolicy::audit_default());
         let harness = BufferedRecordSourceHarness::buffered_default(
             record_source,
             self.acquisition()?.clone(),
         );
         let mut checkpoint = SqliteRowCheckpoint::new(state.sqlite_sources.cursor(&checkpoint_key));
         let report = harness
-            .read_process_lenient(
+            .read_process_lenient_with_snapshot(
                 &mut checkpoint,
                 historical_end_time.map_or(RecordReadHorizon::Unbounded, RecordReadHorizon::Until),
+                state.sqlite_snapshots.state_mut(checkpoint_key.clone()),
+                self.acquisition()?,
+                Some(SqliteSnapshotLinker::new(self.runtime()?.db_pool())),
                 |visit, ctx| async move {
                     self.emit_visit(visit, ctx.materializer())
                         .await
@@ -461,6 +475,7 @@ impl IngestorNode for BrowserNode {
                 .with_acquisition_manager(Arc::clone(&acquisition)),
         );
         self.acquisition = Some(acquisition);
+        self.runtime = Some(runtime.clone());
         self.config = config;
         Ok(())
     }

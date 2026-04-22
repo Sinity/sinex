@@ -12,7 +12,8 @@ use sinex_node_sdk::{
     BufferedRecordSourceHarness, CoverageAnalysis, ExplorationProvider, ExportFormat,
     IngestionHistoryEntry, RecordProcessingOutcome, RecordReadHorizon, RecordSource,
     RecordSourceObservation, RecordSources, RecordWarningDisposition, SourceState,
-    SqliteRowCheckpoint, TailError,
+    SqliteRowCheckpoint, SqliteSnapshotLinker, SqliteSnapshotPolicy, SqliteSnapshotState,
+    TailError,
 };
 use sinex_node_sdk::{
     NodeResult, SinexError, SourceRecordAnchor,
@@ -185,6 +186,9 @@ struct HistoryState {
     inode: Option<u64>,
     /// For `SQLite`-backed history sources: last processed ROWID
     sqlite_row_id: Option<i64>,
+    /// For `SQLite`-backed history sources: SDK-managed snapshot evidence policy state.
+    #[serde(default)]
+    sqlite_snapshot: SqliteSnapshotState,
     /// Rolling window of command content hashes for deduplication across file rotation/truncation.
     /// When a history file is rotated (new inode), old commands may reappear; this set prevents
     /// duplicate events from being emitted.
@@ -220,6 +224,7 @@ impl HistoryState {
             #[cfg(unix)]
             inode: file_state.inode,
             sqlite_row_id: None,
+            sqlite_snapshot: SqliteSnapshotState::default(),
             recent_hashes,
         }
     }
@@ -418,6 +423,8 @@ fn normalize_shell_name(shell: &str) -> String {
 #[derive(Clone)]
 struct HistoryWatcherContext {
     materializer: BufferedRecordMaterializer,
+    acquisition: Arc<AcquisitionManager>,
+    db_pool: sqlx::PgPool,
     stage_context: StageAsYouGoContext,
     metrics: Arc<TerminalMetrics>,
     shell: String,
@@ -1039,12 +1046,12 @@ impl HistoryWatcherContext {
             + 'static
             + Fn(&Utf8PathBuf, i64, Option<Timestamp>) -> Result<(Vec<Entry>, i64), rusqlite::Error>,
     {
-        let (mut sqlite_row_id, mut recent_hashes) = match self
+        let (mut sqlite_row_id, mut recent_hashes, mut sqlite_snapshot) = match self
             .resolve_state(self.initial_state_override.clone())
             .await
         {
             Ok(state) => match self.require_sqlite_row_id(&state) {
-                Ok(sqlite_row_id) => (sqlite_row_id, state.recent_hashes),
+                Ok(sqlite_row_id) => (sqlite_row_id, state.recent_hashes, state.sqlite_snapshot),
                 Err(error) => return Err(error),
             },
             Err(error) => return Err(error),
@@ -1058,7 +1065,7 @@ impl HistoryWatcherContext {
             Entry::SOURCE_LABEL
         );
         if self.initial_state_override.is_some() {
-            self.persist_sqlite_state(sqlite_row_id, &recent_hashes)
+            self.persist_sqlite_state(sqlite_row_id, &recent_hashes, &sqlite_snapshot)
                 .await?;
         }
 
@@ -1076,6 +1083,7 @@ impl HistoryWatcherContext {
                 .poll_sqlite_history_once::<Entry, _>(
                     &mut sqlite_row_id,
                     &mut recent_hashes,
+                    &mut sqlite_snapshot,
                     true,
                     read,
                 )
@@ -1112,6 +1120,9 @@ impl HistoryWatcherContext {
             }
         }
 
+        sqlite_snapshot.record_clean_shutdown(Timestamp::now());
+        self.persist_sqlite_state(sqlite_row_id, &recent_hashes, &sqlite_snapshot)
+            .await?;
         self.finalize_material_stream("terminal-history-sqlite-shutdown")
             .await
     }
@@ -1293,6 +1304,7 @@ impl HistoryWatcherContext {
             pending_timestamp,
             None,
             recent_hashes,
+            SqliteSnapshotState::default(),
         )
         .await
     }
@@ -1301,9 +1313,17 @@ impl HistoryWatcherContext {
         &self,
         sqlite_row_id: i64,
         recent_hashes: &VecDeque<u64>,
+        sqlite_snapshot: &SqliteSnapshotState,
     ) -> NodeResult<()> {
-        self.persist_state_full(0, 0, None, Some(sqlite_row_id), recent_hashes)
-            .await
+        self.persist_state_full(
+            0,
+            0,
+            None,
+            Some(sqlite_row_id),
+            recent_hashes,
+            sqlite_snapshot.clone(),
+        )
+        .await
     }
 
     fn history_state_temp_path(path: &std::path::Path, suffix: Uuid) -> std::path::PathBuf {
@@ -1323,6 +1343,19 @@ impl HistoryWatcherContext {
     fn sqlite_history_state(sqlite_row_id: i64, recent_hashes: VecDeque<u64>) -> HistoryState {
         HistoryState {
             sqlite_row_id: Some(sqlite_row_id),
+            recent_hashes,
+            ..HistoryState::default()
+        }
+    }
+
+    fn sqlite_history_state_with_snapshot(
+        sqlite_row_id: i64,
+        recent_hashes: VecDeque<u64>,
+        sqlite_snapshot: SqliteSnapshotState,
+    ) -> HistoryState {
+        HistoryState {
+            sqlite_row_id: Some(sqlite_row_id),
+            sqlite_snapshot,
             recent_hashes,
             ..HistoryState::default()
         }
@@ -1369,6 +1402,7 @@ impl HistoryWatcherContext {
             }
         };
         let mut recent_hashes = state.recent_hashes;
+        let mut sqlite_snapshot = state.sqlite_snapshot;
         let poll_started_at = Instant::now();
         let file_size = match self.history_file_size().await {
             Ok(size) => size,
@@ -1377,7 +1411,11 @@ impl HistoryWatcherContext {
                 return self.failed_outcome(
                     "stat_history_file",
                     error,
-                    Self::sqlite_history_state(sqlite_row_id, recent_hashes),
+                    Self::sqlite_history_state_with_snapshot(
+                        sqlite_row_id,
+                        recent_hashes,
+                        sqlite_snapshot,
+                    ),
                 );
             }
         };
@@ -1386,23 +1424,29 @@ impl HistoryWatcherContext {
             self.checkpoint_key(),
             move |path, from_row_id, end_time| read(path, from_row_id, end_time),
             |entry: &Entry| entry.row_id(),
-        );
+        )
+        .with_snapshot_policy(SqliteSnapshotPolicy::audit_default());
         let harness = BufferedRecordSourceHarness::new(source, self.materializer.clone());
         let mut checkpoint = SqliteRowCheckpoint::new(sqlite_row_id);
         let import_result = harness
-            .read_process_lenient(
+            .read_process_lenient_with_snapshot(
                 &mut checkpoint,
                 historical_end_time.map_or(RecordReadHorizon::Unbounded, RecordReadHorizon::Until),
-                |entry, _ctx| {
+                &mut sqlite_snapshot,
+                &self.acquisition,
+                Some(SqliteSnapshotLinker::new(&self.db_pool)),
+                |entry, ctx| {
                     let row_id = entry.row_id();
                     let prepared = entry.prepare_command(self, &mut recent_hashes);
+                    let mut record_ctx = self.clone();
+                    record_ctx.materializer = ctx.materializer().clone();
                     async move {
                         let Some(final_command) = prepared? else {
                             return Ok(RecordProcessingOutcome::Skipped);
                         };
 
                         entry
-                            .emit_prepared(self, final_command)
+                            .emit_prepared(&record_ctx, final_command)
                             .await
                             .map(|()| RecordProcessingOutcome::Processed)
                             .map_err(|error| {
@@ -1431,7 +1475,11 @@ impl HistoryWatcherContext {
             return self.failed_outcome(
                 "finalize_source_material",
                 error,
-                Self::sqlite_history_state(sqlite_row_id, recent_hashes),
+                Self::sqlite_history_state_with_snapshot(
+                    sqlite_row_id,
+                    recent_hashes,
+                    sqlite_snapshot,
+                ),
             );
         }
 
@@ -1440,7 +1488,11 @@ impl HistoryWatcherContext {
                 self.record_poll(poll_started_at, file_size, report.processed_records);
                 self.success_outcome(
                     report.processed_records,
-                    Self::sqlite_history_state(sqlite_row_id, recent_hashes),
+                    Self::sqlite_history_state_with_snapshot(
+                        sqlite_row_id,
+                        recent_hashes,
+                        sqlite_snapshot,
+                    ),
                     report
                         .warnings
                         .into_iter()
@@ -1457,7 +1509,11 @@ impl HistoryWatcherContext {
                         Entry::SOURCE_LABEL,
                         self.path
                     ),
-                    Self::sqlite_history_state(sqlite_row_id, recent_hashes),
+                    Self::sqlite_history_state_with_snapshot(
+                        sqlite_row_id,
+                        recent_hashes,
+                        sqlite_snapshot,
+                    ),
                 )
             }
         }
@@ -1611,6 +1667,7 @@ impl HistoryWatcherContext {
         pending_timestamp: Option<Timestamp>,
         sqlite_row_id: Option<i64>,
         recent_hashes: &VecDeque<u64>,
+        sqlite_snapshot: SqliteSnapshotState,
     ) -> NodeResult<()> {
         let Some(path) = &self.state_path else {
             return Ok(());
@@ -1640,6 +1697,7 @@ impl HistoryWatcherContext {
             #[cfg(unix)]
             inode: current_inode,
             sqlite_row_id,
+            sqlite_snapshot,
             recent_hashes: recent_hashes.clone(),
         };
 
@@ -1871,6 +1929,7 @@ impl HistoryWatcherContext {
         &self,
         sqlite_row_id: &mut i64,
         recent_hashes: &mut VecDeque<u64>,
+        sqlite_snapshot: &mut SqliteSnapshotState,
         persist_state: bool,
         read: Read,
     ) -> NodeResult<usize>
@@ -1903,23 +1962,29 @@ impl HistoryWatcherContext {
             self.checkpoint_key(),
             move |path, from_row_id, end_time| read(path, from_row_id, end_time),
             |entry: &Entry| entry.row_id(),
-        );
+        )
+        .with_snapshot_policy(SqliteSnapshotPolicy::audit_default());
         let harness = BufferedRecordSourceHarness::new(source, self.materializer.clone());
         let mut checkpoint = SqliteRowCheckpoint::new(*sqlite_row_id);
         let processed = match harness
-            .read_process_lenient(
+            .read_process_lenient_with_snapshot(
                 &mut checkpoint,
                 RecordReadHorizon::Unbounded,
-                |entry, _ctx| {
+                sqlite_snapshot,
+                &self.acquisition,
+                Some(SqliteSnapshotLinker::new(&self.db_pool)),
+                |entry, ctx| {
                     let row_id = entry.row_id();
                     let prepared = entry.prepare_command(self, recent_hashes);
+                    let mut record_ctx = self.clone();
+                    record_ctx.materializer = ctx.materializer().clone();
                     async move {
                         let Some(final_command) = prepared? else {
                             return Ok(RecordProcessingOutcome::Skipped);
                         };
 
                         entry
-                            .emit_prepared(self, final_command)
+                            .emit_prepared(&record_ctx, final_command)
                             .await
                             .map(|()| RecordProcessingOutcome::Processed)
                             .map_err(|error| {
@@ -1945,7 +2010,7 @@ impl HistoryWatcherContext {
             Ok(report) => {
                 *sqlite_row_id = checkpoint.row_id;
                 if persist_state {
-                    self.persist_sqlite_state(*sqlite_row_id, recent_hashes)
+                    self.persist_sqlite_state(*sqlite_row_id, recent_hashes, sqlite_snapshot)
                         .await?;
                 }
                 report.processed_records
@@ -1973,9 +2038,11 @@ impl HistoryWatcherContext {
         recent_hashes: &mut VecDeque<u64>,
         persist_state: bool,
     ) -> NodeResult<usize> {
+        let mut sqlite_snapshot = SqliteSnapshotState::default();
         self.poll_sqlite_history_once::<crate::atuin_history::AtuinHistoryEntry, _>(
             sqlite_row_id,
             recent_hashes,
+            &mut sqlite_snapshot,
             persist_state,
             crate::atuin_history::read_atuin_history,
         )
@@ -2702,6 +2769,8 @@ impl TerminalNode {
 
             contexts.push(HistoryWatcherContext {
                 materializer,
+                acquisition,
+                db_pool: runtime.db_pool().clone(),
                 stage_context,
                 metrics: Arc::clone(&self.metrics),
                 shell: normalized_shell,
@@ -3806,6 +3875,8 @@ mod tests {
 
         let watcher_ctx = HistoryWatcherContext {
             materializer: test_materializer(&acquisition),
+            acquisition,
+            db_pool: runtime.db_pool().clone(),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "bash".to_string(),
@@ -4156,6 +4227,8 @@ mod tests {
 
         let watcher_ctx = HistoryWatcherContext {
             materializer: test_materializer(&acquisition),
+            acquisition,
+            db_pool: runtime.db_pool().clone(),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "atuin".to_string(),
@@ -4257,6 +4330,8 @@ mod tests {
 
         let mut watcher_ctx = HistoryWatcherContext {
             materializer: test_materializer(&acquisition),
+            acquisition,
+            db_pool: runtime.db_pool().clone(),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "bash".to_string(),
@@ -4390,6 +4465,8 @@ mod tests {
 
         let watcher_ctx = HistoryWatcherContext {
             materializer: test_materializer(&acquisition),
+            acquisition,
+            db_pool: runtime.db_pool().clone(),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "atuin".to_string(),
@@ -4476,6 +4553,8 @@ mod tests {
 
         let watcher_ctx = HistoryWatcherContext {
             materializer: test_materializer(&acquisition),
+            acquisition,
+            db_pool: runtime.db_pool().clone(),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "fish".to_string(),
@@ -4527,6 +4606,8 @@ mod tests {
 
         let watcher_ctx = HistoryWatcherContext {
             materializer: test_materializer(&acquisition),
+            acquisition,
+            db_pool: runtime.db_pool().clone(),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "atuin".to_string(),
@@ -6787,6 +6868,8 @@ mod tests {
 
         let mut ctx = HistoryWatcherContext {
             materializer: test_materializer(&acquisition),
+            acquisition,
+            db_pool: runtime.db_pool().clone(),
             stage_context,
             metrics: TerminalMetrics::new(),
             shell: "bash".to_string(),
