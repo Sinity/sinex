@@ -68,6 +68,8 @@ pub struct RuntimeTargetGateway {
     #[serde(default)]
     pub token_file: Option<PathBuf>,
     #[serde(default)]
+    pub token_role: Option<RuntimeTargetGatewayTokenRole>,
+    #[serde(default)]
     pub ca_cert_file: Option<PathBuf>,
     #[serde(default)]
     pub client_cert_file: Option<PathBuf>,
@@ -77,6 +79,46 @@ pub struct RuntimeTargetGateway {
     pub require_client_tls: bool,
     #[serde(default)]
     pub insecure: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeTargetGatewayTokenRole {
+    Readonly,
+    Write,
+    Admin,
+}
+
+impl RuntimeTargetGatewayTokenRole {
+    #[must_use]
+    pub const fn as_suffix(self) -> &'static str {
+        match self {
+            Self::Readonly => "readonly",
+            Self::Write => "write",
+            Self::Admin => "admin",
+        }
+    }
+
+    #[must_use]
+    pub fn apply_to_token(self, token: &str) -> String {
+        let trimmed = token.trim();
+        if let Some((_base, suffix)) = trimmed.rsplit_once(':')
+            && Self::from_suffix(suffix).is_some()
+        {
+            return trimmed.to_string();
+        }
+
+        format!("{trimmed}:{}", self.as_suffix())
+    }
+
+    fn from_suffix(suffix: &str) -> Option<Self> {
+        match suffix {
+            "readonly" | "read" | "ro" => Some(Self::Readonly),
+            "write" | "rw" => Some(Self::Write),
+            "admin" => Some(Self::Admin),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -229,6 +271,7 @@ impl RuntimeTargetDescriptor {
             gateway: RuntimeTargetGateway {
                 base_url: readiness.gateway.base_url.clone(),
                 token_file: readiness.secrets.gateway_admin_token_file.clone(),
+                token_role: Some(RuntimeTargetGatewayTokenRole::Admin),
                 ca_cert_file: readiness.secrets.gateway_tls_trust_anchor_file.clone(),
                 client_cert_file: None,
                 client_key_file: None,
@@ -378,6 +421,26 @@ mod tests {
             target.gateway.token_file.as_deref(),
             Some(Path::new("/run/agenix/sinex-gateway-admin-token"))
         );
+        assert_eq!(
+            target.gateway.token_role,
+            Some(RuntimeTargetGatewayTokenRole::Admin)
+        );
         assert_eq!(target.services.managed_units, ["sinex-gateway.service"]);
+    }
+
+    #[test]
+    fn gateway_token_role_applies_expected_suffix() {
+        assert_eq!(
+            RuntimeTargetGatewayTokenRole::Admin.apply_to_token("sinex_secret\n"),
+            "sinex_secret:admin"
+        );
+        assert_eq!(
+            RuntimeTargetGatewayTokenRole::Admin.apply_to_token("sinex_secret:admin"),
+            "sinex_secret:admin"
+        );
+        assert_eq!(
+            RuntimeTargetGatewayTokenRole::Readonly.apply_to_token("sinex_secret:admin"),
+            "sinex_secret:admin"
+        );
     }
 }

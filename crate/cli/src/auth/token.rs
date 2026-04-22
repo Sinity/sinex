@@ -3,6 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::Result;
+use sinex_primitives::RuntimeTargetGatewayTokenRole;
 
 /// Load RPC authentication token from environment or file
 ///
@@ -11,17 +12,21 @@ use crate::Result;
 /// 2. `SINEX_RPC_TOKEN` environment variable
 /// 3. Token file path (if provided)
 /// 4. Default token file (~/.config/sinex/token)
-pub fn load_token(explicit_token: Option<&str>, token_file: Option<&Path>) -> Result<String> {
+pub fn load_token(
+    explicit_token: Option<&str>,
+    token_file: Option<&Path>,
+    token_role: Option<RuntimeTargetGatewayTokenRole>,
+) -> Result<String> {
     // 1. Explicit token
     if let Some(token) = explicit_token {
-        return Ok(token.to_string());
+        return Ok(apply_runtime_role(token, token_role));
     }
 
     // 2. Environment variable
     if let Ok(token) = env::var("SINEX_RPC_TOKEN")
         && !token.is_empty()
     {
-        return Ok(token);
+        return Ok(apply_runtime_role(&token, token_role));
     }
 
     // 3. Token file
@@ -29,7 +34,7 @@ pub fn load_token(explicit_token: Option<&str>, token_file: Option<&Path>) -> Re
         && path.exists()
     {
         return fs::read_to_string(path)
-            .map(|s| s.trim().to_string())
+            .map(|s| apply_runtime_role(&s, token_role))
             .map_err(|e| color_eyre::eyre::eyre!("Failed to read token from {:?}: {}", path, e));
     }
 
@@ -38,7 +43,7 @@ pub fn load_token(explicit_token: Option<&str>, token_file: Option<&Path>) -> Re
         let default_path = Path::new(&home).join(".config/sinex/token");
         if default_path.exists() {
             return fs::read_to_string(&default_path)
-                .map(|s| s.trim().to_string())
+                .map(|s| apply_runtime_role(&s, token_role))
                 .map_err(|e| {
                     color_eyre::eyre::eyre!("Failed to read token from {:?}: {}", default_path, e)
                 });
@@ -48,4 +53,11 @@ pub fn load_token(explicit_token: Option<&str>, token_file: Option<&Path>) -> Re
     Err(color_eyre::eyre::eyre!(
         "No authentication token found. Set SINEX_RPC_TOKEN environment variable or provide --token"
     ))
+}
+
+fn apply_runtime_role(token: &str, role: Option<RuntimeTargetGatewayTokenRole>) -> String {
+    role.map_or_else(
+        || token.trim().to_string(),
+        |role| role.apply_to_token(token),
+    )
 }

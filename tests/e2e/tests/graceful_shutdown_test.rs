@@ -97,9 +97,9 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
         .unwrap_or_else(|_| Utf8PathBuf::from("/tmp"));
-    let annex_path = work_dir_utf8.join("annex");
+    let content_store_path = work_dir_utf8.join("content-store");
     let assembler_state_dir = work_dir_utf8.join("assembler_state");
-    tokio::fs::create_dir_all(annex_path.as_std_path()).await?;
+    tokio::fs::create_dir_all(content_store_path.as_std_path()).await?;
     tokio::fs::create_dir_all(assembler_state_dir.as_std_path()).await?;
     let material_id = register_test_material(&ctx.pool, "graceful-source").await?;
 
@@ -118,7 +118,7 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
         .validate_schemas(false)
         .skip_schema_sync(true)
         .work_dir(work_dir_utf8.clone())
-        .annex_repo_path(annex_path)
+        .content_store_path(content_store_path)
         .assembler_state_dir(assembler_state_dir)
         .build();
 
@@ -205,9 +205,9 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
         .unwrap_or_else(|_| Utf8PathBuf::from("/tmp"));
-    let annex_path = work_dir_utf8.join("annex");
+    let content_store_path = work_dir_utf8.join("content-store");
     let assembler_state_dir = work_dir_utf8.join("assembler_state");
-    tokio::fs::create_dir_all(annex_path.as_std_path()).await?;
+    tokio::fs::create_dir_all(content_store_path.as_std_path()).await?;
     tokio::fs::create_dir_all(assembler_state_dir.as_std_path()).await?;
     let material_id = register_test_material(&ctx.pool, "load-source").await?;
 
@@ -226,7 +226,7 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
         .validate_schemas(false)
         .skip_schema_sync(true)
         .work_dir(work_dir_utf8.clone())
-        .annex_repo_path(annex_path)
+        .content_store_path(content_store_path)
         .assembler_state_dir(assembler_state_dir)
         .build();
 
@@ -499,9 +499,9 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
         .unwrap_or_else(|_| Utf8PathBuf::from("/tmp"));
-    let annex_path = work_dir_utf8.join("annex");
+    let content_store_path = work_dir_utf8.join("content-store");
     let assembler_state_dir = work_dir_utf8.join("assembler_state");
-    tokio::fs::create_dir_all(annex_path.as_std_path()).await?;
+    tokio::fs::create_dir_all(content_store_path.as_std_path()).await?;
     tokio::fs::create_dir_all(assembler_state_dir.as_std_path()).await?;
     let material_id = register_test_material(&ctx.pool, "consistency-source").await?;
 
@@ -520,7 +520,7 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
         .validate_schemas(false)
         .skip_schema_sync(true)
         .work_dir(work_dir_utf8.clone())
-        .annex_repo_path(annex_path)
+        .content_store_path(content_store_path)
         .assembler_state_dir(assembler_state_dir)
         .build();
 

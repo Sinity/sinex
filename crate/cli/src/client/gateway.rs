@@ -69,6 +69,7 @@ use crate::auth::load_token;
 use crate::client::RetryConfig;
 use crate::model::NodeRole;
 use crate::validation::{parse_time_input, parse_time_input_with_now, validate_time_range};
+use sinex_primitives::RuntimeTargetGatewayTokenRole;
 use sinex_primitives::query::{
     EventQuery, EventQueryResult, LineageQuery, LineageResult, SubscriptionFilter,
 };
@@ -90,6 +91,8 @@ pub struct ClientConfig {
     pub token: Option<String>,
     /// Token file path (optional)
     pub token_file: Option<String>,
+    /// Role suffix to apply to a raw runtime token.
+    pub token_role: Option<RuntimeTargetGatewayTokenRole>,
     /// Root CA certificate path (for custom CA)
     pub ca_cert: Option<String>,
     /// Client certificate path (for mTLS)
@@ -143,6 +146,7 @@ impl Default for ClientConfig {
                 .unwrap_or_else(|_| "https://127.0.0.1:9999".to_string()),
             token: None,
             token_file: None,
+            token_role: None,
             ca_cert: None,
             client_cert: None,
             client_key: None,
@@ -162,6 +166,7 @@ impl From<&crate::config::Config> for ClientConfig {
             url: config.rpc_url.clone(),
             token: config.token.clone(),
             token_file: config.token_file.clone(),
+            token_role: config.token_role,
             ca_cert: config.ca_cert.clone(),
             client_cert: config.client_cert.clone(),
             client_key: config.client_key.clone(),
@@ -180,7 +185,7 @@ impl GatewayClient {
     pub fn new(config: ClientConfig) -> Result<Self> {
         // Load authentication token
         let token_file_path = config.token_file.as_ref().map(Path::new);
-        let token = load_token(config.token.as_deref(), token_file_path)?;
+        let token = load_token(config.token.as_deref(), token_file_path, config.token_role)?;
 
         // Build HTTP client
         let mut client_builder = ClientBuilder::new()
