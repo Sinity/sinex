@@ -18,13 +18,13 @@
   };
 
   outputs =
-    inputs@{ self
-    , nixpkgs
-    , fenix
-    , crane
-    , agenix
-    , flake-utils
-    ,
+    inputs@{
+      self,
+      nixpkgs,
+      fenix,
+      crane,
+      agenix,
+      flake-utils,
     }:
     let
       # pg_jsonschema - PostgreSQL JSON Schema validation extension
@@ -198,6 +198,40 @@
               }
             );
 
+          runtimePackageNames = [
+            "sinex-ingestd"
+            "sinex-gateway"
+            "sinexctl"
+            "sinex-fs-ingestor"
+            "sinex-terminal-ingestor"
+            "sinex-browser-ingestor"
+            "sinex-desktop-ingestor"
+            "sinex-system-ingestor"
+            "sinex-document-ingestor"
+            "sinex-terminal-command-canonicalizer"
+            "sinex-health-automaton"
+            "sinex-analytics-automaton"
+            "sinex-session-detector"
+            "sinex-node-sdk"
+            "xtask"
+          ];
+
+          runtimeCargoExtraArgs = pkgs.lib.concatMapStringsSep " " (pname: "-p ${pname}") runtimePackageNames;
+
+          sinexRuntime = craneLib.buildPackage (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              pname = "sinex";
+              cargoExtraArgs = runtimeCargoExtraArgs;
+              doCheck = false;
+              SQLX_OFFLINE = "false";
+
+              preBuild = postgresPreBuild;
+              postBuild = postgresPostBuild;
+            }
+          );
+
           # All packages built from Cargo.toml names
           sinexPackages = {
             # Core services
@@ -230,27 +264,10 @@
             # NixOS VM test suite (Rust binary replacing Python testScript assertions)
             sinex-vm-test-suite = mkPackage "sinex-vm-test-suite";
 
-            # Aggregated suite with all binaries
-            sinex = pkgs.symlinkJoin {
-              name = "sinex";
-              paths = [
-                sinexPackages.sinex-ingestd
-                sinexPackages.sinex-gateway
-                sinexPackages.sinexctl
-                sinexPackages.sinex-fs-ingestor
-                sinexPackages.sinex-terminal-ingestor
-                sinexPackages.sinex-browser-ingestor
-                sinexPackages.sinex-desktop-ingestor
-                sinexPackages.sinex-system-ingestor
-                sinexPackages.sinex-document-ingestor
-                sinexPackages.sinex-terminal-command-canonicalizer
-                sinexPackages.sinex-health-automaton
-                sinexPackages.sinex-analytics-automaton
-                sinexPackages.sinex-session-detector
-                sinexPackages.sinex-node-sdk
-                sinexPackages.xtask
-              ];
-            };
+            # Aggregated suite with all runtime binaries. Build this as one
+            # derivation so SQLx's live Postgres validation runs once for the
+            # deployed runtime instead of once per node package.
+            sinex = sinexRuntime;
 
             # PostgreSQL extension
             pg_jsonschema = pkgs.postgresql18Packages.pg_jsonschema;

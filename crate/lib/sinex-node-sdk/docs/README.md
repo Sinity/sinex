@@ -15,6 +15,7 @@ health/self-observation.
 - [**Ingestion & Provenance**](provenance.md) – Rules for sensor/ingestor separation and Stage-as-You-Go patterns.
 
 ### Implementation Guides
+- [**Ingestor Startup**](ingestor_startup.md) – Three-phase lifecycle (snapshot → gap-fill → continuous), crash recovery, source-material input-shape adapters.
 - [**Distributed Coordination**](coordination.md) – Leadership election, handoff protocol, and strict lock ordering rules for reliability.
 - [**Material Content Store**](content_store.md) – Hybrid local-CAS/large-object storage, dual-hash verification, and deduplication.
 - [**Stage-as-You-Go**](stage_as_you_go.md) – Real-time provenance tracking for streaming data.
