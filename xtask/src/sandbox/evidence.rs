@@ -16,15 +16,11 @@ pub const EVIDENCE_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum EvidenceCaptureLevel {
+    #[default]
     Summary,
     Debug,
-}
-
-impl Default for EvidenceCaptureLevel {
-    fn default() -> Self {
-        Self::Summary
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -41,17 +37,13 @@ pub enum EvidenceCollectorKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum EvidenceCollectorStatus {
+    #[default]
     Registered,
     Captured,
     Unavailable,
     Failed,
-}
-
-impl Default for EvidenceCollectorStatus {
-    fn default() -> Self {
-        Self::Registered
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -524,6 +516,7 @@ pub struct LogEvidenceSummary {
 }
 
 impl LogEvidenceSummary {
+    #[must_use]
     pub fn new(logs: &[String], preview_limit: usize) -> Self {
         Self {
             count: logs.len(),
@@ -598,6 +591,7 @@ pub struct DirectoryEvidenceSummary {
 }
 
 impl DirectoryEvidenceSummary {
+    #[must_use]
     pub fn missing(path: &Path) -> Self {
         Self {
             root: path.display().to_string(),
@@ -685,10 +679,12 @@ pub fn evidence_root() -> PathBuf {
     )
 }
 
+#[must_use]
 pub fn test_artifact_dir(test_name: &str) -> PathBuf {
     evidence_root().join(sanitize_component(test_name))
 }
 
+#[must_use]
 pub fn sanitize_component(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     for ch in raw.chars() {
@@ -747,6 +743,7 @@ pub fn write_text_artifact(
     Ok(EvidenceArtifactRef::new(name, kind, "text", path, summary))
 }
 
+#[must_use]
 pub fn render_human_summary(bundle: &EvidenceBundle) -> String {
     let mut lines = Vec::new();
     lines.push(format!("test: {}", bundle.test));
@@ -814,6 +811,7 @@ pub fn render_human_summary(bundle: &EvidenceBundle) -> String {
     lines.join("\n")
 }
 
+#[must_use]
 pub fn current_process_tree_json(sample_window: Duration) -> JsonValue {
     #[cfg(target_os = "linux")]
     {

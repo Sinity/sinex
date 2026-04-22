@@ -1502,8 +1502,18 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn harness_materializes_records_and_finalizes_sink() -> TestResult<()> {
+    #[sinex_test(
+        scenario = "source-adapter.record-source-harness-laws.v1",
+        category = "node_adapter",
+        lane = "fast",
+        cost_tier = "fast",
+        tags = "source_adapter_laws,record_source,anchors,checkpoint",
+        fixtures = "mock_record_source,capturing_record_sink",
+        subjects = "node_adapter:record_source_harness,issue:485",
+        claims = "claim:record_source.cursor_and_anchor_laws",
+        reproducer = "xtask test -p sinex-node-sdk --scenario-tag source_adapter_laws"
+    )]
+    async fn harness_materializes_records_and_finalizes_sink(_ctx: TestContext) -> TestResult<()> {
         let sink = CapturingRecordSink::default();
         let source = MockRecordSource::new(
             "test://record-framework",

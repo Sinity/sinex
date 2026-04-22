@@ -34,6 +34,7 @@ pub mod orchestrator;
 pub mod output;
 pub mod preflight;
 pub mod process;
+pub mod proof_catalog;
 pub mod resources;
 pub mod runtime_metrics;
 pub mod runtime_target;

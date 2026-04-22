@@ -4,6 +4,7 @@ use crate::command_catalog::collect_command_catalog;
 use crate::command_docs::{render_command_guide, render_command_reference};
 use crate::config::{ast_grep_catalog_path, ast_grep_rules_dir};
 use crate::process::ProcessBuilder;
+use crate::proof_catalog::{build_proof_catalog, render_proof_catalog_json};
 use color_eyre::eyre::{Context, ContextCompat, Result};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -109,6 +110,21 @@ pub enum DocsSubcommand {
         check: bool,
     },
 
+    /// Generate the proof catalog from Rust descriptors, payloads, commands, and scenarios.
+    ProofCatalog {
+        /// Output file (default: docs/proof-catalog.json)
+        #[arg(long)]
+        output: Option<std::path::PathBuf>,
+
+        /// Print to stdout instead of writing a file
+        #[arg(long)]
+        stdout: bool,
+
+        /// Exit non-zero if the generated output would change
+        #[arg(long, conflicts_with = "stdout")]
+        check: bool,
+    },
+
     /// Generate the live ast-grep rule catalog from `.config/ast-grep/rules/`.
     AstGrepCatalog {
         /// Output file (default: .config/ast-grep/README.md)
@@ -173,6 +189,11 @@ impl XtaskCommand for DocsCommand {
             DocsSubcommand::SchemaBundle { output_dir, check } => {
                 execute_schema_bundle(output_dir.as_deref(), *check, ctx)
             }
+            DocsSubcommand::ProofCatalog {
+                output,
+                stdout,
+                check,
+            } => execute_proof_catalog(output.as_deref(), *stdout, *check, ctx),
             DocsSubcommand::AstGrepCatalog {
                 output,
                 stdout,
@@ -616,10 +637,21 @@ struct SchemaBundleRegistryEntry {
 fn generated_surfaces(workspace: &std::path::Path) -> Result<Vec<GeneratedSurface>> {
     Ok(vec![
         generated_ast_grep_catalog_surface(workspace)?,
+        generated_proof_catalog_surface(workspace)?,
         generated_command_guide_surface(workspace),
         generated_command_reference_surface(workspace),
         generated_agents_surface(workspace)?,
     ])
+}
+
+fn generated_proof_catalog_surface(workspace: &std::path::Path) -> Result<GeneratedSurface> {
+    let catalog = build_proof_catalog(workspace)?;
+    Ok(GeneratedSurface {
+        label: "proof catalog",
+        path: workspace.join("docs/proof-catalog.json"),
+        content: render_proof_catalog_json(&catalog)?,
+        regenerate_command: "xtask docs proof-catalog",
+    })
 }
 
 fn generated_ast_grep_catalog_surface(_workspace: &std::path::Path) -> Result<GeneratedSurface> {
@@ -687,6 +719,27 @@ fn execute_ast_grep_catalog(
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surface = generated_ast_grep_catalog_surface(&workspace)?;
+    let dest = output.map_or(surface.path, std::path::Path::to_path_buf);
+
+    write_generated_output(
+        &dest,
+        &surface.content,
+        to_stdout,
+        check_only,
+        surface.label,
+        surface.regenerate_command,
+        ctx,
+    )
+}
+
+fn execute_proof_catalog(
+    output: Option<&std::path::Path>,
+    to_stdout: bool,
+    check_only: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let workspace = find_workspace_root(std::env::current_dir()?)?;
+    let surface = generated_proof_catalog_surface(&workspace)?;
     let dest = output.map_or(surface.path, std::path::Path::to_path_buf);
 
     write_generated_output(

@@ -1,0 +1,1741 @@
+{
+  "schema_version": 1,
+  "runtime_units": [
+    {
+      "subject": "runtime_unit:terminal.atuin",
+      "id": "terminal.atuin",
+      "domain": "terminal",
+      "implementation": "sinex-terminal-ingestor::atuin",
+      "adapter": "sqlite_row_stream",
+      "output_event_type": "shell.command",
+      "privacy_context": "command",
+      "material_policy": "canonical_json_lines",
+      "checkpoint_policy": "sqlite_row_id",
+      "resource_shape": "linear_rows_bounded_memory",
+      "capabilities": [
+        "supports_snapshot",
+        "supports_historical",
+        "produces_material_anchors",
+        "requires_target_home"
+      ]
+    }
+  ],
+  "claims": [
+    {
+      "id": "claim:record_source.cursor_and_anchor_laws",
+      "kind": "law",
+      "subject": "node_adapter:record_source_harness",
+      "statement": "record-source harnesses advance checkpoints only through processed/skipped records and collect material anchors for processed records"
+    },
+    {
+      "id": "claim:scenario.evidence_envelope",
+      "kind": "scenario",
+      "subject": "scenario:*",
+      "statement": "proof-carrying scenarios emit subject refs, claim ids, runner id, reproducer, and artifact references"
+    },
+    {
+      "id": "claim:source_material.bounded_physical_frames",
+      "kind": "resource_shape",
+      "subject": "runtime_unit:*",
+      "statement": "logical source records should flow through bounded physical source-material frames rather than one tiny material per record"
+    },
+    {
+      "id": "claim:source_material.material_provenance",
+      "kind": "invariant",
+      "subject": "runtime_unit:*",
+      "statement": "runtime units that ingest external records must produce material provenance with stable anchors"
+    },
+    {
+      "id": "claim:xtask.command_catalog_introspection",
+      "kind": "command_contract",
+      "subject": "xtask_command:*",
+      "statement": "public xtask command contracts should be derived from clap introspection and covered by ordinary Rust scenarios"
+    }
+  ],
+  "runner_bindings": [
+    {
+      "id": "runner:rust.nextest.scenario",
+      "runner": "cargo-nextest",
+      "subject": "scenario:*",
+      "claims": [
+        "claim:scenario.evidence_envelope"
+      ],
+      "command": "xtask test --scenario-tag <tag>"
+    },
+    {
+      "id": "runner:rust.sdk.record_source_laws",
+      "runner": "cargo-nextest",
+      "subject": "node_adapter:record_source_harness",
+      "claims": [
+        "claim:record_source.cursor_and_anchor_laws"
+      ],
+      "command": "xtask test -p sinex-node-sdk --scenario-tag source_adapter_laws"
+    },
+    {
+      "id": "runner:rust.sdk.source_laws",
+      "runner": "cargo-nextest",
+      "subject": "runtime_unit:*",
+      "claims": [
+        "claim:source_material.material_provenance",
+        "claim:source_material.bounded_physical_frames"
+      ],
+      "command": "xtask test -p sinex-node-sdk --scenario-category source_material"
+    },
+    {
+      "id": "runner:rust.xtask.command_contracts",
+      "runner": "cargo-nextest",
+      "subject": "xtask_command:*",
+      "claims": [
+        "claim:xtask.command_catalog_introspection"
+      ],
+      "command": "xtask test -p xtask --scenario-tag command_contract"
+    }
+  ],
+  "obligations": [
+    {
+      "id": "obligation:node_adapter.record_source_laws",
+      "level": "required",
+      "subject": "node_adapter:record_source_harness",
+      "claim_id": "claim:record_source.cursor_and_anchor_laws",
+      "runner_binding_id": "runner:rust.sdk.record_source_laws",
+      "reason": "source adapters are the natural SDK boundary for cursor and material-anchor correctness"
+    },
+    {
+      "id": "obligation:runtime_unit.source_material_laws",
+      "level": "required",
+      "subject": "runtime_unit:*",
+      "claim_id": "claim:source_material.material_provenance",
+      "runner_binding_id": "runner:rust.sdk.source_laws",
+      "reason": "source units are the material-provenance boundary for replay and audit"
+    },
+    {
+      "id": "obligation:scenario.evidence_envelope",
+      "level": "required",
+      "subject": "scenario:*",
+      "claim_id": "claim:scenario.evidence_envelope",
+      "runner_binding_id": "runner:rust.nextest.scenario",
+      "reason": "scenario failures must carry enough context to avoid host forensics"
+    },
+    {
+      "id": "obligation:xtask.command_catalog_introspection",
+      "level": "required",
+      "subject": "xtask_command:*",
+      "claim_id": "claim:xtask.command_catalog_introspection",
+      "runner_binding_id": "runner:rust.xtask.command_contracts",
+      "reason": "command-surface contracts should live in ordinary test/scenario infrastructure rather than xtask exercise entries"
+    }
+  ],
+  "exemptions": [],
+  "event_payloads": [
+    {
+      "subject": "event_payload:activitywatch/afk.changed/1.0.0",
+      "source": "activitywatch",
+      "event_type": "afk.changed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::desktop::ActivityWatchAfkChangedPayload"
+    },
+    {
+      "subject": "event_payload:activitywatch/browser.tab.active/1.0.0",
+      "source": "activitywatch",
+      "event_type": "browser.tab.active",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::desktop::ActivityWatchBrowserTabActivePayload"
+    },
+    {
+      "subject": "event_payload:activitywatch/window.active/1.0.0",
+      "source": "activitywatch",
+      "event_type": "window.active",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::desktop::ActivityWatchWindowActivePayload"
+    },
+    {
+      "subject": "event_payload:blob_storage/blob.deleted/1.0.0",
+      "source": "blob_storage",
+      "event_type": "blob.deleted",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::blob::BlobDeletedPayload"
+    },
+    {
+      "subject": "event_payload:blob_storage/blob.ingested/1.0.0",
+      "source": "blob_storage",
+      "event_type": "blob.ingested",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::blob::BlobIngestedPayload"
+    },
+    {
+      "subject": "event_payload:blob_storage/blob.retrieved/1.0.0",
+      "source": "blob_storage",
+      "event_type": "blob.retrieved",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::blob::BlobRetrievedPayload"
+    },
+    {
+      "subject": "event_payload:blob_storage/blob.stored/1.0.0",
+      "source": "blob_storage",
+      "event_type": "blob.stored",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::blob::BlobStoredPayload"
+    },
+    {
+      "subject": "event_payload:blob_storage/blob.verified/1.0.0",
+      "source": "blob_storage",
+      "event_type": "blob.verified",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::blob::BlobVerifiedPayload"
+    },
+    {
+      "subject": "event_payload:blob_storage/storage.statistics/1.0.0",
+      "source": "blob_storage",
+      "event_type": "storage.statistics",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::blob::StorageStatisticsPayload"
+    },
+    {
+      "subject": "event_payload:canonical.terminal/command.canonical/2.0.0",
+      "source": "canonical.terminal",
+      "event_type": "command.canonical",
+      "version": "2.0.0",
+      "type_name": "sinex_primitives::events::payloads::shell::CanonicalCommandPayload"
+    },
+    {
+      "subject": "event_payload:clipboard/clipboard.copied/1.0.0",
+      "source": "clipboard",
+      "event_type": "clipboard.copied",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::clipboard::ClipboardCopiedPayload"
+    },
+    {
+      "subject": "event_payload:clipboard/clipboard.selected/1.0.0",
+      "source": "clipboard",
+      "event_type": "clipboard.selected",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::clipboard::ClipboardSelectedPayload"
+    },
+    {
+      "subject": "event_payload:dbus/bluetooth.device_changed/1.0.0",
+      "source": "dbus",
+      "event_type": "bluetooth.device_changed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::DbusBluetoothDeviceChangedPayload"
+    },
+    {
+      "subject": "event_payload:dbus/device.connected/1.0.0",
+      "source": "dbus",
+      "event_type": "device.connected",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::DbusDeviceConnectedPayload"
+    },
+    {
+      "subject": "event_payload:dbus/media.state_changed/1.0.0",
+      "source": "dbus",
+      "event_type": "media.state_changed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::DbusMediaStateChangedPayload"
+    },
+    {
+      "subject": "event_payload:dbus/method.called/1.0.0",
+      "source": "dbus",
+      "event_type": "method.called",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::DbusMethodCalledPayload"
+    },
+    {
+      "subject": "event_payload:dbus/mount.event/1.0.0",
+      "source": "dbus",
+      "event_type": "mount.event",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::DbusMountEventPayload"
+    },
+    {
+      "subject": "event_payload:dbus/network.state_changed/1.0.0",
+      "source": "dbus",
+      "event_type": "network.state_changed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::DbusNetworkStateChangedPayload"
+    },
+    {
+      "subject": "event_payload:dbus/notification.sent/1.0.0",
+      "source": "dbus",
+      "event_type": "notification.sent",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::DbusNotificationSentPayload"
+    },
+    {
+      "subject": "event_payload:dbus/power.state_changed/1.0.0",
+      "source": "dbus",
+      "event_type": "power.state_changed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::DbusPowerStateChangedPayload"
+    },
+    {
+      "subject": "event_payload:dbus/signal.received/1.0.0",
+      "source": "dbus",
+      "event_type": "signal.received",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::DbusSignalPayload"
+    },
+    {
+      "subject": "event_payload:derived.activity-window/activity.window.summary/1.0.0",
+      "source": "derived.activity-window",
+      "event_type": "activity.window.summary",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::automaton::ActivityWindowSummaryPayload"
+    },
+    {
+      "subject": "event_payload:derived.session-detector/activity.session.boundary/1.0.0",
+      "source": "derived.session-detector",
+      "event_type": "activity.session.boundary",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::automaton::ActivitySessionBoundaryPayload"
+    },
+    {
+      "subject": "event_payload:desktop/clipboard.historical/1.0.0",
+      "source": "desktop",
+      "event_type": "clipboard.historical",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::desktop::ClipboardHistoricalPayload"
+    },
+    {
+      "subject": "event_payload:desktop/desktop.monitoring_started/1.0.0",
+      "source": "desktop",
+      "event_type": "desktop.monitoring_started",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::desktop::DesktopMonitoringStartedPayload"
+    },
+    {
+      "subject": "event_payload:desktop/desktop.snapshot/1.0.0",
+      "source": "desktop",
+      "event_type": "desktop.snapshot",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::desktop::DesktopSnapshotPayload"
+    },
+    {
+      "subject": "event_payload:desktop/window.wm_historical/1.0.0",
+      "source": "desktop",
+      "event_type": "window.wm_historical",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::desktop::WindowManagerHistoricalPayload"
+    },
+    {
+      "subject": "event_payload:document-ingestor/document.ingested/1.0.0",
+      "source": "document-ingestor",
+      "event_type": "document.ingested",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::document::DocumentIngestedPayload"
+    },
+    {
+      "subject": "event_payload:fs-watcher/dir.created/1.0.0",
+      "source": "fs-watcher",
+      "event_type": "dir.created",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::filesystem::DirCreatedPayload"
+    },
+    {
+      "subject": "event_payload:fs-watcher/dir.deleted/1.0.0",
+      "source": "fs-watcher",
+      "event_type": "dir.deleted",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::filesystem::DirDeletedPayload"
+    },
+    {
+      "subject": "event_payload:fs-watcher/dir.discovered/1.0.0",
+      "source": "fs-watcher",
+      "event_type": "dir.discovered",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::filesystem::DirDiscoveredPayload"
+    },
+    {
+      "subject": "event_payload:fs-watcher/file.created/1.0.0",
+      "source": "fs-watcher",
+      "event_type": "file.created",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::filesystem::FileCreatedPayload"
+    },
+    {
+      "subject": "event_payload:fs-watcher/file.deleted/1.0.0",
+      "source": "fs-watcher",
+      "event_type": "file.deleted",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::filesystem::FileDeletedPayload"
+    },
+    {
+      "subject": "event_payload:fs-watcher/file.discovered/1.0.0",
+      "source": "fs-watcher",
+      "event_type": "file.discovered",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::filesystem::FileDiscoveredPayload"
+    },
+    {
+      "subject": "event_payload:fs-watcher/file.modified/1.0.0",
+      "source": "fs-watcher",
+      "event_type": "file.modified",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::filesystem::FileModifiedPayload"
+    },
+    {
+      "subject": "event_payload:fs-watcher/file.moved/1.0.0",
+      "source": "fs-watcher",
+      "event_type": "file.moved",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::filesystem::FileMovedPayload"
+    },
+    {
+      "subject": "event_payload:health-aggregator/health.aggregated_report/1.0.0",
+      "source": "health-aggregator",
+      "event_type": "health.aggregated_report",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::automaton::HealthAggregatedReportPayload"
+    },
+    {
+      "subject": "event_payload:health-aggregator/system.health_summary/1.0.0",
+      "source": "health-aggregator",
+      "event_type": "system.health_summary",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::SystemHealthSummaryPayload"
+    },
+    {
+      "subject": "event_payload:journald/entry.written/1.0.0",
+      "source": "journald",
+      "event_type": "entry.written",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::JournalEntryWrittenPayload"
+    },
+    {
+      "subject": "event_payload:journald/log_entry.captured/1.0.0",
+      "source": "journald",
+      "event_type": "log_entry.captured",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::JournalEntryPayload"
+    },
+    {
+      "subject": "event_payload:journald/node.heartbeat/1.0.0",
+      "source": "journald",
+      "event_type": "node.heartbeat",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::NodeHeartbeatPayload"
+    },
+    {
+      "subject": "event_payload:journald/sync.completed/1.0.0",
+      "source": "journald",
+      "event_type": "sync.completed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::JournalSyncCompletedPayload"
+    },
+    {
+      "subject": "event_payload:log_processor/log.line/1.0.0",
+      "source": "log_processor",
+      "event_type": "log.line",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::LogLinePayload"
+    },
+    {
+      "subject": "event_payload:shell.asciinema/shell.session_ended/1.0.0",
+      "source": "shell.asciinema",
+      "event_type": "shell.session_ended",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::shell::AsciinemaSessionEndedPayload"
+    },
+    {
+      "subject": "event_payload:shell.asciinema/shell.session_started/1.0.0",
+      "source": "shell.asciinema",
+      "event_type": "shell.session_started",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::shell::AsciinemaSessionStartedPayload"
+    },
+    {
+      "subject": "event_payload:shell.atuin/command.completed/1.0.0",
+      "source": "shell.atuin",
+      "event_type": "command.completed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::shell::AtuinCommandCompletedPayload"
+    },
+    {
+      "subject": "event_payload:shell.atuin/command.executed/1.0.0",
+      "source": "shell.atuin",
+      "event_type": "command.executed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::shell::AtuinCommandExecutedPayload"
+    },
+    {
+      "subject": "event_payload:shell.history.bash/command.executed/1.0.0",
+      "source": "shell.history.bash",
+      "event_type": "command.executed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::shell::BashCommandExecutedPayload"
+    },
+    {
+      "subject": "event_payload:shell.history.fish/command.executed/1.0.0",
+      "source": "shell.history.fish",
+      "event_type": "command.executed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::shell::FishCommandExecutedPayload"
+    },
+    {
+      "subject": "event_payload:shell.history.zsh/command.executed/1.0.0",
+      "source": "shell.history.zsh",
+      "event_type": "command.executed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::shell::ZshCommandExecutedPayload"
+    },
+    {
+      "subject": "event_payload:shell.history/command.imported/1.0.0",
+      "source": "shell.history",
+      "event_type": "command.imported",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::shell::HistoryCommandImportedPayload"
+    },
+    {
+      "subject": "event_payload:shell.kitty/command.completed/1.0.0",
+      "source": "shell.kitty",
+      "event_type": "command.completed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::shell::KittyCommandCompletedPayload"
+    },
+    {
+      "subject": "event_payload:shell.kitty/command.executed/1.0.0",
+      "source": "shell.kitty",
+      "event_type": "command.executed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::shell::KittyCommandExecutedPayload"
+    },
+    {
+      "subject": "event_payload:shell.kitty/content.streamed/1.0.0",
+      "source": "shell.kitty",
+      "event_type": "content.streamed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::shell::KittyContentStreamedPayload"
+    },
+    {
+      "subject": "event_payload:shell.kitty/process.changed/1.0.0",
+      "source": "shell.kitty",
+      "event_type": "process.changed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::shell::KittyProcessChangedPayload"
+    },
+    {
+      "subject": "event_payload:shell.kitty/tab.focused/1.0.0",
+      "source": "shell.kitty",
+      "event_type": "tab.focused",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::shell::KittyTabFocusedPayload"
+    },
+    {
+      "subject": "event_payload:shell.scrollback/shell.output_captured/1.0.0",
+      "source": "shell.scrollback",
+      "event_type": "shell.output_captured",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::shell::ShellOutputCapturedPayload"
+    },
+    {
+      "subject": "event_payload:sinex.gateway/pool.stats/1.0.0",
+      "source": "sinex.gateway",
+      "event_type": "pool.stats",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::PoolStatsPayload"
+    },
+    {
+      "subject": "event_payload:sinex.gateway/rate_limit.exceeded/1.0.0",
+      "source": "sinex.gateway",
+      "event_type": "rate_limit.exceeded",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::RateLimitExceededPayload"
+    },
+    {
+      "subject": "event_payload:sinex.gateway/replay.stats/1.0.0",
+      "source": "sinex.gateway",
+      "event_type": "replay.stats",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::ReplayStatsPayload"
+    },
+    {
+      "subject": "event_payload:sinex.gateway/request.stats/1.0.0",
+      "source": "sinex.gateway",
+      "event_type": "request.stats",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::GatewayRequestStatsPayload"
+    },
+    {
+      "subject": "event_payload:sinex.ingestd/assembly.stats/1.0.0",
+      "source": "sinex.ingestd",
+      "event_type": "assembly.stats",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::AssemblyStatsPayload"
+    },
+    {
+      "subject": "event_payload:sinex.ingestd/batch.stats/2.0.0",
+      "source": "sinex.ingestd",
+      "event_type": "batch.stats",
+      "version": "2.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::IngestdBatchStatsPayload"
+    },
+    {
+      "subject": "event_payload:sinex.ingestd/stream.stats/1.0.0",
+      "source": "sinex.ingestd",
+      "event_type": "stream.stats",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::StreamStatsPayload"
+    },
+    {
+      "subject": "event_payload:sinex.node/processing.stats/1.0.0",
+      "source": "sinex.node",
+      "event_type": "processing.stats",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::NodeProcessingStatsPayload"
+    },
+    {
+      "subject": "event_payload:sinex/automaton.error/1.0.0",
+      "source": "sinex",
+      "event_type": "automaton.error",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::process::AutomatonErrorPayload"
+    },
+    {
+      "subject": "event_payload:sinex/health.status/1.0.0",
+      "source": "sinex",
+      "event_type": "health.status",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::HealthStatusPayload"
+    },
+    {
+      "subject": "event_payload:sinex/metric.counter/1.0.0",
+      "source": "sinex",
+      "event_type": "metric.counter",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::MetricCounterPayload"
+    },
+    {
+      "subject": "event_payload:sinex/metric.gauge/1.0.0",
+      "source": "sinex",
+      "event_type": "metric.gauge",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::MetricGaugePayload"
+    },
+    {
+      "subject": "event_payload:sinex/metric.histogram/1.0.0",
+      "source": "sinex",
+      "event_type": "metric.histogram",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::MetricHistogramPayload"
+    },
+    {
+      "subject": "event_payload:sinex/process.degraded/1.0.0",
+      "source": "sinex",
+      "event_type": "process.degraded",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::process::ProcessDegradedPayload"
+    },
+    {
+      "subject": "event_payload:sinex/process.failed/1.0.0",
+      "source": "sinex",
+      "event_type": "process.failed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::process::ProcessFailedPayload"
+    },
+    {
+      "subject": "event_payload:sinex/process.heartbeat/1.0.0",
+      "source": "sinex",
+      "event_type": "process.heartbeat",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::process::ProcessHeartbeatPayload"
+    },
+    {
+      "subject": "event_payload:sinex/process.shutdown/1.0.0",
+      "source": "sinex",
+      "event_type": "process.shutdown",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::process::ProcessShutdownPayload"
+    },
+    {
+      "subject": "event_payload:sinex/process.started/1.0.0",
+      "source": "sinex",
+      "event_type": "process.started",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::process::ProcessStartedPayload"
+    },
+    {
+      "subject": "event_payload:sinex/sensor.activated/1.0.0",
+      "source": "sinex",
+      "event_type": "sensor.activated",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::process::SensorActivatedPayload"
+    },
+    {
+      "subject": "event_payload:sinex/sensor.deactivated/1.0.0",
+      "source": "sinex",
+      "event_type": "sensor.deactivated",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::process::SensorDeactivatedPayload"
+    },
+    {
+      "subject": "event_payload:system/monitoring.started/1.0.0",
+      "source": "system",
+      "event_type": "monitoring.started",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::SystemMonitoringStartedPayload"
+    },
+    {
+      "subject": "event_payload:system/scan.completed/1.0.0",
+      "source": "system",
+      "event_type": "scan.completed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::ScanCompletedPayload"
+    },
+    {
+      "subject": "event_payload:system/scan.started/1.0.0",
+      "source": "system",
+      "event_type": "scan.started",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::ScanStartedPayload"
+    },
+    {
+      "subject": "event_payload:system/snapshot/1.0.0",
+      "source": "system",
+      "event_type": "snapshot",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::SystemSnapshotPayload"
+    },
+    {
+      "subject": "event_payload:systemd/timer.triggered/1.0.0",
+      "source": "systemd",
+      "event_type": "timer.triggered",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::SystemdTimerTriggeredPayload"
+    },
+    {
+      "subject": "event_payload:systemd/unit.failed/1.0.0",
+      "source": "systemd",
+      "event_type": "unit.failed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::SystemdUnitFailedPayload"
+    },
+    {
+      "subject": "event_payload:systemd/unit.reloaded/1.0.0",
+      "source": "systemd",
+      "event_type": "unit.reloaded",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::SystemdUnitReloadedPayload"
+    },
+    {
+      "subject": "event_payload:systemd/unit.started/1.0.0",
+      "source": "systemd",
+      "event_type": "unit.started",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::SystemdUnitStartedPayload"
+    },
+    {
+      "subject": "event_payload:systemd/unit.starting/1.0.0",
+      "source": "systemd",
+      "event_type": "unit.starting",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::SystemdUnitStartingPayload"
+    },
+    {
+      "subject": "event_payload:systemd/unit.state_changed/1.0.0",
+      "source": "systemd",
+      "event_type": "unit.state_changed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::SystemdUnitStateChangedPayload"
+    },
+    {
+      "subject": "event_payload:systemd/unit.status/1.0.0",
+      "source": "systemd",
+      "event_type": "unit.status",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::SystemdUnitStatusPayload"
+    },
+    {
+      "subject": "event_payload:systemd/unit.stopped/1.0.0",
+      "source": "systemd",
+      "event_type": "unit.stopped",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::SystemdUnitStoppedPayload"
+    },
+    {
+      "subject": "event_payload:systemd/unit.stopping/1.0.0",
+      "source": "systemd",
+      "event_type": "unit.stopping",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::SystemdUnitStoppingPayload"
+    },
+    {
+      "subject": "event_payload:terminal.kitty/session.ended/1.0.0",
+      "source": "terminal.kitty",
+      "event_type": "session.ended",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::shell::KittySessionEndedPayload"
+    },
+    {
+      "subject": "event_payload:terminal.kitty/session.started/1.0.0",
+      "source": "terminal.kitty",
+      "event_type": "session.started",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::shell::KittySessionStartedPayload"
+    },
+    {
+      "subject": "event_payload:terminal/shell.terminal_monitoring_started/1.0.0",
+      "source": "terminal",
+      "event_type": "shell.terminal_monitoring_started",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::shell::TerminalMonitoringStartedPayload"
+    },
+    {
+      "subject": "event_payload:test.alpha/test.alpha_event/1.0.0",
+      "source": "test.alpha",
+      "event_type": "test.alpha_event",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::testing::TestAlphaPayload"
+    },
+    {
+      "subject": "event_payload:test.beta/test.beta_event/1.0.0",
+      "source": "test.beta",
+      "event_type": "test.beta_event",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::testing::TestBetaPayload"
+    },
+    {
+      "subject": "event_payload:test/test.event/1.0.0",
+      "source": "test",
+      "event_type": "test.event",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::testing::TestEventPayload"
+    },
+    {
+      "subject": "event_payload:test/test.numeric/1.0.0",
+      "source": "test",
+      "event_type": "test.numeric",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::testing::TestNumericPayload"
+    },
+    {
+      "subject": "event_payload:test/test.structured/1.0.0",
+      "source": "test",
+      "event_type": "test.structured",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::testing::TestStructuredPayload"
+    },
+    {
+      "subject": "event_payload:udev/device.added/1.0.0",
+      "source": "udev",
+      "event_type": "device.added",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::UdevDeviceAddedPayload"
+    },
+    {
+      "subject": "event_payload:udev/device.changed/1.0.0",
+      "source": "udev",
+      "event_type": "device.changed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::UdevDeviceChangedPayload"
+    },
+    {
+      "subject": "event_payload:udev/device.connected/1.0.0",
+      "source": "udev",
+      "event_type": "device.connected",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::UdevDeviceConnectedPayload"
+    },
+    {
+      "subject": "event_payload:udev/device.disconnected/1.0.0",
+      "source": "udev",
+      "event_type": "device.disconnected",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::UdevDeviceDisconnectedPayload"
+    },
+    {
+      "subject": "event_payload:udev/device.driver_changed/1.0.0",
+      "source": "udev",
+      "event_type": "device.driver_changed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::UdevDeviceDriverChangedPayload"
+    },
+    {
+      "subject": "event_payload:udev/device.other/1.0.0",
+      "source": "udev",
+      "event_type": "device.other",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::UdevDeviceOtherPayload"
+    },
+    {
+      "subject": "event_payload:udev/device.removed/1.0.0",
+      "source": "udev",
+      "event_type": "device.removed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::system::UdevDeviceRemovedPayload"
+    },
+    {
+      "subject": "event_payload:webhistory/page.visited/1.0.0",
+      "source": "webhistory",
+      "event_type": "page.visited",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::web::PageVisitedPayload"
+    },
+    {
+      "subject": "event_payload:wm.hyprland/monitor.focused/1.0.0",
+      "source": "wm.hyprland",
+      "event_type": "monitor.focused",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::window::HyprlandMonitorFocusedPayload"
+    },
+    {
+      "subject": "event_payload:wm.hyprland/state.captured/1.0.0",
+      "source": "wm.hyprland",
+      "event_type": "state.captured",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::window::HyprlandStateCapturedPayload"
+    },
+    {
+      "subject": "event_payload:wm.hyprland/window.closed/1.0.0",
+      "source": "wm.hyprland",
+      "event_type": "window.closed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::window::HyprlandWindowClosedPayload"
+    },
+    {
+      "subject": "event_payload:wm.hyprland/window.focused/1.0.0",
+      "source": "wm.hyprland",
+      "event_type": "window.focused",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::window::HyprlandWindowFocusedPayload"
+    },
+    {
+      "subject": "event_payload:wm.hyprland/window.moved/1.0.0",
+      "source": "wm.hyprland",
+      "event_type": "window.moved",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::window::HyprlandWindowMovedPayload"
+    },
+    {
+      "subject": "event_payload:wm.hyprland/window.opened/1.0.0",
+      "source": "wm.hyprland",
+      "event_type": "window.opened",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::window::HyprlandWindowOpenedPayload"
+    },
+    {
+      "subject": "event_payload:wm.hyprland/window.title_changed/1.0.0",
+      "source": "wm.hyprland",
+      "event_type": "window.title_changed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::window::HyprlandWindowTitleChangedPayload"
+    },
+    {
+      "subject": "event_payload:wm.hyprland/workspace.switched/1.0.0",
+      "source": "wm.hyprland",
+      "event_type": "workspace.switched",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::window::HyprlandWorkspaceSwitchedPayload"
+    }
+  ],
+  "xtask_commands": [
+    {
+      "subject": "xtask_command:analytics",
+      "path": "analytics",
+      "about": "`xtask analytics` — developer intelligence analytics"
+    },
+    {
+      "subject": "xtask_command:analytics.hotspots",
+      "path": "analytics.hotspots",
+      "about": "Diagnostic churn analysis — most active recurring and chronic issues (J2)"
+    },
+    {
+      "subject": "xtask_command:analytics.recommend",
+      "path": "analytics.recommend",
+      "about": "Actionable heuristic recommendations with exact commands to run (J5)"
+    },
+    {
+      "subject": "xtask_command:analytics.reliability",
+      "path": "analytics.reliability",
+      "about": "Test reliability per package — pass rates and flakiness (J3)"
+    },
+    {
+      "subject": "xtask_command:analytics.resources",
+      "path": "analytics.resources",
+      "about": "CPU and memory usage trends across invocations (J6)"
+    },
+    {
+      "subject": "xtask_command:analytics.stages",
+      "path": "analytics.stages",
+      "about": "Stage-level timing breakdowns aggregated across invocations (J7)"
+    },
+    {
+      "subject": "xtask_command:analytics.velocity",
+      "path": "analytics.velocity",
+      "about": "Build and test time trends (J4)"
+    },
+    {
+      "subject": "xtask_command:analytics.workspace-health",
+      "path": "analytics.workspace-health",
+      "about": "Composite workspace health score (0-100) across build, test, and velocity dimensions (J1)"
+    },
+    {
+      "subject": "xtask_command:build",
+      "path": "build",
+      "about": "Build workspace packages while capturing compiler diagnostics"
+    },
+    {
+      "subject": "xtask_command:check",
+      "path": "check",
+      "about": "Run the fast workspace verification pipeline"
+    },
+    {
+      "subject": "xtask_command:deps",
+      "path": "deps",
+      "about": "Analyze workspace dependency structure and impact"
+    },
+    {
+      "subject": "xtask_command:deps.duplicates",
+      "path": "deps.duplicates",
+      "about": "Find duplicate dependencies (multiple versions)"
+    },
+    {
+      "subject": "xtask_command:deps.graph",
+      "path": "deps.graph",
+      "about": "Visualize dependency graph"
+    },
+    {
+      "subject": "xtask_command:deps.impact",
+      "path": "deps.impact",
+      "about": "Analyze rebuild impact of package changes"
+    },
+    {
+      "subject": "xtask_command:deps.list",
+      "path": "deps.list",
+      "about": "List all workspace packages"
+    },
+    {
+      "subject": "xtask_command:deps.timings",
+      "path": "deps.timings",
+      "about": "Analyze build timings"
+    },
+    {
+      "subject": "xtask_command:deps.tree",
+      "path": "deps.tree",
+      "about": "Show dependency tree for a package"
+    },
+    {
+      "subject": "xtask_command:deps.unused",
+      "path": "deps.unused",
+      "about": "Detect unused dependencies"
+    },
+    {
+      "subject": "xtask_command:docs",
+      "path": "docs",
+      "about": "Generate and verify repo documentation surfaces"
+    },
+    {
+      "subject": "xtask_command:docs.agents",
+      "path": "docs.agents",
+      "about": "Generate AGENTS.md by resolving the CLAUDE.md transclusion tree"
+    },
+    {
+      "subject": "xtask_command:docs.ast-grep-catalog",
+      "path": "docs.ast-grep-catalog",
+      "about": "Generate the live ast-grep rule catalog from `.config/ast-grep/rules/`"
+    },
+    {
+      "subject": "xtask_command:docs.build",
+      "path": "docs.build",
+      "about": "Build documentation"
+    },
+    {
+      "subject": "xtask_command:docs.check",
+      "path": "docs.check",
+      "about": "Verify that all generated repo surfaces are up to date"
+    },
+    {
+      "subject": "xtask_command:docs.command-guide",
+      "path": "docs.command-guide",
+      "about": "Generate the concise xtask command guide used for agent memory and humans"
+    },
+    {
+      "subject": "xtask_command:docs.command-reference",
+      "path": "docs.command-reference",
+      "about": "Generate the exhaustive xtask public command reference from the live clap tree"
+    },
+    {
+      "subject": "xtask_command:docs.proof-catalog",
+      "path": "docs.proof-catalog",
+      "about": "Generate the proof catalog from Rust descriptors, payloads, commands, and scenarios"
+    },
+    {
+      "subject": "xtask_command:docs.schema-bundle",
+      "path": "docs.schema-bundle",
+      "about": "Generate the checked-in JSON schema bundle from the Rust EventPayload registry"
+    },
+    {
+      "subject": "xtask_command:docs.serve",
+      "path": "docs.serve",
+      "about": "Serve documentation locally (requires `simple-http-server` or `python3`)"
+    },
+    {
+      "subject": "xtask_command:docs.snapshot",
+      "path": "docs.snapshot",
+      "about": "Generate a codebase snapshot for AI context (via repomix)"
+    },
+    {
+      "subject": "xtask_command:docs.sync",
+      "path": "docs.sync",
+      "about": "Refresh all generated repo surfaces tracked in the repo"
+    },
+    {
+      "subject": "xtask_command:doctor",
+      "path": "doctor",
+      "about": "Probe developer-environment health and deployment readiness"
+    },
+    {
+      "subject": "xtask_command:exercise",
+      "path": "exercise",
+      "about": "Full surface area validation for xtask commands"
+    },
+    {
+      "subject": "xtask_command:fix",
+      "path": "fix",
+      "about": "Apply automatic fixes across workspace packages"
+    },
+    {
+      "subject": "xtask_command:git-stack",
+      "path": "git-stack",
+      "about": "Plan and materialize PR-sized git branch stacks from the current commit graph"
+    },
+    {
+      "subject": "xtask_command:git-stack.materialize",
+      "path": "git-stack.materialize",
+      "about": "Materialize branch refs from an existing stack plan"
+    },
+    {
+      "subject": "xtask_command:git-stack.plan",
+      "path": "git-stack.plan",
+      "about": "Walk the current commit graph and generate a stack plan plus PR/squash bodies"
+    },
+    {
+      "subject": "xtask_command:git-stack.publish",
+      "path": "git-stack.publish",
+      "about": "Push materialized branches and open/reuse PRs from a generated stack plan"
+    },
+    {
+      "subject": "xtask_command:git-stack.split",
+      "path": "git-stack.split",
+      "about": "Generate a stack plan and immediately materialize the resulting branches"
+    },
+    {
+      "subject": "xtask_command:history",
+      "path": "history",
+      "about": "Query build, test, and runtime history recorded by xtask"
+    },
+    {
+      "subject": "xtask_command:history.diagnostics",
+      "path": "history.diagnostics",
+      "about": "Query build diagnostics (warnings/errors)"
+    },
+    {
+      "subject": "xtask_command:history.diff",
+      "path": "history.diff",
+      "about": "Compare two invocations: diagnostic delta, duration delta, stage delta (I5)"
+    },
+    {
+      "subject": "xtask_command:history.eta",
+      "path": "history.eta",
+      "about": "Show ETA estimates for a command based on recorded phase timings"
+    },
+    {
+      "subject": "xtask_command:history.exercise",
+      "path": "history.exercise",
+      "about": "Show exercise run history with pass/fail counts and regression detection"
+    },
+    {
+      "subject": "xtask_command:history.fix",
+      "path": "history.fix",
+      "about": "Query fix session history (G3)"
+    },
+    {
+      "subject": "xtask_command:history.invocation",
+      "path": "history.invocation",
+      "about": "Show complete details for a single invocation (I7)"
+    },
+    {
+      "subject": "xtask_command:history.list",
+      "path": "history.list",
+      "about": "List recent invocations"
+    },
+    {
+      "subject": "xtask_command:history.progress",
+      "path": "history.progress",
+      "about": "Show live or final progress for an invocation"
+    },
+    {
+      "subject": "xtask_command:history.prune",
+      "path": "history.prune",
+      "about": "Prune old history entries"
+    },
+    {
+      "subject": "xtask_command:history.query",
+      "path": "history.query",
+      "about": "Execute a read-only SQL query against the history database (I2)"
+    },
+    {
+      "subject": "xtask_command:history.schema",
+      "path": "history.schema",
+      "about": "Dump CREATE TABLE statements for the history database schema (I2)"
+    },
+    {
+      "subject": "xtask_command:history.seed",
+      "path": "history.seed",
+      "about": "Seed the history database with synthetic data for exploration (T2)"
+    },
+    {
+      "subject": "xtask_command:history.sessions",
+      "path": "history.sessions",
+      "about": "Group invocations into working sessions separated by inactivity gaps (I6)"
+    },
+    {
+      "subject": "xtask_command:history.shell",
+      "path": "history.shell",
+      "about": "Open an interactive SQLite shell on the history database (I2)"
+    },
+    {
+      "subject": "xtask_command:history.stages",
+      "path": "history.stages",
+      "about": "Query pipeline stage timing data (G2)"
+    },
+    {
+      "subject": "xtask_command:history.stats",
+      "path": "history.stats",
+      "about": "Show statistics for a command (or all commands / all packages)"
+    },
+    {
+      "subject": "xtask_command:history.tests",
+      "path": "history.tests",
+      "about": "Query test result history"
+    },
+    {
+      "subject": "xtask_command:history.tests.analyze",
+      "path": "history.tests.analyze",
+      "about": "Comprehensive analysis of the most recent test run"
+    },
+    {
+      "subject": "xtask_command:history.tests.by-package",
+      "path": "history.tests.by-package",
+      "about": "Per-package pass rate, test count, avg duration, and flaky count (G7)"
+    },
+    {
+      "subject": "xtask_command:history.tests.duration-p95",
+      "path": "history.tests.duration-p95",
+      "about": "P95 duration per test over recent runs (G7)"
+    },
+    {
+      "subject": "xtask_command:history.tests.eta",
+      "path": "history.tests.eta",
+      "about": null
+    },
+    {
+      "subject": "xtask_command:history.tests.failures",
+      "path": "history.tests.failures",
+      "about": "Show failing tests from the most recent test run"
+    },
+    {
+      "subject": "xtask_command:history.tests.flaky",
+      "path": "history.tests.flaky",
+      "about": null
+    },
+    {
+      "subject": "xtask_command:history.tests.getting-slower",
+      "path": "history.tests.getting-slower",
+      "about": null
+    },
+    {
+      "subject": "xtask_command:history.tests.grep",
+      "path": "history.tests.grep",
+      "about": "Full-text search across stored test output (G7)"
+    },
+    {
+      "subject": "xtask_command:history.tests.output",
+      "path": "history.tests.output",
+      "about": "Show captured output for a test (pass or fail)"
+    },
+    {
+      "subject": "xtask_command:history.tests.regression",
+      "path": "history.tests.regression",
+      "about": "Tests newly failing in the last N runs that previously passed (G7)"
+    },
+    {
+      "subject": "xtask_command:history.tests.slowest",
+      "path": "history.tests.slowest",
+      "about": null
+    },
+    {
+      "subject": "xtask_command:history.tests.trends",
+      "path": "history.tests.trends",
+      "about": null
+    },
+    {
+      "subject": "xtask_command:history.timeline",
+      "path": "history.timeline",
+      "about": "Cross-invocation chronological view of recent activity (I4)"
+    },
+    {
+      "subject": "xtask_command:history.view",
+      "path": "history.view",
+      "about": "Semantic named views — shortcuts to common queries (I1)"
+    },
+    {
+      "subject": "xtask_command:infra",
+      "path": "infra",
+      "about": "Manage local infrastructure (Postgres, NATS, VMs)"
+    },
+    {
+      "subject": "xtask_command:infra.logs",
+      "path": "infra.logs",
+      "about": "View logs"
+    },
+    {
+      "subject": "xtask_command:infra.schema-apply",
+      "path": "infra.schema-apply",
+      "about": "Apply the declarative schema to a database"
+    },
+    {
+      "subject": "xtask_command:infra.start",
+      "path": "infra.start",
+      "about": "Start the infrastructure"
+    },
+    {
+      "subject": "xtask_command:infra.status",
+      "path": "infra.status",
+      "about": "Show infrastructure status"
+    },
+    {
+      "subject": "xtask_command:infra.stop",
+      "path": "infra.stop",
+      "about": "Stop the infrastructure"
+    },
+    {
+      "subject": "xtask_command:infra.tls-init-gateway",
+      "path": "infra.tls-init-gateway",
+      "about": "Generate gateway TLS certificates using rcgen"
+    },
+    {
+      "subject": "xtask_command:infra.vm",
+      "path": "infra.vm",
+      "about": "Manage VM integration"
+    },
+    {
+      "subject": "xtask_command:infra.vm.snapshot",
+      "path": "infra.vm.snapshot",
+      "about": "Manage VM snapshots"
+    },
+    {
+      "subject": "xtask_command:infra.vm.snapshot.create",
+      "path": "infra.vm.snapshot.create",
+      "about": "Create a named snapshot"
+    },
+    {
+      "subject": "xtask_command:infra.vm.snapshot.list",
+      "path": "infra.vm.snapshot.list",
+      "about": "List available snapshots"
+    },
+    {
+      "subject": "xtask_command:infra.vm.snapshot.restore",
+      "path": "infra.vm.snapshot.restore",
+      "about": "Restore from a snapshot"
+    },
+    {
+      "subject": "xtask_command:infra.vm.ssh",
+      "path": "infra.vm.ssh",
+      "about": "SSH into a running VM"
+    },
+    {
+      "subject": "xtask_command:infra.vm.start",
+      "path": "infra.vm.start",
+      "about": "Start an interactive VM"
+    },
+    {
+      "subject": "xtask_command:infra.vm.stop",
+      "path": "infra.vm.stop",
+      "about": "Stop a running VM"
+    },
+    {
+      "subject": "xtask_command:infra.vm.test",
+      "path": "infra.vm.test",
+      "about": "Run exported NixOS VM flake checks"
+    },
+    {
+      "subject": "xtask_command:jobs",
+      "path": "jobs",
+      "about": "Inspect and manage background xtask jobs"
+    },
+    {
+      "subject": "xtask_command:jobs.active",
+      "path": "jobs.active",
+      "about": "List active jobs"
+    },
+    {
+      "subject": "xtask_command:jobs.cancel",
+      "path": "jobs.cancel",
+      "about": "Cancel a running job"
+    },
+    {
+      "subject": "xtask_command:jobs.list",
+      "path": "jobs.list",
+      "about": "List recent jobs"
+    },
+    {
+      "subject": "xtask_command:jobs.output",
+      "path": "jobs.output",
+      "about": "Show full output of a job"
+    },
+    {
+      "subject": "xtask_command:jobs.prune",
+      "path": "jobs.prune",
+      "about": "Remove completed jobs older than N days"
+    },
+    {
+      "subject": "xtask_command:jobs.status",
+      "path": "jobs.status",
+      "about": "Show status of a specific job"
+    },
+    {
+      "subject": "xtask_command:jobs.wait",
+      "path": "jobs.wait",
+      "about": "Wait for a job to complete"
+    },
+    {
+      "subject": "xtask_command:privacy",
+      "path": "privacy",
+      "about": "Run privacy-engine catalog, test, key, and config utilities"
+    },
+    {
+      "subject": "xtask_command:privacy.catalog",
+      "path": "privacy.catalog",
+      "about": "List all privacy rules in the built-in catalog"
+    },
+    {
+      "subject": "xtask_command:privacy.config",
+      "path": "privacy.config",
+      "about": "Show or generate privacy configuration"
+    },
+    {
+      "subject": "xtask_command:privacy.decrypt",
+      "path": "privacy.decrypt",
+      "about": "Decrypt an encrypted privacy token"
+    },
+    {
+      "subject": "xtask_command:privacy.key",
+      "path": "privacy.key",
+      "about": "Show privacy key information"
+    },
+    {
+      "subject": "xtask_command:privacy.test",
+      "path": "privacy.test",
+      "about": "Test input text against the privacy engine"
+    },
+    {
+      "subject": "xtask_command:reset",
+      "path": "reset",
+      "about": "Reset developer state for a fresh start"
+    },
+    {
+      "subject": "xtask_command:run",
+      "path": "run",
+      "about": "Run command for binary lifecycle management"
+    },
+    {
+      "subject": "xtask_command:run.all-automatons",
+      "path": "run.all-automatons",
+      "about": "Run all automatons"
+    },
+    {
+      "subject": "xtask_command:run.all-ingestors",
+      "path": "run.all-ingestors",
+      "about": "Run all ingestors"
+    },
+    {
+      "subject": "xtask_command:run.core",
+      "path": "run.core",
+      "about": "Run core services bundle (ingestd + gateway)"
+    },
+    {
+      "subject": "xtask_command:run.gateway",
+      "path": "run.gateway",
+      "about": "Run sinex-gateway"
+    },
+    {
+      "subject": "xtask_command:run.ingestd",
+      "path": "run.ingestd",
+      "about": "Run sinex-ingestd"
+    },
+    {
+      "subject": "xtask_command:run.list",
+      "path": "run.list",
+      "about": "List available binaries"
+    },
+    {
+      "subject": "xtask_command:run.node",
+      "path": "run.node",
+      "about": "Run a specific node by name"
+    },
+    {
+      "subject": "xtask_command:run.tether",
+      "path": "run.tether",
+      "about": "Connect to a remote environment via The Tether"
+    },
+    {
+      "subject": "xtask_command:status",
+      "path": "status",
+      "about": "Inspect workspace status, service health, and recent activity"
+    },
+    {
+      "subject": "xtask_command:test",
+      "path": "test",
+      "about": "Run the repo's primary nextest-backed test workflows"
+    },
+    {
+      "subject": "xtask_command:test.bench",
+      "path": "test.bench",
+      "about": "Run benchmarks with optional contract enforcement"
+    },
+    {
+      "subject": "xtask_command:test.coverage",
+      "path": "test.coverage",
+      "about": "Run code coverage analysis (requires cargo-llvm-cov)"
+    },
+    {
+      "subject": "xtask_command:test.fuzz",
+      "path": "test.fuzz",
+      "about": "Run fuzz tests (requires cargo-fuzz)"
+    },
+    {
+      "subject": "xtask_command:test.mutants",
+      "path": "test.mutants",
+      "about": "Run mutation testing (requires cargo-mutants)"
+    },
+    {
+      "subject": "xtask_command:test.vm",
+      "path": "test.vm",
+      "about": "Run exported NixOS VM flake checks"
+    },
+    {
+      "subject": "xtask_command:work",
+      "path": "work",
+      "about": "Execute the minimum workflow sequence to reach a target state"
+    }
+  ],
+  "scenarios": [
+    {
+      "subject": "scenario:runtime.material-acquisition-restart-recovery.v1",
+      "id": "runtime.material-acquisition-restart-recovery.v1",
+      "test_name": "material_acquisition_restart_recovery",
+      "package": "sinex-node-sdk",
+      "path": "crate/lib/sinex-node-sdk/tests/material_acquisition.rs",
+      "category": "runtime",
+      "lane": "heavy",
+      "cost_tier": "integration",
+      "tags": [
+        "runtime",
+        "restart",
+        "recovery",
+        "source_material"
+      ],
+      "fixtures": [
+        "postgres",
+        "nats",
+        "ingestd",
+        "material_spool"
+      ],
+      "subject_refs": [
+        "issue:324",
+        "node-sdk:material-acquisition",
+        "component:ingestd"
+      ],
+      "claim_ids": [
+        "restart-with-pending-material-state-recovers",
+        "material-ledger-total-bytes-match-post-restart-finalization"
+      ]
+    },
+    {
+      "subject": "scenario:source-adapter.record-source-harness-laws.v1",
+      "id": "source-adapter.record-source-harness-laws.v1",
+      "test_name": "harness_materializes_records_and_finalizes_sink",
+      "package": "sinex-node-sdk",
+      "path": "crate/lib/sinex-node-sdk/src/record_source.rs",
+      "category": "node_adapter",
+      "lane": "fast",
+      "cost_tier": "fast",
+      "tags": [
+        "source_adapter_laws",
+        "record_source",
+        "anchors",
+        "checkpoint"
+      ],
+      "fixtures": [
+        "mock_record_source",
+        "capturing_record_sink"
+      ],
+      "subject_refs": [
+        "node_adapter:record_source_harness",
+        "issue:485"
+      ],
+      "claim_ids": [
+        "claim:record_source.cursor_and_anchor_laws"
+      ]
+    },
+    {
+      "subject": "scenario:source-material.resource-duplicate-finalization.v1",
+      "id": "source-material.resource-duplicate-finalization.v1",
+      "test_name": "source_material_scenario_duplicate_content_reuses_blob_identity",
+      "package": "sinex-node-sdk",
+      "path": "crate/lib/sinex-node-sdk/tests/material_acquisition.rs",
+      "category": "source_material",
+      "lane": "fast",
+      "cost_tier": "integration",
+      "tags": [
+        "source_material",
+        "resource_shape",
+        "duplicate_content",
+        "redelivery",
+        "blob_dedup"
+      ],
+      "fixtures": [
+        "postgres",
+        "nats",
+        "ingestd",
+        "material_spool"
+      ],
+      "subject_refs": [
+        "issue:315",
+        "issue:317",
+        "issue:324",
+        "node-sdk:source-material"
+      ],
+      "claim_ids": [
+        "duplicate-content-reuses-one-blob",
+        "duplicate-finalization-has-no-redelivery-loop",
+        "duplicate-finalization-profile-is-machine-readable"
+      ]
+    },
+    {
+      "subject": "scenario:source-material.resource-frame-amplification.v1",
+      "id": "source-material.resource-frame-amplification.v1",
+      "test_name": "source_material_resource_frame_amplification_profile",
+      "package": "sinex-node-sdk",
+      "path": "crate/lib/sinex-node-sdk/tests/material_acquisition.rs",
+      "category": "source_material",
+      "lane": "fast",
+      "cost_tier": "integration",
+      "tags": [
+        "source_material",
+        "row_stream",
+        "resource_shape",
+        "frame_amplification"
+      ],
+      "fixtures": [
+        "postgres",
+        "nats",
+        "ingestd",
+        "material_spool"
+      ],
+      "subject_refs": [
+        "issue:317",
+        "issue:324",
+        "node-sdk:source-material"
+      ],
+      "claim_ids": [
+        "tiny-record-burst-uses-single-slice-frame",
+        "frame-amplification-profile-is-machine-readable",
+        "material-ledger-total-bytes-matches-record-burst"
+      ]
+    },
+    {
+      "subject": "scenario:source-material.resource-storage-backends.v1",
+      "id": "source-material.resource-storage-backends.v1",
+      "test_name": "source_material_resource_storage_backend_profile",
+      "package": "sinex-node-sdk",
+      "path": "crate/lib/sinex-node-sdk/tests/material_acquisition.rs",
+      "category": "source_material",
+      "lane": "heavy",
+      "cost_tier": "heavy",
+      "tags": [
+        "source_material",
+        "resource_shape",
+        "storage_profile",
+        "local_cas",
+        "git_annex"
+      ],
+      "fixtures": [
+        "postgres",
+        "nats",
+        "ingestd",
+        "material_spool",
+        "git_annex"
+      ],
+      "subject_refs": [
+        "issue:317",
+        "issue:324",
+        "node-sdk:source-material",
+        "node-sdk:annex"
+      ],
+      "claim_ids": [
+        "small-material-uses-local-cas-without-git-annex-subprocess",
+        "large-material-uses-git-annex-with-observed-subprocess-count",
+        "storage-backend-profile-is-machine-readable"
+      ]
+    },
+    {
+      "subject": "scenario:source-material.row-stream-batched-anchors.v1",
+      "id": "source-material.row-stream-batched-anchors.v1",
+      "test_name": "source_material_scenario_batches_row_stream_records_with_stable_anchors",
+      "package": "sinex-node-sdk",
+      "path": "crate/lib/sinex-node-sdk/tests/material_acquisition.rs",
+      "category": "source_material",
+      "lane": "fast",
+      "cost_tier": "integration",
+      "tags": [
+        "source_material",
+        "row_stream",
+        "anchors",
+        "material_spool"
+      ],
+      "fixtures": [
+        "postgres",
+        "nats",
+        "ingestd",
+        "material_spool"
+      ],
+      "subject_refs": [
+        "issue:315",
+        "issue:324",
+        "node-sdk:source-material"
+      ],
+      "claim_ids": [
+        "tiny-logical-records-batched",
+        "per-record-byte-anchors-preserved",
+        "material-ledger-total-bytes-matches-source-frame"
+      ]
+    },
+    {
+      "subject": "scenario:xtask.command-catalog-core-surface.v1",
+      "id": "xtask.command-catalog-core-surface.v1",
+      "test_name": "command_catalog_exposes_core_public_surface",
+      "package": "xtask",
+      "path": "xtask/src/command_catalog.rs",
+      "category": "command_contract",
+      "lane": "fast",
+      "cost_tier": "fast",
+      "tags": [
+        "command_contract",
+        "catalog",
+        "xtask"
+      ],
+      "fixtures": [
+        "clap_command_tree"
+      ],
+      "subject_refs": [
+        "xtask_command:check",
+        "xtask_command:test",
+        "xtask_command:docs",
+        "issue:485"
+      ],
+      "claim_ids": [
+        "claim:xtask.command_catalog_introspection"
+      ]
+    }
+  ]
+}
