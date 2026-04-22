@@ -14,6 +14,9 @@ use tracing::{debug, error, info, warn};
 
 use crate::{IngestdResult, SinexError};
 
+use super::assembly_state_machine::{
+    AssemblyInput, AssemblyLogicalState, AssemblyStateMachine, AssemblyTransition,
+};
 use super::finalization_transaction::{FinalizationRequest, FinalizationTransaction};
 use super::state::AssemblyPhase;
 use super::{MaterialAssembler, MaterialEndMessage};
@@ -469,6 +472,16 @@ impl MaterialAssembler {
 
             // Complete: transition into finalization while holding the per-material lock so
             // no more slice writes can mutate the state we are about to snapshot.
+            let transition = AssemblyStateMachine::transition_for_state(
+                &state,
+                AssemblyInput::StartFinalization,
+            )
+            .map_err(|error| error.into_sinex_error(material_id))?;
+            debug!(
+                material_id = %material_id,
+                transition = ?transition,
+                "Assembly state machine accepted finalization start"
+            );
             state.phase = AssemblyPhase::Finalizing;
             let end = state.pending_end.take().ok_or_else(|| {
                 SinexError::service(format!(
@@ -800,13 +813,30 @@ impl MaterialAssembler {
         let state_handle = if let Some(existing) = self.get_state_handle(&material_id) {
             existing
         } else {
-            if self.material_is_terminal(material_id).await? {
+            let transition =
+                if let Some(terminal_state) = self.material_terminal_state(material_id).await? {
+                    AssemblyStateMachine::transition(terminal_state, AssemblyInput::EndFrame)
+                } else {
+                    AssemblyStateMachine::transition(
+                        AssemblyLogicalState::Idle,
+                        AssemblyInput::EndFrame,
+                    )
+                }
+                .map_err(|error| error.into_sinex_error(material_id))?;
+
+            if matches!(transition, AssemblyTransition::IgnoreTerminalFrame) {
                 info!(
                     material_id = %material_id,
-                    "End message received after completion; skipping placeholder state"
+                    transition = ?transition,
+                    "End message received after terminal material; skipping placeholder state"
                 );
                 return Ok(());
             }
+            debug!(
+                material_id = %material_id,
+                transition = ?transition,
+                "Assembly state machine accepted end for new material state"
+            );
             // Preserve compatibility with redelivery, restored WAL state, and non-SDK publishers:
             // record the end even if local state is not present yet.
             warn!(
@@ -820,10 +850,23 @@ impl MaterialAssembler {
         // Record end so a later redelivery or restored slice can complete the material.
         {
             let mut state = state_handle.lock().await;
-            if state.phase == AssemblyPhase::Finalizing {
-                debug!(material_id = %material_id, "Ignoring end message while finalizing");
+            let transition =
+                AssemblyStateMachine::transition_for_state(&state, AssemblyInput::EndFrame)
+                    .map_err(|error| error.into_sinex_error(material_id))?;
+
+            if matches!(transition, AssemblyTransition::IgnoreFinalizingFrame) {
+                debug!(
+                    material_id = %material_id,
+                    transition = ?transition,
+                    "Ignoring end message while finalizing"
+                );
                 return Ok(());
             }
+            debug!(
+                material_id = %material_id,
+                transition = ?transition,
+                "Assembly state machine accepted end for existing material state"
+            );
             state.pending_end = Some(end.clone());
             super::io::append_wal_entry(self, &mut state, super::state::WalEntry::End(end.clone()))
                 .await?;
