@@ -678,6 +678,11 @@ impl Sandbox {
         self.evidence.lock().set_proof(proof);
     }
 
+    /// Attach scenario taxonomy metadata to the eventual evidence envelope.
+    pub fn set_scenario_metadata(&self, scenario: evidence::ScenarioMetadata) {
+        self.evidence.lock().set_scenario(scenario);
+    }
+
     /// Add a human note to the evidence envelope.
     pub fn add_evidence_note(&self, note: impl Into<String>) {
         self.evidence.lock().add_note(note);

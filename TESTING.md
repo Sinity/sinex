@@ -16,10 +16,19 @@ xtask test
 xtask test -p sinex-primitives
 xtask test --debug -E 'test(name)'
 xtask test --heavy
+
+# Proof-carrying runtime scenarios
+xtask test --list-scenarios
+xtask test --scenario-tag row_stream
+xtask test --scenario-category source_material
+xtask test --scenario-lane heavy --heavy
 ```
 
 `xtask test` is the primary test entrypoint. It handles the repo's preflight and
 nextest wiring; use `xtask test --help` for the current option surface.
+Scenario selectors discover `#[sinex_test(... scenario = ...)]` metadata and
+compile it down to ordinary nextest package/filter arguments. Scenario semantics
+belong in Rust tests and evidence bundles, not in product-runtime xtask commands.
 
 ## CI-Parity Validation
 
