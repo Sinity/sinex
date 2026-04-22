@@ -286,6 +286,18 @@ in
             description = "PostgreSQL package to deploy.";
           };
 
+          extensionCompatibilityPackages = mkOption {
+            type = listOf package;
+            default = [ ];
+            description = ''
+              Extra PostgreSQL extension packages to add to the deployed
+              PostgreSQL package without making them the canonical extension
+              provider. This is intended for one-generation compatibility
+              bridges when an existing database catalog still references an
+              older versioned extension shared object during an extension update.
+            '';
+          };
+
           connectionPool = mkOption {
             type = submodule {
               options = {
