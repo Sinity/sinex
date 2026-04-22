@@ -624,7 +624,7 @@ where
             Checkpoint::External {
                 position,
                 description,
-            } => ("external", Some(format!("{description}:{}", position))),
+            } => ("external", Some(format!("{description}:{position}"))),
             Checkpoint::Internal {
                 event_id,
                 message_count,

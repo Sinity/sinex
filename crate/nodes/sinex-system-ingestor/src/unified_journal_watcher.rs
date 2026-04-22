@@ -917,9 +917,10 @@ impl UnifiedJournalWatcher {
                 })
         };
 
-        cursor
-            .map(|cursor| JournalCursorCheckpoint::new(Some(cursor)))
-            .unwrap_or_else(|| previous.clone())
+        cursor.map_or_else(
+            || previous.clone(),
+            |cursor| JournalCursorCheckpoint::new(Some(cursor)),
+        )
     }
 
     async fn read_journalctl_records(
@@ -1089,9 +1090,8 @@ impl UnifiedJournalWatcher {
             let batch = source
                 .read_batch(&checkpoint, horizon)
                 .await
-                .map_err(|error| {
+                .inspect_err(|error| {
                     self.record_error(error.to_string());
-                    error
                 })?;
             (batch, checkpoint)
         };
