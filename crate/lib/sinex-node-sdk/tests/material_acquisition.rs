@@ -1,8 +1,9 @@
 use futures::{StreamExt, future::try_join_all};
 use sinex_db::repositories::{DbPoolExt, material_status};
 use sinex_node_sdk::{
-    AcquisitionManager, RotationPolicy, SOURCE_MATERIAL_BEGIN_SUBJECT, SOURCE_MATERIAL_END_SUBJECT,
-    SOURCE_MATERIAL_STREAM, source_material_slice_subject,
+    AcquisitionManager, AppendStreamAcquirer, RotationPolicy, SOURCE_MATERIAL_BEGIN_SUBJECT,
+    SOURCE_MATERIAL_END_SUBJECT, SOURCE_MATERIAL_STREAM, source_material_slice_subject,
+    stage_material,
 };
 use sinex_primitives::error::SinexError;
 use sinex_primitives::ids::Id;
@@ -77,6 +78,20 @@ where
     wait_for_material_assembler_ready(&nats, &nats_client).await?;
 
     Ok((ctx, nats, nats_client, ingest_handle))
+}
+
+fn source_material_proof(runner_id: &str, claim_ids: &[&str], reproducer: &str) -> ProofMetadata {
+    ProofMetadata {
+        runner_id: Some(runner_id.to_string()),
+        subject_refs: vec!["https://github.com/Sinity/sinex/issues/315".to_string()],
+        claim_ids: claim_ids.iter().map(|claim| (*claim).to_string()).collect(),
+        status: Some("asserted_by_test".to_string()),
+        reproducer: Some(reproducer.to_string()),
+        environment: serde_json::json!({
+            "plane": "isolated-dev",
+            "stack": ["node-sdk", "nats", "ingestd", "postgres"],
+        }),
+    }
 }
 
 /// Test basic material acquisition flow: begin → append slices → finalize
@@ -162,6 +177,298 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
         staged_at_count.unwrap_or(0),
         1,
         "expected exactly one staged_at ledger entry"
+    );
+
+    ingest_handle.stop().await?;
+    Ok(())
+}
+
+/// Scenario: tiny logical row-stream records travel as one physical source frame
+/// while preserving per-record byte anchors all the way to persisted material state.
+#[sinex_test(timeout = 120)]
+async fn source_material_scenario_batches_row_stream_records_with_stable_anchors(
+    ctx: TestContext,
+) -> Result<()> {
+    ctx.set_proof_metadata(source_material_proof(
+        "source-material.row-stream-batched-anchors.v1",
+        &[
+            "tiny-logical-records-batched",
+            "per-record-byte-anchors-preserved",
+            "material-ledger-total-bytes-matches-source-frame",
+        ],
+        "xtask test -p sinex-node-sdk -E 'test(source_material_scenario_batches_row_stream_records_with_stable_anchors)'",
+    ));
+    ctx.record_evidence_event(
+        "scenario.start",
+        "starting batched row-stream source-material scenario",
+        serde_json::json!({
+            "issue": 315,
+            "source_identifier": "scenario://row-stream",
+        }),
+    );
+
+    let work_dir = tempfile::tempdir()?;
+    let (ctx, _nats, nats_client, mut ingest_handle) =
+        setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
+    let mut slice_sub = nats_client
+        .subscribe(
+            sinex_primitives::environment::environment()
+                .nats_subject("source_material.frames.slices.>"),
+        )
+        .await?;
+
+    let manager = Arc::new(
+        AcquisitionManager::with_defaults(nats_client.clone(), "scenario-row-stream")
+            .with_work_dir(work_dir.path().join("writer")),
+    );
+    let mut stream = AppendStreamAcquirer::new(manager);
+    let records = vec![
+        br#"{"row":1,"command":"echo one"}"#.to_vec(),
+        b"\n".to_vec(),
+        br#"{"row":2,"command":"echo two"}"#.to_vec(),
+        b"\n".to_vec(),
+        br#"{"row":3,"command":"echo three"}"#.to_vec(),
+        b"\n".to_vec(),
+    ];
+    let expected_payload = records.concat();
+    let anchors = stream
+        .append_many_with_anchors(&records, "scenario://row-stream")
+        .await?;
+    let material_id = anchors
+        .first()
+        .ok_or_else(|| color_eyre::eyre::eyre!("batched append returned no anchors"))?
+        .material_id;
+
+    let slice_msg = tokio::time::timeout(Duration::from_secs(Timeouts::SHORT), slice_sub.next())
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing live source-material slice frame"))?;
+    assert_eq!(
+        slice_msg.payload.as_ref(),
+        expected_payload.as_slice(),
+        "one physical slice frame should contain the concatenated logical records"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), slice_sub.next())
+            .await
+            .is_err(),
+        "batched append should not publish one source-material slice per tiny record"
+    );
+
+    stream.finalize("row stream scenario complete").await?;
+
+    let expected_bytes = i64::try_from(expected_payload.len())?;
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = ctx.pool.clone();
+            async move {
+                let row = sqlx::query(
+                    r"
+                    SELECT status, total_bytes
+                    FROM raw.source_material_registry
+                    WHERE id = $1::uuid
+                    ",
+                )
+                .bind(material_id)
+                .fetch_optional(&pool)
+                .await?;
+                let Some(row) = row else {
+                    return Ok::<bool, sqlx::Error>(false);
+                };
+                let status: String = sqlx::Row::get(&row, "status");
+                let total_bytes: Option<i64> = sqlx::Row::get(&row, "total_bytes");
+                let ledger_bytes = fetch_realtime_capture_bytes(&pool, material_id).await?;
+                Ok::<bool, sqlx::Error>(
+                    status == material_status::COMPLETED
+                        && total_bytes == Some(expected_bytes)
+                        && ledger_bytes == Some(expected_bytes),
+                )
+            }
+        },
+        DEFAULT_WAIT_SECS,
+    )
+    .await?;
+
+    let mut expected_start = 0_i64;
+    for (anchor, record) in anchors.iter().zip(records.iter()) {
+        let record_len = i64::try_from(record.len())?;
+        assert_eq!(anchor.material_id, material_id);
+        assert_eq!(anchor.offset_start, expected_start);
+        assert_eq!(anchor.offset_end, expected_start + record_len);
+        expected_start = anchor.offset_end;
+    }
+    assert_eq!(expected_start, expected_bytes);
+
+    ctx.write_evidence_json(
+        "row-stream-anchors",
+        "source_material_anchors",
+        &serde_json::json!({
+            "material_id": material_id.to_string(),
+            "expected_bytes": expected_bytes,
+            "anchors": anchors.iter().map(|anchor| serde_json::json!({
+                "material_id": anchor.material_id.to_string(),
+                "offset_start": anchor.offset_start,
+                "offset_end": anchor.offset_end,
+            })).collect::<Vec<_>>(),
+        }),
+        Some(format!(
+            "{} anchor(s), {expected_bytes} byte(s)",
+            anchors.len()
+        )),
+    )?;
+    ctx.capture_db_evidence("source-material-db").await?;
+    ctx.capture_nats_evidence("source-material-nats").await?;
+    ctx.capture_material_directory_evidence("source-material-spool", work_dir.path())?;
+    ctx.record_evidence_event(
+        "scenario.complete",
+        "batched row-stream source-material scenario completed",
+        serde_json::json!({
+            "material_id": material_id.to_string(),
+            "record_count": records.len(),
+            "expected_bytes": expected_bytes,
+        }),
+    );
+
+    ingest_handle.stop().await?;
+    Ok(())
+}
+
+/// Scenario: duplicate source bytes captured through independent material IDs
+/// converge on the same `BLAKE3` blob identity through normal ingestd finalization.
+#[sinex_test(timeout = 120)]
+async fn source_material_scenario_duplicate_content_reuses_blob_identity(
+    ctx: TestContext,
+) -> Result<()> {
+    ctx.set_proof_metadata(source_material_proof(
+        "source-material.duplicate-content-blob-identity.v1",
+        &[
+            "duplicate-content-reuses-blake3-blob",
+            "source-material-ids-remain-distinct",
+            "normal-acquisition-path-finalizes-both-materials",
+        ],
+        "xtask test -p sinex-node-sdk -E 'test(source_material_scenario_duplicate_content_reuses_blob_identity)'",
+    ));
+    ctx.record_evidence_event(
+        "scenario.start",
+        "starting duplicate-content source-material scenario",
+        serde_json::json!({ "issue": 315 }),
+    );
+
+    let work_dir = tempfile::tempdir()?;
+    let (ctx, _nats, nats_client, mut ingest_handle) =
+        setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
+    let manager = AcquisitionManager::with_defaults(nats_client, "scenario-duplicate-content")
+        .with_work_dir(work_dir.path().join("writer"));
+    let payload = b"same logical export bytes\n";
+
+    let first_id = stage_material(
+        &manager,
+        "scenario://duplicate-content/first",
+        payload,
+        "first duplicate-content scenario material",
+        Some(serde_json::json!({ "scenario": "duplicate-content", "ordinal": 1 })),
+    )
+    .await?;
+    let second_id = stage_material(
+        &manager,
+        "scenario://duplicate-content/second",
+        payload,
+        "second duplicate-content scenario material",
+        Some(serde_json::json!({ "scenario": "duplicate-content", "ordinal": 2 })),
+    )
+    .await?;
+
+    let expected_bytes = i64::try_from(payload.len())?;
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = ctx.pool.clone();
+            async move {
+                let rows = sqlx::query(
+                    r"
+                    SELECT id::uuid AS id, status, optional_blob_id::uuid AS optional_blob_id, total_bytes
+                    FROM raw.source_material_registry
+                    WHERE id IN ($1::uuid, $2::uuid)
+                    ",
+                )
+                .bind(first_id)
+                .bind(second_id)
+                .fetch_all(&pool)
+                .await?;
+                Ok::<bool, sqlx::Error>(
+                    rows.len() == 2
+                        && rows.iter().all(|row| {
+                            let status: String = sqlx::Row::get(row, "status");
+                            let blob: Option<Uuid> = sqlx::Row::get(row, "optional_blob_id");
+                            let total_bytes: Option<i64> = sqlx::Row::get(row, "total_bytes");
+                            status == material_status::COMPLETED
+                                && blob.is_some()
+                                && total_bytes == Some(expected_bytes)
+                        }),
+                )
+            }
+        },
+        DEFAULT_WAIT_SECS,
+    )
+    .await?;
+
+    let rows = sqlx::query(
+        r"
+        SELECT id::uuid AS id, optional_blob_id::uuid AS optional_blob_id, total_bytes
+        FROM raw.source_material_registry
+        WHERE id IN ($1::uuid, $2::uuid)
+        ORDER BY id
+        ",
+    )
+    .bind(first_id)
+    .bind(second_id)
+    .fetch_all(&ctx.pool)
+    .await?;
+    assert_eq!(rows.len(), 2);
+    let first_blob: Option<Uuid> = sqlx::Row::get(&rows[0], "optional_blob_id");
+    let second_blob: Option<Uuid> = sqlx::Row::get(&rows[1], "optional_blob_id");
+    assert_ne!(first_id, second_id);
+    assert_eq!(
+        first_blob, second_blob,
+        "duplicate source bytes should converge on one blob identity"
+    );
+    assert!(first_blob.is_some());
+
+    let blob_count: Option<i64> = sqlx::query_scalar(
+        r"
+        SELECT COUNT(*)
+        FROM core.blobs
+        WHERE checksum_blake3 = $1
+        ",
+    )
+    .bind(blake3::hash(payload).to_hex().to_string())
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert_eq!(
+        blob_count.unwrap_or_default(),
+        1,
+        "duplicate material finalization should not create duplicate blob rows"
+    );
+
+    ctx.write_evidence_json(
+        "duplicate-content-materials",
+        "source_material_blob_identity",
+        &serde_json::json!({
+            "first_material_id": first_id.to_string(),
+            "second_material_id": second_id.to_string(),
+            "shared_blob_id": first_blob.map(|id| id.to_string()),
+            "checksum_blake3": blake3::hash(payload).to_hex().to_string(),
+        }),
+        Some("2 material(s), 1 shared blob".to_string()),
+    )?;
+    ctx.capture_db_evidence("source-material-db").await?;
+    ctx.capture_nats_evidence("source-material-nats").await?;
+    ctx.capture_material_directory_evidence("source-material-spool", work_dir.path())?;
+    ctx.record_evidence_event(
+        "scenario.complete",
+        "duplicate-content source-material scenario completed",
+        serde_json::json!({
+            "first_material_id": first_id.to_string(),
+            "second_material_id": second_id.to_string(),
+        }),
     );
 
     ingest_handle.stop().await?;
@@ -450,6 +757,14 @@ async fn material_acquisition_cancel_mid_slice(ctx: TestContext) -> Result<()> {
 /// Test out-of-order slice handling
 #[sinex_test(timeout = 60)]
 async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()> {
+    ctx.set_proof_metadata(source_material_proof(
+        "source-material.out-of-order-slices.v1",
+        &[
+            "out-of-order-material-frames-complete",
+            "buffered-slice-ledger-bytes-match-material",
+        ],
+        "xtask test -p sinex-node-sdk -E 'test(material_acquisition_out_of_order_slices)'",
+    ));
     // `TestContext` is acquired from a pool and cleaned for us; don't do extra per-test DB resets.
     let work_dir = tempfile::tempdir()?;
     let (ctx, nats, nats_client, mut ingest_handle) =
@@ -588,6 +903,14 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
 /// Ensure end-before-begin ordering is tolerated (end is NAKed and later finalized).
 #[sinex_test(timeout = 60)]
 async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
+    ctx.set_proof_metadata(source_material_proof(
+        "source-material.end-before-begin-retry.v1",
+        &[
+            "out-of-order-material-end-frame-retries",
+            "later-begin-and-slices-finalize-material",
+        ],
+        "xtask test -p sinex-node-sdk -E 'test(material_acquisition_end_before_begin)'",
+    ));
     let work_dir = tempfile::tempdir()?;
     let (ctx, nats, nats_client, mut ingest_handle) =
         setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
@@ -696,6 +1019,14 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
 /// Ensure material assembly resumes correctly after ingestd restart
 #[sinex_test(timeout = 90)]
 async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
+    ctx.set_proof_metadata(source_material_proof(
+        "source-material.restart-recovery.v1",
+        &[
+            "restart-with-pending-material-state-recovers",
+            "material-ledger-total-bytes-match-post-restart-finalization",
+        ],
+        "xtask test -p sinex-node-sdk -E 'test(material_acquisition_restart_recovery)'",
+    ));
     let ctx = ctx
         .with_tracing("sinex_ingestd=debug")
         .with_nats()
