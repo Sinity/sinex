@@ -12,10 +12,11 @@ This pattern ensures zero provenance gaps for real-time streams by maintaining d
 
 For append-style or row-like sources, prefer the Record Source framework instead
 of hand-managed begin/append/finalize loops. `RecordSources::*` owns typed
-checkpointed reads; `RecordMaterializer<BufferedRecordSink>` owns stable record
-bytes, batching, rotation, finalization, and exact byte anchors. Use
-`AppendStreamAcquirer` or `BufferedAppendStreamWriter` directly only when
-implementing SDK substrate.
+checkpointed reads; `BufferedRecordSourceHarness` owns the default combination
+of checkpointed reads, stable record bytes, batching, rotation, finalization,
+and exact byte anchors. For push-only observation streams, use
+`BufferedRecordMaterializer`. Use `AppendStreamAcquirer` or
+`BufferedAppendStreamWriter` directly only when implementing SDK substrate.
 
 ## Design Principles
 
@@ -26,9 +27,9 @@ Fine-grained locking (via material ID) ensures that concurrent operations on dif
 The system employs concurrency limits (via semaphores) to ensure predictable resource usage during high-volume assembly operations.
 
 High-cardinality metadata observations should be represented as records through
-`RecordMaterializer<BufferedRecordSink>`, not as fresh zero-byte source
-materials. This preserves material provenance while keeping lifecycle-frame
-count and fsync pressure tied to stream batches instead of event cardinality.
+`BufferedRecordMaterializer`, not as fresh zero-byte source materials. This
+preserves material provenance while keeping lifecycle-frame count and fsync
+pressure tied to stream batches instead of event cardinality.
 
 ### 3. State Reconciliation
 A background task periodically cleans up staging resources associated with completed or abandoned operations based on activity timestamps.

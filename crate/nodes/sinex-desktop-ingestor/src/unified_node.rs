@@ -22,13 +22,12 @@ use crate::{
 use camino::Utf8PathBuf;
 use serde_json::json;
 use sinex_node_sdk::{
-    BufferedRecordSink, EventTransport, RecordMaterializer, RecordProcessingOutcome,
-    RecordReadHorizon, RecordSource, RecordSources, RecordWarningDisposition, SourceRecordAnchor,
-    SqliteRowCheckpoint,
-    acquisition_manager::{AcquisitionManager, BufferedAppendStreamWriterConfig, RotationPolicy},
+    BufferedRecordMaterializer, BufferedRecordSourceHarness, EventTransport,
+    RecordProcessingOutcome, RecordReadHorizon, RecordSources, RecordWarningDisposition,
+    SourceRecordAnchor, SqliteRowCheckpoint,
+    acquisition_manager::{AcquisitionManager, RotationPolicy},
     ingestor_node::IngestorNode,
     nats_publisher::NatsPublisher,
-    process_record_batch_lenient,
     stage_as_you_go::StageAsYouGoContext,
     wait_for_shutdown_signal,
     watcher_handle::WatcherHandle,
@@ -415,7 +414,7 @@ impl DesktopNode {
     }
 
     async fn stage_activitywatch_material(
-        materializer: &RecordMaterializer<BufferedRecordSink>,
+        materializer: &BufferedRecordMaterializer,
         entry: &ActivityWatchHistoryEntry,
     ) -> NodeResult<SourceRecordAnchor> {
         let mut material_bytes =
@@ -548,7 +547,7 @@ impl DesktopNode {
 
     async fn emit_activitywatch_entry(
         &self,
-        materializer: &RecordMaterializer<BufferedRecordSink>,
+        materializer: &BufferedRecordMaterializer,
         entry: &ActivityWatchHistoryEntry,
     ) -> NodeResult<()> {
         let (_, stage_context) = self.activitywatch_runtime_handles()?;
@@ -805,54 +804,45 @@ impl IngestorNode for DesktopNode {
             Arc::clone(self.acquisition.as_ref().ok_or_else(|| {
                 SinexError::lifecycle("Desktop acquisition manager not initialized")
             })?);
-        let materializer = RecordMaterializer::new(BufferedRecordSink::from_manager(
-            acquisition,
-            db_path.as_str(),
-            BufferedAppendStreamWriterConfig::default(),
-        ));
         let source = RecordSources::sqlite(
             db_path.clone(),
             db_path.as_str(),
             read_activitywatch_history,
             |entry: &ActivityWatchHistoryEntry| entry.row_id,
         );
+        let harness = BufferedRecordSourceHarness::buffered_default(source, acquisition);
         let horizon = until
             .end_time()
             .map_or(RecordReadHorizon::Unbounded, RecordReadHorizon::Until);
         let mut checkpoint = SqliteRowCheckpoint::new(start_row_id);
-        let batch = source
-            .read_batch(&checkpoint, horizon)
+        let node = &*self;
+        let import_report = harness
+            .read_process_lenient(
+                &mut checkpoint,
+                horizon,
+                |entry, ctx| {
+                    let started_at = entry.started_at;
+                    let ended_at = entry.ended_at;
+                    if first_ts.is_none() {
+                        first_ts = Some(started_at);
+                    }
+                    last_ts = Some(ended_at);
+                    async move {
+                        node.emit_activitywatch_entry(ctx.materializer(), &entry)
+                            .await
+                            .map(|()| RecordProcessingOutcome::Processed)
+                    }
+                },
+                |_| RecordWarningDisposition::Retry,
+            )
             .await
             .map_err(|error| {
                 SinexError::io(format!(
                     "Failed to read ActivityWatch history from {db_path}: {error}"
                 ))
             })?;
-        let node = &*self;
-        let import_report = process_record_batch_lenient(
-            &mut checkpoint,
-            batch,
-            |entry| {
-                let started_at = entry.started_at;
-                let ended_at = entry.ended_at;
-                let materializer = materializer.clone();
-                if first_ts.is_none() {
-                    first_ts = Some(started_at);
-                }
-                last_ts = Some(ended_at);
-                async move {
-                    node.emit_activitywatch_entry(&materializer, &entry)
-                        .await
-                        .map(|()| RecordProcessingOutcome::Processed)
-                }
-            },
-            |_| RecordWarningDisposition::Retry,
-        )
-        .await;
 
-        materializer
-            .finalize("desktop-activitywatch-historical")
-            .await?;
+        harness.finalize("desktop-activitywatch-historical").await?;
 
         if let Some(error) = import_report.warnings.into_iter().next() {
             return Err(error);

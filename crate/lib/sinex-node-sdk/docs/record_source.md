@@ -35,19 +35,24 @@ Use `RecordSources` to construct a source adapter:
 - `RecordSources::polling(...)` and `RecordSources::journal(...)` for
   custom cursor-based sources.
 
-Use `process_record_batch_lenient(...)` when processing can warn per record.
-It advances the checkpoint after processed records and explicitly skipped
-warnings, holds the checkpoint before retryable warnings, and advances to the
-source read frontier when the whole returned batch completes. That lets readers
-acknowledge internally skipped source rows without each node reinventing cursor
-policy.
+For checkpointed sources, prefer `BufferedRecordSourceHarness`. The harness
+combines the source adapter with SDK-managed source-material bytes, then runs
+one standard retry/skip cursor policy. It advances the checkpoint after
+processed records and explicitly skipped warnings, holds the checkpoint before
+retryable warnings, and advances to the source read frontier when the whole
+returned batch completes. That lets readers acknowledge internally skipped
+source rows without each node reinventing cursor policy.
 
-Use `RecordMaterializer<BufferedRecordSink>` for source-material bytes. The
-materializer appends one stable logical record, returns a `SourceRecordAnchor`,
-and delegates batching/rotation/finalization to the acquisition substrate.
-Construct buffered sinks through `BufferedRecordSink::from_manager(...)` or
-`BufferedRecordSink::from_active_handle(...)`; node code should not wire
-`AppendStreamAcquirer` directly for ordinary record materialization.
+For push-only observation streams, prefer `BufferedRecordMaterializer`. It
+appends one stable logical record, returns a `SourceRecordAnchor`, and delegates
+batching/rotation/finalization to the acquisition substrate. The default
+constructors are:
+
+- `BufferedRecordSourceHarness::buffered_default(source, acquisition)`
+- `BufferedRecordSourceHarness::buffered(source, acquisition, config)`
+- `BufferedRecordMaterializer::buffered_default(acquisition, source_identifier)`
+- `BufferedRecordMaterializer::buffered(acquisition, source_identifier, config)`
+- `BufferedRecordMaterializer::from_active_handle(...)`
 
 ## Default Node Pattern
 
@@ -59,31 +64,34 @@ let source = RecordSources::sqlite(
     |record: &MyRecord| record.row_id,
 );
 
+let harness = BufferedRecordSourceHarness::buffered_default(source, acquisition);
 let mut checkpoint = SqliteRowCheckpoint::new(saved_row_id);
-let batch = source
-    .read_batch(&checkpoint, RecordReadHorizon::Unbounded)
+
+let report = harness
+    .read_process_lenient(
+        &mut checkpoint,
+        RecordReadHorizon::Unbounded,
+        |record, ctx| async move {
+            let anchor = ctx.append_json_line(&record.raw_material()).await?;
+            emit_event(record, anchor).await?;
+            Ok(RecordProcessingOutcome::Processed)
+        },
+        |_| RecordWarningDisposition::Retry,
+    )
     .await?;
 
-let report = process_record_batch_lenient(
-    &mut checkpoint,
-    batch,
-    |record| async move {
-        let anchor = materializer.append_json_line(&record.raw_material()).await?;
-        emit_event(record, anchor).await?;
-        Ok(RecordProcessingOutcome::Processed)
-    },
-    |_| RecordWarningDisposition::Retry,
-)
-.await;
+harness.finalize("sqlite-history-scan").await?;
 ```
 
 Persist `checkpoint.row_id` only after inspecting `report.warnings` and
-finalizing the materializer. This keeps retryable failures from skipping source
+finalizing the harness. This keeps retryable failures from skipping source
 records and keeps source-material streams balanced.
 
 ## Lower-Level Substrate
 
-`AppendStreamAcquirer` and `BufferedAppendStreamWriter` remain the lower-level
-source-material transport. New node code should not use them directly unless it
-is implementing a new `RecordMaterialSink` or a genuinely lower-level SDK
-primitive.
+`RecordSource::read_batch`, `process_record_batch_lenient`,
+`AppendStreamAcquirer`, and `BufferedAppendStreamWriter` remain lower-level SDK
+substrate. New node code should not assemble these directly for ordinary
+checkpointed materialization. Use them only when implementing a new harness,
+sink, source adapter, or a pipeline whose materialization context is deliberately
+shared with another live path.

@@ -175,13 +175,13 @@ pub use node_cli::{NodeCli, NodeCliRunner, NodeCommand, parse_checkpoint, parse_
 pub use processing::{ErrorAction, NodeLogicError};
 #[cfg(feature = "messaging")]
 pub use record_source::{
-    AppendOnlyTextRecord, AppendOnlyUtf8FileSource, BufferedRecordSink, JournalCursorCheckpoint,
-    MockRecordSource, MockRecordSourceError, PollingRecordSource, RecordMaterialSink,
-    RecordMaterializer, RecordProcessContext, RecordProcessReport, RecordProcessingOutcome,
-    RecordReadBatch, RecordReadHorizon, RecordReadItem, RecordSource, RecordSourceDescriptor,
-    RecordSourceHarness, RecordSourceKind, RecordSourceObservation, RecordSources,
-    RecordWarningDisposition, SqliteRecordSource, SqliteRowCheckpoint, TimestampRecordCheckpoint,
-    process_record_batch_lenient, stable_json_line,
+    AppendOnlyTextRecord, AppendOnlyUtf8FileSource, BufferedRecordMaterializer, BufferedRecordSink,
+    BufferedRecordSourceHarness, JournalCursorCheckpoint, MockRecordSource, MockRecordSourceError,
+    PollingRecordSource, RecordMaterialSink, RecordMaterializer, RecordProcessContext,
+    RecordProcessReport, RecordProcessingOutcome, RecordReadBatch, RecordReadHorizon,
+    RecordReadItem, RecordSource, RecordSourceDescriptor, RecordSourceHarness, RecordSourceKind,
+    RecordSourceObservation, RecordSources, RecordWarningDisposition, SqliteRecordSource,
+    SqliteRowCheckpoint, TimestampRecordCheckpoint, process_record_batch_lenient, stable_json_line,
 };
 #[cfg(feature = "messaging")]
 pub use runtime::stream::{

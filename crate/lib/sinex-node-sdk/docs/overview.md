@@ -79,12 +79,13 @@ The SDK automatically enforces data lineage:
 - **Dual-Hash Verification**: Large files are verified using both BLAKE3 (Sinex-native) and SHA256 (Git-annex native) to detect tampering.
 
 For row-like or metadata-only observations, use the Record Source framework:
-`RecordSources::*` for checkpointed reads and `RecordMaterializer` over a
-`BufferedRecordSink` for source-material bytes. It batches adjacent logical
-records into fewer physical source-material slices, rotates through the normal
-SDK policy, and returns `SourceRecordAnchor` values for event provenance. This
-keeps events byte-addressable without creating one tiny material or one
-fsync-heavy slice per observation.
+`RecordSources::*` for checkpointed reads, `BufferedRecordSourceHarness` for
+the default read/process/materialize loop, and `BufferedRecordMaterializer` for
+push-only observation streams. These APIs batch adjacent logical records into
+fewer physical source-material slices, rotate through the normal SDK policy, and
+return `SourceRecordAnchor` values for event provenance. This keeps events
+byte-addressable without creating one tiny material or one fsync-heavy slice per
+observation.
 
 ## 🚦 Error Handling & DLQ
 
