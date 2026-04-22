@@ -3,8 +3,8 @@
 use camino::Utf8PathBuf;
 use sinex_primitives::{Bytes, Seconds};
 use sinex_terminal_ingestor::unified_node::{HistorySourceConfig, TerminalConfig};
-use xtask::sandbox::{sinex_test, TestResult};
 use validator::Validate;
+use xtask::sandbox::{TestResult, sinex_test};
 
 #[sinex_test]
 async fn rejects_dangerous_history_paths() -> TestResult<()> {

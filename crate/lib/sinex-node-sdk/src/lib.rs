@@ -51,8 +51,6 @@
 
 #[cfg(feature = "messaging")]
 pub mod acquisition_manager;
-#[cfg(feature = "db")]
-pub mod content_store;
 pub mod api_poller;
 #[cfg(feature = "messaging")]
 pub mod automaton_base;
@@ -61,6 +59,8 @@ pub mod batch_importer;
 pub mod checkpoint;
 pub mod config;
 pub mod confirmation_handler;
+#[cfg(feature = "db")]
+pub mod content_store;
 #[cfg(feature = "messaging")]
 pub mod coordination;
 pub mod diagnostics;

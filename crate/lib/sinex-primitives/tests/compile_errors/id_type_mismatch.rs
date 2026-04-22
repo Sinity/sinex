@@ -6,10 +6,10 @@
 // The trybuild harness (id_type_system_test.rs) compiles this file and asserts
 // the expected type error appears in the compiler output.
 
+use serde_json::Value;
 use sinex_primitives::Id;
 use sinex_primitives::events::Event;
 use sinex_primitives::rpc::replay::ReplayCheckpoint;
-use serde_json::Value;
 
 fn main() {
     let event_id: Id<Event<Value>> = Id::new();

@@ -892,7 +892,9 @@ mod tests {
         models::blob::Blob,
         repositories::{DbPoolExt, source_materials::status},
     };
-    use sinex_node_sdk::content_store::{ContentStoreConfig, ContentStoreKey, MaterialContentStore};
+    use sinex_node_sdk::content_store::{
+        ContentStoreConfig, ContentStoreKey, MaterialContentStore,
+    };
     use std::sync::Arc;
     use tokio::time::timeout;
     use tokio_stream::StreamExt;

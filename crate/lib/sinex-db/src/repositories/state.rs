@@ -1182,6 +1182,147 @@ impl StateRepository<'_> {
         })
     }
 
+    /// List operator-facing status for registered automata.
+    ///
+    /// The durable base is the node registry (`node_manifests` + latest
+    /// `node_runs`). Derived-node-specific runtime details come from SDK
+    /// self-observation events in `core.events`, keyed by node/run labels.
+    pub async fn list_automata_status(
+        &self,
+        stale_after: Duration,
+        recent_window: Duration,
+    ) -> DbResult<Vec<AutomataStatusRow>> {
+        let stale_secs = stale_after.as_secs() as f64;
+        let recent_secs = recent_window.as_secs() as f64;
+
+        sqlx::query_as!(
+            AutomataStatusRow,
+            r#"
+            SELECT
+                nm.node_name::text as "node_name!: NodeName",
+                nm.version as "version!",
+                nm.description,
+                nm.status as "manifest_status!",
+                (
+                    (nr.id IS NOT NULL
+                        AND nr.status = 'running'
+                        AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8))
+                    OR
+                    (nr.id IS NULL
+                        AND nm.status = 'active'
+                        AND nm.last_heartbeat_at > NOW() - make_interval(secs => $1::float8))
+                ) as "live!",
+                nr.service_name,
+                nr.instance_id,
+                nr.id as "node_run_id: uuid::Uuid",
+                nr.host,
+                nr.status as run_status,
+                nr.started_at as "started_at: sinex_primitives::temporal::Timestamp",
+                COALESCE(nr.last_heartbeat_at, nm.last_heartbeat_at)
+                    as "last_heartbeat_at: sinex_primitives::temporal::Timestamp",
+                processed.events_processed_current_run,
+                checkpoint.checkpoint_kind,
+                checkpoint.checkpoint_position,
+                checkpoint.checkpoint_revision,
+                checkpoint.checkpoint_recorded_at
+                    as "checkpoint_recorded_at: sinex_primitives::temporal::Timestamp",
+                pending.pending_invalidation_count,
+                error_rate.error_rate_5m,
+                COALESCE(outputs.recent_output_count, 0)::bigint as "recent_output_count!",
+                outputs.last_output_at as "last_output_at: sinex_primitives::temporal::Timestamp",
+                outputs.last_replay_at as "last_replay_at: sinex_primitives::temporal::Timestamp"
+            FROM core.node_manifests nm
+            LEFT JOIN LATERAL (
+                SELECT
+                    nr.id,
+                    nr.service_name,
+                    nr.instance_id,
+                    nr.host,
+                    nr.status,
+                    nr.started_at,
+                    nr.last_heartbeat_at
+                FROM core.node_runs nr
+                WHERE nr.node_manifest_id = nm.id
+                ORDER BY nr.started_at DESC
+                LIMIT 1
+            ) nr ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    FLOOR((e.payload->>'value')::float8)::bigint
+                        AS events_processed_current_run
+                FROM core.events e
+                WHERE e.source = 'sinex'
+                  AND e.event_type = 'metric.gauge'
+                  AND e.payload->>'name' = 'derived.events_processed.run'
+                  AND e.payload->'labels'->>'node' = nm.node_name::text
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'node_run_id' = nr.id::text)
+                ORDER BY e.ts_coided DESC
+                LIMIT 1
+            ) processed ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    e.payload->'labels'->>'checkpoint_kind' AS checkpoint_kind,
+                    e.payload->'labels'->>'checkpoint_position' AS checkpoint_position,
+                    FLOOR((e.payload->>'value')::float8)::bigint AS checkpoint_revision,
+                    e.ts_coided AS checkpoint_recorded_at
+                FROM core.events e
+                WHERE e.source = 'sinex'
+                  AND e.event_type = 'metric.gauge'
+                  AND e.payload->>'name' = 'derived.checkpoint.revision'
+                  AND e.payload->'labels'->>'node' = nm.node_name::text
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'node_run_id' = nr.id::text)
+                ORDER BY e.ts_coided DESC
+                LIMIT 1
+            ) checkpoint ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    FLOOR((e.payload->>'value')::float8)::bigint
+                        AS pending_invalidation_count
+                FROM core.events e
+                WHERE e.source = 'sinex'
+                  AND e.event_type = 'metric.gauge'
+                  AND e.payload->>'name' = 'derived.invalidations.pending'
+                  AND e.payload->'labels'->>'node' = nm.node_name::text
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'node_run_id' = nr.id::text)
+                ORDER BY e.ts_coided DESC
+                LIMIT 1
+            ) pending ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    (e.payload->>'value')::float8 AS error_rate_5m
+                FROM core.events e
+                WHERE e.source = 'sinex'
+                  AND e.event_type = 'metric.gauge'
+                  AND e.payload->>'name' = 'derived.error_rate_5m'
+                  AND e.payload->'labels'->>'node' = nm.node_name::text
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'node_run_id' = nr.id::text)
+                ORDER BY e.ts_coided DESC
+                LIMIT 1
+            ) error_rate ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE e.ts_coided > NOW() - make_interval(secs => $2::float8)
+                    ) AS recent_output_count,
+                    MAX(e.ts_coided) AS last_output_at,
+                    MAX(e.ts_coided) FILTER (WHERE e.created_by_operation_id IS NOT NULL)
+                        AS last_replay_at
+                FROM core.events e
+                WHERE nr.id IS NOT NULL
+                  AND e.node_run_id = nr.id
+                  AND e.source_event_ids IS NOT NULL
+            ) outputs ON true
+            WHERE nm.node_type = 'automaton'
+            ORDER BY nm.node_name, nm.version
+            "#,
+            stale_secs,
+            recent_secs
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "list automata status"))
+    }
+
     // ========== System Verification Methods ==========
 
     /// Test UUID generation functionality
@@ -1388,6 +1529,33 @@ pub struct NodeHealthSummary {
     pub unique_nodes: i64,
     pub active_run_count: i64,
     pub oldest_heartbeat: Option<Timestamp>,
+}
+
+/// Operator-facing automaton status row.
+#[derive(Debug, sqlx::FromRow)]
+pub struct AutomataStatusRow {
+    pub node_name: NodeName,
+    pub version: String,
+    pub description: Option<String>,
+    pub manifest_status: String,
+    pub live: bool,
+    pub service_name: Option<String>,
+    pub instance_id: Option<String>,
+    pub node_run_id: Option<Uuid>,
+    pub host: Option<String>,
+    pub run_status: Option<String>,
+    pub started_at: Option<Timestamp>,
+    pub last_heartbeat_at: Option<Timestamp>,
+    pub events_processed_current_run: Option<i64>,
+    pub checkpoint_kind: Option<String>,
+    pub checkpoint_position: Option<String>,
+    pub checkpoint_revision: Option<i64>,
+    pub checkpoint_recorded_at: Option<Timestamp>,
+    pub pending_invalidation_count: Option<i64>,
+    pub error_rate_5m: Option<f64>,
+    pub recent_output_count: i64,
+    pub last_output_at: Option<Timestamp>,
+    pub last_replay_at: Option<Timestamp>,
 }
 
 /// Operation statistics

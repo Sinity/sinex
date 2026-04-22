@@ -21,7 +21,7 @@ use uuid::Uuid;
 pub mod manager;
 pub mod path_validator;
 
-pub use manager::{ContentStoreManager, BlobMetadata};
+pub use manager::{BlobMetadata, ContentStoreManager};
 pub use path_validator::{VerifiedPath, create_secure_temp_path, validate_and_convert_path};
 
 pub const LOCAL_BLAKE3_CAS_BACKEND: &str = "SINEXBLAKE3";
@@ -297,8 +297,10 @@ impl ContentStoreKey {
         })?;
 
         let size = size_part.parse::<u64>().map_err(|e| {
-            SinexError::processing(format!("Failed to parse size from content-store key: {key_str}"))
-                .with_source(e)
+            SinexError::processing(format!(
+                "Failed to parse size from content-store key: {key_str}"
+            ))
+            .with_source(e)
         })?;
 
         Ok(ContentStoreKey {
@@ -365,8 +367,10 @@ impl MaterialContentStore {
             annex_cmd
                 .args(["init", "sinex"])
                 .current_dir(&config.root_path);
-            let annex_output =
-                run_command_blocking(annex_cmd, "Failed to run git-annex init for content-store root")?;
+            let annex_output = run_command_blocking(
+                annex_cmd,
+                "Failed to run git-annex init for content-store root",
+            )?;
             if !annex_output.status.success() {
                 return Err(SinexError::processing(format!(
                     "git-annex init failed for content-store root: {}",
@@ -439,10 +443,7 @@ impl MaterialContentStore {
     }
 
     /// Store a file and return the backend-neutral content-store key.
-    pub async fn store_file(
-        &self,
-        file_path: impl AsRef<Path>,
-    ) -> NodeResult<ContentStoreKey> {
+    pub async fn store_file(&self, file_path: impl AsRef<Path>) -> NodeResult<ContentStoreKey> {
         let file_path = Self::require_utf8_path(file_path)?;
         debug!("Storing file in content store: {:?}", file_path);
 
@@ -631,7 +632,9 @@ impl MaterialContentStore {
         }
 
         let key_str = String::from_utf8(output.stdout)
-            .map_err(|e| SinexError::processing("Invalid UTF-8 in content-store key").with_source(e))?
+            .map_err(|e| {
+                SinexError::processing("Invalid UTF-8 in content-store key").with_source(e)
+            })?
             .trim()
             .to_string();
 
@@ -992,7 +995,8 @@ mod tests {
 
     #[sinex_test]
     async fn parse_store_output_for_key_reports_invalid_utf8() -> ::xtask::sandbox::TestResult<()> {
-        let error = parse_store_output_for_key(&[0xff]).expect_err("invalid utf-8 must be reported");
+        let error =
+            parse_store_output_for_key(&[0xff]).expect_err("invalid utf-8 must be reported");
         assert!(error.contains("not valid UTF-8"));
         Ok(())
     }
@@ -1048,7 +1052,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn small_files_use_local_cas_without_content_store_process() -> ::xtask::sandbox::TestResult<()> {
+    async fn small_files_use_local_cas_without_content_store_process()
+    -> ::xtask::sandbox::TestResult<()> {
         let repo_dir = tempfile::tempdir()?;
         let repo_path = Utf8PathBuf::from_path_buf(repo_dir.path().to_path_buf())
             .expect("temp path should be valid utf-8");
@@ -1077,7 +1082,9 @@ mod tests {
         assert!(content_path.exists());
         content_store.ensure_content_local(&key.key).await?;
 
-        let verification = content_store.verify_key(false, false, Some(&key.key)).await?;
+        let verification = content_store
+            .verify_key(false, false, Some(&key.key))
+            .await?;
         assert!(verification.success);
 
         content_store.drop_content(&key.key, true).await?;

@@ -160,7 +160,8 @@ impl<'a> FinalizationTransaction<'a> {
                     "ensure_material_record_present",
                 ),
             };
-            self.cleanup_content_import_failure(request.content_key).await;
+            self.cleanup_content_import_failure(request.content_key)
+                .await;
             return Err(FinalizationError::new(
                 FinalizationErrorKind::EnsureMaterialRecord,
                 error,
@@ -184,7 +185,8 @@ impl<'a> FinalizationTransaction<'a> {
                         rollback_finalization_failure(error, rollback_error, "upsert_blob")
                     }
                 };
-                self.cleanup_content_import_failure(request.content_key).await;
+                self.cleanup_content_import_failure(request.content_key)
+                    .await;
                 return Err(FinalizationError::new(
                     FinalizationErrorKind::UpsertBlob,
                     error,
@@ -209,7 +211,8 @@ impl<'a> FinalizationTransaction<'a> {
                     rollback_finalization_failure(error, rollback_error, "finalize_material_record")
                 }
             };
-            self.cleanup_content_import_failure(request.content_key).await;
+            self.cleanup_content_import_failure(request.content_key)
+                .await;
             return Err(FinalizationError::new(
                 FinalizationErrorKind::FinalizeMaterialRecord,
                 error,
@@ -226,7 +229,8 @@ impl<'a> FinalizationTransaction<'a> {
                     rollback_finalization_failure(error, rollback_error, "record_ledger_entry")
                 }
             };
-            self.cleanup_content_import_failure(request.content_key).await;
+            self.cleanup_content_import_failure(request.content_key)
+                .await;
             return Err(FinalizationError::new(
                 FinalizationErrorKind::RecordLedgerEntry,
                 error,
@@ -260,7 +264,8 @@ impl<'a> FinalizationTransaction<'a> {
                         Ok(handle)
                     }
                     FinalizationCommitOutcome::NotLanded => {
-                        self.cleanup_content_import_failure(request.content_key).await;
+                        self.cleanup_content_import_failure(request.content_key)
+                            .await;
                         Err(FinalizationError::new(
                             FinalizationErrorKind::Commit,
                             commit_error,
@@ -649,7 +654,10 @@ mod tests {
             error.context_map().get("final_status"),
             Some(&status::COMPLETED.to_string())
         );
-        assert_eq!(error.context_map().get("content_key"), Some(&content_key.key),);
+        assert_eq!(
+            error.context_map().get("content_key"),
+            Some(&content_key.key),
+        );
         assert!(
             error
                 .context_map()
