@@ -17,6 +17,43 @@ fn open_read_only(path: &Utf8Path) -> Result<Connection, rusqlite::Error> {
     Ok(conn)
 }
 
+fn open_immutable_read_only(path: &Utf8Path) -> Result<Connection, rusqlite::Error> {
+    let mut uri = url::Url::from_file_path(path.as_std_path())
+        .map_err(|()| rusqlite::Error::InvalidPath(path.as_std_path().to_path_buf()))?;
+    uri.query_pairs_mut()
+        .append_pair("mode", "ro")
+        .append_pair("immutable", "1");
+
+    let conn = Connection::open_with_flags(
+        uri.as_str(),
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+    )?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    Ok(conn)
+}
+
+fn sqlite_read_needs_immutable_fallback(error: &rusqlite::Error) -> bool {
+    error
+        .sqlite_error_code()
+        .is_some_and(|code| code == rusqlite::ErrorCode::ReadOnly)
+        || error.to_string().contains("readonly database")
+}
+
+fn with_read_only_connection<T>(
+    path: &Utf8Path,
+    mut operation: impl FnMut(&Connection) -> Result<T, rusqlite::Error>,
+) -> Result<T, rusqlite::Error> {
+    let conn = open_read_only(path)?;
+    match operation(&conn) {
+        Ok(value) => Ok(value),
+        Err(error) if sqlite_read_needs_immutable_fallback(&error) => {
+            let immutable = open_immutable_read_only(path)?;
+            operation(&immutable)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Boundaries that can justify capturing an immutable `SQLite` evidence snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -459,28 +496,51 @@ pub fn ensure_sqlite_with_tables(
         });
     }
 
+    let check_tables = |conn: &Connection| -> Result<Vec<String>, rusqlite::Error> {
+        let mut missing_tables = Vec::new();
+        for table in tables {
+            let exists = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?1)",
+                [table],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if !exists {
+                missing_tables.push((*table).to_string());
+            }
+        }
+        Ok(missing_tables)
+    };
+
     let conn = open_read_only(path).map_err(|error| SqliteTableCheckError::OpenFailed {
         path: path.to_path_buf(),
         error: error.to_string(),
     })?;
 
-    let mut missing_tables = Vec::new();
-    for table in tables {
-        let exists = conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?1)",
-                [table],
-                |row| row.get::<_, bool>(0),
-            )
-            .map_err(|error| SqliteTableCheckError::MetadataQueryFailed {
-                path: path.to_path_buf(),
-                table: (*table).to_string(),
-                error: error.to_string(),
+    let missing_tables = match check_tables(&conn) {
+        Ok(missing_tables) => missing_tables,
+        Err(error) if sqlite_read_needs_immutable_fallback(&error) => {
+            let immutable = open_immutable_read_only(path).map_err(|error| {
+                SqliteTableCheckError::OpenFailed {
+                    path: path.to_path_buf(),
+                    error: error.to_string(),
+                }
             })?;
-        if !exists {
-            missing_tables.push((*table).to_string());
+            check_tables(&immutable).map_err(|error| {
+                SqliteTableCheckError::MetadataQueryFailed {
+                    path: path.to_path_buf(),
+                    table: tables.join(", "),
+                    error: error.to_string(),
+                }
+            })?
         }
-    }
+        Err(error) => {
+            return Err(SqliteTableCheckError::MetadataQueryFailed {
+                path: path.to_path_buf(),
+                table: tables.join(", "),
+                error: error.to_string(),
+            });
+        }
+    };
 
     if missing_tables.is_empty() {
         Ok(())
@@ -512,41 +572,43 @@ pub fn read_rows_with_params<T, P, F>(
     mut map: F,
 ) -> Result<(Vec<T>, i64), rusqlite::Error>
 where
-    P: Params,
+    P: Clone + Params,
     F: FnMut(&Row<'_>) -> Result<T, rusqlite::Error>,
 {
-    let conn = open_read_only(path)?;
-    let mut stmt = conn.prepare(query)?;
-    let mut rows = stmt.query(params)?;
-    let mut items = Vec::new();
-    let mut last_row_id = initial_row_id;
+    with_read_only_connection(path, |conn| {
+        let mut stmt = conn.prepare(query)?;
+        let mut rows = stmt.query(params.clone())?;
+        let mut items = Vec::new();
+        let mut last_row_id = initial_row_id;
 
-    while let Some(row) = rows.next()? {
-        let row_id = row.get::<_, i64>(0)?;
-        match map(row) {
-            Ok(item) => {
-                last_row_id = last_row_id.max(row_id);
-                items.push(item);
-            }
-            Err(error) => {
-                return Err(rusqlite::Error::FromSqlConversionFailure(
-                    0,
-                    rusqlite::types::Type::Null,
-                    Box::new(std::io::Error::other(format!(
-                        "failed to map SQLite row {row_id} from {path}: {error}"
-                    ))),
-                ));
+        while let Some(row) = rows.next()? {
+            let row_id = row.get::<_, i64>(0)?;
+            match map(row) {
+                Ok(item) => {
+                    last_row_id = last_row_id.max(row_id);
+                    items.push(item);
+                }
+                Err(error) => {
+                    return Err(rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Null,
+                        Box::new(std::io::Error::other(format!(
+                            "failed to map SQLite row {row_id} from {path}: {error}"
+                        ))),
+                    ));
+                }
             }
         }
-    }
 
-    Ok((items, last_row_id))
+        Ok((items, last_row_id))
+    })
 }
 
 pub fn max_row_id_for_query(path: &Utf8Path, query: &str) -> Result<i64, rusqlite::Error> {
-    let conn = open_read_only(path)?;
-    let max_id: Option<i64> = conn.query_row(query, [], |row| row.get::<_, Option<i64>>(0))?;
-    Ok(max_id.unwrap_or(0))
+    with_read_only_connection(path, |conn| {
+        let max_id: Option<i64> = conn.query_row(query, [], |row| row.get::<_, Option<i64>>(0))?;
+        Ok(max_id.unwrap_or(0))
+    })
 }
 
 #[cfg(test)]
@@ -581,6 +643,63 @@ mod tests {
         let count: i64 =
             snapshot_conn.query_row("SELECT COUNT(*) FROM history", [], |row| row.get(0))?;
         assert_eq!(count, 2);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn sqlite_reads_fall_back_to_immutable_when_wal_sidecars_are_readonly() -> TestResult<()>
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        struct PermissionRestore {
+            dir: std::path::PathBuf,
+            db: std::path::PathBuf,
+        }
+
+        impl Drop for PermissionRestore {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.dir, std::fs::Permissions::from_mode(0o700));
+                let _ = std::fs::set_permissions(&self.db, std::fs::Permissions::from_mode(0o600));
+            }
+        }
+
+        let temp = tempfile::tempdir()?;
+        let db_path = temp.path().join("history.db");
+        {
+            let conn = rusqlite::Connection::open(&db_path)?;
+            conn.execute_batch(
+                r"
+                PRAGMA journal_mode=WAL;
+                CREATE TABLE history (value TEXT);
+                INSERT INTO history (value) VALUES ('one'), ('two');
+                ",
+            )?;
+        }
+        let _ = std::fs::remove_file(temp.path().join("history.db-wal"));
+        let _ = std::fs::remove_file(temp.path().join("history.db-shm"));
+        std::fs::set_permissions(&db_path, std::fs::Permissions::from_mode(0o400))?;
+        std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o500))?;
+        let _restore = PermissionRestore {
+            dir: temp.path().to_path_buf(),
+            db: db_path.clone(),
+        };
+
+        let path = Utf8PathBuf::from_path_buf(db_path)
+            .map_err(|path| color_eyre::eyre::eyre!("non-utf8 temp path: {path:?}"))?;
+
+        ensure_sqlite_with_tables(&path, &["history"])?;
+        let max_id = max_row_id_for_query(&path, "SELECT MAX(ROWID) FROM history")?;
+        let (rows, last_row_id) = read_rows_after(
+            &path,
+            "SELECT ROWID, value FROM history WHERE ROWID > ? ORDER BY ROWID ASC",
+            0,
+            |row| row.get::<_, String>(1),
+        )?;
+
+        assert_eq!(max_id, 2);
+        assert_eq!(last_row_id, 2);
+        assert_eq!(rows, vec!["one".to_string(), "two".to_string()]);
         Ok(())
     }
 
