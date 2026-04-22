@@ -1121,13 +1121,20 @@ impl IngestorNode for DesktopNode {
 mod tests {
     use super::*;
     use serde_json::json;
+    use sinex_db::{DbPool, DbPoolExt};
+    use sinex_node_sdk::{IngestorNodeAdapter, NodeRunner, ShutdownConfig};
+    use sinex_primitives::{
+        Pagination,
+        domain::{EventSource, EventType},
+    };
     #[cfg(unix)]
     use std::ffi::OsString;
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
     use std::time::Duration;
     use xtask::sandbox::{
-        EnvGuard, node_runtime::TestRuntimeBuilder, sinex_serial_test, sinex_test,
+        EnvGuard, TestContext, TestIngestdConfig, TestResult, node_runtime::TestRuntimeBuilder,
+        sinex_serial_test, sinex_test, start_test_ingestd_with_config, timing::Timeouts,
     };
 
     fn sample_activitywatch_entry(
@@ -1146,6 +1153,130 @@ mod tests {
             duration_ms: 1000,
             data,
         })
+    }
+
+    fn raw_node_config<T: Serialize>(config: &T) -> TestResult<HashMap<String, serde_json::Value>> {
+        let value = serde_json::to_value(config)?;
+        let serde_json::Value::Object(object) = value else {
+            return Err(color_eyre::eyre::eyre!(
+                "node config must serialize to a JSON object"
+            ));
+        };
+        Ok(object.into_iter().collect())
+    }
+
+    fn tune_batcher_for_runtime_proof(
+        config: &mut HashMap<String, serde_json::Value>,
+        service_prefix: &str,
+    ) -> String {
+        let suffix = Uuid::now_v7();
+        let service_name = format!("{service_prefix}-{suffix}");
+        config.insert("batch_size".to_string(), json!(1));
+        config.insert("batch_timeout_ms".to_string(), json!(20));
+        config.insert(
+            "consumer_group".to_string(),
+            json!(format!("proof-{suffix}")),
+        );
+        service_name
+    }
+
+    async fn wait_for_source_material_consumer(ctx: &TestContext) -> TestResult<()> {
+        let env = sinex_primitives::environment::environment();
+        let nats = ctx.nats_handle()?;
+        let js = nats.jetstream_with_client(ctx.nats_client());
+        let stream = env.nats_stream_name("SOURCE_MATERIAL");
+        nats.wait_for_consumer_on_stream(&js, &stream, Duration::from_secs(Timeouts::STANDARD))
+            .await?;
+        Ok(())
+    }
+
+    async fn wait_for_event_count(
+        pool: DbPool,
+        source: &'static str,
+        event_type: &'static str,
+        expected_count: i64,
+    ) -> TestResult<()> {
+        let source = EventSource::new(source)?;
+        let event_type = EventType::new(event_type)?;
+        xtask::sandbox::timing::WaitHelpers::wait_for_condition(
+            move || {
+                let pool = pool.clone();
+                let source = source.clone();
+                let event_type = event_type.clone();
+                async move {
+                    let count = pool
+                        .events()
+                        .count_by_source_and_event_type(&source, &event_type)
+                        .await
+                        .map_err(|error| color_eyre::eyre::eyre!("database error: {error}"))?;
+                    Ok::<bool, color_eyre::eyre::Report>(count == expected_count)
+                }
+            },
+            Timeouts::STANDARD,
+        )
+        .await
+    }
+
+    async fn persisted_events(
+        pool: &DbPool,
+        source: &str,
+        event_type: &str,
+    ) -> TestResult<Vec<sinex_primitives::events::Event<serde_json::Value>>> {
+        let source = EventSource::new(source)?;
+        let event_type = EventType::new(event_type)?;
+        let mut events = pool
+            .events()
+            .get_by_source(&source, Pagination::new(Some(100), None))
+            .await?;
+        events.retain(|event| event.event_type == event_type);
+        events.sort_by_key(|event| (event.ts_orig, event.id));
+        Ok(events)
+    }
+
+    fn assert_material_provenance_rows(
+        rows: &[sinex_primitives::events::Event<serde_json::Value>],
+        label: &str,
+    ) -> TestResult<()> {
+        for (index, event) in rows.iter().enumerate() {
+            match event.provenance() {
+                sinex_primitives::events::Provenance::Material { anchor_byte, .. }
+                    if *anchor_byte >= 0 => {}
+                other => {
+                    return Err(color_eyre::eyre::eyre!(
+                        "{label} row {index} has invalid provenance: {other:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn write_activitywatch_fixture(path: &Utf8PathBuf) -> TestResult<()> {
+        let conn = rusqlite::Connection::open(path.as_str())?;
+        conn.execute_batch(
+            "
+            CREATE TABLE buckets (
+              id INTEGER PRIMARY KEY,
+              name TEXT NOT NULL
+            );
+            CREATE TABLE events (
+              bucketrow INTEGER NOT NULL,
+              starttime INTEGER NOT NULL,
+              endtime INTEGER NOT NULL,
+              data TEXT,
+              FOREIGN KEY(bucketrow) REFERENCES buckets(id)
+            );
+            INSERT INTO buckets (id, name) VALUES
+              (1, 'aw-watcher-window_sinnix-prime'),
+              (2, 'aw-watcher-web_sinnix-prime'),
+              (3, 'aw-watcher-afk_sinnix-prime');
+            INSERT INTO events (bucketrow, starttime, endtime, data) VALUES
+              (1, 1000000000, 4000000000, '{\"app\":\"kitty\",\"title\":\"main.rs\"}'),
+              (2, 5000000000, 9000000000, '{\"app\":\"Firefox\",\"title\":\"Docs\",\"url\":\"https://example.com\"}'),
+              (3, 10000000000, 16000000000, '{\"status\":\"afk\"}');
+            ",
+        )?;
+        Ok(())
     }
 
     #[sinex_test]
@@ -1186,6 +1317,136 @@ mod tests {
             std::path::PathBuf::from(OsString::from_vec(vec![b'/', b't', b'm', b'p', b'/', 0xff]));
 
         assert_eq!(default_activitywatch_db_path_from(Some(invalid_dir)), None);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn scan_historical_persists_activitywatch_through_node_runtime(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let temp_dir = tempfile::tempdir()?;
+        let db_path = Utf8PathBuf::from_path_buf(temp_dir.path().join("activitywatch.db"))
+            .map_err(|path| {
+                color_eyre::eyre::eyre!("ActivityWatch temp path is not UTF-8: {}", path.display())
+            })?;
+        write_activitywatch_fixture(&db_path)?;
+
+        let nats = ctx.nats_handle()?;
+        let ingest_config = TestIngestdConfig {
+            nats: nats.connection_config(),
+            database_url: ctx.database_url().to_string(),
+            work_dir: Some(temp_dir.path().join("ingestd")),
+            ..Default::default()
+        };
+        let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
+        wait_for_source_material_consumer(&ctx).await?;
+
+        let mut config = DesktopConfig::default();
+        config.clipboard_enabled = false;
+        config.window_manager_enabled = false;
+        config.require_hyprland = false;
+        config.activitywatch_db_path = Some(db_path);
+        let mut raw_config = raw_node_config(&config)?;
+        let service_name =
+            tune_batcher_for_runtime_proof(&mut raw_config, "desktop-activitywatch-runtime-proof");
+
+        let publisher = Arc::new(NatsPublisher::new(ctx.nats_client()));
+        let checkpoint_path = temp_dir
+            .path()
+            .join("desktop-runtime-proof.checkpoint.json");
+        let adapter =
+            IngestorNodeAdapter::new(DesktopNode::new()).with_shutdown_config(ShutdownConfig {
+                checkpoint_path: Some(checkpoint_path),
+                ..ShutdownConfig::default()
+            });
+        let mut runner = NodeRunner::new(adapter);
+        runner
+            .initialize_with_transport(
+                service_name,
+                raw_config,
+                Some(ctx.pool.clone()),
+                EventTransport::Nats(publisher),
+                temp_dir.path().join("runner"),
+                false,
+            )
+            .await?;
+
+        let report = runner
+            .run_scan(
+                Checkpoint::None,
+                TimeHorizon::Historical {
+                    end_time: Timestamp::now(),
+                },
+                ScanArgs::default(),
+            )
+            .await?;
+        assert_eq!(report.events_processed, 3);
+
+        wait_for_event_count(ctx.pool.clone(), "activitywatch", "window.active", 1).await?;
+        wait_for_event_count(ctx.pool.clone(), "activitywatch", "browser.tab.active", 1).await?;
+        wait_for_event_count(ctx.pool.clone(), "activitywatch", "afk.changed", 1).await?;
+
+        let window_rows = persisted_events(&ctx.pool, "activitywatch", "window.active").await?;
+        let browser_rows =
+            persisted_events(&ctx.pool, "activitywatch", "browser.tab.active").await?;
+        let afk_rows = persisted_events(&ctx.pool, "activitywatch", "afk.changed").await?;
+        assert_material_provenance_rows(&window_rows, "ActivityWatch window")?;
+        assert_material_provenance_rows(&browser_rows, "ActivityWatch browser")?;
+        assert_material_provenance_rows(&afk_rows, "ActivityWatch afk")?;
+        assert_eq!(
+            window_rows
+                .first()
+                .and_then(|event| event.payload.get("app"))
+                .and_then(serde_json::Value::as_str),
+            Some("kitty")
+        );
+        assert_eq!(
+            browser_rows
+                .first()
+                .and_then(|event| event.payload.get("browser"))
+                .and_then(serde_json::Value::as_str),
+            Some("Firefox")
+        );
+        assert_eq!(
+            afk_rows
+                .first()
+                .and_then(|event| event.payload.get("status"))
+                .and_then(serde_json::Value::as_str),
+            Some("afk")
+        );
+
+        let rerun_report = runner
+            .run_scan(
+                report.final_checkpoint.clone(),
+                TimeHorizon::Historical {
+                    end_time: Timestamp::now(),
+                },
+                ScanArgs::default(),
+            )
+            .await?;
+        assert_eq!(rerun_report.events_processed, 0);
+        assert_eq!(
+            persisted_events(&ctx.pool, "activitywatch", "window.active")
+                .await?
+                .len(),
+            1
+        );
+        assert_eq!(
+            persisted_events(&ctx.pool, "activitywatch", "browser.tab.active")
+                .await?
+                .len(),
+            1
+        );
+        assert_eq!(
+            persisted_events(&ctx.pool, "activitywatch", "afk.changed")
+                .await?
+                .len(),
+            1
+        );
+
+        runner.shutdown().await?;
+        ingest_handle.stop().await?;
         Ok(())
     }
 

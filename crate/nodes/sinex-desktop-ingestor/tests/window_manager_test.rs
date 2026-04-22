@@ -42,6 +42,10 @@ async fn window_manager_type_as_str() -> TestResult<()> {
 async fn window_manager_type_from_str_valid() -> TestResult<()> {
     let parsed: WindowManagerType = "hyprland".parse().map_err(|e: String| eyre!(e))?;
     assert_eq!(parsed, WindowManagerType::Hyprland);
+    let parsed: WindowManagerType = "Hyprland".parse().map_err(|e: String| eyre!(e))?;
+    assert_eq!(parsed, WindowManagerType::Hyprland);
+    let parsed: WindowManagerType = " HYPRLAND ".parse().map_err(|e: String| eyre!(e))?;
+    assert_eq!(parsed, WindowManagerType::Hyprland);
     Ok(())
 }
 
