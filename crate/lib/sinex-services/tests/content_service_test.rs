@@ -64,7 +64,10 @@ async fn content_store_retrieve_roundtrip(ctx: TestContext) -> TestResult<()> {
         )
         .await?;
 
-    assert!(!content_key.is_empty(), "content-store key should be non-empty");
+    assert!(
+        !content_key.is_empty(),
+        "content-store key should be non-empty"
+    );
 
     // Retrieve and compare
     let retrieved = service.retrieve_content(&content_key).await?;

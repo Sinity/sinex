@@ -1,4 +1,6 @@
-use sinex_node_sdk::content_store::path_validator::{create_secure_temp_path, validate_and_convert_path};
+use sinex_node_sdk::content_store::path_validator::{
+    create_secure_temp_path, validate_and_convert_path,
+};
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]

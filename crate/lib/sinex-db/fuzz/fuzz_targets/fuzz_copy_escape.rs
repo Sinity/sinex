@@ -14,16 +14,10 @@ fuzz_target!(|data: &[u8]| {
             match output[i] {
                 b'\\' => {
                     // Must be followed by an escape code
-                    assert!(
-                        i + 1 < output.len(),
-                        "trailing backslash at byte {i}"
-                    );
+                    assert!(i + 1 < output.len(), "trailing backslash at byte {i}");
                     match output[i + 1] {
                         b't' | b'n' | b'\\' | b'r' => i += 2,
-                        other => panic!(
-                            "unknown escape sequence \\{} at byte {i}",
-                            other as char
-                        ),
+                        other => panic!("unknown escape sequence \\{} at byte {i}", other as char),
                     }
                 }
                 b'\t' => panic!("unescaped tab at byte {i}"),

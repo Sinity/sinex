@@ -324,12 +324,17 @@ impl ContentStoreManager {
         let mime_type = Self::detect_mime_type(validated_path)
             .map_err(|e| SinexError::blob_storage(e).with_operation("detect_mime_type"))?;
 
-        let content_key = self.content_store.store_file(validated_path).await.map_err(|e| {
-            SinexError::processing("Failed to add file to content store").with_source(e)
-        })?;
+        let content_key = self
+            .content_store
+            .store_file(validated_path)
+            .await
+            .map_err(|e| {
+                SinexError::processing("Failed to add file to content store").with_source(e)
+            })?;
         info!("Added to content store with key: {}", content_key.key);
 
-        self.verify_post_write(&content_key.key, &blake3_hash).await?;
+        self.verify_post_write(&content_key.key, &blake3_hash)
+            .await?;
 
         self.register_new_blob(
             &content_key,
@@ -372,11 +377,13 @@ impl ContentStoreManager {
             .store_file(temp_file_path.as_path())
             .await
             .map_err(|e| {
-                SinexError::processing("Failed to add buffered upload to content store").with_source(e)
+                SinexError::processing("Failed to add buffered upload to content store")
+                    .with_source(e)
             })?;
         info!("Added to content store with key: {}", content_key.key);
 
-        self.verify_post_write(&content_key.key, &blake3_hash).await?;
+        self.verify_post_write(&content_key.key, &blake3_hash)
+            .await?;
 
         if let Err(e) = tokio::fs::remove_file(&temp_file_path).await {
             warn!(
@@ -498,7 +505,9 @@ impl ContentStoreManager {
         let blob = self.get_blob_metadata(content_key).await?;
 
         // Ensure content is available locally
-        self.content_store.ensure_content_local(&blob.content_key()).await?;
+        self.content_store
+            .ensure_content_local(&blob.content_key())
+            .await?;
 
         self.publish_blob_event(
             "blob.retrieved",
@@ -720,7 +729,9 @@ impl ContentStoreManager {
                 }
             }
         } else {
-            debug!("ContentStoreManager event emission disabled; skipping storage.statistics event");
+            debug!(
+                "ContentStoreManager event emission disabled; skipping storage.statistics event"
+            );
         }
 
         Ok(())

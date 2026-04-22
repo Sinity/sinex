@@ -2,12 +2,12 @@
 //!
 //! Exercises NATS KV checkpoint persistence under concurrent updates.
 
-use uuid::Uuid;
-use sinex_primitives::temporal::Timestamp;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use xtask::sandbox::prelude::*;
-use std::sync::atomic::{AtomicU64, Ordering};
+use sinex_primitives::temporal::Timestamp;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use uuid::Uuid;
+use xtask::sandbox::prelude::*;
 const DEFAULT_GROUP: &str = "concurrency";
 const DEFAULT_CONSUMER: &str = "worker";
 
@@ -15,7 +15,10 @@ const DEFAULT_CONSUMER: &str = "worker";
 async fn test_concurrent_checkpoint_updates_basic(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let kv = ctx.checkpoint_kv().await?;
-    let node_name = format!("concurrent_test_node_{}", Uuid::now_v7().to_string().to_lowercase());
+    let node_name = format!(
+        "concurrent_test_node_{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     let manager = CheckpointManager::new(
         kv,
         node_name,
@@ -65,7 +68,10 @@ async fn test_stale_initial_revision_does_not_clobber_existing_checkpoint(
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let kv = ctx.checkpoint_kv().await?;
-    let node_name = format!("checkpoint_cas_node_{}", Uuid::now_v7().to_string().to_lowercase());
+    let node_name = format!(
+        "checkpoint_cas_node_{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     let manager = CheckpointManager::new(
         kv,
         node_name,
@@ -90,7 +96,9 @@ async fn test_stale_initial_revision_does_not_clobber_existing_checkpoint(
         .await
         .expect_err("stale revision-0 save must not overwrite an existing checkpoint");
     assert!(
-        stale_error.to_string().contains("Failed to create checkpoint"),
+        stale_error
+            .to_string()
+            .contains("Failed to create checkpoint"),
         "unexpected stale save error: {stale_error}"
     );
 

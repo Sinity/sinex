@@ -98,7 +98,8 @@ async fn test_manager_path_validation(ctx: TestContext) -> TestResult<()> {
     let (event_tx, mut event_rx) = mpsc::channel::<Event<JsonValue>>(BLOB_EVENT_CHANNEL_CAPACITY);
     tokio::spawn(async move { while event_rx.recv().await.is_some() {} });
 
-    let manager = ContentStoreManager::new(content_store_config, ctx.pool().clone(), Some(event_tx))?;
+    let manager =
+        ContentStoreManager::new(content_store_config, ctx.pool().clone(), Some(event_tx))?;
 
     // Test with safe path - should work if file exists
     let safe_path = camino::Utf8PathBuf::try_from(temp_file)?;
@@ -139,7 +140,8 @@ async fn manager_rejects_percent_encoded_traversal(ctx: TestContext) -> TestResu
         large_files: None,
     };
 
-    let _manager = ContentStoreManager::new(content_store_config, ctx.pool().clone(), Some(event_tx))?;
+    let _manager =
+        ContentStoreManager::new(content_store_config, ctx.pool().clone(), Some(event_tx))?;
 
     let encoded_path = Utf8PathBuf::from("%2e%2e%2fetc%2fpasswd");
     let verification = VerifiedPath::parse(encoded_path.as_str());

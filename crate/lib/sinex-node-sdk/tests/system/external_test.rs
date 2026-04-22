@@ -28,8 +28,9 @@ use xtask::sandbox::prelude::*;
 
 // ==================== CONTENT STORE INTEGRATION TESTS ====================
 
-async fn setup_test_content_store(
-) -> AnyhowResult<(MaterialContentStore, tempfile::TempDir), Box<dyn std::error::Error + Send + Sync>> {
+async fn setup_test_content_store()
+-> AnyhowResult<(MaterialContentStore, tempfile::TempDir), Box<dyn std::error::Error + Send + Sync>>
+{
     let temp_dir = TempDir::new()?;
     let repo_path = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
         .map_err(|_| color_eyre::eyre::eyre!("content-store root path must be valid UTF-8"))?;
@@ -116,7 +117,10 @@ async fn test_content_key_lookup(ctx: TestContext) -> TestResult<()> {
     // Keys should match
     pretty_assertions::assert_eq!(original_key.key, looked_up_key.key);
     pretty_assertions::assert_eq!(original_key.size, looked_up_key.size);
-    pretty_assertions::assert_eq!(original_key.storage_backend(), looked_up_key.storage_backend());
+    pretty_assertions::assert_eq!(
+        original_key.storage_backend(),
+        looked_up_key.storage_backend()
+    );
 
     Ok(())
 }
@@ -436,9 +440,7 @@ async fn test_external_database_connection(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_external_database_timescaledb_functions(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn test_external_database_timescaledb_functions(ctx: TestContext) -> TestResult<()> {
     // Test TimescaleDB specific functions
     let pool = ctx.pool().clone();
 
@@ -476,9 +478,7 @@ async fn test_external_database_extensions(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_external_database_concurrent_connections(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn test_external_database_concurrent_connections(ctx: TestContext) -> TestResult<()> {
     // Test concurrent database connections
     let pool = ctx.pool().clone();
     let mut handles = vec![];
@@ -506,9 +506,7 @@ async fn test_external_database_concurrent_connections(
 }
 
 #[sinex_test]
-async fn test_external_database_transaction_isolation(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn test_external_database_transaction_isolation(ctx: TestContext) -> TestResult<()> {
     // Test database transaction isolation
     let pool = ctx.pool().clone();
 
