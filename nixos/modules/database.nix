@@ -273,16 +273,53 @@ ALTER DATABASE :"sinex_db_name" OWNER TO :"sinex_role_name";
 SQL
         }
 
-        ensure_extension() {
+        extension_exists() {
           local dbName="$1"
           local extName="$2"
-          echo "[sinex] ensuring extension ''${extName} for ''${dbName}"
-          psql -v ON_ERROR_STOP=1 \
+          psql -X -v ON_ERROR_STOP=1 \
+            --set=sinex_ext_name="$extName" \
+            -d "$dbName" -At <<'SQL'
+SELECT EXISTS (
+  SELECT 1
+  FROM pg_extension
+  WHERE extname = :'sinex_ext_name'
+)::int;
+SQL
+        }
+
+        create_extension() {
+          local dbName="$1"
+          local extName="$2"
+          psql -X -v ON_ERROR_STOP=1 \
             --set=sinex_ext_name="$extName" \
             -d "$dbName" <<'SQL' >/dev/null
 CREATE EXTENSION IF NOT EXISTS :"sinex_ext_name";
+SQL
+        }
+
+        update_extension() {
+          local dbName="$1"
+          local extName="$2"
+          # TimescaleDB requires ALTER EXTENSION to be the first command in a
+          # fresh psql session after a package update. Keep every extension on
+          # this stricter path so setup behavior stays uniform.
+          psql -X -v ON_ERROR_STOP=1 \
+            --set=sinex_ext_name="$extName" \
+            -d "$dbName" <<'SQL' >/dev/null
 ALTER EXTENSION :"sinex_ext_name" UPDATE;
 SQL
+        }
+
+        ensure_extension() {
+          local dbName="$1"
+          local extName="$2"
+          local exists
+          echo "[sinex] ensuring extension ''${extName} for ''${dbName}"
+          exists="$(extension_exists "$dbName" "$extName")"
+          if [ "$exists" != "1" ]; then
+            create_extension "$dbName" "$extName"
+          fi
+          update_extension "$dbName" "$extName"
         }
 
         for dbName in ${concatStringsSep " " (map escapeShellArg allDatabases)}; do
