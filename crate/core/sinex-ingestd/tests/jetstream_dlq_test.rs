@@ -436,11 +436,10 @@ async fn wait_for_retry_delivery(setup: &ConsumerSetup, counters: &TestCounters)
     Ok(())
 }
 
-/// FK violation errors (source material not yet registered) should result in a
-/// NAK with delay rather than routing to the DLQ. The consumer treats these as
-/// transient conditions that will resolve once the material is registered.
+/// FK violation errors (source material not yet registered) should retry first,
+/// then route to DLQ once the delivery budget proves the material is orphaned.
 #[sinex_test]
-async fn test_fk_violation_naks_with_delay_not_dlq() -> TestResult<()> {
+async fn test_fk_violation_routes_to_dlq_after_retry_budget() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
     let suffix = format!("fk-nak-{}", Uuid::now_v7().to_string().to_lowercase());
     let (hooks, counters) = TestHooks::builder().count_deliveries().build();
@@ -478,42 +477,30 @@ async fn test_fk_violation_naks_with_delay_not_dlq() -> TestResult<()> {
         .await?;
     setup.nats_client.flush().await?;
 
-    wait_for_retry_delivery(&setup, &counters).await?;
-
-    let mut dlq_stream = setup
-        .js
-        .get_stream(&setup.topology.dlq_stream)
+    let msg = tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), dlq_sub.next())
         .await
-        .map_err(|e| SinexError::network(e.to_string()))?;
-    let dlq_info = dlq_stream
-        .info()
-        .await
-        .map_err(|e| SinexError::network(e.to_string()))?;
-
-    let dlq_error = if dlq_info.state.messages > 0 {
-        let message = tokio::time::timeout(Duration::from_secs(1), dlq_sub.next())
-            .await
-            .ok()
-            .flatten();
-        message
-            .and_then(|msg| serde_json::from_slice::<serde_json::Value>(&msg.payload).ok())
-            .and_then(|entry| entry["error"].as_str().map(str::to_string))
-    } else {
-        None
-    };
+        .map_err(|_| SinexError::network("timed out waiting for source-material FK DLQ entry"))?
+        .ok_or_else(|| SinexError::network("DLQ subscription closed"))?;
+    let entry: serde_json::Value = serde_json::from_slice(&msg.payload)?;
+    let error_field = entry["error"].as_str().unwrap_or("");
+    assert!(
+        error_field.contains("Source material"),
+        "DLQ error should identify orphaned source material, got: {error_field}"
+    );
+    let bogus_material_id_str = bogus_material_id.to_string();
     assert_eq!(
-        dlq_info.state.messages, 0,
-        "FK violation should NOT route to DLQ; it should NAK for retry (dlq_error={dlq_error:?})"
+        entry["original_payload"]["source_material_id"].as_str(),
+        Some(bogus_material_id_str.as_str())
     );
     assert!(
         counters.delivery_count() >= 2,
-        "FK violation should have been retried before the assertion window"
+        "FK violation should retry before terminal DLQ routing"
     );
 
     // Verify the consumer is still running (not crashed).
     assert!(
         !setup.handle.is_finished(),
-        "consumer should keep running after FK violation NAK"
+        "consumer should keep running after routing orphaned material event"
     );
 
     setup.handle.abort();
