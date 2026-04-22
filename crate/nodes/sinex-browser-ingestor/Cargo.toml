@@ -80,6 +80,9 @@ path = "../../../xtask"
 path = "../../lib/sinex-primitives"
 features = ["testing"]
 
+[dev-dependencies.sinex-db]
+path = "../../lib/sinex-db"
+
 [dev-dependencies.tempfile]
 workspace = true
 

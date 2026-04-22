@@ -132,5 +132,8 @@ features = [
 [dev-dependencies.sinex-schema]
 path = "../../lib/sinex-schema"
 
+[dev-dependencies.sinex-db]
+path = "../../lib/sinex-db"
+
 [lints]
 workspace = true

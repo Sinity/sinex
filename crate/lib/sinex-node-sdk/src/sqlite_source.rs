@@ -610,4 +610,37 @@ mod tests {
         );
         Ok(())
     }
+
+    #[sinex_test]
+    async fn sqlite_snapshot_policy_skips_until_cadence_boundary() -> TestResult<()> {
+        let now = Timestamp::now();
+        let mut state = SqliteSnapshotState::default();
+        state.record_success(now, 100);
+        let policy = SqliteSnapshotPolicy::disabled()
+            .with_first_observation(true)
+            .with_min_row_delta(Some(10))
+            .with_min_elapsed(Some(std::time::Duration::from_mins(30)))
+            .with_stale_clean_shutdown_after(Some(std::time::Duration::from_hours(12)));
+
+        assert_eq!(policy.decide(&state, 109, false, now), None);
+        assert_eq!(
+            policy.decide(&state, 110, false, now),
+            Some(SqliteSnapshotTrigger::RowDelta)
+        );
+
+        let elapsed = now + time::Duration::minutes(30);
+        assert_eq!(
+            policy.decide(&state, 101, false, elapsed),
+            Some(SqliteSnapshotTrigger::ElapsedDuration)
+        );
+
+        let clean_shutdown = now - time::Duration::hours(13);
+        state.last_snapshot_at = Some(now);
+        state.last_clean_shutdown_at = Some(clean_shutdown);
+        assert_eq!(
+            policy.decide(&state, 101, false, now),
+            Some(SqliteSnapshotTrigger::StaleCleanShutdown)
+        );
+        Ok(())
+    }
 }
