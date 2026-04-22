@@ -460,7 +460,11 @@ impl MaterialAssembler {
                     view.buffered_count,
                     expected_bytes,
                     expected_slices
-                )));
+                ))
+                .with_context(
+                    super::redelivery_decision::REDELIVERY_ERROR_KIND_CONTEXT,
+                    super::redelivery_decision::redelivery_error_class::ORDERING_INCOMPLETE,
+                ));
             }
 
             // Complete: transition into finalization while holding the per-material lock so
@@ -657,6 +661,10 @@ impl MaterialAssembler {
         let annex_key = match self.import_into_content_store(&final_state).await {
             Ok(result) => result,
             Err(e) => {
+                let e = e.with_context(
+                    super::redelivery_decision::REDELIVERY_ERROR_KIND_CONTEXT,
+                    super::redelivery_decision::redelivery_error_class::CONTENT_STORE_TRANSIENT,
+                );
                 self.route_material_error(
                     material_id,
                     "content_store_import_failed",

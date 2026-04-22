@@ -11,6 +11,7 @@ mod finalization_transaction;
 mod finalize;
 mod io;
 mod pipeline;
+mod redelivery_decision;
 mod restore_plan;
 mod state;
 
