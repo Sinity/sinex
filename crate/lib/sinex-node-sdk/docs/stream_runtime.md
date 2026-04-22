@@ -76,3 +76,10 @@ Nodes define their behavior via the `ErrorAction` enum:
 - `Retry`: NAK the message for redelivery.
 - `SendToDLQ`: Log failure and move message to the Dead Letter Queue.
 - `Skip`: Continue processing without further action.
+
+## Historical context
+
+Two design-evolution notes worth preserving to prevent re-derivation:
+
+- **The actual `WindowedNode` API delegates window-completion to the implementor.** Earlier design documents describe a `WindowPolicy` / `WindowAction` enum-based API that was never implemented. The current trait (see `derived_node/traits.rs`) requires `accumulate`, `window_complete(&self, state) -> bool`, and `emit`, with `recompute_window` as a default-impl hook. Don't reintroduce the policy-enum shape — it lost against delegating the completion predicate to the implementor.
+- **`AutomatonNode` has been fully removed** in favor of the derived-node model family (`TransducerNode` / `WindowedNode` / `ScopeReconcilerNode`). `PersistedState` and `ErrorAction` still exist as standalone types in the derived-node module; they survived the removal because they were useful independent of the dropped trait.
