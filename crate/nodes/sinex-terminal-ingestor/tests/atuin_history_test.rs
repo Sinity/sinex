@@ -1,11 +1,19 @@
 use camino::Utf8PathBuf;
 use color_eyre::eyre::Context;
 use rusqlite::Connection;
+use serde_json::json;
+use sinex_db::repositories::{DbPoolExt, source_material_relation_types};
+use sinex_node_sdk::{
+    AcquisitionManager, BufferedRecordSourceHarness, RecordProcessingOutcome, RecordReadHorizon,
+    RecordSources, RecordWarningDisposition, SqliteRowCheckpoint, SqliteSnapshotLinker,
+    SqliteSnapshotPolicy, SqliteSnapshotState,
+};
 use sinex_primitives::Timestamp;
 use sinex_terminal_ingestor::atuin_history::{
     ensure_atuin_sqlite_history, get_max_row_id, read_atuin_history,
 };
 use std::fs;
+use std::sync::Arc;
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
 
@@ -88,6 +96,94 @@ async fn test_read_atuin_history_returns_all_entries() -> TestResult<()> {
     assert_eq!(entries[1].history_id, "h2");
     assert_eq!(entries[1].exit_code, 1);
     assert_eq!(last_row_id, 2);
+    Ok(())
+}
+
+#[sinex_test]
+async fn atuin_history_snapshot_scenario_links_row_stream_to_sqlite_evidence(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let temp_dir = tempfile::tempdir().wrap_err("create tempdir")?;
+    let history_path = create_test_atuin_history(&temp_dir)?;
+    let source = RecordSources::sqlite(
+        history_path.clone(),
+        "terminal.atuin://history.db",
+        read_atuin_history,
+        |entry: &sinex_terminal_ingestor::atuin_history::AtuinHistoryEntry| entry.row_id,
+    )
+    .with_snapshot_policy(SqliteSnapshotPolicy::disabled().with_first_observation(true));
+    let ctx = ctx.with_nats().shared().await?;
+    let scope = PipelineScope::new(&ctx).await?;
+    let acquisition = Arc::new(AcquisitionManager::new_with_namespace(
+        ctx.nats_client(),
+        sinex_node_sdk::RotationPolicy::default(),
+        "atuin-sqlite-evidence-scenario".to_string(),
+        Some(ctx.pipeline_namespace().prefix().to_string()),
+    ));
+    let harness = BufferedRecordSourceHarness::buffered_default(source, acquisition.clone());
+    let mut checkpoint = SqliteRowCheckpoint::default();
+    let mut snapshot_state = SqliteSnapshotState::default();
+
+    let mut report = harness
+        .read_process_lenient_with_snapshot(
+            &mut checkpoint,
+            RecordReadHorizon::Unbounded,
+            &mut snapshot_state,
+            &acquisition,
+            |entry, material| async move {
+                material
+                    .append_json_line(&json!({
+                        "row_id": entry.row_id,
+                        "history_id": entry.history_id,
+                        "command": entry.command,
+                        "cwd": entry.cwd,
+                        "hostname": entry.hostname,
+                    }))
+                    .await?;
+                Ok::<_, sinex_primitives::SinexError>(RecordProcessingOutcome::Processed)
+            },
+            |_| RecordWarningDisposition::Retry,
+        )
+        .await?;
+    harness
+        .finalize_with_snapshot_evidence(
+            "atuin-sqlite-evidence-scenario",
+            &mut report,
+            Some(SqliteSnapshotLinker::new(ctx.pool())),
+        )
+        .await?;
+
+    assert_eq!(checkpoint, SqliteRowCheckpoint::new(2));
+    assert_eq!(report.processed_records, 2);
+    assert_eq!(report.material_anchors.len(), 2);
+    let snapshot = report
+        .sqlite_snapshot
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing Atuin snapshot evidence report"))?;
+    let snapshot_material_id = snapshot
+        .snapshot_material_id
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing Atuin snapshot material id"))?;
+    assert_eq!(snapshot.failure, None);
+    assert_eq!(snapshot.linked_material_count, 1);
+    assert!(snapshot.link_errors.is_empty());
+    assert_eq!(snapshot_state.last_snapshot_row_id, Some(2));
+
+    let links = ctx
+        .pool()
+        .source_materials()
+        .links_from(report.material_anchors[0].material_id)
+        .await?;
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].to_material_id, snapshot_material_id);
+    assert_eq!(
+        links[0].relation_type,
+        source_material_relation_types::BACKED_BY
+    );
+    assert_eq!(links[0].metadata["evidence_role"], "sqlite_snapshot");
+    assert_eq!(
+        links[0].metadata["source_identifier"],
+        "terminal.atuin://history.db"
+    );
+    scope.shutdown().await?;
     Ok(())
 }
 

@@ -360,13 +360,12 @@ impl BrowserNode {
             self.acquisition()?.clone(),
         );
         let mut checkpoint = SqliteRowCheckpoint::new(state.sqlite_sources.cursor(&checkpoint_key));
-        let report = harness
+        let mut report = harness
             .read_process_lenient_with_snapshot(
                 &mut checkpoint,
                 historical_end_time.map_or(RecordReadHorizon::Unbounded, RecordReadHorizon::Until),
                 state.sqlite_snapshots.state_mut(checkpoint_key.clone()),
                 self.acquisition()?,
-                Some(SqliteSnapshotLinker::new(self.runtime()?.db_pool())),
                 |visit, ctx| async move {
                     self.emit_visit(visit, ctx.materializer())
                         .await
@@ -376,7 +375,13 @@ impl BrowserNode {
             )
             .await?;
 
-        harness.finalize("browser-sqlite-import").await?;
+        harness
+            .finalize_with_snapshot_evidence(
+                "browser-sqlite-import",
+                &mut report,
+                Some(SqliteSnapshotLinker::new(self.runtime()?.db_pool())),
+            )
+            .await?;
         if let Some(error) = report.warnings.into_iter().next() {
             return Err(error);
         }

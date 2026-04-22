@@ -1428,13 +1428,12 @@ impl HistoryWatcherContext {
         .with_snapshot_policy(SqliteSnapshotPolicy::audit_default());
         let harness = BufferedRecordSourceHarness::new(source, self.materializer.clone());
         let mut checkpoint = SqliteRowCheckpoint::new(sqlite_row_id);
-        let import_result = harness
+        let mut import_result = harness
             .read_process_lenient_with_snapshot(
                 &mut checkpoint,
                 historical_end_time.map_or(RecordReadHorizon::Unbounded, RecordReadHorizon::Until),
                 &mut sqlite_snapshot,
                 &self.acquisition,
-                Some(SqliteSnapshotLinker::new(&self.db_pool)),
                 |entry, ctx| {
                     let row_id = entry.row_id();
                     let prepared = entry.prepare_command(self, &mut recent_hashes);
@@ -1464,10 +1463,22 @@ impl HistoryWatcherContext {
             .await;
         sqlite_row_id = checkpoint.row_id;
 
-        if let Err(error) = self
-            .finalize_material_stream("terminal-history-sqlite-scan")
-            .await
-        {
+        let finalize_result = match &mut import_result {
+            Ok(report) => {
+                harness
+                    .finalize_with_snapshot_evidence(
+                        "terminal-history-sqlite-scan",
+                        report,
+                        Some(SqliteSnapshotLinker::new(&self.db_pool)),
+                    )
+                    .await
+            }
+            Err(_) => {
+                self.finalize_material_stream("terminal-history-sqlite-scan")
+                    .await
+            }
+        };
+        if let Err(error) = finalize_result {
             let processed_rows = import_result
                 .as_ref()
                 .map_or(0, |report| report.processed_records);
@@ -1972,7 +1983,6 @@ impl HistoryWatcherContext {
                 RecordReadHorizon::Unbounded,
                 sqlite_snapshot,
                 &self.acquisition,
-                Some(SqliteSnapshotLinker::new(&self.db_pool)),
                 |entry, ctx| {
                     let row_id = entry.row_id();
                     let prepared = entry.prepare_command(self, recent_hashes);
@@ -2007,7 +2017,21 @@ impl HistoryWatcherContext {
             )
             .await
         {
-            Ok(report) => {
+            Ok(mut report) => {
+                if report
+                    .sqlite_snapshot
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.snapshot_material_id)
+                    .is_some()
+                {
+                    harness
+                        .flush_with_snapshot_evidence(
+                            "terminal-history-sqlite-snapshot",
+                            &mut report,
+                            Some(SqliteSnapshotLinker::new(&self.db_pool)),
+                        )
+                        .await?;
+                }
                 *sqlite_row_id = checkpoint.row_id;
                 if persist_state {
                     self.persist_sqlite_state(*sqlite_row_id, recent_hashes, sqlite_snapshot)
@@ -3492,6 +3516,7 @@ impl ExplorationProvider for TerminalNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_db::repositories::source_material_relation_types;
     use sinex_node_sdk::{AcquisitionManager, acquisition_manager::RotationPolicy};
     use sinex_primitives::Id;
     use sinex_primitives::events::Provenance;
@@ -6842,10 +6867,12 @@ mod tests {
             .await?;
         let event_drain = tokio::spawn(async move { while event_rx.recv().await.is_some() {} });
 
+        let temp_dir = tempfile::tempdir()?;
+        let ingest_work_dir = temp_dir.path().join("ingestd");
         let ingest_config = TestIngestdConfig {
             nats: nats.connection_config(),
             database_url: test_ctx.database_url().to_string(),
-            work_dir: None,
+            work_dir: Some(ingest_work_dir),
             ..Default::default()
         };
         let ingest_handle = start_test_ingestd_with_config(ingest_config, Some(test_ctx)).await?;
@@ -6860,7 +6887,6 @@ mod tests {
         let stage_context = StageAsYouGoContext::from_runtime(&runtime)
             .with_acquisition_manager(Arc::clone(&acquisition));
 
-        let temp_dir = tempfile::tempdir()?;
         let history_path = temp_dir.path().join("history.txt");
         let state_path = temp_dir.path().join("history_state.json");
         let history_utf8 = Utf8PathBuf::from_path_buf(history_path.clone())
@@ -7148,6 +7174,16 @@ mod tests {
                 .iter()
                 .any(|command| command == "echo should-run-after-warning"),
             "continuous polling should advance beyond permanently invalid rows"
+        );
+        let evidence_links: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM raw.source_material_links WHERE relation_type = $1",
+        )
+        .bind(source_material_relation_types::BACKED_BY)
+        .fetch_one(ctx.pool())
+        .await?;
+        assert_eq!(
+            evidence_links, 1,
+            "continuous polling should seal row-stream material before linking SQLite snapshot evidence"
         );
         fix._ingest_handle.stop().await?;
         Ok(())
