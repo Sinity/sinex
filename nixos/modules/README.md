@@ -211,6 +211,9 @@ disabled (e.g. staging migrations).
   descriptor is the runtime connection/status target for `sinexctl` and other
   status probes: gateway URL, auth/TLS material, database URL, NATS servers,
   state directories, managed service units, target kind, and descriptor source.
+  When the gateway service stages a role-suffixed admin token from a raw secret,
+  the descriptor records `gateway.token_role = "admin"` so clients can derive
+  the same bearer token from the readable raw secret file.
 - Pre-flight verification lives under `lifecycle.preflight`. Disable individual
   phases with `lifecycle.preflight.skip = [ "migrations" "services" ];`.
 - Coordinated updates use `lifecycle.updates` for grace periods and roll-back

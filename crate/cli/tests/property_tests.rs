@@ -114,6 +114,7 @@ fn config_strategy() -> impl Strategy<Value = Config> {
                     rpc_url,
                     token,
                     token_file,
+                    token_role: None,
                     ca_cert: None,
                     client_cert: None,
                     client_key: None,

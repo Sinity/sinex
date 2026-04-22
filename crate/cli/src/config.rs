@@ -1,7 +1,7 @@
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
-use sinex_primitives::RuntimeTargetDescriptor;
 use sinex_primitives::env as shared_env;
+use sinex_primitives::{RuntimeTargetDescriptor, RuntimeTargetGatewayTokenRole};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -24,6 +24,9 @@ pub struct Config {
 
     /// Token file path
     pub token_file: Option<String>,
+
+    /// Role suffix to apply to a raw runtime token.
+    pub token_role: Option<RuntimeTargetGatewayTokenRole>,
 
     /// Root CA certificate path
     pub ca_cert: Option<String>,
@@ -235,6 +238,7 @@ impl Config {
         if let Some(token_file) = target.gateway.token_file.clone() {
             self.token_file = Some(path_to_string(token_file));
         }
+        self.token_role = target.gateway.token_role;
         if let Some(ca_cert) = target.gateway.ca_cert_file.clone() {
             self.ca_cert = Some(path_to_string(ca_cert));
         }
@@ -282,6 +286,7 @@ impl Default for Config {
             rpc_url: default_rpc_url(),
             token: None,
             token_file: None,
+            token_role: None,
             ca_cert: None,
             client_cert: None,
             client_key: None,

@@ -20,6 +20,7 @@ async fn test_config_default_values() -> TestResult<()> {
     assert_eq!(config.rpc_url, "https://127.0.0.1:9999");
     assert!(config.token.is_none());
     assert!(config.token_file.is_none());
+    assert!(config.token_role.is_none());
     assert!(config.ca_cert.is_none());
     assert!(config.client_cert.is_none());
     assert!(config.client_key.is_none());

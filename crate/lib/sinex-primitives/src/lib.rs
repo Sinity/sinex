@@ -84,8 +84,9 @@ pub use query::{
 };
 pub use runtime_target::{
     RuntimeStatusSignal, RuntimeStatusSignalStatus, RuntimeStatusSnapshot, RuntimeStatusWarning,
-    RuntimeTargetDatabase, RuntimeTargetDescriptor, RuntimeTargetGateway, RuntimeTargetKind,
-    RuntimeTargetNats, RuntimeTargetServices, RuntimeTargetState,
+    RuntimeTargetDatabase, RuntimeTargetDescriptor, RuntimeTargetGateway,
+    RuntimeTargetGatewayTokenRole, RuntimeTargetKind, RuntimeTargetNats, RuntimeTargetServices,
+    RuntimeTargetState,
 };
 pub use serde_json::Value as JsonValue;
 pub use temporal::{OffsetDateTime, now, now_utc};
