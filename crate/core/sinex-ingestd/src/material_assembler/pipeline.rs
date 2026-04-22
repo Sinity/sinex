@@ -3,6 +3,7 @@
 //! This module contains the `JetStream` consumer spawning logic and stream
 //! bootstrapping for the ordered material assembly frame stream.
 
+use super::redelivery_decision::{RedeliveryDecision, RedeliveryErrorKind};
 use super::state::MaterialBeginMessage;
 use super::{MaterialAssembler, MaterialEndMessage, Uuid};
 
@@ -79,6 +80,49 @@ async fn nak_with_warning(
                 )
                 .with_source(error.to_string())
         })
+}
+
+fn message_delivery_attempt(message: &jetstream::Message) -> IngestdResult<i64> {
+    message.info().map(|info| info.delivered).map_err(|error| {
+        SinexError::processing("failed to inspect material frame delivery metadata")
+            .with_context("subject", message.subject.to_string())
+            .with_source(error.to_string())
+    })
+}
+
+async fn apply_redelivery_decision(
+    assembler: &MaterialAssembler,
+    message: &jetstream::Message,
+    decision: RedeliveryDecision,
+    material_id: Option<Uuid>,
+    dlq_context: serde_json::Value,
+) -> IngestdResult<()> {
+    match decision {
+        RedeliveryDecision::Ack { reason } => {
+            ack_with_warning(message, reason, material_id.as_ref()).await
+        }
+        RedeliveryDecision::Nak { reason, delay } => {
+            nak_with_warning(message, Some(delay), reason, material_id.as_ref()).await
+        }
+        RedeliveryDecision::Dlq { reason } => {
+            if let Some(material_id) = material_id {
+                assembler
+                    .route_material_error(material_id, reason.clone(), dlq_context)
+                    .await;
+                assembler
+                    .finalize_failed_material(material_id, &reason)
+                    .await;
+                ack_with_warning(message, "material_frame_routed_to_dlq", Some(&material_id)).await
+            } else {
+                warn!(
+                    subject = %message.subject,
+                    reason,
+                    "Material frame was classified as DLQ but no material_id was available"
+                );
+                ack_with_warning(message, "material_frame_routed_to_dlq", None).await
+            }
+        }
+    }
 }
 
 /// Bootstrap the ordered `JetStream` stream for material lifecycle frames.
@@ -237,22 +281,23 @@ pub(super) async fn spawn_material_consumer(
                         payload_len = message.payload.len(),
                         "Rejecting malformed material frame"
                     );
-                    if let Some(material_id) = material_id {
-                        assembler
-                            .route_material_error(
-                                material_id,
-                                error.reason,
-                                json!({
-                                    "error": error.message,
-                                    "subject": message.subject.as_str(),
-                                }),
-                            )
-                            .await;
-                        assembler
-                            .finalize_failed_material(material_id, error.reason)
-                            .await;
-                    }
-                    ack_with_warning(&message, error.reason, material_id.as_ref()).await?;
+                    let decision = RedeliveryDecision::for_error(
+                        RedeliveryErrorKind::MalformedFrame {
+                            reason: error.reason.to_string(),
+                        },
+                        message_delivery_attempt(&message)?,
+                    );
+                    apply_redelivery_decision(
+                        &assembler,
+                        &message,
+                        decision,
+                        material_id,
+                        json!({
+                            "error": error.message,
+                            "subject": message.subject.as_str(),
+                        }),
+                    )
+                    .await?;
                     continue;
                 }
             };
@@ -286,23 +331,20 @@ pub(super) async fn spawn_material_consumer(
                         "Failed to process material frame: {}",
                         err
                     );
-                    if frame_kind == "slice" {
-                        assembler
-                            .route_material_error(
-                                material_id,
-                                "slice_processing_failed",
-                                json!({
-                                    "error": err.to_string(),
-                                    "offset": frame_offset,
-                                }),
-                            )
-                            .await;
-                    }
-                    nak_with_warning(
+                    let decision = RedeliveryDecision::for_processing_error(
+                        &err,
+                        message_delivery_attempt(&message)?,
+                    );
+                    apply_redelivery_decision(
+                        &assembler,
                         &message,
-                        Some(std::time::Duration::from_millis(200)),
-                        "material_frame_processing_failed",
-                        Some(&material_id),
+                        decision,
+                        Some(material_id),
+                        json!({
+                            "error": err.to_string(),
+                            "frame_kind": frame_kind,
+                            "offset": frame_offset,
+                        }),
                     )
                     .await?;
                     continue;
@@ -315,28 +357,32 @@ pub(super) async fn spawn_material_consumer(
                         "Material frame consumer panicked: {}",
                         panic_msg
                     );
-                    assembler
-                        .route_material_error(
-                            material_id,
-                            "material_frame_consumer_panic",
-                            json!({ "panic": panic_msg, "frame_kind": frame_kind }),
-                        )
-                        .await;
-                    assembler
-                        .finalize_failed_material(material_id, "material_frame_consumer_panic")
-                        .await;
-                    nak_with_warning(
+                    let decision = RedeliveryDecision::for_error(
+                        RedeliveryErrorKind::ConsumerPanic {
+                            panic: panic_msg.clone(),
+                        },
+                        message_delivery_attempt(&message)?,
+                    );
+                    apply_redelivery_decision(
+                        &assembler,
                         &message,
-                        Some(std::time::Duration::from_millis(200)),
-                        "material_frame_processing_panicked",
-                        Some(&material_id),
+                        decision,
+                        Some(material_id),
+                        json!({ "panic": panic_msg, "frame_kind": frame_kind }),
                     )
                     .await?;
                     continue;
                 }
             }
 
-            ack_with_warning(&message, "material_frame_processed", Some(&material_id)).await?;
+            apply_redelivery_decision(
+                &assembler,
+                &message,
+                RedeliveryDecision::processed(),
+                Some(material_id),
+                json!({}),
+            )
+            .await?;
         }
 
         Ok::<(), SinexError>(())
