@@ -85,3 +85,49 @@ fn extract_arg(arg: &clap::Arg) -> ArgInfo {
         ),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sandbox::prelude::*;
+
+    #[sinex_test(
+        scenario = "xtask.command-catalog-core-surface.v1",
+        category = "command_contract",
+        lane = "fast",
+        cost_tier = "fast",
+        tags = "command_contract,catalog,xtask",
+        fixtures = "clap_command_tree",
+        subjects = "xtask_command:check,xtask_command:test,xtask_command:docs,issue:485",
+        claims = "claim:xtask.command_catalog_introspection",
+        reproducer = "xtask test -p xtask --scenario-tag command_contract"
+    )]
+    async fn command_catalog_exposes_core_public_surface(_ctx: TestContext) -> TestResult<()> {
+        let commands = collect_command_catalog();
+
+        assert!(
+            commands.len() >= 15,
+            "public command catalog unexpectedly shrank to {} entries",
+            commands.len()
+        );
+        for command in ["check", "test", "build", "status", "docs"] {
+            assert!(
+                find_command(&commands, command).is_some(),
+                "missing public xtask command `{command}`"
+            );
+        }
+        assert!(
+            find_command(&commands, "docs proof-catalog").is_some(),
+            "proof catalog command must stay discoverable"
+        );
+
+        let global_args = collect_global_args();
+        for arg in ["json", "list_commands", "bg"] {
+            assert!(
+                global_args.iter().any(|candidate| candidate.name == arg),
+                "missing global xtask arg `{arg}`"
+            );
+        }
+        Ok(())
+    }
+}

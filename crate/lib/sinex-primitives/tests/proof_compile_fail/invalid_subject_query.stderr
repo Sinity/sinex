@@ -1,0 +1,19 @@
+error[E0080]: evaluation panicked: invalid proof subject query
+ --> tests/proof_compile_fail/invalid_subject_query.rs:4:13
+  |
+4 |     let _ = subject_query!("runtime_unit");
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `main::QUERY` failed inside this call
+  |
+note: inside `SubjectQuery::from_static`
+ --> $RUST/core/src/panic.rs
+  |
+  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |
+ ::: src/proof.rs
+  |
+  | /         assert!(
+  | |             is_valid_subject_expr(raw, true),
+  | |             "invalid proof subject query"
+  | |         );
+  | |_________- in this macro invocation

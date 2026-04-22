@@ -28,7 +28,7 @@ struct RuntimeBinaryRequirement {
     binary: &'static str,
 }
 
-const SCENARIO_CATEGORIES: &[&str] = &[
+pub(crate) const SCENARIO_CATEGORIES: &[&str] = &[
     "source_material",
     "replay",
     "runtime",
@@ -38,21 +38,21 @@ const SCENARIO_CATEGORIES: &[&str] = &[
     "command_contract",
     "deployment_boundary",
 ];
-const SCENARIO_LANES: &[&str] = &["fast", "heavy", "soak", "vm"];
+pub(crate) const SCENARIO_LANES: &[&str] = &["fast", "heavy", "soak", "vm"];
 
 #[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
-struct ScenarioCatalogEntry {
-    id: String,
-    test_name: String,
-    package: Option<String>,
-    path: String,
-    category: String,
-    lane: String,
-    cost_tier: String,
-    tags: Vec<String>,
-    fixtures: Vec<String>,
-    subject_refs: Vec<String>,
-    claim_ids: Vec<String>,
+pub(crate) struct ScenarioCatalogEntry {
+    pub(crate) id: String,
+    pub(crate) test_name: String,
+    pub(crate) package: Option<String>,
+    pub(crate) path: String,
+    pub(crate) category: String,
+    pub(crate) lane: String,
+    pub(crate) cost_tier: String,
+    pub(crate) tags: Vec<String>,
+    pub(crate) fixtures: Vec<String>,
+    pub(crate) subject_refs: Vec<String>,
+    pub(crate) claim_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, PartialEq, Eq)]
@@ -437,7 +437,7 @@ impl TestCommand {
     fn requests_non_fast_scenario_lane(&self) -> bool {
         self.scenario_lanes
             .iter()
-            .any(|lane| lane.trim().to_ascii_lowercase() != "fast")
+            .any(|lane| !lane.trim().eq_ignore_ascii_case("fast"))
     }
 
     fn effective_threads(&self) -> Option<usize> {
@@ -745,7 +745,9 @@ fn regex_literal(input: &str) -> String {
     escaped
 }
 
-fn discover_scenario_catalog(workspace_root: &Path) -> Result<Vec<ScenarioCatalogEntry>> {
+pub(crate) fn discover_scenario_catalog(
+    workspace_root: &Path,
+) -> Result<Vec<ScenarioCatalogEntry>> {
     let mut entries = Vec::new();
     for root in ["crate", "tests", "xtask"] {
         let root = workspace_root.join(root);
@@ -829,13 +831,12 @@ struct ParsedScenarioAttrs {
 
 fn parse_scenario_attr_values(attr_text: &str) -> Option<ParsedScenarioAttrs> {
     let values = parse_string_name_values(attr_text);
-    let id = values.get("scenario")?.to_string();
+    let id = values.get("scenario")?.clone();
     let category = values.get("category")?.trim().to_ascii_lowercase();
     let lane = values.get("lane")?.trim().to_ascii_lowercase();
     let cost_tier = values
         .get("cost_tier")
-        .map(|value| value.trim().to_ascii_lowercase())
-        .unwrap_or_else(|| lane.clone());
+        .map_or_else(|| lane.clone(), |value| value.trim().to_ascii_lowercase());
     Some(ParsedScenarioAttrs {
         id,
         category,
@@ -853,7 +854,7 @@ fn split_csv(value: &str) -> Vec<String> {
         .split(',')
         .map(str::trim)
         .filter(|item| !item.is_empty())
-        .map(|item| item.to_ascii_lowercase())
+        .map(str::to_ascii_lowercase)
         .collect()
 }
 
@@ -953,16 +954,15 @@ fn package_name_for_path(workspace_root: &Path, relative_path: &Path) -> Option<
     let mut current = absolute_path.parent();
     while let Some(dir) = current {
         let manifest = dir.join("Cargo.toml");
-        if manifest.exists() {
-            if let Ok(source) = fs::read_to_string(&manifest)
-                && let Ok(value) = source.parse::<toml::Value>()
-                && let Some(name) = value
-                    .get("package")
-                    .and_then(|package| package.get("name"))
-                    .and_then(toml::Value::as_str)
-            {
-                return Some(name.to_string());
-            }
+        if manifest.exists()
+            && let Ok(source) = fs::read_to_string(&manifest)
+            && let Ok(value) = source.parse::<toml::Value>()
+            && let Some(name) = value
+                .get("package")
+                .and_then(|package| package.get("name"))
+                .and_then(toml::Value::as_str)
+        {
+            return Some(name.to_string());
         }
         if dir == workspace_root {
             break;

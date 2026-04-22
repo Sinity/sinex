@@ -4,16 +4,16 @@ use super::builders::{
 use super::types::{ExerciseDef, InfraReq, Tier};
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Exercise catalog (~65 exercises)
+// Exercise catalog (~64 exercises)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[allow(clippy::vec_init_then_push)] // 65-item catalog is clearer with push than vec![]
+#[allow(clippy::vec_init_then_push)] // 64-item catalog is clearer with push than vec![]
 #[must_use]
 pub fn build_catalog() -> Vec<ExerciseDef> {
     use super::types::ExpectedExit::{Any, Failure};
     use Tier::{T1, T2, T3, T4};
 
-    let mut v = Vec::with_capacity(65);
+    let mut v = Vec::with_capacity(64);
 
     // ─── Tier 1: Fast / Read-Only (~30s total) ──────────────────────────────
 
@@ -52,14 +52,6 @@ pub fn build_catalog() -> Vec<ExerciseDef> {
             step("list", &["--list-commands", "--json"])
                 .v(v_json())
                 .v(v_has(&["commands", "version"])),
-        ),
-    );
-
-    v.push(
-        def("t1.list_commands_count", "Command count >= 15", T1).step(
-            step("count", &["--list-commands", "--json"])
-                .v(v_json())
-                .v(v_arr_min("commands", 15)),
         ),
     );
 
