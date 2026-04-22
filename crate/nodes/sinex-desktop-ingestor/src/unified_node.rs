@@ -24,7 +24,8 @@ use serde_json::json;
 use sinex_node_sdk::{
     BufferedRecordMaterializer, BufferedRecordSourceHarness, EventTransport,
     RecordProcessingOutcome, RecordReadHorizon, RecordSources, RecordWarningDisposition,
-    SourceRecordAnchor, SqliteRowCheckpoint,
+    SourceRecordAnchor, SqliteRowCheckpoint, SqliteSnapshotLinker, SqliteSnapshotPolicy,
+    SqliteSnapshotState,
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     ingestor_node::IngestorNode,
     nats_publisher::NatsPublisher,
@@ -154,6 +155,8 @@ pub struct DesktopPersistentState {
     pub last_state: Option<DesktopState>,
     #[serde(default)]
     pub activitywatch_last_row_id: i64,
+    #[serde(default)]
+    pub activitywatch_snapshot: SqliteSnapshotState,
 }
 
 /// Unified desktop node implementing Node with Stage-as-You-Go
@@ -809,17 +812,26 @@ impl IngestorNode for DesktopNode {
             db_path.as_str(),
             read_activitywatch_history,
             |entry: &ActivityWatchHistoryEntry| entry.row_id,
-        );
+        )
+        .with_snapshot_policy(SqliteSnapshotPolicy::audit_default());
         let harness = BufferedRecordSourceHarness::buffered_default(source, acquisition);
         let horizon = until
             .end_time()
             .map_or(RecordReadHorizon::Unbounded, RecordReadHorizon::Until);
         let mut checkpoint = SqliteRowCheckpoint::new(start_row_id);
         let node = &*self;
+        let runtime = self.runtime.as_ref().ok_or_else(|| {
+            SinexError::lifecycle("Desktop runtime not initialized for ActivityWatch import")
+        })?;
         let import_report = harness
-            .read_process_lenient(
+            .read_process_lenient_with_snapshot(
                 &mut checkpoint,
                 horizon,
+                &mut state.activitywatch_snapshot,
+                self.acquisition.as_ref().ok_or_else(|| {
+                    SinexError::lifecycle("Desktop acquisition manager not initialized")
+                })?,
+                Some(SqliteSnapshotLinker::new(runtime.db_pool())),
                 |entry, ctx| {
                     let started_at = entry.started_at;
                     let ended_at = entry.ended_at;

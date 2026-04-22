@@ -43,6 +43,15 @@ retryable warnings, and advances to the source read frontier when the whole
 returned batch completes. That lets readers acknowledge internally skipped
 source rows without each node reinventing cursor policy.
 
+For mutable `SQLite` sources, attach a `SqliteSnapshotPolicy` to the source and
+use `read_process_lenient_with_snapshot`. The harness captures a consistent
+online-backup snapshot at policy boundaries, reads rows from that immutable
+snapshot for the current batch, stages the snapshot through the normal
+source-material pipeline, and links row-stream materials to snapshot materials
+with `backed_by` when a `SqliteSnapshotLinker` is available. Snapshot failures
+are reported in `RecordProcessReport::sqlite_snapshot` and do not stop the
+row-stream lane.
+
 For push-only observation streams, prefer `BufferedRecordMaterializer`. It
 appends one stable logical record, returns a `SourceRecordAnchor`, and delegates
 batching/rotation/finalization to the acquisition substrate. The default
@@ -62,15 +71,20 @@ let source = RecordSources::sqlite(
     checkpoint_key.clone(),
     |path, from_row_id, end_time| read_rows(path, from_row_id, end_time),
     |record: &MyRecord| record.row_id,
-);
+)
+.with_snapshot_policy(SqliteSnapshotPolicy::audit_default());
 
 let harness = BufferedRecordSourceHarness::buffered_default(source, acquisition);
 let mut checkpoint = SqliteRowCheckpoint::new(saved_row_id);
+let mut snapshot_state = saved_snapshot_state;
 
 let report = harness
-    .read_process_lenient(
+    .read_process_lenient_with_snapshot(
         &mut checkpoint,
         RecordReadHorizon::Unbounded,
+        &mut snapshot_state,
+        &acquisition,
+        Some(SqliteSnapshotLinker::new(runtime.db_pool())),
         |record, ctx| async move {
             let anchor = ctx.append_json_line(&record.raw_material()).await?;
             emit_event(record, anchor).await?;
@@ -87,6 +101,10 @@ Persist `checkpoint.row_id` only after inspecting `report.warnings` and
 finalizing the harness. This keeps retryable failures from skipping source
 records and keeps source-material streams balanced.
 
+Persist `snapshot_state` with the same node state as the row checkpoint. The SDK
+updates it only after snapshot material staging succeeds, so failed evidence
+captures do not suppress the next eligible snapshot attempt.
+
 ## Lower-Level Substrate
 
 `RecordSource::read_batch`, `process_record_batch_lenient`,
@@ -96,9 +114,9 @@ checkpointed materialization. Use them only when implementing a new harness,
 sink, source adapter, or a pipeline whose materialization context is deliberately
 shared with another live path.
 
-## Mutable SQLite Evidence
+## Mutable `SQLite` Evidence
 
-For mutable SQLite stores, the row-stream material produced by this framework is
+For mutable `SQLite` stores, the row-stream material produced by this framework is
 the event's canonical acquisition payload. Events should cite byte ranges inside
 that stable stream, not the live external database file. Stronger epistemic
 backing should be modeled as complementary snapshot evidence linked to the

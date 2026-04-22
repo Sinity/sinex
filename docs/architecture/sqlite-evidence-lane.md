@@ -2,7 +2,11 @@
 
 ## Status
 
-Decision for [#323](https://github.com/Sinity/sinex/issues/323).
+Decision for [#323](https://github.com/Sinity/sinex/issues/323). The base
+schema/link surface from [#494](https://github.com/Sinity/sinex/issues/494) and
+the SDK capture/porting slice from
+[#493](https://github.com/Sinity/sinex/issues/493) are implemented. Retention
+policy and snapshot-backed reinterpretation remain follow-up work.
 
 ## Decision
 
@@ -171,10 +175,9 @@ The snapshot relation makes the proof chain explainable:
 
 ## Schema and API Implications
 
-The current `raw.source_material_registry.metadata` field can hold snapshot
-metadata, but relation queries need a real first-class link. Issue
-[#494](https://github.com/Sinity/sinex/issues/494) adds this material relation
-surface:
+The current `raw.source_material_registry.metadata` field holds snapshot
+metadata, and `raw.source_material_links` records first-class material
+relations:
 
 ```text
 raw.source_material_links(
@@ -191,8 +194,9 @@ The important invariant is direction:
 
 - `row_stream_material --backed_by--> sqlite_snapshot_material`
 
-The SDK API should make the relationship automatic for SQLite source units that
-enable snapshots. Node code should not manually insert these links.
+The SDK API makes the relationship automatic for SQLite source units that enable
+snapshots and provide a `SqliteSnapshotLinker`. Node code supplies only the
+runtime DB pool; it does not manually insert material links.
 
 ## Non-Goals
 
@@ -206,12 +210,18 @@ enable snapshots. Node code should not manually insert these links.
 
 ## Follow-Up Work
 
-Implementation should split into three slices:
+The initial implementation split into three slices:
 
 - SDK SQLite source-unit descriptors with snapshot policy and snapshot evidence
-  capture.
-- Source-material evidence links and lineage/trace query exposure
+  capture ([#493](https://github.com/Sinity/sinex/issues/493)).
+- Source-material evidence links
   ([#494](https://github.com/Sinity/sinex/issues/494)).
-- Scenario coverage proving row-stream anchoring, snapshot creation/linking,
-  retention behavior, and snapshot-backed reinterpretation against representative
-  Atuin, ActivityWatch, and browser fixtures.
+- Scenario coverage proving row-stream anchoring and snapshot creation/linking
+  for SDK, terminal, desktop, and browser paths.
+
+Remaining follow-up work:
+
+- Retention behavior for snapshot materials.
+- Snapshot-backed reinterpretation against representative Atuin, ActivityWatch,
+  and browser fixtures.
+- Lineage/trace query exposure for material-to-material evidence links.

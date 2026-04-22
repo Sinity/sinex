@@ -12,11 +12,28 @@ use crate::{
         BufferedAppendStreamWriterConfig, SourceMaterialHandle,
     },
     poll_utf8_lines,
+    source_material::stage_material_from_file,
 };
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::json;
 use sinex_primitives::{SinexError, temporal::Timestamp};
-use std::{error::Error, fmt, future::Future, marker::PhantomData, sync::Arc};
+use std::{
+    error::Error,
+    fmt,
+    future::Future,
+    marker::PhantomData,
+    sync::{Arc, Mutex},
+};
+
+use crate::sqlite_source::{
+    SqliteSnapshotEvidenceReport, SqliteSnapshotPolicy, SqliteSnapshotState,
+    capture_sqlite_snapshot,
+};
+#[cfg(feature = "db")]
+use sinex_db::DbPoolExt;
+#[cfg(feature = "db")]
+use sqlx::PgPool;
 
 /// Stable category for a source adapter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -231,24 +248,39 @@ where
                     .with_context("source_identifier", descriptor.source_identifier.clone())
                     .with_std_error(&error)
             })?;
-        Ok(process_record_batch_lenient(
+        let anchor_collector = Arc::new(Mutex::new(Vec::new()));
+        let materializer = self
+            .materializer
+            .with_anchor_collector(anchor_collector.clone());
+        let mut report = process_record_batch_lenient(
             checkpoint,
             batch,
             |record| {
                 let ctx = RecordProcessContext {
                     descriptor: descriptor.clone(),
-                    materializer: self.materializer.clone(),
+                    materializer: materializer.clone(),
                 };
                 process(record, ctx)
             },
             warning_disposition,
         )
-        .await)
+        .await;
+        report.material_anchors = take_collected_anchors(&anchor_collector)?;
+        Ok(report)
     }
 
     pub async fn finalize(&self, reason: &str) -> NodeResult<()> {
         self.materializer.finalize(reason).await
     }
+}
+
+fn take_collected_anchors(
+    anchor_collector: &Arc<Mutex<Vec<SourceRecordAnchor>>>,
+) -> NodeResult<Vec<SourceRecordAnchor>> {
+    let mut anchors = anchor_collector
+        .lock()
+        .map_err(|_| SinexError::processing("record source anchor collector lock poisoned"))?;
+    Ok(std::mem::take(&mut *anchors))
 }
 
 /// Outcome of processing one source record.
@@ -271,6 +303,8 @@ pub struct RecordProcessReport<Checkpoint, Warning = String> {
     pub processed_records: usize,
     pub final_checkpoint: Checkpoint,
     pub warnings: Vec<Warning>,
+    pub material_anchors: Vec<SourceRecordAnchor>,
+    pub sqlite_snapshot: Option<SqliteSnapshotEvidenceReport>,
 }
 
 /// Process a batch while applying one standard cursor advancement policy.
@@ -335,6 +369,8 @@ where
         processed_records,
         final_checkpoint: checkpoint.clone(),
         warnings,
+        material_anchors: Vec::new(),
+        sqlite_snapshot: None,
     }
 }
 
@@ -535,6 +571,7 @@ pub struct SqliteRecordSource<Record, Read, RowId, ReadError> {
     path: Utf8PathBuf,
     read: Read,
     row_id: RowId,
+    snapshot_policy: SqliteSnapshotPolicy,
     _marker: PhantomData<(Record, ReadError)>,
 }
 
@@ -551,8 +588,56 @@ impl<Record, Read, RowId, ReadError> SqliteRecordSource<Record, Read, RowId, Rea
             path: path.into(),
             read,
             row_id,
+            snapshot_policy: SqliteSnapshotPolicy::disabled(),
             _marker: PhantomData,
         }
+    }
+
+    #[must_use]
+    pub fn with_snapshot_policy(mut self, snapshot_policy: SqliteSnapshotPolicy) -> Self {
+        self.snapshot_policy = snapshot_policy;
+        self
+    }
+
+    #[must_use]
+    pub fn path(&self) -> &Utf8Path {
+        &self.path
+    }
+
+    #[must_use]
+    pub fn snapshot_policy(&self) -> &SqliteSnapshotPolicy {
+        &self.snapshot_policy
+    }
+
+    async fn read_batch_from_path<'a>(
+        &'a self,
+        path: &'a Utf8PathBuf,
+        checkpoint: &'a SqliteRowCheckpoint,
+        horizon: RecordReadHorizon,
+    ) -> Result<RecordReadBatch<Record, SqliteRowCheckpoint>, ReadError>
+    where
+        Record: Send + Sync + 'static,
+        Read: Fn(&Utf8PathBuf, i64, Option<Timestamp>) -> Result<(Vec<Record>, i64), ReadError>
+            + Send
+            + Sync
+            + 'static,
+        RowId: Fn(&Record) -> i64 + Send + Sync + 'static,
+        ReadError: Error + Send + Sync + 'static,
+    {
+        let (records, last_row_id) = (self.read)(path, checkpoint.row_id, horizon.end_time())?;
+        let records = records
+            .into_iter()
+            .map(|record| {
+                let row_id = (self.row_id)(&record);
+                RecordReadItem::new(record, SqliteRowCheckpoint::new(row_id))
+            })
+            .collect();
+        Ok(RecordReadBatch {
+            start_checkpoint: *checkpoint,
+            records,
+            final_checkpoint: SqliteRowCheckpoint::new(last_row_id),
+            observation: RecordSourceObservation::None,
+        })
     }
 }
 
@@ -586,23 +671,7 @@ where
     ) -> impl Future<Output = Result<RecordReadBatch<Self::Record, Self::Checkpoint>, Self::Error>>
     + Send
     + 'a {
-        async move {
-            let (records, last_row_id) =
-                (self.read)(&self.path, checkpoint.row_id, horizon.end_time())?;
-            let records = records
-                .into_iter()
-                .map(|record| {
-                    let row_id = (self.row_id)(&record);
-                    RecordReadItem::new(record, SqliteRowCheckpoint::new(row_id))
-                })
-                .collect();
-            Ok(RecordReadBatch {
-                start_checkpoint: *checkpoint,
-                records,
-                final_checkpoint: SqliteRowCheckpoint::new(last_row_id),
-                observation: RecordSourceObservation::None,
-            })
-        }
+        self.read_batch_from_path(&self.path, checkpoint, horizon)
     }
 }
 
@@ -742,6 +811,7 @@ impl RecordMaterialSink for BufferedRecordSink {
 #[derive(Clone)]
 pub struct RecordMaterializer<Sink> {
     sink: Sink,
+    anchor_collector: Option<Arc<Mutex<Vec<SourceRecordAnchor>>>>,
 }
 
 /// Default materializer for node-owned record streams.
@@ -756,12 +826,23 @@ where
 {
     #[must_use]
     pub fn new(sink: Sink) -> Self {
-        Self { sink }
+        Self {
+            sink,
+            anchor_collector: None,
+        }
     }
 
     #[must_use]
     pub fn sink(&self) -> &Sink {
         &self.sink
+    }
+
+    #[must_use]
+    fn with_anchor_collector(&self, anchor_collector: Arc<Mutex<Vec<SourceRecordAnchor>>>) -> Self {
+        Self {
+            sink: self.sink.clone(),
+            anchor_collector: Some(anchor_collector),
+        }
     }
 
     pub async fn append_stable_bytes(&self, bytes: Vec<u8>) -> NodeResult<SourceRecordAnchor> {
@@ -770,7 +851,14 @@ where
                 "source material records must not be empty",
             ));
         }
-        self.sink.append_record(bytes).await
+        let anchor = self.sink.append_record(bytes).await?;
+        if let Some(anchor_collector) = &self.anchor_collector {
+            let mut anchors = anchor_collector.lock().map_err(|_| {
+                SinexError::processing("record source anchor collector lock poisoned")
+            })?;
+            anchors.push(anchor);
+        }
+        Ok(anchor)
     }
 
     pub async fn append_json_line<T>(&self, record: &T) -> NodeResult<SourceRecordAnchor>
@@ -848,6 +936,249 @@ where
     pub fn buffered_default(source: Source, manager: Arc<AcquisitionManager>) -> Self {
         Self::buffered(source, manager, BufferedAppendStreamWriterConfig::default())
     }
+}
+
+#[cfg(feature = "db")]
+#[derive(Clone, Copy)]
+pub struct SqliteSnapshotLinker<'a> {
+    pool: &'a PgPool,
+    max_attempts: usize,
+    retry_delay: std::time::Duration,
+}
+
+#[cfg(feature = "db")]
+impl<'a> SqliteSnapshotLinker<'a> {
+    #[must_use]
+    pub fn new(pool: &'a PgPool) -> Self {
+        Self {
+            pool,
+            max_attempts: 10,
+            retry_delay: std::time::Duration::from_millis(100),
+        }
+    }
+
+    #[must_use]
+    pub fn with_retry(mut self, max_attempts: usize, retry_delay: std::time::Duration) -> Self {
+        self.max_attempts = max_attempts.max(1);
+        self.retry_delay = retry_delay;
+        self
+    }
+
+    async fn link_backing_material(
+        self,
+        from_material_id: sinex_primitives::Uuid,
+        to_material_id: sinex_primitives::Uuid,
+        metadata: serde_json::Value,
+    ) -> Result<(), String> {
+        let mut last_error = None;
+        for attempt in 1..=self.max_attempts {
+            match self
+                .pool
+                .source_materials()
+                .link_backing_material(from_material_id, to_material_id, metadata.clone())
+                .await
+            {
+                Ok(_) => return Ok(()),
+                Err(error) => {
+                    last_error = Some(error.to_string());
+                    if attempt < self.max_attempts {
+                        tokio::time::sleep(self.retry_delay).await;
+                    }
+                }
+            }
+        }
+        Err(last_error.unwrap_or_else(|| "source-material link failed".to_string()))
+    }
+}
+
+impl<Record, Read, RowId, ReadError>
+    RecordSourceHarness<SqliteRecordSource<Record, Read, RowId, ReadError>, BufferedRecordSink>
+where
+    Record: Send + Sync + 'static,
+    Read: Fn(&Utf8PathBuf, i64, Option<Timestamp>) -> Result<(Vec<Record>, i64), ReadError>
+        + Send
+        + Sync
+        + 'static,
+    RowId: Fn(&Record) -> i64 + Send + Sync + 'static,
+    ReadError: Error + Send + Sync + 'static,
+{
+    pub async fn read_process_lenient_with_snapshot<Warning, Process, ProcessFuture, Warn>(
+        &self,
+        checkpoint: &mut SqliteRowCheckpoint,
+        horizon: RecordReadHorizon,
+        snapshot_state: &mut SqliteSnapshotState,
+        acquisition: &AcquisitionManager,
+        #[cfg(feature = "db")] linker: Option<SqliteSnapshotLinker<'_>>,
+        mut process: Process,
+        warning_disposition: Warn,
+    ) -> NodeResult<RecordProcessReport<SqliteRowCheckpoint, Warning>>
+    where
+        Process: FnMut(Record, RecordProcessContext<BufferedRecordSink>) -> ProcessFuture,
+        ProcessFuture: Future<Output = Result<RecordProcessingOutcome, Warning>>,
+        Warn: Fn(&Warning) -> RecordWarningDisposition,
+    {
+        let descriptor = self.source.descriptor().clone();
+        let start_row_id = checkpoint.row_id;
+        let trigger = self.source.snapshot_policy().decide(
+            snapshot_state,
+            start_row_id,
+            horizon.end_time().is_some(),
+            Timestamp::now(),
+        );
+
+        let mut snapshot_failure = None;
+        let snapshot_capture = if let Some(trigger) = trigger {
+            let path = self.source.path().to_path_buf();
+            let source_identifier = descriptor.source_identifier.clone();
+            match tokio::task::spawn_blocking(move || {
+                capture_sqlite_snapshot(&path, &source_identifier)
+            })
+            .await
+            {
+                Ok(Ok(capture)) => Some((trigger, capture)),
+                Ok(Err(error)) => {
+                    snapshot_failure = Some((trigger, error.to_string()));
+                    None
+                }
+                Err(error) => {
+                    snapshot_failure = Some((trigger, error.to_string()));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let read_path = snapshot_capture.as_ref().map_or_else(
+            || self.source.path().to_path_buf(),
+            |(_, capture)| capture.path().to_path_buf(),
+        );
+        let batch = self
+            .source
+            .read_batch_from_path(&read_path, checkpoint, horizon)
+            .await
+            .map_err(|error| {
+                SinexError::processing("failed to read SQLite record source batch")
+                    .with_context("source_identifier", descriptor.source_identifier.clone())
+                    .with_context("source_path", self.source.path().to_string())
+                    .with_std_error(&error)
+            })?;
+
+        let anchor_collector = Arc::new(Mutex::new(Vec::new()));
+        let materializer = self
+            .materializer
+            .with_anchor_collector(anchor_collector.clone());
+        let mut report = process_record_batch_lenient(
+            checkpoint,
+            batch,
+            |record| {
+                let ctx = RecordProcessContext {
+                    descriptor: descriptor.clone(),
+                    materializer: materializer.clone(),
+                };
+                process(record, ctx)
+            },
+            warning_disposition,
+        )
+        .await;
+        report.material_anchors = take_collected_anchors(&anchor_collector)?;
+
+        if let Some((trigger, capture)) = snapshot_capture {
+            let material_metadata =
+                capture.material_metadata(trigger, start_row_id, report.final_checkpoint.row_id);
+            let source_path = capture.metadata().source_path.clone();
+            let source_identifier = capture.metadata().source_identifier.clone();
+            let captured_at = capture.metadata().captured_at;
+            let total_bytes = capture.metadata().total_bytes;
+
+            match stage_material_from_file(
+                acquisition,
+                capture.path(),
+                "sqlite-snapshot-evidence",
+                Some(material_metadata),
+            )
+            .await
+            {
+                Ok((snapshot_material_id, _)) => {
+                    let mut link_errors = Vec::new();
+                    let mut linked_material_count = 0usize;
+                    #[cfg(feature = "db")]
+                    if let Some(linker) = linker {
+                        for material_id in unique_material_ids(&report.material_anchors) {
+                            let link_metadata = json!({
+                                "evidence_role": "sqlite_snapshot",
+                                "source_identifier": source_identifier,
+                                "source_path": source_path,
+                                "trigger": trigger,
+                                "row_range": {
+                                    "start_row_id": start_row_id,
+                                    "final_row_id": report.final_checkpoint.row_id,
+                                },
+                            });
+                            match linker
+                                .link_backing_material(
+                                    material_id,
+                                    snapshot_material_id,
+                                    link_metadata,
+                                )
+                                .await
+                            {
+                                Ok(()) => {
+                                    linked_material_count = linked_material_count.saturating_add(1);
+                                }
+                                Err(error) => link_errors.push(error),
+                            }
+                        }
+                    }
+                    snapshot_state.record_success(captured_at, report.final_checkpoint.row_id);
+                    report.sqlite_snapshot = Some(SqliteSnapshotEvidenceReport {
+                        snapshot_material_id: Some(snapshot_material_id),
+                        trigger,
+                        source_identifier,
+                        source_path,
+                        captured_at: Some(captured_at),
+                        total_bytes: Some(total_bytes),
+                        start_row_id,
+                        final_row_id: report.final_checkpoint.row_id,
+                        linked_material_count,
+                        link_errors,
+                        failure: None,
+                    });
+                }
+                Err(error) => {
+                    report.sqlite_snapshot = Some(SqliteSnapshotEvidenceReport::failure(
+                        trigger,
+                        source_identifier,
+                        source_path,
+                        start_row_id,
+                        report.final_checkpoint.row_id,
+                        error.to_string(),
+                    ));
+                }
+            }
+        } else if let Some((trigger, error)) = snapshot_failure {
+            report.sqlite_snapshot = Some(SqliteSnapshotEvidenceReport::failure(
+                trigger,
+                descriptor.source_identifier,
+                self.source.path().to_string(),
+                start_row_id,
+                report.final_checkpoint.row_id,
+                error,
+            ));
+        }
+
+        Ok(report)
+    }
+}
+
+fn unique_material_ids(anchors: &[SourceRecordAnchor]) -> Vec<sinex_primitives::Uuid> {
+    let mut material_ids = Vec::new();
+    for anchor in anchors {
+        if !material_ids.contains(&anchor.material_id) {
+            material_ids.push(anchor.material_id);
+        }
+    }
+    material_ids
 }
 
 pub fn stable_json_line<T>(record: &T) -> NodeResult<Vec<u8>>
@@ -1134,6 +1465,7 @@ mod tests {
         assert_eq!(report.final_checkpoint, 2);
         assert_eq!(report.processed_records, 2);
         assert!(report.warnings.is_empty());
+        assert_eq!(report.material_anchors.len(), 2);
         let records = sink.records.lock().map_err(|error| {
             color_eyre::eyre::eyre!("capturing record sink lock poisoned: {error}")
         })?;
@@ -1238,6 +1570,80 @@ mod tests {
             SqliteRowCheckpoint::new(6)
         );
         assert_eq!(batch.records[1].record.value, "two");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn sqlite_harness_captures_snapshot_evidence(ctx: TestContext) -> TestResult<()> {
+        let temp = tempfile::NamedTempFile::new()?;
+        let conn = rusqlite::Connection::open(temp.path())?;
+        conn.execute(
+            "CREATE TABLE history (id INTEGER PRIMARY KEY, value TEXT)",
+            [],
+        )?;
+        conn.execute("INSERT INTO history (value) VALUES ('one'), ('two')", [])?;
+        drop(conn);
+
+        let db_path = Utf8PathBuf::from_path_buf(temp.path().to_path_buf())
+            .map_err(|path| color_eyre::eyre::eyre!("non-utf8 temp path: {path:?}"))?;
+        let source = RecordSources::sqlite(
+            db_path.clone(),
+            "test://sqlite-snapshot",
+            |path, from_row_id, _end_time| {
+                crate::sqlite_source::read_rows_after(
+                    path,
+                    "SELECT id, value FROM history WHERE id > ?1 ORDER BY id",
+                    from_row_id,
+                    |row| {
+                        Ok(TestRow {
+                            row_id: row.get(0)?,
+                            value: "value",
+                        })
+                    },
+                )
+            },
+            |row: &TestRow| row.row_id,
+        )
+        .with_snapshot_policy(SqliteSnapshotPolicy::disabled().with_first_observation(true));
+        let ctx = ctx.with_nats().shared().await?;
+        let acquisition = Arc::new(AcquisitionManager::with_defaults(
+            ctx.nats_client(),
+            "sqlite-snapshot-test",
+        ));
+        let harness = BufferedRecordSourceHarness::buffered_default(source, acquisition.clone());
+        let mut checkpoint = SqliteRowCheckpoint::default();
+        let mut snapshot_state = SqliteSnapshotState::default();
+
+        let report = harness
+            .read_process_lenient_with_snapshot(
+                &mut checkpoint,
+                RecordReadHorizon::Unbounded,
+                &mut snapshot_state,
+                &acquisition,
+                None,
+                |record, ctx| async move {
+                    ctx.append_json_line(&json!({
+                        "row_id": record.row_id,
+                        "value": record.value,
+                    }))
+                    .await?;
+                    Ok::<_, SinexError>(RecordProcessingOutcome::Processed)
+                },
+                |_| RecordWarningDisposition::Retry,
+            )
+            .await?;
+        harness.finalize("sqlite-snapshot-test").await?;
+
+        assert_eq!(checkpoint, SqliteRowCheckpoint::new(2));
+        assert_eq!(report.processed_records, 2);
+        assert_eq!(report.material_anchors.len(), 2);
+        let snapshot = report
+            .sqlite_snapshot
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing sqlite snapshot report"))?;
+        assert!(snapshot.snapshot_material_id.is_some());
+        assert_eq!(snapshot.failure, None);
+        assert!(snapshot_state.first_observation_captured);
+        assert_eq!(snapshot_state.last_snapshot_row_id, Some(2));
         Ok(())
     }
 
