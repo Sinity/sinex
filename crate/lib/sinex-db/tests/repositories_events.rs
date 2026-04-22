@@ -603,6 +603,49 @@ async fn register_external_in_flight_rejects_source_identifier_aliasing(
     Ok(())
 }
 
+#[sinex_test]
+async fn finalize_in_flight_persists_total_bytes_column(ctx: TestContext) -> TestResult<()> {
+    let forced_id = uuid::Uuid::now_v7();
+    let identifier = format!("test-material-total-bytes-{forced_id}");
+    let record = ctx
+        .pool
+        .source_materials()
+        .register_external_in_flight(
+            forced_id,
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            json!({"note": "total byte regression"}),
+            Timestamp::now(),
+        )
+        .await?;
+    let material_id = Id::<sinex_db::SourceMaterialRecord>::from_uuid(record.id);
+
+    ctx.pool
+        .source_materials()
+        .finalize_in_flight(
+            material_id,
+            None,
+            Some("text/plain"),
+            Some("preview".to_string()),
+            Some(123),
+        )
+        .await?;
+
+    let persisted = ctx
+        .pool
+        .source_materials()
+        .get_by_id(material_id)
+        .await?
+        .expect("finalized material should remain readable");
+
+    assert_eq!(persisted.status, "completed");
+    assert_eq!(persisted.total_bytes, Some(123));
+    assert_eq!(persisted.metadata["file_size_bytes"], json!(123));
+    assert_eq!(persisted.metadata["encoding"], json!("text/plain"));
+    assert_eq!(persisted.metadata["content_preview"], json!("preview"));
+    Ok(())
+}
+
 // =============================================================================
 // SYNTHETIC METADATA ROUNDTRIP TESTS (Slice 3)
 // =============================================================================
