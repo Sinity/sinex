@@ -1,5 +1,6 @@
 ---
 source: xtask/tests/command_consistency.rs
+assertion_line: 29
 expression: json
 ---
 {
@@ -314,6 +315,49 @@ expression: json
           "required": false,
           "short": "E",
           "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Run tests whose sinex_test scenario metadata includes this tag",
+          "long": "scenario-tag",
+          "name": "scenario_tags",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Run tests whose sinex_test scenario metadata uses this category",
+          "long": "scenario-category",
+          "name": "scenario_categories",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Run tests whose sinex_test scenario metadata uses this lane",
+          "long": "scenario-lane",
+          "name": "scenario_lanes",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "List discovered sinex_test scenarios instead of running tests",
+          "long": "list-scenarios",
+          "name": "list_scenarios",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
         },
         {
           "global": false,
@@ -3873,6 +3917,49 @@ expression: json
           "subcommands": []
         },
         {
+          "about": "Generate the proof catalog from Rust descriptors, payloads, commands, and scenarios",
+          "args": [
+            {
+              "global": false,
+              "help": "Output file (default: docs/proof-catalog.json)",
+              "long": "output",
+              "name": "output",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Print to stdout instead of writing a file",
+              "long": "stdout",
+              "name": "stdout",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Exit non-zero if the generated output would change",
+              "long": "check",
+              "name": "check",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "proof-catalog",
+          "subcommands": []
+        },
+        {
           "about": "Generate the live ast-grep rule catalog from `.config/ast-grep/rules/`",
           "args": [
             {
@@ -4050,6 +4137,60 @@ expression: json
             }
           ],
           "name": "snapshot",
+          "subcommands": []
+        }
+      ]
+    },
+    {
+      "about": "Source-unit manifest operations",
+      "args": [],
+      "name": "source-units",
+      "subcommands": [
+        {
+          "about": "Render the source-unit manifest",
+          "args": [
+            {
+              "global": false,
+              "help": "Output file (default: docs/source-units.json)",
+              "long": "output",
+              "name": "output",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Print to stdout instead of writing a file",
+              "long": "stdout",
+              "name": "stdout",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "render",
+          "subcommands": []
+        },
+        {
+          "about": "Validate source-unit descriptors and the generated manifest",
+          "args": [
+            {
+              "global": false,
+              "help": "Manifest path to check (default: docs/source-units.json)",
+              "long": "output",
+              "name": "output",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "check",
           "subcommands": []
         }
       ]
