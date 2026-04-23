@@ -26,7 +26,7 @@
 //!
 //! ### Data Integrity & Provenance
 //! - **Single-Writer Pattern**: Nodes submit provisional events to NATS; `sinex-ingestd` ensures durable database persistence.
-//! - **Dual-Hash Verification**: Content-store entries are verified using backend-aware digests plus BLAKE3.
+//! - **Content Verification**: Content-store entries are verified using BLAKE3 plus backend-aware digests where available.
 //! - **Lineage Tracking**: Automatic synthesis provenance links derived events to their source.
 //!
 //! ### Distributed Coordination
@@ -44,7 +44,7 @@
 //!
 //! ## Mitigations
 //! - Use NTP/chrony for time synchronization across all nodes
-//! - Prefer DB-generated `UUIDv7` IDs where possible (via `DEFAULT uuidv7()`)
+//! - Use SDK deterministic ID helpers for node-supplied source-occurrence and derived-event IDs; DB defaults remain for DB-owned rows
 //! - Monitor clock skew via confirmation handler warnings (see `confirmation_handler.rs`)
 //! - Set conservative confirmation timeouts (>5 seconds)
 //! - For critical ordering, use database sequences instead of client-side `UUIDv7` IDs

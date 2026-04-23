@@ -1,61 +1,81 @@
-# node Patterns: Nodes vs. Automatons
+# Node Patterns: Ingestors and Derived Nodes
 
-The Sinex architecture employs two primary patterns for distributed agents ("nodes"). Understanding the distinction is crucial for deployment planning and development.
+Sinex node binaries fall into two operational families. They share runtime
+plumbing where that reduces duplication, but they do not have the same
+responsibility boundary.
 
-## 1. Stream Nodes (The "Edge" Model)
+## 1. Capture Ingestors
 
-Stream Nodes are reactive components designed to operate close to the capture
-surface or confirmed event stream.
+Capture ingestors translate external material into material-provenance events.
+They own source acquisition, source-material registration, byte anchoring, and
+checkpointing against the external source.
 
-- **Primary Trigger**: External inputs or inbound confirmed NATS events.
-- **State**: Ephemeral or locally cached (via NATS KV).
-- **Database Dependency**: **Optional / None**. Use `SINEX_EDGE_MODE=1` to suppress DATABASE_URL requirement.
-- **Coordination**: NATS KV (LeaseManager).
+- **Primary trigger**: External inputs such as filesystem notifications,
+  append-only files, `SQLite` history rows, sockets, journals, or pollers.
+- **Authoring trait**: `IngestorNode`.
+- **Adapter**: `IngestorNodeAdapter`.
+- **State**: Ingestor-defined checkpoint state persisted through the SDK.
+- **Database dependency**: Normal deployed nodes use the runtime configuration
+  they need for source-material and preflight surfaces; direct event persistence
+  still belongs to `sinex-ingestd`.
 - **Examples**:
-  - `sinex-fs-ingestor`: Watches configured roots and emits filesystem events.
-  - `sinex-terminal-command-canonicalizer`: Consumes confirmed shell commands and emits canonical forms.
-
-### Architecture
+  - `sinex-fs-ingestor`: watches configured roots and emits filesystem events.
+  - `sinex-terminal-ingestor`: captures shell history and live appended rows.
+  - `sinex-system-ingestor`: captures journal, device, and login observations.
 
 ```mermaid
 graph LR
-    Source(Ingest) -->|NATS Event| Node
-    Node -->|NATS Event| Sink
-    Node -.->|Lease| KV[NATS KV]
+    Source[External Source] --> Ingestor
+    Ingestor --> Material[Source Material Frames]
+    Ingestor --> Events[Raw Event Batches]
+    Material --> NATS[NATS JetStream]
+    Events --> NATS
 ```
 
-## 2. Automatons (The "Core" Model)
+## 2. Derived Nodes
 
-Automatons are long-lived derived services that maintain richer cross-event
-state, emit reconciled summaries, or close semantic windows.
+Derived nodes consume confirmed events and emit synthesis-provenance events.
+They derive conclusions from parent event IDs rather than claiming new external
+source material.
 
-- **Primary Trigger**: Confirmed event streams plus internal window or scope state, sometimes complemented by database queries.
-- **State**: Persistent, Relational, Historical.
-- **Database Dependency**: **Often yes, but not universal**. Some automatons can run stream-first, while others need canonical PostgreSQL/TimescaleDB access for reconciliation or historical lookups.
-- **Coordination**: NATS KV for service coordination; may use advisory locks for DB-internal operations (migrations, replay state).
+- **Primary trigger**: Confirmed event streams plus node-local window or scope
+  state.
+- **Authoring traits**: `TransducerNode`, `WindowedNode`, and
+  `ScopeReconcilerNode`.
+- **Adapter**: `DerivedNodeAdapter` and the trait-specific adapter aliases.
+- **State**: Derived-node state and checkpoints persisted through NATS KV/local
+  state as configured by the SDK.
+- **Database dependency**: Optional and explicit. Some derived nodes are
+  stream-first; others may query canonical storage for reconciliation or
+  historical context.
 - **Examples**:
-  - `sinex-analytics-automaton`: Emits bounded `activity.window.summary` rollups from trusted activity signals.
-  - `sinex-health-automaton`: Reconciles per-component health into aggregated status reports.
-  - `sinex-session-detector`: Groups bounded activity windows into session boundaries.
-
-### Architecture
+  - `sinex-terminal-command-canonicalizer`: maps confirmed shell commands to
+    canonical command events.
+  - `sinex-analytics-automaton`: emits bounded activity rollups.
+  - `sinex-health-automaton`: reconciles component health into aggregate
+    reports.
+  - `sinex-session-detector`: groups activity windows into session boundaries.
 
 ```mermaid
 graph TD
-    Stream[(Confirmed Event Stream)] --> Automaton
-    DB[(Postgres Core)] <--> Automaton
-    Automaton -->|Derived Events| NATS
+    Confirmed[(Confirmed Event Stream)] --> Derived[Derived Node]
+    DB[(Postgres, when explicitly needed)] -.-> Derived
+    Derived --> Synth[Synthesis Event Batches]
+    Synth --> NATS[NATS JetStream]
 ```
 
 ## 3. Deployment Implications
 
-| Feature | Stream Node | Automaton |
-|---------|------------------|-----------|
-| **Scalability** | Horizontal (Consumer Groups) | Singleton / Partitioned |
-| **Location** | Edge / Device / Cloud | Core Cloud / Data Center |
-| **Connectivity** | External surface or NATS event stream | NATS, sometimes low-latency DB access |
-| **Security** | Minimal Access (Credentials) | Full DB Privileges |
+| Feature | Capture Ingestor | Derived Node |
+|---------|------------------|--------------|
+| **Provenance** | `source_material_id` + byte anchor | non-empty `source_event_ids` |
+| **Scale shape** | Source-specific; often one watcher per target surface | Consumer-group, singleton, or partitioned depending on state semantics |
+| **Connectivity** | External source access plus NATS/runtime configuration | Confirmed-event stream, optional DB access |
+| **Access model** | Minimal source permissions for the target surface | Minimal permissions for event consumption and optional reconciliation |
 
-## 4. Hybrid nodes
+## 4. Mixed Responsibilities
 
-Some nodes may function as hybrids. For example, a node that *optionally* enriches data from the DB if available, but degrades gracefully if not. However, strict separation is encouraged to maintain clear "Edge" vs "Core" boundaries.
+Avoid combining capture and synthesis in one node unless the source itself
+requires that shape. If a node observes external bytes and also derives
+cross-event conclusions, split it into an ingestor plus a derived node so the
+provenance boundary remains obvious.

@@ -2,6 +2,12 @@
 
 These features represent the long-term vision for Sinex SDK improvements. They are not blocking production but would significantly improve developer experience.
 
+> Status: this is a vision/history document, not current API reference. The
+> current implemented derived-node APIs are `TransducerNode`, `WindowedNode`,
+> `ScopeReconcilerNode`, and `DerivedNodeAdapter`. Historical references to
+> `AutomatonNode` below preserve the original prompt-to-node sketch rather than
+> describing an available trait.
+
 ---
 
 ## Prompt-to-Node Development
