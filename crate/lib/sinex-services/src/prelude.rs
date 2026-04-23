@@ -7,12 +7,12 @@
 //! use sinex_services::prelude::*;
 //!
 //! // Instead of:
-//! // use sinex_services::{ContentService, PkmService};
+//! // use sinex_services::PkmService;
 //! // use sinex_services::pkm::MaterialSummary;
 //! ```
 
 // All service types
-pub use crate::{ContentService, PkmService};
+pub use crate::PkmService;
 
 // PKM-related types
 pub use crate::pkm::MaterialSummary;

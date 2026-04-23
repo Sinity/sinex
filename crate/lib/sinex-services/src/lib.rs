@@ -26,14 +26,10 @@
 //! For detailed architectural deep dives, see the documentation in the `docs/` directory or
 //! the included structural analysis.
 
-//! Thin facade that re-exports high-level services used by gateways and nodes.
-
-/// Content service for managing large binary data and media
-pub mod content;
+//! Thin facade that re-exports high-level PKM services still owned here.
 /// PKM (Personal Knowledge Management) service for entity and relationship tracking
 pub mod pkm;
 pub mod prelude;
 
-pub use content::ContentService;
 pub use pkm::PkmService;
 pub use sinex_primitives::error::{Result, SinexError};

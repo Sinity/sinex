@@ -15,10 +15,6 @@ workspace = true
 [package.authors]
 workspace = true
 
-
-[dependencies.sinex-node-sdk]
-path = "../../lib/sinex-node-sdk"
-
 [dependencies.sinex-primitives]
 path = "../sinex-primitives"
 
@@ -51,15 +47,6 @@ workspace = true
 
 [dev-dependencies.sinex-schema]
 path = "../sinex-schema"
-
-[dev-dependencies.camino]
-workspace = true
-
-[dev-dependencies.tempfile]
-workspace = true
-
-[dev-dependencies.which]
-workspace = true
 
 [dev-dependencies.sqlx]
 workspace = true

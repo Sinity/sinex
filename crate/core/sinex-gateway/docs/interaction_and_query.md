@@ -1,6 +1,7 @@
 # User Interaction & Query Architecture
 
-* **Purpose:** Describe how users and tools interact with Sinex today: gateway service, CLI, and supporting service layer.
+* **Purpose:** Describe how users and tools interact with Sinex today: gateway service, CLI, and
+  supporting service layer.
 * **Scope:** Current behaviour.
 
 ## 1. Components Overview
@@ -9,7 +10,7 @@
 |-----------|----------|------|--------|
 | `sinex-gateway` | `crate/core/sinex-gateway` | Hosts a JSON-RPC server (TLS-only TCP) and an optional native-messaging bridge | ✅ operational |
 | `sinexctl` CLI | `crate/cli` | Primary operator tooling for gateway RPC; also exposes direct DB commands under `db` | ✅ operational |
-| Service layer | `crate/lib/sinex-services` | Analytics, search, PKM, and content APIs invoked by gateway handlers | ✅ operational |
+| Service layer | `crate/lib/sinex-services` | Remaining PKM orchestration invoked by gateway handlers | ✅ operational |
 ## 2. Gateway Architecture
 
 ### 2.1 Execution Modes
@@ -24,7 +25,8 @@
 
 1. Client submits JSON-RPC payload (method + params).
 2. `rpc_server::handle_rpc` deserialises the message and forwards it to `dispatch_rpc_method`.
-3. Dispatch routes into the appropriate module in `sinex-services`, which talks to `PostgreSQL` via `sinex-db`.
+3. Dispatch routes into gateway-local handlers plus their owned services; PKM currently flows
+   through `sinex-services`, while blob/content workflows stay inside `sinex-gateway`.
 4. Responses are sent synchronously; errors become JSON-RPC failures (`-32601` unknown method, `-32603` internal error).
 
 **Key point:** the gateway does **not** publish or consume `api.command.*` / `api.response.*` events on `JetStream` today. All work is handled within the process using synchronous database calls.
@@ -78,16 +80,15 @@ Adding a method requires registering it in `rpc_registry.rs`, wiring a handler i
 
 ## 4. Service Layer Responsibilities
 
-Gateway handlers delegate to `sinex-services`, which provides cohesive APIs over `sinex-db`:
-* **Analytics (`analytics.rs`)** – timed aggregates over `core.events`.
-* **Search (`search.rs`)** – filtered event queries with pagination.
-* **PKM (`pkm.rs`)** – CRUD operations for knowledge-management entities.
-* **Content (`content.rs`)** – blob storage/retrieval via the content store.
+Gateway handlers split across two ownership shapes today:
+* **PKM (`sinex-services::pkm`)** – entity/relation/source-material orchestration over `sinex-db`.
+* **Content (`sinex-gateway::content_service`)** – blob storage/retrieval via the content store.
 
-These modules run synchronously and use shared database pools. Keep transactions small to avoid blocking other RPCs.
+These modules run synchronously and use shared database pools. Keep transactions small to avoid
+blocking other RPCs.
 
 ## 5. Reference Material
 
 - Gateway source: `crate/core/sinex-gateway/src/main.rs`, `rpc_server.rs`, `handlers.rs`, `service_container.rs`.
 * CLI docs: `crate/cli/README.md`, `crate/cli/DESIGN.md`.
-* Service documentation: `crate/lib/sinex-services/docs/*.md`.
+* PKM service documentation: `crate/lib/sinex-services/docs/*.md`.
