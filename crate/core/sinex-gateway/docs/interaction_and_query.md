@@ -1,7 +1,7 @@
 # User Interaction & Query Architecture
 
 * **Purpose:** Describe how users and tools interact with Sinex today: gateway service, CLI, and
-  supporting service layer.
+  the db-owned/content-owned modules they invoke.
 * **Scope:** Current behaviour.
 
 ## 1. Components Overview
@@ -52,12 +52,12 @@
 * Write/mutate: `pkm.*`, `content.store_blob`, `nodes.{drain,resume,set_horizon}`, `ops.start`, replay create/preview.
 * Admin-only: replay approve/execute/cancel, `dlq.requeue/purge`, lifecycle archive/restore/tombstone, `ops.cancel`, gitops source management, shadow create/delete.
 
-Adding a method requires registering it in `rpc_registry.rs`, wiring a handler in the gateway/service layer, and optionally exposing it in `sinexctl`.
+Adding a method requires registering it in `rpc_registry.rs`, wiring a handler in the gateway or db-owned module surface, and optionally exposing it in `sinexctl`.
 
 ### 2.4 Deployment Considerations
 
 - Keep RPC on loopback unless you explicitly need remote access; enable mTLS + firewalling for non-local binds.
-* Gateway shares a database pool with the service layer; long-running queries block the handler thread. Move heavy work to background tasks before revisiting asynchronous fan-out.
+* Gateway shares database pools with its PKM/content execution surfaces; long-running queries block the handler thread. Move heavy work to background tasks before revisiting asynchronous fan-out.
 * Authentication is enforced by bearer token + role checks; transport and request guards (timeouts/concurrency/body size/rate limiting) are enforced in the gateway middleware stack.
 
 ## 3. CLI Integration (`sinexctl`)

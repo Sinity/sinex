@@ -6087,29 +6087,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-services"
-version = "0.4.2"
-dependencies = [
- "blake3",
- "color-eyre",
- "futures",
- "once_cell",
- "serde",
- "serde_json",
- "sha2",
- "sinex-db",
- "sinex-primitives",
- "sinex-schema",
- "sqlx",
- "time",
- "tokio",
- "tracing",
- "uuid",
- "xtask",
- "xtask-macros",
-]
-
-[[package]]
 name = "sinex-session-detector"
 version = "0.4.2"
 dependencies = [
