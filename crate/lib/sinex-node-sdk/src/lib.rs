@@ -82,6 +82,7 @@ pub mod file_tailer;
 pub mod health_reporter;
 #[cfg(feature = "messaging")]
 pub mod heartbeat;
+pub mod ids;
 pub mod ingestion_helpers;
 #[cfg(feature = "messaging")]
 pub mod ingestor_node;
@@ -163,6 +164,7 @@ pub use file_tailer::{
 pub use health_reporter::{HealthMetrics, HealthReporter, HealthThresholds};
 #[cfg(feature = "messaging")]
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatLogSink, HeartbeatMetrics};
+pub use ids::{deterministic_event_id, deterministic_material_event_id};
 #[cfg(feature = "messaging")]
 pub use ingestor_node::{IngestorNode, IngestorNodeAdapter, IngestorState};
 pub use input_shapes::{

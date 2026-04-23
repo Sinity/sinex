@@ -201,10 +201,10 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
     }
 
     fn checkpoint_file_identity(&self) -> &str {
-        self.runtime
-            .as_ref()
-            .map(NodeRuntimeState::checkpoint_identity)
-            .unwrap_or_else(|| self.ingestor.name())
+        self.runtime.as_ref().map_or_else(
+            || self.ingestor.name(),
+            NodeRuntimeState::checkpoint_identity,
+        )
     }
 }
 

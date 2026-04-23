@@ -9,6 +9,7 @@ use super::traits::{DerivedNodeConfig, DerivedNodeImpl, InputProvenanceFilter};
 
 use crate::checkpoint::{CheckpointManager, CheckpointState, decode_checkpoint_data};
 use crate::error_helpers::{env_bool_with_default, env_parse_with_default};
+use crate::ids::deterministic_event_id;
 use crate::processing::{ErrorAction, PersistedState};
 use crate::runtime::stream::{
     Checkpoint, EventEmitter, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType,
@@ -45,6 +46,57 @@ fn signal_shutdown_channel(shutdown_tx: &watch::Sender<bool>, node_name: &str) -
         return false;
     }
     true
+}
+
+fn derived_event_anchor(
+    output_index: usize,
+    source_event_ids: &NonEmptyVec<Id<Event<JsonValue>>>,
+    temporal_policy: &sinex_primitives::domain::SyntheticTemporalPolicy,
+    semantics_version: Option<&str>,
+    scope_key: Option<&str>,
+    equivalence_key: Option<&str>,
+) -> Vec<u8> {
+    let mut anchor = Vec::new();
+    append_anchor_field(
+        &mut anchor,
+        b"output_index",
+        output_index.to_string().as_bytes(),
+    );
+    append_anchor_field(
+        &mut anchor,
+        b"temporal_policy",
+        temporal_policy.to_string().as_bytes(),
+    );
+    append_anchor_field(
+        &mut anchor,
+        b"semantics_version",
+        semantics_version.unwrap_or("").as_bytes(),
+    );
+    append_anchor_field(
+        &mut anchor,
+        b"scope_key",
+        scope_key.unwrap_or("").as_bytes(),
+    );
+    append_anchor_field(
+        &mut anchor,
+        b"equivalence_key",
+        equivalence_key.unwrap_or("").as_bytes(),
+    );
+    for source_event_id in source_event_ids {
+        append_anchor_field(
+            &mut anchor,
+            b"source_event_id",
+            source_event_id.as_uuid().to_string().as_bytes(),
+        );
+    }
+    anchor
+}
+
+fn append_anchor_field(anchor: &mut Vec<u8>, name: &[u8], value: &[u8]) {
+    anchor.extend_from_slice(&u64::try_from(name.len()).unwrap_or(u64::MAX).to_be_bytes());
+    anchor.extend_from_slice(name);
+    anchor.extend_from_slice(&u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
+    anchor.extend_from_slice(value);
 }
 
 fn stale_output_ids_or_fail_scope(
@@ -940,7 +992,10 @@ where
     ) -> NodeResult<Vec<Event<JsonValue>>> {
         outputs
             .into_iter()
-            .map(|output| self.build_output_event(output, fallback_source_id, context))
+            .enumerate()
+            .map(|(output_index, output)| {
+                self.build_output_event(output, output_index, fallback_source_id, context)
+            })
             .collect()
     }
 
@@ -948,6 +1003,7 @@ where
     fn build_output_event(
         &self,
         output: DerivedOutput<JsonValue>,
+        output_index: usize,
         fallback_source_id: Option<Id<Event<JsonValue>>>,
         context: &DerivedTriggerContext,
     ) -> NodeResult<Event<JsonValue>> {
@@ -1001,6 +1057,20 @@ where
                 }
             }
         };
+        let event_id_source = format!(
+            "{}:{}:{}",
+            self.node.name(),
+            self.node.output_event_source(),
+            self.node.output_event_type()
+        );
+        let event_id_anchor = derived_event_anchor(
+            output_index,
+            &source_event_ids,
+            &temporal_policy,
+            semantics_version.as_deref(),
+            scope_key.as_deref(),
+            equivalence_key.as_deref(),
+        );
         let provenance = Provenance::Synthesis {
             source_event_ids,
             operation_id: context.operation_id(),
@@ -1009,7 +1079,11 @@ where
         let created_by_operation_id = provenance.operation_uuid();
 
         Ok(Event {
-            id: Some(Id::new()),
+            id: Some(Id::from_uuid(deterministic_event_id(
+                event_id_source,
+                event_id_anchor,
+                ts_orig,
+            ))),
             source: EventSource::new(self.node.output_event_source())?,
             event_type: EventType::new(self.node.output_event_type())?,
             payload: filtered_payload,
@@ -1261,10 +1335,19 @@ where
 
             // Build output events
             let mut new_event_ids = Vec::new();
-            for output in outputs {
+            for (output_index, output) in outputs.into_iter().enumerate() {
                 let equivalence_key = output.equivalence_key.clone();
-                let output_event = self.build_output_event(output, None, &context)?;
-                let new_id = *output_event.id.unwrap_or_else(Id::new).as_uuid();
+                let output_event = self.build_output_event(output, output_index, None, &context)?;
+                let new_id = match output_event.id {
+                    Some(id) => *id.as_uuid(),
+                    None => {
+                        return Err(SinexError::processing(
+                            "derived output builder returned event without id",
+                        )
+                        .with_context("node", self.node.name())
+                        .with_context("output_event_type", self.node.output_event_type()));
+                    }
+                };
                 new_event_ids.push((new_id, equivalence_key));
                 all_outputs.push(output_event);
             }
@@ -3366,6 +3449,34 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn derived_outputs_use_deterministic_event_ids() -> TestResult<()> {
+        let input = make_input_event("deterministic-output")?;
+        let mut first_adapter = DerivedNodeAdapter::new(TransducerWrapper(EmittingDerivedNode));
+        let mut second_adapter = DerivedNodeAdapter::new(TransducerWrapper(EmittingDerivedNode));
+
+        let first_output = first_adapter
+            .process_one(input.clone())
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| color_eyre::eyre::eyre!("emitting node should produce an output"))?;
+        let second_output = second_adapter
+            .process_one(input)
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| color_eyre::eyre::eyre!("emitting node should produce an output"))?;
+
+        assert_eq!(first_output.id, second_output.id);
+        let id = first_output.id.ok_or_else(|| {
+            color_eyre::eyre::eyre!("derived output should carry deterministic id")
+        })?;
+        assert_eq!(id.as_uuid().get_version_num(), 7);
+        assert_eq!(id.as_uuid().get_variant(), uuid::Variant::RFC4122);
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn process_one_tracks_run_local_processed_count() -> TestResult<()> {
         let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(EmittingDerivedNode));
 
@@ -3463,7 +3574,7 @@ mod tests {
             created_by_operation_id: None,
         };
 
-        let event = adapter.build_output_event(output, None, &context)?;
+        let event = adapter.build_output_event(output, 0, None, &context)?;
 
         assert_eq!(event.payload["value"].as_str(), Some("<GITHUB_TOKEN>"));
         Ok(())

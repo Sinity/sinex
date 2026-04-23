@@ -36,6 +36,7 @@ pub use crate::{EventSender, EventStream};
 // CLI and utilities
 #[cfg(feature = "messaging")]
 pub use crate::NodeArgs;
+pub use crate::{deterministic_event_id, deterministic_material_event_id};
 
 // Error types
 pub use crate::{NodeResult, SinexError};
