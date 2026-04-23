@@ -2,19 +2,19 @@
 
 //! Personal Knowledge Management (PKM) orchestrator.
 
+use crate::DbPool;
+use crate::repositories::DbPoolExt;
+use crate::repositories::source_materials::SourceMaterial;
+use crate::repositories::state::Operation;
+use crate::repositories::{CreateEntity, CreateEntityRelation};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_db::DbPool;
-use sinex_db::repositories::source_materials::SourceMaterial;
-use sinex_db::repositories::state::Operation;
 use sinex_primitives::Id;
 use sinex_primitives::domain::{Entity as DbEntity, OperationStatus};
 use sinex_primitives::error::{Result, SinexError};
 use sinex_primitives::{Event, JsonValue};
 use uuid::Uuid;
 
-use sinex_db::repositories::DbPoolExt;
-use sinex_db::repositories::{CreateEntity, CreateEntityRelation};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
@@ -477,7 +477,7 @@ impl PkmService {
         content: &[u8],
         mime_type: Option<&str>,
     ) -> Result<()> {
-        use sinex_db::models::blob::Blob;
+        use crate::models::blob::Blob;
 
         let (blake3_checksum, sha256_checksum) = calculate_checksums(content);
 

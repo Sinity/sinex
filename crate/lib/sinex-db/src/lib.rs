@@ -13,6 +13,7 @@ pub mod advisory_lock;
 pub mod error;
 pub mod integrity;
 pub mod models;
+pub mod pkm;
 pub mod pool;
 pub mod query_helpers;
 pub mod replay;
@@ -22,6 +23,7 @@ pub mod validation;
 
 pub use error::{DbResult, db_error};
 pub use models::*;
+pub use pkm::{MaterialSummary, PkmService};
 pub use pool::{
     DbPool, PoolConfig, acquire_with_timeout, create_database_if_not_exists, create_pool,
     create_pool_strict, create_pool_with_config, create_pool_with_config_strict, create_test_pool,

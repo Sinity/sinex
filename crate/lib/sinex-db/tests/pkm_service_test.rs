@@ -4,7 +4,7 @@
 //! entity linking, in-flight material lifecycle, system metadata attachment,
 //! and content preview generation.
 
-use sinex_services::PkmService;
+use sinex_db::pkm::PkmService;
 use std::collections::HashMap;
 use xtask::sandbox::prelude::*;
 

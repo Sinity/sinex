@@ -2,8 +2,9 @@
 
 //! # Sinex Services Layer
 //!
-//! The `sinex-services` crate provides a high-level business logic layer that orchestrates
-//! operations between `sinex-db` repositories and the `sinex-gateway` handlers.
+//! PKM and content orchestration have moved into their directional owners.
+//! This crate remains only as an empty workspace placeholder until the follow-up
+//! cleanup removes it entirely.
 //!
 //! ## Architecture & Design
 //!
@@ -26,10 +27,4 @@
 //! For detailed architectural deep dives, see the documentation in the `docs/` directory or
 //! the included structural analysis.
 
-//! Thin facade that re-exports high-level PKM services still owned here.
-/// PKM (Personal Knowledge Management) service for entity and relationship tracking
-pub mod pkm;
-pub mod prelude;
-
-pub use pkm::PkmService;
 pub use sinex_primitives::error::{Result, SinexError};

@@ -1,5 +1,6 @@
 use base64::Engine;
 use sinex_db::DbPoolExt;
+use sinex_db::pkm::PkmService;
 use sinex_db::repositories::knowledge_graph::CreateEntity;
 use sinex_gateway::{
     auth::Role,
@@ -10,7 +11,6 @@ use sinex_primitives::rpc::pkm::{
     CreateEntitiesResponse, CreateNoteResponse, LinkEntitiesResponse,
 };
 use sinex_primitives::{Uuid, events::DynamicPayload, temporal};
-use sinex_services::PkmService;
 use xtask::sandbox::prelude::*;
 
 fn write_auth() -> RpcAuthContext {

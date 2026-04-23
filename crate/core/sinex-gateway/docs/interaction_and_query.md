@@ -10,7 +10,7 @@
 |-----------|----------|------|--------|
 | `sinex-gateway` | `crate/core/sinex-gateway` | Hosts a JSON-RPC server (TLS-only TCP) and an optional native-messaging bridge | ✅ operational |
 | `sinexctl` CLI | `crate/cli` | Primary operator tooling for gateway RPC; also exposes direct DB commands under `db` | ✅ operational |
-| Service layer | `crate/lib/sinex-services` | Remaining PKM orchestration invoked by gateway handlers | ✅ operational |
+| PKM module | `crate/lib/sinex-db/src/pkm.rs` | DB-owned PKM orchestration invoked by gateway handlers | ✅ operational |
 ## 2. Gateway Architecture
 
 ### 2.1 Execution Modes
@@ -26,7 +26,7 @@
 1. Client submits JSON-RPC payload (method + params).
 2. `rpc_server::handle_rpc` deserialises the message and forwards it to `dispatch_rpc_method`.
 3. Dispatch routes into gateway-local handlers plus their owned services; PKM currently flows
-   through `sinex-services`, while blob/content workflows stay inside `sinex-gateway`.
+   through `sinex-db::pkm`, while blob/content workflows stay inside `sinex-gateway`.
 4. Responses are sent synchronously; errors become JSON-RPC failures (`-32601` unknown method, `-32603` internal error).
 
 **Key point:** the gateway does **not** publish or consume `api.command.*` / `api.response.*` events on `JetStream` today. All work is handled within the process using synchronous database calls.
@@ -81,7 +81,7 @@ Adding a method requires registering it in `rpc_registry.rs`, wiring a handler i
 ## 4. Service Layer Responsibilities
 
 Gateway handlers split across two ownership shapes today:
-* **PKM (`sinex-services::pkm`)** – entity/relation/source-material orchestration over `sinex-db`.
+* **PKM (`sinex-db::pkm`)** – entity/relation/source-material orchestration owned by the database layer.
 * **Content (`sinex-gateway::content_service`)** – blob storage/retrieval via the content store.
 
 These modules run synchronously and use shared database pools. Keep transactions small to avoid
@@ -91,4 +91,4 @@ blocking other RPCs.
 
 - Gateway source: `crate/core/sinex-gateway/src/main.rs`, `rpc_server.rs`, `handlers.rs`, `service_container.rs`.
 * CLI docs: `crate/cli/README.md`, `crate/cli/DESIGN.md`.
-* PKM service documentation: `crate/lib/sinex-services/docs/*.md`.
+* PKM module documentation: `crate/lib/sinex-db/docs/pkm.md`.
