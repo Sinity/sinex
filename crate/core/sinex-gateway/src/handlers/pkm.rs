@@ -70,7 +70,11 @@ pub async fn handle_create_entities(
     })?)
 }
 
-pub async fn handle_link_entities(service: &PkmService, params: Value) -> Result<Value> {
+pub async fn handle_link_entities(
+    service: &PkmService,
+    params: Value,
+    auth: &RpcAuthContext,
+) -> Result<Value> {
     RpcParams::new(&params)
         .optional_object("metadata")
         .wrap_err("invalid `metadata` parameter")?;
@@ -92,6 +96,7 @@ pub async fn handle_link_entities(service: &PkmService, params: Value) -> Result
             request.relation_type.as_ref(),
             properties,
             request.source_material_id.map(|id| *id.as_uuid()),
+            auth.actor_id(),
         )
         .await?;
 
