@@ -820,12 +820,14 @@ let
       resources = resolveResources sat.resources;
       clipboardEnv = if sat.clipboard.enable then [ "SINEX_CLIPBOARD=1" ] else [ "SINEX_CLIPBOARD=0" ];
       bridgeEnvFile = "${runtimeDir}/desktop-target.env";
+      defaultRuntimeRoot =
+        if targetUid != null then "/run/user/${toString targetUid}" else null;
       runtimeRoot =
         if sat.session.runtimeDir != null then sat.session.runtimeDir
         else if targetUid != null then "/run/user/${toString targetUid}"
         else null;
       runtimeRootUnits =
-        optionals (sat.session.runtimeDir == null && targetUid != null) [
+        optionals (runtimeRoot != null && defaultRuntimeRoot != null && runtimeRoot == defaultRuntimeRoot) [
           "user-runtime-dir@${toString targetUid}.service"
         ];
       sessionEnv =
@@ -1044,6 +1046,8 @@ let
         binary = "desktop-ingestor";
         description = "Desktop node";
         inherit instances batch resources;
+        afterUnits = runtimeRootUnits;
+        wantsUnits = runtimeRootUnits;
         extraArgs = sat.extraArgs;
         env = clipboardEnv ++ sessionEnv ++ [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
         path = [ pkgs.hyprland ];
@@ -1479,6 +1483,9 @@ let
       envExtras = params.env or [ ];
       unitPath = params.path or [ ];
       serviceConfigOverrides = params.serviceConfig or { };
+      additionalAfterUnits = params.afterUnits or [ ];
+      additionalRequireUnits = params.requiresUnits or [ ];
+      additionalWantsUnits = params.wantsUnits or [ ];
       afterUnits = schemaApplyUnits ++ optionals coreEnabled [ "sinex-ingestd.service" ];
       requireUnits = schemaApplyUnits;
       # Nodes publish to NATS and don't strictly require ingestd to be up.
@@ -1492,9 +1499,9 @@ let
       mkUnit = instance: {
         description = "${params.description} (instance ${toString instance})";
         wantedBy = [ "multi-user.target" ];
-        after = afterUnits;
-        requires = requireUnits;
-        wants = wantsUnits;
+        after = afterUnits ++ additionalAfterUnits;
+        requires = requireUnits ++ additionalRequireUnits;
+        wants = wantsUnits ++ additionalWantsUnits;
         unitConfig = restartRateLimits // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
         path = unitPath;
         serviceConfig = mkBaseServiceConfig resources env ({

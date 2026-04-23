@@ -70,12 +70,34 @@ pkgs.testers.nixosTest {
     def sinexctl_json(args):
         """Run sinexctl command with JSON output and parse result"""
         output = sinexctl(f"{args} -f json")
-        # Handle multi-line JSON output (one object per line)
-        lines = output.strip().split('\n')
-        if len(lines) == 1:
-            return json.loads(lines[0])
-        else:
-            return [json.loads(line) for line in lines if line.strip()]
+        values = parse_json_output(output)
+        return values[0] if len(values) == 1 else values
+
+    def parse_json_output(output):
+        """Parse sinexctl JSON output, including JSON-lines list output."""
+        values = []
+        for line in output.strip().split('\n'):
+            line = line.strip()
+            if line.startswith("{") or line.startswith("["):
+                values.append(json.loads(line))
+        return values
+
+    def flatten_json_items(values, collection_keys=()):
+        """Flatten JSON-lines objects and empty/list collection output."""
+        items = []
+        for value in values:
+            if isinstance(value, list):
+                items.extend(value)
+                continue
+            if isinstance(value, dict):
+                for key in collection_keys:
+                    nested = value.get(key)
+                    if isinstance(nested, list):
+                        items.extend(nested)
+                        break
+                else:
+                    items.append(value)
+        return items
 
     def generate_test_events(count):
         """Generate filesystem events for testing"""
@@ -121,11 +143,16 @@ pkgs.testers.nixosTest {
         output = nodes_output[1]
 
         if exit_code == 0 and output.strip():
-            # Parse each line as JSON
-            for line in output.strip().split('\n'):
-                if line.strip():
-                    node = json.loads(line)
-                    print(f"Found node: {node.get('name', 'unknown')}")
+            nodes = flatten_json_items(parse_json_output(output), ("nodes", "instances"))
+            for node in nodes:
+                if isinstance(node, dict):
+                    name = node.get("name") or node.get("node_name") \
+                        or node.get("service_name") or node.get("instance_id") or "unknown"
+                    print(f"Found node: {name}")
+                else:
+                    print(f"Found node entry: {node}")
+            if not nodes:
+                print("No nodes registered yet (expected for fresh install)")
         else:
             print("No nodes registered yet (expected for fresh install)")
 

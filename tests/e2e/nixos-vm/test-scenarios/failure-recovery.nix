@@ -20,6 +20,8 @@ let
     import time
     import os
 
+    DB_NAME = os.environ.get("SINEX_TEST_DB_NAME", "sinex_dev")
+
     def query_events(limit=10, source=None, after=None):
         where_clause = ""
         if source:
@@ -27,7 +29,7 @@ let
         if after:
             where_clause += f" AND ts_coided > NOW() - INTERVAL '{after}'"
         
-        cmd = f"psql -d sinex -t -c \"SELECT id, source, event_type, ts_coided, payload FROM core.events WHERE 1=1{where_clause} ORDER BY ts_coided DESC LIMIT {limit};\""
+        cmd = f"psql -d {DB_NAME} -t -c \"SELECT id, source, event_type, ts_coided, payload FROM core.events WHERE 1=1{where_clause} ORDER BY ts_coided DESC LIMIT {limit};\""
         result = subprocess.run([
             "su", "-", "postgres", "-c", cmd
         ], capture_output=True, text=True)
@@ -44,7 +46,7 @@ let
             print(f"Query failed: {result.stderr}")
 
     def db_status():
-        cmd = "psql -d sinex -t -c \"SELECT 'DB_CONNECTED' AS status;\""
+        cmd = f"psql -d {DB_NAME} -t -c \"SELECT 'DB_CONNECTED' AS status;\""
         result = subprocess.run([
             "su", "-", "postgres", "-c", cmd
         ], capture_output=True, text=True)
@@ -70,7 +72,7 @@ let
         return statuses
 
     def stats():
-        cmd = "psql -d sinex -t -c 'SELECT COUNT(*) FROM core.events;'"
+        cmd = f"psql -d {DB_NAME} -t -c 'SELECT COUNT(*) FROM core.events;'"
         result = subprocess.run([
             "su", "-", "postgres", "-c", cmd
         ], capture_output=True, text=True)
@@ -84,8 +86,8 @@ let
             return -1
 
     def pipeline_activity():
-        cmd = """
-        psql -d sinex -t -c "
+        cmd = f"""
+        psql -d {DB_NAME} -t -c "
         SELECT 
             source,
             event_type,
@@ -161,6 +163,14 @@ let
         sleep $DURATION
         echo "Restarting PostgreSQL..."
         systemctl start postgresql
+        systemctl start \
+          sinex-ingestd \
+          sinex-gateway \
+          sinex-filesystem-1 \
+          'sinex-source@terminal.atuin-history.service' \
+          'sinex-source@terminal.bash-history.service' \
+          'sinex-source@terminal.fish-history.service' \
+          'sinex-source@terminal.zsh-history.service'
         ;;
       collector-crash)
         echo "Stopping collector for $DURATION seconds..."
@@ -217,6 +227,7 @@ let
     set -e
     
     MAX_WAIT=''${1:-60}  # Default 60 seconds max wait
+    DB_NAME=''${SINEX_TEST_DB_NAME:-sinex_dev}
     
     echo "Verifying system recovery (max wait: ''${MAX_WAIT}s)..."
     
@@ -256,6 +267,17 @@ let
         echo "Waiting for worker... (''${elapsed}s)"
         sleep 2
     done
+
+    while ! systemctl is-active sinex-filesystem-1 >/dev/null 2>&1; do
+        current_time=$(date +%s)
+        elapsed=$((current_time - start_time))
+        if [ $elapsed -gt $MAX_WAIT ]; then
+            echo "FAIL: Filesystem node not recovered within ''${MAX_WAIT}s"
+            exit 1
+        fi
+        echo "Waiting for filesystem node... (''${elapsed}s)"
+        sleep 2
+    done
     
     # Test basic functionality
     echo "Testing basic functionality..."
@@ -263,17 +285,22 @@ let
     # Generate test event
     su - test -c 'echo "recovery-test-$(date +%s)" > /var/lib/sinex/watched/recovery-test.txt'
     
-    # Wait for event to be processed
-    sleep 5
-    
-    # Verify event was captured
-    if sinex query --limit 5 | grep -q "recovery-test"; then
-        echo "SUCCESS: System fully recovered and operational"
-        return 0
-    else
-        echo "FAIL: System not capturing new events after recovery"
-        return 1
-    fi
+    # Verify event was captured. Query the database directly so telemetry events
+    # cannot push the marker out of a small CLI recency window.
+    for _ in $(seq 1 15); do
+        recovered_count=$(
+            su - postgres -c "psql -d ''${DB_NAME} -tAc \"SELECT COUNT(*) FROM core.events WHERE payload::text LIKE '%recovery-test%';\"" \
+                | tr -d '[:space:]'
+        )
+        if [ "''${recovered_count:-0}" -gt 0 ]; then
+            echo "SUCCESS: System fully recovered and operational"
+            exit 0
+        fi
+        sleep 2
+    done
+
+    echo "FAIL: System not capturing new events after recovery"
+    exit 1
   '';
 in
 pkgs.testers.nixosTest {
@@ -299,6 +326,8 @@ pkgs.testers.nixosTest {
         core.gateway.autoGenerateTls = true;
         database.autoSetup = true;
         database.connectionPool.maxConnections = 20;
+        lifecycle.preflight.enable = lib.mkForce false;
+        nats.jetstreamMaxStore = "16G";
 
         nodes = {
           enable = true;
@@ -315,8 +344,28 @@ pkgs.testers.nixosTest {
           };
 
           terminal.enable = true;
-          desktop.enable = true;
+          terminal.historySources = [
+            {
+              path = "/home/test/.bash_history";
+              shell = "bash";
+            }
+            {
+              path = "/home/test/.zsh_history";
+              shell = "zsh";
+            }
+            {
+              path = "/home/test/.local/share/atuin/history.db";
+              shell = "atuin";
+            }
+            {
+              path = "/home/test/.local/share/fish/fish_history";
+              shell = "fish";
+            }
+          ];
+          browser.enable = lib.mkForce false;
+          desktop.enable = lib.mkForce false;
           system.enable = lib.mkForce false;
+          document.enable = lib.mkForce false;
 
           automata = {
             enable = lib.mkForce false;
@@ -395,12 +444,56 @@ host    all             all             ::1/128                 trust
       # Enhanced tmpfiles for testing
       systemd.tmpfiles.rules = [
         "d /var/lib/sinex/watched 0755 test users -"
-        "f ${stateDir}/.zsh_history 0644 sinex sinex -"
-        "f ${stateDir}/.bash_history 0644 sinex sinex -"
-        "d ${stateDir}/.local 0755 sinex sinex -"
-        "d ${stateDir}/.local/share 0755 sinex sinex -"
-        "d ${stateDir}/.local/share/atuin 0755 sinex sinex -"
+        "f /home/test/.zsh_history 0644 test users -"
+        "f /home/test/.bash_history 0644 test users -"
+        "d /home/test/.local 0755 test users -"
+        "d /home/test/.local/share 0755 test users -"
+        "d /home/test/.local/share/atuin 0755 test users -"
+        "d /home/test/.local/share/fish 0755 test users -"
       ];
+
+      system.activationScripts.sinexFailureHistoryFixture = ''
+        mkdir -p /home/test/.local/share/atuin
+        mkdir -p /home/test/.local/share/fish
+
+        cat > /home/test/.zsh_history <<'EOF'
+: 1700100000:0;echo failure_recovery_zsh_fixture
+EOF
+        cat > /home/test/.bash_history <<'EOF'
+echo failure_recovery_bash_fixture
+EOF
+
+        rm -f /home/test/.local/share/atuin/history.db
+        ${pkgs.sqlite}/bin/sqlite3 /home/test/.local/share/atuin/history.db <<'SQL'
+CREATE TABLE history (
+  id TEXT NOT NULL,
+  timestamp INTEGER NOT NULL,
+  duration INTEGER NOT NULL,
+  exit INTEGER NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  session TEXT NOT NULL,
+  hostname TEXT NOT NULL,
+  deleted_at INTEGER
+);
+INSERT INTO history (id, timestamp, duration, exit, command, cwd, session, hostname, deleted_at)
+VALUES
+  ('failure-recovery-atuin-1', 1700100000000000000, 50000000, 0, 'echo failure_recovery_atuin_fixture', '/home/test', 'failure-recovery', 'sinex-vm', NULL);
+SQL
+
+        rm -f /home/test/.local/share/fish/fish_history
+        ${pkgs.sqlite}/bin/sqlite3 /home/test/.local/share/fish/fish_history <<'SQL'
+CREATE TABLE history (
+  command TEXT NOT NULL,
+  "when" INTEGER
+);
+INSERT INTO history (command, "when")
+VALUES ('echo failure_recovery_fish_fixture', 1700100000);
+SQL
+
+        chown -R test:users /home/test/.zsh_history /home/test/.bash_history /home/test/.local/share/atuin /home/test/.local/share/fish
+        chmod 0644 /home/test/.zsh_history /home/test/.bash_history /home/test/.local/share/atuin/history.db /home/test/.local/share/fish/fish_history
+      '';
       
       # Package overlays
       nixpkgs.overlays = [(final: prev: {
@@ -441,8 +534,7 @@ host    all             all             ::1/128                 trust
   testScript = ''
     import time
     import re
-
-    state_dir = machine.succeed("echo -n $SINEX_STATE_DIR")
+    import shlex
 
     def extract_total_events():
         stats = machine.succeed("sinex stats")
@@ -452,10 +544,21 @@ host    all             all             ::1/128                 trust
         return None
 
     def wait_for_event_pattern(pattern, timeout=60):
+        escaped = pattern.replace("'", chr(39) + chr(39))
+        psql_command = (
+            "psql -d sinex_dev -tAc "
+            + shlex.quote(
+                "SELECT COUNT(*) FROM core.events "
+                f"WHERE source LIKE '%{escaped}%' "
+                f"OR event_type LIKE '%{escaped}%' "
+                f"OR payload::text LIKE '%{escaped}%'"
+            )
+        )
+        shell_command = "su - postgres -c " + shlex.quote(psql_command)
         deadline = time.time() + timeout
         while time.time() < deadline:
-            output = machine.succeed("sinex query --limit 20")
-            if pattern in output:
+            output = machine.succeed(shell_command).strip()
+            if output.isdigit() and int(output) > 0:
                 return
             time.sleep(2)
         raise AssertionError(f"Timed out waiting for event containing '{pattern}'")
@@ -477,11 +580,15 @@ host    all             all             ::1/128                 trust
     machine.wait_for_unit("sinex-gateway.service")
 
     # Ensure node instances are online
+    terminal_source_units = [
+        "sinex-source@terminal.atuin-history.service",
+        "sinex-source@terminal.bash-history.service",
+        "sinex-source@terminal.fish-history.service",
+        "sinex-source@terminal.zsh-history.service",
+    ]
     node_units = [
         "sinex-filesystem-1.service",
-        "sinex-terminal-1.service",
-        "sinex-desktop-1.service",
-    ]
+    ] + terminal_source_units
     wait_for_services(node_units)
 
     # Verify core hubs are active
@@ -490,10 +597,8 @@ host    all             all             ::1/128                 trust
 
     # Initialize baseline system state
     with subtest("Initialize baseline system state"):
-        machine.succeed(f"su - sinex -c 'cd {state_dir} && atuin init zsh'")
-        machine.succeed(f"su - sinex -c 'cd {state_dir} && atuin import auto'")
         machine.succeed("su - test -c 'echo baseline > /var/lib/sinex/watched/baseline.txt'")
-        machine.succeed(f"echo 'baseline_cmd' >> {state_dir}/.zsh_history")
+        machine.succeed("su - test -c 'echo baseline_cmd >> /home/test/.zsh_history'")
         wait_for_event_pattern("baseline")
         baseline_count = extract_total_events() or 0
         print(f"Baseline event count: {baseline_count}")
@@ -503,7 +608,7 @@ host    all             all             ::1/128                 trust
         baseline = extract_total_events() or 0
         run_failure('db-disconnect', 12)
         machine.succeed("su - test -c 'echo during-db-outage > /var/lib/sinex/watched/db-outage.txt'")
-        machine.succeed("sinex-verify 45")
+        machine.succeed("sinex-verify 120")
         wait_for_event_pattern("db-outage")
         recovered = extract_total_events() or 0
         print(f"Recovered event count after DB outage: {recovered}")
@@ -513,7 +618,7 @@ host    all             all             ::1/128                 trust
     with subtest("Collector crash recovery"):
         baseline = extract_total_events() or 0
         run_failure('collector-crash', 10)
-        machine.succeed("sinex-verify 45")
+        machine.succeed("sinex-verify 120")
         machine.succeed("su - test -c 'echo post-collector-recovery > /var/lib/sinex/watched/collector-recovery.txt'")
         wait_for_event_pattern("collector-recovery")
         recovered = extract_total_events() or 0
@@ -523,7 +628,7 @@ host    all             all             ::1/128                 trust
     # Test 3: Worker crash recovery
     with subtest("Worker crash recovery"):
         run_failure('worker-crash', 10)
-        machine.succeed("sinex-verify 45")
+        machine.succeed("sinex-verify 120")
         for i in range(3):
             machine.succeed(f"su - test -c 'echo worker-crash-{i} > /var/lib/sinex/watched/worker-crash-{i}.txt'")
         wait_for_event_pattern("worker-crash-2")

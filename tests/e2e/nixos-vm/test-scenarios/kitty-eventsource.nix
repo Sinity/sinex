@@ -43,6 +43,7 @@ pkgs.testers.nixosTest {
       kitty
       zsh
       bash
+      sqlite
       # For generating terminal activity
       coreutils
       findutils
@@ -88,7 +89,56 @@ pkgs.testers.nixosTest {
       "d /tmp/kitty-logs 0755 testuser users -"
       "d /home/testuser/.config 0755 testuser users -"
       "d /home/testuser/.config/kitty 0755 testuser users -"
+      "f /home/testuser/.zsh_history 0644 testuser users -"
+      "f /home/testuser/.bash_history 0644 testuser users -"
+      "d /home/testuser/.local 0755 testuser users -"
+      "d /home/testuser/.local/share 0755 testuser users -"
+      "d /home/testuser/.local/share/atuin 0755 testuser users -"
+      "d /home/testuser/.local/share/fish 0755 testuser users -"
     ];
+
+    system.activationScripts.sinexKittyHistoryFixtures = ''
+      mkdir -p /home/testuser/.local/share/atuin
+      mkdir -p /home/testuser/.local/share/fish
+
+      cat > /home/testuser/.zsh_history <<'EOF'
+: 1700100000:0;echo kitty_zsh_fixture
+EOF
+      cat > /home/testuser/.bash_history <<'EOF'
+echo kitty_bash_fixture
+EOF
+
+      rm -f /home/testuser/.local/share/atuin/history.db
+      ${pkgs.sqlite}/bin/sqlite3 /home/testuser/.local/share/atuin/history.db <<'SQL'
+CREATE TABLE history (
+  id TEXT NOT NULL,
+  timestamp INTEGER NOT NULL,
+  duration INTEGER NOT NULL,
+  exit INTEGER NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  session TEXT NOT NULL,
+  hostname TEXT NOT NULL,
+  deleted_at INTEGER
+);
+INSERT INTO history (id, timestamp, duration, exit, command, cwd, session, hostname, deleted_at)
+VALUES
+  ('kitty-atuin-1', 1700100000000000000, 50000000, 0, 'echo kitty_atuin_fixture', '/home/testuser', 'kitty-test', 'sinex-vm', NULL);
+SQL
+
+      rm -f /home/testuser/.local/share/fish/fish_history
+      ${pkgs.sqlite}/bin/sqlite3 /home/testuser/.local/share/fish/fish_history <<'SQL'
+CREATE TABLE history (
+  command TEXT NOT NULL,
+  "when" INTEGER
+);
+INSERT INTO history (command, "when")
+VALUES ('echo kitty_fish_fixture', 1700100000);
+SQL
+
+      chown -R testuser:users /home/testuser/.zsh_history /home/testuser/.bash_history /home/testuser/.local/share/atuin /home/testuser/.local/share/fish
+      chmod 0644 /home/testuser/.zsh_history /home/testuser/.bash_history /home/testuser/.local/share/atuin/history.db /home/testuser/.local/share/fish/fish_history
+    '';
     
     # Kitty service for testing (runs as test user)
       systemd.services.kitty-test-daemon = {
@@ -139,7 +189,17 @@ EOF
   };
 
   testScript = ''
+    import shlex
+
     start_all()
+
+    def sql_literal(value):
+        quote = chr(39)
+        return quote + value.replace(quote, quote + quote) + quote
+
+    def psql(sql):
+        psql_command = "psql -d sinex_dev -tAc " + shlex.quote(sql)
+        return machine.succeed("su - postgres -c " + shlex.quote(psql_command))
     
     def wait_for_sinex_ready():
         machine.wait_for_unit("postgresql.service", timeout=60)
@@ -148,27 +208,24 @@ EOF
     
     def get_event_count(event_type=None):
         if event_type:
-            query = f"SELECT COUNT(*) FROM core.events WHERE event_type = '{event_type}';"
+            query = f"SELECT COUNT(*) FROM core.events WHERE event_type = {sql_literal(event_type)};"
         else:
             query = "SELECT COUNT(*) FROM core.events;"
-        result = machine.succeed(
-            f"su - postgres -c 'psql -d sinex -t -c \"{query}\"'"
-        )
+        result = psql(query)
         return int(result.strip())
     
     def get_kitty_events(event_type=None):
         if event_type:
-            where_clause = f"WHERE source = 'terminal.kitty' AND event_type = '{event_type}'"
+            where_clause = f"WHERE source = {sql_literal('shell.kitty')} AND event_type = {sql_literal(event_type)}"
         else:
-            where_clause = "WHERE source = 'terminal.kitty'"
-        result = machine.succeed(
-            f"su - postgres -c 'psql -d sinex -t -c \"SELECT event_type, payload FROM core.events {where_clause} ORDER BY ts_coided DESC LIMIT 10;\"'"
-        )
-        return result.strip()
+            where_clause = f"WHERE source = {sql_literal('shell.kitty')}"
+        return psql(
+            f"SELECT event_type, payload FROM core.events {where_clause} ORDER BY ts_coided DESC LIMIT 10;"
+        ).strip()
     
     def get_kitty_event_count(event_type):
-        result = machine.succeed(
-            f"su - postgres -c 'psql -d sinex -t -c \"SELECT COUNT(*) FROM core.events WHERE source = '\"'\"'terminal.kitty'\"'\"' AND event_type = '\"'\"'{event_type}'\"'\"';\"'"
+        result = psql(
+            f"SELECT COUNT(*) FROM core.events WHERE source = {sql_literal('shell.kitty')} AND event_type = {sql_literal(event_type)};"
         )
         return int(result.strip())
     
@@ -204,7 +261,7 @@ EOF
     # Test Kitty EventSource integration
     with subtest("Kitty EventSource detection"):
         initial_count = get_event_count()
-        initial_kitty_count = get_event_count('command.executed')
+        initial_kitty_count = get_kitty_event_count('command.executed')
         
         print(f"Initial event count: {initial_count}")
         print(f"Initial Kitty command events: {initial_kitty_count}")
@@ -240,7 +297,7 @@ EOF
         
         # Check for events in database
         final_count = get_event_count()
-        final_kitty_count = get_event_count('command.executed')
+        final_kitty_count = get_kitty_event_count('command.executed')
         
         print(f"Final event count: {final_count}")
         print(f"Final Kitty command events: {final_kitty_count}")
@@ -418,8 +475,8 @@ EOF
     with subtest("Kitty event schema validation"):
         # Check if we have any Kitty events with proper structure
         try:
-            kitty_event_structure = machine.succeed(
-                "su - postgres -c 'psql -d sinex -t -c \"SELECT jsonb_object_keys(payload) FROM core.events WHERE source = '\"'\"'shell.kitty'\"'\"' LIMIT 1;\"'"
+            kitty_event_structure = psql(
+                f"SELECT jsonb_object_keys(payload) FROM core.events WHERE source = {sql_literal('shell.kitty')} LIMIT 1;"
             )
             
             if kitty_event_structure.strip():
@@ -448,9 +505,7 @@ EOF
         print(f"Total events captured during test: {total_events}")
         
         # Query for all event sources to verify system health
-        sources = machine.succeed(
-            "su - postgres -c 'psql -d sinex -t -c \"SELECT DISTINCT source FROM core.events ORDER BY source;\"'"
-        )
+        sources = psql("SELECT DISTINCT source FROM core.events ORDER BY source;")
         print(f"Active event sources:\n{sources}")
         
         if 'shell.kitty' in sources:
