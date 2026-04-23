@@ -234,10 +234,8 @@ mod tests {
             Some("terminal"),
         )
         .await?;
-        let coordination = NodeCoordination::from_runtime(
-            &harness.runtime,
-            "source-unit-instance".to_string(),
-        )?;
+        let coordination =
+            NodeCoordination::from_runtime(&harness.runtime, "source-unit-instance".to_string())?;
 
         assert_eq!(coordination.instance.service_name, "terminal.atuin-history");
 

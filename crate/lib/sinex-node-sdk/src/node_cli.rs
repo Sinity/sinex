@@ -447,7 +447,11 @@ fn edge_mode_enabled(database_url_supplied: bool) -> bool {
 fn default_service_name(args: &NodeCli) -> String {
     args.service_name
         .clone()
-        .or_else(|| args.source_unit.as_ref().map(|unit| format!("sinex-{unit}")))
+        .or_else(|| {
+            args.source_unit
+                .as_ref()
+                .map(|unit| format!("sinex-{unit}"))
+        })
         .unwrap_or_else(|| "sinex-node".to_string())
 }
 
@@ -981,14 +985,12 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
             return Ok(());
         };
         match node_config.get(key).and_then(serde_json::Value::as_str) {
-            Some(existing) if existing != value => {
-                Err(SinexError::configuration(format!(
-                    "`--{}` conflicts with node_config.{key}",
-                    key.replace('_', "-")
-                ))
-                .with_context("cli_value", value.to_string())
-                .with_context("config_value", existing.to_string()))
-            }
+            Some(existing) if existing != value => Err(SinexError::configuration(format!(
+                "`--{}` conflicts with node_config.{key}",
+                key.replace('_', "-")
+            ))
+            .with_context("cli_value", value.to_string())
+            .with_context("config_value", existing.to_string())),
             Some(_) => Ok(()),
             None => {
                 node_config.insert(key.to_string(), serde_json::json!(value));
@@ -1046,9 +1048,9 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
 )]
 mod tests {
     use super::{
-        NatsArgs, NodeCli, NodeCommand, edge_mode_enabled, handle_export_result, parse_checkpoint,
-        render_cli_value, render_optional_cli_timestamp, resolve_primary_database_url,
-        unavailable_section, validate_identity_token, default_service_name,
+        NatsArgs, NodeCli, NodeCommand, default_service_name, edge_mode_enabled,
+        handle_export_result, parse_checkpoint, render_cli_value, render_optional_cli_timestamp,
+        resolve_primary_database_url, unavailable_section, validate_identity_token,
     };
     use crate::SinexError;
     use crate::runtime::stream::Checkpoint;

@@ -3787,7 +3787,11 @@ mod tests {
             .filter_for_source_unit(TERMINAL_ATUIN_SOURCE_UNIT_ID)
             .expect_err("unmatched source unit must fail configuration");
 
-        assert!(error.to_string().contains("matched no configured history sources"));
+        assert!(
+            error
+                .to_string()
+                .contains("matched no configured history sources")
+        );
         Ok(())
     }
 

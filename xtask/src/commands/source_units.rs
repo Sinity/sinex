@@ -184,7 +184,9 @@ fn execute_check(output: Option<&Path>, ctx: &CommandContext) -> Result<CommandR
             code: "SOURCE_UNIT_MANIFEST_INVALID".to_string(),
             message: "source-unit descriptors or generated manifest are invalid".to_string(),
             location: Some(dest.display().to_string()),
-            suggestion: Some("Run `xtask source-units render` after fixing descriptors".to_string()),
+            suggestion: Some(
+                "Run `xtask source-units render` after fixing descriptors".to_string(),
+            ),
         })
         .with_message("source-unit manifest check failed")
     } else {
