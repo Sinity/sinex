@@ -1311,6 +1311,17 @@ fn choose_watch_strategy(
     Err(error)
 }
 
+fn notify_error_is_skippable_filtered_target(error: &notify::Error) -> bool {
+    match &error.kind {
+        notify::ErrorKind::PathNotFound => true,
+        notify::ErrorKind::Io(error) => matches!(
+            error.kind(),
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+        ),
+        _ => false,
+    }
+}
+
 fn add_filtered_watch_targets(
     watcher: &mut RecommendedWatcher,
     watched_targets: &mut HashSet<PathBuf>,
@@ -1318,13 +1329,23 @@ fn add_filtered_watch_targets(
 ) -> NodeResult<()> {
     for target in targets {
         if watched_targets.insert(target.clone()) {
-            watcher
-                .watch(&target, RecursiveMode::NonRecursive)
-                .map_err(|error| {
-                    SinexError::lifecycle("Failed to register filtered native watcher target")
-                        .with_source(error)
-                        .with_path(target.display())
-                })?;
+            if let Err(error) = watcher.watch(&target, RecursiveMode::NonRecursive) {
+                if notify_error_is_skippable_filtered_target(&error) {
+                    watched_targets.remove(&target);
+                    warn!(
+                        path = %target.display(),
+                        error = %error,
+                        "Skipping filtered native watcher target that became unavailable after survey"
+                    );
+                    continue;
+                }
+
+                return Err(SinexError::lifecycle(
+                    "Failed to register filtered native watcher target",
+                )
+                .with_source(error)
+                .with_path(target.display()));
+            }
         }
     }
 
@@ -2712,6 +2733,29 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("kernel_max_user_watches"));
         assert!(message.contains("effective_max_watches"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filtered_watch_target_registration_errors_are_classified() -> TestResult<()> {
+        let permission_denied = notify::Error::io(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "permission denied",
+        ));
+        let io_not_found =
+            notify::Error::io(std::io::Error::new(std::io::ErrorKind::NotFound, "missing"));
+        let path_not_found = notify::Error::path_not_found();
+        let watch_limit = notify::Error::new(notify::ErrorKind::MaxFilesWatch);
+
+        assert!(notify_error_is_skippable_filtered_target(
+            &permission_denied
+        ));
+        assert!(notify_error_is_skippable_filtered_target(&io_not_found));
+        assert!(notify_error_is_skippable_filtered_target(&path_not_found));
+        assert!(
+            !notify_error_is_skippable_filtered_target(&watch_limit),
+            "watch exhaustion must remain fatal"
+        );
         Ok(())
     }
 
