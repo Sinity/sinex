@@ -1964,6 +1964,34 @@ impl<'a> EventRepository<'a> {
             current_depth += 1;
         }
 
+        if current_depth >= max_depth {
+            // Mirror of core.expand_cascade: probe whether we would have
+            // inserted anything at the next depth and refuse to silently
+            // truncate the cascade if so.
+            let pending = sqlx::query_scalar::<_, i64>(&format!(
+                r"
+                SELECT COUNT(*)::BIGINT
+                FROM {src} s
+                JOIN {table_name} ct ON s.source_event_ids && ARRAY[ct.id]
+                WHERE ct.depth = $1
+                AND NOT EXISTS (SELECT 1 FROM {table_name} ex WHERE ex.id = s.id)
+                "
+            ))
+            .bind(current_depth)
+            .fetch_one(self.pool)
+            .await
+            .map_err(|e| db_error(e, "probe cascade truncation"))?;
+
+            if pending > 0 {
+                return Err(db_error(
+                    sqlx::Error::Protocol(format!(
+                        "cascade exceeds max depth {max_depth} ({pending} pending children at limit)"
+                    )),
+                    "cascade truncation",
+                ));
+            }
+        }
+
         Ok(current_depth as usize)
     }
 

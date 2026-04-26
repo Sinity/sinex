@@ -1772,7 +1772,11 @@ impl ReplayExecutionEngine {
             .map_err(|e| eyre!("{e}"))
             .wrap_err("Failed to populate replay cascade roots")?;
         repo_tx
-            .expand_cascade(&table_name, 64)
+            .expand_cascade(
+                &table_name,
+                i32::try_from(crate::cascade_analyzer::DEFAULT_CASCADE_MAX_DEPTH)
+                    .unwrap_or(i32::MAX),
+            )
             .await
             .map_err(|e| eyre!("{e}"))
             .wrap_err("Failed to expand replay cascade")?;
