@@ -552,7 +552,7 @@ fn render_events(f: &mut Frame, area: Rect, app: &App) {
 fn render_dlq(f: &mut Frame, area: Rect, app: &App) {
     let (block_title, items) = match &app.dlq_stats {
         Some(stats) if stats.total_messages > 0 => {
-            let title = format!("Dead Letter Queue ({} messages) ⚠", stats.total_messages);
+            let title = format!("Raw Ingest DLQ ({} messages) ⚠", stats.total_messages);
             let items = vec![
                 ListItem::new(format!("Total Messages: {}", stats.total_messages))
                     .style(Style::default().fg(Color::Yellow)),
@@ -560,22 +560,23 @@ fn render_dlq(f: &mut Frame, area: Rect, app: &App) {
                 ListItem::new(format!("First Sequence: {}", stats.first_seq)),
                 ListItem::new(format!("Last Sequence: {}", stats.last_seq)),
                 ListItem::new(""),
-                ListItem::new("Use 'sinexctl dlq peek' to inspect messages."),
+                ListItem::new("Use 'sinexctl dlq peek' to inspect raw-ingest failures."),
                 ListItem::new("Use 'sinexctl dlq requeue --all' to retry."),
             ];
             (title, items)
         }
         Some(_) => {
-            let title = "Dead Letter Queue (empty) ✓".to_string();
+            let title = "Raw Ingest DLQ (empty) ✓".to_string();
             let items = vec![
-                ListItem::new("No messages in DLQ.").style(Style::default().fg(Color::Green)),
+                ListItem::new("No messages in the raw-ingest DLQ.")
+                    .style(Style::default().fg(Color::Green)),
                 ListItem::new(""),
-                ListItem::new("Messages that fail processing appear here."),
+                ListItem::new("Messages that fail raw ingest appear here."),
             ];
             (title, items)
         }
         None => {
-            let title = "Dead Letter Queue".to_string();
+            let title = "Raw Ingest DLQ".to_string();
             let items = vec![ListItem::new("Loading...")];
             (title, items)
         }

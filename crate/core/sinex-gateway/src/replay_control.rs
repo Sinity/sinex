@@ -21,6 +21,7 @@ use sinex_node_sdk::runtime::stream::{
 use sinex_primitives::domain::{EventSource, EventType, NodeName};
 use sinex_primitives::environment::{SinexEnvironment, environment};
 use sinex_primitives::events::{Event as StoredEvent, Provenance};
+use sinex_primitives::nats::{NatsTrafficClass, insert_traffic_class_header};
 use sinex_primitives::{Id, SinexError, Timestamp, Uuid};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -764,7 +765,12 @@ impl ReplayControlServer {
         if let Some(reply_subject) = message.reply {
             match serde_json::to_vec(&response) {
                 Ok(bytes) => {
-                    if let Err(err) = client.publish(reply_subject, bytes.into()).await {
+                    let mut headers = async_nats::HeaderMap::new();
+                    insert_traffic_class_header(&mut headers, NatsTrafficClass::Control);
+                    if let Err(err) = client
+                        .publish_with_headers(reply_subject, headers, bytes.into())
+                        .await
+                    {
                         error!(?err, "Failed to send replay control response");
                     }
                 }
@@ -1920,9 +1926,15 @@ impl ReplayExecutionEngine {
             match serde_json::to_vec(&invalidation) {
                 Ok(payload) => {
                     self.maybe_fail_scope_invalidation_publish()?;
+                    let mut headers = async_nats::HeaderMap::new();
+                    insert_traffic_class_header(&mut headers, NatsTrafficClass::Control);
                     if let Err(e) = self
                         .nats_client
-                        .publish(invalidation_subject.clone(), payload.into())
+                        .publish_with_headers(
+                            invalidation_subject.clone(),
+                            headers,
+                            payload.into(),
+                        )
                         .await
                     {
                         return Err(eyre!(
