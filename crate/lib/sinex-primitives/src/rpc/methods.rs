@@ -6,7 +6,6 @@ pub const SYSTEM_VERSION: &str = "system.version";
 pub const SYSTEM_HEALTH: &str = "system.health";
 
 // Events (composable query engine)
-pub const EVENTS_INGEST: &str = "events.ingest";
 pub const EVENTS_QUERY: &str = "events.query";
 pub const EVENTS_LINEAGE: &str = "events.lineage";
 
