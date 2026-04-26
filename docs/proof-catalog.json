@@ -450,6 +450,20 @@
       "type_name": "sinex_primitives::events::payloads::automaton::ActivityWindowSummaryPayload"
     },
     {
+      "subject": "event_payload:derived.daily-summarizer/activity.summary.daily/1.0.0",
+      "source": "derived.daily-summarizer",
+      "event_type": "activity.summary.daily",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::automaton::ActivityDailySummaryPayload"
+    },
+    {
+      "subject": "event_payload:derived.hourly-summarizer/activity.summary.hourly/1.0.0",
+      "source": "derived.hourly-summarizer",
+      "event_type": "activity.summary.hourly",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::automaton::ActivityHourlySummaryPayload"
+    },
+    {
       "subject": "event_payload:derived.session-detector/activity.session.boundary/1.0.0",
       "source": "derived.session-detector",
       "event_type": "activity.session.boundary",
@@ -1449,6 +1463,11 @@
       "subject": "xtask_command:infra",
       "path": "infra",
       "about": "Manage local infrastructure (Postgres, NATS, VMs)"
+    },
+    {
+      "subject": "xtask_command:infra.flake-stage",
+      "path": "infra.flake-stage",
+      "about": "Stage a flake-safe checkout copy for local Nix builds and deploys"
     },
     {
       "subject": "xtask_command:infra.logs",

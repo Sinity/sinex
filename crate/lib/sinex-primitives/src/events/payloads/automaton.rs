@@ -179,3 +179,52 @@ pub struct ActivitySessionBoundaryPayload {
     pub activity_source_counts: BTreeMap<ActivitySourceKind, u64>,
     pub primary_source: ActivitySourceKind,
 }
+
+/// Completed hourly activity rollup derived from bounded activity windows.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(
+    source = "derived.hourly-summarizer",
+    event_type = "activity.summary.hourly",
+    version = "1.0.0"
+)]
+pub struct ActivityHourlySummaryPayload {
+    pub hour_id: String,
+    pub hour_start: Timestamp,
+    pub hour_end: Timestamp,
+    pub duration_secs: u64,
+    pub window_count: u64,
+    pub event_count: u64,
+    pub source_count: u64,
+    pub sources: Vec<String>,
+    pub top_sources: Vec<String>,
+    pub source_window_counts: BTreeMap<String, u64>,
+    pub activity_sources: Vec<ActivitySourceKind>,
+    pub activity_source_counts: BTreeMap<ActivitySourceKind, u64>,
+    pub focus_time_secs_by_source: BTreeMap<ActivitySourceKind, u64>,
+    pub primary_source: ActivitySourceKind,
+}
+
+/// Completed daily activity rollup derived from hourly activity summaries.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(
+    source = "derived.daily-summarizer",
+    event_type = "activity.summary.daily",
+    version = "1.0.0"
+)]
+pub struct ActivityDailySummaryPayload {
+    pub day_id: String,
+    pub day_start: Timestamp,
+    pub day_end: Timestamp,
+    pub duration_secs: u64,
+    pub hour_count: u64,
+    pub window_count: u64,
+    pub event_count: u64,
+    pub source_count: u64,
+    pub sources: Vec<String>,
+    pub top_sources: Vec<String>,
+    pub source_window_counts: BTreeMap<String, u64>,
+    pub activity_sources: Vec<ActivitySourceKind>,
+    pub activity_source_counts: BTreeMap<ActivitySourceKind, u64>,
+    pub focus_time_secs_by_source: BTreeMap<ActivitySourceKind, u64>,
+    pub primary_source: ActivitySourceKind,
+}
