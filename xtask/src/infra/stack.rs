@@ -4,7 +4,7 @@ use color_eyre::eyre::{Result, WrapErr, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sinex_db::repositories::schema_management::{SchemaManagementRepository, SchemaSyncResult};
-use sinex_primitives::events::schema_registry::generate_all_schemas;
+use sinex_primitives::events::schema_registry::generate_schema_bundle;
 use sinex_schema::apply::SHARED_ACCESS_ROLES;
 use sqlx::postgres::PgPoolOptions;
 use std::fs;
@@ -497,13 +497,13 @@ pub fn sync_event_payload_schemas_for_database_url(
             .wrap_err("Failed to connect for event payload schema synchronization")?;
 
         let repo = SchemaManagementRepository::new(&pool);
-        let discovered_schemas = generate_all_schemas()
+        let schema_bundle = generate_schema_bundle()
             .map_err(|error| color_eyre::eyre::eyre!("{error}"))
-            .wrap_err("Failed to generate discovered event payload schemas")?;
+            .wrap_err("Failed to generate discovered event payload schema bundle")?;
         let result = repo
-            .sync_discovered_schemas(discovered_schemas)
+            .sync_schema_bundle(schema_bundle.into_entries())
             .await
-            .wrap_err("Failed to synchronize discovered event payload schemas")?;
+            .wrap_err("Failed to synchronize discovered event payload schema bundle")?;
         pool.close().await;
         Ok::<_, color_eyre::Report>(result)
     })?;

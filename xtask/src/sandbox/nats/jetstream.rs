@@ -34,7 +34,7 @@ use std::time::Duration;
 ///
 /// Encapsulates the common pattern of:
 /// - Creating a `JetStreamTopology`
-/// - Waiting for all streams (events, confirmations, DLQ) to be ready
+/// - Waiting for all streams (events, confirmations, raw DLQ, processing failures) to be ready
 /// - Providing DLQ state assertions
 pub struct JetStreamTestHelper {
     nats: Arc<EphemeralNats>,
@@ -48,7 +48,7 @@ impl JetStreamTestHelper {
     ///
     /// This will:
     /// 1. Create a `JetStreamTopology` with namespaced stream/consumer names
-    /// 2. Wait for all three streams (events, confirmations, DLQ) to be ready
+    /// 2. Wait for all required streams to be ready
     ///
     /// # Arguments
     /// * `ctx` - Test context (must have NATS enabled via `with_nats()`)
@@ -88,11 +88,10 @@ impl JetStreamTestHelper {
         };
 
         // Create streams before waiting
-        let env = ctx.env();
         let _ = js
             .get_or_create_stream(async_nats::jetstream::stream::Config {
                 name: topology.events_stream.clone(),
-                subjects: vec![env.nats_subject_with_namespace(Some(&namespace), "events.>")],
+                subjects: vec![topology.events_subject.clone()],
                 ..Default::default()
             })
             .await
@@ -101,7 +100,7 @@ impl JetStreamTestHelper {
         let _ = js
             .get_or_create_stream(async_nats::jetstream::stream::Config {
                 name: topology.confirmations_stream.clone(),
-                subjects: vec![format!("{}_CONFIRMATIONS", topology.events_stream)],
+                subjects: vec![topology.confirmations_subject.clone()],
                 ..Default::default()
             })
             .await
@@ -110,11 +109,20 @@ impl JetStreamTestHelper {
         let _ = js
             .get_or_create_stream(async_nats::jetstream::stream::Config {
                 name: topology.dlq_stream.clone(),
-                subjects: vec![format!("{}_DLQ", topology.events_stream)],
+                subjects: vec![topology.dlq_subject.clone()],
                 ..Default::default()
             })
             .await
             .wrap_err("Failed to create DLQ stream")?;
+
+        let _ = js
+            .get_or_create_stream(async_nats::jetstream::stream::Config {
+                name: topology.processing_failures_stream.clone(),
+                subjects: vec![topology.processing_failures_subject.clone()],
+                ..Default::default()
+            })
+            .await
+            .wrap_err("Failed to create processing-failures stream")?;
 
         // Wait for all streams to be ready
         helper.wait_for_all_streams().await?;
@@ -140,7 +148,7 @@ impl JetStreamTestHelper {
         &self.nats
     }
 
-    /// Wait for all three streams (events, confirmations, DLQ) to be ready.
+    /// Wait for all required streams (events, confirmations, raw DLQ, processing failures) to be ready.
     ///
     /// This is called automatically in `new()`, but can be called again
     /// if streams need to be recreated during a test.
@@ -161,6 +169,14 @@ impl JetStreamTestHelper {
             .wait_for_stream(&self.js, &self.topology.dlq_stream, self.stream_timeout)
             .await
             .wrap_err("Failed to wait for DLQ stream")?;
+        self.nats
+            .wait_for_stream(
+                &self.js,
+                &self.topology.processing_failures_stream,
+                self.stream_timeout,
+            )
+            .await
+            .wrap_err("Failed to wait for processing-failures stream")?;
         Ok(())
     }
 
@@ -209,10 +225,10 @@ impl JetStreamTestHelper {
         Ok(state)
     }
 
-    /// Assert that the DLQ is empty.
+    /// Assert that the raw-ingest DLQ is empty.
     ///
     /// Use this at the end of happy-path tests to verify no events
-    /// were routed to the dead letter queue.
+    /// were routed to the raw-ingest dead-letter queue.
     pub async fn assert_dlq_empty(&self) -> TestResult<()> {
         let state = self.dlq_state().await?;
         if state.messages != 0 {
