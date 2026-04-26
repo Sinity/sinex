@@ -212,11 +212,19 @@ impl<T> EventBuilder<T, HasProvenance> {
 
 // Provenance types with flat wire-format serialization.
 
-/// Provenance information tracking the origin of an event
+/// Provenance information tracking the origin of an event.
 ///
 /// Serializes to flat fields for the NATS wire format:
 /// - Material: `{"source_material_id": "...", "anchor_byte": 0, ...}`
 /// - Synthesis: `{"source_event_ids": ["...", "..."]}`
+///
+/// **Construct via [`Provenance::from_material`] or
+/// [`Provenance::from_synthesis`]**, not via struct literals. The variant
+/// fields are `pub` for pattern matching but raw struct construction
+/// bypasses the [`EventBuilder`] typestate guarantees that the
+/// architecture relies on (see issue #559). The XOR provenance check at
+/// the database boundary still catches invalid shapes, but earlier surface
+/// area is preferable.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Provenance {
     /// Event derived from source material (first-order event)
