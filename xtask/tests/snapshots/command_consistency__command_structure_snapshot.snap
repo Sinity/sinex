@@ -1,6 +1,5 @@
 ---
 source: xtask/tests/command_consistency.rs
-assertion_line: 29
 expression: json
 ---
 {
@@ -1536,6 +1535,36 @@ expression: json
               ]
             }
           ]
+        },
+        {
+          "about": "Stage a flake-safe checkout copy for local Nix builds and deploys",
+          "args": [
+            {
+              "global": false,
+              "help": "Output directory for the staged checkout. Defaults to a unique /tmp path",
+              "long": "output-dir",
+              "name": "output_dir",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Replace an existing output directory instead of failing",
+              "long": "force",
+              "name": "force",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "flake-stage",
+          "subcommands": []
         }
       ]
     },

@@ -6,14 +6,14 @@
       "event_type": "command.canonical",
       "version": "2.0.0",
       "path": "canonical.terminal/command.canonical.json",
-      "content_hash": "e793b236113209a149fcbadd92593559b0142e4b9dbc4a3115dece89b3c3a329"
+      "content_hash": "84492d6367d8023940381b46a02febe956e56cd7c50653793788ccf7c4108858"
     },
     {
       "source": "sinex.ingestd",
       "event_type": "batch.stats",
       "version": "2.0.0",
       "path": "sinex.ingestd/batch.stats.json",
-      "content_hash": "42fd69311db898683bf4b6398b16bab45efe46261144a0675d7bf6322724ab01"
+      "content_hash": "ad8ac8d8acb587a40e6c0a95e6eab21aaa38dd8e9d64b5f905c83a4ba70f5d11"
     }
   ]
 }
