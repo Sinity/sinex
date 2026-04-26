@@ -28,7 +28,6 @@
 
 #[cfg(feature = "messaging")]
 pub mod acquisition_manager;
-pub mod api_poller;
 #[cfg(feature = "messaging")]
 pub mod automaton_base;
 pub mod batch_importer;
