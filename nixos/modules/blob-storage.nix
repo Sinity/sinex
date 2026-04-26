@@ -7,7 +7,6 @@ let
   inherit (systemdHardening) mkHelperServiceConfig;
   cfg = config.services.sinex;
   blob = cfg.storage.blob;
-  dlq = cfg.storage.dlq;
   maintenanceCfg = cfg.lifecycle.maintenance;
   repoPath = blob.repositoryPath;
   repositoryUser = cfg.users.nodes;
