@@ -13,7 +13,7 @@ use crate::ids::deterministic_event_id;
 use crate::processing::{ErrorAction, PersistedState};
 use crate::runtime::stream::{
     Checkpoint, EventEmitter, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType,
-    ProcessingStats, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
+    ProcessingStats, RuntimeDrainController, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
 };
 use crate::shutdown::ShutdownConfig;
 use crate::{NodeResult, SinexError};
@@ -30,18 +30,17 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 
 const INVALIDATION_QUERY_PAGE_SIZE: i64 = Pagination::MAX_LIMIT;
 const DERIVED_OUTPUT_PARENT_WARN_THRESHOLD: usize = 100;
 const DERIVED_OUTPUT_PARENT_HARD_LIMIT: usize = 1000;
 
-fn signal_shutdown_channel(shutdown_tx: &watch::Sender<bool>, node_name: &str) -> bool {
-    if shutdown_tx.send(true).is_err() {
+fn request_runtime_drain(drain: &RuntimeDrainController, node_name: &str) -> bool {
+    if !drain.request_drain() && !drain.is_requested() {
         warn!(
             node = node_name,
-            "Derived-node shutdown receiver was already dropped before graceful shutdown"
+            "Derived-node runtime drain signal could not be delivered before graceful shutdown"
         );
         return false;
     }
@@ -168,7 +167,7 @@ where
     runtime: Option<NodeRuntimeState>,
     checkpoint_manager: Option<Arc<CheckpointManager>>,
     event_emitter: Option<EventEmitter>,
-    shutdown_tx: Option<watch::Sender<bool>>,
+    shutdown_tx: Option<Arc<RuntimeDrainController>>,
     host: String,
     events_since_checkpoint: u64,
     last_checkpoint_time: Instant,
@@ -396,14 +395,14 @@ where
         Ok(collected)
     }
 
-    async fn send_to_dlq_or_fail(
+    async fn send_to_processing_failure_queue_or_fail(
         &self,
         event: &Event<JsonValue>,
         error: &crate::NodeLogicError,
     ) -> NodeResult<()> {
         let Some(runtime) = self.runtime.as_ref() else {
             return Err(SinexError::lifecycle(
-                "derived-node requested DLQ but no transport runtime is available",
+                "derived-node requested processing-failure routing but no transport runtime is available",
             )
             .with_context("node", self.node.name())
             .with_context("event_type", event.event_type.as_ref())
@@ -412,15 +411,17 @@ where
         };
         let transport = runtime.handles().transport();
         transport
-            .send_to_dlq(event, &error.to_string(), self.node.name())
+            .send_to_processing_failure_queue(event, &error.to_string(), self.node.name())
             .await
-            .map_err(|dlq_err| {
-                SinexError::processing("failed to send derived-node event to DLQ")
+            .map_err(|failure_err| {
+                SinexError::processing(
+                    "failed to send derived-node event to processing-failure stream",
+                )
                     .with_context("node", self.node.name())
                     .with_context("event_type", event.event_type.as_ref())
                     .with_context("source", event.source.as_ref())
                     .with_context("reason", error.to_string())
-                    .with_std_error(&dlq_err)
+                    .with_std_error(&failure_err)
             })
     }
 
@@ -972,8 +973,9 @@ where
                         self.observe_runtime_snapshot().await;
                         Ok(Vec::new())
                     }
-                    ErrorAction::SendToDLQ => {
-                        self.send_to_dlq_or_fail(&event, &e).await?;
+                    ErrorAction::SendToProcessingFailureQueue => {
+                        self.send_to_processing_failure_queue_or_fail(&event, &e)
+                            .await?;
                         self.record_processed_input(source_event_id);
                         self.observe_runtime_snapshot().await;
                         Ok(Vec::new())
@@ -1752,8 +1754,14 @@ where
         #[cfg(not(feature = "messaging"))]
         let mut invalidation_sub = ();
 
-        let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
-        self.shutdown_tx = Some(shutdown_tx);
+        let runtime = self.runtime.as_ref().ok_or_else(|| {
+            SinexError::lifecycle(
+                "Cannot run continuous invalidation loop: runtime not initialized",
+            )
+        })?;
+        let drain = runtime.runtime_drain();
+        let mut shutdown_rx = drain.subscribe();
+        self.shutdown_tx = Some(drain);
 
         // Invalidation debounce: buffer signals and process after a quiet period.
         // This prevents a replay archiving N scopes from triggering N immediate
@@ -1999,17 +2007,19 @@ where
                             ErrorAction::Skip => {
                                 warn!(node = %self.node.name(), error = %e, "Skipping event in historical replay");
                             }
-                            ErrorAction::SendToDLQ => {
-                                let event_for_dlq = query_event.event.clone();
-                                let dlq_err = self.send_to_dlq_or_fail(&event_for_dlq, &e).await;
+                            ErrorAction::SendToProcessingFailureQueue => {
+                                let failed_event = query_event.event.clone();
+                                let failure_err = self
+                                    .send_to_processing_failure_queue_or_fail(&failed_event, &e)
+                                    .await;
                                 if let Err(cp_err) = self.save_state().await {
                                     error!(
                                         node = %self.node.name(),
                                         error = %cp_err,
-                                        "Failed to save checkpoint after replay DLQ error"
+                                        "Failed to save checkpoint after replay processing-failure routing error"
                                     );
                                 }
-                                dlq_err?;
+                                failure_err?;
                             }
                             ErrorAction::Retry => {
                                 error!(node = %self.node.name(), error = %e, "Retryable error in historical replay; halting replay");
@@ -2102,7 +2112,7 @@ where
     /// Signal shutdown.
     pub fn signal_shutdown(&self) {
         if let Some(tx) = &self.shutdown_tx {
-            signal_shutdown_channel(tx, self.node.name());
+            request_runtime_drain(tx, self.node.name());
         }
     }
 }
@@ -2217,7 +2227,7 @@ where
                 if health_enabled {
                     let config = SelfObserverConfig {
                         component: self.node.name().to_string(),
-                        subject_prefix: "events.raw".to_string(),
+                        namespace: None,
                         enabled: true,
                         min_emission_interval: Duration::from_secs(1),
                     };
@@ -2493,7 +2503,7 @@ mod tests {
     // Inline because these cover a private shutdown-signaling helper.
     #[cfg(feature = "messaging")]
     use super::log_self_observation_failure;
-    use super::signal_shutdown_channel;
+    use super::request_runtime_drain;
     use super::{DerivedNodeAdapter, stale_output_ids_or_fail_scope};
     use crate::derived_node::{
         DerivedNodeConfig, DerivedOutput, DerivedTriggerContext, InputProvenanceFilter,
@@ -2503,7 +2513,8 @@ mod tests {
     #[cfg(feature = "messaging")]
     use crate::health_reporter::{HealthReporter, HealthThresholds};
     use crate::runtime::stream::{
-        Checkpoint, EventEmitter, Node, NodeHandles, NodeRuntimeState, ScanArgs, ServiceInfo,
+        Checkpoint, EventEmitter, Node, NodeHandles, NodeRuntimeState, RuntimeDrainController,
+        ScanArgs, ServiceInfo,
     };
     #[cfg(feature = "messaging")]
     use crate::self_observation::{SelfObservationError, SelfObserver, SelfObserverConfig};
@@ -2528,7 +2539,7 @@ mod tests {
     #[cfg(feature = "messaging")]
     use std::time::Duration;
     use tempfile::tempdir;
-    use tokio::sync::{mpsc, watch};
+    use tokio::sync::mpsc;
     use xtask::sandbox::prelude::*;
 
     #[derive(Debug, Default, Serialize, Deserialize)]
@@ -2909,7 +2920,7 @@ mod tests {
         }
 
         fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
-            ErrorAction::SendToDLQ
+            ErrorAction::SendToProcessingFailureQueue
         }
     }
 
@@ -3088,21 +3099,23 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn signal_shutdown_channel_reports_dropped_receiver() -> TestResult<()> {
-        let (tx, rx) = watch::channel(false);
-        drop(rx);
+    async fn request_runtime_drain_delivers_to_receiver() -> TestResult<()> {
+        let drain = RuntimeDrainController::new();
+        let mut rx = drain.subscribe();
 
-        assert!(!signal_shutdown_channel(&tx, "test-derived"));
+        assert!(request_runtime_drain(&drain, "test-derived"));
+        rx.changed().await?;
+        assert!(*rx.borrow());
         Ok(())
     }
 
     #[sinex_test]
-    async fn signal_shutdown_channel_delivers_to_receiver() -> TestResult<()> {
-        let (tx, mut rx) = watch::channel(false);
+    async fn request_runtime_drain_is_idempotent() -> TestResult<()> {
+        let drain = RuntimeDrainController::new();
 
-        assert!(signal_shutdown_channel(&tx, "test-derived"));
-        rx.changed().await?;
-        assert!(*rx.borrow());
+        assert!(request_runtime_drain(&drain, "test-derived"));
+        assert!(request_runtime_drain(&drain, "test-derived"));
+        assert!(drain.is_requested());
         Ok(())
     }
 
@@ -3174,7 +3187,7 @@ mod tests {
             ctx.nats_client(),
             SelfObserverConfig {
                 component: "derived-source-state".to_string(),
-                subject_prefix: "events.raw".to_string(),
+                namespace: None,
                 enabled: true,
                 min_emission_interval: Duration::from_millis(10),
             },
@@ -3219,7 +3232,7 @@ mod tests {
             ctx.nats_client(),
             SelfObserverConfig {
                 component: "derived-health-check".to_string(),
-                subject_prefix: "events.raw".to_string(),
+                namespace: None,
                 enabled: true,
                 min_emission_interval: Duration::from_millis(10),
             },
@@ -4082,7 +4095,7 @@ mod tests {
             .expect_err("historical replay must fail when DLQ routing fails");
 
         let rendered = format!("{error:#}");
-        assert!(rendered.contains("failed to send derived-node event to DLQ"));
+        assert!(rendered.contains("failed to send derived-node event to processing-failure stream"));
         assert!(rendered.contains("route me to dlq"));
         assert!(rendered.contains("derived-adapter-dlq-retry-test"));
         assert!(

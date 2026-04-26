@@ -132,6 +132,11 @@ impl NodeRuntimeState {
     }
 
     #[must_use]
+    pub fn runtime_drain(&self) -> Arc<super::RuntimeDrainController> {
+        self.handles.runtime_drain()
+    }
+
+    #[must_use]
     pub fn raw_config_value(&self, key: &str) -> Option<&Value> {
         self.raw_config.get(key)
     }
