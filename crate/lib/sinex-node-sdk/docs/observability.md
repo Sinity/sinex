@@ -159,3 +159,33 @@ Current semantics:
 - Flexible `External` variant for custom state
 - Atomic updates via NATS KV
 - Built-in staleness tracking
+
+## Derived-Node Latency / Throughput Gauges
+
+`DerivedNodeAdapter` emits the following gauges through `SelfObserver` on
+every dispatch (one per processed event in `process_one`, one per batch
+in `process_event_batch`). Operators see them via `sinexctl automata` and
+the `sinex.metrics.gauge` event stream:
+
+| Gauge | Source | Meaning |
+|---|---|---|
+| `derived.event_lag_ms` | last sample | wall delta from `event.ts_orig` to dispatch |
+| `derived.event_lag_p50_ms` | reservoir | median over the last `DEFAULT_LATENCY_RESERVOIR` samples (1024) |
+| `derived.event_lag_p99_ms` | reservoir | p99 over the same reservoir |
+| `derived.tick_runtime_ms` | last sample | wall time inside `node.process_derived` |
+| `derived.tick_runtime_p99_ms` | reservoir | p99 of per-tick runtime |
+| `derived.throughput_eps` | sliding 60s | events per second over the live window |
+
+Implementation lives in
+`crate/lib/sinex-node-sdk/src/derived_node/histograms.rs`. Reservoir size
+and window length are exported as `DEFAULT_LATENCY_RESERVOIR` and
+`THROUGHPUT_WINDOW`. Heavy-lane scenario coverage:
+
+```bash
+xtask test -p sinex-node-sdk \
+    -E 'binary(derived_telemetry_heavy_lane)' --heavy
+```
+
+The first slice (#571) shipped the point-in-time gauges; the second
+slice (#561) added the reservoir-based percentiles, the throughput
+window, and the heavy-lane scenario test.
