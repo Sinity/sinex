@@ -4873,8 +4873,8 @@ mod tests {
             .await?;
 
         let invalidation_subject = environment().nats_subject(INVALIDATION_SUBJECT);
-        let mut invalidation_sub = ctx
-            .nats_client()
+        let js = async_nats::jetstream::new(ctx.nats_client());
+        let mut invalidation_sub = js
             .subscribe(invalidation_subject)
             .await
             .map_err(|error| eyre!("failed to subscribe for invalidation test: {error}"))?;
@@ -4909,7 +4909,7 @@ mod tests {
             tokio::time::timeout(Duration::from_secs(1), invalidation_sub.next())
                 .await?
                 .expect("compensating invalidation should be published");
-        let payload = String::from_utf8(invalidation_msg.payload.to_vec())?;
+        let payload = String::from_utf8(invalidation_msg.message.payload.to_vec())?;
         assert!(payload.contains("scope://fs-test/replay-compensating-invalidation"));
         assert!(payload.contains(&event_id.to_string()));
 
