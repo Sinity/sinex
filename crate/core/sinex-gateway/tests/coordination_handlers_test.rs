@@ -198,7 +198,7 @@ async fn coordination_instance_health_rejects_invalid_hostname_metadata(
         hostname: "bad host name".to_string(),
         version: "1.0.0-test".to_string(),
         started_at: now - 120,
-        last_heartbeat: now - 30,
+        last_heartbeat: now,
     };
     kv_client.register_instance(&metadata).await?;
 
