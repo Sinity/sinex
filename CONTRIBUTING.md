@@ -83,6 +83,35 @@ The PR template also implies these review norms:
 - call out impact on schema, operations, docs, and security/privacy when relevant
 - turn real deferred work into explicit follow-up issues
 
+## Acceptance-criteria honesty
+
+The PR template's `## Acceptance Criteria Drift` section is not optional
+when the linked issue carries an AC list. For each AC item, mark whether
+this PR satisfies it as written, defers it to a follow-up issue, or
+discovered the AC was misframed.
+
+This requirement exists because of a recurring failure mode (caught in
+the 2026-04-26 audit cycle): an issue with five AC items closes on a PR
+that satisfies three structurally and silently drops the two
+measurement-under-load items. Future readers — including future-you —
+treat the issue as "done" and rebuild on top of a partial foundation.
+
+Concrete shape:
+
+```
+- [ ] AC #1 ("Lag and parent fan-in observed under prod traffic") — ⏭ deferred to #561
+- [ ] AC #2 ("Schemas registered for every emitter") — ✅ satisfied
+- [ ] AC #3 ("Heavy-lane scenario asserts on lag bound") — ⏭ deferred to #561
+```
+
+If the issue has no AC list (research / design / cleanup tickets often
+don't), say so explicitly: "no AC list — issue closes on the decision
+recorded in this PR body."
+
+The cost of this section is two minutes of writing. The cost of
+skipping it has been entire audit cycles re-doing forensic work on
+issues that "closed."
+
 ## Generated Agent Docs
 
 `AGENTS.md` is generated output. Do not edit it directly.

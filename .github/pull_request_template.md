@@ -28,6 +28,24 @@ List the checks you ran and the exact commands when useful.
 # commands here
 ```
 
+## Acceptance Criteria Drift
+
+For each acceptance-criterion checkbox in the linked issue, mark whether
+this PR satisfies it as written, defers it to a follow-up issue, or
+discovered it was misframed. Silent AC dropping is the failure mode
+this section exists to prevent (see the 2026-04-26 audit cycle —
+several "closed" issues had landed PRs that satisfied only the easy
+ACs without recording the deferrals).
+
+```
+- [ ] AC #1 ("...") — ✅ satisfied / ⏭ deferred to #N / ❎ misframed (see body)
+- [ ] AC #2 ("...") — ...
+```
+
+If the issue has no AC list (e.g. a research / design ticket), state
+that explicitly: "no AC list — issue closes on producing the decision
+recorded in this PR body."
+
 ## Impact
 
 - Schema / database:
