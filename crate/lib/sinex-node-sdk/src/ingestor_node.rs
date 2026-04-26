@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use crate::checkpoint::{CheckpointManager, CheckpointState, decode_checkpoint_data};
 use crate::runtime::stream::{
     Checkpoint, ContinuousStart, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState,
-    NodeType, ScanArgs, ScanReport, TimeHorizon,
+    NodeType, RuntimeDrainController, ScanArgs, ScanReport, TimeHorizon,
 };
 use crate::shutdown::ShutdownConfig;
 use crate::{
@@ -29,15 +29,11 @@ use std::sync::Arc;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "watch::Sender must be moved to send"
-)]
-fn signal_shutdown_channel(tx: watch::Sender<bool>, node_name: &str) -> bool {
-    if tx.send(true).is_err() {
+fn request_runtime_drain(drain: &RuntimeDrainController, node_name: &str) -> bool {
+    if !drain.request_drain() && !drain.is_requested() {
         warn!(
             node = node_name,
-            "Ingestor shutdown receiver was already dropped before graceful shutdown"
+            "Ingestor runtime drain signal could not be delivered before graceful shutdown"
         );
         return false;
     }
@@ -174,7 +170,7 @@ pub struct IngestorNodeAdapter<I: IngestorNode> {
     shutdown_config: ShutdownConfig,
     runtime: Option<NodeRuntimeState>,
     checkpoint_manager: Option<Arc<CheckpointManager>>,
-    shutdown_tx: Option<watch::Sender<bool>>,
+    shutdown_tx: Option<Arc<RuntimeDrainController>>,
     pending_hot_reload_cleanup: Option<PathBuf>,
 }
 
@@ -432,8 +428,12 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
                     .await?
             }
             TimeHorizon::Continuous => {
-                let (tx, rx) = watch::channel(false);
-                self.shutdown_tx = Some(tx);
+                let runtime = self.runtime.as_ref().ok_or_else(|| {
+                    SinexError::lifecycle("Cannot run continuous scan: runtime not initialized")
+                })?;
+                let drain = runtime.runtime_drain();
+                let rx = drain.subscribe();
+                self.shutdown_tx = Some(drain);
                 self.ingestor
                     .run_continuous(
                         &mut self.state.user_state,
@@ -454,7 +454,7 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
 
     async fn shutdown(&mut self) -> NodeResult<()> {
         if let Some(tx) = self.shutdown_tx.take()
-            && !signal_shutdown_channel(tx, self.ingestor.name())
+            && !request_runtime_drain(&tx, self.ingestor.name())
         {
             warn!(
                 node = self.ingestor.name(),
@@ -513,10 +513,11 @@ impl<I: IngestorNode> ExplorationProvider for IngestorNodeAdapter<I> {
 #[cfg(test)]
 mod tests {
     // Inline because these cover a private shutdown-signaling helper.
-    use super::{IngestorNodeAdapter, IngestorState, signal_shutdown_channel};
+    use super::{IngestorNodeAdapter, IngestorState, request_runtime_drain};
     use crate::checkpoint::{CheckpointManager, CheckpointState};
     use crate::runtime::stream::{
-        Checkpoint, ContinuousStart, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon,
+        Checkpoint, ContinuousStart, NodeCapabilities, RuntimeDrainController, ScanArgs,
+        ScanReport, TimeHorizon,
     };
     use crate::shutdown::ShutdownConfig;
     use crate::{IngestorNode, NodeResult};
@@ -614,21 +615,23 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn signal_shutdown_channel_reports_dropped_receiver() -> TestResult<()> {
-        let (tx, rx) = watch::channel(false);
-        drop(rx);
+    async fn request_runtime_drain_delivers_to_receiver() -> TestResult<()> {
+        let drain = RuntimeDrainController::new();
+        let mut rx = drain.subscribe();
 
-        assert!(!signal_shutdown_channel(tx, "test-ingestor"));
+        assert!(request_runtime_drain(&drain, "test-ingestor"));
+        rx.changed().await?;
+        assert!(*rx.borrow());
         Ok(())
     }
 
     #[sinex_test]
-    async fn signal_shutdown_channel_delivers_to_receiver() -> TestResult<()> {
-        let (tx, mut rx) = watch::channel(false);
+    async fn request_runtime_drain_is_idempotent() -> TestResult<()> {
+        let drain = RuntimeDrainController::new();
 
-        assert!(signal_shutdown_channel(tx, "test-ingestor"));
-        rx.changed().await?;
-        assert!(*rx.borrow());
+        assert!(request_runtime_drain(&drain, "test-ingestor"));
+        assert!(request_runtime_drain(&drain, "test-ingestor"));
+        assert!(drain.is_requested());
         Ok(())
     }
 
