@@ -841,28 +841,6 @@ impl<'a> SchemaManagementRepository<'a> {
         })
     }
 
-    /// Associate a schema with an event
-    pub async fn set_event_schema(
-        &self,
-        event_id: &Id<Event<JsonValue>>,
-        schema_id: &Uuid,
-    ) -> DbResult<()> {
-        sqlx::query!(
-            r#"
-            UPDATE core.events 
-            SET payload_schema_id = $1::uuid
-            WHERE id = $2::uuid
-            "#,
-            schema_id,
-            event_id.to_uuid()
-        )
-        .execute(self.pool)
-        .await
-        .map_err(|e| db_error(e, "set event schema"))?;
-
-        Ok(())
-    }
-
     async fn load_schema_map(
         &self,
     ) -> DbResult<std::collections::HashMap<(String, String, String), SchemaRecord>> {

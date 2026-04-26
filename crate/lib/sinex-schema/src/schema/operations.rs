@@ -6,7 +6,9 @@
 //! - Coordinating leadership and instance discovery (`node_instances`, etc.).
 
 use crate::schema::TableDef;
-use sea_query::{Alias, ColumnDef, Expr, Iden, Table, TableCreateStatement};
+use sea_query::{
+    Alias, ColumnDef, Expr, Iden, Index, IndexCreateStatement, Table, TableCreateStatement,
+};
 
 // =============================================================================
 // I. OPERATIONAL STATE
@@ -78,6 +80,50 @@ impl OperationsLog {
             .col(ColumnDef::new(OperationsLog::PreviewSummary).json_binary()) // Output of replay planner
             .col(ColumnDef::new(OperationsLog::DurationMs).integer())
             .to_owned()
+    }
+
+    /// Generates indexes for `core.operations_log`.
+    #[must_use]
+    pub fn create_indexes() -> Vec<IndexCreateStatement> {
+        vec![
+            // B-tree index on (operator, id) for queries filtering by operator and
+            // ordering by recency.
+            Index::create()
+                .if_not_exists()
+                .name("ix_operations_log_operator_id")
+                .table(Self::table_iden())
+                .col(OperationsLog::Operator)
+                .col(OperationsLog::Id)
+                .to_owned(),
+            // B-tree index on (result_status, id) for queries filtering by status
+            // and ordering by recency.
+            Index::create()
+                .if_not_exists()
+                .name("ix_operations_log_status_id")
+                .table(Self::table_iden())
+                .col(OperationsLog::ResultStatus)
+                .col(OperationsLog::Id)
+                .to_owned(),
+            // B-tree index on (operation_type, result_status) for queries by type+status.
+            Index::create()
+                .if_not_exists()
+                .name("ix_operations_log_type_status")
+                .table(Self::table_iden())
+                .col(OperationsLog::OperationType)
+                .col(OperationsLog::ResultStatus)
+                .to_owned(),
+        ]
+    }
+
+    /// Generates raw SQL for GIN indexes (PostgreSQL-specific feature).
+    #[must_use]
+    pub fn create_gin_indexes_sql() -> Vec<String> {
+        vec![format!(
+            "CREATE INDEX IF NOT EXISTS ix_operations_log_scope_gin \
+             ON {}.{} USING GIN (scope)",
+            Self::schema_name(),
+            Self::table_name()
+        )]
     }
 }
 

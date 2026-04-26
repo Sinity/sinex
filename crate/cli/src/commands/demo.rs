@@ -77,12 +77,40 @@ impl DemoCommand {
             .map_err(|e| color_eyre::eyre::eyre!("Failed to connect to database: {}", e))?;
 
         if self.clear {
+            let mut tx = pool.begin().await.map_err(|e| {
+                color_eyre::eyre::eyre!("Failed to begin transaction: {}", e)
+            })?;
+
+            // The archive-on-delete trigger requires sinex.operation_id to be set.
+            sqlx::query("SELECT pg_catalog.set_config('sinex.operation_id', $1, true)")
+                .bind(format!("demo_clear_{}", rand::random::<u64>()))
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("Failed to set operation_id: {}", e))?;
+
+            sqlx::query("SELECT pg_catalog.set_config('sinex.archived_by', $1, true)")
+                .bind("sinexctl-demo")
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("Failed to set archived_by: {}", e))?;
+
+            sqlx::query("SELECT pg_catalog.set_config('sinex.archive_reason', $1, true)")
+                .bind("Demo clear")
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("Failed to set archive_reason: {}", e))?;
+
             let rows: Vec<i64> =
                 sqlx::query_scalar("DELETE FROM core.events WHERE source = $1 RETURNING 1")
                     .bind(DEMO_SOURCE)
-                    .fetch_all(&pool)
+                    .fetch_all(&mut *tx)
                     .await
-                    .unwrap_or_default();
+                    .map_err(|e| color_eyre::eyre::eyre!("Failed to clear demo events: {}", e))?;
+
+            tx.commit().await.map_err(|e| {
+                color_eyre::eyre::eyre!("Failed to commit clear transaction: {}", e)
+            })?;
+
             println!("Cleared {} existing demo events.", rows.len());
         }
 

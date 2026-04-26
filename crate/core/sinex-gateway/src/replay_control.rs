@@ -3,7 +3,7 @@
 use crate::cascade_analyzer::{CascadeAnalyzerConfig, Severity, StreamingCascadeAnalyzer};
 use crate::config::env_bool_optional;
 use async_nats::connection::State as NatsState;
-use async_nats::{Client, Message};
+use async_nats::{Client, Message, jetstream};
 use color_eyre::eyre::{Context, Result, eyre};
 use futures::StreamExt;
 use parking_lot::Mutex;
@@ -28,6 +28,7 @@ use std::sync::Arc;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+use tokio::sync::Semaphore;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 
@@ -621,6 +622,7 @@ impl ReplayControlServer {
         let replay = self.replay.clone();
         let executor = self.executor.clone();
         let health = Arc::clone(&self.health);
+        let semaphore = Arc::new(Semaphore::new(4));
 
         let task = tokio::spawn(async move {
             'outer: loop {
@@ -628,7 +630,12 @@ impl ReplayControlServer {
                     let client = client.clone();
                     let replay = replay.clone();
                     let executor = executor.clone();
+                    let sem = semaphore.clone();
                     tokio::spawn(async move {
+                        let _permit = match sem.acquire_owned().await {
+                            Ok(p) => p,
+                            Err(_) => return, // semaphore closed, skip
+                        };
                         if let Err(err) =
                             Self::handle_message(&client, &replay, &executor, message).await
                         {
@@ -900,6 +907,7 @@ impl ReplayControlServer {
 struct ReplayExecutionEngine {
     replay: Arc<ReplayStateMachine>,
     nats_client: Client,
+    js: jetstream::Context,
     env: SinexEnvironment,
     scan_ack_timeout: Duration,
     scan_completion_timeout: Duration,
@@ -932,9 +940,11 @@ impl ReplayExecutionEngine {
     const EXECUTION_STATE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
     fn new(replay: Arc<ReplayStateMachine>, nats_client: Client) -> Self {
+        let js = jetstream::new(nats_client.clone());
         Self {
             replay,
             nats_client,
+            js,
             env: environment(),
             scan_ack_timeout: Self::SCAN_ACK_TIMEOUT,
             scan_completion_timeout: Self::SCAN_COMPLETION_TIMEOUT,
@@ -1930,13 +1940,10 @@ impl ReplayExecutionEngine {
             match serde_json::to_vec(&invalidation) {
                 Ok(payload) => {
                     self.maybe_fail_scope_invalidation_publish()?;
-                    let mut headers = async_nats::HeaderMap::new();
-                    insert_traffic_class_header(&mut headers, NatsTrafficClass::Control);
                     if let Err(e) = self
-                        .nats_client
-                        .publish_with_headers(
+                        .js
+                        .publish(
                             invalidation_subject.clone(),
-                            headers,
                             payload.into(),
                         )
                         .await
@@ -2144,6 +2151,28 @@ impl ReplayExecutionEngine {
     /// 3. Waits for the node to acknowledge and complete the scan
     /// 4. The node re-reads source material and emits fresh events through normal flow
     /// 5. Downstream automatons process the new events naturally via `JetStream`
+    ///
+    /// ## Transaction-boundary note (known-accepted race window)
+    ///
+    /// The cascade expansion (`derive_cascade_ids`) and the archive
+    /// (`archive_cascade`) execute in **separate** database transactions.
+    /// Between them, a newly-arriving event can reference an event that is
+    /// about to be archived, creating a dangling `source_event_ids` reference.
+    ///
+    /// This window **cannot be closed** without a distributed-transaction
+    /// protocol (2PC): steps after the archive publish invalidation signals
+    /// and dispatch scan commands via NATS, which sit outside the database.
+    /// Holding a DB transaction open across NATS request-reply would block
+    /// the connection pool and risk indefinite locks on `core.events`.
+    ///
+    /// Mitigations that make this safe in practice:
+    /// - `abort_before_scan_ack` restores the cascade and emits compensating
+    ///   invalidations when the invalidation-publish or scan-command steps fail.
+    /// - The cascade analyzer's integrity-violation check (`cascade_analyzer.rs`)
+    ///   catches dangling references before the next replay of the same scope,
+    ///   so the race is detectable and self-healing rather than silent.
+    ///   so the window is narrow and the blast radius (one dangling reference
+    ///   per replay) is negligible.
     async fn replay_events(
         &self,
         operation_id: Uuid,
@@ -4433,8 +4462,8 @@ mod tests {
             .await?;
 
         let invalidation_subject = environment().nats_subject(INVALIDATION_SUBJECT);
-        let mut invalidation_sub = ctx
-            .nats_client()
+        let js = async_nats::jetstream::new(ctx.nats_client());
+        let mut invalidation_sub = js
             .subscribe(invalidation_subject)
             .await
             .map_err(|error| {
@@ -4844,8 +4873,8 @@ mod tests {
             .await?;
 
         let invalidation_subject = environment().nats_subject(INVALIDATION_SUBJECT);
-        let mut invalidation_sub = ctx
-            .nats_client()
+        let js = async_nats::jetstream::new(ctx.nats_client());
+        let mut invalidation_sub = js
             .subscribe(invalidation_subject)
             .await
             .map_err(|error| eyre!("failed to subscribe for invalidation test: {error}"))?;
@@ -4880,7 +4909,7 @@ mod tests {
             tokio::time::timeout(Duration::from_secs(1), invalidation_sub.next())
                 .await?
                 .expect("compensating invalidation should be published");
-        let payload = String::from_utf8(invalidation_msg.payload.to_vec())?;
+        let payload = String::from_utf8(invalidation_msg.message.payload.to_vec())?;
         assert!(payload.contains("scope://fs-test/replay-compensating-invalidation"));
         assert!(payload.contains(&event_id.to_string()));
 

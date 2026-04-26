@@ -16,6 +16,7 @@ use sinex_primitives::events::payloads::process::{
 use sinex_primitives::utils::CoordinationPrimitive;
 use sinex_primitives::{Seconds, Uuid};
 use std::mem::MaybeUninit;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::time::interval;
@@ -106,6 +107,8 @@ pub struct HeartbeatEmitter {
     /// Sliding window for error tracking (last 5 minutes).
     error_window: Arc<parking_lot::Mutex<Vec<Instant>>>,
     node_run_id: Option<Uuid>,
+    /// Counter for rate-limiting persistence failure warn! logs (every 100th).
+    persistence_warn_count: Arc<AtomicU64>,
     /// Optional database pool for persisting heartbeat status to `core.node_manifests`.
     /// When set, each heartbeat emission also updates the `last_heartbeat_at` and `status`
     /// columns for this node, enabling efficient active-node queries.
@@ -147,6 +150,7 @@ impl HeartbeatEmitter {
             last_emitted_status: Arc::new(parking_lot::Mutex::new(ProcessStatus::Healthy)),
             error_window: Arc::new(parking_lot::Mutex::new(Vec::new())),
             node_run_id: None,
+            persistence_warn_count: Arc::new(AtomicU64::new(0)),
             #[cfg(feature = "db")]
             db_pool: None,
         }
@@ -406,12 +410,20 @@ impl HeartbeatEmitter {
         // Persist heartbeat to database if pool is configured
         #[cfg(feature = "db")]
         if let Some(ref pool) = self.db_pool {
+            let warn_skipped = self
+                .persistence_warn_count
+                .fetch_add(1, Ordering::Relaxed);
+            let log_persistence_warn = warn_skipped % 100 == 0;
+
             use sinex_db::DbPoolExt;
             if self.node_name.is_none() && self.node_run_id.is_none() {
-                warn!(
-                    service = %metrics.service_name,
-                    "Heartbeat persistence is configured without a node identity; database heartbeat updates are disabled"
-                );
+                if log_persistence_warn {
+                    warn!(
+                        service = %metrics.service_name,
+                        skipped = warn_skipped,
+                        "Heartbeat persistence is configured without a node identity; database heartbeat updates are disabled (rate-limited)"
+                    );
+                }
             }
             if let Some(node_name) = &self.node_name {
                 match pool
@@ -424,23 +436,29 @@ impl HeartbeatEmitter {
                         self.record_error(&format!(
                             "Heartbeat did not persist because the node manifest row is missing for {node_name}"
                         ));
-                        warn!(
-                            node = %node_name,
-                            service = %metrics.service_name,
-                            version = %metrics.version,
-                            "Heartbeat did not persist because the node manifest row is missing"
-                        );
+                        if log_persistence_warn {
+                            warn!(
+                                node = %node_name,
+                                service = %metrics.service_name,
+                                version = %metrics.version,
+                                skipped = warn_skipped,
+                                "Heartbeat did not persist because the node manifest row is missing (rate-limited)"
+                            );
+                        }
                     }
                     Err(e) => {
                         self.record_error(&format!(
                             "Failed to persist node manifest heartbeat to database: {e}"
                         ));
-                        warn!(
-                            node = %node_name,
-                            service = %metrics.service_name,
-                            error = %e,
-                            "Failed to persist node manifest heartbeat to database"
-                        );
+                        if log_persistence_warn {
+                            warn!(
+                                node = %node_name,
+                                service = %metrics.service_name,
+                                error = %e,
+                                skipped = warn_skipped,
+                                "Failed to persist node manifest heartbeat to database (rate-limited)"
+                            );
+                        }
                     }
                 }
             }
@@ -452,22 +470,28 @@ impl HeartbeatEmitter {
                         self.record_error(&format!(
                             "Heartbeat did not persist because the node run row is missing for {node_run_id}"
                         ));
-                        warn!(
-                            service = %metrics.service_name,
-                            node_run_id = %node_run_id,
-                            "Heartbeat did not persist because the node run row is missing"
-                        );
+                        if log_persistence_warn {
+                            warn!(
+                                service = %metrics.service_name,
+                                node_run_id = %node_run_id,
+                                skipped = warn_skipped,
+                                "Heartbeat did not persist because the node run row is missing (rate-limited)"
+                            );
+                        }
                     }
                     Err(e) => {
                         self.record_error(&format!(
                             "Failed to persist node run heartbeat to database: {e}"
                         ));
-                        warn!(
-                            service = %metrics.service_name,
-                            node_run_id = %node_run_id,
-                            error = %e,
-                            "Failed to persist node run heartbeat to database"
-                        );
+                        if log_persistence_warn {
+                            warn!(
+                                service = %metrics.service_name,
+                                node_run_id = %node_run_id,
+                                error = %e,
+                                skipped = warn_skipped,
+                                "Failed to persist node run heartbeat to database (rate-limited)"
+                            );
+                        }
                     }
                 }
             }
