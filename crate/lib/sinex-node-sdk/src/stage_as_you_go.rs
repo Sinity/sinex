@@ -572,14 +572,15 @@ impl StageAsYouGoContext {
             )));
         }
 
-        // Attach source material provenance to the event
-        event.provenance = sinex_primitives::events::builder::Provenance::Material {
-            id: source_material_id.into(),
+        // Attach source material provenance to the event via the documented
+        // constructor; struct-literal construction would bypass the builder
+        // typestate guarantees (see issue #559 / #559-tracked ast-grep work).
+        event.provenance = sinex_primitives::events::builder::Provenance::from_material(
+            source_material_id,
             anchor_byte,
             offset_start,
             offset_end,
-            offset_kind: sinex_primitives::events::builder::OffsetKind::default(),
-        };
+        );
 
         // Add source material reference to payload metadata if not already present
         if let Some(obj) = event.payload.as_object_mut() {

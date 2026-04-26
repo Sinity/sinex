@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use sinex_db::models::{Event, OffsetKind, Provenance, SourceMaterial};
+use sinex_db::models::{Event, Provenance, SourceMaterial};
 use sinex_node_sdk::acquisition_manager::{
     AcquisitionManager, BufferedAppendStreamWriterConfig, SourceRecordAnchor,
 };
@@ -100,13 +100,7 @@ impl RealWatcherMaterialContext {
 #[async_trait]
 impl MaterialContext for RealWatcherMaterialContext {
     fn initial_provenance(&self) -> Provenance {
-        Provenance::Material {
-            id: self.material_id,
-            anchor_byte: 0,
-            offset_start: None,
-            offset_end: None,
-            offset_kind: OffsetKind::Byte,
-        }
+        Provenance::from_material(self.material_id, 0, None, None)
     }
 
     async fn decorate_event(&self, event: &mut Event<JsonValue>) -> NodeResult<()> {
@@ -116,13 +110,12 @@ impl MaterialContext for RealWatcherMaterialContext {
 
         let anchor = self.append_payload(&payload_bytes).await?;
         let material_id = Id::<SourceMaterial>::from_uuid(anchor.material_id);
-        event.provenance = Provenance::Material {
-            id: material_id,
-            anchor_byte: anchor.offset_start,
-            offset_start: Some(anchor.offset_start),
-            offset_end: Some(anchor.offset_end),
-            offset_kind: OffsetKind::Byte,
-        };
+        event.provenance = Provenance::from_material(
+            material_id,
+            anchor.offset_start,
+            Some(anchor.offset_start),
+            Some(anchor.offset_end),
+        );
         let ts_orig = if let Some(timestamp) = event.ts_orig {
             timestamp
         } else {
