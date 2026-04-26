@@ -91,7 +91,7 @@ It follows the scenario registry in `tests/e2e/nixos-vm/default.nix`.
   target-user terminal/browser history bridges and the desktop runtime bridge
   must be reachable by the `sinex` service user, the managed document surface
   must actually ingest,
-  `sinexctl verify --gateway-smoke --automata-smoke --document-smoke --source-proof --historical-proof`
+  `sinexctl verify --document-smoke --source-proof --historical-proof`
   must pass on the booted VM, and managed service restarts must leave no failed
   `sinex-*` units. When a `sinex-*` unit is failed, the scenario captures recent
   journald logs under `/tmp/sinex-vm-failure-logs`.
