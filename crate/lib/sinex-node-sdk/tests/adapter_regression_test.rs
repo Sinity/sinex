@@ -89,7 +89,7 @@ impl TransducerNode for DlqDerivedNode {
     }
 
     fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
-        ErrorAction::SendToDLQ
+        ErrorAction::SendToProcessingFailureQueue
     }
 }
 
