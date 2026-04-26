@@ -119,10 +119,13 @@ async fn main() -> Result<()> {
 
     // Set up graceful shutdown
     let shutdown_signal = async {
-        if let Err(err) = wait_for_shutdown_signal().await {
-            error!("Failed to listen for shutdown signal: {}", err);
-        } else {
-            info!("Received shutdown signal");
+        match sinex_node_sdk::wait_for_os_shutdown_signal().await {
+            Ok(signal_name) => {
+                info!(signal = signal_name, "Received shutdown signal");
+            }
+            Err(err) => {
+                error!("Failed to listen for shutdown signal: {}", err);
+            }
         }
     };
 
@@ -225,24 +228,6 @@ fn setup_tracing(format: LogFormat, tokio_console: bool, default_filter: &str) -
     }
 
     Ok(())
-}
-
-#[cfg(unix)]
-async fn wait_for_shutdown_signal() -> io::Result<()> {
-    use tokio::signal::unix::{SignalKind, signal};
-
-    let mut sigterm = signal(SignalKind::terminate())?;
-    let mut sigint = signal(SignalKind::interrupt())?;
-
-    tokio::select! {
-        _ = sigterm.recv() => Ok(()),
-        _ = sigint.recv() => Ok(()),
-    }
-}
-
-#[cfg(not(unix))]
-async fn wait_for_shutdown_signal() -> io::Result<()> {
-    tokio::signal::ctrl_c().await
 }
 
 #[cfg(test)]

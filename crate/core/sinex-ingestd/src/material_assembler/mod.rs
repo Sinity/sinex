@@ -56,16 +56,6 @@ fn signal_ready(ready_tx: Option<tokio::sync::oneshot::Sender<()>>, component: &
     }
 }
 
-async fn shutdown_signal(shutdown_flag: &Arc<AtomicBool>, shutdown_notify: &Arc<Notify>) {
-    loop {
-        let notified = shutdown_notify.notified();
-        if shutdown_flag.load(Ordering::Acquire) {
-            return;
-        }
-        notified.await;
-    }
-}
-
 /// Assembly statistics for observability
 #[derive(Debug, Default)]
 struct AssemblyStats {
@@ -787,7 +777,7 @@ impl MaterialAssembler {
                     None => Ok(()),
                 }
             }
-            () = shutdown_signal(&shutdown_flag, &shutdown_notify) => {
+            () = sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                 info!("Material Assembler received shutdown signal");
                 Ok(())
             }

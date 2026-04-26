@@ -17,22 +17,6 @@ pub mod unified_node;
 use sinex_primitives::Seconds;
 use std::fmt;
 
-// Local facade module to reduce import verbosity
-mod common {
-    // Core types facade
-
-    // SDK facade for common node types
-    pub use sinex_node_sdk::{
-        NodeResult,
-        runtime::stream::{
-            Checkpoint, ContinuousStart, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon,
-        },
-    };
-
-    // External dependencies
-
-    pub(crate) use tracing::{info, instrument};
-}
 
 pub use dbus_watcher::DbusWatcher;
 pub(crate) use material_context::WatcherMaterialContext;

@@ -143,13 +143,31 @@ impl Entities {
                     .not_null()
                     .default(Expr::current_timestamp()),
             )
-            .foreign_key(
-                ForeignKey::create()
-                    .from(Self::table_iden(), Entities::MergedIntoId)
-                    .to(Self::table_iden(), Entities::Id)
-                    .on_delete(ForeignKeyAction::SetNull),
-            )
             .to_owned()
+    }
+
+    /// Raw SQL fixup for the self-referencing foreign key on `merged_into_id`.
+    ///
+    /// sea-query has a bug where `on_delete(ForeignKeyAction::SetNull)` on a self-referencing
+    /// FK emits `ON DELETE CASCADE` instead of `ON DELETE SET NULL`. We work around this by
+    /// defining the FK via raw `ALTER TABLE` SQL after table creation, bypassing sea-query.
+    #[must_use]
+    pub fn create_fk_fixup_sql() -> Vec<String> {
+        vec![
+            format!(
+                "ALTER TABLE {}.{} DROP CONSTRAINT IF EXISTS entities_merged_into_id_fkey",
+                Self::schema_name(),
+                Self::table_name()
+            ),
+            format!(
+                "ALTER TABLE {}.{} ADD CONSTRAINT entities_merged_into_id_fkey \
+                 FOREIGN KEY (merged_into_id) REFERENCES {}.{}(id) ON DELETE SET NULL",
+                Self::schema_name(),
+                Self::table_name(),
+                Self::schema_name(),
+                Self::table_name()
+            ),
+        ]
     }
 
     /// Generates indexes for `core.entities`.

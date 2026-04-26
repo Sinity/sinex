@@ -15,7 +15,7 @@ use tracing::{debug, info, warn};
 
 use sinex_primitives::{Timestamp, Uuid};
 
-use super::{MaterialAssembler, shutdown_signal, state};
+use super::{MaterialAssembler, state};
 use crate::{IngestdResult, SinexError};
 
 const STALE_ASSEMBLY_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(1);
@@ -162,7 +162,7 @@ impl MaterialAssembler {
         loop {
             tokio::select! {
                 _ = interval.tick() => {}
-                () = shutdown_signal(&shutdown_flag, &shutdown_notify) => break,
+                () = sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => break,
             }
 
             let active = self.assembler_state.len() as u32;

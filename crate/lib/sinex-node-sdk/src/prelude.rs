@@ -17,7 +17,14 @@ pub use crate::{Checkpoint, CheckpointManager, CheckpointState};
 #[cfg(feature = "messaging")]
 pub use crate::{Node, TimeHorizon};
 #[cfg(feature = "messaging")]
-pub use crate::{NodeCapabilities, NodeType, RunnerLifecycle, ScanArgs, ScanEstimate, ScanReport};
+pub use crate::{
+    ActivityEntry, IngestionHistoryEntry, NodeCapabilities, NodeType, RunnerLifecycle, ScanArgs,
+    ScanEstimate, ScanReport,
+};
+#[cfg(feature = "messaging")]
+pub use crate::exploration::{CoverageAnalysis, SourceState};
+#[cfg(feature = "messaging")]
+pub use crate::runtime::stream::{ContinuousStart, NodeRuntimeState};
 
 // Configuration and coordination
 pub use crate::{AutomatonConfig, EventSourceConfig, NodeConfig};

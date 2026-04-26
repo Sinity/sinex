@@ -1,9 +1,9 @@
 use crate::schema::{
-    ArchivedEvents, Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations,
-    EventAnnotations, EventClusterMembers, EventClusters, EventEmbeddings, EventPayloadSchemas,
-    EventReplacements, EventTombstones, Events, GitopsSchemaSources, NodeManifests, NodeRuns,
-    OperationsLog, SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger,
-    ValidationCache,
+    ArchivedEventAnnotations, ArchivedEventEmbeddings, ArchivedEvents, ArchivedTaggedItems, Blobs,
+    EmbeddingCache, EmbeddingModels, Entities, EntityRelations, EventAnnotations,
+    EventClusterMembers, EventClusters, EventEmbeddings, EventPayloadSchemas, EventReplacements,
+    EventTombstones, Events, GitopsSchemaSources, NodeManifests, NodeRuns, OperationsLog,
+    SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger, ValidationCache,
 };
 use crate::schema_registry;
 use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement};
@@ -404,7 +404,21 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         execute_sql(pool, &sql).await?;
     }
 
+    // Apply FK fixups for self-referencing foreign keys affected by a sea-query bug.
+    // sea-query emits ON DELETE CASCADE instead of ON DELETE SET NULL for
+    // self-referencing FKs. Work around by dropping the wrong constraint and
+    // re-adding with the correct action via raw SQL.
+    for sql in Tags::create_fk_fixup_sql() {
+        execute_sql(pool, &sql).await?;
+    }
+    for sql in Entities::create_fk_fixup_sql() {
+        execute_sql(pool, &sql).await?;
+    }
+
     execute_sql(pool, &ArchivedEvents::create_table_sql()).await?;
+    execute_sql(pool, &ArchivedEventAnnotations::create_table_sql()).await?;
+    execute_sql(pool, &ArchivedEventEmbeddings::create_table_sql()).await?;
+    execute_sql(pool, &ArchivedTaggedItems::create_table_sql()).await?;
     Ok(())
 }
 
@@ -415,6 +429,26 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(render_indexes(Events::create_indexes()));
     index_sql.extend(Events::create_gin_indexes_sql());
     index_sql.extend(ArchivedEvents::create_indexes_sql());
+    index_sql.extend(vec![
+        format!(
+            "CREATE INDEX IF NOT EXISTS ix_archived_annotations_event_id ON audit.archived_annotations(event_id)"
+        ),
+        format!(
+            "CREATE INDEX IF NOT EXISTS ix_archived_annotations_archived_at ON audit.archived_annotations(archived_at DESC)"
+        ),
+        format!(
+            "CREATE INDEX IF NOT EXISTS ix_archived_embeddings_event_id ON audit.archived_embeddings(event_id)"
+        ),
+        format!(
+            "CREATE INDEX IF NOT EXISTS ix_archived_embeddings_archived_at ON audit.archived_embeddings(archived_at DESC)"
+        ),
+        format!(
+            "CREATE INDEX IF NOT EXISTS ix_archived_tagged_items_item ON audit.archived_tagged_items(item_id, item_type)"
+        ),
+        format!(
+            "CREATE INDEX IF NOT EXISTS ix_archived_tagged_items_archived_at ON audit.archived_tagged_items(archived_at DESC)"
+        ),
+    ]);
     index_sql.extend(EventTombstones::create_indexes_sql());
 
     index_sql.extend(render_indexes(Blobs::create_indexes()));
@@ -437,6 +471,8 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(render_indexes(NodeRuns::create_indexes()));
     index_sql.extend(render_indexes(GitopsSchemaSources::create_indexes()));
     index_sql.extend(render_indexes(EventReplacements::create_indexes()));
+    index_sql.extend(render_indexes(OperationsLog::create_indexes()));
+    index_sql.extend(OperationsLog::create_gin_indexes_sql());
 
     for sql in index_sql {
         execute_sql(pool, &sql).await?;

@@ -39,7 +39,9 @@ pub mod confirmation_handler;
 pub mod content_store;
 #[cfg(feature = "messaging")]
 pub mod coordination;
-pub mod diagnostics;
+pub mod diagnostics {
+    pub mod regression;
+}
 #[cfg(feature = "messaging")]
 pub mod dlq_retry;
 
@@ -59,6 +61,7 @@ pub mod health_reporter;
 #[cfg(feature = "messaging")]
 pub mod heartbeat;
 pub mod ids;
+#[cfg(test)]
 pub mod ingestion_helpers;
 #[cfg(feature = "messaging")]
 pub mod ingestor_node;
@@ -76,7 +79,9 @@ pub mod processing;
 #[cfg(feature = "messaging")]
 pub mod record_source;
 #[cfg(feature = "messaging")]
-pub mod runtime;
+pub mod runtime {
+    pub mod stream;
+}
 #[cfg(feature = "messaging")]
 pub mod schema_validator;
 #[cfg(feature = "messaging")]
@@ -178,6 +183,8 @@ pub use self_observation::{
 };
 #[cfg(feature = "messaging")]
 pub use shutdown::wait_for_shutdown_signal;
+pub use shutdown::wait_for_os_shutdown_signal;
+pub use shutdown::wait_for_shutdown_signal_bool;
 pub use shutdown::{ShutdownConfig, default_checkpoint_path};
 #[cfg(feature = "messaging")]
 pub use source_material::{stage_material, stage_material_from_file};

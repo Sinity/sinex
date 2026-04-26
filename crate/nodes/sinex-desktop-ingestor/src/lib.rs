@@ -10,34 +10,6 @@ mod window_manager;
 
 pub mod unified_node;
 
-// Local facade module to reduce import verbosity
-mod common {
-    // Core types facade
-    pub use sinex_db::models::Event;
-    pub use sinex_primitives::{JsonValue, temporal::Timestamp};
-
-    pub use sinex_node_sdk::{ActivityEntry, CoverageAnalysis, IngestionHistoryEntry, SourceState};
-    // SDK facade for common node types
-    pub use sinex_node_sdk::{
-        NodeResult, SinexError,
-        error_helpers::{ConfigAccessor, parse_config_value, parse_typed_config, path_utils},
-        runtime::stream::{
-            Checkpoint, ContinuousStart, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport,
-            TimeHorizon,
-        },
-    };
-
-    // External dependencies
-    pub use {
-        serde::{Deserialize, Serialize},
-        std::{
-            collections::{HashMap, VecDeque},
-            time::Duration,
-        },
-        tokio::{process::Command, time::interval},
-        tracing::{debug, error, info, instrument, warn},
-    };
-}
 
 pub use clipboard::ClipboardWatcher;
 pub use window_manager::{WindowManagerType, WindowManagerWatcher};

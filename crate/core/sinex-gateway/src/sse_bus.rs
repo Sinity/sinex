@@ -34,6 +34,10 @@ const RECENT_DELIVERED_EVENT_IDS: usize = 1024;
 /// so leaving this unbounded makes memory exhaustion trivial.
 pub const MAX_ACTIVE_SUBSCRIPTIONS: usize = 512;
 
+/// Maximum retry attempts for a single confirmed event ID before it is dropped.
+/// Prevents infinite retry loops when the DB persistently misses a confirmed event.
+const CONFIRMATION_RETRY_MAX_ATTEMPTS: u8 = 10;
+
 /// Heartbeat interval for keepalive messages.
 pub const HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
@@ -222,6 +226,9 @@ pub struct SubscriptionBus {
     subscriptions: DashMap<u64, Arc<SubscriptionSlot>>,
     next_sub_id: AtomicU64,
     active_subscriptions: AtomicUsize,
+    /// Tracks retry counts for confirmed event IDs that were not found in the DB.
+    /// After CONFIRMATION_RETRY_MAX_ATTEMPTS, the ID is dropped with a warning.
+    confirmation_retry_counts: Mutex<HashMap<Id<Event<JsonValue>>, u8>>,
 }
 
 impl Default for SubscriptionBus {
@@ -249,6 +256,7 @@ impl SubscriptionBus {
             subscriptions: DashMap::new(),
             next_sub_id: AtomicU64::new(1),
             active_subscriptions: AtomicUsize::new(0),
+            confirmation_retry_counts: Mutex::new(HashMap::new()),
         }
     }
 
@@ -500,6 +508,31 @@ impl SubscriptionBus {
             .collect()
     }
 
+    /// Apply retry counting to IDs that were not found in the DB.
+    /// IDs that exceed the max retry limit are dropped with a warning
+    /// instead of being retried indefinitely.
+    fn filter_retry_ids(
+        &self,
+        ids: Vec<Id<Event<JsonValue>>>,
+        id_buffer: &mut Vec<Id<Event<JsonValue>>>,
+    ) {
+        let mut retry_counts = self.confirmation_retry_counts.lock();
+        for id in ids {
+            let entry = retry_counts.entry(id).or_insert(0);
+            *entry += 1;
+            if *entry >= CONFIRMATION_RETRY_MAX_ATTEMPTS {
+                warn!(
+                    event_id = %id,
+                    retries = *entry,
+                    "Dropping missed confirmation ID after max retries"
+                );
+                retry_counts.remove(&id);
+            } else {
+                id_buffer.push(id);
+            }
+        }
+    }
+
     /// Fetch events from DB and fan out to all matching subscriptions.
     async fn flush_batch(&self, id_buffer: &mut Vec<Id<Event<JsonValue>>>, pool: &sqlx::PgPool) {
         let ids: Vec<_> = std::mem::take(id_buffer);
@@ -527,7 +560,7 @@ impl SubscriptionBus {
                     count = unique_ids.len(),
                     "Failed to fetch events for SSE fan-out; preserving batch for retry"
                 );
-                *id_buffer = unique_ids;
+                self.filter_retry_ids(unique_ids, id_buffer);
                 return;
             }
         };
@@ -560,7 +593,7 @@ impl SubscriptionBus {
                 missing = missing_ids.len(),
                 "SSE fan-out fetch missed confirmed events; preserving IDs for retry"
             );
-            id_buffer.extend(missing_ids);
+            self.filter_retry_ids(missing_ids, id_buffer);
         }
 
         // Snapshot handles so DashMap entry locks are not held during filter evaluation or send.

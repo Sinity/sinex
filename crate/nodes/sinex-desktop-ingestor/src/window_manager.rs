@@ -1,9 +1,12 @@
 #![doc = include_str!("../docs/window_manager.md")]
 
-// Use local facade for common types
-use crate::common::{
-    Duration, Event, HashMap, JsonValue, NodeResult, Timestamp, debug, error, info, warn,
-};
+// Use unified SDK prelude for common types
+use sinex_db::models::Event;
+use sinex_node_sdk::prelude::*;
+use sinex_primitives::{JsonValue, temporal::Timestamp};
+use std::collections::HashMap;
+use std::time::Duration;
+use tracing::{debug, error, info, warn};
 use sinex_primitives::env as shared_env;
 use sinex_primitives::privacy::{self, ProcessingContext};
 

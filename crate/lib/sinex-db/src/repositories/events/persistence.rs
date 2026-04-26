@@ -2199,6 +2199,66 @@ impl<'a> EventRepository<'a> {
             .await
             .map_err(|e| db_error(e, "set archive_reason"))?;
 
+        // Copy annotations to archive before the DELETE cascade destroys them.
+        // This preserves user-curated metadata through replay operations.
+        let annotation_count = sqlx::query(
+            r"INSERT INTO audit.archived_annotations
+              SELECT a.*, now(), $2, $3
+              FROM core.event_annotations a
+              WHERE a.event_id = ANY($1::uuid[])",
+        )
+        .bind(&ids)
+        .bind(archived_by)
+        .bind(reason)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "archive annotations"))?
+        .rows_affected();
+
+        // Copy embeddings to archive before the DELETE cascade destroys them.
+        let embedding_count = sqlx::query(
+            r"INSERT INTO audit.archived_embeddings
+              SELECT e.*, now(), $2, $3
+              FROM core.event_embeddings e
+              WHERE e.event_id = ANY($1::uuid[])",
+        )
+        .bind(&ids)
+        .bind(archived_by)
+        .bind(reason)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "archive embeddings"))?
+        .rows_affected();
+
+        // Copy tagged_items referencing the archived events, then clean up the
+        // live table. Unlike annotations/embeddings, tagged_items has no FK to
+        // events, so the DELETE below will not cascade — we must remove
+        // dangling references explicitly.
+        let tagged_count = sqlx::query(
+            r"INSERT INTO audit.archived_tagged_items
+              SELECT t.*, now(), $2, $3
+              FROM core.tagged_items t
+              WHERE t.item_type = 'event' AND t.item_id = ANY($1::uuid[])",
+        )
+        .bind(&ids)
+        .bind(archived_by)
+        .bind(reason)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "archive tagged items"))?
+        .rows_affected();
+
+        if tagged_count > 0 {
+            sqlx::query(
+                r"DELETE FROM core.tagged_items
+                  WHERE item_type = 'event' AND item_id = ANY($1::uuid[])",
+            )
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "cleanup archived tagged items"))?;
+        }
+
         // Delete events - the trigger fn_archive_before_delete copies them to archive
         // Process in reverse depth order (children first, then parents) to avoid FK issues
         let result = sqlx::query("DELETE FROM core.events WHERE id = ANY($1::uuid[])")
@@ -2221,6 +2281,9 @@ impl<'a> EventRepository<'a> {
             archived_by = %archived_by,
             reason = %reason,
             archived_count = %archived_count,
+            annotations_archived = annotation_count,
+            embeddings_archived = embedding_count,
+            tagged_items_archived = tagged_count,
             "Archived events via cascade operation"
         );
 

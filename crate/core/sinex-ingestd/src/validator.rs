@@ -101,6 +101,12 @@ impl EventValidator {
         }
     }
 
+    /// Whether validation is enabled on this validator.
+    #[must_use]
+    pub fn validation_enabled(&self) -> bool {
+        self.validation_enabled
+    }
+
     /// Create a validator with strict mode enabled.
     ///
     /// In strict mode, events without registered schemas are rejected.
@@ -179,6 +185,31 @@ impl EventValidator {
             .map_err(|e| {
                 SinexError::database(format!("Failed to load fresh schemas: {e}"))
                     .with_operation("validator.load_fresh_schemas")
+            })
+    }
+
+    /// Load fresh schemas from the database using an explicit `validation_enabled` flag.
+    ///
+    /// Unlike `load_fresh_schemas`, this is a static method that does not borrow the
+    /// validator instance, so callers can load schemas without holding any lock:
+    ///
+    /// ```rust,ignore
+    /// // Snapshot validation_enabled under a brief read lock (no I/O):
+    /// let enabled = validator.read().await.validation_enabled();
+    /// // Load schemas without holding any lock (DB I/O):
+    /// let new_inner = EventValidator::load_fresh_schemas_with_options(&pool, enabled).await?;
+    /// // Swap under a brief write lock (no I/O):
+    /// validator.write().await.swap_inner(new_inner);
+    /// ```
+    pub async fn load_fresh_schemas_with_options(
+        pool: &PgPool,
+        validation_enabled: bool,
+    ) -> IngestdResult<CoreEventValidator> {
+        CoreEventValidator::load_from_db_with_options(pool, validation_enabled)
+            .await
+            .map_err(|e| {
+                SinexError::database(format!("Failed to load fresh schemas: {e}"))
+                    .with_operation("validator.load_fresh_schemas_with_options")
             })
     }
 

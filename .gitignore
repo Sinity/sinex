@@ -77,3 +77,4 @@ docs/analysis
 AGENTS.override.md
 # Generated instruction surface
 AGENTS.md
+.claude/scheduled_tasks.lock
