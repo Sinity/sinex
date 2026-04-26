@@ -58,9 +58,10 @@ pub struct BrowserVisitRecord {
     pub material_bytes: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ParsedDumpStats {
     pub delta_line_count: u64,
+    pub parse_failures: u64,
 }
 
 #[must_use]

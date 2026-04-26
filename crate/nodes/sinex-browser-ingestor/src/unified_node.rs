@@ -291,6 +291,13 @@ impl BrowserNode {
                 }
             };
 
+            if stats.parse_failures > 0 {
+                warnings.push(format!(
+                    "browser dump {} skipped {} malformed JSON line(s)",
+                    file.path, stats.parse_failures
+                ));
+            }
+
             let materializer = self.materializer(file.path.as_str())?;
             let import_result: NodeResult<()> = async {
                 for visit in visits {
