@@ -289,7 +289,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Telemetry { cmd } => cmd.execute(&client).await?,
                 Commands::Report { cmd } => cmd.execute(&client).await?,
                 Commands::Status(cmd) => {
-                    cmd.execute(&client, config.runtime_target.as_ref()).await?;
+                    cmd.execute(&client, config.runtime_target.as_ref(), format).await?;
                 }
                 Commands::Recent(cmd) => cmd.execute(&client).await?,
                 Commands::Errors(cmd) => cmd.execute(&client).await?,
