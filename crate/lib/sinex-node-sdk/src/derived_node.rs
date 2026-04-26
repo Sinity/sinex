@@ -11,6 +11,7 @@
 
 mod adapter;
 mod context;
+pub mod histograms;
 pub mod invalidation;
 mod output;
 pub mod traits;
