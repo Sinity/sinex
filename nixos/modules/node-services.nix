@@ -770,6 +770,13 @@ let
             grant_file_read "$path-shm"
           }
 
+          # ACL ordering matters: grant_parent_dirs sets `--x` (traverse-only) on
+          # every directory between `/` and the path. When a path is a file, that
+          # includes the file's containing directory. If we later call
+          # grant_dir_read on that same directory, we upgrade `--x` → `r-x`. So
+          # any block that needs read on a directory MUST run last; otherwise a
+          # subsequent grant_parent_dirs traversing through it will downgrade
+          # the ACL back to `--x` and SQLite will fail to open WAL/SHM siblings.
           ${concatStringsSep "\n" (map (path: ''
             grant_parent_dirs ${escapeShellArg path}
             grant_file_read ${escapeShellArg path}
@@ -777,14 +784,14 @@ let
 
           ${concatStringsSep "\n" (map (path: ''
             grant_parent_dirs ${escapeShellArg path}
-            grant_dir_read ${escapeShellArg path}
-            grant_dir_read_defaults ${escapeShellArg path}
-          '') sqliteHistoryDirs)}
+            grant_sqlite_sidecars ${escapeShellArg path}
+          '') sqliteHistoryPaths)}
 
           ${concatStringsSep "\n" (map (path: ''
             grant_parent_dirs ${escapeShellArg path}
-            grant_sqlite_sidecars ${escapeShellArg path}
-          '') sqliteHistoryPaths)}
+            grant_dir_read ${escapeShellArg path}
+            grant_dir_read_defaults ${escapeShellArg path}
+          '') sqliteHistoryDirs)}
 
           if [ "$acl_failures" -ne 0 ]; then
             exit 1
