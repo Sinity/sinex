@@ -73,7 +73,7 @@ pub fn custom_affected_workspace(dir: &Path, verbose: bool) -> Vec<StepOutcome> 
 }
 
 /// Affected transitive: touch sinex-db (a mid-level library), verify that
-/// transitive dependents like sinex-services and sinex-gateway appear.
+/// transitive dependents like sinex-gateway appear.
 #[must_use]
 pub fn custom_affected_transitive(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     run_affected_exercise(
@@ -81,8 +81,8 @@ pub fn custom_affected_transitive(dir: &Path, verbose: bool) -> Vec<StepOutcome>
         verbose,
         "crate/lib/sinex-db/src/lib.rs",
         &[
-            "sinex-db",       // Direct change
-            "sinex-services", // Depends on sinex-db
+            "sinex-db",      // Direct change
+            "sinex-gateway", // Depends on sinex-db
         ],
         &[], // Don't assert absence — other transitive deps may or may not appear
     )

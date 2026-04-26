@@ -1,4 +1,4 @@
-## Workspace Map (21 Workspace Members)
+## Workspace Map (20 Workspace Members)
 
 ### What to import from where
 
@@ -25,7 +25,6 @@ crate/
     sinex-schema/        DB schema definitions + declarative convergence engine
     sinex-macros/        #[derive(EventPayload)]
     sinex-node-sdk/      Node runtime: lifecycle, checkpoints, replay, CLI framework
-    sinex-services/      Business logic: PkmService (entity graph), ContentService (blobs)
   core/
     sinex-ingestd/       Ingestion daemon: NATS consumer -> batch writes -> confirmations
     sinex-gateway/       API gateway: JSON-RPC, SSE subscriptions, native messaging

@@ -35,6 +35,7 @@ rand = { workspace = true }
 urlencoding = "2.1"
 gethostname = { workspace = true }
 blake3 = "1.5"
+sha2 = "0.10"
 num-traits = "0.2"
 camino = { workspace = true }
 ahash = { workspace = true }

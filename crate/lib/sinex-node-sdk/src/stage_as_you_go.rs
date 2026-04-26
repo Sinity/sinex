@@ -2,12 +2,14 @@
 //! Utilities for staging files during processing.
 
 use crate::acquisition_manager::{AcquisitionManager, SourceMaterialHandle};
+use crate::ids::deterministic_material_event_id;
 use crate::runtime::stream::{EventEmitter, NodeHandles, NodeRuntimeState};
 use crate::{NodeResult, SinexError};
 
 use serde_json::{Map as JsonMap, json};
 use sinex_primitives::Id;
 use sinex_primitives::JsonValue;
+use sinex_primitives::Timestamp;
 use sinex_primitives::events::{Event, EventPayload, payloads::LogLinePayload};
 use std::collections::HashMap;
 use std::io::ErrorKind;
@@ -64,6 +66,7 @@ impl StageCleanupConfig {
 mod tests {
     use super::StageAsYouGoContext;
     use crate::acquisition_manager::{AcquisitionManager, SOURCE_MATERIAL_END_SUBJECT};
+    use crate::ids::deterministic_material_event_id;
     use crate::runtime::stream::EventEmitter;
     use sinex_primitives::environment::environment;
     use sinex_primitives::{DynamicPayload, Id, events::Provenance};
@@ -90,6 +93,10 @@ mod tests {
             Id::from_uuid(Uuid::now_v7()),
             Vec::new(),
         ))
+        .at_time(
+            sinex_primitives::Timestamp::from_unix_timestamp_millis(1_710_000_000_123)
+                .ok_or_else(|| color_eyre::eyre::eyre!("test timestamp should be valid"))?,
+        )
         .build()
         .expect("infallible: test provenance set");
         let material_id = Uuid::now_v7();
@@ -101,8 +108,24 @@ mod tests {
             .await?
             .ok_or_else(|| color_eyre::eyre::eyre!("event channel closed"))?;
 
-        let stored_id = emitted.id.expect("event ID should be assigned");
+        let stored_id = emitted
+            .id
+            .ok_or_else(|| color_eyre::eyre::eyre!("event ID should be assigned"))?;
         assert_eq!(*stored_id.as_uuid(), emitted_id);
+        assert_eq!(
+            *stored_id.as_uuid(),
+            deterministic_material_event_id(
+                "stage.test",
+                "line.captured",
+                material_id,
+                12,
+                Some(12),
+                Some(34),
+                emitted
+                    .ts_orig
+                    .ok_or_else(|| color_eyre::eyre::eyre!("event timestamp should be assigned"))?
+            )
+        );
 
         match emitted.provenance() {
             Provenance::Material { anchor_byte, .. } => {
@@ -529,9 +552,27 @@ impl StageAsYouGoContext {
         offset_end: Option<i64>,
     ) -> NodeResult<Uuid> {
         let anchor_byte = offset_start.or(offset_end).unwrap_or(0);
+        let ts_orig = if let Some(timestamp) = event.ts_orig {
+            timestamp
+        } else {
+            let timestamp = self
+                .material_started_at(source_material_id)
+                .await
+                .unwrap_or_else(Timestamp::now);
+            event.ts_orig = Some(timestamp);
+            timestamp
+        };
 
         if event.id.is_none() {
-            event.id = Some(Id::from_uuid(Uuid::now_v7()));
+            event.id = Some(Id::from_uuid(deterministic_material_event_id(
+                event.source.as_str(),
+                event.event_type.as_str(),
+                source_material_id,
+                anchor_byte,
+                offset_start,
+                offset_end,
+                ts_orig,
+            )));
         }
 
         // Attach source material provenance to the event

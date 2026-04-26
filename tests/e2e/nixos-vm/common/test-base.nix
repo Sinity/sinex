@@ -31,6 +31,10 @@ let
 
     core.gateway.autoGenerateTls = lib.mkDefault true;
 
+    # The deployment-shaped stream topology declares retention caps larger than
+    # the tiny VM default. NATS expects this value as a K/M/G/T-sized string.
+    nats.jetstreamMaxStore = lib.mkDefault "16G";
+
     nodes = {
       enable = lib.mkDefault true;
       coordination.enable = lib.mkDefault false;
@@ -89,8 +93,6 @@ in
   systemd.services.sinex-blob-init.path = [ pkgs.git pkgs.git-annex ];
   systemd.services.sinex-filesystem-1.serviceConfig.Type = lib.mkForce "simple";
   systemd.services.sinex-filesystem-1.serviceConfig.TimeoutStartSec = lib.mkForce "infinity";
-  systemd.services.sinex-terminal-1.serviceConfig.Type = lib.mkForce "simple";
-  systemd.services.sinex-terminal-1.serviceConfig.TimeoutStartSec = lib.mkForce "infinity";
 
   # Relax Postgres authentication for disposable VM tests.
   services.postgresql.authentication = lib.mkForce ''

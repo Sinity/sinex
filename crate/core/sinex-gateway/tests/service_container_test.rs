@@ -1,7 +1,7 @@
 //! Integration tests for `ServiceContainer` dependency injection
 //!
 //! Tests the initialization and dependency management of services
-//! including `ContentService` and `PkmService`.
+//! including the gateway content service and the db-owned PKM service.
 
 use color_eyre::Result as EyreResult;
 use sinex_gateway::{ServiceContainer, service_container::GatewayHealthStatus};

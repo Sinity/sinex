@@ -2,18 +2,21 @@
 
 //! Personal Knowledge Management (PKM) orchestrator.
 
+use crate::DbPool;
+use crate::repositories::DbPoolExt;
+use crate::repositories::source_materials::SourceMaterial;
+use crate::repositories::state::Operation;
+use crate::repositories::{CreateEntity, CreateEntityRelation};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_db::DbPool;
-use sinex_db::repositories::source_materials::SourceMaterial;
 use sinex_primitives::Id;
+use sinex_primitives::domain::{Entity as DbEntity, OperationStatus};
 use sinex_primitives::error::{Result, SinexError};
-use sinex_primitives::{Event, JsonValue, domain::Entity as DbEntity};
+use sinex_primitives::{Event, JsonValue};
 use uuid::Uuid;
 
-use sinex_db::repositories::DbPoolExt;
-use sinex_db::repositories::{CreateEntity, CreateEntityRelation};
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
 pub struct PkmService {
@@ -85,6 +88,8 @@ impl MetadataBuilder {
 
 const CALLER_METADATA_KEY: &str = "caller_metadata";
 const SYSTEM_METADATA_KEY: &str = "_system_metadata";
+const PKM_ENTITY_CREATE_OPERATION: &str = "pkm.entity.create";
+const PKM_ENTITY_LINK_OPERATION: &str = "pkm.entity.link";
 
 fn attach_system_metadata(
     metadata: serde_json::Value,
@@ -247,7 +252,33 @@ impl PkmService {
                 .create_entity_with_executor(&mut *tx, entity)
                 .await?;
 
-            entity_ids.push(*entity.id.as_uuid());
+            let entity_id = *entity.id.as_uuid();
+            self.pool
+                .state()
+                .log_operation_with_executor(
+                    &mut *tx,
+                    Operation {
+                        id: None,
+                        operation_type: PKM_ENTITY_CREATE_OPERATION.to_string(),
+                        operator: created_by.to_string(),
+                        scope: Some(json!({
+                            "entity_id": entity_id,
+                            "source_material_id": source_material_id,
+                            "payload": {
+                                "name": entity.name,
+                                "entity_type": entity.entity_type,
+                                "properties": entity.properties,
+                            }
+                        })),
+                        result_status: OperationStatus::Success,
+                        result_message: None,
+                        preview_summary: Some(json!({ "entity_id": entity_id })),
+                        duration_ms: None,
+                    },
+                )
+                .await?;
+
+            entity_ids.push(entity_id);
         }
 
         tx.commit().await?;
@@ -269,7 +300,9 @@ impl PkmService {
         relationship_type: &str,
         properties: HashMap<String, serde_json::Value>,
         source_material_id: Option<Uuid>,
+        created_by: &str,
     ) -> Result<Uuid> {
+        let started = Instant::now();
         let metadata = serde_json::json!(properties);
         let mut system_metadata = serde_json::json!({});
 
@@ -278,26 +311,58 @@ impl PkmService {
         }
 
         let metadata = attach_system_metadata(metadata, system_metadata);
+        let mut tx = self.pool.begin().await?;
 
         let relationship = self
             .pool
             .knowledge_graph()
-            .create_relation(
+            .create_relation_with_executor(
+                &mut *tx,
                 CreateEntityRelation::new(from_entity_id, to_entity_id, relationship_type)
                     .with_properties(serde_json::to_value(metadata)?),
             )
             .await?;
+        let relation_id = *relationship.id.as_uuid();
+
+        self.pool
+            .state()
+            .log_operation_with_executor(
+                &mut *tx,
+                Operation {
+                    id: None,
+                    operation_type: PKM_ENTITY_LINK_OPERATION.to_string(),
+                    operator: created_by.to_string(),
+                    scope: Some(json!({
+                        "relation_id": relation_id,
+                        "from_entity_id": from_entity_id,
+                        "to_entity_id": to_entity_id,
+                        "source_material_id": source_material_id,
+                        "payload": {
+                            "relationship_type": relationship_type,
+                            "properties": relationship.properties,
+                        }
+                    })),
+                    result_status: OperationStatus::Success,
+                    result_message: None,
+                    preview_summary: Some(json!({ "relation_id": relation_id })),
+                    duration_ms: elapsed_ms(started.elapsed()),
+                },
+            )
+            .await?;
+
+        tx.commit().await?;
 
         info!(
-            relation_id = %relationship.id,
+            relation_id = %relation_id,
             from_entity_id = %from_entity_id,
             to_entity_id = %to_entity_id,
             relationship_type = relationship_type,
             source_material_id = ?source_material_id,
+            created_by = created_by,
             "Created entity relationship with provenance"
         );
 
-        Ok(*relationship.id.as_uuid())
+        Ok(relation_id)
     }
 
     /// Register external content as source material
@@ -412,7 +477,7 @@ impl PkmService {
         content: &[u8],
         mime_type: Option<&str>,
     ) -> Result<()> {
-        use sinex_db::models::blob::Blob;
+        use crate::models::blob::Blob;
 
         let (blake3_checksum, sha256_checksum) = calculate_checksums(content);
 
@@ -571,4 +636,9 @@ fn calculate_checksums(content: &[u8]) -> (String, String) {
         format!("{:x}", hasher.finalize())
     };
     (blake3_hash, sha256_hash)
+}
+
+fn elapsed_ms(duration: Duration) -> Option<i32> {
+    let millis = duration.as_millis().min(i32::MAX as u128);
+    i32::try_from(millis).ok()
 }

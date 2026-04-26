@@ -121,6 +121,16 @@ mod tests {
         ctx: &TestContext,
         service_name: &str,
     ) -> TestResult<TestRuntimeHarness> {
+        build_runtime_with_identity(ctx, service_name, service_name, None, None).await
+    }
+
+    async fn build_runtime_with_identity(
+        ctx: &TestContext,
+        service_name: &str,
+        node_name: &str,
+        source_unit_id: Option<&str>,
+        runner_pack: Option<&str>,
+    ) -> TestResult<TestRuntimeHarness> {
         let nats_client = ctx.ensure_nats().await?;
         let nats = ctx.nats_handle()?;
         let publisher = Arc::new(NatsPublisher::new(nats_client.clone()));
@@ -159,9 +169,11 @@ mod tests {
         let work_dir = Utf8PathBuf::from_path_buf(sinex_primitives::environment().temp_dir())
             .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex-test"));
 
-        let service_info = ServiceInfo::new(
+        let service_info = ServiceInfo::new_with_runtime_identity(
             service_name.to_string(),
-            service_name.to_string(),
+            node_name.to_string(),
+            source_unit_id.map(ToOwned::to_owned),
+            runner_pack.map(ToOwned::to_owned),
             sinex_primitives::events::builder::get_hostname(),
             work_dir.clone().into_std_path_buf(),
             false,
@@ -206,6 +218,37 @@ mod tests {
         assert!(
             second.last_heartbeat > first.last_heartbeat,
             "current_metadata should refresh last_heartbeat"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_unit_coordination_uses_control_identity_for_storage(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let harness = build_runtime_with_identity(
+            &ctx,
+            "sinex-source@terminal.atuin-history",
+            "terminal-watcher",
+            Some("terminal.atuin-history"),
+            Some("terminal"),
+        )
+        .await?;
+        let coordination =
+            NodeCoordination::from_runtime(&harness.runtime, "source-unit-instance".to_string())?;
+
+        assert_eq!(coordination.instance.service_name, "terminal.atuin-history");
+
+        coordination
+            .kv_client
+            .register_instance(&coordination.current_metadata())
+            .await?;
+        assert!(
+            coordination
+                .kv_client
+                .acquire_leadership(&coordination.instance.instance_id)
+                .await?,
+            "source-unit coordination identity should be a valid NATS KV key"
         );
         Ok(())
     }
@@ -996,7 +1039,7 @@ impl NodeCoordination {
             .clone();
 
         Self::new(
-            runtime.service_info().service_name().to_string(),
+            runtime.service_info().control_identity().to_string(),
             instance_id,
             nats_client,
             runtime,

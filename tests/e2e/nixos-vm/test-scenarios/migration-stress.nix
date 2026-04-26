@@ -1,6 +1,6 @@
 # Volume-seeded migration stress test.
 #
-# Seeds 1 million rows directly into Postgres via COPY (bypassing the app layer),
+# Seeds 1 million rows directly into Postgres via INSERT SELECT (bypassing the app layer),
 # then forces a schema migration by invalidating the apply-hash marker. Verifies:
 #   - Migration completes successfully against a large dataset
 #   - No transaction holds an exclusive table lock for more than 30 seconds
@@ -26,16 +26,18 @@ let
   inherit (pkgs) lib;
 
   # SQL to bulk-insert 1M synthetic events via generate_series.
-  # Uses gen_random_uuid() for IDs (no UUIDv7 dependency needed for seeding).
-  # Payload is a minimal valid JSONB object.
+  # Uses UUIDv7 IDs and synthesis provenance so direct inserts exercise the same
+  # persistence invariants as the application pipeline.
   seedSql = ''
-    INSERT INTO core.events (id, source, event_type, payload, ts_orig)
+    INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids)
     SELECT
-      gen_random_uuid(),
+      uuidv7(),
       'migration-stress-seed',
       'synthetic.seed',
+      'sinex-vm',
       jsonb_build_object('seq', gs, 'source', 'seed'),
-      now() - (gs * interval '1 second')
+      now() - (gs * interval '1 second'),
+      ARRAY[uuidv7()]::uuid[]
     FROM generate_series(1, 1000000) AS gs;
   '';
 
@@ -58,6 +60,7 @@ pkgs.testers.nixosTest {
   };
 
   testScript = ''
+    import shlex
     import time
 
     start_all()
@@ -65,19 +68,20 @@ pkgs.testers.nixosTest {
     machine.wait_for_unit("postgresql.service", timeout=60)
     machine.wait_for_unit("sinex-ingestd.service", timeout=60)
 
+    def psql(sql, flags="-tAc"):
+        psql_command = f"psql -d sinex_dev {flags} " + shlex.quote(sql)
+        return machine.succeed("su - postgres -c " + shlex.quote(psql_command))
+
     def get_event_count():
-        result = machine.succeed(
-            "su - postgres -c 'psql -d sinex -t -c \"SELECT COUNT(*) FROM core.events;\"'"
-        )
+        result = psql("SELECT COUNT(*) FROM core.events;")
         return int(result.strip())
 
     def get_max_lock_duration_secs():
         """Return the longest current exclusive lock duration in seconds (0 if none)."""
-        result = machine.succeed(
-            "su - postgres -c 'psql -d sinex -t -c \""
+        result = psql(
             "SELECT COALESCE(MAX(EXTRACT(EPOCH FROM (now() - query_start))), 0) "
             "FROM pg_stat_activity "
-            "WHERE wait_event_type = \\\'Lock\\\' AND state = \\\'active\\\';\"'"
+            "WHERE wait_event_type = 'Lock' AND state = 'active';"
         )
         try:
             return float(result.strip())
@@ -89,13 +93,7 @@ pkgs.testers.nixosTest {
     with subtest("seed-1m-rows"):
         print("Seeding 1M rows via generate_series + INSERT SELECT...")
         seed_start = time.time()
-        machine.succeed(
-            "su - postgres -c 'psql -d sinex -c \""
-            "INSERT INTO core.events (id, source, event_type, payload, ts_orig) "
-            "SELECT gen_random_uuid(), \\\'migration-stress-seed\\\', \\\'synthetic.seed\\\', "
-            "jsonb_build_object(\\\'seq\\\', gs), now() - (gs * interval \\\'1 second\\\') "
-            "FROM generate_series(1, 1000000) AS gs;\"'"
-        )
+        psql(${builtins.toJSON seedSql}, flags="-c")
         seed_elapsed = time.time() - seed_start
         pre_migration_count = get_event_count()
         print(f"✓ Seeded {pre_migration_count} rows in {seed_elapsed:.1f}s")
@@ -155,11 +153,11 @@ pkgs.testers.nixosTest {
     with subtest("pipeline-flows-post-migration"):
         # Touch a file to trigger a fs event (if fs-ingestor is enabled)
         # and verify new events can be written
-        machine.succeed(
-            "su - postgres -c 'psql -d sinex -c \""
-            "INSERT INTO core.events (id, source, event_type, payload, ts_orig) "
-            "VALUES (gen_random_uuid(), \\\'migration-stress-probe\\\', "
-            "\\\'synthetic.probe\\\', \\\'{}\\\'::jsonb, now());\"'"
+        psql(
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) "
+            "VALUES (uuidv7(), 'migration-stress-probe', 'synthetic.probe', "
+            "'sinex-vm', '{}'::jsonb, now(), ARRAY[uuidv7()]::uuid[]);",
+            flags="-c",
         )
         probe_count = get_event_count()
         assert probe_count > post_migration_count, \

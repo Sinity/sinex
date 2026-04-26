@@ -2992,8 +2992,10 @@ mod tests {
                 "sinex-ingestd.service".to_string(),
                 "sinex-gateway.service".to_string(),
                 "sinex-filesystem-1.service".to_string(),
-                "sinex-terminal-1.service".to_string(),
-                "sinex-terminal-2.service".to_string(),
+                "sinex-source@terminal.atuin-history.service".to_string(),
+                "sinex-source@terminal.bash-history.service".to_string(),
+                "sinex-source@terminal.fish-history.service".to_string(),
+                "sinex-source@terminal.zsh-history.service".to_string(),
                 "sinex-system-1.service".to_string(),
                 "sinex-health-automaton.service".to_string(),
             ],
@@ -4804,8 +4806,10 @@ exit 1
         assert!(units.contains(&"sinex-ingestd.service".to_string()));
         assert!(units.contains(&"sinex-gateway.service".to_string()));
         assert!(units.contains(&"sinex-filesystem-1.service".to_string()));
-        assert!(units.contains(&"sinex-terminal-1.service".to_string()));
-        assert!(units.contains(&"sinex-terminal-2.service".to_string()));
+        assert!(units.contains(&"sinex-source@terminal.atuin-history.service".to_string()));
+        assert!(units.contains(&"sinex-source@terminal.bash-history.service".to_string()));
+        assert!(units.contains(&"sinex-source@terminal.fish-history.service".to_string()));
+        assert!(units.contains(&"sinex-source@terminal.zsh-history.service".to_string()));
         assert!(units.contains(&"sinex-system-1.service".to_string()));
         assert!(units.contains(&"sinex-health-automaton.service".to_string()));
         assert!(!units.iter().any(|unit| unit == "sinex-desktop-1.service"));

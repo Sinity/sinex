@@ -9,6 +9,7 @@ pub mod auth;
 pub mod cascade_analyzer;
 pub mod client;
 pub mod config;
+pub mod content_service;
 pub mod distributed_rate_limit;
 pub mod gateway_metrics;
 pub mod handlers;

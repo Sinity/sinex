@@ -42,6 +42,14 @@ pub struct NodeCli {
     #[arg(long)]
     pub service_name: Option<String>,
 
+    /// Semantic source-unit identity hosted by this runner pack
+    #[arg(long, env = "SINEX_SOURCE_UNIT", value_parser = validate_identity_token)]
+    pub source_unit: Option<String>,
+
+    /// Runner-pack identity for binaries that host multiple source units
+    #[arg(long, env = "SINEX_RUNNER_PACK", value_parser = validate_identity_token)]
+    pub runner_pack: Option<String>,
+
     /// Working directory for temporary files
     #[arg(long, value_parser = validate_work_dir)]
     pub work_dir: Option<SanitizedPath>,
@@ -327,6 +335,25 @@ pub fn validate_scan_target(s: &str) -> Result<SanitizedPath, String> {
     parse_non_empty_path_arg(s, "Scan target").map_err(|e| e.to_string())
 }
 
+/// Validate a source-unit or runner-pack identifier.
+pub fn validate_identity_token(s: &str) -> Result<String, String> {
+    let value = s.trim();
+    if value.is_empty() {
+        return Err("identity token cannot be empty".to_string());
+    }
+    if !value.bytes().all(|byte| {
+        byte.is_ascii_lowercase()
+            || byte.is_ascii_uppercase()
+            || byte.is_ascii_digit()
+            || matches!(byte, b'.' | b'-' | b'_')
+    }) {
+        return Err(
+            "identity token may contain only ASCII letters, digits, '.', '-', and '_'".to_string(),
+        );
+    }
+    Ok(value.to_string())
+}
+
 /// Validate and parse export file path
 pub fn validate_export_path(s: &str) -> Result<SanitizedPath, String> {
     parse_non_empty_path_arg(s, "Export").map_err(|e| e.to_string())
@@ -417,6 +444,17 @@ fn edge_mode_enabled(database_url_supplied: bool) -> bool {
     env_bool_with_default("SINEX_EDGE_MODE", false, "node cli edge mode") && !database_url_supplied
 }
 
+fn default_service_name(args: &NodeCli) -> String {
+    args.service_name
+        .clone()
+        .or_else(|| {
+            args.source_unit
+                .as_ref()
+                .map(|unit| format!("sinex-{unit}"))
+        })
+        .unwrap_or_else(|| "sinex-node".to_string())
+}
+
 impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> NodeCliRunner<T> {
     /// Create new CLI runner with a node instance
     pub fn new(node: T) -> Self {
@@ -467,6 +505,13 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
                 .entry("consumer_group".to_string())
                 .or_insert_with(|| serde_json::json!(group));
         }
+
+        Self::insert_identity_arg(
+            &mut node_config,
+            "source_unit_id",
+            args.source_unit.as_deref(),
+        )?;
+        Self::insert_identity_arg(&mut node_config, "runner_pack", args.runner_pack.as_deref())?;
 
         // Take ownership of the node
         let node = self
@@ -928,9 +973,30 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
     }
 
     fn resolve_service_name(args: &NodeCli) -> String {
-        args.service_name
-            .clone()
-            .unwrap_or_else(|| "sinex-node".to_string())
+        default_service_name(args)
+    }
+
+    fn insert_identity_arg(
+        node_config: &mut HashMap<String, serde_json::Value>,
+        key: &str,
+        value: Option<&str>,
+    ) -> NodeResult<()> {
+        let Some(value) = value else {
+            return Ok(());
+        };
+        match node_config.get(key).and_then(serde_json::Value::as_str) {
+            Some(existing) if existing != value => Err(SinexError::configuration(format!(
+                "`--{}` conflicts with node_config.{key}",
+                key.replace('_', "-")
+            ))
+            .with_context("cli_value", value.to_string())
+            .with_context("config_value", existing.to_string())),
+            Some(_) => Ok(()),
+            None => {
+                node_config.insert(key.to_string(), serde_json::json!(value));
+                Ok(())
+            }
+        }
     }
 
     #[allow(clippy::panic)] // Internal invariant: environment-generated paths must validate
@@ -982,9 +1048,9 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
 )]
 mod tests {
     use super::{
-        NatsArgs, NodeCli, NodeCommand, edge_mode_enabled, handle_export_result, parse_checkpoint,
-        render_cli_value, render_optional_cli_timestamp, resolve_primary_database_url,
-        unavailable_section,
+        NatsArgs, NodeCli, NodeCommand, default_service_name, edge_mode_enabled,
+        handle_export_result, parse_checkpoint, render_cli_value, render_optional_cli_timestamp,
+        resolve_primary_database_url, unavailable_section, validate_identity_token,
     };
     use crate::SinexError;
     use crate::runtime::stream::Checkpoint;
@@ -1042,6 +1108,8 @@ mod tests {
             },
             database_url: database_url.map(ToOwned::to_owned),
             service_name: None,
+            source_unit: None,
+            runner_pack: None,
             work_dir: None,
             verbose: 0,
             node_config: None,
@@ -1085,6 +1153,29 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn validate_identity_token_accepts_source_unit_spelling() {
+        assert_eq!(
+            validate_identity_token("terminal.atuin-history").expect("valid source unit"),
+            "terminal.atuin-history"
+        );
+    }
+
+    #[test]
+    fn validate_identity_token_rejects_shell_syntax() {
+        let error = validate_identity_token("terminal;rm -rf")
+            .expect_err("identity tokens must not accept shell syntax");
+        assert!(error.contains("ASCII letters"));
+    }
+
+    #[test]
+    fn source_unit_supplies_default_service_name() {
+        let mut cli = test_cli_with_database_url(None);
+        cli.source_unit = Some("terminal.atuin-history".to_string());
+
+        assert_eq!(default_service_name(&cli), "sinex-terminal.atuin-history");
     }
 
     #[test]

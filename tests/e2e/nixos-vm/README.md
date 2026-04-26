@@ -87,9 +87,14 @@ It follows the scenario registry in `tests/e2e/nixos-vm/default.nix`.
 - `basic` is the fast proof that gateway ingress, automata, and the managed
   document scan surface all function on a booted VM.
 - `node-matrix` is the deployment-honesty proof: every long-running
-  node/automaton unit must start, the managed document surface must actually
-  ingest, and `sinexctl verify --gateway-smoke --automata-smoke --document-smoke --source-proof --historical-proof`
-  must pass on the booted VM.
+  node/automaton unit and terminal runner-pack source unit must start,
+  target-user terminal/browser history bridges and the desktop runtime bridge
+  must be reachable by the `sinex` service user, the managed document surface
+  must actually ingest,
+  `sinexctl verify --gateway-smoke --automata-smoke --document-smoke --source-proof --historical-proof`
+  must pass on the booted VM, and managed service restarts must leave no failed
+  `sinex-*` units. When a `sinex-*` unit is failed, the scenario captures recent
+  journald logs under `/tmp/sinex-vm-failure-logs`.
 - `multi-source` is the broad runtime exercise scenario; it now drives the
   managed document scan surface alongside filesystem, terminal, desktop,
   system, and automata traffic, then proves those enabled collector surfaces

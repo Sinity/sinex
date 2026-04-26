@@ -14,7 +14,7 @@ This include keeps only the compressed memory surface for AGENTS consumers.
 | Cluster | Issues | Meaning |
 |---------|--------|---------|
 | Transport and failure routing | `#326`, `#327`, `#338` | Define publish intent/QoS, split DLQ vs processing failure vs local spool semantics, and formalize node drain behavior. |
-| Service and content ownership | `#328`, `#349`, `#350`, `#351` | Remove the awkward `sinex-services` layer by moving PKM/content ownership into DB/gateway-owned surfaces. |
+| Service-crate cleanup | `#328`, `#351` | Remove the retired `sinex-services` workspace/tooling/docs traces now that PKM and content ownership moved. |
 | Content-store and SDK docs | `#313`, `#235` | Finish backend-neutral content-store naming and refresh node-SDK docs around the current framework/proof architecture. |
 | Deployment and VM coverage | `#318`, `#234` | Make VM scenarios representative of deployment hardening and remove stale satellite-era VM surfaces. |
 | Derived runtime rollout | `#334`, `#329`, `#331`, `#332` | Add operator-visible derived-node telemetry, deploy/session-detector surfaces, and unblock entity/document-layer research after derived-output proof. |
@@ -45,7 +45,6 @@ This include keeps only the compressed memory surface for AGENTS consumers.
 |-----------|----------|
 | Publish backpressure is not yet intent-aware across raw, control, DLQ, gateway, and telemetry paths. | `#326` |
 | DLQ, processing failure, and local recovery spool semantics are still too easy to conflate. | `#327` |
-| `sinex-services` still creates an awkward dependency and ownership boundary. | `#328` |
 | Blob/material APIs still expose annex-centric naming despite the hybrid local-CAS/annex backend. | `#313` |
 | VM/deployment coverage still lags the current runtime-target and target-user bridge model. | `#318`, `#234` |
 | Derived-node telemetry is not yet operator-visible enough through `sinexctl`/status surfaces. | `#334` |

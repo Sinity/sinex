@@ -5635,7 +5635,6 @@ dependencies = [
  "serde_json",
  "sinex-node-sdk",
  "sinex-primitives",
- "sinex-services",
  "sqlx",
  "time",
  "tokio",
@@ -5696,6 +5695,7 @@ dependencies = [
  "sea-query",
  "serde",
  "serde_json",
+ "sha2",
  "sinex-primitives",
  "sinex-schema",
  "sqlx",
@@ -5783,7 +5783,6 @@ dependencies = [
  "sinex-ingestd",
  "sinex-node-sdk",
  "sinex-primitives",
- "sinex-services",
  "sqlx",
  "tempfile",
  "tokio",
@@ -5863,7 +5862,6 @@ dependencies = [
  "sinex-node-sdk",
  "sinex-primitives",
  "sinex-schema",
- "sinex-services",
  "socket2 0.5.10",
  "sqlx",
  "subtle",
@@ -6086,33 +6084,6 @@ dependencies = [
  "tracing",
  "uuid",
  "xtask",
-]
-
-[[package]]
-name = "sinex-services"
-version = "0.4.2"
-dependencies = [
- "blake3",
- "camino",
- "color-eyre",
- "futures",
- "once_cell",
- "serde",
- "serde_json",
- "sha2",
- "sinex-db",
- "sinex-node-sdk",
- "sinex-primitives",
- "sinex-schema",
- "sqlx",
- "tempfile",
- "time",
- "tokio",
- "tracing",
- "uuid",
- "which 5.0.0",
- "xtask",
- "xtask-macros",
 ]
 
 [[package]]

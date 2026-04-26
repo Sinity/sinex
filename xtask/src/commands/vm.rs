@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::sync::mpsc;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config;
@@ -304,11 +305,13 @@ struct VmTestResult {
     duration_secs: f64,
     output: String,
     timed_out: bool,
+    last_summary: Option<String>,
 }
 
 async fn collect_vm_stream_output<R>(
     reader: Option<BufReader<R>>,
     stream_name: &str,
+    summary_tx: Option<mpsc::UnboundedSender<String>>,
 ) -> Result<String>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -321,12 +324,130 @@ where
     loop {
         match lines.next_line().await {
             Ok(Some(line)) => {
+                if let Some(summary) = classify_vm_progress_line(&line)
+                    && let Some(tx) = summary_tx.as_ref()
+                {
+                    let _ = tx.send(summary);
+                }
                 out.push_str(&line);
                 out.push('\n');
             }
             Ok(None) => return Ok(out),
             Err(error) => bail!("failed to read VM {stream_name} output: {error}"),
         }
+    }
+}
+
+fn strip_ansi_escape_sequences(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            if matches!(chars.peek(), Some('[')) {
+                chars.next();
+                for next in chars.by_ref() {
+                    if next.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+
+        out.push(ch);
+    }
+
+    out
+}
+
+fn classify_vm_progress_line(line: &str) -> Option<String> {
+    let stripped = strip_ansi_escape_sequences(line);
+    let trimmed = stripped.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let candidate = trimmed.rsplit("> ").next().unwrap_or(trimmed).trim();
+    if candidate.is_empty() {
+        return None;
+    }
+
+    if let Some(subtest) = candidate.strip_prefix("subtest: ") {
+        return Some(format!("Subtest: {subtest}"));
+    }
+
+    const PREFIXES: &[&str] = &[
+        "!!! Test ",
+        "!!! ",
+        "RequestedAssertionFailed:",
+        "Verification FAILED",
+        "All checks passed",
+        "FAIL:",
+        "SUCCESS:",
+        "✗ ",
+        "✓ ",
+        "⚠ ",
+        "· ",
+    ];
+
+    PREFIXES
+        .iter()
+        .find(|prefix| candidate.starts_with(**prefix))
+        .map(|_| candidate.to_string())
+}
+
+fn update_vm_progress_summary(
+    ctx: &CommandContext,
+    scenario_name: &str,
+    pct_done: f64,
+    items_done: i64,
+    items_total: i64,
+    summary: &str,
+) {
+    let terminal_summary = if summary.starts_with("Running ") || summary.contains(scenario_name) {
+        summary.to_string()
+    } else {
+        format!("{scenario_name}: {summary}")
+    };
+    ctx.report_progress_full(
+        "vm-test",
+        Some(pct_done),
+        Some(items_done),
+        Some(items_total),
+        "indeterminate",
+        None,
+        None,
+        "none",
+        Some(terminal_summary.as_str()),
+    );
+}
+
+fn scenario_terminal_summary(result: &VmTestResult) -> String {
+    if result.timed_out {
+        format!(
+            "{} timed out after {:.1}s",
+            result.name, result.duration_secs
+        )
+    } else if let Some(summary) = result.last_summary.as_deref() {
+        if result.passed {
+            format!("{} passed: {summary}", result.name)
+        } else {
+            format!("{} failed: {summary}", result.name)
+        }
+    } else if result.passed {
+        format!("{} passed", result.name)
+    } else {
+        format!("{} failed", result.name)
+    }
+}
+
+fn suite_terminal_summary(results: &[VmTestResult]) -> String {
+    let total = results.len();
+    let passed = results.iter().filter(|result| result.passed).count();
+    if let Some(failed) = results.iter().find(|result| !result.passed) {
+        scenario_terminal_summary(failed)
+    } else {
+        format!("{passed}/{total} VM tests passed")
     }
 }
 
@@ -441,6 +562,10 @@ async fn run_single_vm_test(
     keep_failed: bool,
     workspace_root: &std::path::Path,
     system: &str,
+    ctx: &CommandContext,
+    suite_pct: f64,
+    items_done: i64,
+    items_total: i64,
 ) -> VmTestResult {
     let start = Instant::now();
 
@@ -455,6 +580,7 @@ async fn run_single_vm_test(
     let mut combined_output = String::new();
     let mut passed = false;
     let mut timed_out = false;
+    let mut last_summary = None;
 
     let mut cmd = tokio::process::Command::new("nix");
     cmd.args(["build", &build_target, "-L"]);
@@ -471,13 +597,15 @@ async fn run_single_vm_test(
     let mut child = match child_result {
         Ok(c) => c,
         Err(e) => {
-            combined_output.push_str(&format!("Failed to spawn nix build {build_target}: {e}\n"));
+            let summary = format!("Failed to spawn nix build {build_target}: {e}");
+            combined_output.push_str(&format!("{summary}\n"));
             return VmTestResult {
                 name: name.to_string(),
                 passed,
                 duration_secs: start.elapsed().as_secs_f64(),
                 output: combined_output,
                 timed_out,
+                last_summary: Some(summary),
             };
         }
     };
@@ -486,35 +614,85 @@ async fn run_single_vm_test(
     let stdout = child.stdout.take().map(BufReader::new);
     let stderr = child.stderr.take().map(BufReader::new);
 
-    let stdout_task = tokio::spawn(async move { collect_vm_stream_output(stdout, "stdout").await });
-    let stderr_task = tokio::spawn(async move { collect_vm_stream_output(stderr, "stderr").await });
+    let (summary_tx, mut summary_rx) = mpsc::unbounded_channel();
+    let stdout_summary_tx = summary_tx.clone();
+    let stdout_task = tokio::spawn(async move {
+        collect_vm_stream_output(stdout, "stdout", Some(stdout_summary_tx)).await
+    });
+    let stderr_task =
+        tokio::spawn(
+            async move { collect_vm_stream_output(stderr, "stderr", Some(summary_tx)).await },
+        );
 
     let timeout_duration = std::time::Duration::from_secs(effective_timeout);
-    let wait_result = tokio::time::timeout(timeout_duration, child.wait()).await;
+    let poll_interval = std::time::Duration::from_millis(200);
+    let poll_fut = tokio::time::sleep(poll_interval);
+    tokio::pin!(poll_fut);
+    let timeout_fut = tokio::time::sleep(timeout_duration);
+    tokio::pin!(timeout_fut);
+    let mut process_finished = false;
+    let mut summary_stream_open = true;
 
-    match wait_result {
-        Ok(Ok(status)) => {
-            if status.success() {
-                passed = true;
+    while !process_finished {
+        tokio::select! {
+            maybe_summary = summary_rx.recv(), if summary_stream_open => {
+                match maybe_summary {
+                    Some(summary) => {
+                        if last_summary.as_deref() == Some(summary.as_str()) {
+                            continue;
+                        }
+                        update_vm_progress_summary(
+                            ctx,
+                            name,
+                            suite_pct,
+                            items_done,
+                            items_total,
+                            &summary,
+                        );
+                        last_summary = Some(summary);
+                    }
+                    None => summary_stream_open = false,
+                }
             }
-        }
-        Ok(Err(e)) => {
-            combined_output.push_str(&format!("Process wait error: {e}\n"));
-        }
-        Err(_elapsed) => {
-            timed_out = true;
-            if let Err(error) = terminate_vm_test_process_tree(&mut child).await {
-                combined_output.push_str(&format!("Timed-out VM test cleanup failed: {error:#}\n"));
+            _ = &mut poll_fut => {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        if status.success() {
+                            passed = true;
+                        }
+                        process_finished = true;
+                    }
+                    Ok(None) => {
+                        poll_fut.as_mut().reset(tokio::time::Instant::now() + poll_interval);
+                    }
+                    Err(error) => {
+                        let summary = format!("Process wait error: {error}");
+                        combined_output.push_str(&format!("{summary}\n"));
+                        last_summary = Some(summary);
+                        process_finished = true;
+                    }
+                }
             }
-            combined_output.push_str(&format!(
-                "Test {name} timed out after {effective_timeout}s\n"
-            ));
+            _ = &mut timeout_fut => {
+                timed_out = true;
+                let cleanup_summary = if let Err(error) = terminate_vm_test_process_tree(&mut child).await {
+                    format!("Timed-out VM test cleanup failed: {error:#}")
+                } else {
+                    format!("Test {name} timed out after {effective_timeout}s")
+                };
+                combined_output.push_str(&format!("{cleanup_summary}\n"));
+                last_summary = Some(cleanup_summary);
+                process_finished = true;
+            }
         }
     }
 
     let (stdout_out, stderr_out) = tokio::join!(stdout_task, stderr_task);
     append_stream_task_output(&mut combined_output, "stdout", stdout_out);
     append_stream_task_output(&mut combined_output, "stderr", stderr_out);
+    while let Ok(summary) = summary_rx.try_recv() {
+        last_summary = Some(summary);
+    }
 
     VmTestResult {
         name: name.to_string(),
@@ -522,6 +700,7 @@ async fn run_single_vm_test(
         duration_secs: start.elapsed().as_secs_f64(),
         output: combined_output,
         timed_out,
+        last_summary,
     }
 }
 
@@ -682,6 +861,18 @@ async fn execute_test(
         results.len()
     );
     println!();
+    let final_summary = suite_terminal_summary(&results);
+    ctx.report_progress_full(
+        "vm-test",
+        Some(100.0),
+        Some(results.len() as i64),
+        Some(results.len() as i64),
+        "indeterminate",
+        None,
+        None,
+        "none",
+        Some(&final_summary),
+    );
 
     // Record per-scenario results to the existing `xtask test` invocation.
     if let Some(inv_id) = ctx.invocation_id() {
@@ -752,7 +943,26 @@ async fn run_sequential(
         );
         print!("  Running {name}… ");
         let scenario_stage = ctx.start_stage(&format!("vm-test:{name}"));
-        let r = run_single_vm_test(name, timeout_secs, keep_failed, workspace_root, system).await;
+        update_vm_progress_summary(
+            ctx,
+            name,
+            current_pct,
+            completed,
+            total,
+            &format!("Running {name}"),
+        );
+        let r = run_single_vm_test(
+            name,
+            timeout_secs,
+            keep_failed,
+            workspace_root,
+            system,
+            ctx,
+            current_pct,
+            completed,
+            total,
+        )
+        .await;
         ctx.finish_stage(scenario_stage, r.passed);
         if r.passed {
             println!("{} ({:.1}s)", style("PASS").green(), r.duration_secs);
@@ -768,12 +978,18 @@ async fn run_sequential(
         } else {
             completed as f64 / total as f64 * 100.0
         };
-        ctx.report_progress(
+        let summary =
+            scenario_terminal_summary(results.last().expect("just pushed scenario result"));
+        ctx.report_progress_full(
             "vm-test",
-            Some(name),
             Some(pct),
             Some(completed),
             Some(total),
+            "indeterminate",
+            None,
+            None,
+            "none",
+            Some(&summary),
         );
     }
     results
@@ -1393,7 +1609,7 @@ mod tests {
         writer.write_all(b"alpha\nbeta\n").await?;
         drop(writer);
 
-        let output = collect_vm_stream_output(Some(BufReader::new(reader)), "stdout").await?;
+        let output = collect_vm_stream_output(Some(BufReader::new(reader)), "stdout", None).await?;
         assert_eq!(output, "alpha\nbeta\n");
         Ok(())
     }
@@ -1407,12 +1623,53 @@ mod tests {
         writer.write_all(&[0xff, b'\n']).await?;
         drop(writer);
 
-        let error = collect_vm_stream_output(Some(BufReader::new(reader)), "stderr")
+        let error = collect_vm_stream_output(Some(BufReader::new(reader)), "stderr", None)
             .await
             .expect_err("invalid utf8 should surface");
         let message = format!("{error:#}");
         assert!(message.contains("failed to read VM stderr output"));
         assert!(message.contains("valid UTF-8"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_strip_ansi_escape_sequences_preserves_utf8_text()
+    -> ::xtask::sandbox::TestResult<()> {
+        let input = "\u{1b}[31mVerification FAILED\u{1b}[0m – żółć";
+        assert_eq!(
+            strip_ansi_escape_sequences(input),
+            "Verification FAILED – żółć"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_classify_vm_progress_line_extracts_subtest_from_prefixed_output()
+    -> ::xtask::sandbox::TestResult<()> {
+        let line = "vm-test > subtest: source-material replay stays ordered";
+        assert_eq!(
+            classify_vm_progress_line(line),
+            Some("Subtest: source-material replay stays ordered".to_string())
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_classify_vm_progress_line_strips_ansi_failure_prefixes()
+    -> ::xtask::sandbox::TestResult<()> {
+        let line = "\u{1b}[31mvm-test > RequestedAssertionFailed: browser proof missing\u{1b}[0m";
+        assert_eq!(
+            classify_vm_progress_line(line),
+            Some("RequestedAssertionFailed: browser proof missing".to_string())
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_classify_vm_progress_line_ignores_nix_build_noise()
+    -> ::xtask::sandbox::TestResult<()> {
+        let line = "building '/nix/store/abc123-sinex-vm-basic.drv'...";
+        assert_eq!(classify_vm_progress_line(line), None);
         Ok(())
     }
 

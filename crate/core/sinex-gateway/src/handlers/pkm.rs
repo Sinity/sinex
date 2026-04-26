@@ -6,12 +6,12 @@ use super::rpc_handlers::{
 use crate::rpc_server::RpcAuthContext;
 use color_eyre::eyre::{Context, Result, eyre};
 use serde_json::{Value, json};
+use sinex_db::pkm::PkmService;
 use sinex_primitives::rpc::pkm::{
     CreateEntitiesRequest, CreateEntitiesResponse, CreateNoteRequest, CreateNoteResponse,
     LinkEntitiesRequest, LinkEntitiesResponse,
 };
 use sinex_primitives::{Event, Id, JsonValue, domain::EntityRelation};
-use sinex_services::PkmService;
 
 pub async fn handle_create_note(
     service: &PkmService,
@@ -70,7 +70,11 @@ pub async fn handle_create_entities(
     })?)
 }
 
-pub async fn handle_link_entities(service: &PkmService, params: Value) -> Result<Value> {
+pub async fn handle_link_entities(
+    service: &PkmService,
+    params: Value,
+    auth: &RpcAuthContext,
+) -> Result<Value> {
     RpcParams::new(&params)
         .optional_object("metadata")
         .wrap_err("invalid `metadata` parameter")?;
@@ -92,6 +96,7 @@ pub async fn handle_link_entities(service: &PkmService, params: Value) -> Result
             request.relation_type.as_ref(),
             properties,
             request.source_material_id.map(|id| *id.as_uuid()),
+            auth.actor_id(),
         )
         .await?;
 

@@ -3,8 +3,10 @@ use sinex_db::models::{Event, OffsetKind, Provenance, SourceMaterial};
 use sinex_node_sdk::acquisition_manager::{
     AcquisitionManager, BufferedAppendStreamWriterConfig, SourceRecordAnchor,
 };
-use sinex_node_sdk::{BufferedRecordMaterializer, NodeResult, SinexError};
-use sinex_primitives::{Id, JsonValue};
+use sinex_node_sdk::{
+    BufferedRecordMaterializer, NodeResult, SinexError, deterministic_material_event_id,
+};
+use sinex_primitives::{Id, JsonValue, Timestamp};
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -121,6 +123,24 @@ impl MaterialContext for RealWatcherMaterialContext {
             offset_end: Some(anchor.offset_end),
             offset_kind: OffsetKind::Byte,
         };
+        let ts_orig = if let Some(timestamp) = event.ts_orig {
+            timestamp
+        } else {
+            let timestamp = Timestamp::now();
+            event.ts_orig = Some(timestamp);
+            timestamp
+        };
+        if event.id.is_none() {
+            event.id = Some(Id::from_uuid(deterministic_material_event_id(
+                event.source.as_str(),
+                event.event_type.as_str(),
+                anchor.material_id,
+                anchor.offset_start,
+                Some(anchor.offset_start),
+                Some(anchor.offset_end),
+                ts_orig,
+            )));
+        }
 
         self.event_count.fetch_add(1, Ordering::Relaxed);
 

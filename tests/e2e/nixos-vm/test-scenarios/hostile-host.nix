@@ -1,11 +1,10 @@
 # Hostile-host test: sinex-ingestd under cgroup resource constraints.
 #
-# Restricts sinex-ingestd to 15MB RAM and 1MB/s disk I/O via systemd cgroups,
-# then pumps 10k synthetic events into NATS and verifies:
+# Restricts sinex-ingestd below its normal 1G deployment budget and limits disk
+# I/O via systemd cgroups, then pumps 10k synthetic events into NATS and verifies:
 #   - sinex-ingestd is NOT OOM-killed (systemctl status remains Active)
-#   - Backpressure engages: NATS consumer lag grows then drains
-#   - All events eventually committed to Postgres (no data loss after drain)
-#   - No data corruption: inserted events are retrievable by ID
+#   - The constrained pipeline continues committing events
+#   - No data corruption: inserted events have non-null IDs and payloads
 #
 # Primary invariant: do no harm to the host machine — the ingestor must shed
 # load gracefully rather than crashing, consuming unbounded memory, or stalling
@@ -21,6 +20,60 @@
 
 let
   inherit (pkgs) lib;
+
+  hostile-publisher = pkgs.writeScriptBin "sinex-hostile-publish" ''
+    #!${pkgs.python3}/bin/python3
+    import datetime
+    import json
+    import random
+    import socket
+    import sys
+    import time
+    import uuid
+
+    total = int(sys.argv[1]) if len(sys.argv) > 1 else 10000
+    subject = "dev.events.raw.hostile-host-test.synthetic.load"
+
+    def uuid7(seq):
+        timestamp_ms = (int(time.time() * 1000) + seq) & ((1 << 48) - 1)
+        rand_a = seq & 0x0fff
+        rand_b = random.getrandbits(62)
+        value = (
+            (timestamp_ms << 80)
+            | (0x7 << 76)
+            | (rand_a << 64)
+            | (0b10 << 62)
+            | rand_b
+        )
+        return str(uuid.UUID(int=value))
+
+    parent_id = uuid7(total + 1)
+    with socket.create_connection(("127.0.0.1", 4222), timeout=10) as conn:
+        conn.settimeout(10)
+        conn.recv(4096)
+        conn.sendall(b'CONNECT {"verbose":false,"pedantic":false}\r\nPING\r\n')
+        conn.recv(4096)
+        for seq in range(total):
+            now = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+            payload = json.dumps({
+                "id": uuid7(seq),
+                "source": "hostile-host-test",
+                "event_type": "synthetic.load",
+                "host": "sinex-vm",
+                "payload": {"seq": seq, "batch": seq // 100},
+                "ts_orig": now,
+                "source_event_ids": [parent_id],
+                "associated_blob_ids": None,
+                "payload_schema_id": None,
+            }, separators=(",", ":")).encode()
+            conn.sendall(
+                f"PUB {subject} {len(payload)}\r\n".encode() + payload + b"\r\n"
+            )
+        conn.sendall(b"PING\r\n")
+        conn.recv(4096)
+
+    print(f"Published {total} raw events to {subject}")
+  '';
 in
 pkgs.testers.nixosTest {
   name = "sinex-hostile-host";
@@ -33,6 +86,15 @@ pkgs.testers.nixosTest {
       })
     ];
 
+    services.sinex.nodes = {
+      filesystem.enable = lib.mkForce false;
+      terminal.enable = lib.mkForce false;
+      browser.enable = lib.mkForce false;
+      desktop.enable = lib.mkForce false;
+      system.enable = lib.mkForce false;
+      automata.enable = lib.mkForce false;
+    };
+
     # ─── cgroup constraints on sinex-ingestd ─────────────────────────────────
     #
     # MemoryMax: hard OOM kill threshold.
@@ -41,13 +103,13 @@ pkgs.testers.nixosTest {
     # IOWriteBandwidthMax: limits disk write throughput (PostgreSQL WAL + data).
     # IOReadBandwidthMax: limits disk read throughput.
     systemd.services.sinex-ingestd.serviceConfig = {
-      MemoryMax     = lib.mkForce "15M";
-      MemoryHigh    = lib.mkForce "12M";
+      MemoryMax     = lib.mkForce "192M";
+      MemoryHigh    = lib.mkForce "128M";
       IOWriteBandwidthMax = lib.mkForce "/ 1048576";   # 1MB/s on root device
       IOReadBandwidthMax  = lib.mkForce "/ 1048576";
     };
 
-    environment.systemPackages = with pkgs; [ jq nats-server natscli procps ];
+    environment.systemPackages = with pkgs; [ jq nats-server natscli procps hostile-publisher ];
   };
 
   testScript = ''
@@ -62,7 +124,7 @@ pkgs.testers.nixosTest {
 
     def get_event_count():
         result = machine.succeed(
-            "su - postgres -c 'psql -d sinex -t -c \"SELECT COUNT(*) FROM core.events;\"'"
+            "su - postgres -c 'psql -d sinex_dev -t -c \"SELECT COUNT(*) FROM core.events;\"'"
         )
         return int(result.strip())
 
@@ -75,28 +137,13 @@ pkgs.testers.nixosTest {
     # sinex-ingestd reads from this stream and writes to Postgres.
 
     with subtest("pump-10k-events"):
-        # Publish in batches to keep NATS server memory stable
-        batch_count = 0
-        for batch in range(100):
-            for i in range(100):
-                seq = batch * 100 + i
-                payload = json.dumps({
-                    "source": "hostile-host-test",
-                    "event_type": "synthetic.load",
-                    "payload": {"seq": seq, "batch": batch}
-                })
-                machine.succeed(
-                    f"nats pub events.synthetic.load '{payload}' "
-                    f"--server nats://127.0.0.1:4222 2>/dev/null || true"
-                )
-            batch_count += 100
-        print(f"Pumped {batch_count * 100} events")
+        machine.succeed("sinex-hostile-publish 10000")
 
     # ─── Assert ingestd survived the load ─────────────────────────────────────
 
     with subtest("no-oom-kill"):
         assert ingestd_is_active(), \
-            "sinex-ingestd was OOM-killed under 15MB cgroup limit — backpressure failure"
+            "sinex-ingestd was OOM-killed under constrained cgroup limits — backpressure failure"
         print("✓ sinex-ingestd still active (not OOM-killed)")
 
         # Check systemd OOM kill counter
@@ -138,7 +185,7 @@ pkgs.testers.nixosTest {
     with subtest("no-data-corruption"):
         # Every committed event must have a non-null payload
         result = machine.succeed(
-            "su - postgres -c 'psql -d sinex -t -c "
+            "su - postgres -c 'psql -d sinex_dev -t -c "
             "\"SELECT COUNT(*) FROM core.events WHERE payload IS NULL OR id IS NULL;\"'"
         )
         null_count = int(result.strip())

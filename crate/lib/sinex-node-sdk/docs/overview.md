@@ -27,14 +27,14 @@ Sinex nodes communicate via a distributed event bus powered by NATS `JetStream`.
 │                     │     │ (Stateful Streams)  │     │                     │
 │ • Files             │     │ • fs-ingestor       │     │ • core.events       │
 │ • Terminal          │     │ • session-detector  │     │ • core.blobs        │
-│ • Desktop           │     │ • health-automaton  │     │ • core.checkpoints  │
+│ • Desktop           │     │ • health-automaton  │     │ • source materials  │
 └─────────────────────┘     └──────────┬──────────┘     └──────────┬──────────┘
                                        │                           │
                             ┌──────────▼──────────┐                │
                             │   NATS JetStream    │◀───────────────┘
                             │                     │
-                            │ • events.raw.*      │ (Provisional)
-                            │ • events.confirm.*  │ (Canonical ID)
+                            │ • events.raw.*      │ (Submitted)
+                            │ • events.confirm.*  │ (Persisted)
                             │ • events.dlq.*      │ (Failures)
                             └─────────────────────┘
 ```
@@ -76,7 +76,7 @@ Checkpoints support multiple anchoring strategies:
 The SDK automatically enforces data lineage:
 - **Ingested Events**: Linked to `SourceMaterial` via byte offsets and hashes.
 - **Synthesized Events**: Linked to parent events via `source_event_ids`.
-- **Dual-Hash Verification**: Large files are verified using both BLAKE3 (Sinex-native) and SHA256 (Git-annex native) to detect tampering.
+- **Content Verification**: Material content is verified with BLAKE3 plus backend-aware digests when the storage backend exposes them.
 
 For row-like or metadata-only observations, use the Record Source framework:
 `RecordSources::*` for checkpointed reads, `BufferedRecordSourceHarness` for
@@ -89,6 +89,6 @@ observation.
 
 ## 🚦 Error Handling & DLQ
 
-- **Automatic Retries**: SDK handles transient NATS and gRPC connectivity issues.
-- **Dead Letter Queue (DLQ)**: Failed events are routed to `events.dlq.<source>` for manual inspection and operator-triggered retry.
+- **Automatic Retries**: SDK handles transient NATS, source-material, and database connectivity failures where the owning runtime path can retry safely.
+- **Dead Letter Queue (DLQ)**: Failed events are routed through the configured DLQ stream/subjects for manual inspection and operator-triggered retry.
 - **Backpressure**: The confirmation buffer applies backpressure via NAKs if the node falls too far behind.

@@ -17,11 +17,10 @@ use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use parking_lot::Mutex;
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use sinex_node_sdk::{
     Checkpoint, JournalCursorCheckpoint, NatsPublisher, NodeResult, RecordProcessingOutcome,
     RecordReadBatch, RecordReadHorizon, RecordReadItem, RecordSource, RecordSources,
-    RecordWarningDisposition, TimeHorizon, process_record_batch_lenient,
+    RecordWarningDisposition, TimeHorizon, deterministic_event_id, process_record_batch_lenient,
 };
 use sinex_primitives::events::{
     JournalEntryWrittenPayload as EventJournalEntryWrittenPayload,
@@ -59,6 +58,8 @@ const DEFAULT_MAX_JOURNAL_LINE_BYTES: usize = 256 * 1024;
 const JOURNAL_LINE_PREVIEW_LIMIT: usize = 512;
 const JOURNAL_STDERR_PREVIEW_LIMIT: usize = 512;
 const GRACEFUL_CHILD_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+const JOURNAL_ENTRY_ID_SOURCE: &[u8] = b"system.journal_entry";
+const SYSTEMD_EVENT_ID_SOURCE: &[u8] = b"system.systemd_event";
 
 /// Required keys in a systemd journal cursor string.
 /// Format: `s=<hex>;i=<hex>;b=<boot_id>;m=<monotonic>;t=<realtime>;x=<xor_hash>`
@@ -1538,9 +1539,8 @@ impl UnifiedJournalWatcher {
         );
 
         // Set deterministic UUIDv7 based on cursor to prevent duplicates.
-        let id_entropy = Self::calculate_entropy(cursor_str.as_str(), 0);
-        let timestamp_ms = timestamp_us / 1000;
-        let uuid = Self::deterministic_uuid_v7(timestamp_ms, id_entropy);
+        let uuid =
+            deterministic_event_id(JOURNAL_ENTRY_ID_SOURCE, cursor_str.as_bytes(), timestamp_dt);
 
         let id = sinex_primitives::Id::from_uuid(uuid);
         event.id = Some(id);
@@ -1588,9 +1588,7 @@ impl UnifiedJournalWatcher {
         let ts_orig = Self::timestamp_from_micros(timestamp_us, unit_name)?;
 
         // Set deterministic UUIDv7 based on cursor to prevent duplicates.
-        let id_entropy = Self::calculate_entropy(&cursor, 1);
-        let timestamp_ms = timestamp_us / 1000;
-        let uuid = Self::deterministic_uuid_v7(timestamp_ms, id_entropy);
+        let uuid = deterministic_event_id(SYSTEMD_EVENT_ID_SOURCE, cursor.as_bytes(), ts_orig);
 
         // Note: We create typed IDs inside each branch to satisfy type inference
 
@@ -1677,38 +1675,6 @@ impl UnifiedJournalWatcher {
         };
 
         Ok(Some(event))
-    }
-
-    /// Calculate deterministic entropy from cursor and discriminator
-    fn calculate_entropy(cursor: &str, discriminator: u8) -> u128 {
-        let mut hasher = Sha256::new();
-        hasher.update(cursor.as_bytes());
-        hasher.update([discriminator]);
-        let hash = hasher.finalize();
-
-        // Use first 16 bytes for 128-bit entropy
-        let mut bytes = [0u8; 16];
-        bytes.copy_from_slice(&hash[0..16]);
-        u128::from_be_bytes(bytes)
-    }
-
-    fn deterministic_uuid_v7(timestamp_ms: u64, entropy: u128) -> uuid::Uuid {
-        let mut bytes = [0u8; 16];
-        let ts = (timestamp_ms & 0x0000_FFFF_FFFF_FFFF).to_be_bytes();
-        bytes[..6].copy_from_slice(&ts[2..]);
-
-        bytes[6] = 0x70 | (((entropy >> 72) as u8) & 0x0f);
-        bytes[7] = (entropy >> 64) as u8;
-        bytes[8] = 0x80 | (((entropy >> 56) as u8) & 0x3f);
-        bytes[9] = (entropy >> 48) as u8;
-        bytes[10] = (entropy >> 40) as u8;
-        bytes[11] = (entropy >> 32) as u8;
-        bytes[12] = (entropy >> 24) as u8;
-        bytes[13] = (entropy >> 16) as u8;
-        bytes[14] = (entropy >> 8) as u8;
-        bytes[15] = entropy as u8;
-
-        uuid::Uuid::from_bytes(bytes)
     }
 
     fn lock_pending_cursor(&self) -> NodeResult<std::sync::MutexGuard<'_, Option<String>>> {
@@ -1956,11 +1922,13 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn deterministic_journal_uuid_sets_v7_and_rfc4122_bits() -> TestResult<()> {
-        let uuid = UnifiedJournalWatcher::deterministic_uuid_v7(
-            1_710_000_000_000,
-            UnifiedJournalWatcher::calculate_entropy("s=abc", 1),
-        );
+    async fn deterministic_journal_uuid_sets_v7_and_rfc4122_bits(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let _ = ctx;
+        let timestamp = Timestamp::from_unix_timestamp_millis(1_710_000_000_000)
+            .ok_or_else(|| color_eyre::eyre::eyre!("test timestamp should be valid"))?;
+        let uuid = deterministic_event_id(SYSTEMD_EVENT_ID_SOURCE, b"s=abc", timestamp);
 
         assert_eq!(uuid.get_version_num(), 7);
         assert_eq!(uuid.get_variant(), uuid::Variant::RFC4122);

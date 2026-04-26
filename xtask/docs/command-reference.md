@@ -38,6 +38,7 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `doctor` | Probe developer-environment health and deployment readiness |
 | `privacy` | Run privacy-engine catalog, test, key, and config utilities |
 | `docs` | Generate and verify repo documentation surfaces |
+| `source-units` | Source-unit manifest operations |
 | `exercise` | Full surface area validation for xtask commands |
 | `reset` | Reset developer state for a fresh start |
 
@@ -1513,6 +1514,40 @@ Generate a codebase snapshot for AI context (via repomix)
 | `--context` | no | no | U3: Inject structured xtask state (recent checks, diagnostics, jobs) into the snapshot |
 | `--project-memory` | no | no | U4: Include CLAUDE.md and .agent/includes/ (project memory) in the snapshot |
 | `--scope` | yes | no | U5: Scope to a crate or directory group (e.g., sinex-db, core, nodes, tests) |
+
+
+## `xtask source-units`
+
+Source-unit manifest operations
+
+**Subcommands**
+
+| Command | Purpose |
+|---|---|
+| `render` | Render the source-unit manifest |
+| `check` | Validate source-unit descriptors and the generated manifest |
+
+### `xtask source-units render`
+
+Render the source-unit manifest
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--output` | yes | no | Output file (default: docs/source-units.json) |
+| `--stdout` | no | no | Print to stdout instead of writing a file |
+
+
+### `xtask source-units check`
+
+Validate source-unit descriptors and the generated manifest
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--output` | yes | no | Manifest path to check (default: docs/source-units.json) |
 
 
 ## `xtask exercise`

@@ -30,11 +30,11 @@ A comprehensive path validation security review has been completed for the core 
   - `SanitizedPath` and `validate_path` are available throughout the shared primitives layer
   - No direct filesystem operations found that bypass validation
 
-#### 4. **sinex-services** - Content Storage
+#### 4. **sinex-gateway** - Content Storage API
 - **Status**: SECURED
 - **Key Changes**:
-  - Content service properly delegates to the content-store manager
-  - Securing the content-store manager automatically secures content service operations
+  - Gateway-local content service properly delegates to the content-store manager
+  - Securing the content-store manager automatically secures gateway content operations
   - No direct filesystem access bypassing content-store manager validation
 
 #### 5. **sinex-test-utils** - Test Path Validation

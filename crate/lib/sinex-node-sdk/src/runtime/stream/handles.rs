@@ -21,6 +21,8 @@ pub type EventStream = mpsc::Receiver<Event<JsonValue>>;
 pub struct ServiceInfo {
     service_name: String,
     node_name: String,
+    source_unit_id: Option<String>,
+    runner_pack: Option<String>,
     host: HostName,
     work_dir: PathBuf,
     dry_run: bool,
@@ -44,6 +46,36 @@ impl ServiceInfo {
         Self {
             service_name,
             node_name,
+            source_unit_id: None,
+            runner_pack: None,
+            host,
+            work_dir,
+            dry_run,
+            instance_id,
+            version,
+            node_run_id,
+        }
+    }
+
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_runtime_identity(
+        service_name: String,
+        node_name: String,
+        source_unit_id: Option<String>,
+        runner_pack: Option<String>,
+        host: HostName,
+        work_dir: PathBuf,
+        dry_run: bool,
+        instance_id: String,
+        version: String,
+        node_run_id: Option<Uuid>,
+    ) -> Self {
+        Self {
+            service_name,
+            node_name,
+            source_unit_id,
+            runner_pack,
             host,
             work_dir,
             dry_run,
@@ -61,6 +93,30 @@ impl ServiceInfo {
     #[must_use]
     pub fn node_name(&self) -> &str {
         &self.node_name
+    }
+
+    #[must_use]
+    pub fn source_unit_id(&self) -> Option<&str> {
+        self.source_unit_id.as_deref()
+    }
+
+    #[must_use]
+    pub fn runner_pack(&self) -> Option<&str> {
+        self.runner_pack.as_deref()
+    }
+
+    #[must_use]
+    pub fn checkpoint_identity(&self) -> &str {
+        self.source_unit_id
+            .as_deref()
+            .unwrap_or(self.service_name.as_str())
+    }
+
+    #[must_use]
+    pub fn control_identity(&self) -> &str {
+        self.source_unit_id
+            .as_deref()
+            .unwrap_or(self.node_name.as_str())
     }
 
     #[must_use]
