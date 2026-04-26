@@ -34,8 +34,8 @@ use sinex_primitives::{
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
-use tokio::sync::RwLock;
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
 use tokio::time::{Duration, timeout};
 use tracing::{debug, error, info, instrument, warn};
 
@@ -749,6 +749,24 @@ impl JetStreamConsumer {
             .await
             .map_err(|e| {
                 SinexError::network("Failed to create processing-failures stream")
+                    .with_source(e)
+            })?;
+
+        // Derived invalidation stream — scope invalidation signals for derived nodes.
+        // Short retention since invalidations are only relevant for running automata.
+        let invalidation_stream = self.topology.invalidation_stream.clone();
+        self.js
+            .create_or_update_stream(jetstream::stream::Config {
+                name: invalidation_stream.clone(),
+                subjects: vec![self.topology.invalidation_subject.clone()],
+                retention: jetstream::stream::RetentionPolicy::Limits,
+                max_age: Duration::from_hours(24), // 24h — running automata only
+                storage: jetstream::stream::StorageType::File,
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| {
+                SinexError::network("Failed to create derived invalidation stream")
                     .with_source(e)
             })?;
 

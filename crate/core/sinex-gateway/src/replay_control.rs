@@ -3,7 +3,7 @@
 use crate::cascade_analyzer::{CascadeAnalyzerConfig, Severity, StreamingCascadeAnalyzer};
 use crate::config::env_bool_optional;
 use async_nats::connection::State as NatsState;
-use async_nats::{Client, Message};
+use async_nats::{Client, Message, jetstream};
 use color_eyre::eyre::{Context, Result, eyre};
 use futures::StreamExt;
 use parking_lot::Mutex;
@@ -907,6 +907,7 @@ impl ReplayControlServer {
 struct ReplayExecutionEngine {
     replay: Arc<ReplayStateMachine>,
     nats_client: Client,
+    js: jetstream::Context,
     env: SinexEnvironment,
     scan_ack_timeout: Duration,
     scan_completion_timeout: Duration,
@@ -939,9 +940,11 @@ impl ReplayExecutionEngine {
     const EXECUTION_STATE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
     fn new(replay: Arc<ReplayStateMachine>, nats_client: Client) -> Self {
+        let js = jetstream::new(nats_client.clone());
         Self {
             replay,
             nats_client,
+            js,
             env: environment(),
             scan_ack_timeout: Self::SCAN_ACK_TIMEOUT,
             scan_completion_timeout: Self::SCAN_COMPLETION_TIMEOUT,
@@ -1937,13 +1940,10 @@ impl ReplayExecutionEngine {
             match serde_json::to_vec(&invalidation) {
                 Ok(payload) => {
                     self.maybe_fail_scope_invalidation_publish()?;
-                    let mut headers = async_nats::HeaderMap::new();
-                    insert_traffic_class_header(&mut headers, NatsTrafficClass::Control);
                     if let Err(e) = self
-                        .nats_client
-                        .publish_with_headers(
+                        .js
+                        .publish(
                             invalidation_subject.clone(),
-                            headers,
                             payload.into(),
                         )
                         .await
@@ -4462,8 +4462,8 @@ mod tests {
             .await?;
 
         let invalidation_subject = environment().nats_subject(INVALIDATION_SUBJECT);
-        let mut invalidation_sub = ctx
-            .nats_client()
+        let js = async_nats::jetstream::new(ctx.nats_client());
+        let mut invalidation_sub = js
             .subscribe(invalidation_subject)
             .await
             .map_err(|error| {

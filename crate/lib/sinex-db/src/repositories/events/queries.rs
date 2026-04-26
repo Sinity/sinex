@@ -13,7 +13,6 @@ use sinex_primitives::{Id, Pagination, Uuid};
 use sqlx::types::Json;
 use std::collections::HashSet;
 use tracing::{instrument, warn};
-use uuid::Uuid;
 
 impl EventRepository<'_> {
     #[instrument(skip(self), fields(event_id = %id))]

@@ -292,7 +292,7 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
 
     // Read back every event by ID and verify roundtrip.
     for (i, row) in batch.iter().enumerate() {
-        let event_id = Id::<Event<JsonValue>>::from_uuid(row.id);
+        let event_id = EventId::from_uuid(row.id);
         let event = ctx
             .pool
             .events()
