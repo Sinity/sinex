@@ -579,25 +579,64 @@ impl From<sqlx::Error> for SinexError {
     }
 }
 
+/// Build a `SinexError::Nats` enriched with the kind name, kind value, and
+/// the underlying source-error chain. The bare `From` impl below uses this so
+/// every NATS-bound failure path inherits the same diagnostics shape — the
+/// pattern mirrors `classify_sqlx_error` for SQLx errors.
+///
+/// The captured shape is intentionally string-only (no `with_std_error`) so
+/// the helper does not require a `'static` bound on `T`. Every NATS error
+/// kind in `async_nats` is itself `'static` in practice, but stringifying
+/// keeps the helper usable in generic code paths that don't promise it.
+#[cfg(feature = "nats")]
+fn classify_nats_error<T>(error: &async_nats::error::Error<T>) -> SinexError
+where
+    T: std::clone::Clone + std::fmt::Debug + std::fmt::Display + std::cmp::PartialEq,
+{
+    use std::error::Error as _;
+
+    let kind_type = std::any::type_name::<T>().rsplit("::").next().unwrap_or("");
+    let mut sinex_error = SinexError::nats(format!("{error}"))
+        .with_context("nats_kind_type", kind_type)
+        .with_context("nats_kind", format!("{:?}", error.kind()));
+    if let Some(source) = error.source() {
+        sinex_error = sinex_error.with_context("nats_source", source.to_string());
+    }
+    sinex_error
+}
+
 #[cfg(feature = "nats")]
 impl<T> From<async_nats::error::Error<T>> for SinexError
 where
     T: std::clone::Clone + std::fmt::Debug + std::fmt::Display + std::cmp::PartialEq,
 {
     fn from(e: async_nats::error::Error<T>) -> Self {
-        SinexError::nats(format!("{e}"))
+        classify_nats_error(&e)
     }
 }
 
 impl<T> From<tokio::sync::mpsc::error::SendError<T>> for SinexError {
     fn from(err: tokio::sync::mpsc::error::SendError<T>) -> Self {
+        // `SendError<T>` is a unit-variant signal: the receiver was dropped.
+        // The `T` payload is owned by the error and would require `Debug`
+        // to render — capture only the type name so generic call sites
+        // don't pull in extra bounds.
+        let payload_type = std::any::type_name::<T>()
+            .rsplit("::")
+            .next()
+            .unwrap_or("unknown");
         SinexError::ChannelSend(ErrorDetails::new(err.to_string()))
+            .with_context("channel_direction", "send")
+            .with_context("channel_state", "receiver_dropped")
+            .with_context("payload_type", payload_type)
     }
 }
 
 impl From<tokio::sync::oneshot::error::RecvError> for SinexError {
     fn from(err: tokio::sync::oneshot::error::RecvError) -> Self {
         SinexError::ChannelReceive(ErrorDetails::new(err.to_string()))
+            .with_context("channel_direction", "recv")
+            .with_context("channel_state", "sender_dropped")
     }
 }
 
