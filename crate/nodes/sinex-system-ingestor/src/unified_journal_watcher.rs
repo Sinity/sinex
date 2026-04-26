@@ -737,7 +737,7 @@ impl UnifiedJournalWatcher {
         .with_timestamp(Timestamp::now());
 
         publisher
-            .publish_to_dlq(&event, "journal_line_too_large", "system-watcher")
+            .publish_to_raw_ingest_dlq(&event, "journal_line_too_large", "system-watcher")
             .await?;
         Ok(true)
     }
