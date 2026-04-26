@@ -7,7 +7,7 @@ use sinex_db::repositories::schema_management::{
     NewEventSchema, SchemaManagementRepository, SchemaSyncResult,
 };
 use sinex_primitives::domain::{EventSource, EventType};
-use sinex_primitives::events::schema_registry::{generate_all_schemas, get_all_payloads};
+use sinex_primitives::events::schema_registry::{generate_schema_bundle, get_all_payloads};
 use sqlx::PgPool;
 use tracing::info;
 
@@ -15,10 +15,10 @@ use tracing::info;
 pub async fn synchronize_schemas(pool: &PgPool) -> IngestdResult<SchemaSyncResult> {
     info!("Starting schema synchronization");
 
-    let discovered_schemas = generate_all_schemas()
-        .map_err(|error| error.with_context("operation", "generate_discovered_payload_schemas"))?;
+    let schema_bundle = generate_schema_bundle()
+        .map_err(|error| error.with_context("operation", "generate_schema_bundle"))?;
     let repo = SchemaManagementRepository::new(pool);
-    let result = repo.sync_discovered_schemas(discovered_schemas).await?;
+    let result = repo.sync_schema_bundle(schema_bundle.into_entries()).await?;
 
     info!(?result, "Schema synchronization completed");
     Ok(result)
