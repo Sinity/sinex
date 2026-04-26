@@ -6,16 +6,10 @@ use console::{StyledObject, style};
 use serde_json::json;
 use sinex_primitives::DeploymentReadinessDescriptor;
 use sinex_primitives::domain::{EventSource, EventType};
-use sinex_primitives::events::EventPayload;
-use sinex_primitives::events::payloads::{
-    ActivitySessionBoundaryPayload, ActivityWindowSummaryPayload, BashCommandExecutedPayload,
-    CanonicalCommandPayload,
-};
 use sinex_primitives::query::{
     AggregationMode, EventQuery, EventQueryResult, GroupByField, PayloadFilter, SortDirection,
     TimeRange,
 };
-use sinex_primitives::rpc::ingest::{EventIngestRequest, EventIngestResponse};
 use sinex_primitives::temporal::Timestamp;
 use tokio::process::Command;
 
@@ -23,14 +17,6 @@ use crate::client::GatewayClient;
 
 #[derive(Debug, Args, Default)]
 pub struct VerifyCommand {
-    /// Publish a synthetic event through `events.ingest` and query it back.
-    #[arg(long, default_value_t = false)]
-    gateway_smoke: bool,
-
-    /// Actively exercise deployable automata through synthetic gateway-ingested events.
-    #[arg(long, default_value_t = false)]
-    automata_smoke: bool,
-
     /// Actively exercise the local managed document scan surface.
     #[arg(long, default_value_t = false)]
     document_smoke: bool,
@@ -44,27 +30,9 @@ pub struct VerifyCommand {
     historical_proof: bool,
 }
 
-const VERIFY_GATEWAY_SOURCE: &str = "sinexctl.verify";
-const VERIFY_GATEWAY_EVENT_TYPE: &str = "test.ping";
 const DOCUMENT_INGESTOR_SOURCE: &str = "document-ingestor";
 const DOCUMENT_INGESTED_EVENT_TYPE: &str = "document.ingested";
 const SOURCE_PROOF_RECENT_WINDOW: Duration = Duration::from_hours(1);
-
-fn session_detector_output_source() -> &'static str {
-    ActivitySessionBoundaryPayload::SOURCE.as_static_str()
-}
-
-fn session_detector_output_event_type() -> &'static str {
-    ActivitySessionBoundaryPayload::EVENT_TYPE.as_static_str()
-}
-
-fn activity_window_output_source() -> &'static str {
-    ActivityWindowSummaryPayload::SOURCE.as_static_str()
-}
-
-fn activity_window_output_event_type() -> &'static str {
-    ActivityWindowSummaryPayload::EVENT_TYPE.as_static_str()
-}
 
 const TERMINAL_COMMAND_SOURCES: &[&str] = &[
     "shell.kitty",
@@ -95,6 +63,24 @@ const PASSIVE_DERIVED_SIGNAL_CHECKS: &[PassiveSignalCheck] = &[
         output_event_type: "command.canonical",
         idle_message: "No terminal command.executed inputs observed; canonicalizer not evaluated",
         zero_message: "No command.canonical events despite terminal command.executed inputs",
+    },
+    PassiveSignalCheck {
+        label: "Analytics automaton",
+        input_sources: TERMINAL_COMMAND_SOURCES,
+        input_event_type: "command.executed",
+        output_sources: &["derived.activity-window"],
+        output_event_type: "activity.window.summary",
+        idle_message: "No terminal command.executed inputs observed; analytics automaton not evaluated",
+        zero_message: "No activity.window.summary events despite terminal command.executed inputs",
+    },
+    PassiveSignalCheck {
+        label: "Session detector",
+        input_sources: TERMINAL_COMMAND_SOURCES,
+        input_event_type: "command.executed",
+        output_sources: &["derived.session-detector"],
+        output_event_type: "activity.session.boundary",
+        idle_message: "No terminal command.executed inputs observed; session detector not evaluated",
+        zero_message: "No activity.session.boundary events despite terminal command.executed inputs",
     },
     PassiveSignalCheck {
         label: "Health automaton",
@@ -174,14 +160,7 @@ impl VerifyCommand {
             enabled_automata,
         )
         .await?;
-        run_active_verification(
-            self,
-            &mut summary,
-            client,
-            descriptor.as_ref(),
-            enabled_automata,
-        )
-        .await?;
+        run_active_verification(self, &mut summary, client, descriptor.as_ref()).await?;
         report_historical_proof(self, &mut summary, client, descriptor.as_ref()).await?;
         print_verification_footer(&summary);
         Ok(())
@@ -242,9 +221,7 @@ async fn report_passive_deployment_surfaces(
     descriptor: Option<&DeploymentReadinessDescriptor>,
     enabled_automata: EnabledAutomata,
 ) -> Result<()> {
-    if !command.automata_smoke {
-        report_passive_derived_signals(summary, client, enabled_automata).await?;
-    }
+    report_passive_derived_signals(summary, client, enabled_automata).await?;
     if !command.document_smoke {
         report_document_surface_check(summary, client, descriptor).await?;
     }
@@ -300,45 +277,9 @@ async fn run_active_verification(
     summary: &mut VerificationSummary,
     client: &GatewayClient,
     descriptor: Option<&DeploymentReadinessDescriptor>,
-    enabled_automata: EnabledAutomata,
 ) -> Result<()> {
-    report_gateway_smoke(command, summary, client).await?;
-    report_automata_smoke(command, summary, client, enabled_automata).await?;
     report_document_smoke(command, summary, client, descriptor).await?;
     report_source_proof(command, summary, client, descriptor).await?;
-    Ok(())
-}
-
-async fn report_gateway_smoke(
-    command: &VerifyCommand,
-    summary: &mut VerificationSummary,
-    client: &GatewayClient,
-) -> Result<()> {
-    if !command.gateway_smoke {
-        return Ok(());
-    }
-
-    match run_gateway_smoke(client).await {
-        Ok(outcome) => summary.pass(format!(
-            "Gateway smoke round-tripped via events.ingest (event_id {}, sequence {})",
-            outcome.ingest_response.event_id, outcome.ingest_response.sequence
-        )),
-        Err(error) => summary.fail(format!("Gateway smoke failed: {error}")),
-    }
-    Ok(())
-}
-
-async fn report_automata_smoke(
-    command: &VerifyCommand,
-    summary: &mut VerificationSummary,
-    client: &GatewayClient,
-    enabled_automata: EnabledAutomata,
-) -> Result<()> {
-    if command.automata_smoke {
-        run_automata_smoke(summary, client, enabled_automata).await?;
-    } else {
-        summary.skip("Automata deployment smoke not run — pass --automata-smoke to force outputs");
-    }
     Ok(())
 }
 
@@ -496,11 +437,6 @@ impl VerificationStatus {
             Self::Fail => style("✗").red(),
         }
     }
-}
-
-#[derive(Debug)]
-struct GatewaySmokeOutcome {
-    ingest_response: EventIngestResponse,
 }
 
 fn load_deployment_descriptor(
@@ -766,6 +702,8 @@ fn passive_signal_enabled(check: &PassiveSignalCheck, enabled_automata: EnabledA
     match check.output_event_type {
         "command.canonical" => enabled_automata.canonicalizer,
         "health.aggregated_report" => enabled_automata.health_aggregator,
+        "activity.window.summary" => enabled_automata.analytics_automaton,
+        "activity.session.boundary" => enabled_automata.session_detector,
         _ => true,
     }
 }
@@ -875,96 +813,6 @@ async fn count_query(client: &GatewayClient, query: EventQuery) -> Result<i64> {
     }
 }
 
-async fn run_gateway_smoke(client: &GatewayClient) -> Result<GatewaySmokeOutcome> {
-    let marker = format!("sinexctl-verify-{:016x}", rand::random::<u64>());
-    let emitted_at = Timestamp::now();
-    let ingest_response = ingest_raw_event(
-        client,
-        VERIFY_GATEWAY_SOURCE,
-        VERIFY_GATEWAY_EVENT_TYPE,
-        emitted_at,
-        json!({
-            "marker": marker,
-            "surface": "sinexctl.verify",
-            "purpose": "gateway smoke round-trip"
-        }),
-    )
-    .await?;
-    let query = gateway_smoke_query(&marker, emitted_at)?;
-
-    for _attempt in 0..20 {
-        match client.query_events(query.clone()).await? {
-            EventQueryResult::Events { events, .. } if !events.is_empty() => {
-                return Ok(GatewaySmokeOutcome { ingest_response });
-            }
-            EventQueryResult::Events { .. } => {
-                tokio::time::sleep(Duration::from_millis(250)).await;
-            }
-            other => {
-                return Err(eyre!(
-                    "unexpected query result for gateway smoke: {}",
-                    result_kind(&other)
-                ));
-            }
-        }
-    }
-
-    Err(eyre!(
-        "events.ingest accepted the smoke event but it was not queryable within 5s"
-    ))
-}
-
-async fn run_automata_smoke(
-    summary: &mut VerificationSummary,
-    client: &GatewayClient,
-    enabled_automata: EnabledAutomata,
-) -> Result<()> {
-    if enabled_automata.canonicalizer {
-        match run_canonicalizer_smoke(client).await {
-            Ok(()) => summary.pass("Canonicalizer smoke produced command.canonical output"),
-            Err(error) => summary.fail(format!("Canonicalizer smoke failed: {error}")),
-        }
-    } else {
-        summary.skip("Canonicalizer deployment smoke skipped because the surface is disabled");
-    }
-
-    if enabled_automata.health_aggregator {
-        match run_health_smoke(client).await {
-            Ok(()) => {
-                summary.pass("Health automaton smoke produced health.aggregated_report output");
-            }
-            Err(error) => summary.fail(format!("Health automaton smoke failed: {error}")),
-        }
-    } else {
-        summary.skip("Health automaton deployment smoke skipped because the surface is disabled");
-    }
-
-    if enabled_automata.analytics_automaton {
-        match run_analytics_smoke(client).await {
-            Ok(()) => {
-                summary.pass("Analytics automaton smoke produced activity.window.summary output");
-            }
-            Err(error) => summary.fail(format!("Analytics automaton smoke failed: {error}")),
-        }
-    } else {
-        summary
-            .skip("Analytics automaton deployment smoke skipped because the surface is disabled");
-    }
-
-    if enabled_automata.session_detector {
-        match run_session_smoke(client).await {
-            Ok(()) => {
-                summary.pass("Session detector smoke produced activity.session.boundary output");
-            }
-            Err(error) => summary.fail(format!("Session detector smoke failed: {error}")),
-        }
-    } else {
-        summary.skip("Session detector deployment smoke skipped because the surface is disabled");
-    }
-
-    Ok(())
-}
-
 async fn run_document_smoke(
     summary: &mut VerificationSummary,
     client: &GatewayClient,
@@ -993,168 +841,6 @@ async fn run_document_smoke(
 
     Ok(())
 }
-
-async fn run_canonicalizer_smoke(client: &GatewayClient) -> Result<()> {
-    let input_baseline = count_events_matching(
-        client,
-        &[BashCommandExecutedPayload::SOURCE.as_static_str()],
-        BashCommandExecutedPayload::EVENT_TYPE.as_static_str(),
-    )
-    .await?;
-    let baseline = count_events_matching(
-        client,
-        &[CanonicalCommandPayload::SOURCE.as_static_str()],
-        CanonicalCommandPayload::EVENT_TYPE.as_static_str(),
-    )
-    .await?;
-    let marker = format!("canonicalizer-{:016x}", rand::random::<u64>());
-    ingest_raw_event(
-        client,
-        BashCommandExecutedPayload::SOURCE.as_static_str(),
-        BashCommandExecutedPayload::EVENT_TYPE.as_static_str(),
-        Timestamp::now(),
-        bash_command_payload(&marker),
-    )
-    .await?;
-
-    wait_for_count_increase(
-        client,
-        &[BashCommandExecutedPayload::SOURCE.as_static_str()],
-        BashCommandExecutedPayload::EVENT_TYPE.as_static_str(),
-        input_baseline,
-        Duration::from_secs(10),
-    )
-    .await?;
-
-    wait_for_count_increase(
-        client,
-        &[CanonicalCommandPayload::SOURCE.as_static_str()],
-        CanonicalCommandPayload::EVENT_TYPE.as_static_str(),
-        baseline,
-        Duration::from_secs(10),
-    )
-    .await
-}
-
-async fn run_health_smoke(client: &GatewayClient) -> Result<()> {
-    let baseline =
-        count_events_matching(client, &["health-aggregator"], "health.aggregated_report").await?;
-    let marker = format!("verify-health-{:016x}", rand::random::<u64>());
-    ingest_raw_event(
-        client,
-        "sinex",
-        "health.status",
-        Timestamp::now(),
-        json!({
-            "component": marker,
-            "previous_status": "unknown",
-            "current_status": "healthy",
-        }),
-    )
-    .await?;
-
-    wait_for_count_increase(
-        client,
-        &["health-aggregator"],
-        "health.aggregated_report",
-        baseline,
-        Duration::from_secs(10),
-    )
-    .await
-}
-
-async fn run_analytics_smoke(client: &GatewayClient) -> Result<()> {
-    let input_baseline = count_events_matching(
-        client,
-        &[BashCommandExecutedPayload::SOURCE.as_static_str()],
-        BashCommandExecutedPayload::EVENT_TYPE.as_static_str(),
-    )
-    .await?;
-    let baseline = count_events_matching(
-        client,
-        &[activity_window_output_source()],
-        activity_window_output_event_type(),
-    )
-    .await?;
-    let marker = format!("analytics-{:016x}", rand::random::<u64>());
-    let window_times = session_smoke_timestamps(Timestamp::now());
-
-    for (ordinal, ts_orig) in window_times.into_iter().enumerate() {
-        ingest_raw_event(
-            client,
-            BashCommandExecutedPayload::SOURCE.as_static_str(),
-            BashCommandExecutedPayload::EVENT_TYPE.as_static_str(),
-            ts_orig,
-            bash_command_payload(&format!("{marker}-{ordinal}")),
-        )
-        .await?;
-    }
-
-    wait_for_count_increase(
-        client,
-        &[BashCommandExecutedPayload::SOURCE.as_static_str()],
-        BashCommandExecutedPayload::EVENT_TYPE.as_static_str(),
-        input_baseline,
-        Duration::from_secs(10),
-    )
-    .await?;
-
-    wait_for_count_increase(
-        client,
-        &[activity_window_output_source()],
-        activity_window_output_event_type(),
-        baseline,
-        Duration::from_secs(15),
-    )
-    .await
-}
-
-async fn run_session_smoke(client: &GatewayClient) -> Result<()> {
-    let input_baseline = count_events_matching(
-        client,
-        &[BashCommandExecutedPayload::SOURCE.as_static_str()],
-        BashCommandExecutedPayload::EVENT_TYPE.as_static_str(),
-    )
-    .await?;
-    let baseline = count_events_matching(
-        client,
-        &[session_detector_output_source()],
-        session_detector_output_event_type(),
-    )
-    .await?;
-    let marker = format!("session-smoke-{:016x}", rand::random::<u64>());
-    let session_times = session_smoke_timestamps(Timestamp::now());
-
-    for (ordinal, ts_orig) in session_times.into_iter().enumerate() {
-        ingest_raw_event(
-            client,
-            BashCommandExecutedPayload::SOURCE.as_static_str(),
-            BashCommandExecutedPayload::EVENT_TYPE.as_static_str(),
-            ts_orig,
-            bash_command_payload(&format!("{marker}-{ordinal}")),
-        )
-        .await?;
-    }
-
-    wait_for_count_increase(
-        client,
-        &[BashCommandExecutedPayload::SOURCE.as_static_str()],
-        BashCommandExecutedPayload::EVENT_TYPE.as_static_str(),
-        input_baseline,
-        Duration::from_secs(10),
-    )
-    .await?;
-
-    wait_for_count_increase(
-        client,
-        &[session_detector_output_source()],
-        session_detector_output_event_type(),
-        baseline,
-        Duration::from_secs(15),
-    )
-    .await
-}
-
 async fn run_document_surface_smoke(
     client: &GatewayClient,
     descriptor: &DeploymentReadinessDescriptor,
@@ -1229,25 +915,6 @@ async fn start_systemd_unit(unit: &str) -> Result<()> {
     Err(eyre!("`systemctl start {unit}` failed: {detail}"))
 }
 
-fn bash_command_payload(marker: &str) -> serde_json::Value {
-    json!({
-        "command": format!("printf '%s' {marker}"),
-        "working_directory": "/tmp",
-        "exit_code": 0,
-        "duration_ms": 1,
-        "user": "sinexctl-verify",
-        "session_id": marker,
-        "environment_hash": null,
-    })
-}
-
-fn session_smoke_timestamps(now: Timestamp) -> [Timestamp; 3] {
-    let first = Timestamp::new(now.inner() + time::Duration::hours(1));
-    let second = Timestamp::new(first.inner() + time::Duration::seconds(1));
-    let third = Timestamp::new(first.inner() + time::Duration::minutes(6));
-    [first, second, third]
-}
-
 struct DocumentSmokeCleanup {
     path: PathBuf,
 }
@@ -1271,24 +938,6 @@ impl Drop for DocumentSmokeCleanup {
     }
 }
 
-async fn ingest_raw_event(
-    client: &GatewayClient,
-    source: &str,
-    event_type: &str,
-    ts_orig: Timestamp,
-    payload: serde_json::Value,
-) -> Result<EventIngestResponse> {
-    client
-        .ingest_event(EventIngestRequest {
-            source: source.to_string(),
-            event_type: event_type.to_string(),
-            payload,
-            ts_orig: ts_orig.format_rfc3339(),
-            host: None,
-        })
-        .await
-}
-
 async fn query_event_count(client: &GatewayClient, query: EventQuery) -> Result<i64> {
     match client.query_events(query).await? {
         EventQueryResult::Events { events, .. } => Ok(events.len() as i64),
@@ -1296,37 +945,6 @@ async fn query_event_count(client: &GatewayClient, query: EventQuery) -> Result<
             "unexpected query result for event smoke query: {}",
             result_kind(&other)
         )),
-    }
-}
-
-async fn wait_for_count_increase(
-    client: &GatewayClient,
-    sources: &[&str],
-    event_type: &str,
-    baseline: i64,
-    timeout: Duration,
-) -> Result<()> {
-    let deadline = tokio::time::Instant::now() + timeout;
-    loop {
-        let current = count_events_matching(client, sources, event_type).await?;
-        if current > baseline {
-            return Ok(());
-        }
-        if tokio::time::Instant::now() >= deadline {
-            let source_label = if sources.is_empty() {
-                "any-source".to_string()
-            } else {
-                sources.join(",")
-            };
-            return Err(eyre!(
-                "expected {} {} count to increase beyond {}, but it stayed at {}",
-                source_label,
-                event_type,
-                baseline,
-                current
-            ));
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
     }
 }
 
@@ -1377,23 +995,6 @@ async fn wait_for_source_surface_evidence(
     }
 }
 
-fn gateway_smoke_query(marker: &str, emitted_at: Timestamp) -> Result<EventQuery> {
-    let start = Timestamp::new(emitted_at.inner() - time::Duration::minutes(1));
-    let end = Timestamp::new(emitted_at.inner() + time::Duration::minutes(2));
-    let time_range = TimeRange::new(Some(start), Some(end))?;
-
-    Ok(EventQuery {
-        sources: vec![EventSource::new(VERIFY_GATEWAY_SOURCE)?],
-        event_types: vec![EventType::new(VERIFY_GATEWAY_EVENT_TYPE)?],
-        payload: Some(PayloadFilter::Contains {
-            value: json!({ "marker": marker }),
-        }),
-        time_range: Some(time_range),
-        limit: 5,
-        ..Default::default()
-    })
-}
-
 fn result_kind(result: &EventQueryResult) -> &'static str {
     match result {
         EventQueryResult::Events { .. } => "events",
@@ -1413,50 +1014,6 @@ mod tests {
         DesktopDeploymentSurface, DocumentDeploymentSurface, TerminalDeploymentSurface,
     };
     use xtask::sandbox::prelude::*;
-
-    #[sinex_test]
-    async fn gateway_smoke_query_is_precisely_scoped() -> TestResult<()> {
-        let emitted_at =
-            Timestamp::parse_rfc3339("2026-04-17T12:00:00Z").expect("timestamp should parse");
-        let query = gateway_smoke_query("marker-123", emitted_at).expect("query should build");
-
-        assert_eq!(query.sources.len(), 1);
-        assert_eq!(query.sources[0].as_str(), VERIFY_GATEWAY_SOURCE);
-        assert_eq!(query.event_types.len(), 1);
-        assert_eq!(query.event_types[0].as_str(), VERIFY_GATEWAY_EVENT_TYPE);
-        assert!(matches!(
-            query.payload,
-            Some(PayloadFilter::Contains { value })
-                if value == json!({ "marker": "marker-123" })
-        ));
-
-        let time_range = query.time_range.expect("time range should be present");
-        assert_eq!(
-            time_range.start().expect("start").format_rfc3339(),
-            "2026-04-17T11:59:00Z"
-        );
-        assert_eq!(
-            time_range.end().expect("end").format_rfc3339(),
-            "2026-04-17T12:02:00Z"
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn session_smoke_timestamps_force_a_gap_after_seeding() -> TestResult<()> {
-        let now = Timestamp::parse_rfc3339("2026-04-17T12:00:00Z").expect("timestamp should parse");
-        let [first, second, third] = session_smoke_timestamps(now);
-
-        assert!(first > now);
-        assert!(second > first);
-        assert!(third > second);
-        assert_eq!(second - first, time::Duration::seconds(1));
-        assert_eq!(
-            third - second,
-            time::Duration::minutes(5) + time::Duration::seconds(59)
-        );
-        Ok(())
-    }
 
     #[sinex_test]
     async fn enabled_automata_follow_descriptor_shape() -> TestResult<()> {
