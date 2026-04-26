@@ -41,7 +41,6 @@ let
   logDir = cfg.observability.logDir;
   ingestSpool = cfg.core.ingestd.spoolDir;
   nodeSpool = "${cfg.stateRoot}/spool/nodes";
-  dlqCfg = cfg.storage.dlq;
   serviceUser = cfg.users.nodes;
 
   databaseUrl = renderDatabaseUrl cfg.database;
@@ -198,15 +197,6 @@ let
     GRACE_PERIOD=${toString updates.gracePeriodSec}
     HEALTH_TIMEOUT=${toString updates.healthCheckTimeoutSec}
     ROLLBACK=${if updates.rollbackOnFailure then "1" else "0"}
-    PRESERVE_DATA=${if updates.preserveData then "1" else "0"}
-    DLQ_ENABLED=${if dlqCfg.enable then "1" else "0"}
-    DLQ_PATH="${dlqCfg.path}"
-
-    BACKUP_DIR=""
-    if [ "$PRESERVE_DATA" = "1" ] && [ "$DLQ_ENABLED" = "1" ] && [ -d "$DLQ_PATH" ]; then
-      BACKUP_DIR="${dlqCfg.path}.backup-$(date +%Y%m%d-%H%M%S)"
-      cp -a "$DLQ_PATH" "$BACKUP_DIR" || true
-    fi
 
     for unit in "''${ACTIVE_UNITS[@]}"; do
       systemctl stop "$unit" || true
@@ -239,29 +229,8 @@ let
         for unit in "''${ACTIVE_UNITS[@]}"; do
           systemctl stop "$unit" || true
         done
-        if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then
-          rollback_old=""
-          if [ -e "$DLQ_PATH" ]; then
-            rollback_old="''${DLQ_PATH}.rollback.$(date +%s).$$"
-            mv "$DLQ_PATH" "$rollback_old"
-          fi
-          if ! mv "$BACKUP_DIR" "$DLQ_PATH"; then
-            if [ -n "$rollback_old" ] && [ -e "$rollback_old" ]; then
-              mv "$rollback_old" "$DLQ_PATH" || true
-            fi
-            echo "Failed to restore DLQ backup during rollback" >&2
-            exit 1
-          fi
-          if [ -n "$rollback_old" ] && [ -e "$rollback_old" ]; then
-            rm -rf "$rollback_old"
-          fi
-        fi
       fi
       exit 1
-    fi
-
-    if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then
-      rm -rf "$BACKUP_DIR"
     fi
 
     echo "$(date): coordinated update completed successfully"
