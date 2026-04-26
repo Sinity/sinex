@@ -26,7 +26,7 @@ struct TransportState {
 fn set_default_capabilities(env_guard: &mut EnvGuard) {
     env_guard.set(
         "SINEX_NATIVE_MESSAGING_CAPABILITIES",
-        r#"{"chrome-extension://trusted-sinex":{"allowed_methods":["system.health"],"rate_limit_per_minute":null,"allowed_event_types":null}}"#,
+        r#"{"chrome-extension://trusted-sinex":{"allowed_methods":["system.health"],"rate_limit_per_minute":null}}"#,
     );
 }
 
@@ -292,7 +292,7 @@ async fn native_messaging_surfaces_invalid_capabilities_config(ctx: TestContext)
     );
     env.set(
         "SINEX_NATIVE_MESSAGING_CAPABILITIES",
-        r#"{"chrome-extension://trusted-sinex":{"allowed_methods":"system.health","rate_limit_per_minute":null,"allowed_event_types":null}}"#,
+        r#"{"chrome-extension://trusted-sinex":{"allowed_methods":"system.health","rate_limit_per_minute":null}}"#,
     );
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::from_database_url(db_url).await?;

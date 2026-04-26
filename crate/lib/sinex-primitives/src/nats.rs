@@ -7,6 +7,46 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::info;
 
+pub const NATS_TRAFFIC_CLASS_HEADER: &str = "Sinex-Traffic-Class";
+
+/// Explicit traffic classes for NATS publish paths.
+///
+/// These classes are intentionally narrow:
+/// - `RawEvent`: persisted raw/synthesized event traffic on `events.raw.*`
+/// - `Telemetry`: self-observation events that still use the normal raw-event plane
+/// - `RawIngestDlq`: operator-facing ingest/material DLQ traffic
+/// - `ProcessingFailure`: derived/runtime processing-failure envelopes
+/// - `Control`: non-event lifecycle/coordination traffic
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NatsTrafficClass {
+    RawEvent,
+    Telemetry,
+    RawIngestDlq,
+    ProcessingFailure,
+    Control,
+}
+
+impl NatsTrafficClass {
+    #[must_use]
+    pub const fn as_header_value(self) -> &'static str {
+        match self {
+            Self::RawEvent => "raw_event",
+            Self::Telemetry => "telemetry",
+            Self::RawIngestDlq => "raw_ingest_dlq",
+            Self::ProcessingFailure => "processing_failure",
+            Self::Control => "control",
+        }
+    }
+}
+
+pub fn insert_traffic_class_header(
+    headers: &mut async_nats::HeaderMap,
+    traffic_class: NatsTrafficClass,
+) {
+    headers.insert(NATS_TRAFFIC_CLASS_HEADER, traffic_class.as_header_value());
+}
+
 /// Configuration for shared NATS transport, TLS, and authentication.
 ///
 /// Deployment-facing configuration should normally come from typed NixOS
@@ -393,9 +433,16 @@ pub struct JetStreamTopology {
     pub confirmations_stream: String,
     pub confirmations_subject: String,
     pub confirmations_prefix: String,
+    pub confirmation_retry_stream: String,
+    pub confirmation_retry_subject: String,
+    pub confirmation_retry_prefix: String,
+    pub confirmation_retry_consumer: String,
     pub dlq_stream: String,
     pub dlq_subject: String,
     pub dlq_publish_subject: String,
+    pub processing_failures_stream: String,
+    pub processing_failures_subject: String,
+    pub processing_failures_prefix: String,
     pub consumer_durable: String,
 }
 
@@ -408,9 +455,15 @@ impl JetStreamTopology {
         namespace: Option<&str>,
     ) -> Self {
         let confirmations_stream = format!("{base_stream}_CONFIRMATIONS");
+        let confirmation_retry_stream = format!("{base_stream}_CONFIRMATION_RETRIES");
         let dlq_stream = format!("{base_stream}_DLQ");
+        let processing_failures_stream = format!("{base_stream}_PROCESSING_FAILURES");
         let namespaced = |subject: &str| env.nats_subject_with_namespace(namespace, subject);
         let confirmations_prefix = format!("{}.", namespaced("events.confirmations"));
+        let confirmation_retry_prefix =
+            format!("{}.", namespaced("events.confirmation_retries"));
+        let processing_failures_prefix =
+            format!("{}.", namespaced("events.processing_failures"));
 
         Self {
             events_stream: base_stream,
@@ -418,9 +471,16 @@ impl JetStreamTopology {
             confirmations_stream,
             confirmations_subject: namespaced("events.confirmations.>"),
             confirmations_prefix,
+            confirmation_retry_stream,
+            confirmation_retry_subject: namespaced("events.confirmation_retries.>"),
+            confirmation_retry_prefix,
+            confirmation_retry_consumer: format!("{consumer_durable}_confirm_retries"),
             dlq_stream,
             dlq_subject: namespaced("events.dlq.>"),
             dlq_publish_subject: namespaced("events.dlq.ingestd"),
+            processing_failures_stream,
+            processing_failures_subject: namespaced("events.processing_failures.>"),
+            processing_failures_prefix,
             consumer_durable,
         }
     }
