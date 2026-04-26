@@ -36,9 +36,7 @@ impl StatusCommand {
         let target = runtime_target.cloned().unwrap_or_else(|| RuntimeTargetDescriptor {
             name: "unknown".to_string(),
             kind: RuntimeTargetKind::Unknown,
-            source: None,
-            source_path: None,
-            services: Default::default(),
+            ..Default::default()
         });
         
         let mut signals = Vec::new();
@@ -136,8 +134,11 @@ impl StatusCommand {
         };
         
         match format {
-            OutputFormat::Json => {
+            OutputFormat::Json | OutputFormat::Dot => {
                 println!("{}", serde_json::to_string_pretty(&snapshot)?);
+            }
+            OutputFormat::Yaml => {
+                println!("{}", serde_yaml::to_string(&snapshot)?);
             }
             OutputFormat::Table => {
                 println!("{}", style("System Status").bold().cyan());
@@ -186,6 +187,7 @@ impl StatusCommand {
         
         Ok(())
     }
+}
 
 fn runtime_target_kind_label(kind: &RuntimeTargetKind) -> &'static str {
     match kind {
