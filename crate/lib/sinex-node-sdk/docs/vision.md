@@ -171,13 +171,13 @@ pub trait AutomatonNode: Send + Sync {
 
     /// Optional: custom error handling
     fn handle_error(&self, error: Error) -> ErrorAction {
-        ErrorAction::SendToDLQ
+        ErrorAction::SendToProcessingFailureQueue
     }
 }
 
 enum ErrorAction {
     Retry,
-    SendToDLQ,
+    SendToProcessingFailureQueue,
     Skip,
 }
 

@@ -37,7 +37,7 @@ impl From<NodeLogicError> for SinexError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorAction {
     Retry,
-    SendToDLQ,
+    SendToProcessingFailureQueue,
     Skip,
 }
 
