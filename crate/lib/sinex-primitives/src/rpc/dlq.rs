@@ -1,4 +1,4 @@
-//! DLQ (Dead Letter Queue) management types
+//! Raw-ingest DLQ management types
 
 use serde::{Deserialize, Serialize};
 
@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 // dlq.list
 // ─────────────────────────────────────────────────────────────
 
-/// Request: dlq.list (no params required)
+/// Request: `dlq.list` for the raw-ingest DLQ (no params required)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DlqListRequest {}
 
@@ -42,7 +42,7 @@ impl Default for DlqPeekRequest {
     }
 }
 
-/// A single DLQ message preview
+/// A single raw-ingest DLQ message preview
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DlqMessagePeek {
     pub subject: String,
@@ -65,10 +65,10 @@ pub struct DlqPeekResponse {
 /// Request: dlq.requeue
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DlqRequeueRequest {
-    /// Optional event ID to requeue specific message
+    /// Optional event ID to requeue a specific raw-ingest DLQ message
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_id: Option<String>,
-    /// Requeue all DLQ messages
+    /// Requeue all raw-ingest DLQ messages
     #[serde(default)]
     pub all: bool,
 }

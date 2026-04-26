@@ -22,7 +22,6 @@ use sinex_primitives::rpc::{
         GitOpsDeleteSourceResponse, GitOpsListSourcesRequest, GitOpsListSourcesResponse,
         GitOpsSourceInfo, GitOpsTriggerSyncRequest, GitOpsTriggerSyncResponse,
     },
-    ingest::{EventIngestRequest, EventIngestResponse},
     lifecycle::{
         LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
         LifecycleRestoreResponse, LifecycleStatusRequest, LifecycleStatusResponse,
@@ -443,14 +442,6 @@ impl GatewayClient {
         Self::expect_string_result(methods::SYSTEM_VERSION, result)
     }
 
-    /// Publish a single event through the gateway's events.ingest RPC endpoint.
-    pub async fn ingest_event(&self, req: EventIngestRequest) -> Result<EventIngestResponse> {
-        let result = self
-            .call_rpc(methods::EVENTS_INGEST, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
-    }
-
     // ==================== Core Commands ====================
 
     /// Get system health status
@@ -765,7 +756,7 @@ impl GatewayClient {
 
     // ==================== DLQ Commands ====================
 
-    /// List dead letter queues
+    /// List raw-ingest dead-letter queue statistics
     pub async fn dlq_list(&self) -> Result<DlqListResponse> {
         let req = DlqListRequest {};
         let result = self

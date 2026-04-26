@@ -445,7 +445,7 @@ impl Provenance {
     }
 
     #[must_use]
-    pub fn from_synthesis_safe(first: EventId, rest: Vec<EventId>) -> Self {
+    pub(crate) fn from_synthesis_safe(first: EventId, rest: Vec<EventId>) -> Self {
         Provenance::Synthesis {
             source_event_ids: NonEmptyVec::from_head_tail(first, rest),
             operation_id: None,
