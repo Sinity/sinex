@@ -120,6 +120,9 @@ pub async fn check_strict(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyError>
     let mut drifts = Vec::new();
     drifts.extend(check_column_defaults(pool).await?);
     drifts.extend(check_trigger_function_bodies(pool).await?);
+    drifts.extend(check_inline_check_exprs(pool).await?);
+    drifts.extend(check_foreign_key_actions(pool).await?);
+    drifts.extend(check_hypertable_settings(pool).await?);
     Ok(drifts)
 }
 
@@ -294,6 +297,303 @@ async fn check_trigger_function_bodies(
             });
         }
     }
+    Ok(drifts)
+}
+
+// ─── Inline CHECK expressions ───────────────────────────────────────────────
+
+/// One declared expectation for an anonymous inline CHECK constraint on a
+/// table. The check is identified by markers it must contain in the body
+/// returned by `pg_get_constraintdef`. We accept matches on ANY constraint
+/// of the table — there is no stable name to key on (sea-query emits the
+/// CHECK without a `CONSTRAINT name` clause and Postgres synthesizes one
+/// like `events_check2`, which renumbers across applies).
+struct DeclaredInlineCheck {
+    schema: &'static str,
+    table: &'static str,
+    /// Short label for the location string. Two checks on the same table need
+    /// distinct labels to disambiguate the drift report.
+    label: &'static str,
+    /// Substrings that some CHECK constraint on the table MUST collectively
+    /// contain (all markers on a single constraint definition). Markers that
+    /// appear across two different constraints do not satisfy the
+    /// expectation — the matcher seeks one constraint that contains every
+    /// marker.
+    expected_markers: &'static [&'static str],
+}
+
+const DECLARED_INLINE_CHECKS: &[DeclaredInlineCheck] = &[
+    DeclaredInlineCheck {
+        schema: "core",
+        table: "events",
+        label: "xor_provenance",
+        // The XOR provenance invariant — exactly one of source_material_id
+        // or source_event_ids set. This is THE load-bearing in-DB check; if
+        // it disappears, the provenance contract is gone.
+        expected_markers: &["source_material_id IS NOT NULL", "source_event_ids IS NULL"],
+    },
+    DeclaredInlineCheck {
+        schema: "core",
+        table: "events",
+        label: "anchor_byte_non_negative",
+        expected_markers: &["anchor_byte", ">= 0"],
+    },
+    DeclaredInlineCheck {
+        schema: "core",
+        table: "events",
+        label: "synthesis_non_empty",
+        expected_markers: &["source_event_ids", "cardinality"],
+    },
+    DeclaredInlineCheck {
+        schema: "core",
+        table: "events",
+        label: "offset_kind_enum",
+        expected_markers: &["offset_kind", "'byte'", "'logical'"],
+    },
+];
+
+async fn check_inline_check_exprs(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyError> {
+    let mut drifts = Vec::new();
+    for declared in DECLARED_INLINE_CHECKS {
+        let definitions: Vec<String> = sqlx::query_scalar(
+            r"
+            SELECT pg_get_constraintdef(c.oid)
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+            WHERE n.nspname = $1
+              AND t.relname = $2
+              AND c.contype = 'c'
+            ",
+        )
+        .bind(declared.schema)
+        .bind(declared.table)
+        .fetch_all(pool)
+        .await?;
+
+        let location = format!(
+            "{}.{}::{}",
+            declared.schema, declared.table, declared.label
+        );
+
+        let any_match = definitions.iter().any(|def| {
+            declared
+                .expected_markers
+                .iter()
+                .all(|marker| def.contains(marker))
+        });
+
+        if !any_match {
+            drifts.push(StrictDrift {
+                category: DriftCategory::InlineCheckExpr,
+                location,
+                declared_summary: format!(
+                    "some CHECK on {}.{} contains all of {:?}",
+                    declared.schema, declared.table, declared.expected_markers
+                ),
+                observed_summary: if definitions.is_empty() {
+                    "table has no CHECK constraints".to_string()
+                } else {
+                    format!("{} CHECK constraint(s); none match", definitions.len())
+                },
+            });
+        }
+    }
+    Ok(drifts)
+}
+
+// ─── Foreign key actions ────────────────────────────────────────────────────
+
+/// One declared FK ON DELETE / ON UPDATE expectation. We pin the action on
+/// the `pg_get_constraintdef` text since it surfaces the action explicitly
+/// (`FOREIGN KEY (col) REFERENCES other(id) ON DELETE CASCADE`). Substring
+/// match on the action keyword keeps the check robust to formatting.
+struct DeclaredForeignKeyAction {
+    schema: &'static str,
+    table: &'static str,
+    /// Substring that uniquely identifies the FK definition we want to pin.
+    /// The first FK whose `pg_get_constraintdef` contains this substring is
+    /// matched. Keep this specific to one FK — pinning by referenced column
+    /// (`FOREIGN KEY (parent_tag_id)`) is the natural choice.
+    fk_marker: &'static str,
+    /// Required text in the constraint definition (e.g. `ON DELETE SET NULL`).
+    expected_action_marker: &'static str,
+}
+
+const DECLARED_FK_ACTIONS: &[DeclaredForeignKeyAction] = &[
+    // TaggedItems(tag_id) → Tags(id) — schema/annotations.rs declares
+    // ON DELETE CASCADE. Reverting to NO ACTION or RESTRICT would block
+    // tag deletion when items still reference it; reverting to SET NULL
+    // would orphan associations into a `(NULL, item_id, item_type)` row,
+    // which violates the assumption that `tagged_items` rows always
+    // resolve to a real tag.
+    DeclaredForeignKeyAction {
+        schema: "core",
+        table: "tagged_items",
+        fk_marker: "FOREIGN KEY (tag_id)",
+        expected_action_marker: "ON DELETE CASCADE",
+    },
+    // Two other FK declarations were considered and intentionally NOT
+    // pinned in this slice. Both surfaced as real schema bugs the strict
+    // diff caught against a freshly applied schema:
+    //
+    // - `core.tags(parent_tag_id)` self-FK: source declares SET NULL but
+    //   live shows CASCADE. Tracked in #578.
+    // - `core.event_annotations(event_id)` → `core.events`: declared
+    //   CASCADE but TimescaleDB does not allow hypertables as FK
+    //   targets, so the constraint is silently absent. Tracked in #579.
+    //
+    // The detector correctly catches both as drift. Re-add to this list
+    // once those issues are resolved.
+];
+
+async fn check_foreign_key_actions(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyError> {
+    let mut drifts = Vec::new();
+    for declared in DECLARED_FK_ACTIONS {
+        let definitions: Vec<String> = sqlx::query_scalar(
+            r"
+            SELECT pg_get_constraintdef(c.oid)
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+            WHERE n.nspname = $1
+              AND t.relname = $2
+              AND c.contype = 'f'
+            ",
+        )
+        .bind(declared.schema)
+        .bind(declared.table)
+        .fetch_all(pool)
+        .await?;
+
+        let location = format!("{}.{} {}", declared.schema, declared.table, declared.fk_marker);
+
+        let Some(matching) = definitions
+            .iter()
+            .find(|def| def.contains(declared.fk_marker))
+        else {
+            drifts.push(StrictDrift {
+                category: DriftCategory::ForeignKeyAction,
+                location,
+                declared_summary: format!(
+                    "FK with `{}` and action `{}`",
+                    declared.fk_marker, declared.expected_action_marker
+                ),
+                observed_summary: format!(
+                    "no FK on {}.{} matches `{}`",
+                    declared.schema, declared.table, declared.fk_marker
+                ),
+            });
+            continue;
+        };
+
+        if !matching.contains(declared.expected_action_marker) {
+            drifts.push(StrictDrift {
+                category: DriftCategory::ForeignKeyAction,
+                location,
+                declared_summary: format!("contains `{}`", declared.expected_action_marker),
+                observed_summary: matching.clone(),
+            });
+        }
+    }
+    Ok(drifts)
+}
+
+// ─── TimescaleDB hypertable settings ────────────────────────────────────────
+
+/// `core.events` hypertable invariants. The chunk interval is set in
+/// `apply::configure_timescaledb` to 7 days; the retention policy is
+/// explicitly removed there. Both decisions matter for replay/archive
+/// behavior — a different chunk interval changes archival pressure, a
+/// retention policy silently drops events. The strict diff catches manual
+/// drift either way.
+const HYPERTABLE_CHUNK_INTERVAL_MICROS: i64 = 7 * 24 * 60 * 60 * 1_000_000;
+
+async fn check_hypertable_settings(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyError> {
+    let mut drifts = Vec::new();
+
+    // Skip if TimescaleDB extension isn't installed. Test databases without
+    // the extension still pass this category (no drift to report).
+    let timescaledb_present: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb')",
+    )
+    .fetch_one(pool)
+    .await?;
+    if !timescaledb_present {
+        return Ok(drifts);
+    }
+
+    // Hypertable presence + chunk interval. `_timescaledb_catalog.dimension`
+    // stores `interval_length` in microseconds for time-partitioned tables;
+    // `by_range('id')` over UUIDv7 uses the same time-derived range.
+    let row: Option<(Option<i64>,)> = sqlx::query_as(
+        r"
+        SELECT d.interval_length
+        FROM _timescaledb_catalog.hypertable h
+        JOIN _timescaledb_catalog.dimension d ON d.hypertable_id = h.id
+        WHERE h.schema_name = 'core' AND h.table_name = 'events'
+        ",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApplyError::from)?;
+
+    match row {
+        None => {
+            drifts.push(StrictDrift {
+                category: DriftCategory::HypertableSetting,
+                location: "core.events".to_string(),
+                declared_summary: "hypertable with 7d chunk interval".to_string(),
+                observed_summary: "core.events is not a hypertable".to_string(),
+            });
+        }
+        Some((Some(observed),)) if observed != HYPERTABLE_CHUNK_INTERVAL_MICROS => {
+            drifts.push(StrictDrift {
+                category: DriftCategory::HypertableSetting,
+                location: "core.events::chunk_interval".to_string(),
+                declared_summary: format!(
+                    "interval_length = {HYPERTABLE_CHUNK_INTERVAL_MICROS} (7 days in µs)"
+                ),
+                observed_summary: format!("interval_length = {observed}"),
+            });
+        }
+        Some((None,)) => {
+            drifts.push(StrictDrift {
+                category: DriftCategory::HypertableSetting,
+                location: "core.events::chunk_interval".to_string(),
+                declared_summary: format!(
+                    "interval_length = {HYPERTABLE_CHUNK_INTERVAL_MICROS} (7 days in µs)"
+                ),
+                observed_summary: "interval_length is NULL".to_string(),
+            });
+        }
+        Some(_) => {} // matches; no drift
+    }
+
+    // Retention policy must NOT exist on core.events. The bgw_job table is
+    // the public entry point for jobs (compression, retention, reorder).
+    let retention_count: i64 = sqlx::query_scalar(
+        r"
+        SELECT count(*)::bigint
+        FROM timescaledb_information.jobs
+        WHERE proc_name = 'policy_retention'
+          AND hypertable_schema = 'core'
+          AND hypertable_name = 'events'
+        ",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApplyError::from)?;
+
+    if retention_count > 0 {
+        drifts.push(StrictDrift {
+            category: DriftCategory::HypertableSetting,
+            location: "core.events::retention_policy".to_string(),
+            declared_summary: "no retention policy".to_string(),
+            observed_summary: format!("{retention_count} retention policy job(s) present"),
+        });
+    }
+
     Ok(drifts)
 }
 
