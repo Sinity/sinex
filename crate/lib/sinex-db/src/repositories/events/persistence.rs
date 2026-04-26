@@ -2740,8 +2740,11 @@ mod tests {
             ts_orig: Some(Timestamp::now()),
             node_run_id: None,
             payload_schema_id: None,
-            provenance: crate::models::Provenance::from_synthesis_safe(parent_id, vec![])
-                .with_operation(provenance_operation_id),
+            provenance: crate::models::Provenance::from_synthesis([
+                sinex_primitives::events::EventId::from_uuid(parent_id.to_uuid()),
+            ])
+            .expect("single parent should produce synthesis provenance")
+            .with_operation(provenance_operation_id),
             associated_blob_ids: None,
             temporal_policy: None,
             semantics_version: None,
