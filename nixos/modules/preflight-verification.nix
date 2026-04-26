@@ -239,6 +239,14 @@ let
   guardUnit = unit: {
     after = mkAfter [ "sinex-preflight.service" ];
     requires = mkAfter [ "sinex-preflight.service" ];
+    # Systemd's TimeoutStartSec covers ALL of ExecStartPre + ExecStart. The
+    # default 90s is shorter than the guard's own preflight timeout
+    # (`preflight.timeoutSec`, default 120s), so a slow preflight — typical
+    # during nixos-rebuild reactivation while NATS is itself restarting —
+    # gets SIGTERM'd before the inner verify can complete. Give the unit
+    # 60s of headroom on top of the inner timeout. The unit is free to
+    # override this; mkDefault keeps that ergonomic.
+    serviceConfig.TimeoutStartSec = lib.mkDefault (preflight.timeoutSec + 60);
     serviceConfig.ExecStartPre = mkAfter [ (pkgs.writeShellScript "sinex-preflight-guard-${sanitizeName unit}" ''
       set -euo pipefail
       UNIT="${unit}.service"
