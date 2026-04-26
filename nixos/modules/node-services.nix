@@ -27,7 +27,6 @@ let
   runtimeDir = "${stateRoot}/run";
   ingestSpool = coreCfg.ingestd.spoolDir;
   logDir = cfg.observability.logDir;
-  dlqPath = cfg.storage.dlq.path;
   blobDir = cfg.storage.blob.repositoryPath;
   tlsDir = "${stateRoot}/tls";
   tlsAutoGenEnabled = coreEnabled && coreCfg.gateway.autoGenerateTls;
@@ -157,7 +156,6 @@ let
     "SINEX_RUNTIME_DIR=${runtimeDir}"
     "SINEX_LOG_DIR=${logDir}"
     "SINEX_SPOOL_INGESTD=${ingestSpool}"
-    "SINEX_DLQ_PATH=${dlqPath}"
     "SINEX_NATS_URL=${natsUrl}"
     "SINEX_NATS_MONITORING_PORT=${toString nodesCfg.nats.monitoringPort}"
     # Both ingestd and gateway access the same content-store root; set here
@@ -203,7 +201,6 @@ let
     runtimeDir
     ingestSpool
     logDir
-    dlqPath
     blobDir
   ];
   restartRateLimits = {
@@ -1557,6 +1554,8 @@ let
       health = nodesCfg.automata.healthAggregator;
       analytics = nodesCfg.automata.analyticsAutomaton;
       session = nodesCfg.automata.sessionDetector;
+      hourly = nodesCfg.automata.hourlySummarizer;
+      daily = nodesCfg.automata.dailySummarizer;
       canonicalizerUnit =
         if !canon.enable then { } else {
           "sinex-canonicalizer" = mkAutomataUnit {
@@ -1597,8 +1596,28 @@ let
             extraArgs = [ ];
           };
         };
+      hourlyUnit =
+        if !hourly.enable then { } else {
+          "sinex-hourly-summarizer" = mkAutomataUnit {
+            binary = "hourly-summarizer";
+            description = "Sinex hourly activity summarizer";
+            profile = hourly.profile;
+            env = hourly.env;
+            extraArgs = [ ];
+          };
+        };
+      dailyUnit =
+        if !daily.enable then { } else {
+          "sinex-daily-summarizer" = mkAutomataUnit {
+            binary = "daily-summarizer";
+            description = "Sinex daily activity summarizer";
+            profile = daily.profile;
+            env = daily.env;
+            extraArgs = [ ];
+          };
+        };
     in
-    canonicalizerUnit // healthUnit // analyticsUnit // sessionUnit;
+    canonicalizerUnit // healthUnit // analyticsUnit // sessionUnit // hourlyUnit // dailyUnit;
 
   nodeservices =
     if !nodesEnabled then { units = { }; supportUnits = { }; } else
