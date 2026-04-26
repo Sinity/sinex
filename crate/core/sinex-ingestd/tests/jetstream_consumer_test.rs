@@ -449,7 +449,7 @@ async fn consumer_loads_externally_registered_materials_via_db_fallback(
         .source_materials()
         .register_in_flight(
             "gateway-inline",
-            Some("sinex-gateway://events.ingest/test"),
+            Some("test://material-ready/fallback"),
             json!({"test": true}),
         )
         .await?;
