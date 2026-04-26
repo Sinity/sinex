@@ -5,10 +5,12 @@ use crate::command_docs::{render_command_guide, render_command_reference};
 use crate::config::{ast_grep_catalog_path, ast_grep_rules_dir};
 use crate::process::ProcessBuilder;
 use crate::proof_catalog::{build_proof_catalog, render_proof_catalog_json};
-use color_eyre::eyre::{Context, ContextCompat, Result};
+use color_eyre::eyre::{Context, Result};
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
-use sinex_primitives::events::schema_registry::get_all_payloads;
+use sinex_primitives::events::schema_registry::{
+    SchemaBundle as PayloadSchemaBundle, SchemaBundleEntry as PayloadSchemaBundleEntry,
+    generate_schema_bundle,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
 
@@ -800,77 +802,15 @@ fn generated_schema_bundle(
     let mut seen_paths = BTreeMap::<(u64, String, String), String>::new();
     let mut registries = BTreeMap::<u64, Vec<SchemaBundleRegistryEntry>>::new();
 
-    let mut payloads: Vec<_> = get_all_payloads().collect();
-    payloads.sort_by(|left, right| {
-        (left.source, left.event_type, left.version, left.type_name).cmp(&(
-            right.source,
-            right.event_type,
-            right.version,
-            right.type_name,
-        ))
-    });
-
-    for payload in payloads {
-        let major = schema_bundle_major_version(payload.version).with_context(|| {
-            format!(
-                "invalid schema version for payload {} ({}/{})",
-                payload.type_name, payload.source, payload.event_type
-            )
-        })?;
-        let path_key = (
-            major,
-            payload.source.to_string(),
-            payload.event_type.to_string(),
-        );
-        if let Some(existing_version) =
-            seen_paths.insert(path_key.clone(), payload.version.to_string())
-            && existing_version != payload.version
-        {
-            color_eyre::eyre::bail!(
-                "schema bundle path collision for {}/{} in v{}: {} and {}",
-                payload.source,
-                payload.event_type,
-                major,
-                existing_version,
-                payload.version
-            );
-        }
-
-        let schema = annotate_schema_bundle_json(
-            (payload.schema_fn)().map_err(|error| {
-                error
-                    .with_context("payload_type", payload.type_name)
-                    .with_context("source", payload.source)
-                    .with_context("event_type", payload.event_type)
-                    .with_context("version", payload.version)
-            })?,
-            payload.source,
-            payload.event_type,
-            payload.version,
-        )?;
-        let schema_content = serde_json::to_string_pretty(&schema)
-            .context("failed to render schema bundle JSON")?
-            + "\n";
-        let schema_rel_path = std::path::PathBuf::from(format!(
-            "v{major}/{}/{}.json",
-            payload.source, payload.event_type
-        ));
-        let registry_path = format!("{}/{}.json", payload.source, payload.event_type);
-        let content_hash = schema_bundle_content_hash(&schema)
-            .context("failed to compute schema bundle content hash")?;
-
-        files.insert(root.join(&schema_rel_path), schema_content);
-        registries
-            .entry(major)
-            .or_default()
-            .push(SchemaBundleRegistryEntry {
-                source: payload.source.to_string(),
-                event_type: payload.event_type.to_string(),
-                version: payload.version.to_string(),
-                path: registry_path,
-                content_hash,
-            });
-    }
+    let payload_bundle = generate_schema_bundle()
+        .context("failed to generate shared event payload schema bundle")?;
+    populate_schema_bundle_files(
+        &payload_bundle,
+        root,
+        &mut files,
+        &mut registries,
+        &mut seen_paths,
+    )?;
 
     for (major, entries) in registries {
         let registry = SchemaBundleRegistry {
@@ -892,28 +832,59 @@ fn generated_schema_bundle(
     })
 }
 
-fn annotate_schema_bundle_json(
-    schema: serde_json::Value,
-    source: &str,
-    event_type: &str,
-    version: &str,
-) -> Result<serde_json::Value> {
-    let serde_json::Value::Object(mut object) = schema else {
-        color_eyre::eyre::bail!("event payload schema root must be a JSON object");
-    };
-    object.insert(
-        "x-sinex-source".to_string(),
-        serde_json::Value::String(source.to_string()),
-    );
-    object.insert(
-        "x-sinex-event-type".to_string(),
-        serde_json::Value::String(event_type.to_string()),
-    );
-    object.insert(
-        "x-sinex-version".to_string(),
-        serde_json::Value::String(version.to_string()),
-    );
-    Ok(serde_json::Value::Object(object))
+fn populate_schema_bundle_files(
+    payload_bundle: &PayloadSchemaBundle,
+    root: &std::path::Path,
+    files: &mut BTreeMap<std::path::PathBuf, String>,
+    registries: &mut BTreeMap<u64, Vec<SchemaBundleRegistryEntry>>,
+    seen_paths: &mut BTreeMap<(u64, String, String), String>,
+) -> Result<()> {
+    for entry in payload_bundle.entries() {
+        populate_schema_bundle_entry(files, registries, seen_paths, root, entry)?;
+    }
+    Ok(())
+}
+
+fn populate_schema_bundle_entry(
+    files: &mut BTreeMap<std::path::PathBuf, String>,
+    registries: &mut BTreeMap<u64, Vec<SchemaBundleRegistryEntry>>,
+    seen_paths: &mut BTreeMap<(u64, String, String), String>,
+    root: &std::path::Path,
+    entry: &PayloadSchemaBundleEntry,
+) -> Result<()> {
+    let major = entry
+        .major_version()
+        .with_context(|| format!("invalid schema version for {}/{}", entry.source, entry.event_type))?;
+    let path_key = (major, entry.source.clone(), entry.event_type.clone());
+    if let Some(existing_version) = seen_paths.insert(path_key, entry.version.clone())
+        && existing_version != entry.version
+    {
+        color_eyre::eyre::bail!(
+            "schema bundle path collision for {}/{} in v{}: {} and {}",
+            entry.source,
+            entry.event_type,
+            major,
+            existing_version,
+            entry.version
+        );
+    }
+
+    let schema_content = serde_json::to_string_pretty(&entry.schema_content)
+        .context("failed to render schema bundle JSON")?
+        + "\n";
+    files.insert(root.join(entry.bundle_relative_path()?), schema_content);
+    registries
+        .entry(major)
+        .or_default()
+        .push(SchemaBundleRegistryEntry {
+            source: entry.source.clone(),
+            event_type: entry.event_type.clone(),
+            version: entry.version.clone(),
+            path: entry.registry_path(),
+            content_hash: entry.content_hash.clone(),
+        });
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1181,36 +1152,6 @@ fn prune_empty_schema_dirs(root: &std::path::Path, start: Option<&std::path::Pat
     }
 }
 
-fn schema_bundle_major_version(version: &str) -> Result<u64> {
-    let mut parts = version.split('.');
-    let major = parts
-        .next()
-        .context("schema version must be in format X.Y.Z")?
-        .parse::<u64>()
-        .context("schema version major component must be numeric")?;
-    let minor = parts
-        .next()
-        .context("schema version must be in format X.Y.Z")?;
-    let patch = parts
-        .next()
-        .context("schema version must be in format X.Y.Z")?;
-    if parts.next().is_some() {
-        color_eyre::eyre::bail!("schema version must be in format X.Y.Z");
-    }
-    minor
-        .parse::<u64>()
-        .context("schema version minor component must be numeric")?;
-    patch
-        .parse::<u64>()
-        .context("schema version patch component must be numeric")?;
-    Ok(major)
-}
-
-fn schema_bundle_content_hash(schema: &serde_json::Value) -> Result<String> {
-    let bytes = serde_json::to_vec(schema).context("failed to serialize schema for hashing")?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
-}
-
 fn write_generated_output(
     dest: &std::path::Path,
     content: &str,
@@ -1454,13 +1395,26 @@ mod tests {
 
     #[test]
     fn test_schema_bundle_major_version_parses_semver() {
-        assert_eq!(schema_bundle_major_version("1.0.0").unwrap(), 1);
-        assert!(schema_bundle_major_version("1").is_err());
-        assert!(schema_bundle_major_version("x.0.0").is_err());
+        assert_eq!(
+            sinex_primitives::events::schema_registry::schema_bundle_major_version("1.0.0")
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sinex_primitives::events::schema_registry::schema_bundle_major_version("1").unwrap(),
+            1
+        );
+        assert!(
+            sinex_primitives::events::schema_registry::schema_bundle_major_version("").is_err()
+        );
+        assert!(
+            sinex_primitives::events::schema_registry::schema_bundle_major_version("x.0.0")
+                .is_err()
+        );
     }
 
     #[test]
-    fn test_schema_bundle_content_hash_matches_existing_registry_contract() {
+    fn test_schema_bundle_content_hash_matches_registry_contract() {
         let schema = serde_json::json!({
             "$schema": "http://json-schema.org/draft-07/schema#",
             "properties": {
@@ -1486,27 +1440,16 @@ mod tests {
             "title": "FileCreatedPayload",
             "type": "object"
         });
-        let schema =
-            annotate_schema_bundle_json(schema, "fs-watcher", "file.created", "1.0.0").unwrap();
-
         assert_eq!(
-            schema_bundle_content_hash(&schema).unwrap(),
-            "7c058ada9e3bdc2c8fbb85d182c7fb913baf5495992d61d5b2c0391785c4e504"
+            sinex_primitives::events::schema_registry::calculate_schema_content_hash(
+                "fs-watcher",
+                "file.created",
+                "1.0.0",
+                &schema
+            )
+            .unwrap(),
+            "dfed8161f597e83e0efaff7ed7efb56ea960fc51c00bb401bc06c154220dcaed"
         );
-    }
-
-    #[test]
-    fn test_annotate_schema_bundle_json_adds_sinex_metadata() {
-        let schema = serde_json::json!({
-            "title": "ExamplePayload",
-            "type": "object"
-        });
-        let annotated =
-            annotate_schema_bundle_json(schema, "example", "example.event", "2.1.0").unwrap();
-
-        assert_eq!(annotated["x-sinex-source"], "example");
-        assert_eq!(annotated["x-sinex-event-type"], "example.event");
-        assert_eq!(annotated["x-sinex-version"], "2.1.0");
     }
 
     #[test]
