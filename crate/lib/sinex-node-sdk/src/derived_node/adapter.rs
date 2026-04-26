@@ -179,6 +179,14 @@ where
     /// Inputs processed since this process/run started. This intentionally
     /// differs from persisted checkpoint totals, which survive restarts.
     run_events_processed: u64,
+    /// Per-event lag samples (ms between `event.ts_orig` and dispatch).
+    /// Drives `derived.event_lag_p50_ms` / `derived.event_lag_p99_ms`.
+    lag_window: super::histograms::LatencyWindow,
+    /// Per-tick wall-time samples (ms inside `node.process_derived`).
+    /// Drives `derived.tick_runtime_p99_ms`.
+    runtime_window: super::histograms::LatencyWindow,
+    /// Sliding-window event count for `derived.throughput_eps`.
+    throughput_window: super::histograms::ThroughputWindow,
     #[cfg(feature = "messaging")]
     health_reporter: Option<Arc<crate::health_reporter::HealthReporter>>,
     #[cfg(feature = "messaging")]
@@ -240,6 +248,15 @@ where
             pending_hot_reload_cleanup: None,
             consecutive_checkpoint_failures: 0,
             run_events_processed: 0,
+            lag_window: super::histograms::LatencyWindow::new(
+                super::histograms::DEFAULT_LATENCY_RESERVOIR,
+            ),
+            runtime_window: super::histograms::LatencyWindow::new(
+                super::histograms::DEFAULT_LATENCY_RESERVOIR,
+            ),
+            throughput_window: super::histograms::ThroughputWindow::new(
+                super::histograms::THROUGHPUT_WINDOW,
+            ),
             #[cfg(feature = "messaging")]
             health_reporter: None,
             #[cfg(feature = "messaging")]
@@ -735,22 +752,34 @@ where
     #[cfg(not(feature = "messaging"))]
     async fn observe_runtime_snapshot(&self) {}
 
-    /// Emit per-event processing-latency gauges (last-value samples) so
-    /// operators can see how a derived node is keeping up with its input
-    /// stream. Adds two metrics:
+    /// Emit per-event processing-latency gauges (point-in-time + percentile)
+    /// so operators can see how a derived node is keeping up with its input
+    /// stream. Each call records the latest sample into the in-process
+    /// reservoirs and emits both the last-value gauge and the latest
+    /// percentile read.
     ///
-    /// - `derived.event_lag_ms` — wall time between the upstream event's
-    ///   `ts_orig` and now, sampled at the moment the adapter dispatches
-    ///   to the node's logic. Surfaces backlog and clock-skew issues.
-    /// - `derived.tick_runtime_ms` — wall time spent inside
-    ///   `node.process_derived` for the last event. Surfaces unbounded
-    ///   per-event work.
-    ///
-    /// These are point-in-time samples, not percentiles — operators
-    /// aggregate via the metrics scrape rather than inside the node.
-    /// Histogram-on-source (t-digest, HDR) is a follow-up (#561).
+    /// Gauges:
+    /// - `derived.event_lag_ms` — last lag sample (wall time between
+    ///   upstream `ts_orig` and dispatch).
+    /// - `derived.tick_runtime_ms` — last runtime sample.
+    /// - `derived.event_lag_p50_ms`, `derived.event_lag_p99_ms` — sliding
+    ///   reservoir percentiles over the last `DEFAULT_LATENCY_RESERVOIR`
+    ///   samples.
+    /// - `derived.tick_runtime_p99_ms` — same reservoir, runtime samples.
+    /// - `derived.throughput_eps` — events per second over the live
+    ///   `THROUGHPUT_WINDOW`.
     #[cfg(feature = "messaging")]
-    async fn observe_processing_latency(&self, lag_ms: f64, runtime_ms: f64) {
+    async fn observe_processing_latency(&mut self, lag_ms: f64, runtime_ms: f64) {
+        // Feed the windows regardless of self_observer presence so unit
+        // tests and feature-gated builds keep accurate state.
+        if lag_ms.is_finite() {
+            self.lag_window.record(lag_ms);
+        }
+        if runtime_ms.is_finite() {
+            self.runtime_window.record(runtime_ms);
+        }
+        self.throughput_window.record(Instant::now());
+
         let Some(obs) = self.self_observer.as_ref() else {
             return;
         };
@@ -767,16 +796,69 @@ where
 
         if runtime_ms.is_finite() {
             if let Err(error) = obs
-                .emit_gauge("derived.tick_runtime_ms", runtime_ms, Some(labels))
+                .emit_gauge("derived.tick_runtime_ms", runtime_ms, Some(labels.clone()))
                 .await
             {
                 log_self_observation_failure(self.node.name(), "derived.tick_runtime_ms", &error);
             }
         }
+
+        if let Some(p50) = self.lag_window.percentile(0.5) {
+            if let Err(error) = obs
+                .emit_gauge("derived.event_lag_p50_ms", p50, Some(labels.clone()))
+                .await
+            {
+                log_self_observation_failure(
+                    self.node.name(),
+                    "derived.event_lag_p50_ms",
+                    &error,
+                );
+            }
+        }
+        if let Some(p99) = self.lag_window.percentile(0.99) {
+            if let Err(error) = obs
+                .emit_gauge("derived.event_lag_p99_ms", p99, Some(labels.clone()))
+                .await
+            {
+                log_self_observation_failure(
+                    self.node.name(),
+                    "derived.event_lag_p99_ms",
+                    &error,
+                );
+            }
+        }
+        if let Some(p99) = self.runtime_window.percentile(0.99) {
+            if let Err(error) = obs
+                .emit_gauge("derived.tick_runtime_p99_ms", p99, Some(labels.clone()))
+                .await
+            {
+                log_self_observation_failure(
+                    self.node.name(),
+                    "derived.tick_runtime_p99_ms",
+                    &error,
+                );
+            }
+        }
+
+        let eps = self.throughput_window.eps(Instant::now());
+        if let Err(error) = obs
+            .emit_gauge("derived.throughput_eps", eps, Some(labels))
+            .await
+        {
+            log_self_observation_failure(self.node.name(), "derived.throughput_eps", &error);
+        }
     }
 
     #[cfg(not(feature = "messaging"))]
-    async fn observe_processing_latency(&self, _lag_ms: f64, _runtime_ms: f64) {}
+    async fn observe_processing_latency(&mut self, lag_ms: f64, runtime_ms: f64) {
+        if lag_ms.is_finite() {
+            self.lag_window.record(lag_ms);
+        }
+        if runtime_ms.is_finite() {
+            self.runtime_window.record(runtime_ms);
+        }
+        self.throughput_window.record(Instant::now());
+    }
 
     #[cfg(feature = "messaging")]
     async fn observe_checkpoint_state(&self, state: &CheckpointState) {
@@ -2167,6 +2249,27 @@ where
         if let Some(tx) = &self.shutdown_tx {
             request_runtime_drain(tx, self.node.name());
         }
+    }
+
+    /// Read-only access to the lag-sample reservoir. Operators usually want
+    /// the percentiles via the emitted `derived.event_lag_p*_ms` gauges,
+    /// but the heavy-lane scenario tests assert on percentile bounds
+    /// directly without spinning up a metrics scrape.
+    #[must_use]
+    pub fn lag_window(&self) -> &super::histograms::LatencyWindow {
+        &self.lag_window
+    }
+
+    /// Read-only access to the per-tick runtime reservoir.
+    #[must_use]
+    pub fn runtime_window(&self) -> &super::histograms::LatencyWindow {
+        &self.runtime_window
+    }
+
+    /// Mutable access to the throughput sliding window. Mutation is required
+    /// because `eps()` evicts stale samples on read.
+    pub fn throughput_window_mut(&mut self) -> &mut super::histograms::ThroughputWindow {
+        &mut self.throughput_window
     }
 }
 
