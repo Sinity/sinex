@@ -1,3 +1,4 @@
+use crate::model::OutputFormat;
 use clap::Args;
 use color_eyre::Result;
 use console::style;
@@ -27,162 +28,164 @@ impl StatusCommand {
         &self,
         client: &GatewayClient,
         runtime_target: Option<&RuntimeTargetDescriptor>,
+        format: OutputFormat,
     ) -> Result<()> {
-        println!("{}", style("System Status").bold().cyan());
-        println!("{}", style("═".repeat(50)).dim());
 
-        if let Some(target) = runtime_target {
-            println!(
-                "Target:  {} {}",
-                style("●").cyan(),
-                style(format!(
-                    "{} ({})",
-                    target.name,
-                    runtime_target_kind_label(&target.kind)
-                ))
-                .cyan()
-            );
-            if let Some(source) = &target.source {
-                println!("         {}", style(format!("source: {source}")).dim());
-            }
-            if let Some(path) = &target.source_path {
-                println!(
-                    "         {}",
-                    style(format!("descriptor: {}", path.display())).dim()
-                );
-            }
-        }
-
+        use sinex_primitives::{RuntimeStatusSnapshot, RuntimeStatusSignal, RuntimeStatusSignalStatus, RuntimeStatusWarning};
+        
+        let target = runtime_target.cloned().unwrap_or_else(|| RuntimeTargetDescriptor {
+            name: "unknown".to_string(),
+            kind: RuntimeTargetKind::Unknown,
+            source: None,
+            source_path: None,
+            services: Default::default(),
+        });
+        
+        let mut signals = Vec::new();
+        let mut warnings = Vec::new();
+        
         // Gateway connectivity
-        match client.version().await {
-            Ok(version) => {
-                println!("Gateway: {} v{}", style("●").green(), version);
-            }
+        let gateway_signal = match client.version().await {
+            Ok(version) => RuntimeStatusSignal {
+                name: "gateway".to_string(),
+                status: RuntimeStatusSignalStatus::Healthy,
+                source: "gateway version probe".to_string(),
+                message: Some(format!("v{version}")),
+            },
             Err(e) => {
-                println!(
-                    "Gateway: {} {}",
-                    style("●").red(),
-                    style(format!("unreachable - {e}")).red()
-                );
-                return Ok(());
+                warnings.push(RuntimeStatusWarning {
+                    source: "gateway".to_string(),
+                    message: format!("unreachable: {e}"),
+                });
+                RuntimeStatusSignal {
+                    name: "gateway".to_string(),
+                    status: RuntimeStatusSignalStatus::Unhealthy,
+                    source: "gateway version probe".to_string(),
+                    message: Some(e.to_string()),
+                }
             }
-        }
-
+        };
+        signals.push(gateway_signal);
+        
         // Nodes
         match client.list_nodes(None).await {
             Ok(nodes) => {
                 let total = nodes.len();
-                // Consider healthy if has heartbeat
                 let healthy = nodes.iter().filter(|n| n.last_heartbeat.is_some()).count();
-                let unhealthy = total - healthy;
-
-                let status_color = if healthy == total {
-                    style("●").green()
+                let status = if healthy == total {
+                    RuntimeStatusSignalStatus::Healthy
                 } else if healthy > 0 {
-                    style("●").yellow()
+                    RuntimeStatusSignalStatus::Degraded
                 } else {
-                    style("●").red()
+                    RuntimeStatusSignalStatus::Unhealthy
                 };
-
-                println!(
-                    "Nodes:   {} {}/{} healthy{}",
-                    status_color,
-                    healthy,
-                    total,
-                    if unhealthy > 0 {
-                        format!(", {unhealthy} unhealthy")
-                    } else {
-                        String::new()
-                    }
-                );
-
-                // List nodes if there are issues
-                if healthy != total {
-                    for node in &nodes {
-                        let has_heartbeat = node.last_heartbeat.is_some();
-                        let icon = if has_heartbeat {
-                            style("  ✓").green()
-                        } else {
-                            style("  ✗").red()
-                        };
-                        let name = node.hostname.as_deref().unwrap_or(&node.instance_id);
-                        println!("{} {} ({})", icon, name, node.node_type);
-                    }
-                }
+                signals.push(RuntimeStatusSignal {
+                    name: "nodes".to_string(),
+                    status,
+                    source: "gateway nodes probe".to_string(),
+                    message: Some(format!("{healthy}/{total} healthy")),
+                });
             }
             Err(e) => {
-                println!(
-                    "Nodes:   {} {}",
-                    style("●").red(),
-                    style(format!("error - {e}")).red()
-                );
+                warnings.push(RuntimeStatusWarning {
+                    source: "nodes".to_string(),
+                    message: format!("error: {e}"),
+                });
+                signals.push(RuntimeStatusSignal {
+                    name: "nodes".to_string(),
+                    status: RuntimeStatusSignalStatus::Unknown,
+                    source: "gateway nodes probe".to_string(),
+                    message: Some(e.to_string()),
+                });
             }
         }
-
+        
         // DLQ
         match client.dlq_list().await {
             Ok(stats) => {
                 let status = if stats.total_messages == 0 {
-                    style("●").green()
+                    RuntimeStatusSignalStatus::Healthy
                 } else {
-                    style("●").yellow()
+                    RuntimeStatusSignalStatus::Degraded
                 };
-                println!(
-                    "DLQ:     {} {} messages",
+                signals.push(RuntimeStatusSignal {
+                    name: "dlq".to_string(),
                     status,
-                    if stats.total_messages == 0 {
-                        "0 ✓".to_string()
-                    } else {
-                        format!("{} ⚠", stats.total_messages)
-                    }
-                );
+                    source: "gateway dlq probe".to_string(),
+                    message: Some(format!("{} messages", stats.total_messages)),
+                });
             }
             Err(e) => {
-                println!(
-                    "DLQ:     {} {}",
-                    style("●").red(),
-                    style(format!("error - {e}")).red()
-                );
+                warnings.push(RuntimeStatusWarning {
+                    source: "dlq".to_string(),
+                    message: format!("error: {e}"),
+                });
+                signals.push(RuntimeStatusSignal {
+                    name: "dlq".to_string(),
+                    status: RuntimeStatusSignalStatus::Unknown,
+                    source: "gateway dlq probe".to_string(),
+                    message: Some(e.to_string()),
+                });
             }
         }
-
-        // Recent events (quick count)
-        let query = EventQuery {
-            sources: vec![],
-            event_types: vec![],
-            time_range: TimeRange::new(Some(Timestamp::now() - Duration::hours(1)), None).ok(),
-            payload: None,
-            limit: 1000,
-            direction: SortDirection::Desc,
-            ..Default::default()
+        
+        let snapshot = RuntimeStatusSnapshot {
+            target,
+            signals,
+            warnings,
         };
-        match client.query_events(query).await {
-            Ok(EventQueryResult::Events { events, .. }) => {
-                println!(
-                    "Events:  {} {} in last hour",
-                    style("●").green(),
-                    events.len()
-                );
+        
+        match format {
+            OutputFormat::Json => {
+                println!("{}", serde_json::to_string_pretty(&snapshot)?);
             }
-            Ok(_) => {
+            OutputFormat::Table => {
+                println!("{}", style("System Status").bold().cyan());
+                println!("{}", style("═".repeat(50)).dim());
+                
                 println!(
-                    "Events:  {} {}",
-                    style("●").red(),
-                    style("unexpected result type").red()
+                    "Target:  {} {}",
+                    style("●").cyan(),
+                    style(format!(
+                        "{} ({})",
+                        snapshot.target.name,
+                        runtime_target_kind_label(&snapshot.target.kind)
+                    ))
+                    .cyan()
                 );
-            }
-            Err(e) => {
-                println!(
-                    "Events:  {} {}",
-                    style("●").red(),
-                    style(format!("error - {e}")).red()
-                );
+                if let Some(source) = &snapshot.target.source {
+                    println!("         {}", style(format!("source: {source}")).dim());
+                }
+                if let Some(path) = &snapshot.target.source_path {
+                    println!(
+                        "         {}",
+                        style(format!("descriptor: {}", path.display())).dim()
+                    );
+                }
+                
+                for signal in &snapshot.signals {
+                    let color = match signal.status {
+                        RuntimeStatusSignalStatus::Healthy => style("●").green(),
+                        RuntimeStatusSignalStatus::Degraded => style("●").yellow(),
+                        RuntimeStatusSignalStatus::Unhealthy => style("●").red(),
+                        RuntimeStatusSignalStatus::Unknown => style("●").dim(),
+                        RuntimeStatusSignalStatus::Skipped => style("●").dim(),
+                        RuntimeStatusSignalStatus::Stale => style("●").yellow(),
+                    };
+                    
+                    let name = format!("{:width$}", signal.name, width=8);
+                    let message = signal.message.as_deref().unwrap_or("");
+                    println!("{}: {} {}", name, color, message);
+                }
+                
+                for warning in &snapshot.warnings {
+                    println!("Warning [{}]: {}", warning.source, warning.message);
+                }
             }
         }
-
+        
         Ok(())
     }
-}
 
 fn runtime_target_kind_label(kind: &RuntimeTargetKind) -> &'static str {
     match kind {
