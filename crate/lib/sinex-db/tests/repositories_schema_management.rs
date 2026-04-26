@@ -344,7 +344,7 @@ async fn corrupt_validation_cache_rows_fail_honestly(ctx: TestContext) -> TestRe
 }
 
 #[sinex_test]
-async fn sync_discovered_schemas_reactivates_inactive_matching_row(
+async fn sync_schema_bundle_reactivates_inactive_matching_row(
     ctx: TestContext,
 ) -> color_eyre::Result<()> {
     let repo = ctx.pool.schemas();
@@ -365,14 +365,12 @@ async fn sync_discovered_schemas_reactivates_inactive_matching_row(
     repo.deprecate_schema(registered.id.as_uuid()).await?;
 
     let sync_result = repo
-        .sync_discovered_schemas([(
-            (
-                schema.source.to_string(),
-                schema.event_type.to_string(),
-                schema.schema_version.clone(),
-            ),
+        .sync_schema_bundle([sinex_primitives::events::schema_registry::SchemaBundleEntry::new(
+            schema.source.to_string(),
+            schema.event_type.to_string(),
+            schema.schema_version.clone(),
             schema.schema_content.clone(),
-        )])
+        )?])
         .await?;
 
     assert_eq!(sync_result.created, 0);
@@ -387,7 +385,7 @@ async fn sync_discovered_schemas_reactivates_inactive_matching_row(
 }
 
 #[sinex_test]
-async fn sync_discovered_schemas_converges_same_version_content_drift(
+async fn sync_schema_bundle_converges_same_version_content_drift(
     ctx: TestContext,
 ) -> color_eyre::Result<()> {
     let repo = ctx.pool.schemas();
@@ -419,17 +417,16 @@ async fn sync_discovered_schemas_converges_same_version_content_drift(
             "required": ["modern"]
         }),
     };
-    let discovered_hash = discovered.calculate_content_hash()?;
+    let discovered_entry =
+        sinex_primitives::events::schema_registry::SchemaBundleEntry::new(
+            discovered.source.to_string(),
+            discovered.event_type.to_string(),
+            discovered.schema_version.clone(),
+            discovered.schema_content.clone(),
+        )?;
 
     let sync_result = repo
-        .sync_discovered_schemas([(
-            (
-                discovered.source.to_string(),
-                discovered.event_type.to_string(),
-                discovered.schema_version.clone(),
-            ),
-            discovered.schema_content.clone(),
-        )])
+        .sync_schema_bundle([discovered_entry.clone()])
         .await?;
 
     assert_eq!(sync_result.created, 0);
@@ -440,8 +437,8 @@ async fn sync_discovered_schemas_converges_same_version_content_drift(
         .get_active_schema(discovered.source.as_str(), discovered.event_type.as_str())
         .await?;
     assert_eq!(active.id, registered.id);
-    assert_eq!(active.content_hash, discovered_hash);
-    assert_eq!(active.schema_content, discovered.schema_content);
+    assert_eq!(active.content_hash, discovered_entry.content_hash);
+    assert_eq!(active.schema_content, discovered_entry.schema_content);
     assert!(active.is_active);
     Ok(())
 }
