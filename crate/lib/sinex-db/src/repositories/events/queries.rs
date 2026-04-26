@@ -9,9 +9,11 @@ use crate::models::Event;
 use crate::repositories::common::{DbResult, db_error};
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{EventSource, EventType};
-use sinex_primitives::{Id, Pagination};
+use sinex_primitives::{Id, Pagination, Uuid};
 use sqlx::types::Json;
+use std::collections::HashSet;
 use tracing::{instrument, warn};
+use uuid::Uuid;
 
 impl EventRepository<'_> {
     #[instrument(skip(self), fields(event_id = %id))]
@@ -619,6 +621,28 @@ impl EventRepository<'_> {
         .map_err(|e| db_error(e, "get events by ids"))?;
 
         records_to_events(records)
+    }
+
+    // ========== Tombstone Query ==========
+
+    /// Check which event IDs in the given set are tombstoned.
+    ///
+    /// Returns the set of event IDs that exist in `core.event_tombstones`.
+    /// Used by the ingestion pipeline to reject re-ingestion of tombstoned events.
+    pub async fn filter_tombstoned(&self, event_ids: &[Uuid]) -> DbResult<HashSet<Uuid>> {
+        if event_ids.is_empty() {
+            return Ok(HashSet::new());
+        }
+
+        let rows: Vec<Uuid> = sqlx::query_scalar(
+            r#"SELECT id::uuid as "id!" FROM core.event_tombstones WHERE id = ANY($1::uuid[])"#,
+        )
+        .bind(event_ids)
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "filter tombstoned events"))?;
+
+        Ok(rows.into_iter().collect())
     }
 }
 

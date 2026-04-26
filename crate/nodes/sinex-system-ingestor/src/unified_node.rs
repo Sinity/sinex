@@ -2,13 +2,10 @@
 
 //! Unified system node implementing `IngestorNode`.
 
-// Use local facade for common types
-use crate::common::{
-    Checkpoint, ContinuousStart, NodeCapabilities, NodeResult, ScanArgs, ScanReport, TimeHorizon,
-    info, instrument,
-};
+// Use unified SDK prelude for common types
 use sinex_node_sdk::error_helpers::{ConfigAccessor, parse_config_value, parse_typed_config};
-use sinex_node_sdk::runtime::stream::{EventEmitter, NodeRuntimeState};
+use sinex_node_sdk::prelude::*;
+use sinex_node_sdk::runtime::stream::EventEmitter;
 
 // System-specific event payloads
 use serde_json::json;

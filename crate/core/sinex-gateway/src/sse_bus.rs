@@ -34,6 +34,10 @@ const RECENT_DELIVERED_EVENT_IDS: usize = 1024;
 /// so leaving this unbounded makes memory exhaustion trivial.
 pub const MAX_ACTIVE_SUBSCRIPTIONS: usize = 512;
 
+/// Maximum retry attempts for a single confirmed event ID before it is dropped.
+/// Prevents infinite retry loops when the DB persistently misses a confirmed event.
+const CONFIRMATION_RETRY_MAX_ATTEMPTS: u8 = 10;
+
 /// Heartbeat interval for keepalive messages.
 pub const HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 

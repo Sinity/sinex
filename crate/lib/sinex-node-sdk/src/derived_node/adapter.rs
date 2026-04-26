@@ -1277,7 +1277,15 @@ where
                         consecutive_failures = self.consecutive_checkpoint_failures,
                         "Failed to save checkpoint after batch"
                     );
-                    if self.consecutive_checkpoint_failures >= 3 {
+                    if self.consecutive_checkpoint_failures >= 3
+                        || matches!(
+                            e,
+                            SinexError::Checkpoint(_)
+                                | SinexError::Lifecycle(_)
+                                | SinexError::Configuration(_)
+                                | SinexError::PermissionDenied(_)
+                        )
+                    {
                         return Err(SinexError::checkpoint(format!(
                             "Checkpoint save failed {} consecutive times; halting to prevent \
                              silent progress loss on crash+restart",
@@ -1766,19 +1774,25 @@ where
                                         &obs_error,
                                     );
                                 }
-                                // Two halt conditions, both per #581:
+                                // Two halt conditions:
                                 // 1. Three consecutive failures — same circuit-breaker
                                 //    threshold the periodic checkpoint branch uses
                                 //    below. Without this, an invalidation-driven CAS
                                 //    conflict loops forever; the periodic branch
                                 //    would never run because the consumer never
                                 //    returns to its `select!`.
-                                // 2. Direct Checkpoint variant — even on the first
-                                //    failure if the error itself signals "halt"
-                                //    (e.g. propagated from the inner save path
-                                //    which already exhausted retries).
+                                // 2. Direct Checkpoint/Lifecycle/Configuration/PermissionDenied
+                                //    variant — even on the first failure if the error
+                                //    itself signals "halt" (e.g. propagated from the
+                                //    inner save path which already exhausted retries).
                                 if self.consecutive_checkpoint_failures >= 3
-                                    || matches!(e, SinexError::Checkpoint(_))
+                                    || matches!(
+                                        e,
+                                        SinexError::Checkpoint(_)
+                                            | SinexError::Lifecycle(_)
+                                            | SinexError::Configuration(_)
+                                            | SinexError::PermissionDenied(_)
+                                    )
                                 {
                                     return Err(SinexError::checkpoint(format!(
                                         "Checkpoint save failed during invalidation \
@@ -2034,7 +2048,15 @@ where
                                     consecutive_failures = self.consecutive_checkpoint_failures,
                                     "Failed to save periodic checkpoint"
                                 );
-                                if self.consecutive_checkpoint_failures >= 3 {
+                                if self.consecutive_checkpoint_failures >= 3
+                                    || matches!(
+                                        e,
+                                        SinexError::Checkpoint(_)
+                                            | SinexError::Lifecycle(_)
+                                            | SinexError::Configuration(_)
+                                            | SinexError::PermissionDenied(_)
+                                    )
+                                {
                                     return Err(SinexError::checkpoint(format!(
                                         "Checkpoint save failed {} consecutive times; halting to \
                                          prevent silent progress loss on crash+restart",

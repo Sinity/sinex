@@ -40,23 +40,6 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-/// Awaits the shutdown signal reactively (no polling).
-///
-/// Arms the `Notify` waiter before reading the flag so a shutdown that lands
-/// between subscription and the flag read cannot be lost.
-async fn shutdown_signal(
-    shutdown_flag: &Arc<AtomicBool>,
-    shutdown_notify: &Arc<tokio::sync::Notify>,
-) {
-    loop {
-        let notified = shutdown_notify.notified();
-        if shutdown_flag.load(Ordering::Acquire) {
-            return;
-        }
-        notified.await;
-    }
-}
-
 fn trigger_shutdown(shutdown_flag: &Arc<AtomicBool>, shutdown_notify: &Arc<tokio::sync::Notify>) {
     if !shutdown_flag.swap(true, Ordering::AcqRel) {
         shutdown_notify.notify_waiters();
@@ -419,7 +402,7 @@ impl IngestService {
             let handle = tokio::spawn(async move {
                 tokio::select! {
                     () = emitter.start_periodic_heartbeat(None) => {}
-                    () = shutdown_signal(&shutdown_flag, &shutdown_notify) => {
+                    () = sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                         let node_name = NodeName::new("sinex-ingestd");
                         if let Err(error) = heartbeat_pool
                             .state()
@@ -542,7 +525,7 @@ impl IngestService {
             }
 
             // Normal shutdown signal
-            () = shutdown_signal(&shutdown_flag, &shutdown_notify) => {
+            () = sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                 info!("Received shutdown signal");
                 Ok(())
             }
@@ -768,7 +751,7 @@ impl IngestService {
                         }
                     }
                 }
-                () = shutdown_signal(&shutdown_flag, &shutdown_notify) => {
+                () = sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                     info!("JetStream consumer shutting down");
                     Ok(())
                 }
@@ -881,18 +864,26 @@ impl IngestService {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        // Load fresh schemas outside the write lock (does DB I/O with only a
-                        // read lock held to snapshot validation_enabled). This keeps the write
-                        // lock window to microseconds rather than the full DB round-trip.
-                        let load_result = {
-                            let read_guard = validator.read().await;
-                            read_guard.load_fresh_schemas(&pool).await
-                        };
-                        match load_result {
+                        // Snapshot validation_enabled under a brief read lock (no I/O).
+                        // The read lock only prevents concurrent writers; a bool copy is
+                        // fast and drops the guard immediately so the subsequent DB I/O
+                        // does not block the writer.
+                        let validation_enabled = validator.read().await.validation_enabled();
+
+                        // Load fresh schemas without holding any lock (does DB I/O).
+                        let new_inner = EventValidator::load_fresh_schemas_with_options(
+                            &pool,
+                            validation_enabled,
+                        )
+                        .await;
+
+                        match new_inner {
                             Err(e) => {
                                 warn!("Failed to reload schemas: {}", e);
                                 if let Some(ref hb) = heartbeat_handle {
-                                    hb.record_error(&format!("schema reload failed: {e}"));
+                                    hb.record_error(
+                                        &format!("schema reload failed: {e}"),
+                                    );
                                 }
                             }
                             Ok(new_inner) => {
@@ -903,14 +894,23 @@ impl IngestService {
 
                                 if let Some(nc) = &nats_client {
                                     let read_guard = validator.read().await;
-                                    if let Err(e) = Self::broadcast_active_schemas(&read_guard, nc, &pool).await {
-                                        warn!("Failed to broadcast active schemas: {}", e);
+                                    if let Err(e) = Self::broadcast_active_schemas(
+                                        &read_guard,
+                                        nc,
+                                        &pool,
+                                    )
+                                    .await
+                                    {
+                                        warn!(
+                                            "Failed to broadcast active schemas: {}",
+                                            e
+                                        );
                                     }
                                 }
                             }
                         }
                     }
-                    () = shutdown_signal(&shutdown_flag, &shutdown_notify) => {
+                    () = sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                         break;
                     }
                 }
@@ -921,10 +921,11 @@ impl IngestService {
     /// Start the `GitOps` schema sync background task
     fn start_gitops_sync_task(&self, pool: PgPool) -> JoinHandle<()> {
         let shutdown_flag = self.shutdown_flag.clone();
+        let shutdown_notify = self.shutdown_notify.clone();
         let work_dir = self.config.gitops_work_dir.clone().into_std_path_buf();
 
         tokio::spawn(async move {
-            let service = crate::gitops::GitOpsSyncService::new(pool, work_dir, shutdown_flag);
+            let service = crate::gitops::GitOpsSyncService::new(pool, work_dir, shutdown_flag, shutdown_notify);
             service.run().await;
         })
     }
@@ -953,7 +954,7 @@ impl IngestService {
                             );
                         }
                     }
-                    () = shutdown_signal(&shutdown_flag, &shutdown_notify) => {
+                    () = sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                         break;
                     }
                 }
@@ -1397,7 +1398,7 @@ mod tests {
 
         tokio::time::timeout(
             Duration::from_millis(10),
-            shutdown_signal(&service.shutdown_flag, &service.shutdown_notify),
+            sinex_node_sdk::wait_for_shutdown_signal_bool(&service.shutdown_flag, &service.shutdown_notify),
         )
         .await
         .expect("shutdown waiters should wake immediately");
@@ -1420,7 +1421,7 @@ mod tests {
 
         tokio::time::timeout(
             Duration::from_millis(10),
-            shutdown_signal(&service.shutdown_flag, &service.shutdown_notify),
+            sinex_node_sdk::wait_for_shutdown_signal_bool(&service.shutdown_flag, &service.shutdown_notify),
         )
         .await
         .expect("shutdown waiters should wake immediately");
@@ -1437,7 +1438,7 @@ mod tests {
 
         tokio::time::timeout(
             Duration::from_millis(10),
-            shutdown_signal(&service.shutdown_flag, &service.shutdown_notify),
+            sinex_node_sdk::wait_for_shutdown_signal_bool(&service.shutdown_flag, &service.shutdown_notify),
         )
         .await
         .expect("late shutdown waiters should observe an already-triggered shutdown");
@@ -1519,7 +1520,7 @@ mod tests {
         let shutdown_flag = Arc::clone(&service.shutdown_flag);
         let shutdown_notify = Arc::clone(&service.shutdown_notify);
         let sibling = tokio::spawn(async move {
-            shutdown_signal(&shutdown_flag, &shutdown_notify).await;
+            sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify).await;
             sibling_flag.store(true, Ordering::SeqCst);
             Ok(())
         });
@@ -1548,7 +1549,7 @@ mod tests {
         let shutdown_flag = Arc::clone(&service.shutdown_flag);
         let shutdown_notify = Arc::clone(&service.shutdown_notify);
         let sibling = tokio::spawn(async move {
-            shutdown_signal(&shutdown_flag, &shutdown_notify).await;
+            sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify).await;
             sibling_flag.store(true, Ordering::SeqCst);
             Ok(())
         });

@@ -3,13 +3,12 @@
 //! This module implements the desktop node node supporting snapshot, historical, and
 //! continuous scanning modes for desktop events.
 
-// Use local facade for common types
-use crate::common::{
-    ActivityEntry, Checkpoint, ConfigAccessor, ContinuousStart, CoverageAnalysis, Deserialize,
-    HashMap, IngestionHistoryEntry, NodeCapabilities, NodeResult, NodeRuntimeState, ScanArgs,
-    ScanReport, Serialize, SinexError, SourceState, TimeHorizon, error, info, instrument,
-    parse_config_value, parse_typed_config, warn,
-};
+// Use unified SDK prelude for common types
+use sinex_node_sdk::error_helpers::{ConfigAccessor, parse_config_value, parse_typed_config};
+use sinex_node_sdk::prelude::*;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use tracing::{error, info, instrument, warn};
 
 use crate::{
     ClipboardWatcher, WindowManagerWatcher,

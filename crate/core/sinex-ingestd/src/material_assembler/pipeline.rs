@@ -8,7 +8,7 @@ use super::state::MaterialBeginMessage;
 use super::{MaterialAssembler, MaterialEndMessage, Uuid};
 
 use async_nats::jetstream;
-use futures::{FutureExt, StreamExt};
+use futures::StreamExt;
 use serde_json::json;
 use sinex_node_sdk::{
     SOURCE_MATERIAL_BEGIN_SUBJECT, SOURCE_MATERIAL_END_SUBJECT, SOURCE_MATERIAL_FRAMES_SUBJECT,
@@ -305,8 +305,7 @@ pub(super) async fn spawn_material_consumer(
             let frame_kind = frame.kind();
             let frame_offset = frame.offset();
 
-            let result = std::panic::AssertUnwindSafe(async {
-                match frame {
+            let result = match frame {
                     MaterialFrame::Begin {
                         material_id,
                         message,
@@ -317,14 +316,11 @@ pub(super) async fn spawn_material_consumer(
                         payload,
                     } => assembler.handle_slice(material_id, offset, payload).await,
                     MaterialFrame::End { message, .. } => assembler.handle_end(message).await,
-                }
-            })
-            .catch_unwind()
-            .await;
+                };
 
             match result {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => {
+                Ok(()) => {}
+                Err(err) => {
                     error!(
                         material_id = %material_id,
                         frame_kind,
@@ -345,30 +341,6 @@ pub(super) async fn spawn_material_consumer(
                             "frame_kind": frame_kind,
                             "offset": frame_offset,
                         }),
-                    )
-                    .await?;
-                    continue;
-                }
-                Err(panic) => {
-                    let panic_msg = describe_panic(&*panic);
-                    error!(
-                        material_id = %material_id,
-                        frame_kind,
-                        "Material frame consumer panicked: {}",
-                        panic_msg
-                    );
-                    let decision = RedeliveryDecision::for_error(
-                        RedeliveryErrorKind::ConsumerPanic {
-                            panic: panic_msg.clone(),
-                        },
-                        message_delivery_attempt(&message)?,
-                    );
-                    apply_redelivery_decision(
-                        &assembler,
-                        &message,
-                        decision,
-                        Some(material_id),
-                        json!({ "panic": panic_msg, "frame_kind": frame_kind }),
                     )
                     .await?;
                     continue;
@@ -419,16 +391,6 @@ fn sanitize_namespace(namespace: &str) -> String {
             }
         })
         .collect()
-}
-
-fn describe_panic(panic: &(dyn std::any::Any + Send)) -> String {
-    if let Some(s) = panic.downcast_ref::<&str>() {
-        (*s).to_string()
-    } else if let Some(s) = panic.downcast_ref::<String>() {
-        s.clone()
-    } else {
-        "unknown panic".to_string()
-    }
 }
 
 fn subject_has_suffix(subject: &str, suffix: &str) -> bool {

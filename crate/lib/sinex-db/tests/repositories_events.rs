@@ -202,6 +202,219 @@ async fn stream_batch_insert_accepts_large_material_batches(ctx: TestContext) ->
 }
 
 #[sinex_test]
+async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestResult<()> {
+    // This test exercises the COPY-based batch insert path (>= 50 material-only rows).
+    // It creates events with payloads containing tabs, newlines, backslashes, Unicode,
+    // and various NULL optional fields, then reads them back and asserts every field
+    // roundtrips correctly.
+
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("copy-roundtrip-diverse"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<SourceMaterial>::from_uuid(material_record.id);
+
+    let batch_size = COPY_BATCH_THRESHOLD + 1; // 51 — forced COPY path
+
+    // Diverse payloads to exercise COPY escape serialization.
+    let payloads = vec![
+        json!({"text": "hello\tworld"}),                              // literal tab
+        json!({"text": "line1\nline2"}),                               // literal newline
+        json!({"text": "back\\slash"}),                                // literal backslash
+        json!({"text": "tab\n\t and \\backslash"}),                    // mixed escape chars
+        json!({"text": "unicode: \u{00e9} \u{2603} \u{1f600}"}),      // e-acute, snowman, emoji
+        json!({"text": "CJK: \u{4e2d}\u{6587}"}),                     // Chinese characters
+        json!({"text": "\t\r\n\\\"\'"}),                               // all special COPY chars
+        json!({"key": null}),                                          // null JSON value
+        json!({"text": "", "empty": null}),                            // empty string + null
+        json!({"text": "a".repeat(500), "count": 42}),                 // larger payload
+        json!({"nested": {"deep": {"array": [1,2,3]}, "tab": "\t"}}), // nested with tab
+    ];
+
+    let source = EventSource::new("test.copy")?;
+    let event_type = EventType::new("test.copy.roundtrip")?;
+    let host = HostName::from_static("copy-test-host");
+    let ts_orig = Timestamp::parse_rfc3339("2026-04-26T12:00:00.123456789Z")?;
+
+    let mut batch = Vec::with_capacity(batch_size);
+    for i in 0..batch_size {
+        let payload = payloads[i % payloads.len()].clone();
+        // Alternate optional-field patterns: even i has all optional fields set,
+        // odd i has them as None.
+        let (offset_start, offset_end, offset_kind) = if i % 2 == 0 {
+            (Some(0i64), Some(i as i64), Some("byte".to_string()))
+        } else {
+            (None, None, None)
+        };
+
+        batch.push(StreamBatchRow {
+            id: Uuid::now_v7(),
+            source: source.clone(),
+            event_type: event_type.clone(),
+            ts_orig,
+            host: host.clone(),
+            payload,
+            source_material_id: Some(material_id),
+            anchor_byte: Some(i as i64),
+            offset_start,
+            offset_end,
+            offset_kind,
+            source_event_ids: None,
+            payload_schema_id: None,
+            node_run_id: None,
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
+        });
+    }
+
+    let result = ctx.pool.events().insert_stream_batch(&batch).await?;
+    assert_eq!(
+        result.inserted_count, batch_size,
+        "all {} events should be inserted",
+        batch_size
+    );
+    assert_eq!(
+        result.inserted_ids.as_ref().map(Vec::len),
+        Some(batch_size),
+        "inserted_ids should contain all {} ids",
+        batch_size
+    );
+
+    // Read back every event by ID and verify roundtrip.
+    for (i, row) in batch.iter().enumerate() {
+        let event_id = Id::<Event<JsonValue>>::from_uuid(row.id);
+        let event = ctx
+            .pool
+            .events()
+            .get_by_id(event_id)
+            .await?
+            .unwrap_or_else(|| panic!("event {} (id={}) must exist in DB", i, row.id));
+
+        assert_eq!(event.id.unwrap().to_uuid(), row.id, "id mismatch at index {}", i);
+        assert_eq!(event.source, row.source, "source mismatch at index {}", i);
+        assert_eq!(event.event_type, row.event_type, "event_type mismatch at index {}", i);
+        assert_eq!(event.host, row.host, "host mismatch at index {}", i);
+        assert_eq!(event.payload, row.payload, "payload mismatch at index {}", i);
+        assert_eq!(event.ts_orig, Some(row.ts_orig), "ts_orig mismatch at index {}", i);
+
+        // Verify material provenance fields.
+        let prov = event.provenance();
+        match prov {
+            Provenance::Material {
+                id,
+                anchor_byte,
+                offset_start,
+                offset_end,
+                offset_kind,
+            } => {
+                assert_eq!(
+                    *id,
+                    row.source_material_id.unwrap(),
+                    "material id mismatch at index {}",
+                    i
+                );
+                assert_eq!(
+                    *anchor_byte,
+                    row.anchor_byte.unwrap(),
+                    "anchor_byte mismatch at index {}",
+                    i
+                );
+                assert_eq!(
+                    *offset_start,
+                    row.offset_start,
+                    "offset_start mismatch at index {}",
+                    i
+                );
+                assert_eq!(
+                    *offset_end,
+                    row.offset_end,
+                    "offset_end mismatch at index {}",
+                    i
+                );
+                // When the row carries no explicit offset_kind, the readback
+                // defaults to OffsetKind::Byte.
+                if let Some(ref kind) = row.offset_kind {
+                    assert_eq!(
+                        offset_kind.as_wire_str(),
+                        kind.as_str(),
+                        "offset_kind mismatch at index {}",
+                        i
+                    );
+                }
+            }
+            other => unreachable!(
+                "event {} should have material provenance, got: {:?}",
+                i, other
+            ),
+        }
+
+        // NULL fields should remain NULL.
+        assert!(
+            matches!(&event.provenance, Provenance::Material { .. }),
+            "provenance should be Material at index {}",
+            i
+        );
+        assert!(
+            event.payload_schema_id.is_none(),
+            "payload_schema_id should be None at index {}",
+            i
+        );
+        assert!(
+            event.node_run_id.is_none(),
+            "node_run_id should be None at index {}",
+            i
+        );
+        assert!(
+            event.associated_blob_ids.is_none(),
+            "associated_blob_ids should be None at index {}",
+            i
+        );
+        assert!(
+            event.temporal_policy.is_none(),
+            "temporal_policy should be None at index {}",
+            i
+        );
+        assert!(
+            event.semantics_version.is_none(),
+            "semantics_version should be None at index {}",
+            i
+        );
+        assert!(
+            event.scope_key.is_none(),
+            "scope_key should be None at index {}",
+            i
+        );
+        assert!(
+            event.equivalence_key.is_none(),
+            "equivalence_key should be None at index {}",
+            i
+        );
+        assert!(
+            event.created_by_operation_id.is_none(),
+            "created_by_operation_id should be None at index {}",
+            i
+        );
+        assert!(
+            event.node_model.is_none(),
+            "node_model should be None at index {}",
+            i
+        );
+    }
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn lifecycle_id_queries_order_same_timestamp_rows_by_id(ctx: TestContext) -> TestResult<()> {
     let material_record = ctx
         .pool

@@ -80,7 +80,14 @@ impl EmbeddingModels {
                     .primary_key()
                     .extra("DEFAULT uuidv7()"),
             )
-            .col(ColumnDef::new(EmbeddingModels::Provider).text().not_null())
+            .col(
+                ColumnDef::new(EmbeddingModels::Provider)
+                    .text()
+                    .not_null()
+                    .check(Expr::cust(
+                        "length(BTRIM(provider, E' \\t\\n\\r\\v\\f')) > 0",
+                    )),
+            )
             .col(ColumnDef::new(EmbeddingModels::ModelName).text().not_null())
             .col(
                 ColumnDef::new(EmbeddingModels::Dimensions)

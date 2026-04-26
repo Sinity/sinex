@@ -19,6 +19,7 @@
 //! so operators can correlate partial-commit scenarios in logs.
 
 use async_nats::{Client as NatsClient, jetstream};
+use async_nats::jetstream::stream::DiscardPolicy;
 use futures::future::{BoxFuture, join_all};
 use serde::{Deserialize, Serialize};
 use sinex_db::repositories::{COPY_BATCH_THRESHOLD, StreamBatchRow};
@@ -34,6 +35,7 @@ use sinex_primitives::{
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use tokio::sync::RwLock;
 use tokio::time::{Duration, timeout};
 use tracing::{debug, error, info, instrument, warn};
 
@@ -44,7 +46,6 @@ use crate::{
 };
 use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::Provenance;
-use tokio::sync::RwLock;
 
 #[derive(Debug, Serialize)]
 struct Confirmation {
@@ -93,6 +94,7 @@ pub struct JetStreamConsumer {
     db_failures_remaining: Option<Arc<AtomicUsize>>,
     post_persist_fail_once: Option<Arc<AtomicBool>>,
     confirmation_failures_remaining: Option<Arc<AtomicUsize>>,
+    confirmation_semaphore: Arc<tokio::sync::Semaphore>,
     processing_delay: Option<Duration>,
     delivery_observer: Option<Arc<AtomicU64>>,
     stats: ConsumerStats,
@@ -222,6 +224,7 @@ const DLQ_RETRY_DELAY: Duration = Duration::from_secs(1);
 const CONFIRM_PUBLISH_MAX_ATTEMPTS: usize = 3;
 const CONFIRM_PUBLISH_BACKOFF_BASE: Duration = Duration::from_millis(200);
 const CONFIRM_PUBLISH_BACKOFF_MAX: Duration = Duration::from_secs(2);
+const CONFIRM_PUBLISH_CONCURRENCY: usize = 50;
 const CONFIRM_RETRY_DELAY: Duration = Duration::from_secs(1);
 const CONFIRM_RETRY_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const CONFIRM_RETRY_BATCH_MAX_MESSAGES: usize = 32;
@@ -357,6 +360,7 @@ struct ConsumerStats {
     suspicious_past_ts_orig: AtomicU64,
     negative_anchor_byte: AtomicU64,
     validation_failures: AtomicU64,
+    tombstoned_events_rejected: AtomicU64,
     dlq_routed: AtomicU64,
     confirmation_failures: AtomicU64,
     confirmation_retries_enqueued: AtomicU64,
@@ -377,6 +381,7 @@ impl ConsumerStats {
             suspicious_past_ts_orig = self.suspicious_past_ts_orig.load(Ordering::Relaxed),
             negative_anchor_byte = self.negative_anchor_byte.load(Ordering::Relaxed),
             validation_failures = self.validation_failures.load(Ordering::Relaxed),
+            tombstoned_events_rejected = self.tombstoned_events_rejected.load(Ordering::Relaxed),
             nats_errors = self.nats_errors.load(Ordering::Relaxed),
             dlq_routed = self.dlq_routed.load(Ordering::Relaxed),
             confirmation_failures = self.confirmation_failures.load(Ordering::Relaxed),
@@ -529,6 +534,7 @@ impl JetStreamConsumer {
             db_failures_remaining: None,
             post_persist_fail_once: None,
             confirmation_failures_remaining: None,
+            confirmation_semaphore: Arc::new(tokio::sync::Semaphore::new(CONFIRM_PUBLISH_CONCURRENCY)),
             processing_delay: None,
             delivery_observer: None,
             stats: ConsumerStats::default(),
@@ -665,6 +671,7 @@ impl JetStreamConsumer {
                 max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
                 max_age: Duration::from_hours(336), // 14 days
                 storage: jetstream::stream::StorageType::File,
+                discard: DiscardPolicy::New,
                 ..Default::default()
             })
             .await
@@ -682,6 +689,7 @@ impl JetStreamConsumer {
                 max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
                 max_age: Duration::from_hours(72), // 3 days
                 storage: jetstream::stream::StorageType::File,
+                discard: DiscardPolicy::New,
                 ..Default::default()
             })
             .await
@@ -698,6 +706,7 @@ impl JetStreamConsumer {
                 max_messages_per_subject: 1,
                 max_age: Duration::from_hours(72),
                 storage: jetstream::stream::StorageType::File,
+                discard: DiscardPolicy::New,
                 ..Default::default()
             })
             .await
@@ -717,6 +726,7 @@ impl JetStreamConsumer {
                 storage: jetstream::stream::StorageType::File,
                 duplicate_window: DLQ_DUPLICATE_WINDOW,
                 allow_direct: true,
+                discard: DiscardPolicy::New,
                 ..Default::default()
             })
             .await
@@ -733,6 +743,7 @@ impl JetStreamConsumer {
                 storage: jetstream::stream::StorageType::File,
                 duplicate_window: DLQ_DUPLICATE_WINDOW,
                 allow_direct: true,
+                discard: DiscardPolicy::New,
                 ..Default::default()
             })
             .await
@@ -1172,9 +1183,21 @@ impl JetStreamConsumer {
                     // Publish confirmations concurrently for the entire batch.
                     // This is the primary throughput optimization: O(1) wall-clock time
                     // instead of O(n) serial NATS round-trips per batch.
+                    // A semaphore limits concurrent in-flight confirmation publishes
+                    // to prevent confirmation storms from starving other NATS operations.
                     let confirmation_futs: Vec<_> = batch
                         .iter()
-                        .map(|prepared| self.publish_confirmation_with_retry(&prepared.parsed_id))
+                        .map(|prepared| {
+                            let sem = Arc::clone(&self.confirmation_semaphore);
+                            let event_id = prepared.parsed_id;
+                            async move {
+                                let _permit = sem
+                                    .acquire()
+                                    .await
+                                    .expect("confirmation semaphore closed");
+                                self.publish_confirmation_with_retry(&event_id).await
+                            }
+                        })
                         .collect();
                     let confirmation_results = join_all(confirmation_futs).await;
 
@@ -1551,7 +1574,13 @@ impl JetStreamConsumer {
             return Err(SinexError::database("forced persistent failure"));
         }
 
-        let to_persist = self.filter_cached_batch(batch);
+        let to_persist = self.filter_cached_batch(batch).await;
+        if to_persist.is_empty() {
+            return Ok(PersistBatchResult { inserted_ids: None });
+        }
+
+        // Filter out tombstoned events: reject re-ingestion of permanently purged events.
+        let to_persist = self.filter_tombstoned_batch(&to_persist).await?;
         if to_persist.is_empty() {
             return Ok(PersistBatchResult { inserted_ids: None });
         }
@@ -1628,7 +1657,7 @@ impl JetStreamConsumer {
         })?;
 
         let inserted_ids = Self::require_inserted_ids(result.inserted_ids, to_persist.len())?;
-        self.remember_batch(batch);
+        self.remember_batch(batch).await;
         Ok(PersistBatchResult {
             inserted_ids: Some(inserted_ids),
         })
@@ -1773,16 +1802,11 @@ impl JetStreamConsumer {
         Err(combined)
     }
 
-    fn filter_cached_batch<'a>(&self, batch: &[&'a PreparedEvent]) -> Vec<&'a PreparedEvent> {
+    async fn filter_cached_batch<'a>(&self, batch: &[&'a PreparedEvent]) -> Vec<&'a PreparedEvent> {
         // Clone cache snapshot then release the lock immediately — don't hold it
         // across the entire batch scan, which would block the writer.
         let cached_ids = {
-            let cache = self.recent_id_cache.lock().unwrap_or_else(|poisoned| {
-                warn!(
-                    "Recent ID cache mutex was poisoned; recovering with potentially inconsistent data"
-                );
-                poisoned.into_inner()
-            });
+            let cache = self.recent_id_cache.lock().await;
             cache.clone()
         };
         let mut seen = HashSet::new();
@@ -1798,16 +1822,59 @@ impl JetStreamConsumer {
             .collect()
     }
 
-    fn remember_batch(&self, batch: &[&PreparedEvent]) {
-        let mut cache = self.recent_id_cache.lock().unwrap_or_else(|poisoned| {
-            warn!(
-                "Recent ID cache mutex was poisoned; recovering with potentially inconsistent data"
-            );
-            poisoned.into_inner()
-        });
+    async fn remember_batch(&self, batch: &[&PreparedEvent]) {
+        let mut cache = self.recent_id_cache.lock().await;
         for event in batch {
             cache.insert(event.parsed_id);
         }
+    }
+
+    /// Filter out tombstoned events from a batch.
+    ///
+    /// Queries `core.event_tombstones` for the batch's event IDs and removes
+    /// any that have been permanently purged. This prevents accidental
+    /// re-ingestion of tombstoned events.
+    async fn filter_tombstoned_batch<'a>(
+        &self,
+        batch: &[&'a PreparedEvent],
+    ) -> IngestdResult<Vec<&'a PreparedEvent>> {
+        if batch.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let ids: Vec<Uuid> = batch.iter().map(|p| p.parsed_id).collect();
+        let tombstoned_ids = self
+            .pool
+            .events()
+            .filter_tombstoned(&ids)
+            .await
+            .map_err(|e| {
+                error!(
+                    "Failed to query event_tombstones during batch persistence: {e}"
+                );
+                SinexError::database("tombstone query failed")
+                    .with_context("batch_size", batch.len().to_string())
+            })?;
+
+        if tombstoned_ids.is_empty() {
+            return Ok(batch.to_vec());
+        }
+
+        let rejected_count = tombstoned_ids.len();
+        self.stats
+            .tombstoned_events_rejected
+            .fetch_add(rejected_count as u64, Ordering::Relaxed);
+
+        warn!(
+            count = rejected_count,
+            "Rejected {rejected_count} tombstoned event(s) during ingestion"
+        );
+
+        Ok(batch
+            .iter()
+            .filter(|p| !tombstoned_ids.contains(&p.parsed_id))
+            .copied()
+            .collect())
     }
 
     /// Publish confirmation to NATS
