@@ -6,7 +6,7 @@
 #[cfg(feature = "sqlx")]
 use crate::DbPool;
 use crate::JsonValue;
-use crate::models::{Event, OffsetKind, Provenance, SourceMaterial};
+use crate::models::{Event, Provenance, SourceMaterial};
 use ahash::AHashMap;
 use jsonschema::Validator;
 use parking_lot::RwLock;
@@ -287,13 +287,12 @@ impl EventValidator {
             host: HostName::from_static("validator"),
             node_run_id: None,
             payload_schema_id: None,
-            provenance: Provenance::Material {
-                id: Id::<SourceMaterial>::new(),
-                anchor_byte: 0,
-                offset_start: None,
-                offset_end: None,
-                offset_kind: OffsetKind::Byte,
-            },
+            provenance: Provenance::from_material(
+                Id::<SourceMaterial>::new(),
+                0,
+                None,
+                None,
+            ),
             associated_blob_ids: None,
             temporal_policy: None,
             semantics_version: None,
