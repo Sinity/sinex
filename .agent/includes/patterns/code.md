@@ -75,7 +75,13 @@ if result.suppressed { /* drop the field */ }
 // Strategies: Redact, Encrypt (XChaCha20-Poly1305), Hash (BLAKE3 MAC), Suppress
 ```
 
-**Gap:** Zero automata use the privacy engine. Derived events inherit ingestor leaks.
+**Coverage gap:** Some ingestors call `privacy::engine()` on their sensitive
+fields (terminal command text, desktop clipboard/window-title, browser
+title/url, system journal/dbus/notification, document text), but
+`sinex-fs-ingestor` and `sinex-document-ingestor` currently emit path-bearing
+fields without a privacy pass — see issue #555. Automata don't re-invoke the
+engine; they rely on upstream redaction. Anything that leaks at the ingestor
+boundary persists into derived events.
 
 ---
 
