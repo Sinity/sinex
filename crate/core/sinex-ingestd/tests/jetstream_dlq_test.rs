@@ -1,4 +1,4 @@
-//! `JetStream` Dead Letter Queue integration tests
+//! `JetStream` raw-ingest DLQ integration tests
 
 #[path = "support.rs"]
 mod support;

@@ -236,7 +236,7 @@ STREAM 2: events.confirmations (Event Persistence Confirmations)
 
 ═══════════════════════════════════════════════════════════════════════════════
 
-STREAM 3: events.dlq (Dead Letter Queue)
+STREAM 3: events.dlq (Raw-Ingest Dead Letter Queue)
 ═══════════════════════════════════════════════════════════════════════════════
 
   Subjects: events.dlq.{component}

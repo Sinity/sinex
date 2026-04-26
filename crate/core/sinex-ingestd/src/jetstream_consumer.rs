@@ -27,7 +27,10 @@ use sinex_node_sdk::SelfObserver;
 use sinex_node_sdk::heartbeat::HeartbeatCounterHandle;
 use sinex_node_sdk::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
 use sinex_primitives::Timestamp;
-use sinex_primitives::{JsonValue, Uuid, environment::SinexEnvironment};
+use sinex_primitives::{
+    JsonValue, Uuid,
+    nats::{JetStreamTopology, NatsTrafficClass, insert_traffic_class_header},
+};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -107,56 +110,6 @@ pub struct JetStreamConsumer {
     stats_log_interval: Duration,
     /// Heartbeat counter handle — feeds batch counts into health status determination
     heartbeat_handle: Option<HeartbeatCounterHandle>,
-}
-
-#[derive(Debug, Clone)]
-pub struct JetStreamTopology {
-    pub events_stream: String,
-    pub events_subject: String,
-    pub confirmations_stream: String,
-    pub confirmations_subject: String,
-    pub confirmations_prefix: String,
-    pub confirmation_retry_stream: String,
-    pub confirmation_retry_subject: String,
-    pub confirmation_retry_prefix: String,
-    pub confirmation_retry_consumer: String,
-    pub dlq_stream: String,
-    pub dlq_subject: String,
-    pub dlq_publish_subject: String,
-    pub consumer_durable: String,
-}
-
-impl JetStreamTopology {
-    #[must_use]
-    pub fn new(
-        env: &SinexEnvironment,
-        base_stream: String,
-        consumer_durable: String,
-        namespace: Option<&str>,
-    ) -> Self {
-        let confirmations_stream = format!("{base_stream}_CONFIRMATIONS");
-        let confirmation_retry_stream = format!("{base_stream}_CONFIRMATION_RETRIES");
-        let dlq_stream = format!("{base_stream}_DLQ");
-        let namespaced = |subject: &str| env.nats_subject_with_namespace(namespace, subject);
-        let confirmations_prefix = format!("{}.", namespaced("events.confirmations"));
-        let confirmation_retry_prefix = format!("{}.", namespaced("events.confirmation_retries"));
-
-        Self {
-            events_stream: base_stream,
-            events_subject: namespaced("events.raw.>"),
-            confirmations_stream,
-            confirmations_subject: namespaced("events.confirmations.>"),
-            confirmations_prefix,
-            confirmation_retry_stream,
-            confirmation_retry_subject: namespaced("events.confirmation_retries.>"),
-            confirmation_retry_prefix,
-            confirmation_retry_consumer: format!("{consumer_durable}_confirm_retries"),
-            dlq_stream,
-            dlq_subject: namespaced("events.dlq.>"),
-            dlq_publish_subject: namespaced("events.dlq.ingestd"),
-            consumer_durable,
-        }
-    }
 }
 
 const DB_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -768,6 +721,25 @@ impl JetStreamConsumer {
             })
             .await
             .map_err(|e| SinexError::network("Failed to create DLQ stream").with_source(e))?;
+
+        let processing_failures_stream = self.topology.processing_failures_stream.clone();
+        self.js
+            .create_or_update_stream(jetstream::stream::Config {
+                name: processing_failures_stream.clone(),
+                subjects: vec![self.topology.processing_failures_subject.clone()],
+                retention: jetstream::stream::RetentionPolicy::Limits,
+                max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
+                max_age: Duration::from_hours(168), // 7 days
+                storage: jetstream::stream::StorageType::File,
+                duplicate_window: DLQ_DUPLICATE_WINDOW,
+                allow_direct: true,
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| {
+                SinexError::network("Failed to create processing-failures stream")
+                    .with_source(e)
+            })?;
 
         info!("JetStream streams bootstrapped successfully");
         Ok(())
@@ -2056,6 +2028,7 @@ impl JetStreamConsumer {
         headers.insert("Nats-Msg-Id", dlq_publish_msg_id.as_str());
         headers.insert("Original-Subject", msg.subject.as_str());
         headers.insert("Retry-Count", "0");
+        insert_traffic_class_header(&mut headers, NatsTrafficClass::RawIngestDlq);
         if let Some(event_id) = original_event_id.as_deref() {
             headers.insert("Event-Id", event_id);
         }
