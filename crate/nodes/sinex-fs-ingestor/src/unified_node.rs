@@ -40,6 +40,7 @@ use sinex_primitives::{
             FileCreatedPayload, FileDeletedPayload, FileModifiedPayload, FileMovedPayload,
         },
     },
+    privacy::{self, ProcessingContext},
     temporal::Timestamp,
     units::Bytes,
     validation::{
@@ -2029,8 +2030,22 @@ fn is_transient_capture_error(err: &SinexError) -> bool {
     })
 }
 
+/// Convert an observed `Path` into a `RecordedPath`, applying the privacy
+/// engine's metadata-context rules first.
+///
+/// The `user_home_path` rule (defined in
+/// `crate/lib/sinex-primitives/src/privacy/catalog.rs`) collapses
+/// `/home/USER/foo/bar` to `<HOME>/foo/bar` for any context, but until this
+/// path runs through `privacy::process` no rule fires. Applying the engine
+/// here means downstream events, derived analytics, and any export carry
+/// home-relative paths instead of literal user-home prefixes — without
+/// losing the user-meaningful suffix.
+///
+/// See issue #555.
 fn sanitize_path(path: &Path) -> NodeResult<RecordedPath> {
-    RecordedPath::from_observed(observed_path_string(path)?)
+    let observed = observed_path_string(path)?;
+    let redacted = redact_metadata(&observed)?;
+    RecordedPath::from_observed(redacted)
         .map_err(|e| SinexError::validation("Path recording failed").with_source(e))
 }
 
@@ -2039,6 +2054,22 @@ fn observed_path_string(path: &Path) -> NodeResult<String> {
         SinexError::validation("filesystem watcher observed non-utf8 path")
             .with_context("path_debug", path.display().to_string())
     })
+}
+
+/// Run a value through the privacy engine using the metadata context.
+///
+/// Returns the redacted text. Privacy-engine initialization failure is
+/// surfaced as a `SinexError::configuration` rather than swallowed; the fs
+/// ingestor cannot honestly emit if redaction is broken.
+fn redact_metadata(value: &str) -> NodeResult<String> {
+    Ok(privacy::process(value, ProcessingContext::Metadata)
+        .map_err(|error| {
+            SinexError::configuration("failed to initialize privacy engine")
+                .with_context("component", "fs_path_redaction")
+                .with_std_error(error)
+        })?
+        .text
+        .into_owned())
 }
 
 #[allow(
@@ -2473,6 +2504,41 @@ mod tests {
         let mut config = FilesystemConfig::default();
         config.watch_paths = vec!["/tmp".to_string()];
         assert!(config.validate_config().is_ok());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn redact_metadata_collapses_user_home_prefix() -> TestResult<()> {
+        // Emulate the fs ingestor running under a real user shell — the
+        // privacy engine's `user_home_path` rule reads $HOME / $USER at
+        // first call and caches a regex. Ensure we set a value the rule
+        // can match on.
+        unsafe {
+            std::env::set_var("HOME", "/home/sinity-test-fs-redact");
+        }
+
+        let observed = "/home/sinity-test-fs-redact/projects/sinex/Cargo.toml";
+        let redacted = redact_metadata(observed)?;
+
+        // Outside the home prefix → unchanged. Inside → replaced with
+        // `<HOME>/...`. The exact replacement label is owned by the
+        // catalog, so assert on the substitution shape rather than the
+        // literal expanded suffix.
+        assert!(
+            !redacted.contains("/home/sinity-test-fs-redact/"),
+            "redacted output should not contain the literal home prefix, got {redacted:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn redact_metadata_passes_non_home_paths_through() -> TestResult<()> {
+        let observed = "/etc/hosts";
+        let redacted = redact_metadata(observed)?;
+        assert_eq!(
+            redacted, observed,
+            "system paths should not be touched by user_home_path rule"
+        );
         Ok(())
     }
 
