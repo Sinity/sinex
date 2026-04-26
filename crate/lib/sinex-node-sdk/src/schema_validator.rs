@@ -26,20 +26,6 @@ use uuid::Uuid;
 use crate::NodeResult;
 use crate::runtime::stream::SchemaBroadcastEntry;
 
-/// Compiled schema cache entry
-///
-/// Metadata fields (`schema_id`, source, `event_type`, version) are stored for
-/// debugging, logging, and potential future introspection of cached schemas.
-#[derive(Clone)]
-#[allow(dead_code)]
-struct CompiledSchema {
-    schema_id: Uuid,
-    source: String,
-    event_type: String,
-    version: String,
-    validator: Arc<Validator>,
-}
-
 /// Schema validator for nodes
 ///
 /// This validator:
@@ -62,7 +48,7 @@ struct CompiledSchema {
 #[derive(Clone)]
 pub struct NodeSchemaValidator {
     /// Compiled schemas by `schema_id`
-    schemas: Arc<RwLock<AHashMap<Uuid, CompiledSchema>>>,
+    schemas: Arc<RwLock<AHashMap<Uuid, Arc<Validator>>>>,
     /// Lookup: (source, `event_type`) → `schema_id`
     lookup: Arc<RwLock<AHashMap<(String, String), Uuid>>>,
     /// Optional database pool for cache-miss hydration (None in edge mode)
@@ -135,15 +121,7 @@ impl NodeSchemaValidator {
             let source = parts[0].to_string();
             let event_type = parts[1..].join(".");
 
-            let compiled_schema = CompiledSchema {
-                schema_id,
-                source: source.clone(),
-                event_type: event_type.clone(),
-                version: entry.version,
-                validator,
-            };
-
-            new_schemas.insert(schema_id, compiled_schema);
+            new_schemas.insert(schema_id, validator);
             new_lookup.insert((source, event_type), schema_id);
             compiled += 1;
         }
@@ -204,8 +182,8 @@ impl NodeSchemaValidator {
         // Get compiled validator
         let validator = {
             let schemas = self.schemas.read();
-            if let Some(s) = schemas.get(&schema_id) {
-                s.validator.clone()
+            if let Some(v) = schemas.get(&schema_id) {
+                v.clone()
             } else {
                 return Err(crate::SinexError::processing(format!(
                     "Schema cache is inconsistent for {source}.{event_type} (schema_id={schema_id})"
@@ -282,19 +260,10 @@ impl NodeSchemaValidator {
                 ))
             })?;
 
-        // Add to cache
-        let compiled_schema = CompiledSchema {
-            schema_id,
-            source: source.to_string(),
-            event_type: event_type.to_string(),
-            version: row.version,
-            validator,
-        };
-
         {
             let mut schemas = self.schemas.write();
             let mut lookup = self.lookup.write();
-            schemas.insert(schema_id, compiled_schema);
+            schemas.insert(schema_id, validator);
             lookup.insert((source.to_string(), event_type.to_string()), schema_id);
         }
 
@@ -374,16 +343,7 @@ impl NodeSchemaValidator {
             ))
         })?;
 
-        self.schemas.write().insert(
-            schema_id,
-            CompiledSchema {
-                schema_id,
-                source: source.to_string(),
-                event_type: event_type.to_string(),
-                version: "test".to_string(),
-                validator: Arc::new(validator),
-            },
-        );
+        self.schemas.write().insert(schema_id, Arc::new(validator));
         self.lookup
             .write()
             .insert((source.to_string(), event_type.to_string()), schema_id);

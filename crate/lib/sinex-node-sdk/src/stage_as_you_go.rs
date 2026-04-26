@@ -278,14 +278,11 @@ mod tests {
 
 struct ReconciliationTask {
     shutdown: watch::Sender<bool>,
-    // Held for ownership: dropping the handle detaches the task; Drop sends the shutdown signal.
-    #[allow(dead_code)]
-    handle: tokio::task::JoinHandle<()>,
 }
 
 impl ReconciliationTask {
-    fn new(shutdown: watch::Sender<bool>, handle: tokio::task::JoinHandle<()>) -> Self {
-        Self { shutdown, handle }
+    fn new(shutdown: watch::Sender<bool>) -> Self {
+        Self { shutdown }
     }
 }
 
@@ -416,7 +413,7 @@ impl StageAsYouGoContext {
         let handles = Arc::clone(&self.acquisition_handles);
         let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
-        let task = tokio::spawn(async move {
+        tokio::spawn(async move {
             loop {
                 tokio::select! {
                     shutdown_result = shutdown_rx.changed() => {
@@ -441,7 +438,7 @@ impl StageAsYouGoContext {
             }
         });
 
-        self.reconciliation_task = Some(Arc::new(ReconciliationTask::new(shutdown_tx, task)));
+        self.reconciliation_task = Some(Arc::new(ReconciliationTask::new(shutdown_tx)));
     }
 
     /// Register in-flight source material and get its ID immediately
