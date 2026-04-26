@@ -153,6 +153,19 @@ impl BrowserNode {
             .into_owned())
     }
 
+    /// Redact metadata-context values (filesystem paths). Symmetric with the
+    /// fs/document ingestors so the `user_home_path` rule fires consistently.
+    fn redact_metadata(value: &str) -> NodeResult<String> {
+        Ok(privacy::process(value, ProcessingContext::Metadata)
+            .map_err(|error| {
+                SinexError::configuration("failed to initialize privacy engine")
+                    .with_context("component", "browser_metadata_redaction")
+                    .with_std_error(error)
+            })?
+            .text
+            .into_owned())
+    }
+
     async fn append_visit_material(
         materializer: &BufferedRecordMaterializer,
         visit: &BrowserVisitRecord,
@@ -192,7 +205,7 @@ impl BrowserNode {
             transition: visit.transition,
             visit_id: visit.visit_id,
             visit_duration_ms: visit.visit_duration_ms,
-            source_file: visit.source_file,
+            source_file: Self::redact_metadata(&visit.source_file)?,
             line_number: visit.line_number,
             db_row_id: visit.db_row_id,
         };
@@ -1042,6 +1055,32 @@ mod tests {
         rerun_runner.shutdown().await?;
         runner.shutdown().await?;
         ingest_handle.stop().await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn redact_metadata_collapses_user_home_prefix() -> TestResult<()> {
+        // Mirror the fs-ingestor test shape so the `user_home_path` rule
+        // sees a HOME prefix it can match on.
+        unsafe {
+            std::env::set_var("HOME", "/home/sinity-test-browser-redact");
+        }
+
+        let observed = "/home/sinity-test-browser-redact/.local/share/qutebrowser/history.sqlite";
+        let redacted = BrowserNode::redact_metadata(observed)?;
+
+        assert!(
+            !redacted.contains("/home/sinity-test-browser-redact/"),
+            "redacted output should not contain the literal home prefix, got {redacted:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn redact_metadata_passes_non_home_paths_through() -> TestResult<()> {
+        let observed = "/var/lib/firefox/places.sqlite";
+        let redacted = BrowserNode::redact_metadata(observed)?;
+        assert_eq!(redacted, observed);
         Ok(())
     }
 }
