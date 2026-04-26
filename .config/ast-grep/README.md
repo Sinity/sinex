@@ -171,7 +171,6 @@ Within xtask automation, `error` severity is blocking; `warning` and `hint` rema
   - `crate/lib/sinex-db/src/repositories/**`
   - `crate/lib/sinex-node-sdk/src/preflight/**`
   - `crate/lib/sinex-schema/src/main.rs`
-  - `crate/lib/sinex-services/src/analytics.rs`
   - `xtask/**`
 - Intent:
   Compile-time checked queries (sqlx::query!()) catch SQL errors at build time.
