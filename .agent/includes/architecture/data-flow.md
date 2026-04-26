@@ -44,7 +44,7 @@ sinex-primitives         Foundation: types, validation, errors, domain enums, ID
     |
     +-- sinex-schema      DB schema + declarative convergence (library only)
     |
-    +-- sinex-db          Database pools, repositories, query helpers
+    +-- sinex-db          Database pools, repositories, query helpers, PKM orchestration
             |
             +-- sinex-macros      #[derive(EventPayload)]
             |
@@ -52,10 +52,7 @@ sinex-primitives         Foundation: types, validation, errors, domain enums, ID
                     |
                     +-- All ingestors (fs, terminal, desktop, system, document)
                     +-- All automata (canonicalizer, analytics, health)
-
-sinex-services           Business logic: PKM (entity graph), content (blob storage)
-    |
-    +-- sinex-gateway     API layer: JSON-RPC, SSE, native messaging
+            +-- sinex-gateway     API layer: JSON-RPC, SSE, native messaging, content orchestration
 
 sinexctl                 Unified CLI (query, trace, telemetry, context, report, import)
 

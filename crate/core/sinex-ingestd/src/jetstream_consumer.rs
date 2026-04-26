@@ -176,6 +176,11 @@ fn is_source_material_fk_constraint_name(value: &str) -> bool {
             .is_some_and(|prefix| prefix.ends_with('_'))
 }
 
+/// Hard guard for node-supplied event IDs.
+///
+/// Ingestors and derived nodes may use `sinex_node_sdk::deterministic_event_id`
+/// for idempotent source occurrences, but ingestd still rejects every ID that is
+/// not an RFC4122 `UUIDv7` before it reaches the hypertable partition key.
 fn is_uuid_v7(value: &Uuid) -> bool {
     value.get_version_num() == 7 && value.get_variant() == uuid::Variant::RFC4122
 }
@@ -377,9 +382,7 @@ fn source_material_unavailable_error(
     material_id: Option<Uuid>,
     persistence_error: Option<&SinexError>,
 ) -> String {
-    let material = material_id
-        .map(|id| id.to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+    let material = material_id.map_or_else(|| "unknown".to_string(), |id| id.to_string());
     let base = format!(
         "Source material {material} was not registered after {SOURCE_MATERIAL_READY_DLQ_THRESHOLD} deliveries for event {} (source={}, event_type={})",
         prepared.parsed_id, prepared.event.source, prepared.event.event_type
@@ -2385,6 +2388,12 @@ mod tests {
     #[sinex_test]
     async fn uuid_v7_guard_rejects_other_uuid_versions() -> TestResult<()> {
         assert!(is_uuid_v7(&Uuid::now_v7()));
+        assert!(is_uuid_v7(&sinex_node_sdk::deterministic_event_id(
+            "ingestd-guard",
+            "source-anchor",
+            Timestamp::from_unix_timestamp_millis(1_710_000_000_123)
+                .ok_or_else(|| color_eyre::eyre::eyre!("test timestamp should be valid"))?
+        )));
         assert!(!is_uuid_v7(&Uuid::new_v4()));
         assert!(!is_uuid_v7(
             &"019da690-06f8-707c-f98d-218250d05d62".parse::<Uuid>()?

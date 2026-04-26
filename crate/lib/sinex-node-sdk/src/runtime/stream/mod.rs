@@ -1147,6 +1147,18 @@ impl<T: Node + 'static> NodeRunner<T> {
         }
     }
 
+    fn config_identity_value(
+        raw_config: &HashMap<String, serde_json::Value>,
+        key: &str,
+    ) -> Option<String> {
+        raw_config
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+    }
+
     /// Returns the current lifecycle state of this runner.
     pub fn lifecycle(&self) -> RunnerLifecycle {
         self.lifecycle
@@ -1279,11 +1291,16 @@ impl<T: Node + 'static> NodeRunner<T> {
             .filter(|value| !value.is_empty())
             .unwrap_or("default")
             .to_string();
+        let source_unit_id = Self::config_identity_value(&raw_config, "source_unit_id");
+        let runner_pack = Self::config_identity_value(&raw_config, "runner_pack");
+        let checkpoint_identity = source_unit_id
+            .clone()
+            .unwrap_or_else(|| service_name.clone());
 
         // Initialize checkpoint manager with KV
         let checkpoint_manager = Arc::new(CheckpointManager::with_missing_checkpoint_warning(
             kv_store,
-            service_name.clone(),
+            checkpoint_identity.clone(),
             consumer_group,
             consumer_name.clone(),
             matches!(self.node.node_type(), NodeType::Automaton),
@@ -1369,9 +1386,11 @@ impl<T: Node + 'static> NodeRunner<T> {
             )
         };
 
-        let service_info = ServiceInfo::new(
+        let service_info = ServiceInfo::new_with_runtime_identity(
             service_name.clone(),
             self.node.node_name().to_string(),
+            source_unit_id.clone(),
+            runner_pack.clone(),
             host.clone(),
             work_dir.clone(),
             dry_run,
@@ -1447,6 +1466,9 @@ impl<T: Node + 'static> NodeRunner<T> {
         info!(
             service = %service_name,
             node = %self.node.node_name(),
+            source_unit = source_unit_id.as_deref().unwrap_or("none"),
+            runner_pack = runner_pack.as_deref().unwrap_or("none"),
+            checkpoint_identity = %checkpoint_identity,
             node_type = ?self.node.node_type(),
             transport = transport_type,
             "Node initialized"
@@ -1543,10 +1565,20 @@ impl<T: Node + 'static> NodeRunner<T> {
             &runtime,
             sinex_primitives::Seconds::from_secs(heartbeat_interval),
         );
+        let heartbeat_identity = serde_json::json!({
+            "node_name": runtime.node_name(),
+            "source_unit_id": runtime.source_unit_id(),
+            "runner_pack": runtime.runner_pack(),
+            "service_instance": runtime.service_info().service_name(),
+            "checkpoint_identity": runtime.checkpoint_identity(),
+            "control_identity": runtime.control_identity(),
+            "host": runtime.service_info().host().as_str(),
+            "run_id": runtime.node_run_id().map(|id| id.to_string()),
+        });
         let (heartbeat_shutdown_tx, heartbeat_shutdown_rx) = tokio::sync::oneshot::channel();
         let heartbeat_handle = tokio::spawn(async move {
             tokio::select! {
-                () = heartbeat.start_periodic_heartbeat(None) => {}
+                () = heartbeat.start_periodic_heartbeat(Some(Box::new(move || Some(heartbeat_identity.clone())))) => {}
                 _ = heartbeat_shutdown_rx => {}
             }
         });
@@ -1639,7 +1671,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             EventTransport::Nats(publisher) => publisher.nats_client().clone(),
         };
 
-        let node_name = self.node.node_name().to_string();
+        let node_name = service_info.control_identity().to_string();
         let node_type = self.node.node_type();
         let supports_historical = self.node.capabilities().supports_historical;
         let env = sinex_primitives::environment::environment().clone();
@@ -1990,9 +2022,11 @@ impl<T: Node + 'static> NodeRunner<T> {
             base_service_info.service_name(),
             command.operation_id.simple()
         );
-        let replay_service_info = ServiceInfo::new(
+        let replay_service_info = ServiceInfo::new_with_runtime_identity(
             replay_service_name.clone(),
             base_service_info.node_name().to_string(),
+            base_service_info.source_unit_id().map(ToOwned::to_owned),
+            base_service_info.runner_pack().map(ToOwned::to_owned),
             base_service_info.host().clone(),
             base_service_info.work_dir().clone(),
             base_service_info.dry_run(),

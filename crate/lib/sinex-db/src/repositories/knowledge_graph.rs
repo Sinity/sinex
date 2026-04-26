@@ -6,7 +6,7 @@ use crate::schema::Entities;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::error::SinexError;
 use sinex_primitives::{Id, Timestamp, Uuid};
-use sqlx::PgPool;
+use sqlx::{Executor, PgPool, Postgres};
 use std::collections::HashSet;
 
 use crate::JsonValue;
@@ -791,6 +791,19 @@ impl KnowledgeGraphRepository<'_> {
         &self,
         relation: CreateEntityRelation,
     ) -> DbResult<EntityRelationRecord> {
+        self.create_relation_with_executor(self.pool, relation)
+            .await
+    }
+
+    /// Create a new entity relation with a specific executor.
+    pub async fn create_relation_with_executor<'e, E>(
+        &self,
+        executor: E,
+        relation: CreateEntityRelation,
+    ) -> DbResult<EntityRelationRecord>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
         let id = Id::<EntityRelation>::new();
         let properties = relation
             .properties
@@ -832,7 +845,7 @@ impl KnowledgeGraphRepository<'_> {
             confidence_score,
             is_active
         )
-        .fetch_one(self.pool)
+        .fetch_one(executor)
         .await
         .map_err(|e| db_error(e, "create relation"))
     }

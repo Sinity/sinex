@@ -15,7 +15,7 @@ use sinex_primitives::error::SinexError;
 use sinex_primitives::rpc::lifecycle::{TombstoneOperation, TombstoneOperationState};
 use sinex_primitives::{Seconds, Timestamp};
 use sqlx::postgres::types::PgRange;
-use sqlx::{FromRow, PgPool};
+use sqlx::{Executor, FromRow, PgPool, Postgres};
 use std::ops::Bound;
 use std::str::FromStr;
 use std::time::Duration;
@@ -326,71 +326,85 @@ impl StateRepository<'_> {
 
     /// Log an operation
     pub async fn log_operation(&self, operation: Operation) -> DbResult<OperationRecord> {
-        Self::validate_audit_operation_type(&operation.operation_type)?;
-        // Validate replay-specific scope only for replay operations; allow other shapes otherwise
-        if operation.operation_type == "replay"
-            && let Some(ref scope) = operation.scope
-        {
-            Self::validate_replay_scope(scope)?;
-        }
-
-        let id = Id::<Operation>::new();
-        let operation_type = operation.operation_type.clone();
-        let operator = operation.operator.clone();
-        let scope = operation.scope.clone();
-        let result_status = operation.result_status;
-        let result_message = operation.result_message.clone();
-        let preview_summary = operation.preview_summary.clone();
-        let duration_ms = operation.duration_ms;
+        Self::validate_log_operation(&operation)?;
 
         let result = with_retry_transaction_idempotent(
             self.pool,
             RetryConfig::default(),
             IdempotentTransaction::new(),
             |tx| {
-                let operation_type = operation_type.clone();
-                let operator = operator.clone();
-                let scope = scope.clone();
-                let result_message = result_message.clone();
-                let preview_summary = preview_summary.clone();
-                Box::pin(async move {
-                    let record = sqlx::query_as!(
-                        OperationRecord,
-                        r#"
-                        INSERT INTO core.operations_log (
-                            id, operation_type, operator, scope, result_status, result_message, preview_summary, duration_ms
-                        ) VALUES (
-                            $1::uuid, $2, $3, $4, $5, $6, $7, $8
-                        )
-                        RETURNING 
-                            id as "id!: Id<Operation>",
-                            operation_type,
-                            operator,
-                            scope,
-                            result_status,
-                            result_message,
-                            preview_summary,
-                            duration_ms
-                        "#,
-                        id.to_uuid(),
-                        operation_type,
-                        operator,
-                        scope,
-                        result_status.to_string(),
-                        result_message,
-                        preview_summary,
-                        duration_ms
-                    )
-                    .fetch_one(&mut **tx)
-                    .await
-                    .map_err(|e| db_error(e, "log operation"))?;
-                    Ok(record)
-                })
+                let operation = operation.clone();
+                Box::pin(
+                    async move { Self::insert_operation_with_executor(&mut **tx, operation).await },
+                )
             },
         )
         .await?;
 
         Ok(result)
+    }
+
+    /// Log an operation using an existing transaction/executor.
+    pub async fn log_operation_with_executor<'e, E>(
+        &self,
+        executor: E,
+        operation: Operation,
+    ) -> DbResult<OperationRecord>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        Self::validate_log_operation(&operation)?;
+        Self::insert_operation_with_executor(executor, operation).await
+    }
+
+    fn validate_log_operation(operation: &Operation) -> DbResult<()> {
+        Self::validate_audit_operation_type(&operation.operation_type)?;
+        if operation.operation_type == "replay"
+            && let Some(ref scope) = operation.scope
+        {
+            Self::validate_replay_scope(scope)?;
+        }
+        Ok(())
+    }
+
+    async fn insert_operation_with_executor<'e, E>(
+        executor: E,
+        operation: Operation,
+    ) -> DbResult<OperationRecord>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
+        let id = Id::<Operation>::new();
+        sqlx::query_as!(
+            OperationRecord,
+            r#"
+            INSERT INTO core.operations_log (
+                id, operation_type, operator, scope, result_status, result_message, preview_summary, duration_ms
+            ) VALUES (
+                $1::uuid, $2, $3, $4, $5, $6, $7, $8
+            )
+            RETURNING
+                id as "id!: Id<Operation>",
+                operation_type,
+                operator,
+                scope,
+                result_status,
+                result_message,
+                preview_summary,
+                duration_ms
+            "#,
+            id.to_uuid(),
+            operation.operation_type,
+            operation.operator,
+            operation.scope,
+            operation.result_status.to_string(),
+            operation.result_message,
+            operation.preview_summary,
+            operation.duration_ms
+        )
+        .fetch_one(executor)
+        .await
+        .map_err(|e| db_error(e, "log operation"))
     }
 
     /// Check if an operation exists by ID (lightweight check without full record fetch)

@@ -7,7 +7,7 @@ transitions.
 
 ## 🧱 The Abstractions
 
-### 1. Derived Node Traits (Automata)
+### 1. Derived Node Traits
 Designed for processing event streams and synthesizing new events. The unified `DerivedNodeAdapter` handles all three variants:
 
 - **`TransducerNode`**: 1:1 stateless event transformation

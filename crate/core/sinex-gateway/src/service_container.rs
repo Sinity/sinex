@@ -1,15 +1,16 @@
 //! Service container that holds all service instances
 
 use crate::config::GatewayConfig;
+use crate::content_service::ContentService;
 use crate::replay_control::{ReplayControlClient, ReplayControlError, spawn_replay_control};
 use color_eyre::eyre::Result;
 use sinex_db::create_pool_with_config;
+use sinex_db::pkm::PkmService;
 use sinex_db::replay::state_machine::ReplayStateMachine;
 use sinex_node_sdk::content_store::{ContentStoreConfig, ContentStoreManager};
 use sinex_primitives::{
     coordination::CoordinationKvClient, environment as sinex_environment, error::SinexError,
 };
-use sinex_services::{ContentService, PkmService};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};

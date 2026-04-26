@@ -1745,7 +1745,7 @@ mod tests {
     -> ::xtask::sandbox::TestResult<()> {
         let plan = resolve_nextest_execution_plan(
             &["sinex-db".into(), "xtask".into()],
-            vec!["sinex-services".into()],
+            vec!["sinex-gateway".into()],
             Some(vec!["sinex-e2e-tests".into()]),
         );
 
@@ -1764,15 +1764,15 @@ mod tests {
     -> ::xtask::sandbox::TestResult<()> {
         let plan = resolve_nextest_execution_plan(
             &[],
-            vec!["sinex-services".into()],
+            vec!["sinex-gateway".into()],
             Some(vec!["xtask".into(), "sinex-db".into(), "xtask".into()]),
         );
 
         assert_eq!(
             plan,
             NextestExecutionPlan {
-                runner_packages: vec!["sinex-services".into()],
-                workload_scope: WorkloadScope::Packages(vec!["sinex-services".into()]),
+                runner_packages: vec!["sinex-gateway".into()],
+                workload_scope: WorkloadScope::Packages(vec!["sinex-gateway".into()]),
             }
         );
         Ok(())

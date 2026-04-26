@@ -40,9 +40,6 @@ path = "../../crate/core/sinex-ingestd"
 [dev-dependencies.sinex-node-sdk]
 path = "../../crate/lib/sinex-node-sdk"
 
-[dev-dependencies.sinex-services]
-path = "../../crate/lib/sinex-services"
-
 [dev-dependencies.sinex-gateway]
 path = "../../crate/core/sinex-gateway"
 features = [ "test-support",]

@@ -64,9 +64,6 @@ features = [
 [dependencies.time]
 workspace = true
 
-[dependencies.sinex-services]
-path = "../../lib/sinex-services"
-
 [dependencies.sinex-node-sdk]
 path = "../../lib/sinex-node-sdk"
 

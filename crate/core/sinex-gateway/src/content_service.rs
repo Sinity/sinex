@@ -1,6 +1,4 @@
-#![doc = include_str!("../docs/content.md")]
-
-//! Content service entry points for binary payload workflows.
+//! Gateway-owned content/blob orchestration.
 
 use sinex_db::DbPool;
 use sinex_db::repositories::DbPoolExt;
