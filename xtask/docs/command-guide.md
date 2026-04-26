@@ -26,6 +26,7 @@ These are the commands worth remembering for day-to-day code changes.
 Use these when the local stack or a running process is part of the work.
 
 - `xtask infra start`: Start the infrastructure. Use when local Postgres and NATS need to be available for checks, tests, or manual runs. Common forms: `xtask infra start`; `xtask infra status`; `xtask infra stop`.
+- `xtask infra flake-stage`: Stage a flake-safe checkout copy for local Nix builds and deploys. Use when you need a dirty checkout, untracked files, or a runtime-socket-filled repo to work as a local Nix or nixos-rebuild input. Common forms: `xtask infra flake-stage`; `xtask infra flake-stage --output-dir /tmp/sinex-flake-verify --force`. Notes: The staged tree excludes local-only runtime and build artifacts such as `.git`, `.sinex`, `target`, `result*`, and `.direnv`.
 - `xtask run`: Run command for binary lifecycle management. Use when you need to launch a node, ingest daemon, or gateway process during development. Common forms: `xtask run node terminal-ingestor --watch`; `xtask run gateway`.
 - `xtask status`: Inspect workspace status, service health, and recent activity. Use when you want a quick read on infra/runtime state before or after a change. Common forms: `xtask status`; `xtask status --summary`.
 - `xtask doctor`: Probe developer-environment health and deployment readiness. Use when the environment may be broken, stale, or missing expected dependencies. Common forms: `xtask doctor`; `xtask doctor --fix`; `xtask doctor --runtime`.

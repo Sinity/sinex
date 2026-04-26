@@ -342,6 +342,7 @@ Manage local infrastructure (Postgres, NATS, VMs)
 | `schema-apply` | Apply the declarative schema to a database |
 | `tls-init-gateway` | Generate gateway TLS certificates using rcgen |
 | `vm` | Manage VM integration |
+| `flake-stage` | Stage a flake-safe checkout copy for local Nix builds and deploys |
 
 ### `xtask infra start`
 
@@ -500,6 +501,18 @@ Restore from a snapshot
 ##### `xtask infra vm snapshot list`
 
 List available snapshots
+
+
+### `xtask infra flake-stage`
+
+Stage a flake-safe checkout copy for local Nix builds and deploys
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--output-dir` | yes | no | Output directory for the staged checkout. Defaults to a unique /tmp path |
+| `--force` | no | no | Replace an existing output directory instead of failing |
 
 
 ## `xtask jobs`
