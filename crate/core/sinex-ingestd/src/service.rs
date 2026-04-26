@@ -126,6 +126,55 @@ fn background_task_timeout(count: usize, timeout: Duration) -> SinexError {
     .with_count(count)
 }
 
+/// Query the DB binary_schema_version and either verify a match or insert on first run.
+async fn verify_binary_schema_version(pool: &PgPool) -> IngestdResult<()> {
+    let db_version: Option<String> = sqlx::query_scalar(
+        "SELECT version FROM sinex_schemas.binary_schema_version WHERE id = 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        SinexError::database("Failed to query binary_schema_version")
+            .with_operation("service.verify_binary_schema_version")
+            .with_source(e)
+    })?;
+
+    match db_version {
+        Some(v) if v == sinex_primitives::EXPECTED_BINARY_SCHEMA_VERSION => {
+            info!(
+                version = %v,
+                "Binary schema version verified"
+            );
+            Ok(())
+        }
+        Some(v) => Err(SinexError::configuration(format!(
+            "Schema version mismatch: binary expects '{}', database has '{}'",
+            sinex_primitives::EXPECTED_BINARY_SCHEMA_VERSION,
+            v,
+        ))
+        .with_operation("service.verify_binary_schema_version")),
+        None => {
+            // First run: insert expected version
+            sqlx::query(
+                "INSERT INTO sinex_schemas.binary_schema_version (id, version) VALUES (1, $1)",
+            )
+            .bind(sinex_primitives::EXPECTED_BINARY_SCHEMA_VERSION)
+            .execute(pool)
+            .await
+            .map_err(|e| {
+                SinexError::database("Failed to insert binary_schema_version")
+                    .with_operation("service.verify_binary_schema_version")
+                    .with_source(e)
+            })?;
+            info!(
+                version = %sinex_primitives::EXPECTED_BINARY_SCHEMA_VERSION,
+                "Initialized binary_schema_version"
+            );
+            Ok(())
+        }
+    }
+}
+
 /// Main ingestion service
 pub struct IngestService {
     config: IngestdConfig,
@@ -169,6 +218,13 @@ impl IngestService {
         info!("Initializing ingestion service");
 
         let db_pool = Self::init_db_pool(&config).await?;
+
+        // Verify binary-schema version compatibility before proceeding further.
+        // On a first-run database (no row), the expected version is inserted automatically.
+        if let Some(ref pool) = db_pool {
+            verify_binary_schema_version(pool).await?;
+        }
+
         let (nats_client, jetstream) = Self::init_nats(&config).await?;
         let validator = Self::init_validator(&config, db_pool.as_ref()).await?;
 

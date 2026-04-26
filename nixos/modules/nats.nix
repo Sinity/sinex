@@ -72,11 +72,14 @@ let
   sharedClientBaseSubjects = map prefixSubject [
     "events.raw.>"
     "events.confirmations.>"
+    "events.confirmation_retries.>"
+    "events.processing_failures.>"
     "events.dlq.>"
     "source_material.frames.>"
     "system.schemas.active"
     "sinex.control.>"
     "sinex.coordination.>"
+    "sinex.derived.invalidation"
     "sinex.telemetry.>"
   ];
   sharedClientInternalSubjects = [
@@ -396,6 +399,25 @@ in
             maxAge = "168h"; # 7d
             maxBytes = natsCliMaxBytes;
             dupeWindow = "1h";
+          }
+          {
+            name = "SINEX_RAW_EVENTS_CONFIRMATION_RETRIES";
+            subjects = [ "events.confirmation_retries.>" ];
+            maxAge = "72h";
+            maxBytes = natsCliMaxBytes;
+            maxMsgsPerSubject = 1;
+          }
+          {
+            name = "SINEX_RAW_EVENTS_PROCESSING_FAILURES";
+            subjects = [ "events.processing_failures.>" ];
+            maxAge = "168h"; # 7d
+            maxBytes = natsCliMaxBytes;
+          }
+          {
+            name = "SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS";
+            subjects = [ "sinex.derived.invalidation" ];
+            maxAge = "24h";
+            maxBytes = natsCliMaxBytes;
           }
         ];
         description = "Stream definitions to bootstrap when bootstrapStreams.enable is true.";
