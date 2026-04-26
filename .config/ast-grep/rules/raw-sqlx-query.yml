@@ -17,8 +17,6 @@ ignores:
   - "crate/lib/sinex-db/src/replay/**"
   # Preflight/migration infrastructure
   - "crate/lib/sinex-node-sdk/src/preflight/**"
-  # Analytics dynamic queries
-  - "crate/lib/sinex-services/src/analytics.rs"
   # Test infrastructure
   - "xtask/**"
   - "**/tests/**"

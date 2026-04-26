@@ -180,6 +180,7 @@ fn execute_list(
             "filter": "recent",
             "jobs": jobs.iter().map(|j| {
                 let progress = load_invocation_progress(ctx, j.invocation_id);
+                let progress_summary = progress_summary(progress.progress.as_ref());
                 serde_json::json!({
                     "id": j.id,
                     "invocation_id": j.invocation_id,
@@ -190,6 +191,7 @@ fn execute_list(
                     "started_at": j.started_at.to_string(),
                     "exit_code": j.exit_code,
                     "progress": progress.progress.as_ref().map(progress_to_json),
+                    "progress_summary": progress_summary,
                     "progress_issue": progress.issue,
                 })
             }).collect::<Vec<_>>()
@@ -250,6 +252,7 @@ fn execute_active(
             "filter": "active",
             "jobs": active.iter().map(|j| {
                 let progress = load_invocation_progress(ctx, j.invocation_id);
+                let progress_summary = progress_summary(progress.progress.as_ref());
                 serde_json::json!({
                     "id": j.id,
                     "invocation_id": j.invocation_id,
@@ -260,6 +263,7 @@ fn execute_active(
                     "started_at": j.started_at.to_string(),
                     "exit_code": j.exit_code,
                     "progress": progress.progress.as_ref().map(progress_to_json),
+                    "progress_summary": progress_summary,
                     "progress_issue": progress.issue,
                 })
             }).collect::<Vec<_>>()
@@ -408,6 +412,7 @@ async fn execute_status(
                 "started_at": job.started_at.to_string(),
                 "exit_code": job.exit_code,
                 "progress": progress.progress.as_ref().map(progress_to_json),
+                "progress_summary": progress_summary(progress.progress.as_ref()),
                 "progress_issue": progress.issue,
                 "resources": resources.usage.as_ref().map(resource_usage_to_json),
                 "resources_issue": resources.issue,
@@ -468,9 +473,13 @@ fn execute_output(
     };
 
     let stream_name = if stderr { "stderr" } else { "stdout" };
+    let progress = load_invocation_progress(ctx, job.invocation_id);
 
     if ctx.is_human() {
         println!("{output}");
+        if let Some(summary) = progress_summary(progress.progress.as_ref()) {
+            eprintln!("─── Summary: {summary} ───");
+        }
         if job.is_terminal() {
             let elapsed = time::OffsetDateTime::now_utc() - job.started_at;
             let exit_str = job
@@ -487,12 +496,20 @@ fn execute_output(
     let mut result = CommandResult::success()
         .with_message(format!("Job {id} {stream_name} output"))
         .with_duration(ctx.elapsed());
+    if let Some(issue) = &progress.issue {
+        result = result.with_warning(issue.clone());
+    }
 
     if !ctx.is_human() {
         result = result.with_data(serde_json::json!({
             "id": id,
+            "status": status_to_str(job.job_status),
+            "exit_code": job.exit_code,
             "stream": stream_name,
             "content": output,
+            "progress": progress.progress.as_ref().map(progress_to_json),
+            "progress_summary": progress_summary(progress.progress.as_ref()),
+            "progress_issue": progress.issue,
         }));
     }
 
@@ -546,6 +563,9 @@ async fn execute_wait(
     }
 
     if ctx.is_human() {
+        if let Some(summary) = progress_summary(progress.progress.as_ref()) {
+            println!("  Summary: {summary}");
+        }
         if let Some(resources) = &resources.usage {
             println!("  Resources: {}", resource_usage_brief(resources));
         } else if let Some(invocation_id) = job.invocation_id {
@@ -569,6 +589,7 @@ async fn execute_wait(
             "status": status_to_str(job.job_status),
             "exit_code": job.exit_code,
             "progress": progress.progress.as_ref().map(progress_to_json),
+            "progress_summary": progress_summary(progress.progress.as_ref()),
             "progress_issue": progress.issue,
             "stages": stages_json,
             "stages_issue": stages.issue,
@@ -643,10 +664,21 @@ fn truncate_str(s: &str, max_len: usize) -> String {
     }
 }
 
+fn progress_summary(progress: Option<&InvocationProgress>) -> Option<String> {
+    progress
+        .and_then(|progress| progress.terminal_summary.as_deref())
+        .map(str::trim)
+        .filter(|summary| !summary.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 fn progress_brief(progress: Option<&InvocationProgress>) -> String {
     let Some(progress) = progress else {
         return "-".to_string();
     };
+    if let Some(summary) = progress_summary(Some(progress)) {
+        return summary;
+    }
     if let Some(pct) = progress.pct_done {
         if let (Some(done), Some(total)) = (progress.items_done, progress.items_total) {
             return format!("{done}/{total} ({pct:.1}%)");
@@ -1098,6 +1130,32 @@ mod tests {
         let probe = progress_probe_from_result(42, Some(Err(eyre!("boom"))));
         assert!(probe.progress.is_none());
         assert!(probe.issue.unwrap_or_default().contains("boom"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_progress_brief_prefers_terminal_summary() -> ::xtask::sandbox::TestResult<()> {
+        let progress = InvocationProgress {
+            invocation_id: 42,
+            phase: Some("vm-test".to_string()),
+            step: Some("subtest: ignored".to_string()),
+            pct_done: Some(25.0),
+            items_done: Some(1),
+            items_total: Some(4),
+            updated_at: "2026-04-23T00:00:00Z".to_string(),
+            mode: Some("indeterminate".to_string()),
+            unit_kind: None,
+            rate_per_sec: None,
+            eta_confidence: Some("none".to_string()),
+            terminal_summary: Some(
+                "basic: RequestedAssertionFailed: browser proof missing".to_string(),
+            ),
+        };
+
+        assert_eq!(
+            progress_brief(Some(&progress)),
+            "basic: RequestedAssertionFailed: browser proof missing"
+        );
         Ok(())
     }
 
