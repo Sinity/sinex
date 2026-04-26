@@ -6,12 +6,40 @@ use sinex_primitives::{
     JsonValue,
     environment::{SinexEnvironment, environment},
     events::{Event, OffsetKind, Provenance},
+    nats::{NatsTrafficClass, insert_traffic_class_header},
 };
 use std::{future::IntoFuture, sync::Arc, time::Duration};
 use tokio::sync::Semaphore;
 
 const DEFAULT_PUBLISH_ACK_TIMEOUT: Duration = Duration::from_secs(10);
-const DEFAULT_PUBLISH_CONCURRENCY: usize = 100;
+const DEFAULT_RAW_EVENT_PUBLISH_CONCURRENCY: usize = 100;
+const DEFAULT_TELEMETRY_PUBLISH_CONCURRENCY: usize = 16;
+const DEFAULT_RAW_INGEST_DLQ_PUBLISH_CONCURRENCY: usize = 16;
+const DEFAULT_PROCESSING_FAILURE_PUBLISH_CONCURRENCY: usize = 16;
+
+#[derive(Debug, Clone)]
+struct PublishSemaphores {
+    raw_event: Arc<Semaphore>,
+    telemetry: Arc<Semaphore>,
+    raw_ingest_dlq: Arc<Semaphore>,
+    processing_failure: Arc<Semaphore>,
+}
+
+impl PublishSemaphores {
+    fn new(
+        raw_event: usize,
+        telemetry: usize,
+        raw_ingest_dlq: usize,
+        processing_failure: usize,
+    ) -> Self {
+        Self {
+            raw_event: Arc::new(Semaphore::new(raw_event)),
+            telemetry: Arc::new(Semaphore::new(telemetry)),
+            raw_ingest_dlq: Arc::new(Semaphore::new(raw_ingest_dlq)),
+            processing_failure: Arc::new(Semaphore::new(processing_failure)),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct NatsPublisher {
@@ -19,10 +47,7 @@ pub struct NatsPublisher {
     js: async_nats::jetstream::Context,
     env: SinexEnvironment,
     namespace: Option<String>,
-    /// Per-publisher backpressure semaphore. Bounds how many in-flight publishes
-    /// this publisher instance can have simultaneously. Override via
-    /// `SINEX_PUBLISH_CONCURRENCY` env var (falls back to 100).
-    publish_semaphore: Arc<Semaphore>,
+    semaphores: PublishSemaphores,
 }
 
 /// Destructured provenance fields for publish payloads.
@@ -106,10 +131,25 @@ impl NatsPublisher {
     #[must_use]
     pub fn with_namespace(nats_client: async_nats::Client, namespace: Option<String>) -> Self {
         let env = environment().clone();
-        let concurrency = env_parse_with_default(
+        let raw_event_concurrency = env_parse_with_default(
             "SINEX_PUBLISH_CONCURRENCY",
-            DEFAULT_PUBLISH_CONCURRENCY,
-            "nats publisher concurrency",
+            DEFAULT_RAW_EVENT_PUBLISH_CONCURRENCY,
+            "nats raw-event publisher concurrency",
+        );
+        let telemetry_concurrency = env_parse_with_default(
+            "SINEX_TELEMETRY_PUBLISH_CONCURRENCY",
+            DEFAULT_TELEMETRY_PUBLISH_CONCURRENCY,
+            "nats telemetry publisher concurrency",
+        );
+        let raw_ingest_dlq_concurrency = env_parse_with_default(
+            "SINEX_RAW_INGEST_DLQ_PUBLISH_CONCURRENCY",
+            DEFAULT_RAW_INGEST_DLQ_PUBLISH_CONCURRENCY,
+            "nats raw-ingest DLQ publisher concurrency",
+        );
+        let processing_failure_concurrency = env_parse_with_default(
+            "SINEX_PROCESSING_FAILURE_PUBLISH_CONCURRENCY",
+            DEFAULT_PROCESSING_FAILURE_PUBLISH_CONCURRENCY,
+            "nats processing-failure publisher concurrency",
         );
         let js = async_nats::jetstream::new(nats_client.clone());
         Self {
@@ -117,7 +157,12 @@ impl NatsPublisher {
             js,
             env,
             namespace,
-            publish_semaphore: Arc::new(Semaphore::new(concurrency)),
+            semaphores: PublishSemaphores::new(
+                raw_event_concurrency,
+                telemetry_concurrency,
+                raw_ingest_dlq_concurrency,
+                processing_failure_concurrency,
+            ),
         }
     }
 
@@ -127,21 +172,21 @@ impl NatsPublisher {
         &self.nats_client
     }
 
-    /// Publish an event to the Dead Letter Queue
+    /// Publish an event to the raw-ingest DLQ.
     ///
-    /// DLQ events preserve the original event data with additional error context.
-    /// They can be retried later using `DlqRetryHandler`.
-    pub async fn publish_to_dlq(
+    /// This exists for the operator-facing raw DLQ and its retry tooling.
+    /// Derived/runtime processing failures must use `publish_processing_failure`.
+    pub async fn publish_to_raw_ingest_dlq(
         &self,
         event: &Event,
         error: &str,
         node_name: &str,
     ) -> NodeResult<()> {
-        // Acquire the publish semaphore to prevent DLQ storms from flooding NATS
-        // while the regular publish path is being rate-limited.
-        let _permit = self.publish_semaphore.acquire().await.map_err(|e| {
-            sinex_primitives::SinexError::processing("DLQ publish semaphore closed").with_source(e)
-        })?;
+        let _permit = acquire_lane_permit(
+            &self.semaphores.raw_ingest_dlq,
+            "raw-ingest DLQ",
+        )
+        .await?;
         let prov = destructure_provenance(event.provenance());
 
         let (event_id, original_event_bytes) = build_publish_payload(
@@ -187,15 +232,16 @@ impl NatsPublisher {
         headers.insert("Event-Id", event_id.as_str());
         headers.insert("Original-Subject", original_subject.as_str());
         headers.insert("Retry-Count", "0");
+        insert_traffic_class_header(&mut headers, NatsTrafficClass::RawIngestDlq);
 
         let ack_future = self
-            .js
-            .publish_with_headers(subject, headers, payload.into())
-            .await
-            .map_err(|e| {
-                sinex_primitives::SinexError::processing("Failed to publish DLQ message")
-                    .with_source(e)
-            })?;
+            .publish_with_headers(
+            subject,
+            headers,
+            payload,
+            "Failed to publish raw-ingest DLQ message",
+        )
+            .await?;
         let ack = wait_for_publish_ack(ack_future, DEFAULT_PUBLISH_ACK_TIMEOUT).await?;
 
         tracing::warn!(
@@ -203,16 +249,121 @@ impl NatsPublisher {
             node = %node_name,
             error = %error,
             sequence = ack.sequence,
-            "Event sent to DLQ"
+            "Event sent to raw-ingest DLQ"
         );
 
         Ok(())
     }
 
     pub async fn publish(&self, event: &Event) -> NodeResult<()> {
-        let _permit = self.publish_semaphore.acquire().await.map_err(|e| {
-            std::io::Error::other(format!("Failed to acquire publish semaphore: {e}"))
-        })?;
+        self.publish_event_with_class(
+            event,
+            NatsTrafficClass::RawEvent,
+            &self.semaphores.raw_event,
+            "raw event",
+        )
+        .await
+    }
+
+    pub async fn publish_telemetry(&self, event: &Event) -> NodeResult<()> {
+        self.publish_event_with_class(
+            event,
+            NatsTrafficClass::Telemetry,
+            &self.semaphores.telemetry,
+            "telemetry event",
+        )
+        .await
+    }
+
+    pub async fn publish_processing_failure(
+        &self,
+        event: &Event,
+        error: &str,
+        node_name: &str,
+    ) -> NodeResult<()> {
+        let _permit = acquire_lane_permit(
+            &self.semaphores.processing_failure,
+            "processing failure",
+        )
+        .await?;
+        let prov = destructure_provenance(event.provenance());
+
+        let (event_id, original_event_bytes) = build_publish_payload(
+            event,
+            prov.source_material_id,
+            prov.anchor_byte,
+            prov.offset_start,
+            prov.offset_end,
+            prov.offset_kind,
+            prov.source_event_ids,
+        )?;
+        let original_event = serde_json::from_slice::<JsonValue>(&original_event_bytes)
+            .map_err(sinex_primitives::SinexError::from)?;
+        let original_subject = self.env.nats_raw_event_subject_with_namespace(
+            self.namespace.as_deref(),
+            event.source.as_str(),
+            event.event_type.as_str(),
+        );
+
+        let failure_entry = serde_json::json!({
+            "event_id": event_id,
+            "source": event.source.as_str(),
+            "event_type": event.event_type.as_str(),
+            "error": error,
+            "node": node_name,
+            "original_event": original_event,
+            "failed_at": sinex_primitives::temporal::format_rfc3339(sinex_primitives::temporal::now()),
+        });
+
+        let payload =
+            serde_json::to_vec(&failure_entry).map_err(sinex_primitives::SinexError::from)?;
+        let subject = self.env.nats_subject_with_namespace(
+            self.namespace.as_deref(),
+            &format!(
+                "events.processing_failures.{}.{}",
+                node_name.replace('.', "_"),
+                event_id
+            ),
+        );
+
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert(
+            "Nats-Msg-Id",
+            format!("processing-failure-{event_id}").as_str(),
+        );
+        headers.insert("Event-Id", event_id.as_str());
+        headers.insert("Original-Subject", original_subject.as_str());
+        insert_traffic_class_header(&mut headers, NatsTrafficClass::ProcessingFailure);
+
+        let ack_future = self
+            .publish_with_headers(
+            subject,
+            headers,
+            payload,
+            "Failed to publish processing-failure message",
+        )
+            .await?;
+        let ack = wait_for_publish_ack(ack_future, DEFAULT_PUBLISH_ACK_TIMEOUT).await?;
+
+        tracing::warn!(
+            event_id = %event_id,
+            node = %node_name,
+            error = %error,
+            sequence = ack.sequence,
+            "Event sent to processing-failure stream"
+        );
+
+        Ok(())
+    }
+
+    async fn publish_event_with_class(
+        &self,
+        event: &Event,
+        traffic_class: NatsTrafficClass,
+        semaphore: &Arc<Semaphore>,
+        lane_label: &'static str,
+    ) -> NodeResult<()> {
+        let _permit = acquire_lane_permit(semaphore, lane_label).await?;
 
         let prov = destructure_provenance(event.provenance());
 
@@ -235,19 +386,17 @@ impl NatsPublisher {
         // Add idempotency header
         let mut headers = async_nats::HeaderMap::new();
         headers.insert("Nats-Msg-Id", event_id_str.as_str());
+        insert_traffic_class_header(&mut headers, traffic_class);
 
         // Publish to JetStream, then wait for acknowledgment (bounded by timeout).
         let ack_future = self
-            .js
-            .publish_with_headers(subject, headers, payload.into())
-            .await
-            .map_err(|e| {
-                sinex_primitives::SinexError::processing("Failed to publish event").with_source(e)
-            })?;
+            .publish_with_headers(subject, headers, payload, "Failed to publish event")
+            .await?;
         let ack = wait_for_publish_ack(ack_future, DEFAULT_PUBLISH_ACK_TIMEOUT).await?;
 
         tracing::debug!(
             event_id = %event_id_str,
+            traffic_class = traffic_class.as_header_value(),
             sequence = ack.sequence,
             stream = %ack.stream,
             "Event published to JetStream"
@@ -255,6 +404,33 @@ impl NatsPublisher {
 
         Ok(())
     }
+
+    async fn publish_with_headers(
+        &self,
+        subject: String,
+        headers: async_nats::HeaderMap,
+        payload: Vec<u8>,
+        error_message: &'static str,
+    ) -> NodeResult<async_nats::jetstream::context::PublishAckFuture> {
+        self.js
+            .publish_with_headers(subject, headers, payload.into())
+            .await
+            .map_err(|error| {
+                sinex_primitives::SinexError::processing(error_message).with_source(error)
+            })
+    }
+}
+
+async fn acquire_lane_permit(
+    semaphore: &Arc<Semaphore>,
+    lane_label: &'static str,
+) -> NodeResult<tokio::sync::OwnedSemaphorePermit> {
+    semaphore.clone().acquire_owned().await.map_err(|error| {
+        sinex_primitives::SinexError::processing(format!(
+            "{lane_label} publish semaphore closed"
+        ))
+        .with_source(error)
+    })
 }
 
 fn build_publish_payload(
@@ -337,13 +513,13 @@ fn offset_kind_label(kind: OffsetKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_PUBLISH_CONCURRENCY, NatsPublisher, build_publish_payload, destructure_provenance,
-        wait_for_publish_ack,
+        DEFAULT_RAW_EVENT_PUBLISH_CONCURRENCY, NatsPublisher, build_publish_payload,
+        destructure_provenance, wait_for_publish_ack,
     };
     use sinex_primitives::{
         DynamicPayload, Id, Uuid,
         domain::{DerivedNodeModel, SyntheticTemporalPolicy},
-        events::{Event, Provenance},
+        events::Event,
     };
     use std::{future, io, time::Duration};
     use xtask::sandbox::sinex_test;
@@ -364,10 +540,7 @@ mod tests {
             "payload.check",
             serde_json::json!({"nested": {"a": 1}}),
         )
-        .with_provenance(Provenance::from_synthesis_safe(
-            Id::from_uuid(Uuid::now_v7()),
-            Vec::new(),
-        ))
+        .from_parents([Id::from_uuid(Uuid::now_v7())])?
         .build()
         .expect("infallible: test provenance set");
         event.id = Some(Id::from_uuid(Uuid::now_v7()));
@@ -444,8 +617,8 @@ mod tests {
         }
 
         assert_eq!(
-            publisher.publish_semaphore.available_permits(),
-            DEFAULT_PUBLISH_CONCURRENCY
+            publisher.semaphores.raw_event.available_permits(),
+            DEFAULT_RAW_EVENT_PUBLISH_CONCURRENCY
         );
         Ok(())
     }

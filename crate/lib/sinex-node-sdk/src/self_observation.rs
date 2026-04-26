@@ -30,36 +30,39 @@
 //! observer.emit_gauge("connections.active", 42.0, None).await?;
 //! ```
 
-use crate::error_helpers::{env_bool_with_default, env_parse_with_default};
+use crate::acquisition_manager::{AcquisitionManager, RotationPolicy};
+use crate::error_helpers::{
+    env_bool_with_default, env_nonempty_string_optional, env_parse_with_default,
+};
+use crate::{BufferedRecordMaterializer, NatsPublisher, deterministic_material_event_id};
 use async_nats::Client as NatsClient;
 use sinex_primitives::Id;
 use sinex_primitives::JsonValue;
-use sinex_primitives::environment::environment;
+use sinex_primitives::Timestamp;
 use sinex_primitives::events::payloads::{
     AssemblyStatsPayload, GatewayRequestStatsPayload, HealthStatusPayload,
     IngestdBatchStatsPayload, MetricCounterPayload, MetricGaugePayload, MetricHistogramPayload,
     NodeProcessingStatsPayload, PoolStatsPayload, RateLimitExceededPayload, ReplayStatsPayload,
     StreamStatsPayload,
 };
-use sinex_primitives::events::{Event, EventId, Provenance};
+use sinex_primitives::events::{Event, Provenance, SourceMaterial};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
-use uuid::Uuid;
 
 /// Self-observation event emitter
 ///
 /// Provides methods for Sinex components to emit internal telemetry as events.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct SelfObserver {
-    /// NATS client for publishing (None when disabled)
-    nats_client: Option<NatsClient>,
+    /// Shared publisher path for raw events (None when disabled)
+    publisher: Option<NatsPublisher>,
+    /// Source-material stream used to record the emitted observation bytes.
+    materializer: Option<BufferedRecordMaterializer>,
     /// Component name
     component: String,
-    /// Subject prefix for publishing
-    subject_prefix: String,
     /// Whether self-observation is enabled
     enabled: bool,
     /// Per-metric emission tracking (`metric_key` -> `last_emission_time`)
@@ -68,13 +71,25 @@ pub struct SelfObserver {
     min_interval: Duration,
 }
 
+impl std::fmt::Debug for SelfObserver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SelfObserver")
+            .field("component", &self.component)
+            .field("enabled", &self.enabled)
+            .field("has_publisher", &self.publisher.is_some())
+            .field("has_materializer", &self.materializer.is_some())
+            .field("min_interval", &self.min_interval)
+            .finish()
+    }
+}
+
 /// Configuration for self-observation
 #[derive(Debug, Clone)]
 pub struct SelfObserverConfig {
     /// Component name (e.g., "sinex-gateway", "sinex-ingestd")
     pub component: String,
-    /// Raw-event subject prefix (default: "events.raw")
-    pub subject_prefix: String,
+    /// Optional NATS namespace used by test/runtime isolation.
+    pub namespace: Option<String>,
     /// Enable self-observation
     pub enabled: bool,
     /// Minimum interval between emissions (default: 1s)
@@ -85,7 +100,7 @@ impl Default for SelfObserverConfig {
     fn default() -> Self {
         Self {
             component: "sinex-unknown".to_string(),
-            subject_prefix: "events.raw".to_string(),
+            namespace: None,
             enabled: true,
             min_emission_interval: Duration::from_secs(1),
         }
@@ -103,10 +118,12 @@ impl SelfObserverConfig {
             1_u64,
             "self-observation",
         );
+        let namespace =
+            env_nonempty_string_optional("SINEX_NAMESPACE", "self-observation namespace");
 
         Self {
             component: component.to_string(),
-            subject_prefix: "events.raw".to_string(),
+            namespace,
             enabled,
             min_emission_interval: Duration::from_secs(min_interval_secs),
         }
@@ -117,13 +134,37 @@ impl SelfObserver {
     /// Create a new self-observer for a component
     #[must_use]
     pub fn new(nats_client: NatsClient, config: SelfObserverConfig) -> Self {
+        let SelfObserverConfig {
+            component,
+            namespace,
+            enabled,
+            min_emission_interval,
+        } = config;
+        let (publisher, materializer) = if enabled {
+            let acquisition_manager = Arc::new(AcquisitionManager::new_with_namespace(
+                nats_client.clone(),
+                RotationPolicy::default(),
+                "self_observation".to_string(),
+                namespace.clone(),
+            ));
+            (
+                Some(NatsPublisher::with_namespace(nats_client, namespace)),
+                Some(BufferedRecordMaterializer::buffered_default(
+                    acquisition_manager,
+                    self_observation_source_identifier(&component),
+                )),
+            )
+        } else {
+            (None, None)
+        };
+
         Self {
-            nats_client: Some(nats_client),
-            component: config.component,
-            subject_prefix: config.subject_prefix,
-            enabled: config.enabled,
+            publisher,
+            materializer,
+            component,
+            enabled,
             metric_emissions: Arc::new(RwLock::new(HashMap::new())),
-            min_interval: config.min_emission_interval,
+            min_interval: min_emission_interval,
         }
     }
 
@@ -131,9 +172,9 @@ impl SelfObserver {
     #[must_use]
     pub fn disabled() -> Self {
         Self {
-            nats_client: None,
+            publisher: None,
+            materializer: None,
             component: "disabled".to_string(),
-            subject_prefix: "events.raw".to_string(),
             enabled: false,
             metric_emissions: Arc::new(RwLock::new(HashMap::new())),
             min_interval: Duration::from_secs(1),
@@ -143,16 +184,7 @@ impl SelfObserver {
     /// Check if self-observation is enabled
     #[must_use]
     pub fn is_enabled(&self) -> bool {
-        self.enabled && self.nats_client.is_some()
-    }
-
-    /// Create provenance for self-observation events
-    ///
-    /// Self-observation events are synthetic with a self-referential source.
-    /// We use a new `UUIDv7` as the "source" event ID, following the pattern
-    /// used elsewhere in the codebase for internally-generated events.
-    fn self_provenance(&self) -> Provenance {
-        Provenance::from_synthesis_safe(EventId::from_uuid(Uuid::now_v7()), Vec::new())
+        self.enabled && self.publisher.is_some() && self.materializer.is_some()
     }
 
     fn metric_identity_key(event_type: &str, payload: &JsonValue) -> String {
@@ -233,48 +265,86 @@ impl SelfObserver {
             return Ok(());
         }
 
-        let mut event = Event::new(payload, self.self_provenance())
-            .to_json_event()
+        let payload_json = serde_json::to_value(&payload)
             .map_err(|e| SelfObservationError::Serialization(e.to_string()))?;
-        event.id = Some(Id::new());
-
-        let metric_key = Self::metric_identity_key(event.event_type.as_str(), &event.payload);
+        let source = P::SOURCE.as_str().to_string();
+        let event_type = P::EVENT_TYPE.as_str().to_string();
+        let metric_key = Self::metric_identity_key(event_type.as_str(), &payload_json);
         if !self.reserve_metric_slot(&metric_key).await {
             return Ok(());
         }
 
-        let subject = environment().nats_subject_with_namespace(
-            None,
-            &format!(
-                "{}.{}.{}",
-                self.subject_prefix,
-                sinex_primitives::environment::SinexEnvironment::nats_subject_token(
-                    event.source.as_str()
-                ),
-                sinex_primitives::environment::SinexEnvironment::nats_subject_token(
-                    event.event_type.as_str()
-                )
-            ),
-        );
-        let data = serde_json::to_vec(&event)
-            .map_err(|e| SelfObservationError::Serialization(e.to_string()))?;
-
-        // Publish to NATS (without waiting for ack for telemetry)
-        let Some(ref nats_client) = self.nats_client else {
+        let (Some(materializer), Some(publisher)) =
+            (self.materializer.as_ref(), self.publisher.as_ref())
+        else {
             self.release_metric_slot(&metric_key).await;
             warn!(
                 component = %self.component,
-                event_type = %event.event_type,
-                "Self-observation enabled but no NATS client is available"
+                event_type = %event_type,
+                "Self-observation enabled but the runtime path is unavailable"
             );
             return Err(SelfObservationError::Unavailable);
         };
 
-        if let Err(e) = nats_client.publish(subject.clone(), data.into()).await {
+        let ts_orig = Timestamp::now();
+        let host = sinex_primitives::events::builder::get_hostname();
+        let record = SelfObservationRecord {
+            component: &self.component,
+            source: source.as_str(),
+            event_type: event_type.as_str(),
+            ts_orig: ts_orig.format_rfc3339(),
+            host: host.as_str(),
+            payload: &payload_json,
+        };
+
+        let anchor = match materializer.append_json_line(&record).await {
+            Ok(anchor) => anchor,
+            Err(error) => {
+                self.release_metric_slot(&metric_key).await;
+                warn!(
+                    component = %self.component,
+                    event_type = %event_type,
+                    error = %error,
+                    "Failed to materialize self-observation record"
+                );
+                return Err(SelfObservationError::Materialization(error.to_string()));
+            }
+        };
+
+        let mut event = Event::new(
+            payload,
+            Provenance::from_material(
+                Id::<SourceMaterial>::from_uuid(anchor.material_id),
+                anchor.offset_start,
+                Some(anchor.offset_start),
+                Some(anchor.offset_end),
+            ),
+        )
+        .with_timestamp(ts_orig)
+        .with_host(host);
+        let event_id = deterministic_material_event_id(
+            event.source.as_str(),
+            event.event_type.as_str(),
+            anchor.material_id,
+            anchor.offset_start,
+            Some(anchor.offset_start),
+            Some(anchor.offset_end),
+            ts_orig,
+        );
+        event.id = Some(Id::from_uuid(event_id));
+
+        let event = match event.to_json_event() {
+            Ok(event) => event,
+            Err(error) => {
+                self.release_metric_slot(&metric_key).await;
+                return Err(SelfObservationError::Serialization(error.to_string()));
+            }
+        };
+
+        if let Err(e) = publisher.publish_telemetry(&event).await {
             self.release_metric_slot(&metric_key).await;
             warn!(
                 component = %self.component,
-                subject = %subject,
                 error = %e,
                 "Failed to publish self-observation event"
             );
@@ -284,6 +354,10 @@ impl SelfObserver {
         debug!(
             component = %self.component,
             event_type = %event.event_type,
+            event_id = %event_id,
+            material_id = %anchor.material_id,
+            offset_start = anchor.offset_start,
+            offset_end = anchor.offset_end,
             "Published self-observation event"
         );
 
@@ -600,10 +674,26 @@ impl SelfObserver {
 pub enum SelfObservationError {
     #[error("Failed to serialize event: {0}")]
     Serialization(String),
-    #[error("Self-observation is enabled but no NATS client is available")]
+    #[error("Self-observation materialization failed: {0}")]
+    Materialization(String),
+    #[error("Self-observation is enabled but the runtime path is unavailable")]
     Unavailable,
     #[error("Failed to publish event: {0}")]
     Publish(String),
+}
+
+#[derive(serde::Serialize)]
+struct SelfObservationRecord<'a> {
+    component: &'a str,
+    source: &'a str,
+    event_type: &'a str,
+    ts_orig: String,
+    host: &'a str,
+    payload: &'a JsonValue,
+}
+
+fn self_observation_source_identifier(component: &str) -> String {
+    format!("sinex.self-observation.{component}")
 }
 
 /// Background task for periodic metric emission
@@ -661,9 +751,9 @@ mod tests {
 
     fn test_observer() -> SelfObserver {
         SelfObserver {
-            nats_client: None,
+            publisher: None,
+            materializer: None,
             component: "test-component".to_string(),
-            subject_prefix: "events.raw".to_string(),
             enabled: true,
             metric_emissions: Arc::new(RwLock::new(HashMap::new())),
             min_interval: Duration::from_secs(1),

@@ -62,6 +62,7 @@ use async_nats::Subscriber;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_primitives::coordination::{CoordinationKvClient, InstanceMetadata};
+use sinex_primitives::nats::{NatsTrafficClass, insert_traffic_class_header};
 use sinex_primitives::utils::CoordinationPrimitive;
 use sinex_primitives::{Result, Seconds, SinexError};
 use std::sync::Arc;
@@ -1360,8 +1361,11 @@ impl NodeCoordination {
         );
         let payload = Self::serialize_handoff_request(&request)?;
 
+        let mut headers = async_nats::HeaderMap::new();
+        insert_traffic_class_header(&mut headers, NatsTrafficClass::Control);
+
         self.nats_client
-            .publish(subject, payload.into())
+            .publish_with_headers(subject, headers, payload.into())
             .await
             .map_err(|e| SinexError::network(format!("Failed to publish handoff ready: {e}")))?;
 
@@ -1419,8 +1423,11 @@ impl NodeCoordination {
         let subject = format!("sinex.coordination.{}.handoff", self.instance.service_name);
         let payload = Self::serialize_handoff_request(&request)?;
 
+        let mut headers = async_nats::HeaderMap::new();
+        insert_traffic_class_header(&mut headers, NatsTrafficClass::Control);
+
         self.nats_client
-            .publish(subject, payload.into())
+            .publish_with_headers(subject, headers, payload.into())
             .await
             .map_err(|e| SinexError::network(format!("Failed to publish handoff request: {e}")))?;
 
@@ -1673,8 +1680,11 @@ impl NodeCoordination {
             SinexError::validation("failed to serialize failure signal").with_source(e)
         })?;
 
+        let mut headers = async_nats::HeaderMap::new();
+        insert_traffic_class_header(&mut headers, NatsTrafficClass::Control);
+
         self.nats_client
-            .publish(subject, bytes.into())
+            .publish_with_headers(subject, headers, bytes.into())
             .await
             .map_err(|e| SinexError::network("failed to publish failure signal").with_source(e))?;
 
