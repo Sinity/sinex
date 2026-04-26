@@ -27,6 +27,8 @@ members = [
   "crate/nodes/sinex-health-automaton",
   "crate/nodes/sinex-analytics-automaton",
   "crate/nodes/sinex-session-detector",
+  "crate/nodes/sinex-hourly-summarizer",
+  "crate/nodes/sinex-daily-summarizer",
 
   # Developer tooling
   "xtask",

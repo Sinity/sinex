@@ -212,6 +212,8 @@
             "sinex-health-automaton"
             "sinex-analytics-automaton"
             "sinex-session-detector"
+            "sinex-hourly-summarizer"
+            "sinex-daily-summarizer"
             "sinex-node-sdk"
             "xtask"
           ];
@@ -254,6 +256,8 @@
             sinex-health-automaton = mkPackage "sinex-health-automaton";
             sinex-analytics-automaton = mkPackage "sinex-analytics-automaton";
             sinex-session-detector = mkPackage "sinex-session-detector";
+            sinex-hourly-summarizer = mkPackage "sinex-hourly-summarizer";
+            sinex-daily-summarizer = mkPackage "sinex-daily-summarizer";
 
             # Node SDK binaries (sinex-preflight lives here)
             sinex-node-sdk = mkPackage "sinex-node-sdk";
@@ -987,6 +991,8 @@
             sinex-health-automaton
             sinex-analytics-automaton
             sinex-session-detector
+            sinex-hourly-summarizer
+            sinex-daily-summarizer
             sinex-node-sdk
             ;
         }
