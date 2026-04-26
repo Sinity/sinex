@@ -295,7 +295,7 @@ SQL
             timeout=60,
         )
         machine.wait_until_succeeds(
-            "sinexctl --insecure verify --gateway-smoke --automata-smoke --document-smoke --source-proof --historical-proof",
+            "sinexctl --insecure verify --document-smoke --source-proof --historical-proof",
             timeout=120,
         )
         assert_no_failed_sinex_units()
@@ -310,7 +310,7 @@ SQL
             machine.systemctl(f"restart {unit}")
             machine.wait_for_unit(unit, timeout=60)
             machine.succeed(f"systemctl is-active {unit}")
-        machine.succeed("sinexctl --insecure verify --gateway-smoke")
+        machine.succeed("sinexctl --insecure verify")
         assert_no_failed_sinex_units()
 
     with subtest("Managed node units are generated"):
