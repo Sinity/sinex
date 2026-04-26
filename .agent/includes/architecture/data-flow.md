@@ -86,10 +86,17 @@ All share `DerivedNodeAdapter<N>` for: NATS consumer, checkpoint persistence, he
 
 Each synthesis event carries `node_model`, `temporal_policy`, and `semantics_version` — self-documenting provenance metadata.
 
-**Current automata**: canonicalizer (Transducer), analytics (Windowed, 1000-event sliding window), health (ScopeReconciler, per-component).
+**Current automata** (live as of 2026-04-26):
+- `sinex-terminal-command-canonicalizer` — Transducer, `command.canonical`
+- `sinex-analytics-automaton` — Windowed (1000-event sliding window), `analytics.insight`
+- `sinex-health-automaton` — ScopeReconciler, `health.aggregated_report`
+- `sinex-session-detector` — Windowed, `activity.session.boundary` (enabled by NixOS module default)
+- `sinex-hourly-summarizer` — Windowed, hourly rollups
+- `sinex-daily-summarizer` — Windowed, daily rollups
 
-**Session detector exists** (`sinex-session-detector` crate, WindowedNode, not yet deployed).
-Entity extractor and day summarizer are not yet implemented. The SDK is complete. The intelligence layer is vacant.
+Entity extractor is not yet implemented. The SDK and the basic intelligence
+layer are present; richer derivations (entity extraction, document-level
+synthesis) are the open frontier.
 
 ### WindowedNode Example: Session Detector
 
