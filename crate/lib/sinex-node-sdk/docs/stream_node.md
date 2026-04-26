@@ -61,5 +61,16 @@ For lower-level control, implement `Node` directly.
 - Key format is `<node>.<consumer_group>.<consumer>`.
 - Derived-node leader/standby behavior is handled inside runtime processing paths
   when the configured processing model requires it.
+- `NodeRuntimeState::runtime_drain()` exposes the shared runtime drain signal.
+  Adapter-managed continuous loops should subscribe to it instead of inventing a
+  second shutdown channel.
+- `sinex.control.nodes.<control_identity>.drain` is a one-way graceful-stop
+  command. The runner marks the node as draining, stops accepting new runtime-
+  owned work, lets the current unit of work finish, persists the final
+  checkpoint, and then publishes
+  `sinex.control.nodes.<control_identity>.drain_complete`.
+- `sinex.control.nodes.<control_identity>.resume` is not an in-process inverse of
+  drain. Today the runtime drain signal is intentionally one-way; resuming work
+  means starting a fresh process/runtime.
 - Coordination adapters are optional and should not duplicate built-in
   derived-node leadership.

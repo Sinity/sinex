@@ -10,11 +10,86 @@ use sinex_primitives::events::Event;
 use sinex_primitives::{HostName, Id, JsonValue, Uuid};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tracing::info;
 
 pub type EventSender = mpsc::Sender<Event<JsonValue>>;
 pub type EventStream = mpsc::Receiver<Event<JsonValue>>;
+
+/// Shared one-way drain controller for a running node service.
+///
+/// The command listener raises the drain signal, long-running node loops
+/// subscribe to it, and the runner can register abort handles for runtime-owned
+/// background tasks that must stop accepting new work immediately.
+#[derive(Clone)]
+pub struct RuntimeDrainController {
+    drain_tx: Arc<watch::Sender<bool>>,
+    runtime_abort: Arc<std::sync::Mutex<Option<tokio::task::AbortHandle>>>,
+}
+
+impl RuntimeDrainController {
+    #[must_use]
+    pub fn new() -> Self {
+        let (drain_tx, _drain_rx) = watch::channel(false);
+        Self {
+            drain_tx: Arc::new(drain_tx),
+            runtime_abort: Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+
+    #[must_use]
+    pub fn subscribe(&self) -> watch::Receiver<bool> {
+        self.drain_tx.subscribe()
+    }
+
+    #[must_use]
+    pub fn is_requested(&self) -> bool {
+        *self.drain_tx.borrow()
+    }
+
+    pub fn request_drain(&self) -> bool {
+        if self.is_requested() {
+            return false;
+        }
+        self.drain_tx.send_replace(true);
+        true
+    }
+
+    pub fn register_runtime_abort(&self, abort_handle: tokio::task::AbortHandle) {
+        let mut guard = self
+            .runtime_abort
+            .lock()
+            .expect("runtime abort handle mutex poisoned");
+        *guard = Some(abort_handle);
+    }
+
+    pub fn clear_runtime_abort(&self) {
+        let mut guard = self
+            .runtime_abort
+            .lock()
+            .expect("runtime abort handle mutex poisoned");
+        *guard = None;
+    }
+
+    pub fn abort_runtime_work(&self) -> bool {
+        let guard = self
+            .runtime_abort
+            .lock()
+            .expect("runtime abort handle mutex poisoned");
+        if let Some(handle) = guard.as_ref() {
+            handle.abort();
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl Default for RuntimeDrainController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Basic metadata about the running service.
 #[derive(Debug, Clone)]
@@ -479,6 +554,7 @@ pub struct NodeHandles {
     transport: EventTransport,
     confirmation_buffer: Option<Arc<ConfirmationBuffer>>,
     schema_cache: Option<Arc<crate::runtime::stream::SchemaBroadcastCache>>,
+    runtime_drain: Arc<RuntimeDrainController>,
 }
 
 impl NodeHandles {
@@ -500,6 +576,7 @@ impl NodeHandles {
             transport,
             confirmation_buffer,
             schema_cache,
+            runtime_drain: Arc::new(RuntimeDrainController::new()),
         }
     }
 
@@ -521,6 +598,7 @@ impl NodeHandles {
             transport,
             confirmation_buffer,
             schema_cache,
+            runtime_drain: Arc::new(RuntimeDrainController::new()),
         }
     }
 
@@ -564,6 +642,11 @@ impl NodeHandles {
 
     pub fn schema_cache(&self) -> Option<Arc<crate::runtime::stream::SchemaBroadcastCache>> {
         self.schema_cache.as_ref().map(Arc::clone)
+    }
+
+    #[must_use]
+    pub fn runtime_drain(&self) -> Arc<RuntimeDrainController> {
+        Arc::clone(&self.runtime_drain)
     }
 }
 
