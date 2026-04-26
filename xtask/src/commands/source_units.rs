@@ -215,7 +215,7 @@ fn build_source_unit_manifest() -> SourceUnitManifest {
 
     SourceUnitManifest {
         schema_version: proof::PROOF_CATALOG_SCHEMA_VERSION,
-        issue_refs: vec!["issue:518", "issue:473", "issue:369"],
+        issue_refs: vec!["issue:518", "issue:486", "issue:369"],
         runner_packs: runner_pack_manifests(&source_units),
         services: service_manifests(&source_units),
         package_impact: package_impact_report(&source_units),
