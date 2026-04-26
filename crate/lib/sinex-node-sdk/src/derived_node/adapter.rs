@@ -1629,7 +1629,16 @@ where
     /// - `invalidation.errors` counter (on failure)
     /// - `invalidation.outputs_emitted` counter (on success, with output count)
     /// - `invalidation.processing_duration_ms` gauge (on success)
-    async fn handle_invalidation_message(&mut self, payload: &[u8]) -> Option<u64> {
+    /// Returns `Ok(Some(count))` on success, `Ok(None)` for a non-fatal skip
+    /// (deserialize error, transient processing error), or `Err` for a fatal
+    /// failure that should halt the node's invalidation consumer. Fatal
+    /// errors include `SinexError::Checkpoint` after the local circuit
+    /// breaker threshold trips — see #581 for why DLQ-style "log and
+    /// continue" on checkpoint errors is unsafe.
+    async fn handle_invalidation_message(
+        &mut self,
+        payload: &[u8],
+    ) -> NodeResult<Option<u64>> {
         let node_name = self.node.name();
         let processing_start = Instant::now();
 
@@ -1659,7 +1668,7 @@ where
                 {
                     log_self_observation_failure(node_name, "invalidation.errors", &error);
                 }
-                return None;
+                return Ok(None);
             }
         };
 
@@ -1703,7 +1712,7 @@ where
                                     &obs_error,
                                 );
                             }
-                            return None;
+                            return Ok(None);
                         }
                     };
                     if let Err(error) = self
@@ -1727,31 +1736,60 @@ where
                                 &obs_error,
                             );
                         }
-                        return None;
+                        return Ok(None);
                     }
                     self.record_state_mutation();
                     let duration_ms = processing_start.elapsed().as_millis() as f64;
 
-                    if self.should_checkpoint()
-                        && let Err(e) = self.save_state().await
-                    {
-                        error!(
-                            node = %node_name,
-                            error = %e,
-                            "Failed to checkpoint after invalidation"
-                        );
-                        #[cfg(feature = "messaging")]
-                        if let Some(ref obs) = self.self_observer
-                            && let Err(obs_error) =
-                                obs.emit_counter("invalidation.errors", 1, None).await
-                        {
-                            log_self_observation_failure(
-                                node_name,
-                                "invalidation.errors",
-                                &obs_error,
-                            );
+                    if self.should_checkpoint() {
+                        match self.save_state().await {
+                            Ok(()) => {
+                                self.consecutive_checkpoint_failures = 0;
+                            }
+                            Err(e) => {
+                                self.consecutive_checkpoint_failures += 1;
+                                error!(
+                                    node = %node_name,
+                                    error = %e,
+                                    consecutive_failures =
+                                        self.consecutive_checkpoint_failures,
+                                    "Failed to checkpoint after invalidation"
+                                );
+                                #[cfg(feature = "messaging")]
+                                if let Some(ref obs) = self.self_observer
+                                    && let Err(obs_error) =
+                                        obs.emit_counter("invalidation.errors", 1, None).await
+                                {
+                                    log_self_observation_failure(
+                                        node_name,
+                                        "invalidation.errors",
+                                        &obs_error,
+                                    );
+                                }
+                                // Two halt conditions, both per #581:
+                                // 1. Three consecutive failures — same circuit-breaker
+                                //    threshold the periodic checkpoint branch uses
+                                //    below. Without this, an invalidation-driven CAS
+                                //    conflict loops forever; the periodic branch
+                                //    would never run because the consumer never
+                                //    returns to its `select!`.
+                                // 2. Direct Checkpoint variant — even on the first
+                                //    failure if the error itself signals "halt"
+                                //    (e.g. propagated from the inner save path
+                                //    which already exhausted retries).
+                                if self.consecutive_checkpoint_failures >= 3
+                                    || matches!(e, SinexError::Checkpoint(_))
+                                {
+                                    return Err(SinexError::checkpoint(format!(
+                                        "Checkpoint save failed during invalidation \
+                                         processing ({} consecutive); halting node \
+                                         to prevent silent progress loss: {e}",
+                                        self.consecutive_checkpoint_failures
+                                    )));
+                                }
+                                return Ok(None);
+                            }
                         }
-                        return None;
                     }
 
                     // Emit success metrics
@@ -1793,7 +1831,7 @@ where
                         }
                     }
 
-                    Some(count)
+                    Ok(Some(count))
                 }
                 Err(e) => {
                     error!(
@@ -1808,7 +1846,14 @@ where
                     {
                         log_self_observation_failure(node_name, "invalidation.errors", &error);
                     }
-                    None
+                    // Same #581 guard at the prepare step: a Checkpoint
+                    // variant from inside `prepare_invalidation` (e.g. a
+                    // sub-call exhausted its own retries) means the next
+                    // invalidation will hit the same wall.
+                    if matches!(e, SinexError::Checkpoint(_)) {
+                        return Err(e);
+                    }
+                    Ok(None)
                 }
             }
         }
@@ -1821,7 +1866,7 @@ where
                 node = %node_name,
                 "Invalidation received but db feature not enabled — cannot process"
             );
-            None
+            Ok(None)
         }
     }
 
@@ -1921,10 +1966,16 @@ where
                     }
                     if shutdown_result.is_err() || *shutdown_rx.borrow() {
                         info!(node = %node_name, "Shutdown signal received");
-                        // Process any pending invalidations before shutdown
+                        // Process any pending invalidations before shutdown.
+                        // A halt-class error from `handle_invalidation_message`
+                        // (`Err`) means the next invalidation will hit the
+                        // same wall — propagate it so the node halts on
+                        // genuine fatal classes (#581-shape).
                         for payload in pending_invalidations.drain(..) {
-                            if self.handle_invalidation_message(&payload).await.is_some() {
-                                invalidations_processed += 1;
+                            match self.handle_invalidation_message(&payload).await {
+                                Ok(Some(_)) => invalidations_processed += 1,
+                                Ok(None) => {}
+                                Err(e) => return Err(e),
                             }
                         }
                         self.observe_pending_invalidations(0).await;
@@ -1956,8 +2007,12 @@ where
                         "Processing debounced invalidation batch"
                     );
                     for payload in pending_invalidations.drain(..) {
-                        if self.handle_invalidation_message(&payload).await.is_some() {
-                            invalidations_processed += 1;
+                        match self.handle_invalidation_message(&payload).await {
+                            Ok(Some(_)) => invalidations_processed += 1,
+                            Ok(None) => {}
+                            // Halt-class error (#581-shape). Stop the
+                            // continuous loop instead of looping forever.
+                            Err(e) => return Err(e),
                         }
                     }
                     self.observe_pending_invalidations(0).await;
@@ -4128,8 +4183,8 @@ mod tests {
 
         let result = adapter.handle_invalidation_message(&payload).await;
         assert!(
-            result.is_none(),
-            "output send failures must fail invalidation handling"
+            matches!(result, Ok(None)),
+            "output send failures must skip the invalidation (Ok(None)), got: {result:?}"
         );
         let live_output_count = match ctx
             .pool()
@@ -4230,7 +4285,7 @@ mod tests {
 
         let processed = adapter.handle_invalidation_message(&payload).await;
         assert_eq!(
-            processed,
+            processed.expect("state-only invalidation must not halt the node"),
             Some(0),
             "state-only invalidation should still be treated as a successful recomputation"
         );
