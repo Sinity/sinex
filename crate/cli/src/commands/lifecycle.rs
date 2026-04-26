@@ -13,7 +13,10 @@
 
 use clap::{Args, Subcommand, ValueEnum};
 use humantime::parse_duration;
-use sinex_primitives::rpc::lifecycle::TombstoneOperationState;
+use sinex_primitives::rpc::lifecycle::{
+    TombstoneApproveResponse, TombstoneCreateResponse, TombstoneListResponse,
+    TombstoneOperationState, TombstonePreviewResponse, TombstoneStatusResponse,
+};
 use std::time::Duration;
 
 use crate::Result;
@@ -312,49 +315,8 @@ impl TombstoneCreateCommand {
         )
         .await?;
 
-        println!();
-        println!("Tombstone Operation Created");
-        println!("{}", "═".repeat(60));
-        println!();
-        println!("  Operation ID: {}", response.operation.operation_id);
-        println!("  State:        {:?}", response.operation.state);
-        println!("  Expires:      {}", response.operation.expires_at);
-        println!();
-
-        if let Some(analysis) = &response.operation.cascade_analysis {
-            println!("Cascade Analysis:");
-            println!("  Root events:   {}", analysis.root_event_count);
-            println!("  Total cascade: {}", analysis.cascade_total);
-            println!("  Max depth:     {}", analysis.cascade_depth);
-            if !analysis.sample_ids.is_empty() {
-                println!(
-                    "  Sample IDs:    {} ...",
-                    analysis.sample_ids.first().unwrap_or(&"(none)".to_string())
-                );
-            }
-        }
-
-        println!();
-        println!(
-            "⚠️  This operation will PERMANENTLY DELETE {} events.",
-            response
-                .operation
-                .cascade_analysis
-                .as_ref()
-                .map_or(0, |a| a.cascade_total)
-        );
-        println!();
-        println!("To approve and execute, run within 1 hour:");
-        println!(
-            "  sinexctl lifecycle tombstone approve {} --yes-i-understand-data-is-gone",
-            response.operation.operation_id
-        );
-        println!();
-        println!("To cancel:");
-        println!(
-            "  sinexctl lifecycle tombstone cancel {}",
-            response.operation.operation_id
-        );
+        CommandOutput::single(response, format_tombstone_create_table)
+            .display(&self.format)?;
 
         Ok(())
     }
@@ -387,19 +349,22 @@ impl TombstoneApproveCommand {
         // First, get the current status to show what will happen
         let status = client.tombstone_status(self.operation_id.clone()).await?;
 
-        println!();
-        println!("⚠️  WARNING: TOMBSTONING IS PERMANENT!");
-        println!("{}", "═".repeat(60));
-        if let Some(analysis) = &status.operation.cascade_analysis {
-            println!(
-                "  {} events will be reduced to minimal skeletons.",
-                analysis.cascade_total
-            );
+        // Print the warning banner for table mode
+        if matches!(self.format, OutputFormat::Table) {
+            println!();
+            println!("⚠️  WARNING: TOMBSTONING IS PERMANENT!");
+            println!("{}", "═".repeat(60));
+            if let Some(analysis) = &status.operation.cascade_analysis {
+                println!(
+                    "  {} events will be reduced to minimal skeletons.",
+                    analysis.cascade_total
+                );
+            }
+            println!("  Payload data will be PERMANENTLY DELETED.");
+            println!("  This operation CANNOT be undone.");
+            println!("{}", "═".repeat(60));
+            println!();
         }
-        println!("  Payload data will be PERMANENTLY DELETED.");
-        println!("  This operation CANNOT be undone.");
-        println!("{}", "═".repeat(60));
-        println!();
 
         let response = with_spinner_result(
             "Executing tombstone operation...".to_string(),
@@ -408,16 +373,8 @@ impl TombstoneApproveCommand {
         )
         .await?;
 
-        println!();
-        println!("💀 Tombstone Complete (PERMANENT)");
-        println!("{}", "─".repeat(50));
-        println!("  Operation ID:  {}", response.operation.operation_id);
-        println!("  State:         {:?}", response.operation.state);
-        if let Some(count) = response.operation.tombstoned_count {
-            println!("  Tombstoned:    {count} events");
-        }
-        println!();
-        println!("Data has been permanently deleted.");
+        CommandOutput::single(response, format_tombstone_approve_table)
+            .display(&self.format)?;
 
         Ok(())
     }
@@ -443,23 +400,8 @@ impl TombstonePreviewCommand {
         )
         .await?;
 
-        println!();
-        println!("Tombstone Operation Preview");
-        println!("{}", "═".repeat(60));
-        println!();
-        println!("  Operation ID: {}", response.operation.operation_id);
-        println!("  State:        {:?}", response.operation.state);
-        println!("  Created:      {}", response.operation.created_at);
-        println!("  Expires:      {}", response.operation.expires_at);
-        println!("  Reason:       {}", response.operation.reason);
-        println!();
-
-        if let Some(analysis) = &response.operation.cascade_analysis {
-            println!("Cascade Analysis:");
-            println!("  Root events:   {}", analysis.root_event_count);
-            println!("  Total cascade: {}", analysis.cascade_total);
-            println!("  Max depth:     {}", analysis.cascade_depth);
-        }
+        CommandOutput::single(response, format_tombstone_preview_table)
+            .display(&self.format)?;
 
         Ok(())
     }
@@ -549,35 +491,12 @@ impl TombstoneListCommand {
         .await?;
 
         if response.operations.is_empty() {
-            println!("No tombstone operations found.");
+            CommandOutput::empty("No tombstone operations found.").display(&self.format)?;
             return Ok(());
         }
 
-        println!();
-        println!("Tombstone Operations");
-        println!("{}", "═".repeat(100));
-        println!(
-            "{:<28} {:<12} {:<10} {:<20} Reason",
-            "Operation ID", "State", "Events", "Created"
-        );
-        println!("{}", "─".repeat(100));
-
-        for op in &response.operations {
-            let event_count = op.cascade_analysis.as_ref().map_or(0, |a| a.cascade_total);
-            let reason = if op.reason.len() > 30 {
-                format!("{}...", &op.reason[..27])
-            } else {
-                op.reason.clone()
-            };
-            println!(
-                "{:<28} {:<12} {:<10} {:<20} {}",
-                op.operation_id,
-                format!("{:?}", op.state),
-                event_count,
-                &op.created_at[..19], // Truncate to datetime
-                reason
-            );
-        }
+        CommandOutput::single(response, format_tombstone_list_table)
+            .display(&self.format)?;
 
         Ok(())
     }
@@ -603,46 +522,8 @@ impl TombstoneStatusCommand {
         )
         .await?;
 
-        let op = &response.operation;
-
-        println!();
-        println!("Tombstone Operation Status");
-        println!("{}", "═".repeat(60));
-        println!();
-        println!("  Operation ID: {}", op.operation_id);
-        println!("  State:        {:?}", op.state);
-        println!("  Created by:   {}", op.created_by);
-        println!("  Created at:   {}", op.created_at);
-        println!("  Expires at:   {}", op.expires_at);
-        println!("  Reason:       {}", op.reason);
-        println!();
-
-        if let Some(by) = &op.approved_by {
-            println!("  Approved by:  {by}");
-        }
-        if let Some(at) = &op.approved_at {
-            println!("  Approved at:  {at}");
-        }
-        if let Some(at) = &op.started_at {
-            println!("  Started at:   {at}");
-        }
-        if let Some(at) = &op.finished_at {
-            println!("  Finished at:  {at}");
-        }
-        if let Some(count) = op.tombstoned_count {
-            println!("  Tombstoned:   {count} events");
-        }
-        if let Some(err) = &op.error_details {
-            println!("  Error:        {err}");
-        }
-
-        if let Some(analysis) = &op.cascade_analysis {
-            println!();
-            println!("Cascade Analysis:");
-            println!("  Root events:   {}", analysis.root_event_count);
-            println!("  Total cascade: {}", analysis.cascade_total);
-            println!("  Max depth:     {}", analysis.cascade_depth);
-        }
+        CommandOutput::single(response, format_tombstone_status_table)
+            .display(&self.format)?;
 
         Ok(())
     }
@@ -737,6 +618,172 @@ fn format_restore_table(
     output.push_str(&format!("  Cascade depth: {}\n", response.cascade_depth));
     output.push_str(&format!("  Cascade total: {}\n", response.cascade_total));
     output.push_str(&format!("  Operation ID:  {}\n", response.operation_id));
+
+    output
+}
+
+// ==================== Tombstone Table Formatters ====================
+
+fn format_tombstone_create_table(response: &TombstoneCreateResponse) -> String {
+    let mut output = String::new();
+    output.push_str("\n");
+    output.push_str("Tombstone Operation Created\n");
+    output.push_str(&"\u2550".repeat(60));
+    output.push_str("\n\n");
+    output.push_str(&format!("  Operation ID: {}\n", response.operation.operation_id));
+    output.push_str(&format!("  State:        {:?}\n", response.operation.state));
+    output.push_str(&format!("  Expires:      {}\n", response.operation.expires_at));
+    output.push_str("\n");
+
+    if let Some(analysis) = &response.operation.cascade_analysis {
+        output.push_str("Cascade Analysis:\n");
+        output.push_str(&format!("  Root events:   {}\n", analysis.root_event_count));
+        output.push_str(&format!("  Total cascade: {}\n", analysis.cascade_total));
+        output.push_str(&format!("  Max depth:     {}\n", analysis.cascade_depth));
+        if !analysis.sample_ids.is_empty() {
+            output.push_str(&format!(
+                "  Sample IDs:    {} ...\n",
+                analysis.sample_ids.first().unwrap_or(&"(none)".to_string())
+            ));
+        }
+    }
+
+    output.push_str("\n");
+    let warning_count = response
+        .operation
+        .cascade_analysis
+        .as_ref()
+        .map_or(0, |a| a.cascade_total);
+    output.push_str(&format!("\u26a0\ufe0f  This operation will PERMANENTLY DELETE {} events.\n", warning_count));
+    output.push_str("\n");
+    output.push_str("To approve and execute, run within 1 hour:\n");
+    output.push_str(&format!(
+        "  sinexctl lifecycle tombstone approve {} --yes-i-understand-data-is-gone\n",
+        response.operation.operation_id
+    ));
+    output.push_str("\n");
+    output.push_str("To cancel:\n");
+    output.push_str(&format!(
+        "  sinexctl lifecycle tombstone cancel {}\n",
+        response.operation.operation_id
+    ));
+
+    output
+}
+
+fn format_tombstone_approve_table(response: &TombstoneApproveResponse) -> String {
+    let mut output = String::new();
+    output.push_str("\n");
+    output.push_str("\U0001f480 Tombstone Complete (PERMANENT)\n");
+    output.push_str(&"\u2500".repeat(50));
+    output.push_str("\n");
+    output.push_str(&format!("  Operation ID:  {}\n", response.operation.operation_id));
+    output.push_str(&format!("  State:         {:?}\n", response.operation.state));
+    if let Some(count) = response.operation.tombstoned_count {
+        output.push_str(&format!("  Tombstoned:    {count} events\n"));
+    }
+    output.push_str("\n");
+    output.push_str("Data has been permanently deleted.\n");
+    output
+}
+
+fn format_tombstone_preview_table(response: &TombstonePreviewResponse) -> String {
+    let mut output = String::new();
+    output.push_str("\n");
+    output.push_str("Tombstone Operation Preview\n");
+    output.push_str(&"\u2550".repeat(60));
+    output.push_str("\n\n");
+    output.push_str(&format!("  Operation ID: {}\n", response.operation.operation_id));
+    output.push_str(&format!("  State:        {:?}\n", response.operation.state));
+    output.push_str(&format!("  Created:      {}\n", response.operation.created_at));
+    output.push_str(&format!("  Expires:      {}\n", response.operation.expires_at));
+    output.push_str(&format!("  Reason:       {}\n", response.operation.reason));
+    output.push_str("\n");
+
+    if let Some(analysis) = &response.operation.cascade_analysis {
+        output.push_str("Cascade Analysis:\n");
+        output.push_str(&format!("  Root events:   {}\n", analysis.root_event_count));
+        output.push_str(&format!("  Total cascade: {}\n", analysis.cascade_total));
+        output.push_str(&format!("  Max depth:     {}\n", analysis.cascade_depth));
+    }
+
+    output
+}
+
+fn format_tombstone_list_table(response: &TombstoneListResponse) -> String {
+    let mut output = String::new();
+    output.push_str("\n");
+    output.push_str("Tombstone Operations\n");
+    output.push_str(&"\u2550".repeat(100));
+    output.push_str("\n");
+    output.push_str(&format!(
+        "{:<28} {:<12} {:<10} {:<20} Reason\n",
+        "Operation ID", "State", "Events", "Created"
+    ));
+    output.push_str(&"\u2500".repeat(100));
+    output.push_str("\n");
+
+    for op in &response.operations {
+        let event_count = op.cascade_analysis.as_ref().map_or(0, |a| a.cascade_total);
+        let reason = if op.reason.len() > 30 {
+            format!("{}...", &op.reason[..27])
+        } else {
+            op.reason.clone()
+        };
+        output.push_str(&format!(
+            "{:<28} {:<12} {:<10} {:<20} {}\n",
+            op.operation_id,
+            format!("{:?}", op.state),
+            event_count,
+            &op.created_at[..19],
+            reason
+        ));
+    }
+
+    output
+}
+
+fn format_tombstone_status_table(response: &TombstoneStatusResponse) -> String {
+    let op = &response.operation;
+    let mut output = String::new();
+    output.push_str("\n");
+    output.push_str("Tombstone Operation Status\n");
+    output.push_str(&"\u2550".repeat(60));
+    output.push_str("\n\n");
+    output.push_str(&format!("  Operation ID: {}\n", op.operation_id));
+    output.push_str(&format!("  State:        {:?}\n", op.state));
+    output.push_str(&format!("  Created by:   {}\n", op.created_by));
+    output.push_str(&format!("  Created at:   {}\n", op.created_at));
+    output.push_str(&format!("  Expires at:   {}\n", op.expires_at));
+    output.push_str(&format!("  Reason:       {}\n", op.reason));
+    output.push_str("\n");
+
+    if let Some(by) = &op.approved_by {
+        output.push_str(&format!("  Approved by:  {by}\n"));
+    }
+    if let Some(at) = &op.approved_at {
+        output.push_str(&format!("  Approved at:  {at}\n"));
+    }
+    if let Some(at) = &op.started_at {
+        output.push_str(&format!("  Started at:   {at}\n"));
+    }
+    if let Some(at) = &op.finished_at {
+        output.push_str(&format!("  Finished at:  {at}\n"));
+    }
+    if let Some(count) = op.tombstoned_count {
+        output.push_str(&format!("  Tombstoned:   {count} events\n"));
+    }
+    if let Some(err) = &op.error_details {
+        output.push_str(&format!("  Error:        {err}\n"));
+    }
+
+    if let Some(analysis) = &op.cascade_analysis {
+        output.push_str("\n");
+        output.push_str("Cascade Analysis:\n");
+        output.push_str(&format!("  Root events:   {}\n", analysis.root_event_count));
+        output.push_str(&format!("  Total cascade: {}\n", analysis.cascade_total));
+        output.push_str(&format!("  Max depth:     {}\n", analysis.cascade_depth));
+    }
 
     output
 }

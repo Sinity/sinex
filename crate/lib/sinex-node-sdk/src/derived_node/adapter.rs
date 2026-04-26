@@ -1907,7 +1907,7 @@ where
         // The two `#[cfg]` blocks produce different types but both work with
         // `recv_invalidation()` which has matching cfg'd signatures.
         #[cfg(feature = "messaging")]
-        let mut invalidation_sub: Option<async_nats::Subscriber> = {
+        let mut invalidation_sub: Option<async_nats::jetstream::consumer::push::Messages> = {
             let nats_client = self
                 .runtime
                 .as_ref()
@@ -1915,27 +1915,57 @@ where
 
             if let Some(client) = nats_client {
                 let env = sinex_primitives::environment::environment();
-                let subject = env.nats_subject(super::invalidation::INVALIDATION_SUBJECT);
+                let stream_name = env.nats_stream_name("SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS");
                 let queue_group = format!("derived.invalidation.{}", self.node.name());
-                match client
-                    .queue_subscribe(subject.clone(), queue_group.clone())
-                    .await
-                {
-                    Ok(sub) => {
-                        info!(
-                            node = %node_name,
-                            subject = %subject,
-                            queue_group = %queue_group,
-                            "Subscribed to invalidation signals"
-                        );
-                        Some(sub)
+                let deliver_subject = client.new_inbox();
+                let js = async_nats::jetstream::new(client.clone());
+
+                match js.get_stream(&stream_name).await {
+                    Ok(stream) => {
+                        let config = async_nats::jetstream::consumer::push::Config {
+                            deliver_subject: deliver_subject.to_string(),
+                            deliver_group: Some(queue_group.clone()),
+                            ..Default::default()
+                        };
+                        match stream.create_consumer(config).await {
+                            Ok(consumer) => {
+                                match consumer.messages().await {
+                                    Ok(messages) => {
+                                        info!(
+                                            node = %node_name,
+                                            stream = %stream_name,
+                                            queue_group = %queue_group,
+                                            "Subscribed to invalidation signals via JetStream push consumer"
+                                        );
+                                        Some(messages)
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            node = %node_name,
+                                            error = %e,
+                                            "Failed to start invalidation consumer message stream"
+                                        );
+                                        None
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                warn!(
+                                    node = %node_name,
+                                    queue_group = %queue_group,
+                                    error = %e,
+                                    "Failed to create invalidation push consumer"
+                                );
+                                None
+                            }
+                        }
                     }
                     Err(e) => {
                         warn!(
                             node = %node_name,
+                            stream = %stream_name,
                             error = %e,
-                            "Failed to subscribe to invalidation signals via JetStream — \
-                             scope recomputation will not be triggered"
+                            "Failed to get invalidation stream"
                         );
                         None
                     }
@@ -2358,11 +2388,18 @@ where
 /// disabling the select arm without needing `#[cfg]` inside `tokio::select!`.
 #[cfg(feature = "messaging")]
 async fn recv_invalidation(
-    sub: &mut Option<async_nats::Subscriber>,
+    sub: &mut Option<async_nats::jetstream::consumer::push::Messages>,
 ) -> Option<Vec<u8>> {
     use futures::StreamExt;
     match sub.as_mut() {
-        Some(s) => s.next().await.map(|msg| msg.payload.to_vec()),
+        Some(s) => match s.next().await {
+            Some(Ok(msg)) => Some(msg.payload.to_vec()),
+            Some(Err(e)) => {
+                warn!("Error receiving invalidation message: {e}");
+                None
+            }
+            None => None,
+        },
         None => std::future::pending().await,
     }
 }

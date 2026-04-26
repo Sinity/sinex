@@ -52,6 +52,12 @@ pub mod prelude {
     pub use crate::temporal::OffsetDateTime;
 }
 
+/// The schema version that this binary expects to find in the database.
+/// Stored in `sinex_schemas.binary_schema_version` and checked by ingestd
+/// and the gateway at startup. Must be bumped when a schema change requires
+/// coordinated binary+DB updates.
+pub const EXPECTED_BINARY_SCHEMA_VERSION: &str = "1";
+
 // Re-export commonly used types at crate root
 pub use activity::{ActivitySourceKind, classify_trusted_activity_signal, primary_activity_source};
 pub use constants::filesystem;
