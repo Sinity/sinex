@@ -101,6 +101,7 @@ fn parse_json_dump(
         visits,
         stats: ParsedDumpStats {
             delta_line_count: line_count,
+            parse_failures: 0,
         },
     })
 }
@@ -188,6 +189,7 @@ fn parse_csv_dump(
         visits,
         stats: ParsedDumpStats {
             delta_line_count: line_count,
+            parse_failures: 0,
         },
     })
 }
@@ -200,6 +202,7 @@ fn parse_json_lines(
 ) -> NodeResult<ParsedDumpFile> {
     let mut visits = Vec::new();
     let mut line_count = 0u64;
+    let mut parse_failures = 0u64;
 
     for line in content.lines() {
         let line = line.trim();
@@ -209,7 +212,10 @@ fn parse_json_lines(
         line_count += 1;
         let payload: Value = match serde_json::from_str(line) {
             Ok(payload) => payload,
-            Err(_) => continue,
+            Err(_) => {
+                parse_failures = parse_failures.saturating_add(1);
+                continue;
+            }
         };
         let Some(payload) = payload.as_object() else {
             continue;
@@ -228,6 +234,7 @@ fn parse_json_lines(
         visits,
         stats: ParsedDumpStats {
             delta_line_count: line_count,
+            parse_failures,
         },
     })
 }
