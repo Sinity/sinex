@@ -73,12 +73,10 @@ impl StageAsYouGoNode for DemoLogNode {
             let event = Event::new(
                 payload,
                 // Provenance will be overwritten/augmented by context
-                sinex_primitives::Provenance::Synthesis {
-                    source_event_ids: sinex_primitives::non_empty::NonEmptyVec::single(
-                        sinex_primitives::events::EventId::from_uuid(Uuid::now_v7()),
-                    ),
-                    operation_id: None,
-                },
+                sinex_primitives::Provenance::from_synthesis(std::iter::once(
+                    sinex_primitives::events::EventId::from_uuid(Uuid::now_v7()),
+                ))
+                .expect("non-empty iterator yields synthesis provenance"),
             );
 
             // Emit with provenance linked to material
