@@ -656,6 +656,14 @@ impl JetStreamConsumer {
 
     /// Bootstrap all required `JetStream` streams
     async fn bootstrap_streams(&self) -> IngestdResult<()> {
+        // When SINEX_NATS_STREAMS_MANAGED_EXTERNALLY=true, the NixOS module owns
+        // stream configuration. Skip bootstrap so the two sources of truth don't
+        // conflict on stream shape or subject overlap.
+        if std::env::var("SINEX_NATS_STREAMS_MANAGED_EXTERNALLY").as_deref() == Ok("true") {
+            info!("NATS streams managed externally -- skipping bootstrap");
+            return Ok(());
+        }
+
         info!("Bootstrapping JetStream streams");
 
         // Events stream - durable event log for automata replay.
