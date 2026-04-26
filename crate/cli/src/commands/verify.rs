@@ -144,11 +144,11 @@ const HISTORICAL_SIGNAL_CHECKS: &[HistoricalSignalCheck] = &[
         zero_message: "No shell.history command.imported events found",
     },
     HistoricalSignalCheck {
-        label: "Desktop window history backfill",
+        label: "Desktop ActivityWatch history backfill",
         surface: HistoricalSurface::Desktop,
-        sources: &["desktop"],
-        event_type: "window.wm_historical",
-        zero_message: "No desktop window.wm_historical events found",
+        sources: &["activitywatch"],
+        event_type: "window.active",
+        zero_message: "No activitywatch window.active events found",
     },
     HistoricalSignalCheck {
         label: "Browser history ingestion",

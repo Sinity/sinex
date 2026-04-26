@@ -1,5 +1,6 @@
 use base64::Engine;
 use sinex_db::DbPoolExt;
+use sinex_db::pkm::PkmService;
 use sinex_db::repositories::knowledge_graph::CreateEntity;
 use sinex_gateway::{
     auth::Role,
@@ -10,7 +11,6 @@ use sinex_primitives::rpc::pkm::{
     CreateEntitiesResponse, CreateNoteResponse, LinkEntitiesResponse,
 };
 use sinex_primitives::{Uuid, events::DynamicPayload, temporal};
-use sinex_services::PkmService;
 use xtask::sandbox::prelude::*;
 
 fn write_auth() -> RpcAuthContext {
@@ -75,6 +75,7 @@ async fn pkm_create_entities_rejects_malformed_entities_param(ctx: TestContext) 
 #[sinex_test]
 async fn pkm_link_entities_rejects_malformed_properties(ctx: TestContext) -> TestResult<()> {
     let service = PkmService::new(ctx.pool().clone());
+    let auth = write_auth();
 
     let error = handle_link_entities(
         &service,
@@ -84,6 +85,7 @@ async fn pkm_link_entities_rejects_malformed_properties(ctx: TestContext) -> Tes
             "relation_type": "related_to",
             "metadata": ["not-an-object"]
         }),
+        &auth,
     )
     .await
     .expect_err("malformed relation properties must fail");
@@ -176,6 +178,7 @@ async fn pkm_link_entities_uses_typed_contract_and_preserves_source_material(
     ctx: TestContext,
 ) -> TestResult<()> {
     let service = PkmService::new(ctx.pool().clone());
+    let auth = write_auth();
     let material_id = ctx
         .create_source_material(Some("pkm-link-source-material"))
         .await?;
@@ -199,6 +202,7 @@ async fn pkm_link_entities_uses_typed_contract_and_preserves_source_material(
             "metadata": { "note": "operator supplied" },
             "source_material_id": material_id,
         }),
+        &auth,
     )
     .await?;
     let response: LinkEntitiesResponse = serde_json::from_value(response)?;
@@ -222,5 +226,14 @@ async fn pkm_link_entities_uses_typed_contract_and_preserves_source_material(
         relation.properties["_system_metadata"]["source_material_id"].as_str(),
         Some(expected_source_material_id.as_str())
     );
+
+    let audit: (String,) = sqlx::query_as(
+        "SELECT operator FROM core.operations_log \
+         WHERE operation_type = 'pkm.entity.link' ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(audit.0, auth.actor_id());
+
     Ok(())
 }

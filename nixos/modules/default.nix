@@ -41,6 +41,16 @@ let
     shell_integration no-title
   '';
 
+  terminalSourceUnitIdForShell = shell:
+    let
+      normalized = toLower shell;
+    in
+    if normalized == "atuin" then "terminal.atuin-history"
+    else if normalized == "zsh" then "terminal.zsh-history"
+    else if normalized == "fish" then "terminal.fish-history"
+    else if normalized == "bash" then "terminal.bash-history"
+    else "terminal.${normalized}-history";
+
 in
 {
   imports = [
@@ -121,6 +131,15 @@ in
         shell = mkOption {
           type = str;
           description = "Shell identifier (`bash`, `zsh`, `fish`, etc.).";
+        };
+        sourceUnitId = mkOption {
+          type = nullOr str;
+          default = null;
+          description = ''
+            Optional stable source-unit identity. When null, the module derives
+            one from <option>shell</option> and passes it through
+            <literal>--source-unit</literal>.
+          '';
         };
       };
     };
@@ -1839,6 +1858,12 @@ in
               (source: {
                 path = source.path;
                 shell = source.shell;
+                source_unit_id =
+                  if source.sourceUnitId != null then source.sourceUnitId
+                  else terminalSourceUnitIdForShell source.shell;
+                runner_pack = "terminal";
+                runner_binary = "sinex-terminal-ingestor";
+                service = "sinex-source@${if source.sourceUnitId != null then source.sourceUnitId else terminalSourceUnitIdForShell source.shell}";
               })
               cfg.nodes.terminal.historySources;
           };

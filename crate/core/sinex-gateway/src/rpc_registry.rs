@@ -598,8 +598,10 @@ fn build_registry_impl() -> RpcRegistry {
         .register(
             "pkm.link_entities",
             Role::Write,
-            |params, services, _auth| {
-                Box::pin(async move { handle_link_entities(services.pkm.as_ref(), params).await })
+            |params, services, auth| {
+                Box::pin(
+                    async move { handle_link_entities(services.pkm.as_ref(), params, auth).await },
+                )
             },
         )
         // Content methods (Write)

@@ -30,15 +30,17 @@ The derive macro handles:
 
 No migration-chain steps are needed for payload shape changes - `core.events` stores `payload` as JSONB.
 
-### 2. Unified Node Runtime (`Node` + `IngestorNode`/`AutomatonNode`)
+### 2. Node Runtime (`Node` + current high-level traits)
 
 The runtime provides complete node lifecycle via `NodeRunner` and adapter traits:
 - **Three-phase lifecycle**: Snapshot → Historical → Continuous
 - **Associated `Config` type**: Type-safe, deserializable configuration
 - **NodeInitContext / NodeRuntimeState**: DB pool, checkpoint manager, event emitter, NATS transport
-- **Adapter ergonomics**: `IngestorNodeAdapter` and `AutomatonNodeAdapter` remove boilerplate
+- **Adapter ergonomics**: `IngestorNodeAdapter` and `DerivedNodeAdapter` remove boilerplate
 
-New nodes usually implement `IngestorNode` or `AutomatonNode` and use `node_entrypoint!`.
+New capture nodes usually implement `IngestorNode`. New derived nodes implement
+`TransducerNode`, `WindowedNode`, or `ScopeReconcilerNode`, then run through the
+matching `DerivedNodeAdapter` alias. Binaries use `node_entrypoint!`.
 
 ### 3. NATS Subject Routing
 
@@ -77,9 +79,12 @@ match method {
 
 ## Validation Status
 
-The architecture is sound in design. The remaining validation is proving the wiring works in practice:
-- NATS actually delivers
-- Ingestd actually persists
-- Gateway actually queries
+The basic cross-section is no longer only a design claim. Current validation is
+kept in package tests, proof-carrying runtime scenarios, evidence bundles,
+deployment checks, and VM coverage where runtime hardening matters.
 
-Once the cross-section works, rapid assembly is viable.
+When extending the SDK, make the new surface prove its own contract:
+- add focused package tests for trait or adapter behavior
+- add scenario metadata when the behavior is a runtime proof point
+- use evidence artifacts for resource-shape or deployment-readiness claims
+- keep generated docs and agent-facing memory aligned with the implemented API

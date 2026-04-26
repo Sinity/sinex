@@ -149,8 +149,9 @@ fn config_show(format: OutputFormat) -> Result<()> {
 
     match format {
         OutputFormat::Json | OutputFormat::Dot => {
-            let json = serde_json::to_string_pretty(&config)?;
+            let json = serde_json::to_string(&config)?;
             println!("{json}");
+            return Ok(());
         }
         OutputFormat::Yaml | OutputFormat::Table => {
             // YAML is more readable for config display

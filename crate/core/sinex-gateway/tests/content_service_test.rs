@@ -1,19 +1,15 @@
-//! Integration tests for `ContentService`.
+//! Integration tests for the gateway-owned content service.
 //!
 //! Full roundtrip tests (store -> retrieve -> verify) require `git-annex` on PATH
 //! and are gated behind `#[ignore = "external"]`. Logic-level tests (error
 //! wrapping, operation logging, helpers) run unconditionally.
 
 use camino::Utf8PathBuf;
+use sinex_gateway::content_service::ContentService;
 use sinex_node_sdk::content_store::{ContentStoreConfig, ContentStoreManager};
-use sinex_services::ContentService;
 use std::sync::Arc;
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
-
-// ---------------------------------------------------------------------------
-// Fixture
-// ---------------------------------------------------------------------------
 
 /// Preflight: bail early if git-annex is missing.
 fn require_git_annex() -> TestResult<()> {
@@ -44,10 +40,6 @@ async fn content_service_fixture(ctx: &TestContext) -> TestResult<(ContentServic
     Ok((service, temp_dir))
 }
 
-// ---------------------------------------------------------------------------
-// Full roundtrip (external — requires git-annex)
-// ---------------------------------------------------------------------------
-
 #[sinex_test]
 #[ignore = "external"]
 async fn content_store_retrieve_roundtrip(ctx: TestContext) -> TestResult<()> {
@@ -69,7 +61,6 @@ async fn content_store_retrieve_roundtrip(ctx: TestContext) -> TestResult<()> {
         "content-store key should be non-empty"
     );
 
-    // Retrieve and compare
     let retrieved = service.retrieve_content(&content_key).await?;
     assert_eq!(
         retrieved.as_slice(),
@@ -162,10 +153,6 @@ async fn content_deduplication(ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Operation logging (requires DB only, no git-annex)
-// ---------------------------------------------------------------------------
-
 #[sinex_test]
 #[ignore = "external"]
 async fn content_store_logs_operation(ctx: TestContext) -> TestResult<()> {
@@ -195,18 +182,9 @@ async fn content_store_logs_operation(ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Error wrapping (no external deps)
-// ---------------------------------------------------------------------------
-
 #[sinex_test]
 async fn retrieve_nonexistent_key_returns_service_error(ctx: TestContext) -> TestResult<()> {
-    // ContentService needs a ContentStoreManager. For error-path tests we can still
-    // construct one with a valid temp dir — the retrieve will fail because
-    // the key doesn't exist in storage, which is the error path we want.
     if which::which("git-annex").is_err() {
-        // Can't construct ContentStoreManager without git-annex at all — skip gracefully.
-        // This test only validates error wrapping, so skipping is acceptable.
         return Ok(());
     }
     let (service, _tmp) = content_service_fixture(&ctx).await?;

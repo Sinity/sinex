@@ -88,7 +88,6 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/lib/sinex-db/src/replay/state_machine.rs",
             "crate/lib/sinex-node-sdk/src/preflight/database.rs",
             "crate/lib/sinex-node-sdk/src/preflight/verification.rs",
-            "crate/lib/sinex-services/src/analytics.rs",
             "crate/lib/sinex-test-utils/src/database_pool.rs",
             "crate/lib/sinex-test-utils/src/db_common.rs",
             "crate/lib/sinex-test-utils/src/fixture_generator.rs",

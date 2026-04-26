@@ -23,6 +23,19 @@ pkgs.testers.nixosTest {
       })
     ];
 
+    # The preflight service intentionally verifies production-style resource
+    # floors. Give this VM enough headroom for those checks instead of relaxing
+    # the deployed preflight thresholds.
+    virtualisation = {
+      memorySize = 4096;
+      diskSize = 16384;
+    };
+
+    # common/test-base relaxes filesystem readiness for broad VM tests. This
+    # scenario is specifically about deployed preflight contracts, so restore
+    # the managed notify/watchdog unit shape before preflight inspects systemd.
+    systemd.services.sinex-filesystem-1.serviceConfig.Type = lib.mkOverride 40 "notify";
+
     services.sinex = {
       # Exercise preflight-enabled wiring but keep other features minimal.
       lifecycle.preflight.enable = lib.mkOverride 60 true;
@@ -38,8 +51,7 @@ pkgs.testers.nixosTest {
     machine.wait_for_unit("sinex-ingestd.service")
     machine.wait_for_unit("sinex-gateway.service")
     machine.succeed("systemctl start sinex-preflight.service")
-    machine.wait_for_unit("sinex-preflight.service")
-    machine.succeed("systemctl is-active --quiet sinex-preflight.service")
-    machine.succeed("systemctl show -p Result sinex-preflight.service | grep '=success'")
+    machine.succeed("systemctl show -p Result --value sinex-preflight.service | grep '^success$'")
+    machine.succeed("systemctl show -p ExecMainStatus --value sinex-preflight.service | grep '^0$'")
   '';
 }

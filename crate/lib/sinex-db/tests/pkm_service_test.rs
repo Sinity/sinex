@@ -4,7 +4,7 @@
 //! entity linking, in-flight material lifecycle, system metadata attachment,
 //! and content preview generation.
 
-use sinex_services::PkmService;
+use sinex_db::pkm::PkmService;
 use std::collections::HashMap;
 use xtask::sandbox::prelude::*;
 
@@ -333,6 +333,32 @@ async fn test_create_entities_from_source_material(ctx: TestContext) -> TestResu
     assert_eq!(entity_2.entity_type, "topic");
     assert_eq!(entity_2.name, "Rust");
 
+    let audit_rows: Vec<(String, serde_json::Value, Option<serde_json::Value>)> = sqlx::query_as(
+        "SELECT operator, scope, preview_summary FROM core.operations_log \
+             WHERE operation_type = 'pkm.entity.create' ORDER BY id ASC",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    assert_eq!(audit_rows.len(), 3, "one audit row per created entity");
+    for ((operator, scope, preview), entity_id) in audit_rows.iter().zip(entity_ids.iter()) {
+        assert_eq!(operator, "test-user");
+        assert_eq!(scope["entity_id"], json!(entity_id.to_string()));
+        assert_eq!(
+            scope["source_material_id"],
+            json!(material_id.to_string()),
+            "audit scope should preserve the source material"
+        );
+        assert!(
+            scope["payload"]["name"].is_string(),
+            "audit scope should carry entity payload details"
+        );
+        let preview = preview
+            .as_ref()
+            .expect("entity creation audit should include preview summary");
+        assert_eq!(preview["entity_id"], json!(entity_id.to_string()));
+    }
+
     Ok(())
 }
 
@@ -561,6 +587,7 @@ async fn test_link_entities(ctx: TestContext) -> TestResult<()> {
             "works_on",
             properties,
             Some(material_id),
+            "test-user",
         )
         .await?;
 
@@ -593,6 +620,30 @@ async fn test_link_entities(ctx: TestContext) -> TestResult<()> {
         json!(material_id.to_string())
     );
 
+    let audit: (String, serde_json::Value, Option<serde_json::Value>) = sqlx::query_as(
+        "SELECT operator, scope, preview_summary FROM core.operations_log \
+         WHERE operation_type = 'pkm.entity.link' ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    assert_eq!(audit.0, "test-user");
+    assert_eq!(audit.1["relation_id"], json!(relation_id.to_string()));
+    assert_eq!(audit.1["from_entity_id"], json!(alice_id.to_string()));
+    assert_eq!(audit.1["to_entity_id"], json!(sinex_id.to_string()));
+    assert_eq!(
+        audit.1["source_material_id"],
+        json!(material_id.to_string())
+    );
+    assert_eq!(audit.1["payload"]["relationship_type"], json!("works_on"));
+    assert_eq!(
+        audit
+            .2
+            .as_ref()
+            .expect("link audit should include preview summary")["relation_id"],
+        json!(relation_id.to_string())
+    );
+
     Ok(())
 }
 
@@ -621,6 +672,7 @@ async fn test_link_entities_without_source_material(ctx: TestContext) -> TestRes
             "contributes_to",
             HashMap::new(),
             None,
+            "test-user",
         )
         .await?;
 
@@ -665,7 +717,14 @@ async fn test_link_entities_with_complex_properties(ctx: TestContext) -> TestRes
     properties.insert("tags".to_string(), json!(["related", "derived"]));
 
     let _relation_id = pkm
-        .link_entities(entity_a.id, entity_b.id, "related_to", properties, None)
+        .link_entities(
+            entity_a.id,
+            entity_b.id,
+            "related_to",
+            properties,
+            None,
+            "test-user",
+        )
         .await?;
 
     let relations = pool
@@ -1055,6 +1114,17 @@ async fn test_create_entities_transaction_atomicity(ctx: TestContext) -> TestRes
     assert!(
         all_entities.is_empty(),
         "transaction should have rolled back, no entities should exist"
+    );
+
+    let audit_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM core.operations_log \
+         WHERE operation_type = 'pkm.entity.create'",
+    )
+    .fetch_one(pool)
+    .await?;
+    assert_eq!(
+        audit_count, 0,
+        "rolled-back entity creation should not leave audit rows"
     );
 
     Ok(())

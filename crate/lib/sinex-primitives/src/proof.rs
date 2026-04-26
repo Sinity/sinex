@@ -250,6 +250,204 @@ pub struct RuntimeUnitDescriptor {
     pub capabilities: &'static [&'static str],
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+pub struct SourceUnitDescriptor {
+    pub subject: SubjectRef,
+    pub id: &'static str,
+    pub domain: &'static str,
+    pub role: &'static str,
+    pub modes: &'static [&'static str],
+    pub acquisition_shape: &'static str,
+    pub material_policy: &'static str,
+    pub checkpoint_policy: &'static str,
+    pub occurrence_policy: &'static str,
+    pub output_event_type: &'static str,
+    pub privacy_context: &'static str,
+    pub resource_profile: &'static str,
+    pub access_policy: &'static str,
+    pub service_policy: &'static str,
+    pub runner_pack: &'static str,
+    pub package_impact: &'static str,
+    pub implementation_mode: &'static str,
+    pub proof_obligations: &'static [&'static str],
+    pub crate_impact: &'static str,
+    pub binary_impact: &'static str,
+    pub nix_output_impact: &'static str,
+    pub derivation_impact: &'static str,
+    pub sqlx_validation_impact: &'static str,
+    pub dedicated_build_rationale: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SourceUnitDescriptorBuilder {
+    descriptor: SourceUnitDescriptor,
+}
+
+impl SourceUnitDescriptor {
+    #[must_use]
+    pub const fn builder(
+        subject: SubjectRef,
+        id: &'static str,
+        domain: &'static str,
+    ) -> SourceUnitDescriptorBuilder {
+        SourceUnitDescriptorBuilder {
+            descriptor: SourceUnitDescriptor {
+                subject,
+                id,
+                domain,
+                role: "",
+                modes: &[],
+                acquisition_shape: "",
+                material_policy: "",
+                checkpoint_policy: "",
+                occurrence_policy: "",
+                output_event_type: "",
+                privacy_context: "",
+                resource_profile: "",
+                access_policy: "",
+                service_policy: "",
+                runner_pack: "",
+                package_impact: "",
+                implementation_mode: "",
+                proof_obligations: &[],
+                crate_impact: "0",
+                binary_impact: "0",
+                nix_output_impact: "0",
+                derivation_impact: "0",
+                sqlx_validation_impact: "0",
+                dedicated_build_rationale: None,
+            },
+        }
+    }
+}
+
+impl SourceUnitDescriptorBuilder {
+    #[must_use]
+    pub const fn role(mut self, role: &'static str) -> Self {
+        self.descriptor.role = role;
+        self
+    }
+
+    #[must_use]
+    pub const fn modes(mut self, modes: &'static [&'static str]) -> Self {
+        self.descriptor.modes = modes;
+        self
+    }
+
+    #[must_use]
+    pub const fn acquisition_shape(mut self, acquisition_shape: &'static str) -> Self {
+        self.descriptor.acquisition_shape = acquisition_shape;
+        self
+    }
+
+    #[must_use]
+    pub const fn material_policy(mut self, material_policy: &'static str) -> Self {
+        self.descriptor.material_policy = material_policy;
+        self
+    }
+
+    #[must_use]
+    pub const fn checkpoint_policy(mut self, checkpoint_policy: &'static str) -> Self {
+        self.descriptor.checkpoint_policy = checkpoint_policy;
+        self
+    }
+
+    #[must_use]
+    pub const fn occurrence_policy(mut self, occurrence_policy: &'static str) -> Self {
+        self.descriptor.occurrence_policy = occurrence_policy;
+        self
+    }
+
+    #[must_use]
+    pub const fn output_event_type(mut self, output_event_type: &'static str) -> Self {
+        self.descriptor.output_event_type = output_event_type;
+        self
+    }
+
+    #[must_use]
+    pub const fn privacy_context(mut self, privacy_context: &'static str) -> Self {
+        self.descriptor.privacy_context = privacy_context;
+        self
+    }
+
+    #[must_use]
+    pub const fn resource_profile(mut self, resource_profile: &'static str) -> Self {
+        self.descriptor.resource_profile = resource_profile;
+        self
+    }
+
+    #[must_use]
+    pub const fn access_policy(mut self, access_policy: &'static str) -> Self {
+        self.descriptor.access_policy = access_policy;
+        self
+    }
+
+    #[must_use]
+    pub const fn service_policy(mut self, service_policy: &'static str) -> Self {
+        self.descriptor.service_policy = service_policy;
+        self
+    }
+
+    #[must_use]
+    pub const fn runner_pack(mut self, runner_pack: &'static str) -> Self {
+        self.descriptor.runner_pack = runner_pack;
+        self
+    }
+
+    #[must_use]
+    pub const fn package_impact(mut self, package_impact: &'static str) -> Self {
+        self.descriptor.package_impact = package_impact;
+        self
+    }
+
+    #[must_use]
+    pub const fn implementation_mode(mut self, implementation_mode: &'static str) -> Self {
+        self.descriptor.implementation_mode = implementation_mode;
+        self
+    }
+
+    #[must_use]
+    pub const fn proof_obligations(mut self, obligations: &'static [&'static str]) -> Self {
+        self.descriptor.proof_obligations = obligations;
+        self
+    }
+
+    #[must_use]
+    pub const fn build_impact(
+        mut self,
+        crate_impact: &'static str,
+        binary_impact: &'static str,
+        nix_output_impact: &'static str,
+    ) -> Self {
+        self.descriptor.crate_impact = crate_impact;
+        self.descriptor.binary_impact = binary_impact;
+        self.descriptor.nix_output_impact = nix_output_impact;
+        self
+    }
+
+    #[must_use]
+    pub const fn validation_impact(
+        mut self,
+        derivation_impact: &'static str,
+        sqlx_validation_impact: &'static str,
+    ) -> Self {
+        self.descriptor.derivation_impact = derivation_impact;
+        self.descriptor.sqlx_validation_impact = sqlx_validation_impact;
+        self
+    }
+
+    #[must_use]
+    pub const fn dedicated_build_rationale(mut self, rationale: &'static str) -> Self {
+        self.descriptor.dedicated_build_rationale = Some(rationale);
+        self
+    }
+
+    #[must_use]
+    pub const fn build(self) -> SourceUnitDescriptor {
+        self.descriptor
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct MissingOutput;
 #[derive(Debug, Clone, Copy)]
@@ -394,6 +592,7 @@ impl RuntimeUnitDescriptorBuilder<HasOutput, HasPrivacy, HasMaterial, HasCheckpo
 }
 
 inventory::collect!(RuntimeUnitDescriptor);
+inventory::collect!(SourceUnitDescriptor);
 inventory::collect!(Claim);
 inventory::collect!(RunnerBinding);
 inventory::collect!(ProofObligation);
@@ -402,6 +601,11 @@ inventory::collect!(Exemption);
 #[must_use]
 pub fn runtime_unit_descriptors() -> impl Iterator<Item = &'static RuntimeUnitDescriptor> {
     inventory::iter::<RuntimeUnitDescriptor>()
+}
+
+#[must_use]
+pub fn source_unit_descriptors() -> impl Iterator<Item = &'static SourceUnitDescriptor> {
+    inventory::iter::<SourceUnitDescriptor>()
 }
 
 #[must_use]
@@ -443,6 +647,122 @@ inventory::submit! {
         "produces_material_anchors",
         "requires_target_home",
     ])
+    .build()
+}
+
+inventory::submit! {
+    SourceUnitDescriptor::builder(
+        SubjectRef::from_static("source_unit:terminal.atuin-history"),
+        "terminal.atuin-history",
+        "terminal",
+    )
+    .role("source_adapter")
+    .modes(&["historical", "continuous"])
+    .acquisition_shape("sqlite_row_stream")
+    .material_policy("canonical_json_lines")
+    .checkpoint_policy("sqlite_row_id")
+    .occurrence_policy("natural_key:atuin.history.id")
+    .output_event_type("shell.atuin/command.executed")
+    .privacy_context("command_line_history")
+    .resource_profile("bounded_sqlite_polling:256M")
+    .access_policy("target_home_read:.local/share/atuin/history.db")
+    .service_policy("dedicated_instance:on-failure")
+    .runner_pack("terminal")
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:terminal")
+    .proof_obligations(&[
+        "obligation:source_unit.material_provenance",
+        "obligation:source_unit.package_impact_rationale",
+    ])
+    .build_impact("0", "0", "0")
+    .validation_impact("0", "0")
+    .build()
+}
+
+inventory::submit! {
+    SourceUnitDescriptor::builder(
+        SubjectRef::from_static("source_unit:terminal.zsh-history"),
+        "terminal.zsh-history",
+        "terminal",
+    )
+    .role("source_adapter")
+    .modes(&["historical", "continuous"])
+    .acquisition_shape("append_only_file")
+    .material_policy("canonical_json_lines")
+    .checkpoint_policy("byte_offset_and_line")
+    .occurrence_policy("material_anchor")
+    .output_event_type("shell.history/command.imported")
+    .privacy_context("command_line_history")
+    .resource_profile("bounded_file_polling:256M")
+    .access_policy("target_home_read:.zsh_history")
+    .service_policy("dedicated_instance:on-failure")
+    .runner_pack("terminal")
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:terminal")
+    .proof_obligations(&[
+        "obligation:source_unit.material_provenance",
+        "obligation:source_unit.package_impact_rationale",
+    ])
+    .build_impact("0", "0", "0")
+    .validation_impact("0", "0")
+    .build()
+}
+
+inventory::submit! {
+    SourceUnitDescriptor::builder(
+        SubjectRef::from_static("source_unit:terminal.fish-history"),
+        "terminal.fish-history",
+        "terminal",
+    )
+    .role("source_adapter")
+    .modes(&["historical", "continuous"])
+    .acquisition_shape("sqlite_row_stream")
+    .material_policy("canonical_json_lines")
+    .checkpoint_policy("sqlite_row_id")
+    .occurrence_policy("sqlite_row_id")
+    .output_event_type("shell.history.fish/command.executed")
+    .privacy_context("command_line_history")
+    .resource_profile("bounded_sqlite_polling:256M")
+    .access_policy("target_home_read:.local/share/fish/fish_history")
+    .service_policy("dedicated_instance:on-failure")
+    .runner_pack("terminal")
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:terminal")
+    .proof_obligations(&[
+        "obligation:source_unit.material_provenance",
+        "obligation:source_unit.package_impact_rationale",
+    ])
+    .build_impact("0", "0", "0")
+    .validation_impact("0", "0")
+    .build()
+}
+
+inventory::submit! {
+    SourceUnitDescriptor::builder(
+        SubjectRef::from_static("source_unit:terminal.bash-history"),
+        "terminal.bash-history",
+        "terminal",
+    )
+    .role("source_adapter")
+    .modes(&["historical", "continuous"])
+    .acquisition_shape("append_only_file")
+    .material_policy("canonical_json_lines")
+    .checkpoint_policy("byte_offset_and_line")
+    .occurrence_policy("material_anchor")
+    .output_event_type("shell.history/command.imported")
+    .privacy_context("command_line_history")
+    .resource_profile("bounded_file_polling:256M")
+    .access_policy("target_home_read:.bash_history")
+    .service_policy("dedicated_instance:on-failure")
+    .runner_pack("terminal")
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:terminal")
+    .proof_obligations(&[
+        "obligation:source_unit.material_provenance",
+        "obligation:source_unit.package_impact_rationale",
+    ])
+    .build_impact("0", "0", "0")
+    .validation_impact("0", "0")
     .build()
 }
 
@@ -492,6 +812,24 @@ inventory::submit! {
 }
 
 inventory::submit! {
+    Claim {
+        id: "claim:source_unit.identity_axes_are_decoupled",
+        kind: ProofClaimKind::Invariant,
+        subject: SubjectQuery::from_static("source_unit:*"),
+        statement: "source-unit identity must not imply a new Cargo package, Rust binary target, Nix output, or independent derivation by default",
+    }
+}
+
+inventory::submit! {
+    Claim {
+        id: "claim:source_unit.package_impact_visible",
+        kind: ProofClaimKind::CommandContract,
+        subject: SubjectQuery::from_static("source_unit:*"),
+        statement: "source-unit manifests expose crate, binary, package-output, derivation, SQLx validation, and service-instance impact",
+    }
+}
+
+inventory::submit! {
     RunnerBinding {
         id: "runner:rust.nextest.scenario",
         runner: "cargo-nextest",
@@ -535,6 +873,19 @@ inventory::submit! {
 }
 
 inventory::submit! {
+    RunnerBinding {
+        id: "runner:xtask.source_units",
+        runner: "xtask",
+        subject: SubjectQuery::from_static("source_unit:*"),
+        claims: &[
+            "claim:source_unit.identity_axes_are_decoupled",
+            "claim:source_unit.package_impact_visible",
+        ],
+        command: "xtask source-units check",
+    }
+}
+
+inventory::submit! {
     ProofObligation {
         id: "obligation:runtime_unit.source_material_laws",
         level: ProofObligationLevel::Required,
@@ -542,6 +893,28 @@ inventory::submit! {
         claim_id: "claim:source_material.material_provenance",
         runner_binding_id: "runner:rust.sdk.source_laws",
         reason: "source units are the material-provenance boundary for replay and audit",
+    }
+}
+
+inventory::submit! {
+    ProofObligation {
+        id: "obligation:source_unit.material_provenance",
+        level: ProofObligationLevel::Required,
+        subject: SubjectQuery::from_static("source_unit:*"),
+        claim_id: "claim:source_material.material_provenance",
+        runner_binding_id: "runner:rust.sdk.source_laws",
+        reason: "source units are the semantic leaves that must carry replayable material provenance",
+    }
+}
+
+inventory::submit! {
+    ProofObligation {
+        id: "obligation:source_unit.package_impact_rationale",
+        level: ProofObligationLevel::Required,
+        subject: SubjectQuery::from_static("source_unit:*"),
+        claim_id: "claim:source_unit.package_impact_visible",
+        runner_binding_id: "runner:xtask.source_units",
+        reason: "new source units must make build/cache/service impact visible before adding more physical artifacts",
     }
 }
 
@@ -617,14 +990,57 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn source_unit_descriptor_builder_records_physical_impact() -> TestResult<()> {
+        let descriptor = SourceUnitDescriptor::builder(
+            SubjectRef::from_static("source_unit:test.demo-source"),
+            "test.demo-source",
+            "test",
+        )
+        .role("source_adapter")
+        .modes(&["historical", "continuous"])
+        .acquisition_shape("sqlite_row_stream")
+        .material_policy("canonical_json_lines")
+        .checkpoint_policy("row_id")
+        .occurrence_policy("natural_key:test.id")
+        .output_event_type("test.output")
+        .privacy_context("metadata")
+        .resource_profile("bounded")
+        .access_policy("none")
+        .service_policy("dedicated_instance")
+        .runner_pack("test")
+        .package_impact("no_new_output")
+        .implementation_mode("rust_in_pack:test")
+        .proof_obligations(&["obligation:source_unit.package_impact_rationale"])
+        .build_impact("0", "0", "0")
+        .validation_impact("0", "0")
+        .build();
+
+        assert_eq!(descriptor.runner_pack, "test");
+        assert_eq!(descriptor.crate_impact, "0");
+        assert_eq!(descriptor.binary_impact, "0");
+        assert_eq!(descriptor.nix_output_impact, "0");
+        assert_eq!(descriptor.derivation_impact, "0");
+        assert_eq!(descriptor.sqlx_validation_impact, "0");
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn proof_inventory_contains_builtin_runtime_unit() -> TestResult<()> {
         let runtime_units = runtime_unit_descriptors()
             .map(|descriptor| descriptor.subject.as_str())
             .collect::<Vec<_>>();
+        let source_units = source_unit_descriptors()
+            .map(|descriptor| descriptor.subject.as_str())
+            .collect::<Vec<_>>();
 
         assert!(runtime_units.contains(&"runtime_unit:terminal.atuin"));
+        assert!(source_units.contains(&"source_unit:terminal.atuin-history"));
+        assert!(source_units.contains(&"source_unit:terminal.zsh-history"));
+        assert!(source_units.contains(&"source_unit:terminal.fish-history"));
         assert!(claims().any(|claim| claim.id == "claim:source_material.material_provenance"));
+        assert!(claims().any(|claim| claim.id == "claim:source_unit.package_impact_visible"));
         assert!(runner_bindings().any(|binding| binding.id == "runner:rust.nextest.scenario"));
+        assert!(runner_bindings().any(|binding| binding.id == "runner:xtask.source_units"));
         Ok(())
     }
 }
