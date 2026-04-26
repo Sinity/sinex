@@ -7,33 +7,10 @@
 
 //! # Sinex Node SDK
 //!
-//! The Sinex Node SDK provides the core abstractions and runtime for building
-//! ingestors and derived nodes in the Sinex ecosystem.
-//!
-//! ## Core Concepts
-//!
-//! ### Shared Runtime Surface
-//! The low-level [`Node`] trait and runtime support point-in-time snapshots,
-//! historical catch-up, and continuous real-time processing.
-//!
-//! ### High-Level Node Traits
-//! The SDK provides higher-level traits like [`TransducerNode`],
-//! [`WindowedNode`], [`ScopeReconcilerNode`], and [`IngestorNode`] that automate:
-//! - **State Persistence**: Automatic checkpointing to NATS KV and local backup files.
-//! - **Hot Reload**: Fast state restoration from local files during development rebuilds.
-//! - **Graceful Lifecycle**: Cooperative shutdown patterns via [`WatcherHandle`] and `CancellationToken`.
-//! - **Health Monitoring**: Automatic error-rate tracking and status emission.
-//!
-//! ### Data Integrity & Provenance
-//! - **Single-Writer Pattern**: Nodes submit provisional events to NATS; `sinex-ingestd` ensures durable database persistence.
-//! - **Content Verification**: Content-store entries are verified using BLAKE3 plus backend-aware digests where available.
-//! - **Lineage Tracking**: Automatic synthesis provenance links derived events to their source.
-//!
-//! ### Distributed Coordination
-//! High-level primitives for:
-//! - **Leadership Election**: Ensuring singleton execution of stateful automata.
-//! - **Graceful Handoff**: Zero-downtime version upgrades.
-//! - **Work Tracking**: Ensuring in-flight operations complete before shutdown.
+//! This crate provides the current authoring and runtime surface for Sinex
+//! ingestors and derived nodes. The included markdown docs are the primary
+//! architecture reference; vision-only material lives in `docs/vision.md`
+//! rather than in the current-runtime pages.
 //!
 //! # Clock Skew Considerations
 //!

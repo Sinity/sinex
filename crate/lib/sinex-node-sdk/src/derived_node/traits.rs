@@ -149,7 +149,7 @@ pub trait TransducerNode: Send + Sync + 'static {
     > + Send;
 
     fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
-        ErrorAction::SendToDLQ
+        ErrorAction::SendToProcessingFailureQueue
     }
 
     fn on_initialize(
@@ -249,7 +249,7 @@ pub trait WindowedNode: Send + Sync + 'static {
     }
 
     fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
-        ErrorAction::SendToDLQ
+        ErrorAction::SendToProcessingFailureQueue
     }
 
     fn on_initialize(
@@ -349,7 +349,7 @@ pub trait ScopeReconcilerNode: Send + Sync + 'static {
     }
 
     fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
-        ErrorAction::SendToDLQ
+        ErrorAction::SendToProcessingFailureQueue
     }
 
     fn on_initialize(

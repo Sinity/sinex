@@ -34,7 +34,7 @@ async fn test_health_metrics_error_rate(ctx: TestContext) -> TestResult<()> {
         ctx.nats_client(),
         SelfObserverConfig {
             component: "health-inline".to_string(),
-            subject_prefix: "events.raw".to_string(),
+            namespace: None,
             enabled: true,
             min_emission_interval: Duration::ZERO,
         },
@@ -82,7 +82,7 @@ async fn test_process_status_calculation(ctx: TestContext) -> TestResult<()> {
         ctx.nats_client(),
         SelfObserverConfig {
             component: "health-thresholds".to_string(),
-            subject_prefix: "events.raw".to_string(),
+            namespace: None,
             enabled: true,
             min_emission_interval: Duration::ZERO,
         },
@@ -114,7 +114,7 @@ async fn test_process_status_calculation(ctx: TestContext) -> TestResult<()> {
             ctx.nats_client(),
             SelfObserverConfig {
                 component: "health-thresholds-failed".to_string(),
-                subject_prefix: "events.raw".to_string(),
+                namespace: None,
                 enabled: true,
                 min_emission_interval: Duration::ZERO,
             },

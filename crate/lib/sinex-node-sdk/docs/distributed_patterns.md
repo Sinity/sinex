@@ -22,11 +22,11 @@ Sinex's distributed systems patterns for event sourcing, concurrency, and operat
 - Compensating transactions (rollback)
 - Eventual consistency
 
-### Dead Letter Queue
+### Failure Isolation
 
-- Failed events isolated
-- 30-day retention
-- Prevents poison pill blocking
+- Raw-ingest failures isolated in the operator-facing DLQ
+- Derived/runtime failures isolated in a separate processing-failure stream
+- Per-node recovery spool preserved locally when even failure publication fails
 
 ### Stream Compaction
 
