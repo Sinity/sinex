@@ -14,6 +14,6 @@ the correct model because:
 - No window accumulation or cross-event state needed
 - `ts_orig` is inherited directly from the input event
 
-If future replay invalidation requires session-level scope targeting (e.g.
-"recompute all canonicalizations in session X"), this node can be upgraded to
-`ScopeReconcilerNode` with `scope_key` derived from `session_id`.
+If future work needs richer cross-source command context, that should be a
+downstream `ScopeReconcilerNode` keyed by session or activity scope rather than
+turning `command.canonical` itself into a late-reconciled surface.
