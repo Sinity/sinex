@@ -9,6 +9,9 @@ use crate::{DbResult, Event, JsonValue};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{EventSource, EventType, SchemaVersion};
 use sinex_primitives::error::SinexError;
+use sinex_primitives::events::schema_registry::{
+    SchemaBundleEntry, calculate_schema_content_hash,
+};
 use sinex_primitives::{Id, Timestamp};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -31,20 +34,12 @@ pub struct NewEventSchema {
 impl NewEventSchema {
     /// Calculate the content hash for the schema
     pub fn calculate_content_hash(&self) -> Result<String, sinex_primitives::error::SinexError> {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(self.source.as_str().as_bytes());
-        hasher.update(b":");
-        hasher.update(self.event_type.as_str().as_bytes());
-        hasher.update(b":");
-        hasher.update(self.schema_version.as_bytes());
-        hasher.update(b":");
-        let serialized = serde_json::to_vec(&self.schema_content).map_err(|e| {
-            sinex_primitives::error::SinexError::validation(format!(
-                "Failed to serialize schema content for hashing: {e}"
-            ))
-        })?;
-        hasher.update(&serialized);
-        Ok(hasher.finalize().to_hex().to_string())
+        calculate_schema_content_hash(
+            self.source.as_str(),
+            self.event_type.as_str(),
+            &self.schema_version,
+            &self.schema_content,
+        )
     }
 }
 
@@ -98,19 +93,14 @@ impl<'a> SchemaManagementRepository<'a> {
         Self { pool }
     }
 
-    /// Synchronize the discovered schemas (from inventory) with the database
-    pub async fn sync_discovered_schemas<I>(&self, discovered: I) -> DbResult<SchemaSyncResult>
+    /// Synchronize a normalized schema bundle with the database registry.
+    pub async fn sync_schema_bundle<I>(&self, bundle: I) -> DbResult<SchemaSyncResult>
     where
-        I: IntoIterator<Item = ((String, String, String), JsonValue)>,
+        I: IntoIterator<Item = SchemaBundleEntry>,
     {
         let mut candidates = Vec::new();
-        for ((source, event_type, version), schema_content) in discovered {
-            candidates.push(SchemaCandidate::new(
-                source,
-                event_type,
-                version,
-                schema_content,
-            )?);
+        for entry in bundle {
+            candidates.push(SchemaCandidate::from_bundle_entry(entry)?);
         }
 
         let discovered_count = candidates.len();
@@ -960,29 +950,26 @@ struct SchemaCandidate {
 }
 
 impl SchemaCandidate {
-    fn new(
-        source: String,
-        event_type: String,
-        schema_version: String,
-        schema_content: JsonValue,
-    ) -> Result<Self, sinex_primitives::error::SinexError> {
-        // Validate schema version format (must be semver X.Y.Z)
-        SchemaVersion::new(&schema_version)
+    fn from_bundle_entry(entry: SchemaBundleEntry) -> Result<Self, sinex_primitives::error::SinexError> {
+        let schema = NewEventSchema {
+            source: EventSource::new(entry.source)?,
+            event_type: EventType::new(entry.event_type)?,
+            schema_version: entry.version,
+            schema_content: entry.schema_content,
+        };
+
+        SchemaVersion::new(&schema.schema_version)
             .validate()
-            .map_err(|e| {
-                SinexError::validation(format!("Invalid schema version '{schema_version}': {e}"))
+            .map_err(|error| {
+                SinexError::validation(format!(
+                    "Invalid schema version '{}': {error}",
+                    schema.schema_version
+                ))
             })?;
 
-        let schema = NewEventSchema {
-            source: EventSource::new(source)?,
-            event_type: EventType::new(event_type)?,
-            schema_version,
-            schema_content,
-        };
-        let content_hash = schema.calculate_content_hash()?;
         Ok(Self {
             schema,
-            content_hash,
+            content_hash: entry.content_hash,
         })
     }
 
