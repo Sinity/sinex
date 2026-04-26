@@ -66,11 +66,6 @@ slow-timeout = { period = "120s", terminate-after = 2 }
 filter = "package(sinex-db) | package(sinex-schema)"
 slow-timeout = { period = "90s", terminate-after = 2 }
 
-# Services tests use DB + may wait for events
-[[profile.default.overrides]]
-filter = "package(sinex-services)"
-slow-timeout = { period = "90s", terminate-after = 2 }
-
 # -----------------------------------------------------------------------------
 # debug: Single-threaded debugging
 # -----------------------------------------------------------------------------

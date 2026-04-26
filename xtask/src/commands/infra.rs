@@ -2,10 +2,12 @@
 
 use clap::Subcommand;
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
+use crate::infra::flake_stage::stage_checkout_for_flake;
 use crate::infra::stack::{self, StackConfig, StackStatus};
 use crate::infra::state::CheckoutState;
 
@@ -73,6 +75,15 @@ pub enum InfraSubcommand {
         #[command(subcommand)]
         cmd: crate::commands::vm::VmSubcommand,
     },
+    /// Stage a flake-safe checkout copy for local Nix builds and deploys
+    FlakeStage {
+        /// Output directory for the staged checkout. Defaults to a unique /tmp path.
+        #[arg(long)]
+        output_dir: Option<PathBuf>,
+        /// Replace an existing output directory instead of failing.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 impl XtaskCommand for InfraCommand {
@@ -117,6 +128,9 @@ impl XtaskCommand for InfraCommand {
                     subcommand: cmd.clone(),
                 };
                 vm_cmd.execute(ctx).await
+            }
+            InfraSubcommand::FlakeStage { output_dir, force } => {
+                execute_flake_stage(output_dir.as_deref(), *force, ctx)
             }
         }
     }
@@ -257,6 +271,65 @@ fn execute_tls_init_gateway(
         result = result.with_detail(format!("SAN: {san_entry}"));
     }
     Ok(result)
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct FlakeStageResult {
+    staged_root: String,
+    flake_uri: String,
+    copied_dirs: usize,
+    copied_files: usize,
+    copied_symlinks: usize,
+    excluded_count: usize,
+    unsupported_count: usize,
+    excluded_paths: Vec<String>,
+    unsupported_paths: Vec<String>,
+}
+
+fn execute_flake_stage(
+    output_dir: Option<&Path>,
+    force: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    ctx.heading("infra flake-stage");
+
+    let report = stage_checkout_for_flake(&crate::config::workspace_root(), output_dir, force)?;
+    let result = FlakeStageResult {
+        staged_root: report.staged_root.clone(),
+        flake_uri: report.flake_uri.clone(),
+        copied_dirs: report.copied_dirs,
+        copied_files: report.copied_files,
+        copied_symlinks: report.copied_symlinks,
+        excluded_count: report.excluded_paths.len(),
+        unsupported_count: report.unsupported_paths.len(),
+        excluded_paths: report.excluded_paths.clone(),
+        unsupported_paths: report.unsupported_paths.clone(),
+    };
+
+    let mut command_result = CommandResult::success()
+        .with_message("Flake-safe checkout staged")
+        .with_detail(format!("Stage root: {}", report.staged_root))
+        .with_detail(format!("Flake URI: {}", report.flake_uri))
+        .with_detail(format!(
+            "Copied {} directories, {} files, {} symlinks",
+            report.copied_dirs, report.copied_files, report.copied_symlinks
+        ))
+        .with_detail(format!(
+            "Excluded {} paths and skipped {} unsupported entries",
+            report.excluded_paths.len(),
+            report.unsupported_paths.len()
+        ))
+        .with_data(serde_json::to_value(result)?)
+        .with_duration(ctx.elapsed());
+
+    if !report.unsupported_paths.is_empty() {
+        command_result = command_result.with_warning(format!(
+            "Skipped unsupported filesystem entries: {}",
+            report.unsupported_paths.join(", ")
+        ));
+    }
+
+    Ok(command_result)
 }
 
 fn execute_stop(config: &StackConfig, ctx: &CommandContext) -> Result<CommandResult> {

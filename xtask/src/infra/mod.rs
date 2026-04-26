@@ -1,3 +1,4 @@
+pub mod flake_stage;
 pub mod probe;
 pub mod services;
 pub mod stack;

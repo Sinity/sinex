@@ -5674,6 +5674,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-daily-summarizer"
+version = "0.4.2"
+dependencies = [
+ "clap",
+ "color-eyre",
+ "human-panic",
+ "mimalloc",
+ "serde",
+ "sinex-node-sdk",
+ "sinex-primitives",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "xtask",
+]
+
+[[package]]
 name = "sinex-db"
 version = "0.1.0"
 dependencies = [
@@ -5896,6 +5913,23 @@ dependencies = [
  "sinex-node-sdk",
  "sinex-primitives",
  "time",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "xtask",
+]
+
+[[package]]
+name = "sinex-hourly-summarizer"
+version = "0.4.2"
+dependencies = [
+ "clap",
+ "color-eyre",
+ "human-panic",
+ "mimalloc",
+ "serde",
+ "sinex-node-sdk",
+ "sinex-primitives",
  "tokio",
  "tracing",
  "tracing-subscriber",

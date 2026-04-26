@@ -126,6 +126,20 @@ impl XtaskCommand for LintForbiddenCommand {
             r"sqlx::query_as\(",
             &sqlx_query_as_allow,
         )?);
+        let raw_event_subject_allow = [
+            "xtask/src/sandbox/events.rs",
+            "crate/lib/sinex-node-sdk/src/nats_publisher.rs",
+            "crate/lib/sinex-primitives/src/environment.rs",
+            "crate/lib/sinex-node-sdk/src/event_node.rs",
+            "crate/lib/sinex-node-sdk/src/runtime/stream/mod.rs",
+            "xtask/src/commands/lint_forbidden.rs",
+        ];
+        violations.extend(check_pattern(
+            "nats_raw_event_subject_with_namespace(",
+            r"nats_raw_event_subject_with_namespace\(",
+            &raw_event_subject_allow,
+            is_tests_path,
+        )?);
 
         // anyhow:: in library code is disallowed; libraries use the project error stack.
         let anyhow_allow: [&str; 0] = [];
@@ -206,9 +220,7 @@ impl XtaskCommand for LintForbiddenCommand {
 
 /// Check for a pattern allowing test directories
 fn check_pattern_allow_tests(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
-    run_rg(pattern)
-        .and_then(|matches| filter_allowlist(matches, allow, is_tests_path))
-        .with_context(|| format!("failed to scan for {label}"))
+    check_pattern(label, pattern, allow, is_tests_path)
 }
 
 /// Check test attributes while allowing dedicated test dirs and inline cfg(test) modules.
@@ -217,12 +229,17 @@ fn check_rust_test_attr_patterns(
     pattern: &str,
     allow: &[&str],
 ) -> Result<Vec<String>> {
+    check_pattern(label, pattern, allow, |path| {
+        is_tests_path(path) || file_has_inline_cfg_test_module(path)
+    })
+}
+
+fn check_pattern<F>(label: &str, pattern: &str, allow: &[&str], skip: F) -> Result<Vec<String>>
+where
+    F: FnMut(&str) -> bool,
+{
     run_rg(pattern)
-        .and_then(|matches| {
-            filter_allowlist(matches, allow, |path| {
-                is_tests_path(path) || file_has_inline_cfg_test_module(path)
-            })
-        })
+        .and_then(|matches| filter_allowlist(matches, allow, skip))
         .with_context(|| format!("failed to scan for {label}"))
 }
 

@@ -111,6 +111,18 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 notes: &[],
             },
             GuideEntry {
+                path: "infra flake-stage",
+                fallback_summary: "Stage a flake-safe checkout copy",
+                when: "you need a dirty checkout, untracked files, or a runtime-socket-filled repo to work as a local Nix or nixos-rebuild input",
+                examples: &[
+                    "xtask infra flake-stage",
+                    "xtask infra flake-stage --output-dir /tmp/sinex-flake-verify --force",
+                ],
+                notes: &[
+                    "The staged tree excludes local-only runtime and build artifacts such as `.git`, `.sinex`, `target`, `result*`, and `.direnv`.",
+                ],
+            },
+            GuideEntry {
                 path: "run",
                 fallback_summary: "Run sinex binaries",
                 when: "you need to launch a node, ingest daemon, or gateway process during development",
