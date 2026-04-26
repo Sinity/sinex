@@ -63,6 +63,7 @@ Use when your node transforms individual events in a stateless manner.
 - Return `Some(output)` to emit, `None` to filter/skip
 - Error handling via DLQ, retry, or skip actions
 - Lowest boilerplate for simple transformations
+- Do not use as an implicit waiting or cross-source reconciliation mechanism
 
 ### WindowedNode — "I aggregate events over time windows"
 
@@ -76,6 +77,7 @@ Use when your node combines multiple events within a time or count window.
 - Maintains window state across multiple input events
 - Automatic checkpoint at window completion
 - Return aggregated `Some(output)` per window boundary
+- Correct choice when bounded waiting is part of the domain truth
 
 ### ScopeReconcilerNode — "I track and reconcile scope state"
 
@@ -89,6 +91,21 @@ Use when your node maintains per-scope state and emits reconciliation events.
 - Emits reconciliation events when scope state changes
 - Handles scope creation, updates, and cleanup
 - Automatic DLQ/retry for failed reconciliations
+- Correct choice when late-arriving evidence may require recomputing the current
+  best output for a scope
+
+## Late-Arrival Decision Rule
+
+When sources for the same logical activity arrive with different latencies:
+
+- keep raw ingestors eager;
+- keep simple 1:1 normalization as `TransducerNode`;
+- use `WindowedNode` only for real bounded windows;
+- use `ScopeReconcilerNode` when the output may need replacement after the
+  scope's working set changes.
+
+Do not introduce a general-purpose derived-event provisional/final model just
+because the runtime transport itself is provisional-before-confirmed.
 
 ### StageAsYouGoNode — "I need streaming content capture"
 
