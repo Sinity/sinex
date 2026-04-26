@@ -7,6 +7,7 @@ use crate::gitops::types::{GitOpsSource, GitOpsSyncStats};
 use crate::{IngestdResult, SinexError};
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::schema_management::SchemaManagementRepository;
+use sinex_primitives::events::schema_registry::SchemaBundleEntry;
 use sqlx::PgPool;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -155,14 +156,19 @@ impl GitOpsSyncService {
 
         let schemas_discovered = discovered.len();
 
-        // Convert to the format expected by sync_discovered_schemas
-        let schema_iter = discovered
-            .into_iter()
-            .map(|s| ((s.source, s.event_type, s.version), s.schema_content));
+        let mut schema_bundle = Vec::with_capacity(discovered.len());
+        for schema in discovered {
+            schema_bundle.push(SchemaBundleEntry::new(
+                schema.source,
+                schema.event_type,
+                schema.version,
+                schema.schema_content,
+            )?);
+        }
 
         // Upsert schemas into the database
         let repo = SchemaManagementRepository::new(&self.pool);
-        let sync_result = repo.sync_discovered_schemas(schema_iter).await?;
+        let sync_result = repo.sync_schema_bundle(schema_bundle).await?;
 
         // Update the source with the current sync state
         self.update_source_sync_state(&source.id, &head_sha).await?;
