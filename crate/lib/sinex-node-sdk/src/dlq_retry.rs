@@ -1,6 +1,7 @@
-//! Dead Letter Queue retry mechanism
+//! Raw-ingest DLQ retry mechanism
 //!
-//! This module provides utilities for manually retrying messages from the DLQ.
+//! This module provides utilities for manually retrying messages from the
+//! operator-facing raw-ingest DLQ.
 
 use crate::{NodeResult, SinexError};
 use async_nats::jetstream;

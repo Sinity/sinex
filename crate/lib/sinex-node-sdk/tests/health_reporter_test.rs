@@ -3,7 +3,7 @@
 use sinex_node_sdk::SinexError;
 use sinex_node_sdk::health_reporter::{HealthClock, HealthReporter, HealthThresholds};
 use sinex_node_sdk::prelude::ProcessStatus;
-use sinex_node_sdk::self_observation::{SelfObserver, SelfObserverConfig};
+use sinex_node_sdk::self_observation::SelfObserver;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -27,21 +27,11 @@ impl HealthClock for ManualHealthClock {
     }
 }
 
-/// Create a test health reporter with NATS connection
+/// Create a test health reporter with a disabled observer.
 async fn create_test_reporter(
     ctx: TestContext,
 ) -> TestResult<(TestContext, Arc<HealthReporter>, Arc<ManualHealthClock>)> {
-    let ctx = ctx.with_nats().shared().await?;
-    let nats_client = ctx.nats_client();
-
-    let config = SelfObserverConfig {
-        component: "test-component".to_string(),
-        subject_prefix: "events.raw".to_string(),
-        enabled: true,
-        min_emission_interval: Duration::ZERO,
-    };
-
-    let observer = Arc::new(SelfObserver::new(nats_client, config));
+    let observer = Arc::new(SelfObserver::disabled());
     let clock = Arc::new(ManualHealthClock::default());
 
     let thresholds = HealthThresholds {
@@ -259,17 +249,7 @@ async fn health_reporter_calculates_error_rate_in_sliding_window(
 
 #[sinex_test]
 async fn health_reporter_with_custom_thresholds(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().shared().await?;
-    let nats_client = ctx.nats_client();
-
-    let config = SelfObserverConfig {
-        component: "test-strict".to_string(),
-        subject_prefix: "events.raw".to_string(),
-        enabled: true,
-        min_emission_interval: Duration::from_millis(100),
-    };
-
-    let observer = Arc::new(SelfObserver::new(nats_client, config));
+    let observer = Arc::new(SelfObserver::disabled());
     let clock = Arc::new(ManualHealthClock::default());
 
     // Stricter thresholds: degraded at 1%, failed at 2%

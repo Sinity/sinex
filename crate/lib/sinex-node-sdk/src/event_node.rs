@@ -31,11 +31,10 @@ impl std::fmt::Debug for EventTransport {
 }
 
 impl EventTransport {
-    /// Send an event to the Dead Letter Queue
+    /// Send a failed event to the processing-failure stream.
     ///
-    /// This method is used when processing fails and the event should be
-    /// preserved for later retry or manual inspection.
-    pub async fn send_to_dlq(
+    /// This is for derived/runtime processing failures, not the raw-ingest DLQ.
+    pub async fn send_to_processing_failure_queue(
         &self,
         event: &Event<JsonValue>,
         error: &str,
@@ -43,9 +42,9 @@ impl EventTransport {
     ) -> NodeResult<()> {
         match self {
             EventTransport::Nats(publisher) => publisher
-                .publish_to_dlq(event, error, node_name)
+                .publish_processing_failure(event, error, node_name)
                 .await
-                .map_err(|e| e.with_context("operation", "send_to_dlq")),
+                .map_err(|e| e.with_context("operation", "send_to_processing_failure_queue")),
         }
     }
 }
@@ -73,7 +72,7 @@ struct EventBatcherStats {
     batches_sent: AtomicU64,
     events_sent: AtomicU64,
     publish_failures: AtomicU64,
-    dlq_write_failures: AtomicU64,
+    recovery_spool_write_failures: AtomicU64,
 }
 
 impl EventBatcherStats {
@@ -82,7 +81,8 @@ impl EventBatcherStats {
             batches_sent = self.batches_sent.load(Ordering::Relaxed),
             events_sent = self.events_sent.load(Ordering::Relaxed),
             publish_failures = self.publish_failures.load(Ordering::Relaxed),
-            dlq_write_failures = self.dlq_write_failures.load(Ordering::Relaxed),
+            recovery_spool_write_failures =
+                self.recovery_spool_write_failures.load(Ordering::Relaxed),
             "Event batcher stats"
         );
     }
@@ -100,10 +100,10 @@ pub struct EventBatcher {
     event_receiver: mpsc::Receiver<Event<JsonValue>>,
     shutdown: tokio::sync::oneshot::Receiver<()>,
     stats: Arc<EventBatcherStats>,
-    /// Persistent work directory used for the local DLQ fallback file.
+    /// Persistent work directory used for the local recovery-spool file.
     ///
     /// This must be a directory that survives service restarts (i.e. **not** under a
-    /// `PrivateTmp` systemd namespace).  It is populated from the node's `NodeConfig::work_dir`
+    /// `PrivateTmp` systemd namespace). It is populated from the node's `NodeConfig::work_dir`
     /// by the runtime, which in turn reads `SINEX_WORK_DIR` / defaults to the system cache dir.
     work_dir: PathBuf,
 }
@@ -112,9 +112,9 @@ impl EventBatcher {
     /// Create a new event batcher.
     ///
     /// `work_dir` must be a persistent directory that survives service restarts (i.e. **not**
-    /// under `PrivateTmp`).  It is used as the fallback write location when NATS DLQ publishing
-    /// fails.  On creation, any leftover DLQ files from a previous run are detected and logged
-    /// as warnings so operators know there are events that require manual attention.
+    /// under `PrivateTmp`). It is used as the fallback write location when raw-event publishing
+    /// fails. On creation, any leftover recovery-spool files from a previous run are detected
+    /// and logged as warnings so operators know there are events that require manual attention.
     #[must_use]
     pub fn new(
         transport: EventTransport,
@@ -131,22 +131,22 @@ impl EventBatcher {
             stats: Arc::new(EventBatcherStats::default()),
             work_dir,
         };
-        batcher.warn_leftover_dlq_files();
+        batcher.warn_leftover_recovery_spool();
         batcher
     }
 
-    /// Check for leftover local DLQ files from a previous run and emit a warn-level log.
+    /// Check for leftover local recovery-spool files from a previous run and emit a warn-level log.
     ///
     /// Automatic replay happens in `run()` before the main batching loop starts; this warning keeps
     /// leftover state visible even when replay cannot fully recover it.
-    fn warn_leftover_dlq_files(&self) {
-        let dlq_path = self.dlq_path();
-        match std::fs::metadata(&dlq_path) {
+    fn warn_leftover_recovery_spool(&self) {
+        let recovery_spool_path = self.recovery_spool_path();
+        match std::fs::metadata(&recovery_spool_path) {
             Ok(meta) => {
                 warn!(
-                    path = ?dlq_path,
+                    path = ?recovery_spool_path,
                     bytes = meta.len(),
-                    "Found leftover local DLQ file from a previous run; \
+                    "Found leftover local recovery spool from a previous run; \
                      events in this file were not delivered to NATS and require manual attention"
                 );
             }
@@ -155,17 +155,17 @@ impl EventBatcher {
             }
             Err(e) => {
                 warn!(
-                    path = ?dlq_path,
+                    path = ?recovery_spool_path,
                     error = %e,
-                    "Could not check for leftover local DLQ file on startup"
+                    "Could not check for leftover local recovery spool on startup"
                 );
             }
         }
     }
 
-    /// Return the canonical path for the local DLQ fallback file in the node's work directory.
-    fn dlq_path(&self) -> PathBuf {
-        self.work_dir.join("sinex_dead_letter_events.json")
+    /// Return the canonical path for the local recovery spool in the node's work directory.
+    fn recovery_spool_path(&self) -> PathBuf {
+        self.work_dir.join("sinex_event_recovery_spool.jsonl")
     }
 
     /// Run the event batching loop
@@ -176,7 +176,7 @@ impl EventBatcher {
             batch_timeout_ms = self.config.batch_timeout_ms,
             "Starting event batcher"
         );
-        self.recover_dead_letter_events().await?;
+        self.recover_recovery_spool_events().await?;
 
         let mut batch = Vec::with_capacity(self.config.batch_size);
         let mut ticker = interval(Duration::from_millis(self.config.batch_timeout_ms));
@@ -238,16 +238,16 @@ impl EventBatcher {
         Ok(())
     }
 
-    async fn recover_dead_letter_events(&self) -> NodeResult<()> {
-        let dlq_path = self.dlq_path();
-        let file = match tokio::fs::File::open(&dlq_path).await {
+    async fn recover_recovery_spool_events(&self) -> NodeResult<()> {
+        let recovery_spool_path = self.recovery_spool_path();
+        let file = match tokio::fs::File::open(&recovery_spool_path).await {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => {
                 warn!(
-                    path = ?dlq_path,
+                    path = ?recovery_spool_path,
                     error = %error,
-                    "Could not open leftover local DLQ file for recovery"
+                    "Could not open leftover local recovery spool for replay"
                 );
                 return Ok(());
             }
@@ -268,9 +268,9 @@ impl EventBatcher {
                 Err(error) => {
                     malformed += 1;
                     warn!(
-                        path = ?dlq_path,
+                        path = ?recovery_spool_path,
                         error = %error,
-                        "Preserving malformed local DLQ entry during recovery"
+                        "Preserving malformed local recovery-spool entry during replay"
                     );
                     remaining_lines.push(line);
                     continue;
@@ -283,10 +283,10 @@ impl EventBatcher {
 
             if let Err(error) = publish_result {
                 warn!(
-                    path = ?dlq_path,
+                    path = ?recovery_spool_path,
                     event_id = ?event.id,
                     error = %error,
-                    "Preserving local DLQ entry after replay publish failure"
+                    "Preserving recovery-spool entry after replay publish failure"
                 );
                 remaining_lines.push(line);
                 continue;
@@ -296,23 +296,23 @@ impl EventBatcher {
         }
 
         if remaining_lines.is_empty() {
-            tokio::fs::remove_file(&dlq_path).await?;
+            tokio::fs::remove_file(&recovery_spool_path).await?;
             info!(
-                path = ?dlq_path,
+                path = ?recovery_spool_path,
                 recovered,
                 malformed,
-                "Recovered and removed leftover local DLQ file"
+                "Replayed and removed leftover local recovery spool"
             );
             return Ok(());
         }
 
-        Self::rewrite_dead_letter_file(&remaining_lines, &dlq_path).await?;
+        Self::rewrite_recovery_spool_file(&remaining_lines, &recovery_spool_path).await?;
         warn!(
-            path = ?dlq_path,
+            path = ?recovery_spool_path,
             recovered,
             malformed,
             remaining = remaining_lines.len(),
-            "Recovered local DLQ file partially; unreadable or unpublished entries were preserved"
+            "Replayed local recovery spool partially; unreadable or unpublished entries were preserved"
         );
         Ok(())
     }
@@ -351,21 +351,21 @@ impl EventBatcher {
         error!(
             batch_size,
             failed = batch.len(),
-            "Failed to send batch; routing failures to DLQ"
+            "Failed to send batch; routing failures to local recovery spool"
         );
         self.stats
             .publish_failures
             .fetch_add(batch.len() as u64, Ordering::Relaxed);
-        // Store failed events in dead letter queue for later retry.
-        let dlq_path = self.dlq_path();
-        if let Err(e) = Self::store_dead_letter_events(batch, &dlq_path).await {
+        // Store failed raw events in the local recovery spool for later replay.
+        let recovery_spool_path = self.recovery_spool_path();
+        if let Err(e) = Self::store_recovery_spool_events(batch, &recovery_spool_path).await {
             self.stats
-                .dlq_write_failures
+                .recovery_spool_write_failures
                 .fetch_add(batch.len() as u64, Ordering::Relaxed);
             error!(
-                dlq_events = batch.len(),
+                recovery_spool_events = batch.len(),
                 error = %e,
-                "Failed to store events in dead letter queue"
+                "Failed to store events in local recovery spool"
             );
             return Err(e);
         }
@@ -374,29 +374,31 @@ impl EventBatcher {
         Ok(())
     }
 
-    /// Store failed events in the local DLQ fallback file at `dead_letter_path`.
+    /// Store failed raw events in the local recovery spool at `recovery_spool_path`.
     ///
     /// The caller is responsible for providing a persistent path (not under `PrivateTmp`).
-    async fn store_dead_letter_events(
+    async fn store_recovery_spool_events(
         events: &[Event<JsonValue>],
-        dead_letter_path: &Path,
+        recovery_spool_path: &Path,
     ) -> NodeResult<()> {
         warn!(
-            path = ?dead_letter_path,
+            path = ?recovery_spool_path,
             events = events.len(),
-            "Writing failed events to local DLQ file"
+            "Writing failed events to local recovery spool"
         );
-        Self::store_dead_letter_events_at_path(events, dead_letter_path).await
+        Self::store_recovery_spool_events_at_path(events, recovery_spool_path).await
     }
 
-    async fn store_dead_letter_events_at_path(
+    async fn store_recovery_spool_events_at_path(
         events: &[Event<JsonValue>],
-        dead_letter_path: &Path,
+        recovery_spool_path: &Path,
     ) -> NodeResult<()> {
-        let parent_dir = dead_letter_path.parent().unwrap_or_else(|| Path::new("."));
+        let parent_dir = recovery_spool_path.parent().unwrap_or_else(|| Path::new("."));
         tokio::fs::create_dir_all(parent_dir).await?;
-        let temp_path =
-            parent_dir.join(format!(".sinex_dead_letter_events.{}.tmp", Uuid::now_v7()));
+        let temp_path = parent_dir.join(format!(
+            ".sinex_event_recovery_spool.{}.tmp",
+            Uuid::now_v7()
+        ));
 
         let mut file = tokio::fs::OpenOptions::new()
             .create_new(true)
@@ -404,10 +406,10 @@ impl EventBatcher {
             .open(&temp_path)
             .await?;
 
-        if tokio::fs::metadata(dead_letter_path).await.is_ok() {
+        if tokio::fs::metadata(recovery_spool_path).await.is_ok() {
             let mut existing = tokio::fs::OpenOptions::new()
                 .read(true)
-                .open(dead_letter_path)
+                .open(recovery_spool_path)
                 .await?;
             io::copy(&mut existing, &mut file).await?;
         }
@@ -420,21 +422,26 @@ impl EventBatcher {
 
         file.flush().await?;
         file.sync_all().await?;
-        tokio::fs::rename(&temp_path, dead_letter_path).await?;
+        tokio::fs::rename(&temp_path, recovery_spool_path).await?;
 
         info!(
-            dlq_events = events.len(),
-            path = ?dead_letter_path,
-            "Stored events in dead letter queue"
+            recovery_spool_events = events.len(),
+            path = ?recovery_spool_path,
+            "Stored events in local recovery spool"
         );
         Ok(())
     }
 
-    async fn rewrite_dead_letter_file(lines: &[String], dead_letter_path: &Path) -> NodeResult<()> {
-        let parent_dir = dead_letter_path.parent().unwrap_or_else(|| Path::new("."));
+    async fn rewrite_recovery_spool_file(
+        lines: &[String],
+        recovery_spool_path: &Path,
+    ) -> NodeResult<()> {
+        let parent_dir = recovery_spool_path.parent().unwrap_or_else(|| Path::new("."));
         tokio::fs::create_dir_all(parent_dir).await?;
-        let temp_path =
-            parent_dir.join(format!(".sinex_dead_letter_events.{}.tmp", Uuid::now_v7()));
+        let temp_path = parent_dir.join(format!(
+            ".sinex_event_recovery_spool.{}.tmp",
+            Uuid::now_v7()
+        ));
         let mut file = tokio::fs::OpenOptions::new()
             .create_new(true)
             .write(true)
@@ -448,7 +455,7 @@ impl EventBatcher {
 
         file.flush().await?;
         file.sync_all().await?;
-        tokio::fs::rename(&temp_path, dead_letter_path).await?;
+        tokio::fs::rename(&temp_path, recovery_spool_path).await?;
         Ok(())
     }
 
@@ -496,7 +503,7 @@ impl EventBatcher {
 /// Spawn the event batcher loop.
 ///
 /// `work_dir` must point to a directory that persists across service restarts so that any
-/// local DLQ fallback files survive a `PrivateTmp`-scoped restart and can be inspected.
+/// local recovery-spool files survive a `PrivateTmp`-scoped restart and can be inspected.
 #[must_use]
 pub fn spawn_event_batcher(
     transport: EventTransport,
@@ -518,7 +525,7 @@ mod tests {
     use async_nats::jetstream;
     use futures::StreamExt;
     use sinex_primitives::{
-        DynamicPayload, Id, JsonValue, Provenance, Uuid,
+        DynamicPayload, Id, JsonValue, Uuid,
         events::{Event, EventId},
     };
     use std::fs;
@@ -554,19 +561,16 @@ mod tests {
 
     fn test_event(name: &str, ok: bool) -> sinex_primitives::Result<Event<JsonValue>> {
         let mut event = DynamicPayload::new("dlq.test", name, serde_json::json!({ "ok": ok }))
-            .with_provenance(Provenance::from_synthesis_safe(
-                EventId::from_uuid(Uuid::now_v7()),
-                Vec::new(),
-            ))
+            .from_parents([EventId::from_uuid(Uuid::now_v7())])?
             .build()?;
         event.id = Some(Id::new());
         Ok(event)
     }
 
     #[sinex_test]
-    async fn dead_letter_write_failure_is_propagated() -> TestResult<()> {
+    async fn recovery_spool_write_failure_is_propagated() -> TestResult<()> {
         let temp_dir = tempdir()?;
-        let dead_letter_path = temp_dir.path().join("sinex_dead_letter_events.json");
+        let recovery_spool_path = temp_dir.path().join("sinex_event_recovery_spool.jsonl");
         let original_permissions = fs::metadata(temp_dir.path())?.permissions();
         let mut read_only = original_permissions.clone();
         read_only.set_readonly(true);
@@ -574,17 +578,15 @@ mod tests {
 
         let event = DynamicPayload::new(
             "dlq.test",
-            "dead_letter.failure",
+            "recovery_spool.failure",
             serde_json::json!({"ok": true}),
         )
-        .with_provenance(Provenance::from_synthesis_safe(
-            EventId::from_uuid(Uuid::now_v7()),
-            Vec::new(),
-        ))
+        .from_parents([EventId::from_uuid(Uuid::now_v7())])?
         .build()
         .expect("infallible: test provenance set");
         let result =
-            EventBatcher::store_dead_letter_events_at_path(&[event], &dead_letter_path).await;
+            EventBatcher::store_recovery_spool_events_at_path(&[event], &recovery_spool_path)
+                .await;
 
         fs::set_permissions(temp_dir.path(), original_permissions)?;
         assert!(result.is_err());
@@ -592,42 +594,39 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn dead_letter_write_uses_provided_work_directory() -> TestResult<()> {
+    async fn recovery_spool_write_uses_provided_work_directory() -> TestResult<()> {
         let temp_dir = tempdir()?;
         let work_dir = temp_dir.path().to_path_buf();
-        let dead_letter_path = work_dir.join("sinex_dead_letter_events.json");
+        let recovery_spool_path = work_dir.join("sinex_event_recovery_spool.jsonl");
 
         let event = DynamicPayload::new(
             "dlq.test",
-            "dead_letter.path",
+            "recovery_spool.path",
             serde_json::json!({"ok": true}),
         )
-        .with_provenance(Provenance::from_synthesis_safe(
-            EventId::from_uuid(Uuid::now_v7()),
-            Vec::new(),
-        ))
+        .from_parents([EventId::from_uuid(Uuid::now_v7())])?
         .build()
         .expect("infallible: test provenance set");
 
-        remove_if_exists(&dead_letter_path).await?;
-        EventBatcher::store_dead_letter_events(&[event], &dead_letter_path).await?;
+        remove_if_exists(&recovery_spool_path).await?;
+        EventBatcher::store_recovery_spool_events(&[event], &recovery_spool_path).await?;
         assert!(
-            dead_letter_path.exists(),
-            "expected DLQ file at {dead_letter_path:?}"
+            recovery_spool_path.exists(),
+            "expected recovery spool at {recovery_spool_path:?}"
         );
         Ok(())
     }
 
     #[sinex_test]
-    async fn leftover_local_dlq_events_are_republished_on_startup(
+    async fn leftover_recovery_spool_events_are_republished_on_startup(
         ctx: xtask::sandbox::TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().dedicated().await?;
         ensure_events_stream(&ctx.nats_client(), ctx.env()).await?;
 
         let work_dir = tempdir()?;
-        let dead_letter_path = work_dir.path().join("sinex_dead_letter_events.json");
-        let event = test_event("dead_letter.recovered", true)?;
+        let recovery_spool_path = work_dir.path().join("sinex_event_recovery_spool.jsonl");
+        let event = test_event("recovery_spool.recovered", true)?;
         let subject = ctx.env().nats_raw_event_subject_with_namespace(
             None,
             event.source.as_str(),
@@ -635,7 +634,8 @@ mod tests {
         );
         let mut subscription = ctx.nats_client().subscribe(subject).await?;
 
-        EventBatcher::store_dead_letter_events_at_path(&[event], &dead_letter_path).await?;
+        EventBatcher::store_recovery_spool_events_at_path(&[event], &recovery_spool_path)
+            .await?;
 
         let (_sender, receiver) = mpsc::channel(1);
         let (_shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -646,34 +646,34 @@ mod tests {
             shutdown_rx,
             work_dir.path().to_path_buf(),
         );
-        batcher.recover_dead_letter_events().await?;
+        batcher.recover_recovery_spool_events().await?;
 
         let message = tokio::time::timeout(Duration::from_secs(5), subscription.next())
             .await?
-            .expect("replayed local DLQ event should be published");
+            .expect("replayed recovery-spool event should be published");
         let payload: JsonValue = serde_json::from_slice(&message.payload)?;
-        assert_eq!(payload["event_type"], "dead_letter.recovered");
+        assert_eq!(payload["event_type"], "recovery_spool.recovered");
         assert!(
-            tokio::fs::metadata(&dead_letter_path).await.is_err(),
-            "fully recovered local DLQ file should be removed"
+            tokio::fs::metadata(&recovery_spool_path).await.is_err(),
+            "fully replayed recovery spool should be removed"
         );
         Ok(())
     }
 
     #[sinex_test]
-    async fn malformed_local_dlq_entries_are_preserved_during_recovery(
+    async fn malformed_recovery_spool_entries_are_preserved_during_replay(
         ctx: xtask::sandbox::TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().dedicated().await?;
         ensure_events_stream(&ctx.nats_client(), ctx.env()).await?;
 
         let work_dir = tempdir()?;
-        let dead_letter_path = work_dir.path().join("sinex_dead_letter_events.json");
-        let event = test_event("dead_letter.partial_recovery", true)?;
+        let recovery_spool_path = work_dir.path().join("sinex_event_recovery_spool.jsonl");
+        let event = test_event("recovery_spool.partial_recovery", true)?;
         let valid_line = serde_json::to_string(&event)?;
-        EventBatcher::rewrite_dead_letter_file(
+        EventBatcher::rewrite_recovery_spool_file(
             &[valid_line, "{not-json".to_string()],
-            &dead_letter_path,
+            &recovery_spool_path,
         )
         .await?;
 
@@ -686,16 +686,16 @@ mod tests {
             shutdown_rx,
             work_dir.path().to_path_buf(),
         );
-        batcher.recover_dead_letter_events().await?;
+        batcher.recover_recovery_spool_events().await?;
 
-        let contents = tokio::fs::read_to_string(&dead_letter_path).await?;
+        let contents = tokio::fs::read_to_string(&recovery_spool_path).await?;
         assert!(
             contents.contains("{not-json"),
-            "malformed local DLQ entry should remain for manual inspection"
+            "malformed recovery-spool entry should remain for manual inspection"
         );
         assert!(
-            !contents.contains("dead_letter.partial_recovery"),
-            "successfully replayed entries should be removed from the preserved DLQ file"
+            !contents.contains("recovery_spool.partial_recovery"),
+            "successfully replayed entries should be removed from the preserved recovery spool"
         );
         Ok(())
     }

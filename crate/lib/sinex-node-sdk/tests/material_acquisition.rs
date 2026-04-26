@@ -97,6 +97,54 @@ where
     Ok((ctx, nats, nats_client, ingest_handle))
 }
 
+async fn wait_for_slice_payload(
+    slice_sub: &mut async_nats::Subscriber,
+    subject: &str,
+    expected_payload: &[u8],
+) -> Result<()> {
+    loop {
+        let message = tokio::time::timeout(Duration::from_secs(Timeouts::SHORT), slice_sub.next())
+            .await?
+            .ok_or_else(|| {
+                color_eyre::eyre::eyre!("missing source-material slice frame for subject {subject}")
+            })?;
+        if message.subject.as_str() != subject {
+            continue;
+        }
+
+        assert_eq!(
+            message.payload.as_ref(),
+            expected_payload,
+            "one physical slice frame should contain the concatenated logical records"
+        );
+        return Ok(());
+    }
+}
+
+async fn assert_no_additional_slice_payload(
+    slice_sub: &mut async_nats::Subscriber,
+    subject: &str,
+    quiet_period: Duration,
+) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + quiet_period;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Ok(());
+        }
+
+        match tokio::time::timeout(remaining, slice_sub.next()).await {
+            Err(_) | Ok(None) => return Ok(()),
+            Ok(Some(message)) if message.subject.as_str() == subject => {
+                return Err(color_eyre::eyre::eyre!(
+                    "subject {subject} published more than one slice frame"
+                ));
+            }
+            Ok(Some(_)) => continue,
+        }
+    }
+}
+
 fn source_material_proof(runner_id: &str, claim_ids: &[&str], reproducer: &str) -> ProofMetadata {
     source_material_proof_with_subjects(
         runner_id,
@@ -390,21 +438,12 @@ async fn source_material_scenario_batches_row_stream_records_with_stable_anchors
         .first()
         .ok_or_else(|| color_eyre::eyre::eyre!("batched append returned no anchors"))?
         .material_id;
-
-    let slice_msg = tokio::time::timeout(Duration::from_secs(Timeouts::SHORT), slice_sub.next())
-        .await?
-        .ok_or_else(|| color_eyre::eyre::eyre!("missing live source-material slice frame"))?;
-    assert_eq!(
-        slice_msg.payload.as_ref(),
-        expected_payload.as_slice(),
-        "one physical slice frame should contain the concatenated logical records"
-    );
-    assert!(
-        tokio::time::timeout(Duration::from_millis(200), slice_sub.next())
-            .await
-            .is_err(),
-        "batched append should not publish one source-material slice per tiny record"
-    );
+    let slice_subject = ctx
+        .pipeline_namespace()
+        .subject(&source_material_slice_subject(material_id));
+    wait_for_slice_payload(&mut slice_sub, &slice_subject, expected_payload.as_slice()).await?;
+    assert_no_additional_slice_payload(&mut slice_sub, &slice_subject, Duration::from_millis(200))
+        .await?;
 
     stream.finalize("row stream scenario complete").await?;
 
@@ -543,21 +582,12 @@ async fn source_material_resource_frame_amplification_profile(ctx: TestContext) 
         .first()
         .ok_or_else(|| color_eyre::eyre::eyre!("resource append returned no anchors"))?
         .material_id;
-
-    let slice_msg = tokio::time::timeout(Duration::from_secs(Timeouts::SHORT), slice_sub.next())
-        .await?
-        .ok_or_else(|| color_eyre::eyre::eyre!("missing resource profile slice frame"))?;
-    assert_eq!(
-        slice_msg.payload.as_ref(),
-        expected_payload.as_slice(),
-        "resource profile should emit one physical slice for the tiny-record burst"
-    );
-    assert!(
-        tokio::time::timeout(Duration::from_millis(200), slice_sub.next())
-            .await
-            .is_err(),
-        "tiny-record burst should not amplify into one slice frame per record"
-    );
+    let slice_subject = ctx
+        .pipeline_namespace()
+        .subject(&source_material_slice_subject(material_id));
+    wait_for_slice_payload(&mut slice_sub, &slice_subject, expected_payload.as_slice()).await?;
+    assert_no_additional_slice_payload(&mut slice_sub, &slice_subject, Duration::from_millis(200))
+        .await?;
 
     stream.finalize("resource frame profile complete").await?;
     let expected_bytes = i64::try_from(logical_bytes)?;

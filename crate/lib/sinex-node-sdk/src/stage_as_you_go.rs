@@ -89,10 +89,7 @@ mod tests {
             "line.captured",
             serde_json::json!({"line": "hello"}),
         )
-        .with_provenance(Provenance::from_synthesis_safe(
-            Id::from_uuid(Uuid::now_v7()),
-            Vec::new(),
-        ))
+        .from_parents([Id::from_uuid(Uuid::now_v7())])?
         .at_time(
             sinex_primitives::Timestamp::from_unix_timestamp_millis(1_710_000_000_123)
                 .ok_or_else(|| color_eyre::eyre::eyre!("test timestamp should be valid"))?,
