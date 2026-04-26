@@ -23,7 +23,7 @@ async fn self_observation_metrics_persist_via_ingestd(ctx: TestContext) -> TestR
         ctx.nats_client(),
         SelfObserverConfig {
             component: "telemetry-persistence".to_string(),
-            subject_prefix: format!("{namespace}.events.raw"),
+            namespace: Some(namespace),
             enabled: true,
             min_emission_interval: Duration::ZERO,
         },
