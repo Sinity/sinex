@@ -1,5 +1,5 @@
 use crate::schema::{
-    ArchivedEventAnnotations, ArchivedEventEmbeddings, ArchivedEvents, ArchivedTaggedItems, Blobs,
+    ArchivedEventAnnotations, ArchivedEventEmbeddings, ArchivedEvents, ArchivedTaggedItems, BinarySchemaVersion, Blobs,
     EmbeddingCache, EmbeddingModels, Entities, EntityRelations, EventAnnotations,
     EventClusterMembers, EventClusters, EventEmbeddings, EventPayloadSchemas, EventReplacements,
     EventTombstones, Events, GitopsSchemaSources, NodeManifests, NodeRuns, OperationsLog,
@@ -388,6 +388,7 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         render_table(&Events::create_table_statement()),
         render_table(&GitopsSchemaSources::create_table_statement()),
         render_table(&ValidationCache::create_table_statement()),
+        render_table(&BinarySchemaVersion::create_table_statement()),
         render_table(&TemporalLedger::create_table_statement()),
         render_table(&Entities::create_table_statement()),
         render_table(&EntityRelations::create_table_statement()),

@@ -127,6 +127,14 @@ async fn apply_redelivery_decision(
 
 /// Bootstrap the ordered `JetStream` stream for material lifecycle frames.
 pub(super) async fn bootstrap_streams(assembler: &MaterialAssembler) -> IngestdResult<()> {
+    // When SINEX_NATS_STREAMS_MANAGED_EXTERNALLY=true, the NixOS module owns
+    // stream configuration. Skip bootstrap so the two sources of truth don't
+    // conflict on stream shape or subject overlap.
+    if std::env::var("SINEX_NATS_STREAMS_MANAGED_EXTERNALLY").as_deref() == Ok("true") {
+        info!("NATS streams managed externally -- skipping bootstrap");
+        return Ok(());
+    }
+
     info!("Bootstrapping material streams");
 
     assembler
