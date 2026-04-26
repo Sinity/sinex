@@ -735,6 +735,49 @@ where
     #[cfg(not(feature = "messaging"))]
     async fn observe_runtime_snapshot(&self) {}
 
+    /// Emit per-event processing-latency gauges (last-value samples) so
+    /// operators can see how a derived node is keeping up with its input
+    /// stream. Adds two metrics:
+    ///
+    /// - `derived.event_lag_ms` — wall time between the upstream event's
+    ///   `ts_orig` and now, sampled at the moment the adapter dispatches
+    ///   to the node's logic. Surfaces backlog and clock-skew issues.
+    /// - `derived.tick_runtime_ms` — wall time spent inside
+    ///   `node.process_derived` for the last event. Surfaces unbounded
+    ///   per-event work.
+    ///
+    /// These are point-in-time samples, not percentiles — operators
+    /// aggregate via the metrics scrape rather than inside the node.
+    /// Histogram-on-source (t-digest, HDR) is a follow-up (#561).
+    #[cfg(feature = "messaging")]
+    async fn observe_processing_latency(&self, lag_ms: f64, runtime_ms: f64) {
+        let Some(obs) = self.self_observer.as_ref() else {
+            return;
+        };
+        let labels = self.derived_metric_labels();
+
+        if lag_ms.is_finite() {
+            if let Err(error) = obs
+                .emit_gauge("derived.event_lag_ms", lag_ms, Some(labels.clone()))
+                .await
+            {
+                log_self_observation_failure(self.node.name(), "derived.event_lag_ms", &error);
+            }
+        }
+
+        if runtime_ms.is_finite() {
+            if let Err(error) = obs
+                .emit_gauge("derived.tick_runtime_ms", runtime_ms, Some(labels))
+                .await
+            {
+                log_self_observation_failure(self.node.name(), "derived.tick_runtime_ms", &error);
+            }
+        }
+    }
+
+    #[cfg(not(feature = "messaging"))]
+    async fn observe_processing_latency(&self, _lag_ms: f64, _runtime_ms: f64) {}
+
     #[cfg(feature = "messaging")]
     async fn observe_checkpoint_state(&self, state: &CheckpointState) {
         let Some(obs) = self.self_observer.as_ref() else {
@@ -932,10 +975,20 @@ where
         let context = DerivedTriggerContext::live(&event)?;
         let source_event_id = context.trigger_event_id;
 
+        // Lag = wall time between the upstream event's `ts_orig` and the
+        // moment we start processing it. Negative values (clock skew /
+        // synthesized future timestamps) are clamped to zero so the
+        // gauge stays interpretable.
+        let lag_ms = event_lag_ms(&event);
+        let process_started_at = std::time::Instant::now();
+
         let result = self
             .node
             .process_derived(&mut self.persisted_state.state, event.clone(), &context)
             .await;
+
+        let runtime_ms = process_started_at.elapsed().as_secs_f64() * 1000.0;
+        self.observe_processing_latency(lag_ms, runtime_ms).await;
 
         // Track health
         #[cfg(feature = "messaging")]
@@ -2138,6 +2191,20 @@ async fn recv_invalidation(_sub: &mut ()) -> Option<Vec<u8>> {
     std::future::pending().await
 }
 
+/// Wall time between an event's `ts_orig` and now, expressed in
+/// milliseconds. Returns `0.0` when `ts_orig` is missing or in the future
+/// (clock skew / synthesized timestamps); returns `f64::NAN` only on
+/// arithmetic overflow, in which case the gauge emit is skipped.
+fn event_lag_ms(event: &Event<JsonValue>) -> f64 {
+    let Some(ts_orig) = event.ts_orig else {
+        return 0.0;
+    };
+    let now = sinex_primitives::Timestamp::now();
+    let delta = now - ts_orig;
+    let ms = delta.whole_milliseconds();
+    if ms <= 0 { 0.0 } else { ms as f64 }
+}
+
 fn checkpoint_resume_event_id(checkpoint: &Checkpoint) -> Option<Uuid> {
     match checkpoint {
         Checkpoint::Internal { event_id, .. } => Some(*event_id),
@@ -2335,8 +2402,16 @@ where
         }
 
         let batch_size = matching.len();
+        // Sample the lag of the oldest event in the batch — operators
+        // care about the worst-case backlog, not the average.
+        let max_lag_ms = matching
+            .iter()
+            .map(event_lag_ms)
+            .fold(0.0_f64, f64::max);
         let start = std::time::Instant::now();
         let outputs = self.process_batch(matching).await?;
+        let runtime_ms = start.elapsed().as_secs_f64() * 1000.0;
+        self.observe_processing_latency(max_lag_ms, runtime_ms).await;
         let output_count = outputs.len();
 
         if !outputs.is_empty() {
@@ -2353,7 +2428,7 @@ where
 
         Ok(ProcessingStats {
             processed: batch_size,
-            duration: start.elapsed(),
+            duration: std::time::Duration::from_secs_f64(runtime_ms / 1000.0),
             ..ProcessingStats::default()
         })
     }
