@@ -20,6 +20,7 @@ pub struct GitOpsSyncService {
     pool: PgPool,
     git_ops: GitOperations,
     shutdown_flag: Arc<AtomicBool>,
+    shutdown_notify: Arc<tokio::sync::Notify>,
 }
 
 impl GitOpsSyncService {
@@ -28,11 +29,18 @@ impl GitOpsSyncService {
     /// - `pool`: Database pool for querying sources and upserting schemas
     /// - `work_dir`: Directory where repositories are cloned
     /// - `shutdown_flag`: Shared flag for graceful shutdown
-    pub fn new(pool: PgPool, work_dir: PathBuf, shutdown_flag: Arc<AtomicBool>) -> Self {
+    /// - `shutdown_notify`: Notify for reactive shutdown waking
+    pub fn new(
+        pool: PgPool,
+        work_dir: PathBuf,
+        shutdown_flag: Arc<AtomicBool>,
+        shutdown_notify: Arc<tokio::sync::Notify>,
+    ) -> Self {
         Self {
             pool,
             git_ops: GitOperations::new(work_dir),
             shutdown_flag,
+            shutdown_notify,
         }
     }
 
@@ -70,7 +78,7 @@ impl GitOpsSyncService {
                         }
                     }
                 }
-                () = shutdown_signal(&self.shutdown_flag) => {
+                () = sinex_node_sdk::wait_for_shutdown_signal_bool(&self.shutdown_flag, &self.shutdown_notify) => {
                     info!("GitOps sync service shutting down");
                     break;
                 }
@@ -233,12 +241,3 @@ struct SourceSyncResult {
     unchanged: usize,
 }
 
-/// Helper function to create a shutdown signal future.
-async fn shutdown_signal(shutdown_flag: &Arc<AtomicBool>) {
-    loop {
-        if shutdown_flag.load(Ordering::Acquire) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}

@@ -105,13 +105,31 @@ impl Tags {
                     .not_null()
                     .default(Expr::current_timestamp()),
             )
-            .foreign_key(
-                ForeignKey::create()
-                    .from(Self::table_iden(), Tags::ParentTagId)
-                    .to(Self::table_iden(), Tags::Id)
-                    .on_delete(ForeignKeyAction::SetNull), // If a parent is deleted, children become top-level.
-            )
             .to_owned()
+    }
+
+    /// Raw SQL fixup for the self-referencing foreign key on `parent_tag_id`.
+    ///
+    /// sea-query has a bug where `on_delete(ForeignKeyAction::SetNull)` on a self-referencing
+    /// FK emits `ON DELETE CASCADE` instead of `ON DELETE SET NULL`. We work around this by
+    /// defining the FK via raw `ALTER TABLE` SQL after table creation, bypassing sea-query.
+    #[must_use]
+    pub fn create_fk_fixup_sql() -> Vec<String> {
+        vec![
+            format!(
+                "ALTER TABLE {}.{} DROP CONSTRAINT IF EXISTS tags_parent_tag_id_fkey",
+                Self::schema_name(),
+                Self::table_name()
+            ),
+            format!(
+                "ALTER TABLE {}.{} ADD CONSTRAINT tags_parent_tag_id_fkey \
+                 FOREIGN KEY (parent_tag_id) REFERENCES {}.{}(id) ON DELETE SET NULL",
+                Self::schema_name(),
+                Self::table_name(),
+                Self::schema_name(),
+                Self::table_name()
+            ),
+        ]
     }
 }
 
@@ -262,7 +280,10 @@ impl EventAnnotations {
             .col(
                 ColumnDef::new(EventAnnotations::AnnotationType)
                     .text()
-                    .not_null(),
+                    .not_null()
+                    .check(Expr::cust(
+                        "length(BTRIM(annotation_type, E' \\t\\n\\r\\v\\f')) > 0",
+                    )),
             )
             .col(ColumnDef::new(EventAnnotations::Content).text().not_null())
             .col(

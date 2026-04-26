@@ -443,6 +443,8 @@ pub struct JetStreamTopology {
     pub processing_failures_stream: String,
     pub processing_failures_subject: String,
     pub processing_failures_prefix: String,
+    pub invalidation_stream: String,
+    pub invalidation_subject: String,
     pub consumer_durable: String,
 }
 
@@ -458,6 +460,7 @@ impl JetStreamTopology {
         let confirmation_retry_stream = format!("{base_stream}_CONFIRMATION_RETRIES");
         let dlq_stream = format!("{base_stream}_DLQ");
         let processing_failures_stream = format!("{base_stream}_PROCESSING_FAILURES");
+        let invalidation_stream = format!("{base_stream}_DERIVED_INVALIDATIONS");
         let namespaced = |subject: &str| env.nats_subject_with_namespace(namespace, subject);
         let confirmations_prefix = format!("{}.", namespaced("events.confirmations"));
         let confirmation_retry_prefix =
@@ -481,6 +484,8 @@ impl JetStreamTopology {
             processing_failures_stream,
             processing_failures_subject: namespaced("events.processing_failures.>"),
             processing_failures_prefix,
+            invalidation_stream,
+            invalidation_subject: namespaced("sinex.derived.invalidation"),
             consumer_durable,
         }
     }

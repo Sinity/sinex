@@ -6,7 +6,50 @@
 
 use sinex_primitives::env as shared_env;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::warn;
+
+/// Wait until shutdown is signaled via an `Arc<AtomicBool>` + `Arc<Notify>` pair.
+///
+/// Uses the `Notify` for reactive waking (no polling). Returns once the flag
+/// has been observed as set, even if it was already set before the first check.
+pub async fn wait_for_shutdown_signal_bool(
+    shutdown_flag: &Arc<AtomicBool>,
+    shutdown_notify: &Arc<tokio::sync::Notify>,
+) {
+    loop {
+        let notified = shutdown_notify.notified();
+        if shutdown_flag.load(Ordering::Acquire) {
+            return;
+        }
+        notified.await;
+    }
+}
+
+/// Wait for OS shutdown signals (`SIGTERM`, `SIGINT` on Unix; `Ctrl+C` on all
+/// platforms).
+///
+/// Returns the name of the signal that triggered shutdown.
+#[cfg(unix)]
+pub async fn wait_for_os_shutdown_signal() -> std::io::Result<&'static str> {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let mut sigterm = signal(SignalKind::terminate())?;
+    let mut sigint = signal(SignalKind::interrupt())?;
+
+    tokio::select! {
+        _ = sigterm.recv() => Ok("SIGTERM"),
+        _ = sigint.recv() => Ok("SIGINT"),
+    }
+}
+
+/// Wait for OS shutdown signals (platform fallback: `Ctrl+C` only).
+#[cfg(not(unix))]
+pub async fn wait_for_os_shutdown_signal() -> std::io::Result<&'static str> {
+    tokio::signal::ctrl_c().await?;
+    Ok("Ctrl+C")
+}
 
 /// Default checkpoint file path for a node.
 #[must_use]

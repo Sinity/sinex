@@ -48,7 +48,10 @@
 use std::collections::HashSet;
 
 use crate::apply::ApplyError;
-use crate::schema::{Events, NodeManifests, TableMeta};
+use crate::schema::{
+    Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations, EventAnnotations,
+    EventEmbeddings, Events, NodeManifests, OperationsLog, TableMeta, Tags, TaggedItems,
+};
 use sea_query::{
     Alias, ColumnDef, ColumnSpec, ForeignKeyCreateStatement, PostgresQueryBuilder, Table,
     TableCreateStatement,
@@ -479,6 +482,124 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
             meta: find_meta("core.node_manifests")?,
             statement_fn: NodeManifests::create_table_statement,
             named_constraints: vec![],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("core.blobs")?,
+            statement_fn: Blobs::create_table_statement,
+            named_constraints: vec![
+                NamedConstraint {
+                    name: "blobs_verification_status_valid",
+                    expression: "verification_status IS NULL OR verification_status IN ('pending', 'verified', 'corrupted')",
+                },
+            ],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("core.tags")?,
+            statement_fn: Tags::create_table_statement,
+            named_constraints: vec![],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("core.tagged_items")?,
+            statement_fn: TaggedItems::create_table_statement,
+            named_constraints: vec![],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("core.event_annotations")?,
+            statement_fn: EventAnnotations::create_table_statement,
+            named_constraints: vec![
+                NamedConstraint {
+                    name: "event_annotations_annotation_type_non_empty",
+                    expression: "length(BTRIM(annotation_type, E' \\t\\n\\r\\v\\f')) > 0",
+                },
+            ],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("core.entities")?,
+            statement_fn: Entities::create_table_statement,
+            named_constraints: vec![
+                NamedConstraint {
+                    name: "entities_confidence_score_range",
+                    expression: "confidence_score >= 0 AND confidence_score <= 1.0",
+                },
+            ],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("core.entity_relations")?,
+            statement_fn: EntityRelations::create_table_statement,
+            named_constraints: vec![
+                NamedConstraint {
+                    name: "entity_relations_self_ref_check",
+                    expression: "from_entity_id <> to_entity_id",
+                },
+                NamedConstraint {
+                    name: "entity_relations_confidence_score_range",
+                    expression: "confidence_score >= 0 AND confidence_score <= 1.0",
+                },
+            ],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("core.embedding_models")?,
+            statement_fn: EmbeddingModels::create_table_statement,
+            named_constraints: vec![
+                NamedConstraint {
+                    name: "embedding_models_provider_non_empty",
+                    expression: "length(BTRIM(provider, E' \\t\\n\\r\\v\\f')) > 0",
+                },
+            ],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("core.embedding_cache")?,
+            statement_fn: EmbeddingCache::create_table_statement,
+            named_constraints: vec![],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("core.event_embeddings")?,
+            statement_fn: EventEmbeddings::create_table_statement,
+            named_constraints: vec![],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("core.operations_log")?,
+            statement_fn: OperationsLog::create_table_statement,
+            named_constraints: vec![
+                NamedConstraint {
+                    name: "operations_log_operation_type_format",
+                    expression: "operation_type ~ '^[a-z][a-z0-9_.-]*$'",
+                },
+                NamedConstraint {
+                    name: "operations_log_result_status_valid",
+                    expression: "result_status IN ('success', 'failure', 'partial', 'running', 'cancelled')",
+                },
+            ],
             foreign_keys: vec![],
             columns_to_drop: &[],
             mirror: None,

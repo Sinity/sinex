@@ -71,7 +71,7 @@ fn secret_rules() -> Vec<PatternRule> {
             description: "GitHub personal access tokens and fine-grained tokens".into(),
             category: RuleCategory::Secret,
             matcher: Matcher::Regex {
-                pattern: r"gh[pousr]_[A-Za-z0-9_]{36,255}".into(),
+                pattern: r"gh(?:[pousr]_|ithub_pat_)[A-Za-z0-9_]{36,255}".into(),
             },
             strategy: Strategy::Redact {
                 label: Some("<GITHUB_TOKEN>".into()),
@@ -176,7 +176,7 @@ fn secret_rules() -> Vec<PatternRule> {
             category: RuleCategory::Secret,
             matcher: Matcher::Regex {
                 // Exclude values that are already redaction placeholders (<...>)
-                pattern: r"(?i)(password|passwd|secret|token|api_key|apikey|access_key|auth_token|credentials)\s*[:=]\s*([^<\s]\S*)".into(),
+                pattern: r"(?i)(password|passwd|secret|token|api_key|apikey|api-key|access_key|auth_token|credentials)\s*[:=]\s*([^<\s]\S*)".into(),
             },
             strategy: Strategy::Redact {
                 label: Some("$1=<REDACTED>".into()),
@@ -189,7 +189,7 @@ fn secret_rules() -> Vec<PatternRule> {
             description: "Command-line flags for secrets (--password, --token, etc.)".into(),
             category: RuleCategory::Secret,
             matcher: Matcher::Regex {
-                pattern: r"(?i)--(password|token|secret|key|api-key|auth-token)\s+(\S+)".into(),
+                pattern: r"(?i)--(password|token|secret|key|api-key|auth-token)[\s=]+(\S+)".into(),
             },
             strategy: Strategy::Redact {
                 label: Some("--$1 <REDACTED>".into()),

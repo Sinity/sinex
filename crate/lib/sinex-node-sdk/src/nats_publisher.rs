@@ -8,7 +8,12 @@ use sinex_primitives::{
     events::{Event, OffsetKind, Provenance},
     nats::{NatsTrafficClass, insert_traffic_class_header},
 };
-use std::{future::IntoFuture, sync::Arc, time::Duration};
+use std::{
+    future::IntoFuture,
+    sync::atomic::{AtomicU64, Ordering},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::sync::Semaphore;
 
 const DEFAULT_PUBLISH_ACK_TIMEOUT: Duration = Duration::from_secs(10);
@@ -48,6 +53,7 @@ pub struct NatsPublisher {
     env: SinexEnvironment,
     namespace: Option<String>,
     semaphores: PublishSemaphores,
+    processing_failure_log_count: Arc<AtomicU64>,
 }
 
 /// Destructured provenance fields for publish payloads.
@@ -163,6 +169,7 @@ impl NatsPublisher {
                 raw_ingest_dlq_concurrency,
                 processing_failure_concurrency,
             ),
+            processing_failure_log_count: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -345,13 +352,19 @@ impl NatsPublisher {
             .await?;
         let ack = wait_for_publish_ack(ack_future, DEFAULT_PUBLISH_ACK_TIMEOUT).await?;
 
-        tracing::warn!(
-            event_id = %event_id,
-            node = %node_name,
-            error = %error,
-            sequence = ack.sequence,
-            "Event sent to processing-failure stream"
-        );
+        let count = self
+            .processing_failure_log_count
+            .fetch_add(1, Ordering::Relaxed);
+        if count % 100 == 0 {
+            tracing::warn!(
+                event_id = %event_id,
+                node = %node_name,
+                error = %error,
+                sequence = ack.sequence,
+                skipped = count,
+                "Event sent to processing-failure stream (rate-limited, logging every 100th)"
+            );
+        }
 
         Ok(())
     }

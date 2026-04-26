@@ -1277,7 +1277,15 @@ where
                         consecutive_failures = self.consecutive_checkpoint_failures,
                         "Failed to save checkpoint after batch"
                     );
-                    if self.consecutive_checkpoint_failures >= 3 {
+                    if self.consecutive_checkpoint_failures >= 3
+                        || matches!(
+                            e,
+                            SinexError::Checkpoint(_)
+                                | SinexError::Lifecycle(_)
+                                | SinexError::Configuration(_)
+                                | SinexError::PermissionDenied(_)
+                        )
+                    {
                         return Err(SinexError::checkpoint(format!(
                             "Checkpoint save failed {} consecutive times; halting to prevent \
                              silent progress loss on crash+restart",
@@ -1766,19 +1774,25 @@ where
                                         &obs_error,
                                     );
                                 }
-                                // Two halt conditions, both per #581:
+                                // Two halt conditions:
                                 // 1. Three consecutive failures — same circuit-breaker
                                 //    threshold the periodic checkpoint branch uses
                                 //    below. Without this, an invalidation-driven CAS
                                 //    conflict loops forever; the periodic branch
                                 //    would never run because the consumer never
                                 //    returns to its `select!`.
-                                // 2. Direct Checkpoint variant — even on the first
-                                //    failure if the error itself signals "halt"
-                                //    (e.g. propagated from the inner save path
-                                //    which already exhausted retries).
+                                // 2. Direct Checkpoint/Lifecycle/Configuration/PermissionDenied
+                                //    variant — even on the first failure if the error
+                                //    itself signals "halt" (e.g. propagated from the
+                                //    inner save path which already exhausted retries).
                                 if self.consecutive_checkpoint_failures >= 3
-                                    || matches!(e, SinexError::Checkpoint(_))
+                                    || matches!(
+                                        e,
+                                        SinexError::Checkpoint(_)
+                                            | SinexError::Lifecycle(_)
+                                            | SinexError::Configuration(_)
+                                            | SinexError::PermissionDenied(_)
+                                    )
                                 {
                                     return Err(SinexError::checkpoint(format!(
                                         "Checkpoint save failed during invalidation \
@@ -1883,13 +1897,13 @@ where
             "DerivedNode initialized — running invalidation-driven continuous loop"
         );
 
-        // Subscribe to scope invalidation signals via NATS queue group.
-        // Queue group ensures only one instance per node type processes each signal,
-        // preventing redundant recomputation when multiple replicas are running.
+        // Subscribe to scope invalidation signals via JetStream push consumer.
+        // JetStream provides durable message delivery for invalidation signals.
+        // Each node type creates its own ephemeral push consumer, receiving all
+        // signals published to the invalidation subject.
         //
         // Note: requires `messaging` feature (default). run_continuous is only called
         // by the runtime kernel which itself requires messaging infrastructure.
-        // Subscribe to scope invalidation signals when messaging is available.
         // The two `#[cfg]` blocks produce different types but both work with
         // `recv_invalidation()` which has matching cfg'd signatures.
         #[cfg(feature = "messaging")]
@@ -1920,7 +1934,7 @@ where
                         warn!(
                             node = %node_name,
                             error = %e,
-                            "Failed to subscribe to invalidation signals — \
+                            "Failed to subscribe to invalidation signals via JetStream — \
                              scope recomputation will not be triggered"
                         );
                         None
@@ -2034,7 +2048,15 @@ where
                                     consecutive_failures = self.consecutive_checkpoint_failures,
                                     "Failed to save periodic checkpoint"
                                 );
-                                if self.consecutive_checkpoint_failures >= 3 {
+                                if self.consecutive_checkpoint_failures >= 3
+                                    || matches!(
+                                        e,
+                                        SinexError::Checkpoint(_)
+                                            | SinexError::Lifecycle(_)
+                                            | SinexError::Configuration(_)
+                                            | SinexError::PermissionDenied(_)
+                                    )
+                                {
                                     return Err(SinexError::checkpoint(format!(
                                         "Checkpoint save failed {} consecutive times; halting to \
                                          prevent silent progress loss on crash+restart",
@@ -2330,12 +2352,14 @@ where
 
 // ── Invalidation subscription helper ─────────────────────────────────
 
-/// Receive the next invalidation message payload from a NATS subscription.
+/// Receive the next invalidation message payload from a NATS subscriber.
 /// Returns `None` only when the subscription stream ends.
 /// When `sub` is `None` (no NATS available), pends forever — effectively
 /// disabling the select arm without needing `#[cfg]` inside `tokio::select!`.
 #[cfg(feature = "messaging")]
-async fn recv_invalidation(sub: &mut Option<async_nats::Subscriber>) -> Option<Vec<u8>> {
+async fn recv_invalidation(
+    sub: &mut Option<async_nats::Subscriber>,
+) -> Option<Vec<u8>> {
     use futures::StreamExt;
     match sub.as_mut() {
         Some(s) => s.next().await.map(|msg| msg.payload.to_vec()),

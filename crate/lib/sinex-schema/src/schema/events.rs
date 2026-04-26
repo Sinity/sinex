@@ -540,6 +540,157 @@ impl ArchivedEvents {
 }
 
 // =============================================================================
+// The `audit.archived_annotations` Table
+// =============================================================================
+
+/// **Table: `audit.archived_annotations`**
+///
+/// Preserves event annotations when the parent event is archived and subsequently
+/// cascade-deleted from `core.event_annotations`. Mirrors `core.event_annotations`
+/// via `LIKE` and adds audit context columns.
+///
+/// Without this table, replay archive operations would silently destroy all
+/// user-curated annotations attached to the archived events.
+#[derive(Iden, Copy, Clone)]
+pub enum ArchivedEventAnnotations {
+    Table,
+    ArchivedAt,
+    ArchivedBy,
+    ArchiveReason,
+}
+
+impl TableDef for ArchivedEventAnnotations {
+    fn table_name() -> &'static str {
+        "archived_annotations"
+    }
+    fn schema_name() -> &'static str {
+        "audit"
+    }
+    fn primary_key() -> &'static str {
+        "id"
+    }
+}
+
+impl ArchivedEventAnnotations {
+    /// Generates the `CREATE TABLE` statement using `LIKE` to mirror
+    /// `core.event_annotations` (excluding the FK to `core.events`), plus
+    /// audit context columns.
+    #[must_use]
+    pub fn create_table_sql() -> String {
+        format!(
+            r"CREATE TABLE IF NOT EXISTS audit.archived_annotations (
+                LIKE core.event_annotations INCLUDING ALL,
+                {archived_at} TIMESTAMPTZ NOT NULL DEFAULT now(),
+                {archived_by} TEXT,
+                {archive_reason} TEXT
+            );",
+            archived_at = ArchivedEventAnnotations::ArchivedAt.to_string(),
+            archived_by = ArchivedEventAnnotations::ArchivedBy.to_string(),
+            archive_reason = ArchivedEventAnnotations::ArchiveReason.to_string(),
+        )
+    }
+}
+
+// =============================================================================
+// The `audit.archived_embeddings` Table
+// =============================================================================
+
+/// **Table: `audit.archived_embeddings`**
+///
+/// Preserves vector embeddings when the parent event is archived and
+/// cascade-deleted from `core.event_embeddings`. Without this table, replay
+/// archive operations would silently destroy semantic search data for the
+/// archived events.
+#[derive(Iden, Copy, Clone)]
+pub enum ArchivedEventEmbeddings {
+    Table,
+    ArchivedAt,
+    ArchivedBy,
+    ArchiveReason,
+}
+
+impl TableDef for ArchivedEventEmbeddings {
+    fn table_name() -> &'static str {
+        "archived_embeddings"
+    }
+    fn schema_name() -> &'static str {
+        "audit"
+    }
+    fn primary_key() -> &'static str {
+        "id"
+    }
+}
+
+impl ArchivedEventEmbeddings {
+    /// Generates the `CREATE TABLE` statement using `LIKE` to mirror
+    /// `core.event_embeddings` (excluding the FK to `core.events`), plus
+    /// audit context columns.
+    #[must_use]
+    pub fn create_table_sql() -> String {
+        format!(
+            r"CREATE TABLE IF NOT EXISTS audit.archived_embeddings (
+                LIKE core.event_embeddings INCLUDING ALL,
+                {archived_at} TIMESTAMPTZ NOT NULL DEFAULT now(),
+                {archived_by} TEXT,
+                {archive_reason} TEXT
+            );",
+            archived_at = ArchivedEventEmbeddings::ArchivedAt.to_string(),
+            archived_by = ArchivedEventEmbeddings::ArchivedBy.to_string(),
+            archive_reason = ArchivedEventEmbeddings::ArchiveReason.to_string(),
+        )
+    }
+}
+
+// =============================================================================
+// The `audit.archived_tagged_items` Table
+// =============================================================================
+
+/// **Table: `audit.archived_tagged_items`**
+///
+/// Preserves tag associations for events being archived. Unlike annotations
+/// and embeddings, `core.tagged_items` has no FK to `core.events` (the
+/// `item_id` column is polymorphic), so archived entries are explicitly copied
+/// here and removed from the live table to prevent dangling references.
+#[derive(Iden, Copy, Clone)]
+pub enum ArchivedTaggedItems {
+    Table,
+    ArchivedAt,
+    ArchivedBy,
+    ArchiveReason,
+}
+
+impl TableDef for ArchivedTaggedItems {
+    fn table_name() -> &'static str {
+        "archived_tagged_items"
+    }
+    fn schema_name() -> &'static str {
+        "audit"
+    }
+    fn primary_key() -> &'static str {
+        "(tag_id, item_id, item_type)"
+    }
+}
+
+impl ArchivedTaggedItems {
+    /// Generates the `CREATE TABLE` statement using `LIKE` to mirror
+    /// `core.tagged_items`, plus audit context columns.
+    #[must_use]
+    pub fn create_table_sql() -> String {
+        format!(
+            r"CREATE TABLE IF NOT EXISTS audit.archived_tagged_items (
+                LIKE core.tagged_items INCLUDING ALL,
+                {archived_at} TIMESTAMPTZ NOT NULL DEFAULT now(),
+                {archived_by} TEXT,
+                {archive_reason} TEXT
+            );",
+            archived_at = ArchivedTaggedItems::ArchivedAt.to_string(),
+            archived_by = ArchivedTaggedItems::ArchivedBy.to_string(),
+            archive_reason = ArchivedTaggedItems::ArchiveReason.to_string(),
+        )
+    }
+}
+
+// =============================================================================
 // The `core.event_tombstones` Table
 // =============================================================================
 

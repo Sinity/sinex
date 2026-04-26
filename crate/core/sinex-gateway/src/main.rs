@@ -133,29 +133,6 @@ fn load_env_filter(default_filter: &str) -> Result<tracing_subscriber::EnvFilter
     })
 }
 
-async fn wait_for_shutdown_signal() -> io::Result<&'static str> {
-    let ctrl_c = async {
-        tokio::signal::ctrl_c().await?;
-        Ok("SIGINT (Ctrl+C)")
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        let mut sigterm =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-        sigterm.recv().await;
-        Ok("SIGTERM")
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<io::Result<&'static str>>();
-
-    tokio::select! {
-        result = ctrl_c => result,
-        result = terminate => result,
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     human_panic::setup_panic!();
@@ -176,7 +153,7 @@ async fn main() -> Result<()> {
     let shutdown_task = {
         let shutdown_tx = shutdown_tx.clone();
         tokio::spawn(async move {
-            match wait_for_shutdown_signal().await {
+            match sinex_node_sdk::wait_for_os_shutdown_signal().await {
                 Ok(signal_name) => {
                     info!(
                         signal = signal_name,
