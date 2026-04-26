@@ -1,4 +1,4 @@
-//! Comprehensive tests for DLQ (Dead Letter Queue) handlers
+//! Comprehensive tests for raw-ingest DLQ handlers
 //!
 //! Tests DLQ statistics and purge operations.
 //! Note: Peek tests are excluded because `handle_dlq_peek` waits indefinitely

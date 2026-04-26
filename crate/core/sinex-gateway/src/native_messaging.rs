@@ -39,15 +39,13 @@ const EXTENSION_ROLES_ENV: &str = "SINEX_NATIVE_MESSAGING_EXTENSION_ROLES";
 /// Capability-based access control for native messaging extensions.
 ///
 /// When configured via `SINEX_NATIVE_MESSAGING_CAPABILITIES`, each extension
-/// can be restricted to specific methods, event types, and rate limits.
+/// can be restricted to specific methods and rate limits.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ExtensionCapabilities {
     /// Set of RPC method names this extension is allowed to call.
     pub allowed_methods: HashSet<String>,
     /// Maximum requests per minute. `None` means unlimited.
     pub rate_limit_per_minute: Option<u32>,
-    /// If set, only these event types can be submitted by this extension.
-    pub allowed_event_types: Option<HashSet<String>>,
 }
 
 /// Simple sliding-window rate limiter for native messaging.
@@ -374,46 +372,6 @@ impl NativeMessagingConfig {
             && let Some(ref limiter) = self.rate_limiter
         {
             limiter.check_and_record(extension_id, limit)?;
-        }
-
-        // Enforce granular event type permissions (fail-closed).
-        // When `allowed_event_types` is configured, the request MUST include a valid
-        // `event_type` parameter. Omitting it is rejected to prevent ACL bypass.
-        if let Some(allowed_types) = &caps.allowed_event_types
-            && !allowed_types.is_empty()
-        {
-            let event_type = message
-                .params
-                .as_ref()
-                .and_then(|p| p.get("event_type"))
-                .and_then(|v| v.as_str());
-
-            match event_type {
-                None => {
-                    warn!(
-                        event = "native_messaging.capability",
-                        extension_id = extension_id,
-                        reason = "missing_event_type",
-                        "Extension request missing required event_type parameter"
-                    );
-                    return Err(eyre!(
-                        "Extension '{extension_id}' requires event_type parameter (allowed_event_types is configured)"
-                    ));
-                }
-                Some(et) if !allowed_types.contains(et) => {
-                    warn!(
-                        event = "native_messaging.capability",
-                        extension_id = extension_id,
-                        event_type = et,
-                        reason = "event_type_not_allowed",
-                        "Extension attempted to use disallowed event type"
-                    );
-                    return Err(eyre!(
-                        "Extension '{extension_id}' is not allowed to use event type '{et}'"
-                    ));
-                }
-                Some(_) => {} // allowed
-            }
         }
 
         debug!(
@@ -773,79 +731,6 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn capability_check_enforces_event_types() -> TestResult<()> {
-        let mut caps = std::collections::HashMap::new();
-        caps.insert(
-            "ext-1".to_string(),
-            ExtensionCapabilities {
-                allowed_methods: HashSet::from(["ingest_event".to_string()]),
-                rate_limit_per_minute: None,
-                allowed_event_types: Some(HashSet::from(["allowed.event".to_string()])),
-            },
-        );
-
-        let config = NativeMessagingConfig {
-            trusted_extensions: vec![TrustedExtension {
-                id: "ext-1".to_string(),
-                secret: None,
-            }],
-            trusted_extensions_config_error: None,
-            trusted_hosts: Vec::new(),
-            trusted_hosts_config_error: None,
-            expected_protocol_version: None,
-            capabilities: caps,
-            capabilities_config_error: None,
-            rate_limiter: None,
-            extension_roles: std::collections::HashMap::new(),
-            extension_roles_config_error: None,
-            max_message_size: 1024 * 1024,
-            read_timeout: std::time::Duration::from_secs(DEFAULT_READ_TIMEOUT_SECS),
-        };
-
-        // Case 1: Allowed event type
-        let msg_allowed = NativeMessage {
-            msg_type: "rpc".to_string(),
-            method: Some("ingest_event".to_string()),
-            params: Some(serde_json::json!({ "event_type": "allowed.event" })),
-            id: None,
-            extension_id: Some("ext-1".to_string()),
-            extension_secret: None,
-            host: None,
-            protocol_version: None,
-        };
-        assert!(config.enforce_metadata(&msg_allowed).is_ok());
-
-        // Case 2: Disallowed event type
-        let msg_disallowed = NativeMessage {
-            msg_type: "rpc".to_string(),
-            method: Some("ingest_event".to_string()),
-            params: Some(serde_json::json!({ "event_type": "forbidden.event" })),
-            id: None,
-            extension_id: Some("ext-1".to_string()),
-            extension_secret: None,
-            host: None,
-            protocol_version: None,
-        };
-        assert!(config.enforce_metadata(&msg_disallowed).is_err());
-
-        // Case 3: No event_type in params — fail-closed: when allowed_event_types is
-        // configured, a missing event_type is rejected to prevent ACL bypass.
-        let msg_no_type = NativeMessage {
-            msg_type: "rpc".to_string(),
-            method: Some("ingest_event".to_string()),
-            params: Some(serde_json::json!({ "foo": "bar" })),
-            id: None,
-            extension_id: Some("ext-1".to_string()),
-            extension_secret: None,
-            host: None,
-            protocol_version: None,
-        };
-        assert!(config.enforce_metadata(&msg_no_type).is_err());
-
-        Ok(())
-    }
-
-    #[sinex_test]
     async fn extension_roles_env_uses_typed_role_values() -> TestResult<()> {
         let mut env = EnvGuard::new();
         env.set(
@@ -889,7 +774,7 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set(
             CAPABILITIES_ENV,
-            r#"{"ext-1":{"allowed_methods":"system.health","rate_limit_per_minute":null,"allowed_event_types":null}}"#,
+            r#"{"ext-1":{"allowed_methods":"system.health","rate_limit_per_minute":null}}"#,
         );
 
         let config = NativeMessagingConfig::from_env()?;
