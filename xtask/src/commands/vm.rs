@@ -14,6 +14,7 @@
 
 use color_eyre::eyre::{Result, WrapErr, bail};
 use console::style;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Instant;
@@ -23,6 +24,7 @@ use tokio::sync::mpsc;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config;
 use crate::history::TestStatus;
+use crate::infra::flake_stage::{FlakeStageReport, stage_checkout_for_flake};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test Catalogue
@@ -492,8 +494,85 @@ fn detect_nix_system(workspace_root: &Path) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn available_vm_tests(workspace_root: &Path, system: &str) -> Result<Vec<String>> {
-    let attr_path = format!(".#checks.{system}");
+#[derive(Debug)]
+struct VmFlakeInput {
+    flake_ref: String,
+    stage_report: Option<FlakeStageReport>,
+    preserve_stage: bool,
+}
+
+impl VmFlakeInput {
+    fn workspace_default() -> Self {
+        Self {
+            flake_ref: ".".to_string(),
+            stage_report: None,
+            preserve_stage: false,
+        }
+    }
+
+    fn flake_ref(&self) -> &str {
+        &self.flake_ref
+    }
+
+    fn stage_report(&self) -> Option<&FlakeStageReport> {
+        self.stage_report.as_ref()
+    }
+
+    fn preserve_stage(&mut self) {
+        self.preserve_stage = true;
+    }
+
+    fn staged_checkout_detail(&self) -> Option<String> {
+        self.stage_report
+            .as_ref()
+            .map(|report| format!("Using staged flake input: {}", report.flake_uri))
+    }
+}
+
+impl Drop for VmFlakeInput {
+    fn drop(&mut self) {
+        if self.preserve_stage {
+            return;
+        }
+
+        let Some(report) = &self.stage_report else {
+            return;
+        };
+
+        let _ = fs::remove_dir_all(&report.staged_root);
+    }
+}
+
+fn checkout_has_local_flake_changes(workspace_root: &Path) -> Result<bool> {
+    let output = Command::new("git")
+        .args(["status", "--porcelain=v1", "--untracked-files=all"])
+        .current_dir(workspace_root)
+        .output()
+        .wrap_err("Failed to inspect checkout state for VM flake staging")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("Failed to inspect checkout state for VM flake staging: {stderr}");
+    }
+
+    Ok(!String::from_utf8_lossy(&output.stdout).trim().is_empty())
+}
+
+fn prepare_vm_flake_input(workspace_root: &Path) -> Result<VmFlakeInput> {
+    if !checkout_has_local_flake_changes(workspace_root)? {
+        return Ok(VmFlakeInput::workspace_default());
+    }
+
+    let report = stage_checkout_for_flake(workspace_root, None, false)?;
+    Ok(VmFlakeInput {
+        flake_ref: report.flake_uri.clone(),
+        stage_report: Some(report),
+        preserve_stage: false,
+    })
+}
+
+fn available_vm_tests(workspace_root: &Path, flake_ref: &str, system: &str) -> Result<Vec<String>> {
+    let attr_path = format!("{flake_ref}#checks.{system}");
     let output = Command::new("nix")
         .args([
             "eval",
@@ -561,6 +640,7 @@ async fn run_single_vm_test(
     timeout_secs: u64,
     keep_failed: bool,
     workspace_root: &std::path::Path,
+    flake_ref: &str,
     system: &str,
     ctx: &CommandContext,
     suite_pct: f64,
@@ -575,7 +655,7 @@ async fn run_single_vm_test(
         timeout_secs
     };
 
-    let build_target = format!(".#checks.{system}.sinex-vm-{name}");
+    let build_target = format!("{flake_ref}#checks.{system}.sinex-vm-{name}");
 
     let mut combined_output = String::new();
     let mut passed = false;
@@ -744,13 +824,15 @@ async fn execute_test(
     }
 
     let discover_stage = ctx.start_stage("vm-checks-discover");
-    let resolved_environment = (|| -> Result<(String, Vec<String>)> {
+    let resolved_environment = (|| -> Result<(String, VmFlakeInput, Vec<String>)> {
         let system = detect_nix_system(&workspace_root)?;
-        let available_tests = available_vm_tests(&workspace_root, &system)?;
-        Ok((system, available_tests))
+        let flake_input = prepare_vm_flake_input(&workspace_root)?;
+        let available_tests =
+            available_vm_tests(&workspace_root, flake_input.flake_ref(), &system)?;
+        Ok((system, flake_input, available_tests))
     })();
     ctx.finish_stage(discover_stage, resolved_environment.is_ok());
-    let (system, available_tests) = resolved_environment?;
+    let (system, mut flake_input, available_tests) = resolved_environment?;
 
     if list {
         let categories = [
@@ -820,6 +902,9 @@ async fn execute_test(
         println!("\n{}", style("NixOS VM Tests").bold());
         println!("  Tests : {}", tests_to_run.join(", "));
         println!("  Timeout: {timeout_secs}s per test");
+        if let Some(detail) = flake_input.staged_checkout_detail() {
+            println!("  {detail}");
+        }
         println!();
     }
 
@@ -832,6 +917,7 @@ async fn execute_test(
         timeout_secs,
         keep_failed,
         &workspace_root,
+        flake_input.flake_ref(),
         &system,
         ctx,
     )
@@ -896,14 +982,26 @@ async fn execute_test(
     }
 
     if failed.is_empty() {
-        Ok(CommandResult::success()
+        let mut result = CommandResult::success()
             .with_message(format!(
                 "{}/{} VM tests passed",
                 passed.len(),
                 results.len()
             ))
-            .with_duration(ctx.elapsed()))
+            .with_duration(ctx.elapsed());
+        if let Some(report) = flake_input.stage_report() {
+            result = result
+                .with_detail(format!("Flake input: {}", report.flake_uri))
+                .with_detail(format!("Staged checkout: {}", report.staged_root));
+        }
+        Ok(result)
     } else {
+        if keep_failed {
+            flake_input.preserve_stage();
+            if let Some(report) = flake_input.stage_report() {
+                println!("  Preserved staged checkout: {}", report.staged_root);
+            }
+        }
         let names: Vec<&str> = failed.iter().map(|r| r.name.as_str()).collect();
         bail!(
             "{}/{} VM tests failed: {}",
@@ -920,6 +1018,7 @@ async fn run_sequential(
     timeout_secs: u64,
     keep_failed: bool,
     workspace_root: &std::path::Path,
+    flake_ref: &str,
     system: &str,
     ctx: &CommandContext,
 ) -> Vec<VmTestResult> {
@@ -956,6 +1055,7 @@ async fn run_sequential(
             timeout_secs,
             keep_failed,
             workspace_root,
+            flake_ref,
             system,
             ctx,
             current_pct,
@@ -1437,8 +1537,10 @@ fn execute_snapshot(cmd: &VmSnapshotSubcommand, ctx: &CommandContext) -> Command
 mod tests {
     use super::*;
     use crate::command::CommandContext;
+    use crate::history::HistoryDb;
     use crate::output::{OutputFormat, OutputWriter};
     use crate::sandbox::sinex_test;
+    use tempfile::tempdir;
 
     fn silent_ctx() -> CommandContext {
         CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None, "vm")
@@ -1506,6 +1608,75 @@ mod tests {
             coordination_args,
             vec!["--scope=vm:run:tests:basic,replay-smoke:timeout=1337:keep_failed=1".to_string()]
         );
+        Ok(())
+    }
+
+    fn git(root: &Path, args: &[&str]) -> Result<()> {
+        let output = Command::new("git").args(args).current_dir(root).output()?;
+        if output.status.success() {
+            return Ok(());
+        }
+
+        bail!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    fn init_git_repo(root: &Path) -> Result<()> {
+        git(root, &["init"])?;
+        git(root, &["config", "user.email", "xtask-vm-test@example.com"])?;
+        git(root, &["config", "user.name", "xtask vm test"])?;
+        std::fs::write(root.join("flake.nix"), "{ outputs = _: {}; }\n")?;
+        git(root, &["add", "flake.nix"])?;
+        git(root, &["commit", "-m", "init"])?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_prepare_vm_flake_input_uses_workspace_flake_for_clean_checkout()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        init_git_repo(temp.path())?;
+
+        let input = prepare_vm_flake_input(temp.path())?;
+        assert_eq!(input.flake_ref(), ".");
+        assert!(input.stage_report().is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_prepare_vm_flake_input_stages_dirty_checkout_with_untracked_workspace_files()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        init_git_repo(temp.path())?;
+
+        let new_crate = temp
+            .path()
+            .join("crate/nodes/sinex-hourly-summarizer/Cargo.toml");
+        std::fs::create_dir_all(new_crate.parent().expect("new crate parent"))?;
+        std::fs::write(
+            &new_crate,
+            "[package]\nname = \"sinex-hourly-summarizer\"\n",
+        )?;
+
+        let mut input = prepare_vm_flake_input(temp.path())?;
+        let staged_root = input
+            .stage_report()
+            .expect("dirty checkout should use staged flake input")
+            .staged_root
+            .clone();
+        assert!(input.flake_ref().starts_with("path:"));
+        assert!(
+            Path::new(&staged_root)
+                .join("crate/nodes/sinex-hourly-summarizer/Cargo.toml")
+                .is_file(),
+            "staged checkout should include untracked crate files"
+        );
+
+        input.preserve_stage();
+        std::fs::remove_dir_all(staged_root)?;
         Ok(())
     }
 
@@ -1670,6 +1841,46 @@ mod tests {
     -> ::xtask::sandbox::TestResult<()> {
         let line = "building '/nix/store/abc123-sinex-vm-basic.drv'...";
         assert_eq!(classify_vm_progress_line(line), None);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_update_vm_progress_summary_records_terminal_summary()
+    -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("xtask-history.db");
+        let db = HistoryDb::open(&db_path)?;
+        let invocation_id = db.start_invocation("vm", None, None, None)?;
+
+        let ctx = CommandContext::new_with_db_override(
+            OutputWriter::new(OutputFormat::Silent),
+            true,
+            Some(invocation_id),
+            "vm",
+            db_path.clone(),
+        );
+
+        update_vm_progress_summary(
+            &ctx,
+            "basic",
+            25.0,
+            1,
+            4,
+            "RequestedAssertionFailed: browser proof missing",
+        );
+
+        let stored = HistoryDb::open_query(&db_path)?
+            .get_progress(invocation_id)?
+            .expect("vm progress should be stored");
+
+        assert_eq!(stored.phase.as_deref(), Some("vm-test"));
+        assert_eq!(stored.pct_done, Some(25.0));
+        assert_eq!(stored.items_done, Some(1));
+        assert_eq!(stored.items_total, Some(4));
+        assert_eq!(
+            stored.terminal_summary.as_deref(),
+            Some("basic: RequestedAssertionFailed: browser proof missing")
+        );
         Ok(())
     }
 
