@@ -39,11 +39,6 @@ values derived from `stateRoot` and the global `logLevel`.
     database.autoSetup = true;
     nats.autoSetup = true; # defaulted on when services.sinex.enable = true
 
-    storage.dlq.cleanup = {
-      schedule = "hourly";
-      maxAge = "14d";
-    };
-
     nodes.filesystem.watchPaths = [ "/home/alice" "/workspace" ];
     nodes.automata.canonicalizer.profile = "heavy";
 
@@ -87,8 +82,10 @@ disabled (e.g. staging migrations).
   `Id<T>` wrappers and convert only at storage boundaries.
 
 ### Storage
-- DLQ cleanup runs via `sinex-dlq-cleanup.timer`; schedule, max age, and max file
-  count come from `storage.dlq.cleanup`.
+- Raw-ingest DLQ retention is a JetStream concern; configure it through
+  `nats.bootstrapStreams.retention`.
+- Per-node recovery spool files live under the node work directories beneath
+  `${stateRoot}/spool/nodes`; there is no separate centralized local DLQ path.
 - Blob repository lives at `storage.blob.repositoryPath` (default:
   `${stateRoot}/blob-repository`). `autoInit = true` creates the content-store
   root on boot.
@@ -217,10 +214,9 @@ disabled (e.g. staging migrations).
 - Pre-flight verification lives under `lifecycle.preflight`. Disable individual
   phases with `lifecycle.preflight.skip = [ "migrations" "services" ];`.
 - Coordinated updates use `lifecycle.updates` for grace periods and roll-back
-  policy. The generated `sinex-update` service restarts guarded units in-place,
-  preserving DLQ contents when `preserveData = true`.
-- Maintenance toggles (`lifecycle.maintenance.tasks`) control DLQ cleanup and
-  blob GC/fsck integration.
+  policy. The generated `sinex-update` service restarts guarded units in-place.
+- Maintenance toggles (`lifecycle.maintenance.tasks`) control blob GC/fsck
+  integration.
 
 ### Developer Ergonomics
 - `shell.asciinema.autoRecord = true` records interactive shells to

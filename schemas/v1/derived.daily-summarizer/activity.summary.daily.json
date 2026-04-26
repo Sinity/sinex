@@ -1,0 +1,159 @@
+{
+  "$defs": {
+    "ActivitySourceKind": {
+      "enum": [
+        "unknown",
+        "window",
+        "browser",
+        "terminal"
+      ],
+      "type": "string"
+    },
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Completed daily activity rollup derived from hourly activity summaries.",
+  "properties": {
+    "activity_source_counts": {
+      "additionalProperties": false,
+      "properties": {
+        "browser": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "terminal": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unknown": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "activity_sources": {
+      "items": {
+        "$ref": "#/$defs/ActivitySourceKind"
+      },
+      "type": "array"
+    },
+    "day_end": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "day_id": {
+      "type": "string"
+    },
+    "day_start": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "duration_secs": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "event_count": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "focus_time_secs_by_source": {
+      "additionalProperties": false,
+      "properties": {
+        "browser": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "terminal": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unknown": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "hour_count": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "primary_source": {
+      "$ref": "#/$defs/ActivitySourceKind"
+    },
+    "source_count": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "source_window_counts": {
+      "additionalProperties": {
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "type": "object"
+    },
+    "sources": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "top_sources": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "window_count": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "day_id",
+    "day_start",
+    "day_end",
+    "duration_secs",
+    "hour_count",
+    "window_count",
+    "event_count",
+    "source_count",
+    "sources",
+    "top_sources",
+    "source_window_counts",
+    "activity_sources",
+    "activity_source_counts",
+    "focus_time_secs_by_source",
+    "primary_source"
+  ],
+  "title": "ActivityDailySummaryPayload",
+  "type": "object",
+  "x-sinex-event-type": "activity.summary.daily",
+  "x-sinex-source": "derived.daily-summarizer",
+  "x-sinex-version": "1.0.0"
+}

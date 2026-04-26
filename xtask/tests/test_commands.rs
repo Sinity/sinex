@@ -8,15 +8,119 @@
 
 mod support;
 
+use std::fs;
+use std::process::Child;
+
 use support::xtask_command;
 use xtask::command::{CommandContext, XtaskCommand};
 use xtask::commands::jobs::{JobsCommand, JobsSubcommand};
 use xtask::history::{
-    HistoryDb,
+    HistoryDb, InvocationStatus, JobLifecycleStatus,
     seed::{SeedOptions, seed_history},
 };
 use xtask::output::{OutputFormat, OutputWriter};
 use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
+
+fn history_db_path(state_dir: &std::path::Path) -> std::path::PathBuf {
+    state_dir.join("xtask-history.db")
+}
+
+fn seed_failed_vm_job(state_dir: &std::path::Path) -> ::xtask::sandbox::TestResult<(i64, i64)> {
+    let db = HistoryDb::open(&history_db_path(state_dir))?;
+    let stdout_path = state_dir.join("vm-job.stdout.log");
+    let stderr_path = state_dir.join("vm-job.stderr.log");
+    fs::write(
+        &stdout_path,
+        "vm-test > RequestedAssertionFailed: browser proof missing\n",
+    )?;
+    fs::write(&stderr_path, "")?;
+
+    let args = vec![
+        "test".to_string(),
+        "--category".to_string(),
+        "smoke".to_string(),
+    ];
+    let (invocation_id, job_id) =
+        db.start_background_job("vm", &args, None, &stdout_path, &stderr_path)?;
+    db.write_progress_full(
+        invocation_id,
+        Some("vm-test"),
+        None,
+        Some(25.0),
+        Some(1),
+        Some(4),
+        Some("indeterminate"),
+        None,
+        None,
+        Some("none"),
+        Some("basic: RequestedAssertionFailed: browser proof missing"),
+    )?;
+    db.finish_invocation(invocation_id, InvocationStatus::Failed, Some(1), 12.5)?;
+    db.finish_background_job(
+        job_id,
+        JobLifecycleStatus::Failed,
+        Some(1),
+        12.5,
+        Some(&stdout_path),
+        Some(&stderr_path),
+    )?;
+
+    fs::remove_file(stdout_path)?;
+    fs::remove_file(stderr_path)?;
+    Ok((invocation_id, job_id))
+}
+
+struct ChildGuard(Child);
+
+impl ChildGuard {
+    fn id(&self) -> u32 {
+        self.0.id()
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn seed_running_vm_job(
+    state_dir: &std::path::Path,
+) -> ::xtask::sandbox::TestResult<(ChildGuard, i64, i64)> {
+    let child = ChildGuard(std::process::Command::new("sleep").arg("30").spawn()?);
+    let db = HistoryDb::open(&history_db_path(state_dir))?;
+    let stdout_path = state_dir.join("vm-live.stdout.log");
+    let stderr_path = state_dir.join("vm-live.stderr.log");
+    fs::write(
+        &stdout_path,
+        "vm-test > subtest: source-material replay stays ordered\n",
+    )?;
+    fs::write(&stderr_path, "")?;
+
+    let args = vec![
+        "test".to_string(),
+        "--category".to_string(),
+        "smoke".to_string(),
+    ];
+    let (invocation_id, job_id) =
+        db.start_background_job("vm", &args, Some(child.id()), &stdout_path, &stderr_path)?;
+    db.write_progress_full(
+        invocation_id,
+        Some("vm-test"),
+        None,
+        Some(25.0),
+        Some(1),
+        Some(4),
+        Some("indeterminate"),
+        None,
+        None,
+        Some("none"),
+        Some("basic: Subtest: source-material replay stays ordered"),
+    )?;
+
+    Ok((child, invocation_id, job_id))
+}
 
 /// Invariant: `jobs list` on empty state returns an empty jobs array, not an error.
 ///
@@ -105,6 +209,139 @@ async fn test_jobs_prune_empty_state_removes_zero() -> ::xtask::sandbox::TestRes
         "jobs prune on empty state must report success, got: {json}"
     );
 
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_jobs_status_json_surfaces_running_vm_progress_summary()
+-> ::xtask::sandbox::TestResult<()> {
+    let state_dir = tempfile::tempdir()?;
+    let (_child, _invocation_id, job_id) = seed_running_vm_job(state_dir.path())?;
+
+    let output = xtask_command()?
+        .env("SINEX_STATE_DIR", state_dir.path())
+        .env("NO_COLOR", "1")
+        .args(["jobs", "status", &job_id.to_string(), "--json"])
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "jobs status --json should succeed for running VM job; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).map_err(|error| {
+        color_eyre::eyre::eyre!(
+            "jobs status --json emitted invalid JSON: {error}\nstdout: {stdout}"
+        )
+    })?;
+
+    assert_eq!(json["data"]["status"], "running");
+    assert_eq!(
+        json["data"]["progress"]["terminal_summary"],
+        "basic: Subtest: source-material replay stays ordered"
+    );
+    assert_eq!(
+        json["data"]["progress_summary"],
+        "basic: Subtest: source-material replay stays ordered"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_jobs_status_human_surfaces_failed_vm_summary() -> ::xtask::sandbox::TestResult<()> {
+    let state_dir = tempfile::tempdir()?;
+    let (_invocation_id, job_id) = seed_failed_vm_job(state_dir.path())?;
+
+    let output = xtask_command()?
+        .env("SINEX_STATE_DIR", state_dir.path())
+        .env("NO_COLOR", "1")
+        .args(["--format", "human", "jobs", "status", &job_id.to_string()])
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "jobs status should succeed for failed VM job; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Progress: basic: RequestedAssertionFailed: browser proof missing"),
+        "jobs status should surface the stored VM failure summary.\nstdout:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_jobs_output_json_surfaces_failed_vm_progress_summary()
+-> ::xtask::sandbox::TestResult<()> {
+    let state_dir = tempfile::tempdir()?;
+    let (_invocation_id, job_id) = seed_failed_vm_job(state_dir.path())?;
+
+    let output = xtask_command()?
+        .env("SINEX_STATE_DIR", state_dir.path())
+        .env("NO_COLOR", "1")
+        .args(["jobs", "output", &job_id.to_string(), "--json"])
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "jobs output --json should succeed for failed VM job; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).map_err(|error| {
+        color_eyre::eyre::eyre!(
+            "jobs output --json emitted invalid JSON: {error}\nstdout: {stdout}"
+        )
+    })?;
+
+    assert_eq!(json["data"]["status"], "failed");
+    assert_eq!(json["data"]["exit_code"], 1);
+    assert_eq!(
+        json["data"]["progress_summary"],
+        "basic: RequestedAssertionFailed: browser proof missing"
+    );
+    assert_eq!(
+        json["data"]["progress"]["terminal_summary"],
+        "basic: RequestedAssertionFailed: browser proof missing"
+    );
+    assert!(
+        json["data"]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("RequestedAssertionFailed: browser proof missing"),
+        "jobs output should keep the full VM stdout content"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_jobs_output_human_prints_failed_vm_summary_footer() -> ::xtask::sandbox::TestResult<()>
+{
+    let state_dir = tempfile::tempdir()?;
+    let (_invocation_id, job_id) = seed_failed_vm_job(state_dir.path())?;
+
+    let output = xtask_command()?
+        .env("SINEX_STATE_DIR", state_dir.path())
+        .env("NO_COLOR", "1")
+        .args(["--format", "human", "jobs", "output", &job_id.to_string()])
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "jobs output should succeed for failed VM job; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Summary: basic: RequestedAssertionFailed: browser proof missing"),
+        "jobs output should print the stored VM failure summary footer.\nstderr:\n{stderr}"
+    );
     Ok(())
 }
 

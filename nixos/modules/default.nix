@@ -355,54 +355,6 @@ in
     storage = mkOption {
       type = submodule {
         options = {
-          dlq = mkOption {
-            type = submodule {
-              options = {
-                enable = mkOption {
-                  type = bool;
-                  default = true;
-                  description = "Enable the Dead Letter Queue.";
-                };
-                path = mkOption {
-                  type = path;
-                  default = cfg.stateRoot + "/failures";
-                  defaultText = literalExpression "config.services.sinex.stateRoot + \"/failures\"";
-                  description = "Directory used to store DLQ payloads.";
-                };
-                cleanup = mkOption {
-                  type = submodule {
-                    options = {
-                      enable = mkOption {
-                        type = bool;
-                        default = true;
-                        description = "Enable scheduled DLQ cleanup.";
-                      };
-                      maxAge = mkOption {
-                        type = str;
-                        default = "30d";
-                        description = "Delete DLQ entries older than this duration.";
-                      };
-                      maxFiles = mkOption {
-                        type = positive;
-                        default = 10000;
-                        description = "Delete DLQ entries when file count exceeds this number.";
-                      };
-                      schedule = mkOption {
-                        type = str;
-                        default = "daily";
-                        description = "systemd.timer OnCalendar expression for cleanup.";
-                      };
-                    };
-                  };
-                  default = { };
-                  description = "DLQ maintenance configuration.";
-                };
-              };
-            };
-            default = { };
-            description = "Dead Letter Queue settings.";
-          };
-
           blob = mkOption {
             type = submodule {
               options = {
@@ -1374,6 +1326,30 @@ in
                   description = "Session detector automaton. Rolls bounded `activity.window.summary` inputs into `activity.session.boundary` outputs.";
                 };
 
+                hourlySummarizer = mkOption {
+                  type = submodule {
+                    options = {
+                      enable = mkOption { type = bool; default = true; description = "Enable hourly activity summarizer automaton."; };
+                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+                    };
+                  };
+                  default = { };
+                  description = "Hourly summarizer automaton. Rolls bounded `activity.window.summary` inputs into UTC-hour `activity.summary.hourly` outputs.";
+                };
+
+                dailySummarizer = mkOption {
+                  type = submodule {
+                    options = {
+                      enable = mkOption { type = bool; default = true; description = "Enable daily activity summarizer automaton."; };
+                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+                    };
+                  };
+                  default = { };
+                  description = "Daily summarizer automaton. Rolls hourly `activity.summary.hourly` inputs into UTC-day `activity.summary.daily` outputs.";
+                };
+
                 profiles = mkOption {
                   type = attrsOf (submodule {
                     options = {
@@ -1607,7 +1583,6 @@ in
                 gracePeriodSec = mkOption { type = positive; default = 30; description = "Grace period before restarting units."; };
                 healthCheckTimeoutSec = mkOption { type = positive; default = 60; description = "Time to wait for units to become healthy."; };
                 rollbackOnFailure = mkOption { type = bool; default = true; description = "Rollback units if update fails."; };
-                preserveData = mkOption { type = bool; default = true; description = "Preserve DLQ data during update."; };
                 units = mkOption { type = strList; default = [ ]; description = "Explicit list of units to manage (empty derives)."; };
               };
             };
@@ -1622,7 +1597,6 @@ in
                 tasks = mkOption {
                   type = submodule {
                     options = {
-                      dlq = mkOption { type = bool; default = true; description = "Run DLQ cleanup timer."; };
                       blobGc = mkOption { type = bool; default = true; description = "Run blob garbage collection."; };
                       blobFsck = mkOption { type = bool; default = true; description = "Run blob fsck timer."; };
                       custom = mkOption { type = strList; default = [ ]; description = "Additional maintenance units to start."; };
@@ -1731,7 +1705,6 @@ in
       nodesSpool = "${spoolBase}/nodes";
       ingestSpool = cfg.core.ingestd.spoolDir;
       logDir = cfg.observability.logDir;
-      dlqDir = cfg.storage.dlq.path;
       blobDir = cfg.storage.blob.repositoryPath;
       sinexUser = cfg.users.nodes;
       targetUser = cfg.users.target;
@@ -1928,6 +1901,14 @@ in
               cfg.nodes.enable
               && cfg.nodes.automata.enable
               && cfg.nodes.automata.sessionDetector.enable;
+            hourly_summarizer =
+              cfg.nodes.enable
+              && cfg.nodes.automata.enable
+              && cfg.nodes.automata.hourlySummarizer.enable;
+            daily_summarizer =
+              cfg.nodes.enable
+              && cfg.nodes.automata.enable
+              && cfg.nodes.automata.dailySummarizer.enable;
           };
         expectations = {
           schema_apply = cfg.database.enable && cfg.database.autoSetup;
@@ -2003,21 +1984,6 @@ in
       };
       runtimeTargetDescriptorJson = builtins.toJSON runtimeTargetDescriptor;
       runtimeTargetDescriptorFile = pkgs.writeText "sinex-runtime-target.json" runtimeTargetDescriptorJson;
-      dlqCleanupScript = if cfg.cliPackage == null then null else
-      pkgs.writeShellScript "sinex-dlq-cleanup" ''
-        set -euo pipefail
-
-        CLI_BIN="${cfg.cliPackage}/bin/sinexctl"
-        if [ ! -x "$CLI_BIN" ]; then
-          echo "sinexctl not found at $CLI_BIN" >&2
-          exit 1
-        fi
-
-        "$CLI_BIN" dlq cleanup \
-          --older-than ${cfg.storage.dlq.cleanup.maxAge} \
-          --max-files ${toString cfg.storage.dlq.cleanup.maxFiles} \
-          --confirm
-      '';
       asciinemaDir = cfg.shell.asciinema.recordingsPath;
       asciiPath = toString asciinemaDir;
 
@@ -2030,7 +1996,6 @@ in
           { path = ingestSpool; mode = "0755"; }
           { path = logDir; mode = "0755"; }
         ]
-        ++ optionals (cfg.storage.dlq.enable) [{ path = dlqDir; mode = "0750"; }]
         ++ optionals (cfg.storage.blob.enable) [{ path = blobDir; mode = "0750"; }]
         ++ optionals (cfg.core.enable && cfg.core.gateway.autoGenerateTls) [{ path = "${stateRoot}/tls"; mode = "0750"; }]
         ++ optionals (cfg.shell.asciinema.autoRecord && targetUser != null && hasPrefix "/" asciiPath) [
@@ -2155,7 +2120,7 @@ in
         };
       })
 
-      (mkIf (cfg.enable || cfg.storage.dlq.enable || cfg.storage.blob.enable) {
+      (mkIf (cfg.enable || cfg.storage.blob.enable) {
         systemd.tmpfiles.rules = mkAfter (map tmpRule directoryRules);
       })
 
@@ -2262,40 +2227,6 @@ in
       (mkIf (targetHome != null) {
         services.sinex.nodes.desktop.history.activitywatchDbPath =
           mkDefault "${targetHome}/.local/share/activitywatch/aw-server-rust/sqlite.db";
-      })
-
-      (mkIf (cfg.storage.dlq.enable && cfg.lifecycle.maintenance.enable && cfg.lifecycle.maintenance.tasks.dlq && cfg.cliPackage != null) {
-        systemd.services.sinex-dlq-cleanup = {
-          description = "Sinex DLQ cleanup";
-          serviceConfig = {
-            Environment = [
-              "DATABASE_URL=${databaseUrl}"
-              "SINEX_DLQ_PATH=${dlqDir}"
-            ];
-            ExecStart = mkDatabasePasswordExec {
-              name = "dlq-cleanup";
-              command = dlqCleanupScript;
-              passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
-            };
-            # Retry within the same calendar window if cleanup fails
-            # (e.g. gateway unavailable, transient I/O error).
-            Restart = "on-failure";
-            RestartSec = 300;
-          } // mkHelperServiceConfig {
-            user = sinexUser;
-            group = sinexUser;
-            readWritePaths = [ dlqDir ];
-          };
-        };
-
-        systemd.timers.sinex-dlq-cleanup = {
-          description = "Timer for Sinex DLQ cleanup";
-          wantedBy = [ "timers.target" ];
-          timerConfig = {
-            OnCalendar = cfg.storage.dlq.cleanup.schedule;
-            Persistent = true;
-          };
-        };
       })
 
       (mkIf (cfg.nats.enable || cfg.nats.autoSetup) {

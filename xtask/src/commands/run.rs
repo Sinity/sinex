@@ -367,6 +367,16 @@ static BINARIES: &[(&str, &str, &str)] = &[
         "sinex-session-detector",
         "sinex-session-detector",
     ),
+    (
+        "hourly-summarizer",
+        "sinex-hourly-summarizer",
+        "sinex-hourly-summarizer",
+    ),
+    (
+        "daily-summarizer",
+        "sinex-daily-summarizer",
+        "sinex-daily-summarizer",
+    ),
     // Processors
     (
         "terminal-canonicalizer",
@@ -386,6 +396,8 @@ const AUTOMATON_TARGETS: &[&str] = &[
     "analytics-automaton",
     "health-automaton",
     "session-detector",
+    "hourly-summarizer",
+    "daily-summarizer",
     "terminal-canonicalizer",
 ];
 
@@ -1549,6 +1561,8 @@ mod tests {
                 "analytics-automaton",
                 "health-automaton",
                 "session-detector",
+                "hourly-summarizer",
+                "daily-summarizer",
                 "terminal-canonicalizer",
             ]
         );
