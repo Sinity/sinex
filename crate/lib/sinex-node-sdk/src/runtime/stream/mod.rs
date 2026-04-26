@@ -3237,6 +3237,25 @@ impl<T: Node + 'static> NodeRunner<T> {
                 Ok(stats.processed as u64)
             }
             Err(batch_err) => {
+                // Checkpoint errors are permanent (the KV revision will never
+                // match) and apply to the entire node, not to any one event.
+                // Per-event DLQ fallback would route every event in the batch
+                // — and every subsequent batch — to DLQ while the node keeps
+                // consuming, generating an unbounded log/IO storm. Issue #581
+                // observed 221K consecutive failures producing 1.6M journal
+                // entries and 54 GB of NATS traffic on sinnix-prime before
+                // I/O saturation halted the host.
+                //
+                // Propagate the checkpoint error directly so the runtime
+                // halts the node and signals for operator intervention.
+                if matches!(batch_err, SinexError::Checkpoint(_)) {
+                    error!(
+                        error = %batch_err,
+                        batch_size,
+                        "Checkpoint error in batch processing; halting node (per-event DLQ fallback would loop on every event)"
+                    );
+                    return Err(batch_err);
+                }
                 warn!(
                     error = %batch_err,
                     batch_size,
@@ -3250,6 +3269,18 @@ impl<T: Node + 'static> NodeRunner<T> {
                             succeeded += stats.processed as u64;
                         }
                         Err(event_err) => {
+                            // Same defense as the batch path — checkpoint
+                            // errors are not data errors; DLQ routing will
+                            // not help, and retrying the next event will hit
+                            // the exact same KV-revision conflict. Halt
+                            // immediately. Tracks #581.
+                            if matches!(event_err, SinexError::Checkpoint(_)) {
+                                error!(
+                                    error = %event_err,
+                                    "Checkpoint error during per-event fallback; halting node"
+                                );
+                                return Err(event_err);
+                            }
                             let event_id = event.id;
                             warn!(
                                 error = %event_err,
@@ -4471,6 +4502,127 @@ mod tests {
             message.contains("Confirmed event could not be reconstructed from provisional payload")
         );
         assert!(message.contains("Invalid UUID for node_run_id"));
+        Ok(())
+    }
+
+    /// Node that returns a checkpoint error from `process_event_batch`. The
+    /// real adapter does this after 3 consecutive checkpoint CAS failures
+    /// (see `derived_node::adapter::process_batch`); we shortcut that
+    /// behaviour to drive the runtime fallback path directly.
+    struct CheckpointErrorBatchNode;
+
+    impl Node for CheckpointErrorBatchNode {
+        type Config = ();
+
+        async fn initialize(&mut self, _init: NodeInitContext<Self::Config>) -> NodeResult<()> {
+            Ok(())
+        }
+
+        async fn scan(
+            &mut self,
+            _from: Checkpoint,
+            _until: TimeHorizon,
+            _args: ScanArgs,
+        ) -> NodeResult<ScanReport> {
+            Ok(ScanReport {
+                events_processed: 0,
+                duration: std::time::Duration::ZERO,
+                final_checkpoint: Checkpoint::None,
+                time_range: None,
+                node_stats: HashMap::new(),
+                successful_targets: Vec::new(),
+                failed_targets: Vec::new(),
+                warnings: Vec::new(),
+            })
+        }
+
+        fn node_name(&self) -> &'static str {
+            "runtime-checkpoint-error-node"
+        }
+
+        fn node_type(&self) -> NodeType {
+            NodeType::Automaton
+        }
+
+        fn capabilities(&self) -> NodeCapabilities {
+            NodeCapabilities {
+                supports_historical: false,
+                ..NodeCapabilities::default()
+            }
+        }
+
+        async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
+            Ok(Checkpoint::None)
+        }
+
+        async fn process_event_batch(
+            &mut self,
+            _events: Vec<Event<JsonValue>>,
+        ) -> NodeResult<ProcessingStats> {
+            Err(SinexError::checkpoint(
+                "Checkpoint save failed 3 consecutive times; halting to prevent silent progress loss on crash+restart",
+            ))
+        }
+    }
+
+    /// Regression for #581. The pre-fix code caught `Err` from the batch path
+    /// and tried per-event DLQ routing; with a checkpoint error every event
+    /// hit the same KV-revision conflict and the function returned Ok,
+    /// looping forever and saturating I/O. The fix matches
+    /// `SinexError::Checkpoint` and propagates immediately.
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn process_batch_with_dlq_fallback_propagates_checkpoint_errors(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let transport =
+            EventTransport::Nats(Arc::new(crate::NatsPublisher::new(ctx.nats_client())));
+        let mut node = CheckpointErrorBatchNode;
+        let event = Event {
+            id: Some(EventId::from(Uuid::now_v7())),
+            source: EventSource::new("runtime-test-source")?,
+            event_type: EventType::new("runtime.test")?,
+            payload: serde_json::json!({"ok": true}),
+            ts_orig: Some(Timestamp::now()),
+            host: HostName::from_static("runtime-test-host"),
+            node_run_id: None,
+            payload_schema_id: None,
+            provenance: Provenance::Material {
+                id: Id::<SourceMaterial>::from_uuid(Uuid::now_v7()),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: OffsetKind::Byte,
+            },
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
+        };
+
+        let error = NodeRunner::<CheckpointErrorBatchNode>::process_batch_with_dlq_fallback(
+            &mut node,
+            &transport,
+            vec![event],
+        )
+        .await
+        .expect_err("checkpoint error must propagate, not be DLQ-fallback'd");
+
+        // The error must remain a Checkpoint variant — the runtime supervisor
+        // matches on this to halt the consumer instead of advancing.
+        assert!(
+            matches!(error, SinexError::Checkpoint(_)),
+            "expected SinexError::Checkpoint, got: {error:?}"
+        );
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("Checkpoint save failed"),
+            "checkpoint error message lost in propagation: {message}"
+        );
         Ok(())
     }
 
