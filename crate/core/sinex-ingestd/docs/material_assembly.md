@@ -44,9 +44,9 @@ That is why the lock-contention investigation closed without follow-up changes:
 When changing material assembly, do not move slow content-store or filesystem operations back
 under the per-material state lock.
 
-## Error Handling & Dead Letter Queue (DLQ)
+## Error Handling & Raw-Ingest DLQ
 
 If an assembly fails due to corruption, timeout, or storage errors:
-- **DLQ Routing**: The material ID and failure context are routed to a Dead Letter Queue for manual investigation.
+- **DLQ Routing**: The material ID and failure context are routed to the raw-ingest DLQ for manual investigation.
 - **Cleanup**: Temporary files and WAL entries are purged to reclaim disk space.
 - **State Update**: Source material is marked failed and metrics/logs capture failure context.
