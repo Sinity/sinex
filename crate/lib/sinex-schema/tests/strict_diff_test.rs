@@ -140,3 +140,143 @@ async fn detects_manual_edit_to_trigger_function_body(
 
     Ok(())
 }
+
+#[sinex_test]
+async fn detects_dropped_inline_check_on_events(ctx: TestContext) -> TestResult<()> {
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    // Find and drop the XOR provenance CHECK. There is no stable name —
+    // discover it via pg_constraint, then drop it. This simulates an
+    // operator running ALTER TABLE ... DROP CONSTRAINT manually.
+    let constraint_name: String = sqlx::query_scalar(
+        r"
+        SELECT c.conname::text
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE n.nspname = 'core'
+          AND t.relname = 'events'
+          AND c.contype = 'c'
+          AND pg_get_constraintdef(c.oid) LIKE '%source_material_id IS NOT NULL%'
+          AND pg_get_constraintdef(c.oid) LIKE '%source_event_ids IS NULL%'
+        LIMIT 1
+        ",
+    )
+    .fetch_one(&ctx.pool)
+    .await?;
+
+    sqlx::query(&format!(
+        "ALTER TABLE core.events DROP CONSTRAINT {constraint_name}"
+    ))
+    .execute(&ctx.pool)
+    .await?;
+
+    let drifts = check_strict(&ctx.pool).await?;
+    let matched: Vec<_> = drifts
+        .iter()
+        .filter(|d| {
+            d.category == DriftCategory::InlineCheckExpr
+                && d.location == "core.events::xor_provenance"
+        })
+        .collect();
+
+    assert_eq!(
+        matched.len(),
+        1,
+        "expected exactly one inline_check_expr drift on xor_provenance, got: {drifts:?}"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn detects_changed_foreign_key_action(ctx: TestContext) -> TestResult<()> {
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    // The TaggedItems(tag_id) FK declares ON DELETE CASCADE. Drop it and
+    // re-add with NO ACTION to simulate manual drift.
+    let constraint_name: String = sqlx::query_scalar(
+        r"
+        SELECT c.conname::text
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE n.nspname = 'core'
+          AND t.relname = 'tagged_items'
+          AND c.contype = 'f'
+          AND pg_get_constraintdef(c.oid) LIKE '%FOREIGN KEY (tag_id)%'
+        LIMIT 1
+        ",
+    )
+    .fetch_one(&ctx.pool)
+    .await?;
+
+    sqlx::query(&format!(
+        "ALTER TABLE core.tagged_items DROP CONSTRAINT {constraint_name}"
+    ))
+    .execute(&ctx.pool)
+    .await?;
+
+    sqlx::query(
+        "ALTER TABLE core.tagged_items
+            ADD CONSTRAINT tagged_items_tag_id_drift_fkey
+            FOREIGN KEY (tag_id) REFERENCES core.tags(id) ON DELETE NO ACTION",
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let drifts = check_strict(&ctx.pool).await?;
+    let matched: Vec<_> = drifts
+        .iter()
+        .filter(|d| {
+            d.category == DriftCategory::ForeignKeyAction
+                && d.location.contains("tagged_items")
+                && d.location.contains("tag_id")
+        })
+        .collect();
+
+    assert_eq!(
+        matched.len(),
+        1,
+        "expected exactly one foreign_key_action drift on tagged_items(tag_id), got: {drifts:?}"
+    );
+    // Postgres normalizes `ON DELETE NO ACTION` to no clause at all in
+    // pg_get_constraintdef, since NO ACTION is the SQL default. The drift
+    // shows up as the CASCADE marker missing from the observed summary.
+    assert!(
+        !matched[0].observed_summary.contains("ON DELETE CASCADE"),
+        "observed summary should no longer contain CASCADE: {}",
+        matched[0].observed_summary
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn detects_changed_hypertable_chunk_interval(ctx: TestContext) -> TestResult<()> {
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    // Change the chunk interval to 1 day. TimescaleDB exposes
+    // `set_chunk_time_interval` for exactly this — operator-facing
+    // mutation that strict diff must catch.
+    sqlx::query("SELECT set_chunk_time_interval('core.events', INTERVAL '1 day')")
+        .execute(&ctx.pool)
+        .await?;
+
+    let drifts = check_strict(&ctx.pool).await?;
+    let matched: Vec<_> = drifts
+        .iter()
+        .filter(|d| {
+            d.category == DriftCategory::HypertableSetting
+                && d.location == "core.events::chunk_interval"
+        })
+        .collect();
+
+    assert_eq!(
+        matched.len(),
+        1,
+        "expected exactly one hypertable_setting drift on chunk_interval, got: {drifts:?}"
+    );
+
+    Ok(())
+}

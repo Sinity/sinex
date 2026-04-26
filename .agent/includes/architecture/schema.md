@@ -52,7 +52,10 @@ Schema evolution uses declarative convergence (`sinex-schema apply`), not migrat
 (missing tables, columns, named constraints, indexes, triggers, views,
 continuous aggregates). For categories the convergence engine does NOT
 reconcile — trigger function bodies that survived a manual edit,
-DEFAULT changes on existing columns, FK actions, inline CHECKs,
-hypertable settings — call `strict_diff::check_strict` (or run the
-`schema-strict-diff` binary against `DATABASE_URL`). Issue #556 tracks
-follow-up categories.
+DEFAULT changes on existing columns, inline CHECKs, FK
+ON DELETE / ON UPDATE actions, TimescaleDB hypertable settings (chunk
+interval + retention policy presence) — call `strict_diff::check_strict`
+(or run the `schema-strict-diff` binary against `DATABASE_URL`).
+Comments / table descriptions remain a non-goal per #556. Issues #578
+and #579 track real source-vs-live drift the strict diff caught on
+fresh-apply state.

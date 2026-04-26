@@ -24,11 +24,27 @@ Two routines, with overlapping but distinct coverage:
   indexes, triggers, views, and continuous aggregates. This is what a
   CI gate or a "did apply do anything?" check uses.
 - `strict_diff::check_strict` extends `diff` with categories that
-  apply does NOT converge: trigger function bodies (silently
-  overwritten on next apply), column DEFAULT expressions on existing
-  columns (`ADD COLUMN IF NOT EXISTS` is a no-op for those), and
-  reserved slots for FK actions, inline CHECKs, and hypertable
-  settings. Issue #556 tracks the remaining categories.
+  apply does NOT converge:
+  - **Trigger function bodies** — silently overwritten on next apply.
+  - **Column DEFAULT expressions** on existing columns —
+    `ADD COLUMN IF NOT EXISTS` is a no-op for those.
+  - **Inline CHECK expressions** — anonymous `CHECK (...)` clauses
+    declared via sea-query column statements; convergence has no
+    name handle to reconcile against.
+  - **Foreign key ON DELETE / ON UPDATE actions** — FK exists by
+    name, action change is not applied.
+  - **TimescaleDB hypertable settings** — chunk interval, retention
+    policy presence/absence.
+
+  Reserved-but-not-yet-implemented: comments / table descriptions
+  (issue #556 explicitly lists this as a non-goal).
+
+  Each category is opinionated: detection compares declared
+  marker substrings against `pg_get_constraintdef`,
+  `pg_get_expr`, `pg_proc.prosrc`, or `_timescaledb_catalog.dimension`
+  values rather than full-text equality, since Postgres normalizes
+  expression and function-body storage in ways that do not
+  round-trip the source SQL verbatim.
 
 Operator-facing CLI:
 
