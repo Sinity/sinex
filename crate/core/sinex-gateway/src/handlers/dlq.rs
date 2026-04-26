@@ -1,10 +1,11 @@
-//! DLQ (Dead Letter Queue) management handlers
+//! Raw-ingest DLQ management handlers
 //!
-//! This module provides RPC endpoints for managing the NATS Dead Letter Queue:
-//! - List DLQ statistics
-//! - Peek at DLQ messages without removing them
-//! - Requeue messages from DLQ back to main stream
-//! - Purge DLQ messages
+//! This module provides RPC endpoints for managing the operator-facing raw-ingest
+//! DLQ in NATS:
+//! - List raw DLQ statistics
+//! - Peek at raw DLQ messages without removing them
+//! - Requeue raw DLQ messages back to the main raw-event stream
+//! - Purge raw DLQ messages
 
 use crate::service_container::ServiceContainer;
 use color_eyre::eyre::{Context, Result, eyre};
@@ -42,7 +43,7 @@ fn payload_preview(payload: &str, max_chars: usize) -> String {
     }
 }
 
-/// Handle DLQ list request - returns statistics about DLQ
+/// Handle raw-DLQ list request - returns statistics about the raw-ingest DLQ.
 pub async fn handle_dlq_list(services: &ServiceContainer, _params: Value) -> Result<Value> {
     let nats_client = services
         .nats_client()
@@ -66,7 +67,7 @@ pub async fn handle_dlq_list(services: &ServiceContainer, _params: Value) -> Res
     Ok(serde_json::to_value(response)?)
 }
 
-/// Handle DLQ peek request - preview messages without removing them
+/// Handle raw-DLQ peek request - preview messages without removing them.
 pub async fn handle_dlq_peek(services: &ServiceContainer, params: Value) -> Result<Value> {
     use async_nats::jetstream;
     use futures::StreamExt;
@@ -153,7 +154,7 @@ pub async fn handle_dlq_peek(services: &ServiceContainer, params: Value) -> Resu
     Ok(serde_json::to_value(response)?)
 }
 
-/// Handle DLQ requeue request - move messages back to main stream
+/// Handle raw-DLQ requeue request - move raw-ingest failures back to the main stream.
 ///
 /// # Authorization
 ///
@@ -216,7 +217,7 @@ pub async fn handle_dlq_requeue(
     Ok(serde_json::to_value(response)?)
 }
 
-/// Handle DLQ purge request - permanently delete DLQ messages
+/// Handle raw-DLQ purge request - permanently delete raw-ingest DLQ messages.
 ///
 /// # Authorization
 ///

@@ -18,9 +18,9 @@ sinexctl replay list --token "$SINEX_RPC_TOKEN"
 # Inspect derived-node/automata runtime health and checkpoint position
 sinexctl automata --token "$SINEX_RPC_TOKEN"
 
-# Run trust verification, including gateway/automata smoke, managed
+# Run trust verification, including passive derived-signal checks, managed
 # document-scan smoke, collector-surface evidence, and historical-backfill proof
-sinexctl verify --gateway-smoke --automata-smoke --document-smoke --source-proof --historical-proof --token "$SINEX_RPC_TOKEN"
+sinexctl verify --document-smoke --source-proof --historical-proof --token "$SINEX_RPC_TOKEN"
 
 # Inspect DLQ state
 sinexctl dlq list --token "$SINEX_RPC_TOKEN"
