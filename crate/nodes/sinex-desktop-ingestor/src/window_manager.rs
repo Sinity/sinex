@@ -16,7 +16,7 @@ use sinex_primitives::events::payloads::{
     HyprlandWindowFocusedPayload, HyprlandWindowMovedPayload, HyprlandWindowOpenedPayload,
     HyprlandWindowTitleChangedPayload, HyprlandWorkspaceSwitchedPayload, WindowGeometry,
 };
-use sinex_primitives::{DynamicPayload, Id, OffsetKind, Provenance, Uuid};
+use sinex_primitives::{DynamicPayload, Id, Provenance, SourceMaterial, Uuid};
 use std::{
     fmt,
     path::{Path, PathBuf},
@@ -807,13 +807,12 @@ impl WindowManagerWatcher {
                         "event_type": event_type,
                         "event_data": event_data,
                     });
-                    let provenance = Provenance::Material {
-                        id: Id::from_uuid(material_id),
-                        anchor_byte: 0,
-                        offset_start: Some(0),
-                        offset_end: Some(payload_bytes.len() as i64),
-                        offset_kind: OffsetKind::Byte,
-                    };
+                    let provenance = Provenance::from_material(
+                        Id::<SourceMaterial>::from_uuid(material_id),
+                        0,
+                        Some(0),
+                        Some(payload_bytes.len() as i64),
+                    );
                     let event = DynamicPayload::new(
                         EventSource::from_static("wm.hyprland"),
                         EventType::from_static("wm.unhandled"),

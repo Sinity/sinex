@@ -1,0 +1,56 @@
+id: raw-provenance-literal
+message: "Use Provenance::from_material() / from_synthesis() instead of constructing Provenance::Material/Synthesis directly. Direct struct literals bypass the EventBuilder typestate that enforces XOR provenance."
+severity: error
+language: rust
+rule:
+  any:
+    - pattern: "Provenance::Material { $$$ }"
+    - pattern: "Provenance::Synthesis { $$$ }"
+    - pattern: "sinex_primitives::events::Provenance::Material { $$$ }"
+    - pattern: "sinex_primitives::events::Provenance::Synthesis { $$$ }"
+    - pattern: "sinex_primitives::Provenance::Material { $$$ }"
+    - pattern: "sinex_primitives::Provenance::Synthesis { $$$ }"
+ignores:
+  # The defining crate owns the constructors; the literals here implement them.
+  - "crate/lib/sinex-primitives/**"
+  # Reconstruction of an already-validated XOR shape from a wire/DB row.
+  # The DB CHECK constraint and JetStream schema enforce XOR upstream;
+  # these sites preserve `offset_kind` and `operation_id` from a trusted
+  # frame, which the safe constructors don't accept (yet — see issue #559
+  # follow-up for an explicit `material_from_wire` / `synthesis_from_wire`
+  # constructor surface).
+  - "crate/lib/sinex-db/src/repositories/events/conversions.rs"
+  - "crate/lib/sinex-node-sdk/src/runtime/stream/mod.rs"
+  - "crate/lib/sinex-node-sdk/src/derived_node/adapter.rs"
+  # Tests and test infrastructure legitimately construct events with arbitrary
+  # provenance shapes for failure injection and fixture builders. Production
+  # paths must go through the typed builder methods.
+  - "**/tests/**"
+  - "**/*_test.rs"
+  - "**/*_tests.rs"
+  - "xtask/src/sandbox/**"
+  # Files where every direct literal lives in an inline `#[cfg(test)]`
+  # module. ast-grep can't easily target an ancestor `mod tests` block, so
+  # we ignore the file. New production code in these files must still use
+  # `Provenance::from_material()` / `from_synthesis()` — reviewers are the
+  # backstop here.
+  - "crate/nodes/sinex-system-ingestor/src/unified_node.rs"
+  - "crate/nodes/sinex-system-ingestor/src/udev_watcher.rs"
+  - "crate/nodes/sinex-system-ingestor/src/dbus_watcher.rs"
+  - "crate/nodes/sinex-system-ingestor/src/unified_journal_watcher.rs"
+  - "crate/lib/sinex-node-sdk/src/runtime/stream/handles.rs"
+  - "crate/cli/src/commands/report.rs"
+note: |
+  See issue #559. The XOR-provenance invariant is encoded in:
+    - EventBuilder typestate (NoProvenance has no .build())
+    - serde Deserialize (rejects both-set / neither-set)
+    - DB CHECK constraint (defense-in-depth)
+
+  Direct `Provenance::Material { .. }` literals outside the defining
+  crate skip the typestate guarantee. Use:
+    payload.from_material(material_id)
+    payload.from_parents(parent_ids)?
+  or, for in-place construction of a Provenance value, the helpers in
+  `sinex_primitives::events::builder::Provenance`:
+    Provenance::from_material(id, anchor_byte, offset_start, offset_end)
+    Provenance::from_synthesis(event_ids)  // returns Option (None on empty)

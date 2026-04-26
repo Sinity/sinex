@@ -14,6 +14,7 @@ Within xtask automation, `error` severity is blocking; `warning` and `hint` rema
 | --- | --- | --- | --- |
 | `cargo-command-outside-process` | `error` | `rust` | Spawn cargo via xtask::process helpers, not ad-hoc Command::new("cargo") |
 | `dbg-macro` | `error` | `rust` | Debug macro dbg!() found - remove before commit |
+| `raw-provenance-literal` | `error` | `rust` | Use Provenance::from_material() / from_synthesis() instead of constructing Provenance::Material/Synthesis directly. Direct struct literals bypass the EventBuilder typestate that enforces XOR provenance. |
 | `todo-macro` | `error` | `rust` | TODO macro found in production code |
 | `unimplemented-macro` | `error` | `rust` | unimplemented! macro found in production code |
 | `anyhow-in-lib` | `warning` | `rust` | Use SinexError instead of anyhow in library code |
@@ -44,6 +45,41 @@ Within xtask automation, `error` severity is blocking; `warning` and `hint` rema
 - Intent:
   dbg!() is for temporary debugging only.
   Use tracing::debug!() for permanent debug logging.
+
+## `raw-provenance-literal`
+
+- Severity: `error`
+- Language: `rust`
+- Message: Use Provenance::from_material() / from_synthesis() instead of constructing Provenance::Material/Synthesis directly. Direct struct literals bypass the EventBuilder typestate that enforces XOR provenance.
+- Ignore globs:
+  - `**/*_test.rs`
+  - `**/*_tests.rs`
+  - `**/tests/**`
+  - `crate/cli/src/commands/report.rs`
+  - `crate/lib/sinex-db/src/repositories/events/conversions.rs`
+  - `crate/lib/sinex-node-sdk/src/derived_node/adapter.rs`
+  - `crate/lib/sinex-node-sdk/src/runtime/stream/handles.rs`
+  - `crate/lib/sinex-node-sdk/src/runtime/stream/mod.rs`
+  - `crate/lib/sinex-primitives/**`
+  - `crate/nodes/sinex-system-ingestor/src/dbus_watcher.rs`
+  - `crate/nodes/sinex-system-ingestor/src/udev_watcher.rs`
+  - `crate/nodes/sinex-system-ingestor/src/unified_journal_watcher.rs`
+  - `crate/nodes/sinex-system-ingestor/src/unified_node.rs`
+  - `xtask/src/sandbox/**`
+- Intent:
+  See issue #559. The XOR-provenance invariant is encoded in:
+    - EventBuilder typestate (NoProvenance has no .build())
+    - serde Deserialize (rejects both-set / neither-set)
+    - DB CHECK constraint (defense-in-depth)
+  
+  Direct `Provenance::Material { .. }` literals outside the defining
+  crate skip the typestate guarantee. Use:
+    payload.from_material(material_id)
+    payload.from_parents(parent_ids)?
+  or, for in-place construction of a Provenance value, the helpers in
+  `sinex_primitives::events::builder::Provenance`:
+    Provenance::from_material(id, anchor_byte, offset_start, offset_end)
+    Provenance::from_synthesis(event_ids)  // returns Option (None on empty)
 
 ## `todo-macro`
 
