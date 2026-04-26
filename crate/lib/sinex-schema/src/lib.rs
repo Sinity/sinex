@@ -17,3 +17,9 @@ pub mod schema;
 
 // Centralized registry of all database schemas.
 pub mod schema_registry;
+
+// Strict drift detection: extends `apply::diff` with categories that the
+// convergence engine does not currently reconcile (trigger function bodies,
+// column DEFAULT expressions, FK actions, inline CHECKs, hypertable
+// settings). See issue #556.
+pub mod strict_diff;
