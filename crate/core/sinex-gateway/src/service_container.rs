@@ -10,7 +10,6 @@ use sinex_db::replay::state_machine::ReplayStateMachine;
 use sinex_node_sdk::content_store::{ContentStoreConfig, ContentStoreManager};
 use sinex_primitives::{
     coordination::CoordinationKvClient, environment as sinex_environment, error::SinexError,
-    EXPECTED_BINARY_SCHEMA_VERSION,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -112,8 +111,7 @@ impl ServiceContainer {
                     .with_source(e.to_string())
             })?;
 
-        // Verify binary-schema version compatibility before proceeding further.
-        // On a first-run database (no row), the expected version is inserted automatically.
+        // Check binary-schema version compatibility
         verify_binary_schema_version(&content_pool).await?;
 
         // Create content store for content service
@@ -450,8 +448,8 @@ async fn connect_replay_control_with_backoff(
     }
 }
 
-/// Query the DB binary_schema_version and either verify a match or insert on first run.
-async fn verify_binary_schema_version(pool: &sqlx::PgPool) -> Result<()> {
+async fn verify_binary_schema_version(pool: &sqlx::PgPool) -> Result<(), SinexError> {
+    use sinex_primitives::EXPECTED_BINARY_SCHEMA_VERSION;
     let db_version: Option<String> = sqlx::query_scalar(
         "SELECT version FROM sinex_schemas.binary_schema_version WHERE id = 1",
     )
@@ -462,22 +460,15 @@ async fn verify_binary_schema_version(pool: &sqlx::PgPool) -> Result<()> {
             .with_operation("gateway.verify_binary_schema_version")
             .with_source(e.to_string())
     })?;
-
     match db_version {
         Some(v) if v == EXPECTED_BINARY_SCHEMA_VERSION => {
-            info!(
-                version = %v,
-                "Binary schema version verified"
-            );
+            info!(version = %v, "Binary schema version verified");
             Ok(())
         }
         Some(v) => Err(SinexError::configuration(format!(
-            "Schema version mismatch: binary expects '{EXPECTED_BINARY_SCHEMA_VERSION}', database has '{v}'",
-        ))
-        .with_operation("gateway.verify_binary_schema_version")
-        .into()),
+            "Schema version mismatch: binary expects '{EXPECTED_BINARY_SCHEMA_VERSION}', database has '{v}'"
+        )).with_operation("gateway.verify_binary_schema_version")),
         None => {
-            // First run: insert expected version
             sqlx::query(
                 "INSERT INTO sinex_schemas.binary_schema_version (id, version) VALUES (1, $1)",
             )
@@ -489,15 +480,11 @@ async fn verify_binary_schema_version(pool: &sqlx::PgPool) -> Result<()> {
                     .with_operation("gateway.verify_binary_schema_version")
                     .with_source(e.to_string())
             })?;
-            info!(
-                version = %EXPECTED_BINARY_SCHEMA_VERSION,
-                "Initialized binary_schema_version"
-            );
+            info!(version = %EXPECTED_BINARY_SCHEMA_VERSION, "Initialized binary_schema_version");
             Ok(())
         }
     }
 }
-
 
 fn per_service_pool_config(
     base: &sinex_db::PoolConfig,
