@@ -5,6 +5,11 @@ The Sinex Node SDK is the framework for building Sinex **ingestors** and
 checkpointing, confirmation handling, replay participation, coordination, and
 health/self-observation.
 
+Unless a page is filed under **Vision & Roadmap**, the docs in this directory
+describe the current runtime and public authoring surface. Historical rollout
+language and future ideas belong in explicit history/vision pages, not in the
+main architecture descriptions.
+
 ## 🧭 Navigation
 
 ### Current Runtime Model
@@ -27,7 +32,7 @@ health/self-observation.
 - [**Extensibility**](extensibility.md) – Extension patterns for nodes, events, and runtime composition.
 
 ### Vision & Roadmap
-- [**SDK Vision**](vision.md) – Hot reload, Seamless Developer Experience, and the Prompt-to-Node development workflow.
+- [**SDK Vision**](vision.md) – Non-current ideas and future-facing design work.
 
 ## 🛠️ Key Runtime Entry Points
 
@@ -37,7 +42,9 @@ health/self-observation.
 
 ## 📐 Design Principles
 
-1. **Durable Lifecycle**: Shutdown persists checkpoint state to local files and NATS KV. Files are for fast hot-rebuilds; NATS is for durable recovery.
+1. **Durable Lifecycle**: Shutdown persists checkpoint state to local files and
+   NATS KV. Files are for fast local restart handoff; NATS is for durable
+   recovery.
 2. **Cooperative Shutdown**: Use `CancellationToken` and `WatcherHandle` for coordinated cleanup; avoid abrupt task aborts.
 3. **Confirmed-Event Synthesis**: Derived nodes consume confirmations, checkpoint confirmed progress, and emit synthesis events with parent provenance.
 4. **Privacy-by-Design**: Telemetry stays local via the "Self-Observation" pattern (metrics as events).
