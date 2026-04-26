@@ -9,7 +9,8 @@ mod time_horizon;
 
 pub use checkpoint::Checkpoint;
 pub use handles::{
-    EventEmitter, EventSender, EventStream, NodeHandles, NodeInitContext, ServiceInfo,
+    EventEmitter, EventSender, EventStream, NodeHandles, NodeInitContext, RuntimeDrainController,
+    ServiceInfo,
 };
 pub use kernel::{
     PullConsumerSpec, ShadowConsumerSpec, consume_pull_loop, create_shadow_consumer,
@@ -41,7 +42,9 @@ use sinex_db::models::SourceMaterial;
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::{EventId, Provenance};
-use sinex_primitives::nats::create_or_open_kv_store;
+use sinex_primitives::nats::{
+    NatsTrafficClass, create_or_open_kv_store, insert_traffic_class_header,
+};
 const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1024;
 use sinex_primitives::{
     EventSource, EventType, HostName, Id, JsonValue, OffsetKind, Timestamp, Uuid,
@@ -374,6 +377,59 @@ pub struct NodeScanProgress {
     pub final_report: Option<ScanReport>,
     /// Terminal error when the scan could not complete.
     pub error: Option<String>,
+}
+
+#[cfg(feature = "messaging")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ControlCommandKind {
+    Scan,
+    Drain,
+    Resume,
+}
+
+#[cfg(feature = "messaging")]
+fn control_command_kind(subject: &str) -> Option<ControlCommandKind> {
+    if subject.ends_with(".scan") {
+        Some(ControlCommandKind::Scan)
+    } else if subject.ends_with(".drain") {
+        Some(ControlCommandKind::Drain)
+    } else if subject.ends_with(".resume") {
+        Some(ControlCommandKind::Resume)
+    } else {
+        None
+    }
+}
+
+#[cfg(feature = "messaging")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct NodeDrainComplete {
+    node_name: String,
+    timestamp: Timestamp,
+    checkpoint: Option<String>,
+}
+
+const MAX_CONTROL_MESSAGE_BYTES: usize = 512 * 1024;
+
+fn ensure_control_payload_fits(
+    error_message: &'static str,
+    subject: &str,
+    node_name: &str,
+    operation_id: Option<Uuid>,
+    payload_len: usize,
+) -> NodeResult<()> {
+    if payload_len <= MAX_CONTROL_MESSAGE_BYTES {
+        return Ok(());
+    }
+
+    let mut error = SinexError::messaging(error_message.to_string())
+        .with_context("node", node_name.to_string())
+        .with_context("subject", subject.to_string())
+        .with_context("payload_bytes", payload_len.to_string())
+        .with_context("max_payload_bytes", MAX_CONTROL_MESSAGE_BYTES.to_string());
+    if let Some(operation_id) = operation_id {
+        error = error.with_context("operation_id", operation_id.to_string());
+    }
+    Err(error)
 }
 
 fn encode_control_message<TPayload: Serialize>(
@@ -996,8 +1052,18 @@ impl<T: Node + 'static> NodeRunner<T> {
             }
         };
 
+        let mut headers = async_nats::HeaderMap::new();
+        insert_traffic_class_header(&mut headers, NatsTrafficClass::Control);
+        ensure_control_payload_fits(
+            "Failed to publish scan acknowledgement",
+            reply.as_ref(),
+            &ack.node_name,
+            Some(ack.operation_id),
+            payload.len(),
+        )?;
+
         nats_client
-            .publish(reply.clone(), payload.into())
+            .publish_with_headers(reply.clone(), headers, payload.into())
             .await
             .map_err(|error| {
                 SinexError::messaging("Failed to publish scan acknowledgement")
@@ -1031,8 +1097,18 @@ impl<T: Node + 'static> NodeRunner<T> {
             }
         };
 
+        let mut headers = async_nats::HeaderMap::new();
+        insert_traffic_class_header(&mut headers, NatsTrafficClass::Control);
+        ensure_control_payload_fits(
+            "Failed to publish scan progress update",
+            &subject,
+            &progress.node_name,
+            Some(progress.operation_id),
+            payload.len(),
+        )?;
+
         nats_client
-            .publish(subject.clone(), payload.into())
+            .publish_with_headers(subject.clone(), headers, payload.into())
             .await
             .map_err(|error| {
                 SinexError::messaging("Failed to publish scan progress update")
@@ -1041,6 +1117,87 @@ impl<T: Node + 'static> NodeRunner<T> {
                     .with_context("subject", subject)
                     .with_std_error(&error)
             })
+    }
+
+    #[cfg(feature = "messaging")]
+    async fn publish_drain_complete(
+        nats_client: &async_nats::Client,
+        node_name: &str,
+        payload: &NodeDrainComplete,
+    ) -> NodeResult<()> {
+        let subject = sinex_primitives::environment::environment()
+            .nats_subject(&format!("sinex.control.nodes.{node_name}.drain_complete"));
+        let encoded = serde_json::to_vec(payload).map_err(|error| {
+            SinexError::serialization(format!(
+                "Failed to serialize drain_complete payload for node '{node_name}': {error}"
+            ))
+        })?;
+        let mut headers = async_nats::HeaderMap::new();
+        insert_traffic_class_header(&mut headers, NatsTrafficClass::Control);
+        ensure_control_payload_fits(
+            "Failed to publish drain_complete signal",
+            &subject,
+            node_name,
+            None,
+            encoded.len(),
+        )?;
+
+        nats_client
+            .publish_with_headers(subject.clone(), headers, encoded.into())
+            .await
+            .map_err(|error| {
+                SinexError::messaging("Failed to publish drain_complete signal")
+                    .with_context("node", node_name.to_string())
+                    .with_context("subject", subject)
+                    .with_std_error(&error)
+            })
+    }
+
+    #[cfg(feature = "messaging")]
+    async fn handle_drain_command(
+        node_name: &str,
+        payload: &[u8],
+        drain: &RuntimeDrainController,
+        #[cfg(feature = "db")] pool: Option<PgPool>,
+        service_info: &ServiceInfo,
+    ) {
+        let command =
+            match serde_json::from_slice::<sinex_primitives::rpc::nodes::NodeDrainRequest>(payload)
+            {
+                Ok(command) => command,
+                Err(error) => {
+                    warn!(
+                        node = %node_name,
+                        error = %error,
+                        "Ignoring malformed drain command"
+                    );
+                    return;
+                }
+            };
+
+        if command.node_id.as_ref() != node_name {
+            warn!(
+                node = %node_name,
+                requested = %command.node_id,
+                "Ignoring drain command addressed to a different node"
+            );
+            return;
+        }
+
+        let first_request = drain.request_drain();
+        let aborted_runtime_work = drain.abort_runtime_work();
+        info!(
+            node = %node_name,
+            reason = ?command.reason,
+            first_request,
+            aborted_runtime_work,
+            "Accepted drain command"
+        );
+
+        #[cfg(feature = "db")]
+        if let Some(pool) = pool {
+            Self::update_registered_run_status(&pool, service_info, NodeState::Draining).await;
+        }
     }
 
     #[cfg(feature = "db")]
@@ -1157,6 +1314,24 @@ impl<T: Node + 'static> NodeRunner<T> {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned)
+    }
+
+    async fn drain_completion_checkpoint_description(&self) -> Option<String> {
+        let node_checkpoint = self.node.current_checkpoint().await.ok();
+        if let Some(checkpoint) = node_checkpoint.clone()
+            && !matches!(checkpoint, Checkpoint::None)
+        {
+            return Some(checkpoint.description());
+        }
+
+        if let Some(handles) = &self.handles
+            && let Ok(checkpoint_state) = handles.checkpoint_manager().load_checkpoint().await
+            && !matches!(checkpoint_state.checkpoint, Checkpoint::None)
+        {
+            return Some(checkpoint_state.checkpoint.description());
+        }
+
+        node_checkpoint.map(|checkpoint| checkpoint.description())
     }
 
     /// Returns the current lifecycle state of this runner.
@@ -1583,6 +1758,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             }
         });
         let watchdog_handle = systemd_notify::spawn_watchdog("sinex-node");
+        let drain_controller = runtime.handles().runtime_drain();
 
         // Start command listener for node-dispatch replay (scan commands via NATS).
         // This allows the gateway to dispatch historical scans to running nodes.
@@ -1617,10 +1793,40 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         let shutdown_result = self.shutdown().await;
 
+        #[cfg(feature = "messaging")]
+        let drain_complete_result =
+            if drain_controller.is_requested() && service_result.is_ok() && shutdown_result.is_ok()
+            {
+                let checkpoint = self.drain_completion_checkpoint_description().await;
+                let payload = NodeDrainComplete {
+                    node_name: runtime.control_identity().to_string(),
+                    timestamp: Timestamp::now(),
+                    checkpoint,
+                };
+                Some(
+                    Self::publish_drain_complete(
+                        &runtime.nats_client().ok_or_else(|| {
+                            SinexError::lifecycle(
+                                "NATS client missing during drain completion".to_string(),
+                            )
+                        })?,
+                        runtime.control_identity(),
+                        &payload,
+                    )
+                    .await,
+                )
+            } else {
+                None
+            };
+
         let mut terminal_errors = Vec::new();
         Self::push_shutdown_error(&mut terminal_errors, "service", service_result);
         Self::push_shutdown_error(&mut terminal_errors, "heartbeat", heartbeat_result);
         Self::push_shutdown_error(&mut terminal_errors, "shutdown", shutdown_result);
+        #[cfg(feature = "messaging")]
+        if let Some(result) = drain_complete_result {
+            Self::push_shutdown_error(&mut terminal_errors, "drain_complete", result);
+        }
         let terminal_result = Self::collapse_shutdown_errors(terminal_errors);
 
         #[cfg(feature = "db")]
@@ -1678,10 +1884,13 @@ impl<T: Node + 'static> NodeRunner<T> {
         let raw_config = self.raw_config.clone().unwrap_or_default();
         let dry_run = service_info.dry_run();
         let node_factory = self.node_factory.clone();
+        let drain_controller = handles.runtime_drain();
+        #[cfg(feature = "db")]
+        let db_pool = handles.db_pool().cloned();
 
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let handle = tokio::spawn(async move {
-            let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
+            let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.*"));
             let active_scan = Arc::new(AtomicBool::new(false));
             let subscribe_client = nats_client.clone();
             let subscribe_subject = subject.clone();
@@ -1708,6 +1917,9 @@ impl<T: Node + 'static> NodeRunner<T> {
                     let loop_work_dir_utf8 = work_dir_utf8.clone();
                     let loop_node_factory = node_factory.clone();
                     let loop_active_scan = active_scan.clone();
+                    let loop_drain_controller = drain_controller.clone();
+                    #[cfg(feature = "db")]
+                    let loop_db_pool = db_pool.clone();
                     let mut shutdown_rx = subscription_shutdown_rx.clone();
                     async move {
                         loop {
@@ -1726,277 +1938,325 @@ impl<T: Node + 'static> NodeRunner<T> {
                                     continue;
                                 }
                             };
-                            let command: NodeScanCommand = match serde_json::from_slice(&msg.payload) {
-                                Ok(cmd) => cmd,
-                                Err(err) => {
-                                    warn!(error = %err, "Failed to deserialize NodeScanCommand");
-                                    if let Some(reply) = msg.reply {
-                                        let nack = NodeScanAck {
-                                            operation_id: Uuid::now_v7(),
-                                            node_name: loop_node_name.clone(),
-                                            accepted: false,
-                                            error: Some(format!("Failed to deserialize command: {err}")),
-                                        };
-                                        if let Err(error) =
-                                            Self::publish_scan_ack(&loop_client, Some(reply), &nack).await
-                                        {
-                                            warn!(
-                                                node = %loop_node_name,
-                                                error = %error,
-                                                "Failed to publish malformed-command rejection"
-                                            );
+                            match control_command_kind(msg.subject.as_ref()) {
+                                Some(ControlCommandKind::Drain) => {
+                                    Self::handle_drain_command(
+                                        &loop_node_name,
+                                        &msg.payload,
+                                        &loop_drain_controller,
+                                        #[cfg(feature = "db")]
+                                        loop_db_pool.clone(),
+                                        &loop_service_info,
+                                    )
+                                    .await;
+                                }
+                                Some(ControlCommandKind::Resume) => {
+                                    warn!(
+                                        node = %loop_node_name,
+                                        "Resume command received, but runtime drain is currently a one-way shutdown signal"
+                                    );
+                                }
+                                Some(ControlCommandKind::Scan) => {
+                                    let command: NodeScanCommand = match serde_json::from_slice(&msg.payload) {
+                                        Ok(cmd) => cmd,
+                                        Err(err) => {
+                                            warn!(error = %err, "Failed to deserialize NodeScanCommand");
+                                            if let Some(reply) = msg.reply {
+                                                let nack = NodeScanAck {
+                                                    operation_id: Uuid::now_v7(),
+                                                    node_name: loop_node_name.clone(),
+                                                    accepted: false,
+                                                    error: Some(format!("Failed to deserialize command: {err}")),
+                                                };
+                                                if let Err(error) =
+                                                    Self::publish_scan_ack(&loop_client, Some(reply), &nack).await
+                                                {
+                                                    warn!(
+                                                        node = %loop_node_name,
+                                                        error = %error,
+                                                        "Failed to publish malformed-command rejection"
+                                                    );
+                                                }
+                                            }
+                                            continue;
                                         }
-                                    }
-                                    continue;
-                                }
-                            };
+                                    };
 
-                            let operation_id = command.operation_id;
-                            let Some(reply) = msg.reply.clone() else {
-                                warn!(
-                                    operation_id = %operation_id,
-                                    node = %loop_node_name,
-                                    "Ignoring scan command without reply subject"
-                                );
-                                continue;
-                            };
-
-                            if node_type != NodeType::Ingestor {
-                                let ack = NodeScanAck {
-                                    operation_id,
-                                    node_name: loop_node_name.clone(),
-                                    accepted: false,
-                                    error: Some(format!(
-                                        "Node '{loop_node_name}' is a {node_type:?}, not an Ingestor. Automata receive replay events via JetStream."
-                                    )),
-                                };
-                                if let Err(error) =
-                                    Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
-                                {
-                                    warn!(
-                                        operation_id = %operation_id,
-                                        node = %loop_node_name,
-                                        error = %error,
-                                        "Failed to publish scan rejection"
-                                    );
-                                }
-                                continue;
-                            }
-
-                            if !supports_historical {
-                                let ack = NodeScanAck {
-                                    operation_id,
-                                    node_name: loop_node_name.clone(),
-                                    accepted: false,
-                                    error: Some(format!(
-                                        "Node '{loop_node_name}' does not support historical scans (supports_historical = false)"
-                                    )),
-                                };
-                                if let Err(error) =
-                                    Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
-                                {
-                                    warn!(
-                                        operation_id = %operation_id,
-                                        node = %loop_node_name,
-                                        error = %error,
-                                        "Failed to publish scan rejection"
-                                    );
-                                }
-                                continue;
-                            }
-
-                            if dry_run {
-                                let ack = NodeScanAck {
-                                    operation_id,
-                                    node_name: loop_node_name.clone(),
-                                    accepted: false,
-                                    error: Some(
-                                        "Node is running in dry-run mode and cannot execute replay scans"
-                                            .to_string(),
-                                    ),
-                                };
-                                if let Err(error) =
-                                    Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
-                                {
-                                    warn!(
-                                        operation_id = %operation_id,
-                                        node = %loop_node_name,
-                                        error = %error,
-                                        "Failed to publish scan rejection"
-                                    );
-                                }
-                                continue;
-                            }
-
-                            let Some(factory) = loop_node_factory.clone() else {
-                                let ack = NodeScanAck {
-                                    operation_id,
-                                    node_name: loop_node_name.clone(),
-                                    accepted: false,
-                                    error: Some("Node was started without a replay worker factory".to_string()),
-                                };
-                                if let Err(error) =
-                                    Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
-                                {
-                                    warn!(
-                                        operation_id = %operation_id,
-                                        node = %loop_node_name,
-                                        error = %error,
-                                        "Failed to publish scan rejection"
-                                    );
-                                }
-                                continue;
-                            };
-
-                            if loop_active_scan.swap(true, Ordering::SeqCst) {
-                                let ack = NodeScanAck {
-                                    operation_id,
-                                    node_name: loop_node_name.clone(),
-                                    accepted: false,
-                                    error: Some("A scan is already in progress on this node".to_string()),
-                                };
-                                if let Err(error) =
-                                    Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
-                                {
-                                    warn!(
-                                        operation_id = %operation_id,
-                                        node = %loop_node_name,
-                                        error = %error,
-                                        "Failed to publish scan rejection"
-                                    );
-                                }
-                                continue;
-                            }
-
-                            let ack = NodeScanAck {
-                                operation_id,
-                                node_name: loop_node_name.clone(),
-                                accepted: true,
-                                error: None,
-                            };
-                            if let Err(error) =
-                                Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
-                            {
-                                error!(
-                                    operation_id = %operation_id,
-                                    node = %loop_node_name,
-                                    error = %error,
-                                    "Failed to publish scan acceptance; aborting dispatched scan"
-                                );
-                                loop_active_scan.store(false, Ordering::SeqCst);
-                                continue;
-                            }
-
-                            info!(
-                                operation_id = %operation_id,
-                                node = %loop_node_name,
-                                "Accepted scan command, spawning historical scan task"
-                            );
-
-                            let scan_client = loop_client.clone();
-                            let scan_env = loop_env.clone();
-                            let scan_node_name = loop_node_name.clone();
-                            let scan_active = loop_active_scan.clone();
-                            let scan_handles = loop_handles.clone();
-                            let scan_service_info = loop_service_info.clone();
-                            let scan_raw_config = loop_raw_config.clone();
-                            let scan_work_dir_utf8 = loop_work_dir_utf8.clone();
-                            let scan_command = command.clone();
-
-                            tokio::spawn(async move {
-                                struct ActiveScanGuard(Arc<AtomicBool>);
-
-                                impl Drop for ActiveScanGuard {
-                                    fn drop(&mut self) {
-                                        self.0.store(false, Ordering::SeqCst);
-                                    }
-                                }
-
-                                let _active_scan_guard = ActiveScanGuard(scan_active.clone());
-                                let progress_subject = scan_env
-                                    .nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
-
-                                let start_progress = NodeScanProgress {
-                                    operation_id,
-                                    node_name: scan_node_name.clone(),
-                                    events_processed: 0,
-                                    events_emitted: 0,
-                                    final_report: None,
-                                    error: None,
-                                };
-                                if let Err(error) = Self::publish_scan_progress(
-                                    &scan_client,
-                                    progress_subject.clone(),
-                                    &start_progress,
-                                )
-                                .await
-                                {
-                                    error!(
-                                        operation_id = %operation_id,
-                                        node = %scan_node_name,
-                                        error = %error,
-                                        "Failed to publish initial scan progress; aborting dispatched scan"
-                                    );
-                                    return;
-                                }
-
-                                let scan_outcome = Self::execute_dispatched_scan(
-                                    factory,
-                                    scan_handles,
-                                    scan_service_info,
-                                    scan_raw_config,
-                                    scan_work_dir_utf8,
-                                    scan_command,
-                                )
-                                .await;
-
-                                let final_progress = match scan_outcome {
-                                    Ok(outcome) => {
-                                        let mut report = outcome.report;
-                                        report
-                                            .node_stats
-                                            .entry("events_emitted".to_string())
-                                            .or_insert(outcome.events_emitted);
-                                        NodeScanProgress {
-                                            operation_id,
-                                            node_name: scan_node_name.clone(),
-                                            events_processed: report.events_processed,
-                                            events_emitted: outcome.events_emitted,
-                                            final_report: Some(report),
-                                            error: None,
-                                        }
-                                    }
-                                    Err(outcome) => {
+                                    let operation_id = command.operation_id;
+                                    let Some(reply) = msg.reply.clone() else {
                                         warn!(
                                             operation_id = %operation_id,
-                                            node = %scan_node_name,
-                                            error = %outcome.error,
-                                            events_emitted = outcome.events_emitted,
-                                            "Dispatched scan failed"
+                                            node = %loop_node_name,
+                                            "Ignoring scan command without reply subject"
                                         );
-                                        NodeScanProgress {
+                                        continue;
+                                    };
+
+                                    if loop_drain_controller.is_requested() {
+                                        let ack = NodeScanAck {
+                                            operation_id,
+                                            node_name: loop_node_name.clone(),
+                                            accepted: false,
+                                            error: Some("Node is draining and cannot accept replay scans".to_string()),
+                                        };
+                                        if let Err(error) =
+                                            Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
+                                        {
+                                            warn!(
+                                                operation_id = %operation_id,
+                                                node = %loop_node_name,
+                                                error = %error,
+                                                "Failed to publish scan rejection"
+                                            );
+                                        }
+                                        continue;
+                                    }
+
+                                    if node_type != NodeType::Ingestor {
+                                        let ack = NodeScanAck {
+                                            operation_id,
+                                            node_name: loop_node_name.clone(),
+                                            accepted: false,
+                                            error: Some(format!(
+                                                "Node '{loop_node_name}' is a {node_type:?}, not an Ingestor. Automata receive replay events via JetStream."
+                                            )),
+                                        };
+                                        if let Err(error) =
+                                            Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
+                                        {
+                                            warn!(
+                                                operation_id = %operation_id,
+                                                node = %loop_node_name,
+                                                error = %error,
+                                                "Failed to publish scan rejection"
+                                            );
+                                        }
+                                        continue;
+                                    }
+
+                                    if !supports_historical {
+                                        let ack = NodeScanAck {
+                                            operation_id,
+                                            node_name: loop_node_name.clone(),
+                                            accepted: false,
+                                            error: Some(format!(
+                                                "Node '{loop_node_name}' does not support historical scans (supports_historical = false)"
+                                            )),
+                                        };
+                                        if let Err(error) =
+                                            Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
+                                        {
+                                            warn!(
+                                                operation_id = %operation_id,
+                                                node = %loop_node_name,
+                                                error = %error,
+                                                "Failed to publish scan rejection"
+                                            );
+                                        }
+                                        continue;
+                                    }
+
+                                    if dry_run {
+                                        let ack = NodeScanAck {
+                                            operation_id,
+                                            node_name: loop_node_name.clone(),
+                                            accepted: false,
+                                            error: Some(
+                                                "Node is running in dry-run mode and cannot execute replay scans"
+                                                    .to_string(),
+                                            ),
+                                        };
+                                        if let Err(error) =
+                                            Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
+                                        {
+                                            warn!(
+                                                operation_id = %operation_id,
+                                                node = %loop_node_name,
+                                                error = %error,
+                                                "Failed to publish scan rejection"
+                                            );
+                                        }
+                                        continue;
+                                    }
+
+                                    let Some(factory) = loop_node_factory.clone() else {
+                                        let ack = NodeScanAck {
+                                            operation_id,
+                                            node_name: loop_node_name.clone(),
+                                            accepted: false,
+                                            error: Some("Node was started without a replay worker factory".to_string()),
+                                        };
+                                        if let Err(error) =
+                                            Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
+                                        {
+                                            warn!(
+                                                operation_id = %operation_id,
+                                                node = %loop_node_name,
+                                                error = %error,
+                                                "Failed to publish scan rejection"
+                                            );
+                                        }
+                                        continue;
+                                    };
+
+                                    if loop_active_scan.swap(true, Ordering::SeqCst) {
+                                        let ack = NodeScanAck {
+                                            operation_id,
+                                            node_name: loop_node_name.clone(),
+                                            accepted: false,
+                                            error: Some("A scan is already in progress on this node".to_string()),
+                                        };
+                                        if let Err(error) =
+                                            Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
+                                        {
+                                            warn!(
+                                                operation_id = %operation_id,
+                                                node = %loop_node_name,
+                                                error = %error,
+                                                "Failed to publish scan rejection"
+                                            );
+                                        }
+                                        continue;
+                                    }
+
+                                    let ack = NodeScanAck {
+                                        operation_id,
+                                        node_name: loop_node_name.clone(),
+                                        accepted: true,
+                                        error: None,
+                                    };
+                                    if let Err(error) =
+                                        Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
+                                    {
+                                        error!(
+                                            operation_id = %operation_id,
+                                            node = %loop_node_name,
+                                            error = %error,
+                                            "Failed to publish scan acceptance; aborting dispatched scan"
+                                        );
+                                        loop_active_scan.store(false, Ordering::SeqCst);
+                                        continue;
+                                    }
+
+                                    info!(
+                                        operation_id = %operation_id,
+                                        node = %loop_node_name,
+                                        "Accepted scan command, spawning historical scan task"
+                                    );
+
+                                    let scan_client = loop_client.clone();
+                                    let scan_env = loop_env.clone();
+                                    let scan_node_name = loop_node_name.clone();
+                                    let scan_active = loop_active_scan.clone();
+                                    let scan_handles = loop_handles.clone();
+                                    let scan_service_info = loop_service_info.clone();
+                                    let scan_raw_config = loop_raw_config.clone();
+                                    let scan_work_dir_utf8 = loop_work_dir_utf8.clone();
+                                    let scan_command = command.clone();
+
+                                    tokio::spawn(async move {
+                                        struct ActiveScanGuard(Arc<AtomicBool>);
+
+                                        impl Drop for ActiveScanGuard {
+                                            fn drop(&mut self) {
+                                                self.0.store(false, Ordering::SeqCst);
+                                            }
+                                        }
+
+                                        let _active_scan_guard = ActiveScanGuard(scan_active.clone());
+                                        let progress_subject = scan_env
+                                            .nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
+
+                                        let start_progress = NodeScanProgress {
                                             operation_id,
                                             node_name: scan_node_name.clone(),
-                                            events_processed: outcome.events_emitted,
-                                            events_emitted: outcome.events_emitted,
+                                            events_processed: 0,
+                                            events_emitted: 0,
                                             final_report: None,
-                                            error: Some(outcome.error.to_string()),
-                                        }
-                                    }
-                                };
-
-                                if let Err(error) =
-                                    Self::publish_scan_progress(&scan_client, progress_subject, &final_progress)
+                                            error: None,
+                                        };
+                                        if let Err(error) = Self::publish_scan_progress(
+                                            &scan_client,
+                                            progress_subject.clone(),
+                                            &start_progress,
+                                        )
                                         .await
-                                {
-                                    error!(
-                                        operation_id = %operation_id,
-                                        node = %scan_node_name,
-                                        error = %error,
-                                        "Failed to publish final scan progress"
+                                        {
+                                            error!(
+                                                operation_id = %operation_id,
+                                                node = %scan_node_name,
+                                                error = %error,
+                                                "Failed to publish initial scan progress; aborting dispatched scan"
+                                            );
+                                            return;
+                                        }
+
+                                        let scan_outcome = Self::execute_dispatched_scan(
+                                            factory,
+                                            scan_handles,
+                                            scan_service_info,
+                                            scan_raw_config,
+                                            scan_work_dir_utf8,
+                                            scan_command,
+                                        )
+                                        .await;
+
+                                        let final_progress = match scan_outcome {
+                                            Ok(outcome) => {
+                                                let mut report = outcome.report;
+                                                report
+                                                    .node_stats
+                                                    .entry("events_emitted".to_string())
+                                                    .or_insert(outcome.events_emitted);
+                                                NodeScanProgress {
+                                                    operation_id,
+                                                    node_name: scan_node_name.clone(),
+                                                    events_processed: report.events_processed,
+                                                    events_emitted: outcome.events_emitted,
+                                                    final_report: Some(report),
+                                                    error: None,
+                                                }
+                                            }
+                                            Err(outcome) => {
+                                                warn!(
+                                                    operation_id = %operation_id,
+                                                    node = %scan_node_name,
+                                                    error = %outcome.error,
+                                                    events_emitted = outcome.events_emitted,
+                                                    "Dispatched scan failed"
+                                                );
+                                                NodeScanProgress {
+                                                    operation_id,
+                                                    node_name: scan_node_name.clone(),
+                                                    events_processed: outcome.events_emitted,
+                                                    events_emitted: outcome.events_emitted,
+                                                    final_report: None,
+                                                    error: Some(outcome.error.to_string()),
+                                                }
+                                            }
+                                        };
+
+                                        if let Err(error) =
+                                            Self::publish_scan_progress(&scan_client, progress_subject, &final_progress)
+                                                .await
+                                        {
+                                            error!(
+                                                operation_id = %operation_id,
+                                                node = %scan_node_name,
+                                                error = %error,
+                                                "Failed to publish final scan progress"
+                                            );
+                                        }
+                                    });
+                                }
+                                None => {
+                                    warn!(
+                                        node = %loop_node_name,
+                                        subject = %msg.subject,
+                                        "Ignoring unsupported node control subject"
                                     );
                                 }
-                            });
+                            }
                         }
                     }
                 },
@@ -2225,6 +2485,11 @@ impl<T: Node + 'static> NodeRunner<T> {
     /// Run ingestor startup sequence (Snapshot -> Gap-fill -> Continuous)
     async fn run_ingestor_startup_sequence(&mut self) -> NodeResult<()> {
         let preexisting_checkpoint = self.node.current_checkpoint().await?;
+        let drain_controller = self
+            .runtime_state()
+            .ok_or_else(|| SinexError::lifecycle("Runtime state missing".to_string()))?
+            .handles()
+            .runtime_drain();
 
         // Phase 1: Snapshot (if supported)
         if self.node.capabilities().supports_snapshot {
@@ -2238,6 +2503,11 @@ impl<T: Node + 'static> NodeRunner<T> {
                 events = snapshot_report.events_processed,
                 "Snapshot phase completed"
             );
+
+            if drain_controller.is_requested() {
+                info!("Drain requested during snapshot phase; skipping later startup phases");
+                return Ok(());
+            }
         }
 
         // Phase 2: Gap-filling (if supported and needed)
@@ -2261,6 +2531,11 @@ impl<T: Node + 'static> NodeRunner<T> {
                     "Gap-fill phase completed"
                 );
             }
+
+            if drain_controller.is_requested() {
+                info!("Drain requested during gap-fill phase; skipping continuous startup");
+                return Ok(());
+            }
         }
 
         // Phase 3: Continuous processing (traditional scan method)
@@ -2279,13 +2554,20 @@ impl<T: Node + 'static> NodeRunner<T> {
                 )
                 .await?;
 
-            // If continuous scan returns, it means it exited unexpectedly.
-            // Log so operators can investigate (M4: silent exit prevention).
-            warn!(
-                events_processed = continuous_report.events_processed,
-                "Continuous scan returned unexpectedly - service will exit. \
-                 This may indicate the scan implementation does not block indefinitely."
-            );
+            if drain_controller.is_requested() {
+                info!(
+                    events_processed = continuous_report.events_processed,
+                    "Continuous scan exited after runtime drain request"
+                );
+            } else {
+                // If continuous scan returns, it means it exited unexpectedly.
+                // Log so operators can investigate (M4: silent exit prevention).
+                warn!(
+                    events_processed = continuous_report.events_processed,
+                    "Continuous scan returned unexpectedly - service will exit. \
+                     This may indicate the scan implementation does not block indefinitely."
+                );
+            }
         } else {
             warn!("Node does not support continuous mode - service will exit");
         }
@@ -2297,6 +2579,11 @@ impl<T: Node + 'static> NodeRunner<T> {
     #[cfg(feature = "messaging")]
     async fn run_automaton_continuous_mode(&mut self) -> NodeResult<()> {
         info!("Starting automaton continuous mode");
+        let drain_controller = self
+            .runtime_state()
+            .ok_or_else(|| SinexError::lifecycle("Runtime state missing".to_string()))?
+            .handles()
+            .runtime_drain();
 
         // Get current checkpoint to resume from previous state if available
         let current_checkpoint = self.node.current_checkpoint().await?;
@@ -2311,7 +2598,11 @@ impl<T: Node + 'static> NodeRunner<T> {
             systemd_notify::notify_ready("sinex-node");
 
             if self.processing_model == ProcessingModel::LeaderStandby {
-                self.acquire_leader_standby().await?;
+                let leader_acquired = self.acquire_leader_standby().await?;
+                if !leader_acquired {
+                    info!("Drain requested while waiting in leader standby; exiting cleanly");
+                    return Ok(());
+                }
             }
 
             if capabilities.manages_own_continuous_loop {
@@ -2327,7 +2618,11 @@ impl<T: Node + 'static> NodeRunner<T> {
                 self.run_automaton_event_bridge(current_checkpoint).await?;
             }
 
-            info!("Automaton continuous processing completed");
+            if drain_controller.is_requested() {
+                info!("Automaton continuous processing completed after runtime drain");
+            } else {
+                info!("Automaton continuous processing completed");
+            }
         } else {
             // Automata can also run in batch mode for historical processing
             if capabilities.supports_historical {
@@ -2358,10 +2653,11 @@ impl<T: Node + 'static> NodeRunner<T> {
     ///
     /// If another instance currently holds the lease, remain in standby and
     /// retry until the lease is handed off or expires.
-    async fn acquire_leader_standby(&mut self) -> NodeResult<()> {
+    async fn acquire_leader_standby(&mut self) -> NodeResult<bool> {
         let rs = self
             .runtime_state()
             .ok_or_else(|| SinexError::lifecycle("Runtime state missing".to_string()))?;
+        let drain_controller = rs.handles().runtime_drain();
 
         #[cfg(feature = "messaging")]
         {
@@ -2380,6 +2676,10 @@ impl<T: Node + 'static> NodeRunner<T> {
             let mut announced_standby = false;
 
             loop {
+                if drain_controller.is_requested() {
+                    return Ok(false);
+                }
+
                 let is_leader = kv_client
                     .acquire_leadership(&instance_id)
                     .await
@@ -2441,7 +2741,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             warn!("LeaderStandby mode requires messaging feature. Skipping leadership check.");
         }
 
-        Ok(())
+        Ok(true)
     }
 
     #[cfg(feature = "messaging")]
@@ -2450,6 +2750,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             .handles
             .as_ref()
             .ok_or_else(|| SinexError::lifecycle("Runner handles not initialized".to_string()))?;
+        let drain_controller = handles.runtime_drain();
 
         #[cfg(feature = "db")]
         let db_pool = handles.db_pool().cloned();
@@ -2513,6 +2814,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                 *guard = Some(err);
             }
         });
+        drain_controller.register_runtime_abort(consumer_handle.abort_handle());
         self.consumer_handle = Some(consumer_handle);
 
         if !matches!(from, Checkpoint::None) && self.node.capabilities().supports_historical {
@@ -2527,6 +2829,11 @@ impl<T: Node + 'static> NodeRunner<T> {
                     ScanArgs::default(),
                 )
                 .await?;
+        }
+
+        if drain_controller.is_requested() {
+            let _ = drain_controller.abort_runtime_work();
+            info!("Drain requested before automaton bridge entered live processing");
         }
 
         let bridge_manages_checkpoints = !self.node.capabilities().manages_own_checkpoints;
@@ -2560,8 +2867,20 @@ impl<T: Node + 'static> NodeRunner<T> {
         const BATCH_SIZE: usize = 100;
 
         loop {
-            // Block until at least one event arrives (or channel closes)
-            let Some(first) = receiver.recv().await else {
+            // Normal mode blocks for more work. Once drain is requested, the
+            // runner-owned consumer is aborted and the bridge switches to
+            // draining whatever is already buffered before exiting cleanly.
+            let next_event = if drain_controller.is_requested() {
+                match receiver.try_recv() {
+                    Ok(event) => Some(event),
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+                    | Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => None,
+                }
+            } else {
+                receiver.recv().await
+            };
+
+            let Some(first) = next_event else {
                 if let Some(error) = consumer_failure.lock().await.take() {
                     return Err(error);
                 }
@@ -2640,12 +2959,20 @@ impl<T: Node + 'static> NodeRunner<T> {
             info!(processed_events, "Final checkpoint saved on clean shutdown");
         }
 
-        info!(
-            processed_events,
-            "JetStream confirmed event channel closed; stopping automaton bridge"
-        );
+        if drain_controller.is_requested() {
+            info!(
+                processed_events,
+                "JetStream bridge drained after runtime drain request"
+            );
+        } else {
+            info!(
+                processed_events,
+                "JetStream confirmed event channel closed; stopping automaton bridge"
+            );
+        }
 
         consumer.stop().await;
+        drain_controller.clear_runtime_abort();
 
         if let Some(handle) = self.consumer_handle.take() {
             match handle.await {
@@ -2930,11 +3257,15 @@ impl<T: Node + 'static> NodeRunner<T> {
                                 "Event processing failed; routing to DLQ"
                             );
                             if let Err(dlq_err) = transport
-                                .send_to_dlq(&event, &event_err.to_string(), &node_name)
+                                .send_to_processing_failure_queue(
+                                    &event,
+                                    &event_err.to_string(),
+                                    &node_name,
+                                )
                                 .await
                             {
                                 return Err(SinexError::processing(
-                                    "failed to route failed automaton event to DLQ",
+                                    "failed to route failed automaton event to processing-failure stream",
                                 )
                                 .with_context("node", node_name.clone())
                                 .with_context(
@@ -3174,9 +3505,13 @@ mod tests {
     // Inline because these cover private control-plane encoding helpers.
     use super::*;
     use crate::checkpoint::CheckpointManager;
+    use crate::{IngestorNode, IngestorNodeAdapter, NatsPublisher};
+    use async_nats::jetstream;
     use serde::ser::Error as _;
     use sinex_primitives::domain::{EventSource, EventType};
     use sinex_primitives::events::builder::EventId;
+    use tempfile::tempdir;
+    use tokio::sync::Notify;
     use xtask::sandbox::prelude::*;
 
     #[derive(Default)]
@@ -3201,6 +3536,34 @@ mod tests {
         capabilities: NodeCapabilities,
     }
 
+    #[cfg(feature = "messaging")]
+    struct DrainTestIngestor {
+        started: Arc<Notify>,
+        drain_observed: Arc<Notify>,
+        release_exit: Arc<Notify>,
+        final_checkpoint: Checkpoint,
+    }
+
+    #[cfg(feature = "messaging")]
+    impl Default for DrainTestIngestor {
+        fn default() -> Self {
+            Self {
+                started: Arc::new(Notify::new()),
+                drain_observed: Arc::new(Notify::new()),
+                release_exit: Arc::new(Notify::new()),
+                final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
+            }
+        }
+    }
+
+    #[cfg(feature = "messaging")]
+    #[derive(Default)]
+    struct DrainBridgeTestNode {
+        processing_started: Arc<Notify>,
+        release_processing: Arc<Notify>,
+        processed_event_ids: Arc<tokio::sync::Mutex<Vec<Uuid>>>,
+    }
+
     impl StartupSequenceTestNode {
         fn new(initial_checkpoint: Checkpoint, snapshot_checkpoint: Checkpoint) -> Self {
             Self {
@@ -3214,6 +3577,98 @@ mod tests {
                     ..NodeCapabilities::default()
                 },
             }
+        }
+    }
+
+    #[cfg(feature = "messaging")]
+    impl IngestorNode for DrainTestIngestor {
+        type Config = ();
+        type State = ();
+
+        fn name(&self) -> &str {
+            "drain-test-ingestor"
+        }
+
+        fn capabilities(&self) -> NodeCapabilities {
+            NodeCapabilities {
+                supports_continuous: true,
+                supports_historical: false,
+                supports_snapshot: false,
+                manages_own_continuous_loop: true,
+                manages_own_checkpoints: true,
+                ..NodeCapabilities::default()
+            }
+        }
+
+        async fn initialize(
+            &mut self,
+            _config: Self::Config,
+            _runtime: &NodeRuntimeState,
+            _state: &mut Self::State,
+        ) -> NodeResult<()> {
+            Ok(())
+        }
+
+        async fn scan_snapshot(
+            &mut self,
+            _state: &mut Self::State,
+            _args: ScanArgs,
+        ) -> NodeResult<ScanReport> {
+            Ok(ScanReport {
+                events_processed: 0,
+                duration: std::time::Duration::ZERO,
+                final_checkpoint: Checkpoint::None,
+                time_range: None,
+                node_stats: HashMap::new(),
+                successful_targets: Vec::new(),
+                failed_targets: Vec::new(),
+                warnings: Vec::new(),
+            })
+        }
+
+        async fn scan_historical(
+            &mut self,
+            _state: &mut Self::State,
+            _from: Checkpoint,
+            _until: TimeHorizon,
+            _args: ScanArgs,
+        ) -> NodeResult<ScanReport> {
+            Ok(ScanReport {
+                events_processed: 0,
+                duration: std::time::Duration::ZERO,
+                final_checkpoint: Checkpoint::None,
+                time_range: None,
+                node_stats: HashMap::new(),
+                successful_targets: Vec::new(),
+                failed_targets: Vec::new(),
+                warnings: Vec::new(),
+            })
+        }
+
+        async fn run_continuous(
+            &mut self,
+            _state: &mut Self::State,
+            _start: ContinuousStart,
+            mut shutdown_rx: watch::Receiver<bool>,
+        ) -> NodeResult<ScanReport> {
+            self.started.notify_one();
+            shutdown_rx.changed().await.map_err(|error| {
+                SinexError::lifecycle(format!(
+                    "drain-test-ingestor shutdown channel dropped before drain: {error}"
+                ))
+            })?;
+            self.drain_observed.notify_one();
+            self.release_exit.notified().await;
+            Ok(ScanReport {
+                events_processed: 0,
+                duration: std::time::Duration::ZERO,
+                final_checkpoint: self.final_checkpoint.clone(),
+                time_range: None,
+                node_stats: HashMap::new(),
+                successful_targets: Vec::new(),
+                failed_targets: Vec::new(),
+                warnings: Vec::new(),
+            })
         }
     }
 
@@ -3397,6 +3852,73 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "messaging")]
+    impl Node for DrainBridgeTestNode {
+        type Config = ();
+
+        async fn initialize(&mut self, _init: NodeInitContext<Self::Config>) -> NodeResult<()> {
+            Ok(())
+        }
+
+        async fn scan(
+            &mut self,
+            _from: Checkpoint,
+            _until: TimeHorizon,
+            _args: ScanArgs,
+        ) -> NodeResult<ScanReport> {
+            Ok(ScanReport {
+                events_processed: 0,
+                duration: std::time::Duration::ZERO,
+                final_checkpoint: Checkpoint::None,
+                time_range: None,
+                node_stats: HashMap::new(),
+                successful_targets: Vec::new(),
+                failed_targets: Vec::new(),
+                warnings: Vec::new(),
+            })
+        }
+
+        fn node_name(&self) -> &'static str {
+            "drain-bridge-test-node"
+        }
+
+        fn node_type(&self) -> NodeType {
+            NodeType::Automaton
+        }
+
+        fn capabilities(&self) -> NodeCapabilities {
+            NodeCapabilities {
+                supports_historical: false,
+                ..NodeCapabilities::default()
+            }
+        }
+
+        async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
+            Ok(Checkpoint::None)
+        }
+
+        async fn process_event_batch(
+            &mut self,
+            events: Vec<Event<JsonValue>>,
+        ) -> NodeResult<ProcessingStats> {
+            self.processing_started.notify_one();
+            self.release_processing.notified().await;
+            let mut processed = self.processed_event_ids.lock().await;
+            processed.extend(
+                events
+                    .iter()
+                    .filter_map(|event| event.id.map(|id| *id.as_uuid())),
+            );
+            Ok(ProcessingStats {
+                processed: events.len(),
+                skipped: 0,
+                failed: 0,
+                duration: std::time::Duration::ZERO,
+                errors: Vec::new(),
+            })
+        }
+    }
+
     struct FailingSerialize;
 
     impl Serialize for FailingSerialize {
@@ -3406,6 +3928,144 @@ mod tests {
         {
             Err(S::Error::custom("boom"))
         }
+    }
+
+    #[cfg(feature = "messaging")]
+    async fn ensure_default_bridge_streams(client: &async_nats::Client) -> TestResult<()> {
+        let js = jetstream::new(client.clone());
+        let env = sinex_primitives::environment();
+        let topology = sinex_primitives::nats::JetStreamTopology::new(
+            &env,
+            env.nats_stream_name("SINEX_RAW_EVENTS"),
+            "runtime-drain-test-consumer".to_string(),
+            None,
+        );
+        js.get_or_create_stream(jetstream::stream::Config {
+            name: topology.events_stream.clone(),
+            subjects: vec![topology.events_subject.clone()],
+            storage: jetstream::stream::StorageType::Memory,
+            ..Default::default()
+        })
+        .await?;
+        js.get_or_create_stream(jetstream::stream::Config {
+            name: topology.confirmations_stream,
+            subjects: vec![topology.confirmations_subject],
+            storage: jetstream::stream::StorageType::Memory,
+            ..Default::default()
+        })
+        .await?;
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    async fn request_drain_until_applied(
+        client: &async_nats::Client,
+        control_identity: &str,
+        drain_controller: &RuntimeDrainController,
+        reason: Option<&str>,
+    ) -> TestResult<()> {
+        let env = sinex_primitives::environment();
+        let subject = env.nats_subject(&format!("sinex.control.nodes.{control_identity}.drain"));
+        let payload = serde_json::to_vec(&sinex_primitives::rpc::nodes::NodeDrainRequest {
+            node_id: control_identity.to_string().into(),
+            reason: reason.map(ToOwned::to_owned),
+        })?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+
+        while tokio::time::Instant::now() < deadline {
+            client
+                .publish(subject.clone(), payload.clone().into())
+                .await?;
+            client.flush().await?;
+            if drain_controller.is_requested() {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        Err(color_eyre::eyre::eyre!(
+            "drain command was not applied for control identity {control_identity}"
+        ))
+    }
+
+    #[cfg(feature = "messaging")]
+    fn runtime_test_material_event(
+        event_id: Uuid,
+        source: &str,
+        event_type: &str,
+        payload: JsonValue,
+    ) -> TestResult<Event<JsonValue>> {
+        Ok(Event {
+            id: Some(EventId::from_uuid(event_id)),
+            source: EventSource::new(source)?,
+            event_type: EventType::new(event_type)?,
+            payload,
+            ts_orig: Some(Timestamp::now()),
+            host: HostName::from_static("runtime-test-host"),
+            node_run_id: None,
+            payload_schema_id: None,
+            provenance: Provenance::Material {
+                id: Id::<SourceMaterial>::from_uuid(Uuid::now_v7()),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: OffsetKind::Byte,
+            },
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
+        })
+    }
+
+    #[cfg(feature = "messaging")]
+    async fn publish_confirmed_raw_event(
+        client: &async_nats::Client,
+        event: &Event<JsonValue>,
+    ) -> TestResult<()> {
+        let env = sinex_primitives::environment();
+        let raw_subject = env.nats_raw_event_subject_with_namespace(
+            None,
+            event.source.as_str(),
+            event.event_type.as_str(),
+        );
+        client
+            .publish(raw_subject, serde_json::to_vec(event)?.into())
+            .await?;
+
+        let event_id = event
+            .id
+            .as_ref()
+            .ok_or_else(|| color_eyre::eyre::eyre!("test event is missing an id"))?;
+        let confirmation_subject =
+            env.nats_subject(&format!("events.confirmations.{}", event_id.as_uuid()));
+        let confirmation = serde_json::json!({
+            "event_id": event_id.to_string(),
+            "persisted": true,
+            "ts_ingest": Timestamp::now().format_rfc3339(),
+        });
+        client
+            .publish(
+                confirmation_subject,
+                serde_json::to_vec(&confirmation)?.into(),
+            )
+            .await?;
+        client.flush().await?;
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    async fn node_run_status(pool: &sinex_db::DbPool, node_run_id: Uuid) -> TestResult<String> {
+        let status = sqlx::query_scalar::<_, String>(
+            "SELECT status::text FROM core.node_runs WHERE id = $1",
+        )
+        .bind(node_run_id)
+        .fetch_one(pool)
+        .await?;
+        Ok(status)
     }
 
     #[sinex_test]
@@ -3471,6 +4131,100 @@ mod tests {
         assert!(message.contains("Failed to publish scan acknowledgement"));
         assert!(message.contains("sinex.test.reply"));
         assert!(message.contains(&operation_id.to_string()));
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn run_service_drain_persists_ingestor_checkpoint_and_updates_status(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let client = ctx.nats_client();
+        ensure_default_bridge_streams(&client).await?;
+        let transport = EventTransport::Nats(Arc::new(NatsPublisher::new(client.clone())));
+        let work_dir = tempdir()?;
+
+        let ingestor = DrainTestIngestor::default();
+        let started = ingestor.started.clone();
+        let drain_observed = ingestor.drain_observed.clone();
+        let release_exit = ingestor.release_exit.clone();
+        let expected_checkpoint = ingestor.final_checkpoint.clone();
+
+        let mut runner = NodeRunner::new(IngestorNodeAdapter::new(ingestor));
+        runner
+            .initialize_with_transport(
+                "runtime-drain-ingestor-service".to_string(),
+                HashMap::new(),
+                Some(ctx.pool().clone()),
+                transport,
+                work_dir.path().to_path_buf(),
+                false,
+            )
+            .await?;
+
+        let runtime = runner
+            .runtime_state()
+            .ok_or_else(|| color_eyre::eyre::eyre!("runtime state missing after init"))?;
+        let control_identity = runtime.control_identity().to_string();
+        let drain_controller = runtime.runtime_drain();
+        let checkpoint_manager = runtime.checkpoint_manager();
+        let node_run_id = runtime
+            .node_run_id()
+            .ok_or_else(|| color_eyre::eyre::eyre!("node run id missing after db-backed init"))?;
+        let drain_complete_subject = sinex_primitives::environment().nats_subject(&format!(
+            "sinex.control.nodes.{control_identity}.drain_complete"
+        ));
+        let mut drain_complete_sub = client.subscribe(drain_complete_subject).await?;
+
+        let run_handle = tokio::spawn(async move { runner.run_service().await });
+        tokio::time::timeout(Duration::from_secs(3), started.notified())
+            .await
+            .map_err(|_| color_eyre::eyre::eyre!("ingestor continuous loop did not start"))?;
+
+        request_drain_until_applied(
+            &client,
+            &control_identity,
+            &drain_controller,
+            Some("test drain"),
+        )
+        .await?;
+        tokio::time::timeout(Duration::from_secs(3), drain_observed.notified())
+            .await
+            .map_err(|_| color_eyre::eyre::eyre!("ingestor did not observe runtime drain"))?;
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if node_run_status(ctx.pool(), node_run_id).await? == "draining" {
+                    return Ok::<(), color_eyre::Report>(());
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .map_err(|_| color_eyre::eyre::eyre!("node run status never reached draining"))??;
+
+        release_exit.notify_one();
+
+        let drain_complete =
+            tokio::time::timeout(Duration::from_secs(3), drain_complete_sub.next())
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("drain_complete was not published"))?
+                .ok_or_else(|| color_eyre::eyre::eyre!("drain_complete subscription closed"))?;
+        let payload: NodeDrainComplete = serde_json::from_slice(&drain_complete.payload)?;
+        assert_eq!(payload.node_name, control_identity);
+        assert_eq!(
+            payload.checkpoint.as_deref(),
+            Some(expected_checkpoint.description().as_str())
+        );
+
+        let run_result = tokio::time::timeout(Duration::from_secs(3), run_handle)
+            .await
+            .map_err(|_| color_eyre::eyre::eyre!("drained ingestor service did not exit"))?;
+        run_result??;
+
+        let saved = checkpoint_manager.load_checkpoint().await?;
+        assert_eq!(saved.checkpoint, expected_checkpoint);
+        assert_eq!(node_run_status(ctx.pool(), node_run_id).await?, "stopped");
         Ok(())
     }
 
@@ -3607,12 +4361,25 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn ingestor_startup_skips_gap_fill_when_only_snapshot_created_checkpoint()
-    -> TestResult<()> {
+    async fn ingestor_startup_skips_gap_fill_when_only_snapshot_created_checkpoint(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
         let snapshot_checkpoint = Checkpoint::timestamp(Timestamp::now(), None);
         let node = StartupSequenceTestNode::new(Checkpoint::None, snapshot_checkpoint);
         let scans = node.scans.clone();
         let mut runner = NodeRunner::new(node);
+        let work_dir = tempdir()?;
+        runner
+            .initialize_with_transport(
+                "startup-sequence-snapshot-only".to_string(),
+                HashMap::new(),
+                None,
+                EventTransport::Nats(Arc::new(crate::NatsPublisher::new(ctx.nats_client()))),
+                work_dir.path().to_path_buf(),
+                false,
+            )
+            .await?;
 
         runner.run_ingestor_startup_sequence().await?;
 
@@ -3628,7 +4395,10 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn ingestor_startup_gap_fill_uses_preexisting_checkpoint() -> TestResult<()> {
+    async fn ingestor_startup_gap_fill_uses_preexisting_checkpoint(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
         let preexisting_checkpoint =
             Checkpoint::timestamp(Timestamp::now() - time::Duration::minutes(15), None);
         let snapshot_checkpoint = Checkpoint::timestamp(Timestamp::now(), None);
@@ -3636,6 +4406,17 @@ mod tests {
             StartupSequenceTestNode::new(preexisting_checkpoint.clone(), snapshot_checkpoint);
         let scans = node.scans.clone();
         let mut runner = NodeRunner::new(node);
+        let work_dir = tempdir()?;
+        runner
+            .initialize_with_transport(
+                "startup-sequence-gap-fill".to_string(),
+                HashMap::new(),
+                None,
+                EventTransport::Nats(Arc::new(crate::NatsPublisher::new(ctx.nats_client()))),
+                work_dir.path().to_path_buf(),
+                false,
+            )
+            .await?;
 
         runner.run_ingestor_startup_sequence().await?;
 
@@ -3736,7 +4517,7 @@ mod tests {
         .expect_err("failed DLQ routing must stop checkpoint advancement");
 
         let message = format!("{error:#}");
-        assert!(message.contains("failed to route failed automaton event to DLQ"));
+        assert!(message.contains("failed to route failed automaton event to processing-failure stream"));
         assert!(message.contains("batch processing boom"));
         assert!(message.contains("runtime-failing-batch-node"));
         Ok(())
@@ -3769,6 +4550,96 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("Failed to load checkpoint state for automaton bridge"));
         assert!(message.contains("Failed to decode checkpoint from KV"));
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn run_service_drain_finishes_inflight_automaton_batch_and_emits_completion(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let client = ctx.nats_client();
+        ensure_default_bridge_streams(&client).await?;
+
+        let transport = EventTransport::Nats(Arc::new(NatsPublisher::new(client.clone())));
+        let work_dir = tempdir()?;
+
+        let node = DrainBridgeTestNode::default();
+        let processing_started = node.processing_started.clone();
+        let release_processing = node.release_processing.clone();
+        let processed_event_ids = node.processed_event_ids.clone();
+
+        let mut runner = NodeRunner::new(node);
+        runner
+            .initialize_with_transport(
+                "runtime-drain-automaton-service".to_string(),
+                HashMap::new(),
+                None,
+                transport,
+                work_dir.path().to_path_buf(),
+                false,
+            )
+            .await?;
+
+        let runtime = runner
+            .runtime_state()
+            .ok_or_else(|| color_eyre::eyre::eyre!("runtime state missing after init"))?;
+        let control_identity = runtime.control_identity().to_string();
+        let drain_controller = runtime.runtime_drain();
+        let checkpoint_manager = runtime.checkpoint_manager();
+        let drain_complete_subject = sinex_primitives::environment().nats_subject(&format!(
+            "sinex.control.nodes.{control_identity}.drain_complete"
+        ));
+        let mut drain_complete_sub = client.subscribe(drain_complete_subject).await?;
+
+        let run_handle = tokio::spawn(async move { runner.run_service().await });
+
+        let event_id = Uuid::now_v7();
+        let event = runtime_test_material_event(
+            event_id,
+            "runtime-test-source",
+            "runtime.test.input",
+            serde_json::json!({"value": "drain"}),
+        )?;
+        publish_confirmed_raw_event(&client, &event).await?;
+
+        tokio::time::timeout(Duration::from_secs(3), processing_started.notified())
+            .await
+            .map_err(|_| color_eyre::eyre::eyre!("automaton batch did not start"))?;
+
+        request_drain_until_applied(
+            &client,
+            &control_identity,
+            &drain_controller,
+            Some("test drain"),
+        )
+        .await?;
+
+        release_processing.notify_one();
+
+        let drain_complete =
+            tokio::time::timeout(Duration::from_secs(3), drain_complete_sub.next())
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("automaton drain_complete was not published"))?
+                .ok_or_else(|| color_eyre::eyre::eyre!("drain_complete subscription closed"))?;
+        let payload: NodeDrainComplete = serde_json::from_slice(&drain_complete.payload)?;
+
+        let run_result = tokio::time::timeout(Duration::from_secs(3), run_handle)
+            .await
+            .map_err(|_| color_eyre::eyre::eyre!("drained automaton service did not exit"))?;
+        run_result??;
+
+        assert_eq!(processed_event_ids.lock().await.as_slice(), &[event_id]);
+
+        let saved = checkpoint_manager.load_checkpoint().await?;
+        let expected_checkpoint = Checkpoint::internal(event_id, 1);
+        assert_eq!(saved.checkpoint, expected_checkpoint);
+        assert_eq!(payload.node_name, control_identity);
+        assert_eq!(
+            payload.checkpoint.as_deref(),
+            Some(expected_checkpoint.description().as_str())
+        );
         Ok(())
     }
 

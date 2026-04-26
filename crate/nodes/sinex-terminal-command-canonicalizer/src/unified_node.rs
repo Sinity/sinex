@@ -8,8 +8,9 @@
 //!
 //! The spec's "expected mapping" suggested `ScopeReconcilerNode`, but the actual
 //! processing logic is a pure per-event transform with no accumulated scope state.
-//! If future replay invalidation requires scope-based targeting, this node can be
-//! upgraded to `ScopeReconcilerNode` with `scope_keys()` derived from `session_id`.
+//! If future work needs late-arrival correction or richer cross-source context,
+//! that should be a downstream scope reconciler keyed by session/activity scope
+//! rather than widening `command.canonical` itself into a reconciled object.
 
 use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, TransducerNodeAdapter};
 use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, TransducerNode};
