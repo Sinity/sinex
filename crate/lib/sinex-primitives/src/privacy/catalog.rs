@@ -386,6 +386,33 @@ fn infrastructure_rules() -> Vec<PatternRule> {
             contexts: vec![],
             enabled: true,
         },
+        // Opt-in aggressive variant. Hashes the full home path instead of
+        // collapsing to `<HOME>/...`, which preserves uniqueness under analysis
+        // (so two events touching different files inside $HOME stay
+        // distinguishable) without leaking the literal path. Disabled by
+        // default; enable via override:
+        //
+        //   [overrides.user_home_path_aggressive]
+        //   enabled = true
+        //
+        //   # and typically also disable the soft variant to avoid both
+        //   # firing on the same input:
+        //   [overrides.user_home_path]
+        //   enabled = false
+        //
+        // Or via env: SINEX_PRIVACY_OVERRIDES='{"user_home_path_aggressive":{"enabled":true},"user_home_path":{"enabled":false}}'
+        PatternRule {
+            name: "user_home_path_aggressive".into(),
+            description: "Aggressive variant: hash full home paths instead of collapsing to <HOME>/..."
+                .into(),
+            category: RuleCategory::Privacy,
+            matcher: Matcher::Structural {
+                detector: StructuralDetector::UserHomePath,
+            },
+            strategy: Strategy::Hash,
+            contexts: vec![],
+            enabled: false,
+        },
     ]
 }
 
@@ -476,16 +503,89 @@ mod tests {
         Ok(())
     }
 
+    /// Names of rules that ship disabled-by-default. These are opt-in
+    /// aggressive variants the operator must explicitly enable via overrides.
+    const OPT_IN_RULES: &[&str] = &["user_home_path_aggressive"];
+
     #[sinex_test]
-    async fn all_rules_are_enabled() -> ::xtask::sandbox::TestResult<()> {
+    async fn default_enablement_matches_opt_in_list() -> ::xtask::sandbox::TestResult<()> {
         let rules = builtin_rules();
         for rule in &rules {
-            assert!(
-                rule.enabled,
-                "rule '{}' should be enabled by default",
+            let expected = !OPT_IN_RULES.contains(&rule.name.as_str());
+            assert_eq!(
+                rule.enabled, expected,
+                "rule '{}' enablement disagrees with OPT_IN_RULES list",
                 rule.name
             );
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn opt_in_rules_actually_exist() -> ::xtask::sandbox::TestResult<()> {
+        let rules = builtin_rules();
+        for name in OPT_IN_RULES {
+            assert!(
+                rules.iter().any(|r| r.name == *name),
+                "OPT_IN_RULES references '{name}' but no such rule is in the catalog"
+            );
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn aggressive_path_rule_replaces_collapse_when_opted_in()
+    -> ::xtask::sandbox::TestResult<()> {
+        // Document the operator-facing pattern: turning on the aggressive
+        // variant and turning off the soft variant produces hashed output
+        // for $HOME paths instead of `<HOME>/...` collapse.
+        use crate::privacy::{PrivacyConfig, PrivacyEngine, ProcessingContext, RuleOverride};
+        use std::collections::HashMap;
+
+        unsafe {
+            std::env::set_var("HOME", "/home/sinity-test-aggressive-redact");
+        }
+
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "user_home_path_aggressive".to_string(),
+            RuleOverride {
+                enabled: Some(true),
+                ..Default::default()
+            },
+        );
+        overrides.insert(
+            "user_home_path".to_string(),
+            RuleOverride {
+                enabled: Some(false),
+                ..Default::default()
+            },
+        );
+
+        let config = PrivacyConfig {
+            overrides,
+            ..PrivacyConfig::default()
+        };
+        let engine = PrivacyEngine::new(config).expect("engine builds");
+        let result = engine.process(
+            "/home/sinity-test-aggressive-redact/projects/sinex/Cargo.toml",
+            ProcessingContext::Metadata,
+        );
+
+        // Without a key, Hash degrades to a generic redact label rather than
+        // a real hash. Either way the literal home prefix must be gone, AND
+        // the soft `<HOME>/...` collapse must NOT be the output (proving the
+        // override flipped which rule fired).
+        assert!(
+            !result.text.contains("/home/sinity-test-aggressive-redact/"),
+            "aggressive variant must redact the home prefix, got {:?}",
+            result.text
+        );
+        assert!(
+            !result.text.contains("<HOME>"),
+            "aggressive variant must not emit the soft <HOME>/... label, got {:?}",
+            result.text
+        );
         Ok(())
     }
 }
