@@ -951,9 +951,31 @@ RETURNS INTEGER AS $$
 DECLARE
     current_depth INTEGER := 0;
     rows_inserted INTEGER;
+    pending_at_limit INTEGER;
 BEGIN
     LOOP
         IF current_depth >= max_depth THEN
+            -- Probe whether we would have inserted anything at the next depth.
+            -- If yes, the cascade exceeds the configured limit and we MUST
+            -- raise rather than silently truncate; the caller's preview/audit
+            -- surfaces depend on this signal to stay honest.
+            EXECUTE format(
+                'WITH current_level AS (
+                    SELECT id FROM %I WHERE depth = $1 AND processed = FALSE
+                )
+                SELECT COUNT(*)::INTEGER FROM core.events e
+                JOIN current_level cl ON e.source_event_ids && ARRAY[cl.id]
+                WHERE NOT EXISTS (SELECT 1 FROM %I existing WHERE existing.id = e.id)',
+                temp_table,
+                temp_table
+            ) INTO pending_at_limit USING current_depth;
+
+            IF pending_at_limit > 0 THEN
+                RAISE EXCEPTION 'cascade exceeds max depth % (% pending children at limit)',
+                    max_depth, pending_at_limit
+                    USING ERRCODE = 'P0001';
+            END IF;
+
             EXIT;
         END IF;
 
