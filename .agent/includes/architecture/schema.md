@@ -47,3 +47,12 @@ Schema evolution uses declarative convergence (`sinex-schema apply`), not migrat
 - Schema source: `crate/lib/sinex-schema/src/schema/`
 - Apply engine: `crate/lib/sinex-schema/src/apply.rs`
 - Design: `crate/lib/sinex-schema/docs/schema_design.md`
+
+**Drift detection**: `apply::diff` reports the categories it converges
+(missing tables, columns, named constraints, indexes, triggers, views,
+continuous aggregates). For categories the convergence engine does NOT
+reconcile — trigger function bodies that survived a manual edit,
+DEFAULT changes on existing columns, FK actions, inline CHECKs,
+hypertable settings — call `strict_diff::check_strict` (or run the
+`schema-strict-diff` binary against `DATABASE_URL`). Issue #556 tracks
+follow-up categories.
