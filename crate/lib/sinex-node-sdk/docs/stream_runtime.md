@@ -1,14 +1,16 @@
 # Stream Processing Runtime
 
-The Sinex SDK provides high-level abstractions—**Derived Node Traits**
-(`TransducerNode`, `WindowedNode`, `ScopeReconcilerNode`) and `IngestorNode`—
-plus adapters that automate state management, checkpointing, and lifecycle
-transitions.
+This document describes the current node authoring traits and the runtime
+behavior around them. It is not a design-history page: the goal is to explain
+what a contributor should implement against today.
 
 ## 🧱 The Abstractions
 
 ### 1. Derived Node Traits
-Designed for processing event streams and synthesizing new events. The unified `DerivedNodeAdapter` handles all three variants:
+
+Derived nodes consume confirmed events and emit synthesis events. The shared
+`DerivedNodeAdapter` handles the common runtime work for all three trait
+families:
 
 - **`TransducerNode`**: 1:1 stateless event transformation
   - Simple filtering/enrichment without complex state
@@ -22,16 +24,34 @@ Designed for processing event streams and synthesizing new events. The unified `
   - Maintain distinct state per scope (source, device, etc.)
   - Example: health monitor, scope-aware reconciler
 
-**Common Traits:**
-- **Auto-State**: State is automatically persisted to NATS KV via `DerivedNodeAdapter`.
-- **Runtime-Integrated**: Composes with `NodeRunner` and node-specific processing bridges.
-- **Health**: Integrates with `HealthReporter` for automatic error rate monitoring.
+**Shared adapter responsibilities**
+- **Checkpointing**: state and stream progress persist through the normal SDK
+  checkpoint surfaces
+- **Invalidation handling**: replay invalidations are consumed and reflected in
+  adapter state
+- **Health/self-observation**: per-run counters and error-rate signals are
+  emitted through the shared telemetry paths
+- **Drain and shutdown**: the adapter can stop intake, finish buffered work,
+  persist state, and exit cleanly
 
 ### 2. `IngestorNode`
-Tailored for capturing data from external sources (Files, APIs, Sockets).
-- **Control**: Manages its own continuous loop (sensor mode).
-- **Symmetry**: Implements `scan_snapshot`, `scan_historical`, and `run_continuous`.
-- **Checkpointing**: In-memory state is flushed to NATS KV and local files.
+
+Ingestors capture from external sources such as files, sockets, journals, or
+APIs.
+
+- **Authoring surface**: implement `scan_snapshot`, `scan_historical`, and
+  `run_continuous`
+- **Continuous ownership**: the node owns its source-specific watch/tail logic
+- **Provenance responsibility**: emitted events are material-provenance events
+  rooted in source material
+- **Checkpointing**: in-memory state is flushed to NATS KV and local files
+
+### 3. `NodeRunner` and Adapters
+
+The low-level `NodeRunner` provides lifecycle orchestration, while the adapters
+turn the high-level traits into runnable services. Most node implementations
+should use the trait + adapter surface instead of implementing low-level
+runtime behavior themselves.
 
 ## 🔄 Processing Pipeline
 
@@ -42,6 +62,17 @@ The runtime follows a provisional/confirmed pattern:
 3. ingestd publishes confirmations.
 4. Automata consume confirmed events and advance checkpoints.
 
+That pipeline-level provisional state is only about transport durability. It is
+not a semantic license to emit "tentative" derived events whenever sibling
+sources might arrive later. Late-arrival coordination uses the normal derived
+node models:
+
+- `TransducerNode` stays eager and 1:1;
+- `WindowedNode` performs bounded waiting when window closure is part of the
+  domain truth;
+- `ScopeReconcilerNode` handles late correction through scope invalidation,
+  recomputation, and replacement relations.
+
 ## 💾 State Persistence Pattern
 
 State is stored using a dual-destination strategy:
@@ -49,20 +80,24 @@ State is stored using a dual-destination strategy:
 | Destination | Role | Rationale |
 | :--- | :--- | :--- |
 | **NATS KV** | Primary | Distributed durability for crash recovery. |
-| **Local File** | Secondary | Ultra-fast serialization for **Hot Reload** restarts. |
+| **Local File** | Secondary | Fast local restart handoff during shutdown/restart. |
 
 > [!IMPORTANT]
-> Local files take precedence during startup. If a file-based checkpoint exists, the node assumes it was just rebuilt and resumes immediately.
+> Local files take precedence during startup. If a file-based checkpoint exists,
+> the node resumes from that state before falling back to the distributed
+> checkpoint store.
 
-## 🛑 Cooperative Shutdown
+## 🛑 Drain and Cooperative Shutdown
 
-Nodes use **Cooperative Cancellation**:
+Nodes support an orderly drain/shutdown path:
 
-1.  **Signal**: Node receives SIGTERM.
-2.  **Broadcast**: `watch::channel` notifies all background watchers.
-3.  **Finalize**: Watchers finish their current slice and finalize `SourceMaterial`.
-4.  **Checkpoint**: Final state is written to disk and NATS KV.
-5.  **Exit**: Process terminates cleanly.
+1.  **Signal**: The runtime receives drain or shutdown.
+2.  **Stop intake**: Background watchers/consumers stop accepting new work.
+3.  **Flush in-flight work**: Watchers finish their current slice; derived nodes
+    drain buffered confirmed events and invalidations.
+4.  **Persist state**: Final state is written to disk and NATS KV.
+5.  **Exit**: The process terminates after the runtime reports drain/shutdown
+    completion.
 
 ## 🛡️ Path Validation
 
@@ -74,12 +109,14 @@ All filesystem operations must pass through the `VerifiedPath` type. This preven
 
 Nodes define their behavior via the `ErrorAction` enum:
 - `Retry`: NAK the message for redelivery.
-- `SendToDLQ`: Log failure and move message to the Dead Letter Queue.
+- `SendToProcessingFailureQueue`: Log failure and move the payload to the
+  processing-failure stream.
 - `Skip`: Continue processing without further action.
 
 ## Historical context
 
-Two design-evolution notes worth preserving to prevent re-derivation:
+Two retired design branches are worth keeping as explicit history so they do
+not drift back in as supposed current doctrine:
 
 - **The actual `WindowedNode` API delegates window-completion to the implementor.** Earlier design documents describe a `WindowPolicy` / `WindowAction` enum-based API that was never implemented. The current trait (see `derived_node/traits.rs`) requires `accumulate`, `window_complete(&self, state) -> bool`, and `emit`, with `recompute_window` as a default-impl hook. Don't reintroduce the policy-enum shape — it lost against delegating the completion predicate to the implementor.
 - **`AutomatonNode` has been fully removed** in favor of the derived-node model family (`TransducerNode` / `WindowedNode` / `ScopeReconcilerNode`). `PersistedState` and `ErrorAction` still exist as standalone types in the derived-node module; they survived the removal because they were useful independent of the dropped trait.
