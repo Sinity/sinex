@@ -213,7 +213,7 @@ const RECENT_ID_CACHE_SIZE: usize = 50_000;
 const DEFAULT_BATCH_FETCH_MAX_MESSAGES: usize = 100;
 const DEFAULT_BATCH_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
 const DEFAULT_MAX_ACK_PENDING: i64 = 100;
-const MAIN_CONSUMER_JETSTREAM_MAX_DELIVER: i64 = -1;
+const MAIN_CONSUMER_JETSTREAM_MAX_DELIVER: i64 = 10;
 const MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD: i64 = 10;
 const SOURCE_MATERIAL_READY_DLQ_THRESHOLD: i64 = MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD;
 const DLQ_PUBLISH_MAX_ATTEMPTS: usize = 3;
@@ -823,7 +823,7 @@ impl JetStreamConsumer {
         confirmation_retry_spec.deliver_policy = jetstream::consumer::DeliverPolicy::All;
         confirmation_retry_spec.ack_wait = self.ack_wait;
         confirmation_retry_spec.max_ack_pending = self.max_ack_pending;
-        confirmation_retry_spec.max_deliver = -1;
+        confirmation_retry_spec.max_deliver = 10;
         let confirmation_retry_consumer = ensure_pull_consumer(&self.js, &confirmation_retry_spec)
             .await
             .map_err(|e| {
