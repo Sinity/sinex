@@ -78,6 +78,14 @@ pub struct AutomatonStatus {
     pub pending_invalidation_count: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_rate_5m: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_lag_p50_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_lag_p99_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tick_runtime_p99_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub throughput_eps: Option<f64>,
     pub recent_output_count: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_output_at: Option<Timestamp>,
