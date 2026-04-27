@@ -53,6 +53,20 @@ fn format_optional_rate(value: Option<f64>) -> String {
     )
 }
 
+fn format_optional_ms(value: Option<f64>) -> String {
+    value.map_or_else(
+        || style("-").dim().to_string(),
+        |value| format!("{value:.0}"),
+    )
+}
+
+fn format_optional_eps(value: Option<f64>) -> String {
+    value.map_or_else(
+        || style("-").dim().to_string(),
+        |value| format!("{value:.2}"),
+    )
+}
+
 fn format_optional_age(value: Option<&sinex_primitives::Timestamp>) -> String {
     value.map_or_else(|| style("-").dim().to_string(), format_heartbeat_age)
 }
@@ -82,6 +96,10 @@ fn format_automata_status_table(response: &AutomataStatusResponse) -> String {
         "RUN",
         "PROCESSED",
         "ERR 5M",
+        "LAG p50",
+        "LAG p99",
+        "TICK p99",
+        "EPS",
         "PENDING",
         "CHECKPOINT",
         "LAST OUTPUT",
@@ -105,6 +123,10 @@ fn format_automata_status_table(response: &AutomataStatusResponse) -> String {
             run,
             format_optional_count(automaton.events_processed_current_run),
             format_optional_rate(automaton.error_rate_5m),
+            format_optional_ms(automaton.event_lag_p50_ms),
+            format_optional_ms(automaton.event_lag_p99_ms),
+            format_optional_ms(automaton.tick_runtime_p99_ms),
+            format_optional_eps(automaton.throughput_eps),
             format_optional_count(automaton.pending_invalidation_count),
             checkpoint_summary(automaton),
             format_optional_age(automaton.last_output_at.as_ref()),
