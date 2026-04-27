@@ -628,17 +628,31 @@ fn configured_hostname_resolution_probe() -> ConfiguredHostnameResolutionProbe {
         match std::env::var_os(env_name) {
             None => {}
             Some(raw) => match raw.into_string() {
-                Ok(raw) => match resolution_target_host(&raw) {
-                    Ok(Some(host)) => {
-                        targets.insert(host);
+                Ok(raw) => {
+                    // SINEX_NATS_URL may be a comma-separated list of URLs
+                    // (e.g. "nats://host1:4222,nats://host2:4222"). Split on commas
+                    // so each segment is probed individually. DATABASE_URL and
+                    // SINEX_GATEWAY_URL are single URLs and will not contain commas
+                    // in valid usage, but splitting is still safe for them.
+                    let segments: Vec<&str> = raw.split(',').collect();
+                    for segment in &segments {
+                        let segment = segment.trim();
+                        if segment.is_empty() {
+                            continue;
+                        }
+                        match resolution_target_host(segment) {
+                            Ok(Some(host)) => {
+                                targets.insert(host);
+                            }
+                            Ok(None) => {}
+                            Err(error) => invalid_inputs.push(InvalidResolutionTarget {
+                                env_name,
+                                raw: segment.to_string(),
+                                error,
+                            }),
+                        }
                     }
-                    Ok(None) => {}
-                    Err(error) => invalid_inputs.push(InvalidResolutionTarget {
-                        env_name,
-                        raw,
-                        error,
-                    }),
-                },
+                }
                 Err(raw) => invalid_inputs.push(InvalidResolutionTarget {
                     env_name,
                     raw: raw.to_string_lossy().into_owned(),
@@ -952,6 +966,27 @@ mod tests {
                 message.contains("cannot be created") && message.contains(&missing_work_dir_str)
             }),
             "filesystem probe should report the missing path as non-creatable: {messages:#?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn configured_hostname_resolution_probe_handles_comma_separated_nats_urls()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set(
+            "SINEX_NATS_URL",
+            "nats://nats1.example:4222,nats://nats2.example:4222",
+        );
+
+        let targets = configured_hostname_resolution_probe().hosts;
+        assert!(
+            targets.contains(&"nats1.example".to_string()),
+            "first NATS host should be probed: {targets:?}"
+        );
+        assert!(
+            targets.contains(&"nats2.example".to_string()),
+            "second NATS host should be probed: {targets:?}"
         );
         Ok(())
     }
