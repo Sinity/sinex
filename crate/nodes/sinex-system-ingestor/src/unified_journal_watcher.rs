@@ -792,6 +792,9 @@ impl UnifiedJournalWatcher {
                 );
             }
             Err(err) => {
+                // Non-fatal: a transient DLQ routing failure for an oversized line must not
+                // terminate the entire journal watcher. Log and skip — the cursor does not
+                // advance for this line, so the line can be retried on the next iteration.
                 warn!(
                     line_bytes = line.len(),
                     limit = self.max_line_bytes,
@@ -799,9 +802,8 @@ impl UnifiedJournalWatcher {
                     journal_unit = ?unit,
                     error = %err,
                     reason = "journal_line_too_large",
-                    "Failed to route oversized journal line to DLQ; cursor will not advance"
+                    "Failed to route oversized journal line to DLQ; skipping line and continuing"
                 );
-                return Err(err);
             }
         }
 

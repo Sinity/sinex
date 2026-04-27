@@ -123,12 +123,28 @@ const SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION_CLASS: &str = "23";
 /// Error-class marker for deferred source-material FK violations.
 const ERROR_CLASS_SOURCE_MATERIAL_FK: &str = "source_material_fk_violation";
 const EVENTS_SOURCE_MATERIAL_ID_FKEY: &str = "events_source_material_id_fkey";
+const EVENTS_PAYLOAD_SCHEMA_ID_FKEY: &str = "events_payload_schema_id_fkey";
 
 fn is_source_material_fk_constraint_name(value: &str) -> bool {
     value == EVENTS_SOURCE_MATERIAL_ID_FKEY
         || value
             .strip_suffix(EVENTS_SOURCE_MATERIAL_ID_FKEY)
             .is_some_and(|prefix| prefix.ends_with('_'))
+}
+
+/// Return true if the error is a FK violation on `payload_schema_id`.
+///
+/// This can happen when a schema is deleted between the validation step (which
+/// stamps the schema UUID on the event) and the INSERT. We treat it as recoverable
+/// by stripping `payload_schema_id` from the batch and retrying.
+fn is_payload_schema_fk_violation(err: &SinexError) -> bool {
+    if !is_foreign_key_violation(err) {
+        return false;
+    }
+    err.context_map()
+        .get("constraint")
+        .is_some_and(|c| c == EVENTS_PAYLOAD_SCHEMA_ID_FKEY || c.contains(EVENTS_PAYLOAD_SCHEMA_ID_FKEY))
+        || err.to_string().contains(EVENTS_PAYLOAD_SCHEMA_ID_FKEY)
 }
 
 /// Hard guard for node-supplied event IDs.
@@ -648,12 +664,17 @@ impl JetStreamConsumer {
             })?;
 
         let confirmation_retry_stream = self.topology.confirmation_retry_stream.clone();
+        // Cap the total backlog to prevent unbounded growth when confirmation publish failures
+        // persist. DiscardPolicy::New combined with max_messages ensures the stream does not
+        // grow beyond the cap even if many events are continuously failing confirmation.
+        const CONFIRMATION_RETRY_MAX_MESSAGES: i64 = 50_000;
         self.js
             .create_or_update_stream(jetstream::stream::Config {
                 name: confirmation_retry_stream.clone(),
                 subjects: vec![self.topology.confirmation_retry_subject.clone()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages_per_subject: 1,
+                max_messages: CONFIRMATION_RETRY_MAX_MESSAGES,
                 max_age: Duration::from_hours(72),
                 storage: jetstream::stream::StorageType::File,
                 discard: DiscardPolicy::New,
@@ -1658,7 +1679,7 @@ impl JetStreamConsumer {
             })
             .collect::<IngestdResult<Vec<_>>>()?;
 
-        let result = timeout(
+        let insert_result = timeout(
             DB_WRITE_TIMEOUT,
             self.pool.events().insert_stream_batch(&rows),
         )
@@ -1672,7 +1693,36 @@ impl JetStreamConsumer {
             SinexError::database(format!(
                 "Persisting batch timed out after {DB_WRITE_TIMEOUT:?}"
             ))
-        })?
+        })?;
+
+        // If the INSERT failed due to a payload_schema_id FK violation (schema deleted between
+        // validation and insert), retry without schema IDs. This is safe: we lose the
+        // payload_schema_id annotation but the event itself is persisted correctly.
+        let insert_result = match insert_result {
+            Err(ref err) if is_payload_schema_fk_violation(err) => {
+                warn!(
+                    batch_size = to_persist.len(),
+                    "INSERT hit FK violation on payload_schema_id (schema deleted during validation race); retrying without schema IDs"
+                );
+                let mut rows_without_schema: Vec<StreamBatchRow> = rows.clone();
+                for row in &mut rows_without_schema {
+                    row.payload_schema_id = None;
+                }
+                timeout(
+                    DB_WRITE_TIMEOUT,
+                    self.pool.events().insert_stream_batch(&rows_without_schema),
+                )
+                .await
+                .map_err(|_| {
+                    SinexError::database(format!(
+                        "Persisting batch (schema-id-stripped retry) timed out after {DB_WRITE_TIMEOUT:?}"
+                    ))
+                })?
+            }
+            other => other,
+        };
+
+        let result = insert_result
         .map_err(|err| {
             if is_source_material_fk_violation_for_stream_batch(&err, &rows) {
                 warn!(
