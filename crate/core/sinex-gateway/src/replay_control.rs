@@ -627,15 +627,19 @@ impl ReplayControlServer {
         let task = tokio::spawn(async move {
             'outer: loop {
                 while let Some(message) = subscription.next().await {
+                    // Acquire the permit BEFORE spawning so the receive loop
+                    // applies backpressure to the subscription instead of
+                    // letting unbounded spawn count pile up waiting on the
+                    // semaphore inside spawned tasks.
+                    let permit = match semaphore.clone().acquire_owned().await {
+                        Ok(p) => p,
+                        Err(_) => break 'outer, // semaphore closed (shutdown)
+                    };
                     let client = client.clone();
                     let replay = replay.clone();
                     let executor = executor.clone();
-                    let sem = semaphore.clone();
                     tokio::spawn(async move {
-                        let _permit = match sem.acquire_owned().await {
-                            Ok(p) => p,
-                            Err(_) => return, // semaphore closed, skip
-                        };
+                        let _permit = permit;
                         if let Err(err) =
                             Self::handle_message(&client, &replay, &executor, message).await
                         {
