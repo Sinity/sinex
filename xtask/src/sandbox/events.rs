@@ -178,9 +178,9 @@ impl EventPublisher for Sandbox {
         let mut event_ids = self
             .publish_prebuilt_events(std::slice::from_ref(event))
             .await?;
-        Ok(event_ids
+        event_ids
             .pop()
-            .expect("single-event batch publish must return one event id"))
+            .ok_or_else(|| eyre!("single-event batch publish returned no event ids"))
     }
 
     async fn publish_prebuilt_events(&self, events: &[Event<JsonValue>]) -> TestResult<Vec<Uuid>> {
@@ -344,7 +344,14 @@ impl Sandbox {
             ));
         }
 
-        // Phase 3: Wait for the last event to be persisted.
+        // Phase 3: Register all events for cleanup BEFORE waiting.
+        // If the wait times out or returns an error, the cleanup records are already
+        // present so the test harness can still tear down the published events/materials.
+        for (event_uuid, material_uuid) in published_ids.iter().zip(material_uuids.iter()) {
+            self.record_created_event(*event_uuid, Some(*material_uuid));
+        }
+
+        // Phase 4: Wait for the last event to be persisted.
         // Since ingestd processes events in JetStream order (single consumer),
         // once the last event is in DB, all preceding events are guaranteed to be there.
         // Safety: `published_ids` is non-empty because we checked `events.is_empty()` above.
@@ -354,11 +361,6 @@ impl Sandbox {
             .to_owned();
         let last_event_id = Id::<Event<JsonValue>>::from_uuid(last_event_uuid);
         WaitHelpers::wait_for_event_id(self.pool(), last_event_id, DEFAULT_WAIT_SECS).await?;
-
-        // Phase 4: Record all events for cleanup
-        for (event_uuid, material_uuid) in published_ids.iter().zip(material_uuids.iter()) {
-            self.record_created_event(*event_uuid, Some(*material_uuid));
-        }
 
         Ok(events)
     }
