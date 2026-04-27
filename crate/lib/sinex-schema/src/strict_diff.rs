@@ -330,7 +330,14 @@ const DECLARED_INLINE_CHECKS: &[DeclaredInlineCheck] = &[
         // The XOR provenance invariant — exactly one of source_material_id
         // or source_event_ids set. This is THE load-bearing in-DB check; if
         // it disappears, the provenance contract is gone.
-        expected_markers: &["source_material_id IS NOT NULL", "source_event_ids IS NULL"],
+        // Markers span both OR-branches of the constraint so a partial
+        // rewrite that removes the synthesis side is also detected.
+        expected_markers: &[
+            "source_material_id IS NOT NULL",
+            "source_event_ids IS NULL",
+            "source_material_id IS NULL",
+            "source_event_ids IS NOT NULL",
+        ],
     },
     DeclaredInlineCheck {
         schema: "core",
@@ -348,7 +355,9 @@ const DECLARED_INLINE_CHECKS: &[DeclaredInlineCheck] = &[
         schema: "core",
         table: "events",
         label: "offset_kind_enum",
-        expected_markers: &["offset_kind", "'byte'", "'logical'"],
+        // All four wire-format values declared in schema/events.rs:
+        // 'byte', 'line', 'rowid', 'logical' (maps to OffsetKind variants in builder.rs).
+        expected_markers: &["offset_kind", "'byte'", "'line'", "'rowid'", "'logical'"],
     },
 ];
 
@@ -416,8 +425,12 @@ struct DeclaredForeignKeyAction {
     /// matched. Keep this specific to one FK — pinning by referenced column
     /// (`FOREIGN KEY (parent_tag_id)`) is the natural choice.
     fk_marker: &'static str,
-    /// Required text in the constraint definition (e.g. `ON DELETE SET NULL`).
-    expected_action_marker: &'static str,
+    /// Required text for the ON DELETE action (e.g. `ON DELETE CASCADE`).
+    /// `None` means the check does not assert a specific ON DELETE action.
+    expected_delete_action_marker: Option<&'static str>,
+    /// Required text for the ON UPDATE action (e.g. `ON UPDATE CASCADE`).
+    /// `None` means the check does not assert a specific ON UPDATE action.
+    expected_update_action_marker: Option<&'static str>,
 }
 
 const DECLARED_FK_ACTIONS: &[DeclaredForeignKeyAction] = &[
@@ -431,7 +444,8 @@ const DECLARED_FK_ACTIONS: &[DeclaredForeignKeyAction] = &[
         schema: "core",
         table: "tagged_items",
         fk_marker: "FOREIGN KEY (tag_id)",
-        expected_action_marker: "ON DELETE CASCADE",
+        expected_delete_action_marker: Some("ON DELETE CASCADE"),
+        expected_update_action_marker: None,
     },
     // Two other FK declarations were considered and intentionally NOT
     // pinned in this slice. Both surfaced as real schema bugs the strict
@@ -476,8 +490,16 @@ async fn check_foreign_key_actions(pool: &PgPool) -> Result<Vec<StrictDrift>, Ap
                 category: DriftCategory::ForeignKeyAction,
                 location,
                 declared_summary: format!(
-                    "FK with `{}` and action `{}`",
-                    declared.fk_marker, declared.expected_action_marker
+                    "FK with `{}`{}{}",
+                    declared.fk_marker,
+                    declared
+                        .expected_delete_action_marker
+                        .map(|a| format!(", delete action `{a}`"))
+                        .unwrap_or_default(),
+                    declared
+                        .expected_update_action_marker
+                        .map(|a| format!(", update action `{a}`"))
+                        .unwrap_or_default(),
                 ),
                 observed_summary: format!(
                     "no FK on {}.{} matches `{}`",
@@ -487,13 +509,26 @@ async fn check_foreign_key_actions(pool: &PgPool) -> Result<Vec<StrictDrift>, Ap
             continue;
         };
 
-        if !matching.contains(declared.expected_action_marker) {
-            drifts.push(StrictDrift {
-                category: DriftCategory::ForeignKeyAction,
-                location,
-                declared_summary: format!("contains `{}`", declared.expected_action_marker),
-                observed_summary: matching.clone(),
-            });
+        if let Some(delete_marker) = declared.expected_delete_action_marker {
+            if !matching.contains(delete_marker) {
+                drifts.push(StrictDrift {
+                    category: DriftCategory::ForeignKeyAction,
+                    location: format!("{location} (ON DELETE)"),
+                    declared_summary: format!("contains `{delete_marker}`"),
+                    observed_summary: matching.clone(),
+                });
+            }
+        }
+
+        if let Some(update_marker) = declared.expected_update_action_marker {
+            if !matching.contains(update_marker) {
+                drifts.push(StrictDrift {
+                    category: DriftCategory::ForeignKeyAction,
+                    location: format!("{location} (ON UPDATE)"),
+                    declared_summary: format!("contains `{update_marker}`"),
+                    observed_summary: matching.clone(),
+                });
+            }
         }
     }
     Ok(drifts)
