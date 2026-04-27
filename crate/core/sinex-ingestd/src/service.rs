@@ -1020,7 +1020,13 @@ impl IngestService {
         let content_store_path = self.config.content_store_path.clone();
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(interval_duration);
+            // Use interval_at to defer the first tick by one full period; tokio::time::interval()
+            // fires immediately on creation, causing GC to run at startup before the system has
+            // warmed up.
+            let mut interval = tokio::time::interval_at(
+                tokio::time::Instant::now() + interval_duration,
+                interval_duration,
+            );
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
             loop {

@@ -1228,9 +1228,7 @@ where
     let cors = if cors_origins.is_empty() {
         CorsLayer::new()
             .allow_origin(AllowOrigin::predicate(|origin, _| {
-                origin.to_str().is_ok_and(|s| {
-                    s.starts_with("http://localhost:") || s.starts_with("http://127.0.0.1:")
-                })
+                origin.to_str().is_ok_and(|s| is_localhost_origin(s))
             }))
             .allow_methods([Method::POST, Method::GET, Method::OPTIONS])
             .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
@@ -1266,6 +1264,23 @@ where
         )
         .layer(PropagateRequestIdLayer::new(request_id_header.clone()))
         .layer(SetRequestIdLayer::new(request_id_header, MakeRequestUuid))
+}
+
+/// Return true if the given HTTP origin is a valid localhost or loopback origin.
+///
+/// Accepts `http://localhost:<port>` and `http://127.0.0.1:<port>` where `<port>`
+/// consists only of ASCII digits. Rejects strings like `http://localhost:evil.com`
+/// that pass a naive `starts_with` check.
+fn is_localhost_origin(origin: &str) -> bool {
+    for prefix in &["http://localhost:", "http://127.0.0.1:"] {
+        if let Some(rest) = origin.strip_prefix(prefix) {
+            // The remainder must be a non-empty sequence of ASCII digits only
+            if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn parse_cors_origin_values(cors_origins: &[String]) -> Vec<HeaderValue> {
