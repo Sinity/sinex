@@ -270,6 +270,17 @@ pub struct IngestdConfig {
     #[builder(default = default_stats_log_interval_secs())]
     #[validate(range(min = 5, max = 3600))]
     pub stats_log_interval_secs: u64,
+
+    /// Interval between automatic blob garbage collection sweeps. None = disabled.
+    ///
+    /// When set, ingestd periodically sweeps content-store keys that are unused
+    /// in git-annex AND have no matching `core.blobs` row, dropping them from
+    /// the large-object backend. The same logic backs `sinexctl blob sweep-orphans`.
+    ///
+    /// Set via: `SINEX_INGESTD_BLOB_GC_INTERVAL_SECS`
+    #[serde(default = "default_blob_gc_interval_secs")]
+    #[validate(custom(function = "validate_blob_gc_interval"))]
+    pub blob_gc_interval_secs: Option<u64>,
 }
 
 impl IngestdConfig {
@@ -311,6 +322,8 @@ impl IngestdConfig {
                 .unwrap_or_else(default_schema_reload_interval_secs);
         let stats_log_interval_secs: u64 = env_parsed("SINEX_INGESTD_STATS_LOG_INTERVAL_SECS")?
             .unwrap_or_else(default_stats_log_interval_secs);
+        let blob_gc_interval_secs: Option<u64> =
+            env_parsed("SINEX_INGESTD_BLOB_GC_INTERVAL_SECS")?;
         let pool_acquire_timeout_secs: u64 = env_parsed("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS")?
             .unwrap_or_else(default_pool_acquire_timeout_secs);
         let pool_idle_timeout_secs: u64 = env_parsed("SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS")?
@@ -339,6 +352,7 @@ impl IngestdConfig {
         config.gitops_enabled = gitops_enabled;
         config.schema_reload_interval_secs = schema_reload_interval_secs;
         config.stats_log_interval_secs = stats_log_interval_secs;
+        config.blob_gc_interval_secs = blob_gc_interval_secs;
         config.nats = nats_config_clone;
         config.nats_namespace = namespace;
         if let Some(path) = work_dir_override {
@@ -663,6 +677,7 @@ impl Default for IngestdConfig {
             gitops_work_dir: default_gitops_work_dir(),
             schema_reload_interval_secs: default_schema_reload_interval_secs(),
             stats_log_interval_secs: default_stats_log_interval_secs(),
+            blob_gc_interval_secs: default_blob_gc_interval_secs(),
         }
     }
 }
@@ -1087,6 +1102,17 @@ fn default_schema_reload_interval_secs() -> u64 {
 
 fn default_stats_log_interval_secs() -> u64 {
     60 // 1 minute
+}
+
+fn default_blob_gc_interval_secs() -> Option<u64> {
+    None
+}
+
+fn validate_blob_gc_interval(value: u64) -> Result<(), ValidationError> {
+    if value < 60 {
+        return Err(ValidationError::new("blob_gc_interval_too_small"));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

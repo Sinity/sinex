@@ -563,6 +563,16 @@ in
                   default = 60;
                   description = "Interval in seconds between processing statistics log entries.";
                 };
+                blobGcIntervalSecs = mkOption {
+                  type = nullOr positive;
+                  default = null;
+                  description = ''
+                    Interval in seconds between automatic blob garbage collection sweeps.
+                    When null (default), automatic GC is disabled and orphans must be
+                    reclaimed manually via `sinexctl blob sweep-orphans --apply`.
+                    Minimum effective value is 60 seconds (validated by ingestd).
+                  '';
+                };
                 extraArgs = mkOption {
                   type = strList;
                   default = [ ];

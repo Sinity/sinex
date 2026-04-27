@@ -2,8 +2,11 @@ use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::{WrapErr, eyre};
 use serde::Serialize;
-use sinex_db::{DbPoolExt, create_pool};
-use sinex_node_sdk::content_store::{ContentStoreConfig, MaterialContentStore, UnusedContentEntry};
+use sinex_db::create_pool;
+use sinex_node_sdk::content_store::{
+    ContentStoreConfig, MaterialContentStore, UnusedContentEntry,
+    gc::{BlobGcReport, sweep_orphans_detailed},
+};
 
 use crate::Result;
 use crate::fmt::CommandOutput;
@@ -77,54 +80,26 @@ impl BlobSweepOrphansCommand {
             large_files: None,
         })
         .wrap_err_with(|| format!("open content-store root {}", self.content_store_path))?;
-        let unused_entries = content_store
-            .list_unused()
+
+        let (report, orphan_entries) = sweep_orphans_detailed(&pool, &content_store, self.apply)
             .await
-            .wrap_err("list content-store unused entries")?;
+            .wrap_err("sweep content-store orphans")?;
 
-        let mut db_backed_entries = 0usize;
-        let mut orphaned_unused = Vec::new();
-        for entry in unused_entries {
-            let size_bytes = i64::try_from(entry.key.size).wrap_err_with(|| {
-                format!("content-store key size does not fit i64: {}", entry.key.key)
-            })?;
-            if pool
-                .blobs()
-                .get_by_content(entry.key.storage_backend(), &entry.key.digest, size_bytes)
-                .await
-                .wrap_err_with(|| {
-                    format!("lookup blob row for content-store key {}", entry.key.key)
-                })?
-                .is_some()
-            {
-                db_backed_entries += 1;
-            } else {
-                orphaned_unused.push(entry);
-            }
-        }
-
-        let dropped_entries = if self.apply && !orphaned_unused.is_empty() {
-            let numbers = orphaned_unused
-                .iter()
-                .map(|entry| entry.number)
-                .collect::<Vec<_>>();
-            content_store
-                .drop_unused(&numbers, true)
-                .await
-                .wrap_err("drop orphaned content-store unused entries")?;
-            numbers.len()
-        } else {
-            0
-        };
+        let BlobGcReport {
+            total_unused,
+            db_backed,
+            orphaned,
+            dropped,
+        } = report;
 
         let summary = BlobSweepSummary {
             content_store_path: self.content_store_path.to_string(),
             mode: if self.apply { "apply" } else { "dry-run" },
-            total_unused_entries: db_backed_entries + orphaned_unused.len(),
-            db_backed_entries,
-            orphaned_entries: orphaned_unused.len(),
-            dropped_entries,
-            orphaned_keys: orphaned_unused.into_iter().map(blob_orphan_entry).collect(),
+            total_unused_entries: total_unused,
+            db_backed_entries: db_backed,
+            orphaned_entries: orphaned,
+            dropped_entries: dropped,
+            orphaned_keys: orphan_entries.into_iter().map(blob_orphan_entry).collect(),
         };
 
         CommandOutput::single(summary, format_blob_sweep_summary).display(&format)
