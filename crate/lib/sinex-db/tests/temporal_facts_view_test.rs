@@ -60,10 +60,10 @@ async fn material_event_projected_through_ledger(ctx: TestContext) -> TestResult
         RecordedPath::from_observed("/tmp/temporal-facts.txt")
             .map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
-    let event = Event::new(
-        payload,
-        Provenance::from_material(material_id, 0, None, None),
-    );
+    let event = Event::builder(payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance");
     let inserted = ctx.pool.events().insert(event).await?;
     let event_id = inserted.id.unwrap();
 
@@ -127,10 +127,10 @@ async fn synthetic_event_projected_inline(ctx: TestContext) -> TestResult<()> {
 
     // Create a source event (needed as parent for synthesis)
     let source_payload = KittyCommandExecutedPayload::test_default("echo synth-parent");
-    let source_event = Event::new(
-        source_payload,
-        Provenance::from_material(material_id, 0, None, None),
-    );
+    let source_event = Event::builder(source_payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance");
     let source = ctx.pool.events().insert(source_event).await?;
     let source_id = source.id.unwrap();
 
@@ -212,10 +212,10 @@ async fn mixed_projection_no_cross_contamination(ctx: TestContext) -> TestResult
         RecordedPath::from_observed("/tmp/mixed-material.txt")
             .map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
-    let mat_event = Event::new(
-        mat_payload,
-        Provenance::from_material(material_id, 0, None, None),
-    );
+    let mat_event = Event::builder(mat_payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance");
     let mat_inserted = ctx.pool.events().insert(mat_event).await?;
     let mat_id = mat_inserted.id.unwrap();
 
