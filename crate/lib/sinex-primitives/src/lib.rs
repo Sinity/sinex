@@ -24,6 +24,7 @@ pub mod privacy;
 pub mod proof;
 pub mod query;
 pub mod rpc;
+pub mod settlement;
 pub mod runtime_target;
 pub mod temporal;
 pub mod testing;
