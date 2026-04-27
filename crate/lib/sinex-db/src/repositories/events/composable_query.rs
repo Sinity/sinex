@@ -323,7 +323,10 @@ impl EventRepository<'_> {
 
         let mut qb = QueryBuilder::<Postgres>::new("SELECT time_bucket(");
         qb.push_bind(interval);
-        qb.push("::interval, ts_orig) AS bucket, COUNT(*) AS count FROM core.events WHERE TRUE");
+        // COALESCE to ts_coided (extracted from the UUIDv7 id) so events with a
+        // NULL ts_orig (which the schema allows) do not cause a NULL bucket and
+        // silently disappear from the time-series result.
+        qb.push("::interval, COALESCE(ts_orig, ts_coided)) AS bucket, COUNT(*) AS count FROM core.events WHERE TRUE");
         push_filters(&mut qb, &query);
         qb.push(" GROUP BY bucket");
 
