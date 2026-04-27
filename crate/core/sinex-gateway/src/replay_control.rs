@@ -1526,7 +1526,7 @@ impl ReplayExecutionEngine {
     async fn collect_scope_events(
         &self,
         scope: &ReplayScope,
-        _time_window: (Timestamp, Timestamp),
+        _execution_window: (Timestamp, Timestamp),
         pool: &sqlx::PgPool,
     ) -> Result<Vec<StoredEvent>> {
         let root_ids = self
@@ -1534,15 +1534,31 @@ impl ReplayExecutionEngine {
             .collect_scope_root_ids(scope)
             .await
             .map_err(|e| eyre!("Failed to collect replay scope root ids: {e}"))?;
-        let event_ids = root_ids
+        let event_ids: Vec<Id<StoredEvent>> = root_ids
             .into_iter()
             .map(Id::<StoredEvent>::from_uuid)
-            .collect::<Vec<_>>();
+            .collect();
 
-        pool.events()
-            .get_by_ids(&event_ids)
-            .await
-            .map_err(|e| eyre!("Failed to hydrate replay scope events: {e}"))
+        // get_by_ids silently clamps to 1000; chunk to avoid the truncation.
+        const CHUNK_SIZE: usize = 1000;
+        if event_ids.len() <= CHUNK_SIZE {
+            return pool
+                .events()
+                .get_by_ids(&event_ids)
+                .await
+                .map_err(|e| eyre!("Failed to hydrate replay scope events: {e}"));
+        }
+
+        let mut all_events = Vec::with_capacity(event_ids.len());
+        for chunk in event_ids.chunks(CHUNK_SIZE) {
+            let chunk_events = pool
+                .events()
+                .get_by_ids(chunk)
+                .await
+                .map_err(|e| eyre!("Failed to hydrate replay scope events (chunk): {e}"))?;
+            all_events.extend(chunk_events);
+        }
+        Ok(all_events)
     }
 
     async fn collect_operation_output_events(
@@ -1657,7 +1673,10 @@ impl ReplayExecutionEngine {
     ) -> Result<i64> {
         sqlx::query_scalar::<_, i64>(
             r"
-            SELECT COUNT(*)::bigint
+            SELECT COUNT(DISTINCT COALESCE(
+                    smr.metadata->>'logical_source_identifier',
+                    split_part(smr.source_identifier, '#material=', 1)
+                  ))::bigint
             FROM core.events
             INNER JOIN raw.source_material_registry smr
                 ON smr.id = core.events.source_material_id
@@ -2079,11 +2098,16 @@ impl ReplayExecutionEngine {
             return Ok(());
         }
 
-        // Build equivalence_key → new_event_id index
-        let mut eq_key_to_new: HashMap<String, Uuid> = HashMap::new();
+        // Build equivalence_key → new_event_ids index, preserving all outputs
+        // with the same key (e.g. deterministic re-runs that produce two events
+        // with the same equivalence_key must all be recorded, not collapsed).
+        let mut eq_key_to_new: HashMap<String, Vec<Uuid>> = HashMap::new();
         for event in &new_events {
             if let Some(ref eq_key) = event.equivalence_key {
-                eq_key_to_new.entry(eq_key.clone()).or_insert(event.id);
+                eq_key_to_new
+                    .entry(eq_key.clone())
+                    .or_default()
+                    .push(event.id);
             }
         }
 
@@ -2091,7 +2115,7 @@ impl ReplayExecutionEngine {
         let mut replacements = Vec::with_capacity(old_rows.len());
         let mut unmatched_count = 0usize;
         for row in &old_rows {
-            let Some(&new_event_id) = row
+            let Some(new_event_ids) = row
                 .equivalence_key
                 .as_ref()
                 .and_then(|eq| eq_key_to_new.get(eq))
@@ -2100,13 +2124,15 @@ impl ReplayExecutionEngine {
                 continue;
             };
 
-            replacements.push(ReplacementRecord {
-                old_event_id: row.id,
-                new_event_id,
-                relation_kind: ReplacementKind::Superseded,
-                scope_key: row.scope_key.clone(),
-                equivalence_key: row.equivalence_key.clone(),
-            });
+            for &new_event_id in new_event_ids {
+                replacements.push(ReplacementRecord {
+                    old_event_id: row.id,
+                    new_event_id,
+                    relation_kind: ReplacementKind::Superseded,
+                    scope_key: row.scope_key.clone(),
+                    equivalence_key: row.equivalence_key.clone(),
+                });
+            }
         }
 
         if unmatched_count > 0 {
