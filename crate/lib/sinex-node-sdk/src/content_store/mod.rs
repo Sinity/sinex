@@ -18,6 +18,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+pub mod gc;
 pub mod manager;
 pub mod path_validator;
 
