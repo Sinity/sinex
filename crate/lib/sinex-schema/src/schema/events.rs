@@ -393,6 +393,82 @@ impl Events {
         FOR EACH ROW EXECUTE FUNCTION core.fn_events_no_update();
         "
     }
+
+    /// Generates the opt-in payload-validation trigger for `core.events`.
+    ///
+    /// The trigger calls `jsonb_matches_schema` against the registered
+    /// schema in `sinex_schemas.event_payload_schemas`. By default it is a
+    /// no-op: the function checks the session GUC `sinex.payload_validation`
+    /// and returns NEW unmodified unless it is set to `'on'`. Operators
+    /// opt in per-session (`SET LOCAL sinex.payload_validation = 'on'`) so
+    /// the COPY hot path is unaffected by default and the validation cost
+    /// can be measured before being made unconditional.
+    ///
+    /// Schema lookup precedence:
+    /// 1. `payload_schema_id` (FK) when set on the row.
+    /// 2. Latest `is_active = true` row matching `(source, event_type)`.
+    ///
+    /// If no schema is registered the trigger is lenient (matches the
+    /// application-level validator). When a schema *is* registered and the
+    /// payload does not match, the trigger raises and the INSERT fails.
+    #[must_use]
+    pub fn create_payload_validation_trigger_sql() -> &'static str {
+        r"
+        CREATE OR REPLACE FUNCTION core.fn_events_validate_payload()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        DECLARE
+            schema_jsonb JSONB;
+            enabled TEXT;
+        BEGIN
+            -- Opt-in: validation only runs when the session enables it.
+            -- Use try-mode current_setting (returns NULL if unset) to avoid
+            -- requiring every session to declare the GUC.
+            BEGIN
+                enabled := current_setting('sinex.payload_validation', true);
+            EXCEPTION WHEN OTHERS THEN
+                enabled := NULL;
+            END;
+            IF enabled IS NULL OR lower(enabled) <> 'on' THEN
+                RETURN NEW;
+            END IF;
+
+            -- Resolve schema: prefer the FK, fall back to (source, event_type).
+            IF NEW.payload_schema_id IS NOT NULL THEN
+                SELECT schema_content INTO schema_jsonb
+                FROM sinex_schemas.event_payload_schemas
+                WHERE id = NEW.payload_schema_id AND is_active = true;
+            ELSE
+                SELECT schema_content INTO schema_jsonb
+                FROM sinex_schemas.event_payload_schemas
+                WHERE source = NEW.source
+                  AND event_type = NEW.event_type
+                  AND is_active = true
+                ORDER BY updated_at DESC
+                LIMIT 1;
+            END IF;
+
+            -- Lenient: no registered schema means accept (matches the
+            -- application-level validator's behavior).
+            IF schema_jsonb IS NULL THEN
+                RETURN NEW;
+            END IF;
+
+            IF NOT jsonb_matches_schema(schema_jsonb::json, NEW.payload) THEN
+                RAISE EXCEPTION
+                    'event payload does not match registered schema (source=%, event_type=%, schema_id=%)',
+                    NEW.source, NEW.event_type, NEW.payload_schema_id
+                    USING ERRCODE = 'check_violation';
+            END IF;
+
+            RETURN NEW;
+        END $$;
+
+        DROP TRIGGER IF EXISTS trg_events_validate_payload ON core.events;
+        CREATE TRIGGER trg_events_validate_payload
+        BEFORE INSERT ON core.events
+        FOR EACH ROW EXECUTE FUNCTION core.fn_events_validate_payload();
+        "
+    }
 }
 
 // =============================================================================
