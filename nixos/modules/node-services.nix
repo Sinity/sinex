@@ -1288,6 +1288,7 @@ let
           priorities = [ ];
           include_kernel = true;
           include_user = true;
+          exclude_units = [ ];
           exclude_fields = [
             "__CURSOR"
             "__REALTIME_TIMESTAMP"

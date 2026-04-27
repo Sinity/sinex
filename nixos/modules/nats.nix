@@ -568,7 +568,7 @@ in
                               stream_args+=(--max-age ${escapeShellArg stream.maxAge})
                 ${optionalArgLines}
                               if ${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream info ${streamName} >/dev/null 2>&1; then
-                                if ! output=$(${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream edit ${streamName} \
+                                if ! output=$(${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream edit -f ${streamName} \
                                   "''${stream_args[@]}" \
                                   2>&1); then
                                   echo "Failed to reconcile stream ${stream.name} with declarative bootstrap config" >&2
