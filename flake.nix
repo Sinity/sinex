@@ -113,8 +113,7 @@
             buildInputs = with pkgs; [
               openssl
               dbus
-              systemd
-            ];
+            ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.systemd ];
 
             nativeBuildInputs = with pkgs; [
               pkg-config
