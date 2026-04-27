@@ -25,21 +25,21 @@ macro_rules! create_udev_event {
     ($material:expr, $payload_type:ident, $action:expr, $device_path:expr, $device_type:expr,
      $subsystem:expr, $devtype:expr, $vendor:expr, $model:expr, $serial:expr,
      $properties:expr, $timestamp:expr) => {{
-        let event = Event::new(
-            $payload_type {
-                action: $action,
-                device_path: $device_path.to_string(),
-                device_type: $device_type,
-                subsystem: $subsystem,
-                devtype: $devtype,
-                vendor: $vendor,
-                model: $model,
-                serial: $serial,
-                properties: $properties,
-                timestamp: $timestamp,
-            },
-            $material.initial_provenance(),
-        )
+        let event = Event::builder($payload_type {
+            action: $action,
+            device_path: $device_path.to_string(),
+            device_type: $device_type,
+            subsystem: $subsystem,
+            devtype: $devtype,
+            vendor: $vendor,
+            model: $model,
+            serial: $serial,
+            properties: $properties,
+            timestamp: $timestamp,
+        })
+        .with_provenance($material.initial_provenance())
+        .build()
+        .expect("valid provenance: builder always sets it")
         .to_json_event()?;
 
         Ok(event)

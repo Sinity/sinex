@@ -311,17 +311,17 @@ impl SelfObserver {
             }
         };
 
-        let mut event = Event::new(
-            payload,
-            Provenance::from_material(
+        let mut event = Event::builder(payload)
+            .with_provenance(Provenance::from_material(
                 Id::<SourceMaterial>::from_uuid(anchor.material_id),
                 anchor.offset_start,
                 Some(anchor.offset_start),
                 Some(anchor.offset_end),
-            ),
-        )
-        .with_timestamp(ts_orig)
-        .with_host(host);
+            ))
+            .build()
+            .expect("valid provenance: builder always sets it")
+            .with_timestamp(ts_orig)
+            .with_host(host);
         let event_id = deterministic_material_event_id(
             event.source.as_str(),
             event.event_type.as_str(),
