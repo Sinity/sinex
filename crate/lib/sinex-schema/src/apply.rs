@@ -484,6 +484,7 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
 
 async fn create_triggers_and_functions(pool: &PgPool) -> Result<(), ApplyError> {
     execute_sql(pool, Events::create_no_update_trigger_sql()).await?;
+    execute_sql(pool, Events::create_payload_validation_trigger_sql()).await?;
     execute_sql(pool, ArchivedEvents::create_archive_trigger_sql()).await?;
     execute_sql(pool, TemporalLedger::create_append_only_trigger_sql()).await?;
     execute_sql(pool, &Entities::create_updated_at_trigger_sql()).await?;
