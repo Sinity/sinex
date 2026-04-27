@@ -305,7 +305,7 @@ impl JetStreamEventConsumer {
             PullConsumerSpec::new(stream_name.to_string(), self.config.consumer_name.clone());
         spec.filter_subject = Some(filter.to_string());
         spec.max_ack_pending = self.config.max_ack_pending;
-        spec.max_deliver = -1;
+        spec.max_deliver = 10;
         spec.ack_wait = Duration::from_secs(30);
         spec.deliver_policy = self.config.deliver_policy;
         ensure_pull_consumer(js, &spec).await
