@@ -117,23 +117,34 @@ pub async fn handle_nodes_list_active(pool: &PgPool, params: Value) -> Result<Va
 
     let nodes = live_nodes
         .into_iter()
-        .map(|node| {
-            Ok(NodeInfo {
-                node_name: node.node_name,
-                node_type: node.node_type,
-                version: node.version,
-                description: node.description,
-                service_name: node.service_name,
-                instance_id: node.instance_id,
-                node_run_id: node.node_run_id,
-                host: node.host,
-                status: node.status,
-                last_heartbeat_at: node.last_heartbeat_at,
-                started_at: node.started_at,
-                heartbeat_source: NodeHeartbeatSource::parse(&node.heartbeat_source)?,
-            })
+        .filter_map(|node| {
+            match NodeHeartbeatSource::parse(&node.heartbeat_source) {
+                Ok(heartbeat_source) => Some(NodeInfo {
+                    node_name: node.node_name,
+                    node_type: node.node_type,
+                    version: node.version,
+                    description: node.description,
+                    service_name: node.service_name,
+                    instance_id: node.instance_id,
+                    node_run_id: node.node_run_id,
+                    host: node.host,
+                    status: node.status,
+                    last_heartbeat_at: node.last_heartbeat_at,
+                    started_at: node.started_at,
+                    heartbeat_source,
+                }),
+                Err(error) => {
+                    tracing::warn!(
+                        service_name = %node.service_name,
+                        heartbeat_source = %node.heartbeat_source,
+                        error = %error,
+                        "Skipping node with unrecognised heartbeat_source in listing"
+                    );
+                    None
+                }
+            }
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Vec<_>>();
 
     let response = NodesListActiveResponse { nodes };
     serde_json::to_value(response).map_err(|e| {
