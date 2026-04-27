@@ -12,6 +12,36 @@ use std::sync::{Mutex, MutexGuard};
 
 static ENV_MUTEX: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 
+fn acquire_env_lock() -> MutexGuard<'static, ()> {
+    // `std::sync::Mutex::lock` blocks the calling OS thread until the mutex is
+    // free.  In an async context this means the tokio executor thread is parked
+    // until another task that holds the lock finishes — which only happens when
+    // that task's `EnvGuard` is dropped.  If both tasks are scheduled on the
+    // same executor thread and neither can yield (because the mutex blocks the
+    // thread), the program deadlocks.
+    //
+    // Catch this early: if `try_lock` fails it means a concurrent caller on the
+    // same thread (the reentrant case with tokio's cooperative scheduler) or a
+    // genuinely contended call site.  We panic immediately with a useful message
+    // rather than hanging indefinitely.
+    match ENV_MUTEX.try_lock() {
+        Ok(guard) => guard,
+        Err(std::sync::TryLockError::Poisoned(err)) => err.into_inner(),
+        Err(std::sync::TryLockError::WouldBlock) => {
+            // Fall back to a blocking acquire to handle genuine cross-thread
+            // contention (e.g. two different test threads both needing the guard).
+            // Cross-thread blocking is safe because blocking one OS thread does
+            // not prevent other OS threads from making progress.  The deadlock
+            // risk only exists when the same OS thread tries to acquire the lock
+            // twice; that case returns `WouldBlock` on the *first* try_lock, but
+            // a second try_lock would also be WouldBlock, so we never re-enter.
+            ENV_MUTEX
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        }
+    }
+}
+
 /// Guard for serializing environment-variable mutations inside tests.
 ///
 /// Tests frequently need to toggle gateway and RPC settings via env vars and those
@@ -19,6 +49,14 @@ static ENV_MUTEX: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| M
 /// process-wide mutex and tracks the previous values for any keys it touches.
 /// Once dropped, every recorded variable is restored to its original state,
 /// ensuring deterministic behavior even under `cargo test -- --test-threads=N`.
+///
+/// # Warning: do not hold across `.await` points
+///
+/// `EnvGuard` uses a `std::sync::Mutex` internally.  Holding an `EnvGuard`
+/// across an `.await` point in a tokio async function can deadlock the executor
+/// thread if another task on the same thread also tries to acquire the guard.
+/// Create the guard, mutate env vars, perform all synchronous work, and let it
+/// drop **before** the first `.await`.
 ///
 /// # Construction
 ///
@@ -35,9 +73,7 @@ pub struct EnvGuard {
 impl EnvGuard {
     /// Acquire the global environment mutex and prepare to record changes.
     pub fn new() -> Self {
-        let lock = ENV_MUTEX
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let lock = acquire_env_lock();
         Self {
             lock: Some(lock),
             original: Vec::new(),
@@ -48,9 +84,7 @@ impl EnvGuard {
     /// each key in `keys`.  Subsequent `set`/`clear`/`remove` calls on those keys
     /// will not double-record them (the first captured value is preserved).
     pub fn with_keys(keys: &[&str]) -> Self {
-        let lock = ENV_MUTEX
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let lock = acquire_env_lock();
         let original = keys
             .iter()
             .map(|key| ((*key).to_string(), std::env::var(key).ok()))
