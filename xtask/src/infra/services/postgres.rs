@@ -4,6 +4,32 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+/// Validate a PostgreSQL identifier (role name, database name) against a strict allowlist.
+///
+/// Accepts only lowercase letters, digits, and underscores; must start with a letter or
+/// underscore; length bounded to 63 bytes (PostgreSQL identifier limit).  This rejects
+/// anything that could escape a bare (un-quoted) identifier context and prevents SQL
+/// injection via `format!`-constructed DDL statements.
+fn validate_pg_identifier(ident: &str, kind: &str) -> Result<()> {
+    let valid = !ident.is_empty()
+        && ident.len() <= 63
+        && ident
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && ident
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if valid {
+        Ok(())
+    } else {
+        bail!(
+            "invalid PostgreSQL {kind} identifier {:?}: must match [a-zA-Z_][a-zA-Z0-9_]{{0,62}}",
+            ident
+        )
+    }
+}
+
 const MANAGED_CONFIG_BEGIN: &str = "# >>> sinex-dev managed configuration >>>";
 const MANAGED_CONFIG_END: &str = "# <<< sinex-dev managed configuration <<<";
 const LEGACY_CONFIG_MARKER: &str = "# sinex-dev configuration";
@@ -350,6 +376,7 @@ impl PostgresManager {
     }
 
     pub fn drop_db(&self, db: &str, creator: &str) -> Result<()> {
+        validate_pg_identifier(db, "database")?;
         // WITH (FORCE) terminates any remaining connections before dropping (PG 13+)
         self.psql(
             creator,
@@ -360,6 +387,8 @@ impl PostgresManager {
     }
 
     pub fn ensure_db(&self, db: &str, owner: &str, creator: &str) -> Result<()> {
+        validate_pg_identifier(db, "database")?;
+        validate_pg_identifier(owner, "role")?;
         let exists = self.psql(
             creator,
             "postgres",
@@ -485,6 +514,7 @@ impl PostgresManager {
     where
         F: FnMut(&str, &str, &str) -> Result<String>,
     {
+        validate_pg_identifier(role, "role")?;
         let exists = psql(
             creator,
             "postgres",
