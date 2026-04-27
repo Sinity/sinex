@@ -333,7 +333,9 @@ async fn test_invalid_configuration_handling(ctx: TestContext) -> TestResult<()>
     for (source, event_type) in test_cases {
         let (Ok(source), Ok(event_type)) = (EventSource::new(source), EventType::new(event_type))
         else {
-            continue;
+            panic!(
+                "test data invalid: source or event_type failed to parse for ({source}, {event_type})"
+            );
         };
         let event = DynamicPayload::new(source, event_type, json!({"test": "invalid"}))
             .from_material(material.id)
