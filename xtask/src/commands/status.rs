@@ -304,12 +304,16 @@ fn collect_runtime_metrics(runtime_db_url: Result<Option<String>>) -> Option<Run
 fn collect_runtime_metrics_if_postgres_ready(
     pg_probe: &PostgresProbe,
     runtime_db_url: Result<Option<String>>,
+    target_kind: RuntimeTargetKind,
 ) -> Option<RuntimeMetrics> {
-    if pg_probe.ready() {
-        collect_runtime_metrics(runtime_db_url)
-    } else {
-        Some(RuntimeMetrics::unavailable())
+    // Only gate on the local dev-stack probe when the runtime target IS that
+    // local stack.  For deployed or VM targets the runtime database is a
+    // separate system; skipping it because the local dev Postgres is not
+    // running would silently suppress valid runtime telemetry.
+    if target_kind == RuntimeTargetKind::DevCheckout && !pg_probe.ready() {
+        return Some(RuntimeMetrics::unavailable());
     }
+    collect_runtime_metrics(runtime_db_url)
 }
 
 fn describe_thread_panic(payload: &(dyn Any + Send)) -> String {
@@ -1133,6 +1137,7 @@ async fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
     let gateway_url = runtime_target.gateway.base_url.clone();
     let runtime_db_url =
         resolve_runtime_metrics_database_url(runtime_target.database.url.as_deref());
+    let runtime_target_kind = runtime_target.kind.clone();
 
     let threaded_stage_started_at = Instant::now();
     let (
@@ -1155,7 +1160,7 @@ async fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
             let infra_duration = started_at.elapsed();
 
             let runtime_metrics_started_at = Instant::now();
-            let runtime_metrics = collect_runtime_metrics_if_postgres_ready(&pg, runtime_db_url);
+            let runtime_metrics = collect_runtime_metrics_if_postgres_ready(&pg, runtime_db_url, runtime_target_kind);
             let runtime_duration = runtime_metrics_started_at.elapsed();
 
             (
@@ -2367,6 +2372,7 @@ async fn collect_status_data(
         .ok()
         .and_then(|value| value.as_ref())
         .is_some();
+    let runtime_target_kind = runtime_target.kind.clone();
 
     let threaded_stage_started_at = Instant::now();
     let (pg_probe, nats_probe, runtime_metrics, jobs, history) = std::thread::scope(|s| {
@@ -2378,7 +2384,7 @@ async fn collect_status_data(
             let infra_duration = started_at.elapsed();
 
             let runtime_metrics_started_at = Instant::now();
-            let runtime_metrics = collect_runtime_metrics_if_postgres_ready(&pg, runtime_db_url);
+            let runtime_metrics = collect_runtime_metrics_if_postgres_ready(&pg, runtime_db_url, runtime_target_kind);
             let runtime_duration = runtime_metrics_started_at.elapsed();
 
             (
@@ -3669,6 +3675,7 @@ mod tests {
             Ok(Some(
                 "postgresql:///sinex_dev?host=/tmp/never-used".to_string(),
             )),
+            RuntimeTargetKind::DevCheckout,
         )
         .unwrap_or_else(|| panic!("expected runtime metrics placeholder"));
 
