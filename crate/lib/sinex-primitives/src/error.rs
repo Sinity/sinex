@@ -136,7 +136,7 @@ impl SinexError {
             SinexError::Validation(_) => ErrorClass::DataError,
             SinexError::Parse(_) => ErrorClass::DataError,
             SinexError::Serialization(_) => ErrorClass::DataError,
-            SinexError::Processing(_) => ErrorClass::DataError,
+            SinexError::Processing(_) => ErrorClass::TransientInfra,
             SinexError::Automaton(_) => ErrorClass::DataError,
             SinexError::NotFound(_) => ErrorClass::DataError,
             SinexError::AlreadyExists(_) => ErrorClass::DataError,

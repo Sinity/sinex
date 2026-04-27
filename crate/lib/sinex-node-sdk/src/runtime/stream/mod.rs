@@ -3237,27 +3237,32 @@ impl<T: Node + 'static> NodeRunner<T> {
                 Ok(stats.processed as u64)
             }
             Err(batch_err) => {
-                // Checkpoint errors are permanent (the KV revision will never
-                // match) and apply to the entire node, not to any one event.
-                // Per-event DLQ fallback would route every event in the batch
-                // — and every subsequent batch — to DLQ while the node keeps
-                // consuming, generating an unbounded log/IO storm. Issue #581
-                // observed 221K consecutive failures producing 1.6M journal
-                // entries and 54 GB of NATS traffic on sinnix-prime before
-                // I/O saturation halted the host.
+                // Fatal errors (NodeFatal, TransportDegraded) apply to the
+                // entire node, not to any one event. Per-event DLQ fallback
+                // would route every event in the batch — and every subsequent
+                // batch — to DLQ while the node keeps consuming, generating
+                // an unbounded log/IO storm. Issue #581 observed 221K
+                // consecutive failures producing 1.6M journal entries and
+                // 54 GB of NATS traffic on sinnix-prime before I/O saturation
+                // halted the host.
                 //
-                // Propagate the checkpoint error directly so the runtime
-                // halts the node and signals for operator intervention.
-                if matches!(batch_err, SinexError::Checkpoint(_)) {
+                // Use the new error_class() classification instead of
+                // hardcoding individual variants. Checkpoint, Lifecycle,
+                // Configuration, PermissionDenied, and live-context
+                // ChannelSend are all NodeFatal.
+                let error_class = batch_err.error_class();
+                if error_class.is_fatal() {
                     error!(
                         error = %batch_err,
+                        ?error_class,
                         batch_size,
-                        "Checkpoint error in batch processing; halting node (per-event DLQ fallback would loop on every event)"
+                        "Fatal error in batch processing; halting node (per-event DLQ fallback would loop on every event)"
                     );
                     return Err(batch_err);
                 }
                 warn!(
                     error = %batch_err,
+                    ?error_class,
                     batch_size,
                     "Batch processing failed; falling back to per-event processing with DLQ routing"
                 );
@@ -3269,12 +3274,9 @@ impl<T: Node + 'static> NodeRunner<T> {
                             succeeded += stats.processed as u64;
                         }
                         Err(event_err) => {
-                            // Same defense as the batch path — checkpoint
-                            // errors are not data errors; DLQ routing will
-                            // not help, and retrying the next event will hit
-                            // the exact same KV-revision conflict. Halt
-                            // immediately. Tracks #581.
-                            if matches!(event_err, SinexError::Checkpoint(_)) {
+                            // Same defense as the batch path — fatal errors
+                            // are not data errors. Halt immediately.
+                            if event_err.error_class().is_fatal() {
                                 error!(
                                     error = %event_err,
                                     "Checkpoint error during per-event fallback; halting node"
