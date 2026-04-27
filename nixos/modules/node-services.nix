@@ -486,6 +486,9 @@ let
               "SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS=${toString coreCfg.ingestd.schemaReloadIntervalSecs}"
               "SINEX_INGESTD_STATS_LOG_INTERVAL_SECS=${toString coreCfg.ingestd.statsLogIntervalSecs}"
             ]
+            ++ lib.optional (
+              coreCfg.ingestd.blobGcIntervalSecs != null
+            ) "SINEX_INGESTD_BLOB_GC_INTERVAL_SECS=${toString coreCfg.ingestd.blobGcIntervalSecs}"
           )
           {
             ExecStart = mkDatabasePasswordExec {

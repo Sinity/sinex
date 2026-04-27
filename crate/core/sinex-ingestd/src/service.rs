@@ -381,6 +381,17 @@ impl IngestService {
             self.track_task(handle).await;
         }
 
+        if let (Some(interval_secs), Some(pool)) =
+            (self.config.blob_gc_interval_secs, self.db_pool.clone())
+        {
+            let handle = self.start_blob_gc_task(pool, Duration::from_secs(interval_secs));
+            self.track_task(handle).await;
+            info!(
+                interval_secs,
+                "Automatic blob garbage collection task started"
+            );
+        }
+
         // Start GitOps sync service if enabled
         if self.config.gitops_enabled {
             if let Some(ref pool) = self.db_pool {
@@ -993,6 +1004,59 @@ impl IngestService {
                                 retained = ready_set.len(),
                                 "Evicted stale materials from MaterialReadySet background maintenance"
                             );
+                        }
+                    }
+                    () = sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+                        break;
+                    }
+                }
+            }
+        })
+    }
+
+    fn start_blob_gc_task(&self, pool: PgPool, interval_duration: Duration) -> JoinHandle<()> {
+        let shutdown_flag = self.shutdown_flag.clone();
+        let shutdown_notify = self.shutdown_notify.clone();
+        let content_store_path = self.config.content_store_path.clone();
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(interval_duration);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let content_store = match MaterialContentStore::new(ContentStoreConfig {
+                            root_path: content_store_path.clone(),
+                            num_copies: None,
+                            large_files: None,
+                        }) {
+                            Ok(store) => store,
+                            Err(error) => {
+                                warn!(error = %error, path = %content_store_path, "blob GC sweep failed to open content store");
+                                continue;
+                            }
+                        };
+
+                        match sinex_node_sdk::content_store::gc::sweep_orphans(
+                            &pool,
+                            &content_store,
+                            true,
+                        )
+                        .await
+                        {
+                            Ok(report) => {
+                                info!(
+                                    total_unused = report.total_unused,
+                                    db_backed = report.db_backed,
+                                    orphaned = report.orphaned,
+                                    dropped = report.dropped,
+                                    "blob GC sweep complete"
+                                );
+                            }
+                            Err(error) => {
+                                warn!(error = %error, "blob GC sweep failed");
+                            }
                         }
                     }
                     () = sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
@@ -1678,6 +1742,44 @@ mod tests {
         tokio::time::timeout(Duration::from_millis(200), service.shutdown())
             .await
             .expect("maintenance task should observe shutdown without waiting for its interval")?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn blob_gc_task_stops_promptly_on_shutdown() -> xtask::sandbox::TestResult<()> {
+        // We cannot easily seed a real content store without git-annex, but we
+        // can verify the spawned GC task observes the shutdown flag without
+        // waiting for its full interval. Use a dummy non-existent path; the
+        // first sweep will fail (warn-and-continue) but shutdown still wins.
+        let mut service = test_service();
+        // Use a long interval so the task is reliably parked in `interval.tick`
+        // when shutdown fires, exercising the shutdown branch of the select.
+        let interval_duration = Duration::from_secs(60);
+        // Drive the path through the spawn helper directly with a placeholder
+        // pool — we never actually tick because we shut down immediately.
+        // The placeholder pool is constructed via a lazy connect string; we
+        // never use it because the first interval tick fires after our long
+        // delay. We keep things honest by only exercising the shutdown branch.
+        let pool = sqlx::PgPool::connect_lazy("postgres://invalid/invalid")
+            .expect("lazy pool construction should not contact the server");
+        let handle = service.start_blob_gc_task(pool, interval_duration);
+        service.task_handles.lock().await.push(handle);
+
+        tokio::time::timeout(Duration::from_millis(200), service.shutdown())
+            .await
+            .expect("blob GC task should observe shutdown without waiting for its interval")?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn blob_gc_disabled_by_default() -> xtask::sandbox::TestResult<()> {
+        // Default config has `blob_gc_interval_secs = None`. The construction
+        // path in `IngestService::run()` only spawns the GC task when the
+        // interval is `Some(_)`, so a freshly built test service must have
+        // zero registered tasks regardless of any other startup wiring.
+        let service = test_service();
+        assert_eq!(service.config.blob_gc_interval_secs, None);
+        assert_eq!(service.task_handles.lock().await.len(), 0);
         Ok(())
     }
 
