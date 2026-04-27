@@ -1542,7 +1542,20 @@ impl DatabasePool {
         pid: u32,
         start_time: std::time::Instant,
     ) -> std::result::Result<TestDatabase, ()> {
-        release_slot(slot, pool, &mut lock_conn, lock_id).await;
+        // Do NOT call release_slot() here: that would transiently set in_use=false,
+        // creating a window where another concurrent acquire can grab this slot while
+        // we are still recreating it.  Instead release only the advisory lock and
+        // close the pool, keeping in_use=true for the full duration of the recreate.
+        let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+            .bind(lock_id)
+            .execute(lock_conn.as_mut())
+            .await;
+        let () = pool.close().await;
+        {
+            let mut pool_opt = slot.pool.lock();
+            *pool_opt = None;
+        }
+        // in_use stays true — no other task should acquire this slot.
 
         if let Err(recreate_err) = recreate_pool_database(&slot.name, &slot.url).await {
             slog!(
@@ -1551,16 +1564,21 @@ impl DatabasePool {
                 slot = slot.name,
                 error = recreate_err
             );
+            // Quarantine and release in_use so the slot is not permanently stuck.
             slot.quarantined.store(true, Ordering::SeqCst);
+            slot.in_use.store(false, Ordering::Release);
             return Err(());
         }
 
         slot.schema_verified.store(true, Ordering::SeqCst);
 
         let Some(pool) = try_connect_to_slot(slot, self.slot_max_connections).await else {
+            // Could not reconnect after recreate; give up on this slot.
+            slot.in_use.store(false, Ordering::Release);
             return Err(());
         };
         let Some(mut lock_conn) = try_advisory_lock_slot(&pool, slot).await else {
+            slot.in_use.store(false, Ordering::Release);
             return Err(());
         };
 

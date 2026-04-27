@@ -1204,14 +1204,6 @@ impl HistoryDb {
         Ok(())
     }
 
-    /// Clear the synthetic marker (called on first real `start_invocation`).
-    fn clear_synthetic(&self) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM metadata WHERE key = 'synthetic'", [])
-            .context("failed to clear synthetic marker")?;
-        Ok(())
-    }
-
     /// Print a one-time-per-process warning if this database is synthetic.
     ///
     /// Suppressed when `XTASK_SYNTHETIC_HISTORY=allow` is set (exercises use this).
@@ -1252,19 +1244,41 @@ impl HistoryDb {
         let cwd = capture_working_directory(std::env::current_dir());
         let started_at = Timestamp::now().format_rfc3339();
 
-        // Transition from synthetic to real: clear the marker on first real write.
-        if self.is_synthetic {
-            self.clear_synthetic()?;
-        }
-
+        // Transition from synthetic to real: clear the marker and insert the
+        // invocation row atomically so a crash between the two cannot leave the
+        // DB in a state where the synthetic marker is gone but no real row exists.
+        let is_synthetic = self.is_synthetic;
         with_sqlite_lock_retry("start invocation history row", || {
-            self.conn.execute(
+            self.conn.execute("BEGIN", [])?;
+            if is_synthetic {
+                match self
+                    .conn
+                    .execute("DELETE FROM metadata WHERE key = 'synthetic'", [])
+                {
+                    Ok(_) => {}
+                    Err(err) => {
+                        let _ = self.conn.execute("ROLLBACK", []);
+                        return Err(color_eyre::eyre::Report::from(err))
+                            .wrap_err("failed to clear synthetic marker");
+                    }
+                }
+            }
+            let result = self.conn.execute(
                 r"
                 INSERT INTO invocations (command, subcommand, profile, args_json, git_commit, git_dirty, started_at, host, cwd, status)
                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'running')
                 ",
                 params![command, subcommand, profile, args_json, git_commit, git_dirty, started_at, host, cwd],
-            )?;
+            );
+            match result {
+                Ok(_) => {
+                    self.conn.execute("COMMIT", [])?;
+                }
+                Err(err) => {
+                    let _ = self.conn.execute("ROLLBACK", []);
+                    return Err(err.into());
+                }
+            }
             Ok(())
         })?;
 
@@ -1697,21 +1711,30 @@ impl HistoryDb {
             return Ok(0);
         }
 
-        let placeholders: Vec<&str> = invocation_ids.iter().map(|_| "?").collect();
-        let sql = format!(
-            r"
-            UPDATE invocations
-            SET status = 'cancelled',
-                finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-                duration_secs = (julianday('now') - julianday(started_at)) * 86400
-            WHERE id IN ({})
-            ",
-            placeholders.join(",")
-        );
-
-        self.conn
-            .execute(&sql, rusqlite::params_from_iter(invocation_ids.iter()))
-            .context("failed to mark stale invocations as cancelled")
+        // SQLite bind-variable limit is ~999; chunk at 500 for safety.
+        // Guard with status IN ('running', 'pending') to avoid double-cancelling
+        // rows that another process already transitioned to a terminal state.
+        const BATCH: usize = 500;
+        let mut total_cancelled = 0usize;
+        for chunk in invocation_ids.chunks(BATCH) {
+            let placeholders: Vec<&str> = chunk.iter().map(|_| "?").collect();
+            let sql = format!(
+                r"
+                UPDATE invocations
+                SET status = 'cancelled',
+                    finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+                    duration_secs = (julianday('now') - julianday(started_at)) * 86400
+                WHERE id IN ({})
+                  AND status IN ('running', 'pending')
+                ",
+                placeholders.join(",")
+            );
+            total_cancelled += self
+                .conn
+                .execute(&sql, rusqlite::params_from_iter(chunk.iter()))
+                .context("failed to mark stale invocations as cancelled")?;
+        }
+        Ok(total_cancelled)
     }
 
     fn mark_background_jobs_orphaned(&self, background_job_ids: &[i64]) -> Result<()> {
@@ -1719,20 +1742,25 @@ impl HistoryDb {
             return Ok(());
         }
 
-        let placeholders: Vec<&str> = background_job_ids.iter().map(|_| "?").collect();
-        let sql = format!(
-            r"
-            UPDATE background_jobs
-            SET job_status = 'orphaned',
-                finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-            WHERE id IN ({})
-            ",
-            placeholders.join(",")
-        );
-
-        self.conn
-            .execute(&sql, rusqlite::params_from_iter(background_job_ids.iter()))
-            .context("failed to mark stale background jobs as orphaned")?;
+        // SQLite bind-variable limit is ~999; chunk at 500 for safety.
+        // Guard with job_status = 'running' to avoid overwriting terminal states.
+        const BATCH: usize = 500;
+        for chunk in background_job_ids.chunks(BATCH) {
+            let placeholders: Vec<&str> = chunk.iter().map(|_| "?").collect();
+            let sql = format!(
+                r"
+                UPDATE background_jobs
+                SET job_status = 'orphaned',
+                    finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                WHERE id IN ({})
+                  AND job_status = 'running'
+                ",
+                placeholders.join(",")
+            );
+            self.conn
+                .execute(&sql, rusqlite::params_from_iter(chunk.iter()))
+                .context("failed to mark stale background jobs as orphaned")?;
+        }
         Ok(())
     }
 
@@ -4117,7 +4145,10 @@ impl HistoryDb {
         job_id: i64,
         command: Option<&str>,
     ) -> Result<Option<i64>> {
-        let id = if let Some(cmd) = command {
+        // `invocation_id` is nullable in background_jobs — use Option<i64> to
+        // distinguish "row not found" (outer None) from "row found but NULL id"
+        // (inner None), then flatten both into Option<i64>.
+        let id: Option<Option<i64>> = if let Some(cmd) = command {
             self.conn
                 .query_row(
                     r"
@@ -4128,7 +4159,7 @@ impl HistoryDb {
                     LIMIT 1
                     ",
                     params![job_id, cmd],
-                    |row| row.get(0),
+                    |row| row.get::<_, Option<i64>>(0),
                 )
                 .optional()?
         } else {
@@ -4136,11 +4167,11 @@ impl HistoryDb {
                 .query_row(
                     r"SELECT invocation_id FROM background_jobs WHERE id = ?1 LIMIT 1",
                     params![job_id],
-                    |row| row.get(0),
+                    |row| row.get::<_, Option<i64>>(0),
                 )
                 .optional()?
         };
-        Ok(id)
+        Ok(id.flatten())
     }
 
     /// Resolve an invocation selector to a concrete invocation ID.
