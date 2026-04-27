@@ -337,6 +337,15 @@ impl XtaskCommand for DoctorCommand {
                 }
                 result.warnings.extend(remediation_warnings);
             }
+
+            // Re-run diagnostics to reflect the post-remediation state.  The
+            // initial `result` was captured before any fixes were applied; without
+            // this refresh, callers see stale `overall: false` even after a
+            // successful infra restart.
+            if let Ok(fresh) = execute_doctor(self.pipelines, ctx) {
+                result.data = fresh.data;
+                result.status = fresh.status;
+            }
         }
 
         Ok(result)
