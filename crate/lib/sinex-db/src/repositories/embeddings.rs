@@ -19,6 +19,38 @@ impl<'a> EmbeddingRepository<'a> {
         dimensions: i32,
         metadata: &serde_json::Value,
     ) -> DbResult<Uuid> {
+        // Validate the requested dimension count against the column's declared
+        // typmod (set when pgvector extension creates the column). A mismatch
+        // causes a silent runtime cast error or wrong-shape vectors later.
+        let declared_dim: Option<i32> = sqlx::query_scalar!(
+            r#"
+            SELECT ((a.atttypmod - 4) / 4)::int4 as "dim"
+            FROM pg_catalog.pg_attribute a
+            JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'core'
+              AND c.relname = 'event_embeddings'
+              AND a.attname = 'embedding'
+              AND a.atttypmod > 0
+            "#,
+        )
+        .fetch_optional(self.pool)
+        .await?;
+
+        if let Some(declared) = declared_dim {
+            if declared != dimensions {
+                return Err(super::common::db_error(
+                    sqlx::Error::ColumnDecode {
+                        index: "embedding".into(),
+                        source: Box::new(std::io::Error::other(format!(
+                            "dimension mismatch: requested {dimensions} but column declares {declared}"
+                        ))),
+                    },
+                    "register_model: dimension mismatch against pg_catalog",
+                ));
+            }
+        }
+
         let row = sqlx::query_scalar!(
             r#"
             INSERT INTO core.embedding_models (provider, model_name, dimensions, metadata)
@@ -68,11 +100,15 @@ impl<'a> EmbeddingRepository<'a> {
         embedding: &[f32],
     ) -> DbResult<Uuid> {
         let embedding_str = format_vector(embedding);
+        // Use DO UPDATE … RETURNING so we always get back the real persisted ID
+        // rather than generating a synthetic UUID when the row already exists.
         let row = sqlx::query!(
             r#"
             INSERT INTO core.event_embeddings (event_id, embedding_model_id, embedded_text, embedding)
             VALUES ($1, $2, $3, $4::text::vector)
-            ON CONFLICT DO NOTHING
+            ON CONFLICT (event_id, embedding_model_id) DO UPDATE SET
+                embedded_text = EXCLUDED.embedded_text,
+                embedding = EXCLUDED.embedding
             RETURNING id as "id!"
             "#,
             event_id,
@@ -80,9 +116,9 @@ impl<'a> EmbeddingRepository<'a> {
             embedded_text,
             embedding_str,
         )
-        .fetch_optional(self.pool)
+        .fetch_one(self.pool)
         .await?;
-        Ok(row.map_or_else(Uuid::now_v7, |row| row.id))
+        Ok(row.id)
     }
 
     pub async fn search_similar(
@@ -155,7 +191,7 @@ impl<'a> EmbeddingRepository<'a> {
             ),
             combined AS (
                 SELECT COALESCE(v.event_id, f.event_id) as event_id,
-                       COALESCE(v.embedded_text, '') as embedded_text,
+                       v.embedded_text as embedded_text,
                        COALESCE(1.0::float8 / ($5::float8 + v.vector_rank::float8), 0.0::float8) as vector_rrf,
                        COALESCE(1.0::float8 / ($5::float8 + f.fts_rank::float8), 0.0::float8) as fts_rrf,
                        COALESCE(v.vector_similarity, 0.0::float8) as vector_similarity,
@@ -163,7 +199,7 @@ impl<'a> EmbeddingRepository<'a> {
                 FROM vector_results v
                 FULL OUTER JOIN fts_results f ON v.event_id = f.event_id
             )
-            SELECT event_id as "event_id!", embedded_text as "embedded_text!",
+            SELECT event_id as "event_id!", embedded_text as "embedded_text?: String",
                    (vector_rrf + fts_rrf) as "rrf_score!: f64",
                    vector_similarity as "vector_similarity!: f64",
                    fts_score as "fts_score!: f64"
@@ -300,7 +336,10 @@ pub struct SimilarityResult {
 #[derive(Debug)]
 pub struct HybridSearchResult {
     pub event_id: Uuid,
-    pub embedded_text: String,
+    /// The embedded text from the vector side of the hybrid search.
+    /// `None` when the result originates exclusively from the FTS path
+    /// (i.e. no matching vector embedding exists for this event).
+    pub embedded_text: Option<String>,
     pub rrf_score: f64,
     pub vector_similarity: f64,
     pub fts_score: f64,

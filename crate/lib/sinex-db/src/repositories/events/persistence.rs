@@ -2269,12 +2269,40 @@ impl<'a> EventRepository<'a> {
 
         let archived_count = result.rows_affected();
 
+        // Verify all requested roots were actually archived. The DELETE trigger
+        // copies matching rows to audit.archived_events; a count mismatch means
+        // some IDs were not found in core.events (already archived, tombstoned,
+        // or never existed).
+        let requested_count = ids.len() as u64;
+        if archived_count < requested_count {
+            let missing_count = requested_count - archived_count;
+            tracing::warn!(
+                operation_id = %operation_id,
+                requested = requested_count,
+                archived = archived_count,
+                missing = missing_count,
+                "archive_cascade: {missing_count} of {requested_count} requested root IDs were not \
+                 found in core.events (already archived, tombstoned, or never existed)"
+            );
+        }
+
         tx.commit().await.map_err(|e| {
             db_error(
                 e,
                 &format!("Failed to commit archive transaction (archived {archived_count} events)"),
             )
         })?;
+
+        if archived_count < requested_count {
+            let missing_count = requested_count - archived_count;
+            return Err(db_error(
+                sqlx::Error::RowNotFound,
+                &format!(
+                    "archive_cascade: {missing_count} of {requested_count} requested root IDs \
+                     were not present in core.events and could not be archived"
+                ),
+            ));
+        }
 
         tracing::info!(
             operation_id = %operation_id,
