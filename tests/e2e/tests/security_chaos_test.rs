@@ -4,8 +4,7 @@
 //! injections without crashing or corrupting data.
 
 use sinex_primitives::events::EventBuilder;
-use sinex_primitives::{DynamicPayload, Id, SourceMaterial, Timestamp};
-use std::time::Duration;
+use sinex_primitives::{DynamicPayload, Id, Pagination, SourceMaterial, Timestamp};
 use xtask::sandbox::events::EventPublisher;
 use xtask::sandbox::prelude::*;
 
@@ -127,7 +126,36 @@ async fn validator_rejects_null_byte_in_payload_string(ctx: TestContext) -> Test
     // Transport acceptance only means the envelope reached the pipeline. The
     // DB may still reject the payload and route it to the DLQ, which is the
     // expected behavior for embedded null bytes.
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    //
+    // Poll until event count from this source stabilizes (two consecutive
+    // checks return the same value) rather than sleeping a fixed duration.
+    // Null-byte payloads may be rejected by ingestd/DB before persisting, so
+    // the stable count may be anywhere from 0 to accepted_by_transport.
+    if accepted_by_transport > 0 {
+        let pool = scope.ctx().pool.clone();
+        let prev_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(usize::MAX));
+        let _ = WaitHelpers::wait_for_condition(
+            move || {
+                let pool = pool.clone();
+                let prev = prev_count.clone();
+                async move {
+                    let source = sinex_primitives::EventSource::from("security-null-test");
+                    let count = pool
+                        .events()
+                        .get_by_source(&source, Pagination::new(Some(100), None))
+                        .await
+                        .map(|v| v.len())
+                        .unwrap_or(0);
+                    let previous =
+                        prev.swap(count, std::sync::atomic::Ordering::SeqCst);
+                    // Stable when two consecutive polls return the same count.
+                    Ok::<bool, SinexError>(previous == count)
+                }
+            },
+            Timeouts::SHORT,
+        )
+        .await;
+    }
 
     let source = sinex_primitives::EventSource::from("security-null-test");
     let stored = scope
