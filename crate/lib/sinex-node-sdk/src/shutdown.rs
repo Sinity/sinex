@@ -51,50 +51,36 @@ pub async fn wait_for_os_shutdown_signal() -> std::io::Result<&'static str> {
     Ok("Ctrl+C")
 }
 
-/// Validate that a node name is safe to use as a filename component.
+/// Sanitize a node name for use as a filename component.
 ///
-/// Rejects empty names, names containing path separators or `..`, and any
-/// character outside `[a-zA-Z0-9_-]`.  This prevents a maliciously-crafted
-/// `node_name` from escaping the runtime directory via path traversal when
-/// the name is joined into a checkpoint file path.
-///
-/// # Errors
-///
-/// Returns an error string if the name fails validation.
-pub fn validate_node_name(node_name: &str) -> Result<(), String> {
-    if node_name.is_empty() {
-        return Err("node name must not be empty".to_string());
+/// Replaces any character that is not alphanumeric, `-`, or `_` with `_`.
+/// This prevents node names containing path separators from escaping the
+/// intended checkpoint directory.
+fn sanitize_node_name_for_filename(name: &str) -> String {
+    if name.is_empty() {
+        return "_".to_string();
     }
-    if !node_name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-    {
-        return Err(format!(
-            "node name {node_name:?} contains disallowed characters; \
-             only [a-zA-Z0-9_-] are permitted"
-        ));
-    }
-    Ok(())
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 /// Default checkpoint file path for a node.
-///
-/// # Panics
-///
-/// Panics if `node_name` fails [`validate_node_name`].  Node names are
-/// compile-time constants in production code, so a panic here indicates a
-/// programming error rather than a runtime condition.
 #[must_use]
 pub fn default_checkpoint_path(node_name: &str) -> PathBuf {
-    if let Err(e) = validate_node_name(node_name) {
-        panic!("invalid node name passed to default_checkpoint_path: {e}");
-    }
     let runtime_dir = env_nonempty_string_optional("SINEX_RUNTIME_DIR", "shutdown checkpoint path")
         .or_else(|| env_nonempty_string_optional("SINEX_WORK_DIR", "shutdown checkpoint path"))
         .map(PathBuf::from)
         .or_else(|| dirs::cache_dir().map(|dir| dir.join("sinex")))
         .unwrap_or_else(|| PathBuf::from("/tmp/sinex"));
-    runtime_dir.join(format!("{node_name}.checkpoint.json"))
+    let safe_name = sanitize_node_name_for_filename(node_name);
+    runtime_dir.join(format!("{safe_name}.checkpoint.json"))
 }
 
 fn env_nonempty_string_optional(var: &str, context: &str) -> Option<String> {

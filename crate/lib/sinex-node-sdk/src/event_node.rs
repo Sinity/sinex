@@ -168,6 +168,14 @@ impl EventBatcher {
         self.work_dir.join("sinex_event_recovery_spool.jsonl")
     }
 
+    /// Return the legacy dead-letter spool path used by older node versions.
+    ///
+    /// During `recover_recovery_spool_events`, if the canonical spool does not exist but the
+    /// legacy path does, the legacy file is migrated to the canonical name before replay.
+    fn legacy_recovery_spool_path(&self) -> PathBuf {
+        self.work_dir.join("sinex_dead_letter_events.json")
+    }
+
     /// Run the event batching loop
     pub async fn run(mut self) -> NodeResult<()> {
         info!(
@@ -176,7 +184,11 @@ impl EventBatcher {
             batch_timeout_ms = self.config.batch_timeout_ms,
             "Starting event batcher"
         );
-        self.recover_recovery_spool_events().await?;
+        // Non-fatal: recovery spool replay failure should not prevent the batcher from starting.
+        // Events that could not be replayed remain in the spool file for manual inspection.
+        if let Err(e) = self.recover_recovery_spool_events().await {
+            warn!(error = %e, "Recovery spool replay failed on startup; batcher will continue without it");
+        }
 
         let mut batch = Vec::with_capacity(self.config.batch_size);
         let mut ticker = interval(Duration::from_millis(self.config.batch_timeout_ms));
@@ -240,6 +252,32 @@ impl EventBatcher {
 
     async fn recover_recovery_spool_events(&self) -> NodeResult<()> {
         let recovery_spool_path = self.recovery_spool_path();
+
+        // Migrate legacy dead-letter spool file if the canonical path does not exist yet.
+        // This preserves events from nodes upgraded from older versions.
+        if !tokio::fs::try_exists(&recovery_spool_path).await.unwrap_or(false) {
+            let legacy_path = self.legacy_recovery_spool_path();
+            if tokio::fs::try_exists(&legacy_path).await.unwrap_or(false) {
+                match tokio::fs::rename(&legacy_path, &recovery_spool_path).await {
+                    Ok(()) => {
+                        info!(
+                            from = ?legacy_path,
+                            to = ?recovery_spool_path,
+                            "Migrated legacy dead-letter spool to canonical recovery spool path"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            from = ?legacy_path,
+                            to = ?recovery_spool_path,
+                            error = %e,
+                            "Could not migrate legacy dead-letter spool; events may be stranded"
+                        );
+                    }
+                }
+            }
+        }
+
         let file = match tokio::fs::File::open(&recovery_spool_path).await {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -253,10 +291,16 @@ impl EventBatcher {
             }
         };
 
+        // Maximum number of non-recoverable (malformed or publish-failed) lines to preserve
+        // in the rewritten spool file. Prevents unbounded growth when the spool file
+        // accumulates repeated failures.
+        const MAX_REMAINING_LINES: usize = 1_000;
+
         let mut lines = BufReader::new(file).lines();
         let mut remaining_lines = Vec::new();
         let mut recovered = 0_u64;
         let mut malformed = 0_u64;
+        let mut discarded = 0_u64;
 
         while let Some(line) = lines.next_line().await? {
             if line.trim().is_empty() {
@@ -267,12 +311,21 @@ impl EventBatcher {
                 Ok(event) => event,
                 Err(error) => {
                     malformed += 1;
-                    warn!(
-                        path = ?recovery_spool_path,
-                        error = %error,
-                        "Preserving malformed local recovery-spool entry during replay"
-                    );
-                    remaining_lines.push(line);
+                    if remaining_lines.len() >= MAX_REMAINING_LINES {
+                        discarded += 1;
+                        warn!(
+                            path = ?recovery_spool_path,
+                            error = %error,
+                            "Discarding malformed recovery-spool entry (remaining-lines cap reached)"
+                        );
+                    } else {
+                        warn!(
+                            path = ?recovery_spool_path,
+                            error = %error,
+                            "Preserving malformed local recovery-spool entry during replay"
+                        );
+                        remaining_lines.push(line);
+                    }
                     continue;
                 }
             };
@@ -282,13 +335,23 @@ impl EventBatcher {
             };
 
             if let Err(error) = publish_result {
-                warn!(
-                    path = ?recovery_spool_path,
-                    event_id = ?event.id,
-                    error = %error,
-                    "Preserving recovery-spool entry after replay publish failure"
-                );
-                remaining_lines.push(line);
+                if remaining_lines.len() >= MAX_REMAINING_LINES {
+                    discarded += 1;
+                    warn!(
+                        path = ?recovery_spool_path,
+                        event_id = ?event.id,
+                        error = %error,
+                        "Discarding unpublished recovery-spool entry (remaining-lines cap reached)"
+                    );
+                } else {
+                    warn!(
+                        path = ?recovery_spool_path,
+                        event_id = ?event.id,
+                        error = %error,
+                        "Preserving recovery-spool entry after replay publish failure"
+                    );
+                    remaining_lines.push(line);
+                }
                 continue;
             }
 
@@ -301,6 +364,7 @@ impl EventBatcher {
                 path = ?recovery_spool_path,
                 recovered,
                 malformed,
+                discarded,
                 "Replayed and removed leftover local recovery spool"
             );
             return Ok(());
@@ -311,6 +375,7 @@ impl EventBatcher {
             path = ?recovery_spool_path,
             recovered,
             malformed,
+            discarded,
             remaining = remaining_lines.len(),
             "Replayed local recovery spool partially; unreadable or unpublished entries were preserved"
         );
