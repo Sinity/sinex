@@ -50,7 +50,8 @@ use std::collections::HashSet;
 use crate::apply::ApplyError;
 use crate::schema::{
     Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations, EventAnnotations,
-    EventEmbeddings, Events, NodeManifests, OperationsLog, TableMeta, Tags, TaggedItems,
+    EventEmbeddings, EventPayloadSchemas, Events, NodeManifests, OperationsLog, TableMeta, Tags,
+    TaggedItems,
 };
 use sea_query::{
     Alias, ColumnDef, ColumnSpec, ForeignKeyCreateStatement, PostgresQueryBuilder, Table,
@@ -505,6 +506,41 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                 NamedConstraint {
                     name: "node_manifests_version_bounds",
                     expression: "length(version) BETWEEN 1 AND 64",
+                },
+                // pg_jsonschema validation: config_schema must be a JSON
+                // object (i.e. shaped like a JSON Schema document) when set.
+                NamedConstraint {
+                    name: "node_manifests_config_schema_object",
+                    expression: "config_schema IS NULL OR jsonb_matches_schema('{\"type\": \"object\"}'::json, config_schema)",
+                },
+            ],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("sinex_schemas.event_payload_schemas")?,
+            statement_fn: EventPayloadSchemas::create_table_statement,
+            named_constraints: vec![
+                // pg_jsonschema validation: schema_content is itself a JSON
+                // Schema document and must be a non-empty JSON object.
+                // Catches malformed schema registrations at write time
+                // instead of at validation time.
+                NamedConstraint {
+                    name: "event_payload_schemas_schema_content_object",
+                    expression: "jsonb_matches_schema('{\"type\": \"object\", \"minProperties\": 1}'::json, schema_content)",
+                },
+                NamedConstraint {
+                    name: "event_payload_schemas_source_bounds",
+                    expression: "length(source) BETWEEN 1 AND 128",
+                },
+                NamedConstraint {
+                    name: "event_payload_schemas_event_type_bounds",
+                    expression: "length(event_type) BETWEEN 1 AND 128",
+                },
+                NamedConstraint {
+                    name: "event_payload_schemas_schema_version_bounds",
+                    expression: "length(schema_version) BETWEEN 1 AND 64",
                 },
             ],
             foreign_keys: vec![],
