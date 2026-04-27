@@ -171,36 +171,47 @@ impl XtaskCommand for LintForbiddenCommand {
         check_test_utils_layering(&mut violations)?;
 
         let ast_grep = run_ast_grep_scan()?;
-        if ast_grep.has_findings() && ctx.is_human() {
-            eprintln!(
-                "ℹ ast-grep: {} error(s), {} warning(s), {} hint(s)",
-                ast_grep.error_count(),
-                ast_grep.warning_count(),
-                ast_grep.hint_count()
-            );
-        }
-        for finding in ast_grep.error_findings() {
-            violations.push(format!(
-                "{}:{}:{} [{}] {}",
-                finding.file, finding.line, finding.column, finding.rule_id, finding.message
-            ));
+        if let Some(ref ag) = ast_grep {
+            if ag.has_findings() && ctx.is_human() {
+                eprintln!(
+                    "ℹ ast-grep: {} error(s), {} warning(s), {} hint(s)",
+                    ag.error_count(),
+                    ag.warning_count(),
+                    ag.hint_count()
+                );
+            }
+            for finding in ag.error_findings() {
+                violations.push(format!(
+                    "{}:{}:{} [{}] {}",
+                    finding.file, finding.line, finding.column, finding.rule_id, finding.message
+                ));
+            }
+        } else if ctx.is_human() {
+            eprintln!("ℹ ast-grep not found in PATH — skipping structural lint checks");
         }
 
         if violations.is_empty() {
             if ctx.is_human() {
                 eprintln!("✅ No forbidden patterns found");
             }
+            let ast_grep_value = ast_grep
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()?
+                .unwrap_or(serde_json::Value::Null);
             let mut result = CommandResult::success()
                 .with_message("No forbidden patterns found")
                 .with_duration(ctx.elapsed())
                 .with_data(serde_json::json!({
-                    "ast_grep": ast_grep,
+                    "ast_grep": ast_grep_value,
                 }));
-            if ast_grep.warning_count() > 0 || ast_grep.hint_count() > 0 {
+            if let Some(ref ag) = ast_grep
+                && (ag.warning_count() > 0 || ag.hint_count() > 0)
+            {
                 result = result.with_detail(format!(
                     "ast-grep advisory findings: {} warning(s), {} hint(s)",
-                    ast_grep.warning_count(),
-                    ast_grep.hint_count()
+                    ag.warning_count(),
+                    ag.hint_count()
                 ));
             }
             return Ok(result);
@@ -507,10 +518,10 @@ struct AstGrepPosition {
     column: usize,
 }
 
-fn run_ast_grep_scan() -> Result<AstGrepSummary> {
+fn run_ast_grep_scan() -> Result<Option<AstGrepSummary>> {
     let workspace = workspace_root();
     let config_path = ast_grep_config_path();
-    let output = Command::new("ast-grep")
+    let output = match Command::new("ast-grep")
         .current_dir(&workspace)
         .arg("scan")
         .arg("--config")
@@ -529,12 +540,24 @@ fn run_ast_grep_scan() -> Result<AstGrepSummary> {
         .arg("!**/build.rs")
         .arg(".")
         .output()
-        .with_context(|| format!("failed to invoke ast-grep with {}", config_path.display()))?;
+    {
+        Ok(out) => out,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            // ast-grep is not installed in this environment (e.g. CI without the
+            // tool in PATH).  Treat this as a graceful skip rather than a hard
+            // failure so the rest of the lint checks still run.
+            return Ok(None);
+        }
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("failed to invoke ast-grep with {}", config_path.display()));
+        }
+    };
 
     ensure_ast_grep_completed(&output)?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_ast_grep_summary(&stdout)
+    parse_ast_grep_summary(&stdout).map(Some)
 }
 
 fn ensure_ast_grep_completed(output: &std::process::Output) -> Result<()> {

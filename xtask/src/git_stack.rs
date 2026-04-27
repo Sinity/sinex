@@ -1705,13 +1705,17 @@ fn collapse_loose_end_key(path: &str) -> Option<String> {
 
 fn resolve_repo_root(explicit: Option<&Path>) -> Result<PathBuf> {
     if let Some(explicit) = explicit {
-        return Ok(explicit.to_path_buf());
+        return explicit
+            .canonicalize()
+            .with_context(|| format!("failed to canonicalize explicit repo root '{}'", explicit.display()));
     }
 
     let cwd = std::env::current_dir().context("failed to determine current directory")?;
     let repo_root = git_stdout(&cwd, ["rev-parse", "--show-toplevel"])
         .context("failed to determine git repository root")?;
-    Ok(PathBuf::from(repo_root))
+    let path = PathBuf::from(repo_root);
+    path.canonicalize()
+        .with_context(|| format!("failed to canonicalize repo root '{}'", path.display()))
 }
 
 fn resolve_base_ref(repo_root: &Path, explicit: Option<&str>) -> Result<String> {
@@ -1757,6 +1761,23 @@ fn resolve_output_dir(
                 output_dir.display()
             );
         }
+
+        // Safety guard: refuse to recursively delete directories that are not
+        // inside the repo root.  An explicit --output-dir pointing outside the
+        // repo (e.g. `/`, `~`) combined with --force would otherwise destroy
+        // arbitrary filesystem content.
+        let canonical_output = output_dir
+            .canonicalize()
+            .with_context(|| format!("failed to canonicalize output dir '{}'", output_dir.display()))?;
+        if !canonical_output.starts_with(repo_root) {
+            bail!(
+                "refusing to remove output directory {} because it is outside the repository root {}; \
+                 use a path under the repo root or remove it manually",
+                canonical_output.display(),
+                repo_root.display()
+            );
+        }
+
         fs::remove_dir_all(&output_dir)
             .with_context(|| format!("failed to remove {}", output_dir.display()))?;
     }

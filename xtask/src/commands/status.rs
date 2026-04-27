@@ -209,6 +209,7 @@ async fn collect_core_service_statuses(
     gateway_url: Option<&str>,
     runtime_metrics: Option<&RuntimeMetrics>,
     active_jobs: &[crate::jobs::Job],
+    target_kind: &RuntimeTargetKind,
 ) -> Vec<ServiceStatus> {
     let ingestd = active_job_for_service("sinex-ingestd", active_jobs).map_or_else(
         || ingestd_service_status_from_runtime_metrics(runtime_metrics),
@@ -224,7 +225,13 @@ async fn collect_core_service_statuses(
         },
         |job| service_status_from_active_job("sinex-gateway", job),
     );
-    let gateway_force_probe = matches!(gateway_process.status, ServiceRunStatus::Running);
+    // For non-DevCheckout targets (deployed, VM) the gateway is not managed by a
+    // local xtask job, so basing `force_probe` on job presence would always
+    // produce `false` and map HTTP failures to `Stopped` rather than `Unknown`.
+    // Force the probe for any non-local runtime so the HTTP readiness result is
+    // interpreted correctly.
+    let gateway_force_probe = matches!(gateway_process.status, ServiceRunStatus::Running)
+        || !matches!(target_kind, RuntimeTargetKind::DevCheckout);
 
     vec![
         probe_gateway_service_status(gateway_url, gateway_force_probe, gateway_process.pid).await,
@@ -1317,6 +1324,7 @@ async fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
         gateway_url.as_deref(),
         runtime_metrics.as_ref(),
         &active_jobs_list,
+        &runtime_target_kind,
     )
     .await;
     emit_status_profile("summary.service_stage", service_stage_started_at);
@@ -2462,6 +2470,7 @@ async fn collect_status_data(
         gateway_url.as_deref(),
         runtime_metrics.as_ref(),
         &jobs.active,
+        &runtime_target_kind,
     )
     .await;
     emit_status_profile("full.service_stage", service_stage_started_at);
