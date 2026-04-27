@@ -180,8 +180,10 @@ async fn run_command_async(
     mut cmd: AsyncCommand,
     context: &'static str,
 ) -> NodeResult<std::process::Output> {
-    let _guard = content_store_process_lock().lock().await;
-    record_process_invocation(cmd.as_std().get_program(), false);
+    {
+        let _guard = content_store_process_lock().lock().await;
+        record_process_invocation(cmd.as_std().get_program(), false);
+    }
     cmd.output()
         .await
         .map_err(|e| SinexError::processing(context).with_source(e))
