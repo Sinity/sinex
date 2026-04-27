@@ -79,7 +79,13 @@ sinex_proptest! {
         context: ProcessingContext in arb_context()
     ) -> Result<()> {
         let result = engine().process(&text, context);
-        prop_assert!(!result.text.is_empty() || text.is_empty());
+        // result.text may be empty when:
+        // - text itself was empty, or
+        // - the privacy engine suppressed the entire input (result.suppressed = true)
+        prop_assert!(
+            !result.text.is_empty() || text.is_empty() || result.suppressed,
+            "Non-empty input produced empty output without suppression"
+        );
         Ok(())
     }
 }
@@ -182,6 +188,9 @@ sinex_proptest! {
         val2: String in "\\PC{0,50}",
         context: ProcessingContext in arb_context()
     ) -> Result<()> {
+        // When keys collide the JSON object collapses to one entry; skip that case
+        // to keep the two-key invariant meaningful.
+        prop_assume!(key1 != key2);
         let input = serde_json::json!({ &key1: val1, &key2: val2 });
         let output = engine().process_json(&input, context);
         prop_assert!(output.is_object(), "Output should remain an object");
@@ -199,11 +208,19 @@ sinex_proptest! {
         context: ProcessingContext in arb_context()
     ) -> Result<()> {
         let result = engine().process(&text, context);
+        // Assert unconditionally: suppression must imply empty text.
+        // The original guard `if result.suppressed` allowed the property to pass vacuously
+        // on every non-suppressed case without actually checking anything.
         if result.suppressed {
             prop_assert!(
                 result.text.is_empty(),
                 "Suppressed result should have empty text, got: {}",
                 result.text,
+            );
+        } else {
+            prop_assert!(
+                !result.text.is_empty(),
+                "Non-suppressed result with non-empty input should have non-empty text"
             );
         }
         Ok(())

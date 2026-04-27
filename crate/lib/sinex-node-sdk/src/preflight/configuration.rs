@@ -242,7 +242,7 @@ fn verify_runtime_configuration_contract(messages: &mut Vec<String>) -> Value {
 
 fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut event_sources = HashMap::new();
-    let descriptor = deployment_descriptor_result("preflight configuration checks")?;
+    let descriptor = deployment_descriptor_result()?;
     let mut configured_unavailable = Vec::new();
     let mut configured_unavailable_blocking = Vec::new();
     let mut configured_unavailable_advisory = Vec::new();
@@ -310,6 +310,12 @@ fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeResult<V
 }
 
 pub fn validate_readable_file(path: &Path) -> NodeResult<()> {
+    // Check that the path refers to a regular file, not a directory. File::open() succeeds on
+    // directories, which would pass the check silently and produce confusing downstream errors.
+    if path.is_dir() {
+        return Err(SinexError::processing("configured path is a directory, not a file")
+            .with_context("path", path.display().to_string()));
+    }
     std::fs::File::open(path).map(|_| ()).map_err(|error| {
         SinexError::processing("failed to open configured file")
             .with_context("path", path.display().to_string())
@@ -841,16 +847,34 @@ fn resolve_descriptor_runtime_dir(descriptor: &DeploymentReadinessDescriptor) ->
 }
 
 fn resolve_uid_from_target_user(user: &str) -> Option<u32> {
-    let user = CString::new(user).ok()?;
-    // SAFETY: `user` is a valid NUL-terminated C string for the duration of
-    // the call, and `getpwnam` only reads process NSS state.
-    let passwd = unsafe { libc::getpwnam(user.as_ptr()) };
-    if passwd.is_null() {
+    let user_cstr = CString::new(user).ok()?;
+    // Use getpwnam_r instead of getpwnam: getpwnam is not reentrant and uses thread-unsafe
+    // static storage that any concurrent NSS call (including from other threads) can overwrite.
+    // getpwnam_r writes into caller-supplied storage and is safe for concurrent use.
+    let buf_size = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
+    let buf_size = if buf_size <= 0 { 4096 } else { buf_size as usize };
+    let mut buf = vec![0u8; buf_size];
+    let mut passwd = std::mem::MaybeUninit::<libc::passwd>::uninit();
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+
+    // SAFETY: user_cstr is a valid NUL-terminated string; buf is writable with buf_size bytes;
+    // passwd and result are properly aligned and will be initialized by getpwnam_r on success.
+    let ret = unsafe {
+        libc::getpwnam_r(
+            user_cstr.as_ptr(),
+            passwd.as_mut_ptr(),
+            buf.as_mut_ptr().cast::<libc::c_char>(),
+            buf_size,
+            &mut result,
+        )
+    };
+
+    if ret != 0 || result.is_null() {
         return None;
     }
 
-    // SAFETY: `passwd` was returned by `getpwnam` and checked for null above.
-    Some(unsafe { (*passwd).pw_uid })
+    // SAFETY: result is non-null and points to the passwd struct we passed in.
+    Some(unsafe { (*result).pw_uid })
 }
 
 fn collect_hyprland_runtime_sockets<I, E>(

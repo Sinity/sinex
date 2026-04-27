@@ -187,7 +187,9 @@ pub mod strategies {
 
     /// Generate random HostName values.
     pub fn hostname() -> impl Strategy<Value = HostName> {
-        "[a-z][a-z0-9-]{2,15}"
+        // Pattern: starts with a letter, middle may contain hyphens, ends with alphanumeric.
+        // "[a-z][a-z0-9-]{2,15}" allowed trailing hyphens which HostName::new rejects.
+        "[a-z][a-z0-9-]{1,14}[a-z0-9]"
             .prop_map(|s| HostName::new(s).expect("regex-generated hostname is always valid"))
     }
 
