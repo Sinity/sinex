@@ -491,7 +491,7 @@ impl TombstoneListCommand {
         .await?;
 
         if response.operations.is_empty() {
-            CommandOutput::empty("No tombstone operations found.").display(&self.format)?;
+            CommandOutput::<serde_json::Value>::empty("No tombstone operations found.").display(&self.format)?;
             return Ok(());
         }
 
@@ -628,7 +628,7 @@ fn format_tombstone_create_table(response: &TombstoneCreateResponse) -> String {
     let mut output = String::new();
     output.push_str("\n");
     output.push_str("Tombstone Operation Created\n");
-    output.push_str(&"\u2550".repeat(60));
+    output.push_str(&"\u{2550}".repeat(60));
     output.push_str("\n\n");
     output.push_str(&format!("  Operation ID: {}\n", response.operation.operation_id));
     output.push_str(&format!("  State:        {:?}\n", response.operation.state));
@@ -654,7 +654,7 @@ fn format_tombstone_create_table(response: &TombstoneCreateResponse) -> String {
         .cascade_analysis
         .as_ref()
         .map_or(0, |a| a.cascade_total);
-    output.push_str(&format!("\u26a0\ufe0f  This operation will PERMANENTLY DELETE {} events.\n", warning_count));
+    output.push_str(&format!("\u{26a0}\u{fe0f}  This operation will PERMANENTLY DELETE {} events.\n", warning_count));
     output.push_str("\n");
     output.push_str("To approve and execute, run within 1 hour:\n");
     output.push_str(&format!(
@@ -674,8 +674,8 @@ fn format_tombstone_create_table(response: &TombstoneCreateResponse) -> String {
 fn format_tombstone_approve_table(response: &TombstoneApproveResponse) -> String {
     let mut output = String::new();
     output.push_str("\n");
-    output.push_str("\U0001f480 Tombstone Complete (PERMANENT)\n");
-    output.push_str(&"\u2500".repeat(50));
+    output.push_str("\u{1f480} Tombstone Complete (PERMANENT)\n");
+    output.push_str(&"\u{2500}".repeat(50));
     output.push_str("\n");
     output.push_str(&format!("  Operation ID:  {}\n", response.operation.operation_id));
     output.push_str(&format!("  State:         {:?}\n", response.operation.state));
@@ -691,7 +691,7 @@ fn format_tombstone_preview_table(response: &TombstonePreviewResponse) -> String
     let mut output = String::new();
     output.push_str("\n");
     output.push_str("Tombstone Operation Preview\n");
-    output.push_str(&"\u2550".repeat(60));
+    output.push_str(&"\u{2550}".repeat(60));
     output.push_str("\n\n");
     output.push_str(&format!("  Operation ID: {}\n", response.operation.operation_id));
     output.push_str(&format!("  State:        {:?}\n", response.operation.state));
@@ -714,13 +714,13 @@ fn format_tombstone_list_table(response: &TombstoneListResponse) -> String {
     let mut output = String::new();
     output.push_str("\n");
     output.push_str("Tombstone Operations\n");
-    output.push_str(&"\u2550".repeat(100));
+    output.push_str(&"\u{2550}".repeat(100));
     output.push_str("\n");
     output.push_str(&format!(
         "{:<28} {:<12} {:<10} {:<20} Reason\n",
         "Operation ID", "State", "Events", "Created"
     ));
-    output.push_str(&"\u2500".repeat(100));
+    output.push_str(&"\u{2500}".repeat(100));
     output.push_str("\n");
 
     for op in &response.operations {
@@ -748,7 +748,7 @@ fn format_tombstone_status_table(response: &TombstoneStatusResponse) -> String {
     let mut output = String::new();
     output.push_str("\n");
     output.push_str("Tombstone Operation Status\n");
-    output.push_str(&"\u2550".repeat(60));
+    output.push_str(&"\u{2550}".repeat(60));
     output.push_str("\n\n");
     output.push_str(&format!("  Operation ID: {}\n", op.operation_id));
     output.push_str(&format!("  State:        {:?}\n", op.state));
