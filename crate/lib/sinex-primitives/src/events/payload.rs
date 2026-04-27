@@ -64,7 +64,10 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     where
         Self: Sized,
     {
-        Event::new(self, provenance)
+        Event::builder(self)
+            .with_provenance(provenance)
+            .build()
+            .expect("valid provenance: builder always sets it")
     }
 }
 

@@ -61,10 +61,10 @@ async fn events_repository_inserts_typed_events(ctx: TestContext) -> TestResult<
             .map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
     payload.size = 512;
-    let event = Event::new(
-        payload,
-        Provenance::from_material(material_id, 0, None, None),
-    );
+    let event = Event::builder(payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance");
     let expected_host = event.host.clone();
     let inserted = ctx.pool.events().insert(event).await?;
     assert_eq!(inserted.source.as_str(), "fs-watcher");
@@ -90,10 +90,10 @@ async fn events_repository_preserves_provenance(ctx: TestContext) -> TestResult<
     let material_id = Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
 
     let source_payload = KittyCommandExecutedPayload::test_default("echo provenance");
-    let source_event = Event::new(
-        source_payload,
-        Provenance::from_material(material_id, 0, None, None),
-    );
+    let source_event = Event::builder(source_payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance");
 
     let source = ctx.pool.events().insert(source_event).await?;
     let source_id = source.id.unwrap();
@@ -135,11 +135,11 @@ async fn events_repository_rejects_unknown_node_run_id(ctx: TestContext) -> Test
         RecordedPath::from_observed("/tmp/node-run-integrity.txt")
             .map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
-    let event = Event::new(
-        payload,
-        Provenance::from_material(material_id, 0, None, None),
-    )
-    .with_node_run_id(Uuid::now_v7());
+    let event = Event::builder(payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance")
+        .with_node_run_id(Uuid::now_v7());
 
     let error = ctx
         .pool
@@ -879,10 +879,10 @@ async fn synthetic_metadata_roundtrips_through_insert(ctx: TestContext) -> TestR
 
     // Create a source event first (needed as parent for synthesis)
     let source_payload = KittyCommandExecutedPayload::test_default("echo roundtrip");
-    let source_event = Event::new(
-        source_payload,
-        Provenance::from_material(material_id, 0, None, None),
-    );
+    let source_event = Event::builder(source_payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance");
     let source = ctx.pool.events().insert(source_event).await?;
     let source_id = source.id.unwrap();
 
@@ -962,10 +962,10 @@ async fn material_events_have_null_synthetic_metadata(ctx: TestContext) -> TestR
         RecordedPath::from_observed("/tmp/plain-material.txt")
             .map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
-    let event = Event::new(
-        payload,
-        Provenance::from_material(material_id, 0, None, None),
-    );
+    let event = Event::builder(payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance");
 
     let inserted = ctx.pool.events().insert(event).await?;
     let event_id = inserted.id.unwrap();
@@ -1004,10 +1004,10 @@ async fn all_temporal_policy_variants_roundtrip(ctx: TestContext) -> TestResult<
 
     // Create parent event
     let source_payload = KittyCommandExecutedPayload::test_default("echo variants");
-    let source_event = Event::new(
-        source_payload,
-        Provenance::from_material(material_id, 0, None, None),
-    );
+    let source_event = Event::builder(source_payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance");
     let source = ctx.pool.events().insert(source_event).await?;
     let source_id = source.id.unwrap();
 
@@ -1059,10 +1059,10 @@ async fn all_node_model_variants_roundtrip(ctx: TestContext) -> TestResult<()> {
     ];
 
     let source_payload = KittyCommandExecutedPayload::test_default("echo models");
-    let source_event = Event::new(
-        source_payload,
-        Provenance::from_material(material_id, 0, None, None),
-    );
+    let source_event = Event::builder(source_payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance");
     let source = ctx.pool.events().insert(source_event).await?;
     let source_id = source.id.unwrap();
 
@@ -1109,10 +1109,10 @@ async fn synthetic_metadata_survives_batch_insert(ctx: TestContext) -> TestResul
 
     // Create parent events
     let source_payload = KittyCommandExecutedPayload::test_default("echo batch");
-    let source_event = Event::new(
-        source_payload,
-        Provenance::from_material(material_id, 0, None, None),
-    );
+    let source_event = Event::builder(source_payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance");
     let source = ctx.pool.events().insert(source_event).await?;
     let source_id = source.id.unwrap();
 
