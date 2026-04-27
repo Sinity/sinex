@@ -621,16 +621,16 @@ impl SystemNode {
         let emitter = self.emitter()?;
         let material = self.node_material()?;
 
-        let mut event = Event::new(
-            SystemMonitoringStartedPayload {
-                dbus_enabled: self.config.dbus_enabled,
-                journal_enabled: self.config.journal_enabled,
-                udev_enabled: self.config.udev_enabled,
-                systemd_enabled: self.config.systemd_enabled,
-                start_time: Timestamp::now(),
-            },
-            material.initial_provenance(),
-        )
+        let mut event = Event::builder(SystemMonitoringStartedPayload {
+            dbus_enabled: self.config.dbus_enabled,
+            journal_enabled: self.config.journal_enabled,
+            udev_enabled: self.config.udev_enabled,
+            systemd_enabled: self.config.systemd_enabled,
+            start_time: Timestamp::now(),
+        })
+        .with_provenance(material.initial_provenance())
+        .build()
+        .expect("valid provenance: builder always sets it")
         .to_json_event()?;
 
         material.decorate_event(&mut event).await?;

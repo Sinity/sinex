@@ -36,10 +36,10 @@ async fn test_event_persistence_basics(ctx: TestContext) -> TestResult<()> {
     payload.size = 1024;
     payload.permissions = Some(0o644);
 
-    let event = Event::new(
-        payload,
-        Provenance::from_material(material_id, 0, None, None),
-    );
+    let event = Event::builder(payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance");
 
     let inserted = ctx.pool.events().insert(event).await?;
     let event_id = inserted.id.expect("inserted event should have id");
@@ -70,16 +70,16 @@ async fn test_event_queries(ctx: TestContext) -> TestResult<()> {
     let fs_payload = FileCreatedPayload::test_default(
         RecordedPath::from_observed("/tmp/1.txt").map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
-    let fs_event = Event::new(
-        fs_payload,
-        Provenance::from_material(material_id, 0, None, None),
-    );
+    let fs_event = Event::builder(fs_payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance");
 
     let terminal_payload = KittyCommandExecutedPayload::test_default("ls");
-    let terminal_event = Event::new(
-        terminal_payload,
-        Provenance::from_material(material_id, 0, None, None),
-    );
+    let terminal_event = Event::builder(terminal_payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance");
 
     let inserted_fs = ctx.pool.events().insert(fs_event).await?;
     let inserted_terminal = ctx.pool.events().insert(terminal_event).await?;

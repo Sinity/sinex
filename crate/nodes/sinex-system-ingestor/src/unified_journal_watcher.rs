@@ -1142,18 +1142,18 @@ impl UnifiedJournalWatcher {
                 duration_ms: start_time.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
             };
 
-            let sync_event = Event::new(
-                EventJournalSyncCompletedPayload {
-                    sync_type: sync_payload.sync_type,
-                    start_cursor: sync_payload.start_cursor,
-                    end_cursor: sync_payload.end_cursor,
-                    entries_count: sync_payload.entries_count,
-                    time_start: sync_payload.time_start,
-                    time_end: sync_payload.time_end,
-                    duration_ms: sync_payload.duration_ms,
-                },
-                material.initial_provenance(),
-            )
+            let sync_event = Event::builder(EventJournalSyncCompletedPayload {
+                sync_type: sync_payload.sync_type,
+                start_cursor: sync_payload.start_cursor,
+                end_cursor: sync_payload.end_cursor,
+                entries_count: sync_payload.entries_count,
+                time_start: sync_payload.time_start,
+                time_end: sync_payload.time_end,
+                duration_ms: sync_payload.duration_ms,
+            })
+            .with_provenance(material.initial_provenance())
+            .build()
+            .expect("valid provenance: builder always sets it")
             .to_json_event()
             .map_err(|error| {
                 SinexError::serialization("failed to serialize journal sync completion event")
@@ -1537,27 +1537,27 @@ impl UnifiedJournalWatcher {
         let cursor_str = payload.cursor.clone();
         let timestamp_dt = payload.timestamp;
 
-        let mut event = Event::new(
-            EventJournalEntryWrittenPayload {
-                cursor: payload.cursor,
-                timestamp_us: Microseconds::from_micros(timestamp_us_i64),
-                timestamp: payload.timestamp,
-                hostname: payload.hostname,
-                unit: payload.unit,
-                syslog_identifier: payload.syslog_identifier,
-                pid: payload.pid.map(ProcessId::from_raw),
-                uid: payload.uid.map(UnixUid::from_raw),
-                gid: payload.gid.map(UnixGid::from_raw),
-                cmdline: payload.cmdline,
-                exe: payload.exe,
-                unit_type: payload.unit_type.as_deref().map(parse_systemd_unit_type),
-                priority: payload.priority.map(SyslogPriority::from_raw),
-                facility: payload.facility,
-                message: payload.message,
-                fields: payload.fields,
-            },
-            material.initial_provenance(),
-        );
+        let mut event = Event::builder(EventJournalEntryWrittenPayload {
+            cursor: payload.cursor,
+            timestamp_us: Microseconds::from_micros(timestamp_us_i64),
+            timestamp: payload.timestamp,
+            hostname: payload.hostname,
+            unit: payload.unit,
+            syslog_identifier: payload.syslog_identifier,
+            pid: payload.pid.map(ProcessId::from_raw),
+            uid: payload.uid.map(UnixUid::from_raw),
+            gid: payload.gid.map(UnixGid::from_raw),
+            cmdline: payload.cmdline,
+            exe: payload.exe,
+            unit_type: payload.unit_type.as_deref().map(parse_systemd_unit_type),
+            priority: payload.priority.map(SyslogPriority::from_raw),
+            facility: payload.facility,
+            message: payload.message,
+            fields: payload.fields,
+        })
+        .with_provenance(material.initial_provenance())
+        .build()
+        .expect("valid provenance: builder always sets it");
 
         // Set deterministic UUIDv7 based on cursor to prevent duplicates.
         let uuid =
@@ -1622,75 +1622,75 @@ impl UnifiedJournalWatcher {
                 let unit_type = convert_unit_type(SystemdUnitType::from_unit_name(unit_name));
                 let main_pid = Self::parse_optional_field::<u32>(obj, "_PID", &cursor)?
                     .map(ProcessId::from_raw);
-                let e = Event::new(
-                    SystemdUnitStartedPayload {
-                        unit_name: unit_name.to_string(),
-                        unit_type,
-                        main_pid,
-                        active_state: CoreSystemdActiveState::Active,
-                        sub_state: "running".to_string(),
-                    },
-                    material.initial_provenance(),
-                );
+                let e = Event::builder(SystemdUnitStartedPayload {
+                    unit_name: unit_name.to_string(),
+                    unit_type,
+                    main_pid,
+                    active_state: CoreSystemdActiveState::Active,
+                    sub_state: "running".to_string(),
+                })
+                .with_provenance(material.initial_provenance())
+                .build()
+                .expect("valid provenance: builder always sets it");
                 Self::serialize_systemd_event(e, uuid, ts_orig)?
             }
             SystemdEventKind::Stopped => {
                 let unit_type = convert_unit_type(SystemdUnitType::from_unit_name(unit_name));
-                let e = Event::new(
-                    SystemdUnitStoppedPayload {
-                        unit_name: unit_name.to_string(),
-                        unit_type,
-                        exit_code: None,
-                        active_state: CoreSystemdActiveState::Inactive,
-                        sub_state: "dead".to_string(),
-                    },
-                    material.initial_provenance(),
-                );
+                let e = Event::builder(SystemdUnitStoppedPayload {
+                    unit_name: unit_name.to_string(),
+                    unit_type,
+                    exit_code: None,
+                    active_state: CoreSystemdActiveState::Inactive,
+                    sub_state: "dead".to_string(),
+                })
+                .with_provenance(material.initial_provenance())
+                .build()
+                .expect("valid provenance: builder always sets it");
                 Self::serialize_systemd_event(e, uuid, ts_orig)?
             }
             SystemdEventKind::Failed => {
-                let e = Event::new(
-                    SystemdUnitFailedPayload {
-                        unit_name: unit_name.to_string(),
-                        message: message.to_string(),
-                        cursor: cursor.clone(),
-                        pid: entry["_PID"].as_str().map(String::from),
-                        uid: entry["_UID"].as_str().map(String::from),
-                        timestamp: ts_orig,
-                        journal_timestamp: Some(ts_orig),
-                    },
-                    material.initial_provenance(),
-                );
+                let e = Event::builder(SystemdUnitFailedPayload {
+                    unit_name: unit_name.to_string(),
+                    message: message.to_string(),
+                    cursor: cursor.clone(),
+                    pid: entry["_PID"].as_str().map(String::from),
+                    uid: entry["_UID"].as_str().map(String::from),
+                    timestamp: ts_orig,
+                    journal_timestamp: Some(ts_orig),
+                })
+                .with_provenance(material.initial_provenance())
+                .build()
+                .expect("valid provenance: builder always sets it");
                 Self::serialize_systemd_event(e, uuid, ts_orig)?
             }
             SystemdEventKind::Reloaded => {
-                let e = Event::new(
-                    SystemdUnitReloadedPayload {
-                        unit_name: Some(unit_name.to_string()),
-                        message: message.to_string(),
-                        cursor: cursor.clone(),
-                        pid: entry["_PID"].as_str().map(String::from),
-                        uid: entry["_UID"].as_str().map(String::from),
-                        timestamp: ts_orig,
-                        journal_timestamp: Some(ts_orig),
-                    },
-                    material.initial_provenance(),
-                );
+                let e = Event::builder(SystemdUnitReloadedPayload {
+                    unit_name: Some(unit_name.to_string()),
+                    message: message.to_string(),
+                    cursor: cursor.clone(),
+                    pid: entry["_PID"].as_str().map(String::from),
+                    uid: entry["_UID"].as_str().map(String::from),
+                    timestamp: ts_orig,
+                    journal_timestamp: Some(ts_orig),
+                })
+                .with_provenance(material.initial_provenance())
+                .build()
+                .expect("valid provenance: builder always sets it");
                 Self::serialize_systemd_event(e, uuid, ts_orig)?
             }
             SystemdEventKind::Triggered => {
-                let e = Event::new(
-                    SystemdTimerTriggeredPayload {
-                        unit_name: Some(unit_name.to_string()),
-                        message: message.to_string(),
-                        cursor: cursor.clone(),
-                        pid: entry["_PID"].as_str().map(String::from),
-                        uid: entry["_UID"].as_str().map(String::from),
-                        timestamp: ts_orig,
-                        journal_timestamp: Some(ts_orig),
-                    },
-                    material.initial_provenance(),
-                );
+                let e = Event::builder(SystemdTimerTriggeredPayload {
+                    unit_name: Some(unit_name.to_string()),
+                    message: message.to_string(),
+                    cursor: cursor.clone(),
+                    pid: entry["_PID"].as_str().map(String::from),
+                    uid: entry["_UID"].as_str().map(String::from),
+                    timestamp: ts_orig,
+                    journal_timestamp: Some(ts_orig),
+                })
+                .with_provenance(material.initial_provenance())
+                .build()
+                .expect("valid provenance: builder always sets it");
                 Self::serialize_systemd_event(e, uuid, ts_orig)?
             }
         };

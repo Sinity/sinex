@@ -688,7 +688,11 @@ impl DbusWatcher {
             && member == "Notify"
         {
             let payload = Self::parse_notification_args(args, timestamp)?;
-            let event = Event::new(payload, material.initial_provenance()).to_json_event()?;
+            let event = Event::builder(payload)
+                .with_provenance(material.initial_provenance())
+                .build()
+                .expect("valid provenance: builder always sets it")
+                .to_json_event()?;
             Self::send_event(tx, event, "dbus_notification", material).await?;
         }
 
@@ -710,7 +714,11 @@ impl DbusWatcher {
                     )
                 })?;
 
-            let event = Event::new(payload, material.initial_provenance()).to_json_event()?;
+            let event = Event::builder(payload)
+                .with_provenance(material.initial_provenance())
+                .build()
+                .expect("valid provenance: builder always sets it")
+                .to_json_event()?;
             Self::send_event(tx, event, "dbus_media_playback", material).await?;
         }
 
@@ -719,18 +727,18 @@ impl DbusWatcher {
                 && matches!(member, "PrepareForSleep" | "PrepareForShutdown"))
                 || (interface == "org.freedesktop.UPower" && member == "DeviceChanged"))
         {
-            let event = Event::new(
-                DbusPowerStateChangedPayload {
-                    event_type: parse_power_event(member),
-                    details: json!({
-                        "bus": bus_type,
-                        "interface": interface,
-                        "path": path,
-                    }),
-                    timestamp,
-                },
-                material.initial_provenance(),
-            )
+            let event = Event::builder(DbusPowerStateChangedPayload {
+                event_type: parse_power_event(member),
+                details: json!({
+                    "bus": bus_type,
+                    "interface": interface,
+                    "path": path,
+                }),
+                timestamp,
+            })
+            .with_provenance(material.initial_provenance())
+            .build()
+            .expect("valid provenance: builder always sets it")
             .to_json_event()?;
             Self::send_event(tx, event, "dbus_power_event", material).await?;
         }
@@ -745,56 +753,56 @@ impl DbusWatcher {
                 DeviceType::Battery
             };
 
-            let event = Event::new(
-                DbusDeviceConnectedPayload {
-                    device_type,
-                    event_type: member.to_string(),
-                    device_path: path.to_string(),
-                    device_name: None,
-                    vendor: None,
-                    model: None,
-                    serial: None,
-                    properties: HashMap::new(),
-                    timestamp,
-                },
-                material.initial_provenance(),
-            )
+            let event = Event::builder(DbusDeviceConnectedPayload {
+                device_type,
+                event_type: member.to_string(),
+                device_path: path.to_string(),
+                device_name: None,
+                vendor: None,
+                model: None,
+                serial: None,
+                properties: HashMap::new(),
+                timestamp,
+            })
+            .with_provenance(material.initial_provenance())
+            .build()
+            .expect("valid provenance: builder always sets it")
             .to_json_event()?;
             Self::send_event(tx, event, "dbus_hardware_event", material).await?;
         }
 
         if config.extract_bluetooth && interface.starts_with("org.bluez") {
-            let event = Event::new(
-                DbusBluetoothDeviceChangedPayload {
-                    event_type: parse_bluetooth_event(member),
-                    device_address: "unknown".to_string(),
-                    device_name: None,
-                    device_class: None,
-                    rssi: None,
-                    connected: false,
-                    paired: false,
-                    trusted: false,
-                    timestamp,
-                },
-                material.initial_provenance(),
-            )
+            let event = Event::builder(DbusBluetoothDeviceChangedPayload {
+                event_type: parse_bluetooth_event(member),
+                device_address: "unknown".to_string(),
+                device_name: None,
+                device_class: None,
+                rssi: None,
+                connected: false,
+                paired: false,
+                trusted: false,
+                timestamp,
+            })
+            .with_provenance(material.initial_provenance())
+            .build()
+            .expect("valid provenance: builder always sets it")
             .to_json_event()?;
             Self::send_event(tx, event, "dbus_bluetooth_event", material).await?;
         }
 
         if config.extract_network && interface.starts_with("org.freedesktop.NetworkManager") {
-            let event = Event::new(
-                DbusNetworkStateChangedPayload {
-                    event_type: parse_network_event(member),
-                    interface: path.to_string(),
-                    connection_type: NetworkConnectionType::Other,
-                    ssid: None,
-                    ip_address: None,
-                    state: NetworkState::Unknown,
-                    timestamp,
-                },
-                material.initial_provenance(),
-            )
+            let event = Event::builder(DbusNetworkStateChangedPayload {
+                event_type: parse_network_event(member),
+                interface: path.to_string(),
+                connection_type: NetworkConnectionType::Other,
+                ssid: None,
+                ip_address: None,
+                state: NetworkState::Unknown,
+                timestamp,
+            })
+            .with_provenance(material.initial_provenance())
+            .build()
+            .expect("valid provenance: builder always sets it")
             .to_json_event()?;
             Self::send_event(tx, event, "dbus_network_event", material).await?;
         }
@@ -806,19 +814,19 @@ impl DbusWatcher {
                 MountEventType::Unmounted
             };
 
-            let event = Event::new(
-                DbusMountEventPayload {
-                    event_type: mount_event_type,
-                    device: path.to_string(),
-                    mount_point: "/unknown".to_string(),
-                    filesystem: "unknown".to_string(),
-                    label: None,
-                    uuid: None,
-                    size_bytes: None,
-                    timestamp,
-                },
-                material.initial_provenance(),
-            )
+            let event = Event::builder(DbusMountEventPayload {
+                event_type: mount_event_type,
+                device: path.to_string(),
+                mount_point: "/unknown".to_string(),
+                filesystem: "unknown".to_string(),
+                label: None,
+                uuid: None,
+                size_bytes: None,
+                timestamp,
+            })
+            .with_provenance(material.initial_provenance())
+            .build()
+            .expect("valid provenance: builder always sets it")
             .to_json_event()?;
             Self::send_event(tx, event, "dbus_mount_event", material).await?;
         }
@@ -831,18 +839,18 @@ impl DbusWatcher {
             .with_context("component", "dbus_signal_redaction")
             .with_std_error(error)
         })?;
-        let event = Event::new(
-            DbusSignalPayload {
-                bus: parse_bus_type(bus_type),
-                sender,
-                path: path.to_string(),
-                interface: interface.to_string(),
-                signal: member.to_string(),
-                args: privacy_engine.process_json(args, ProcessingContext::Dbus),
-                timestamp,
-            },
-            material.initial_provenance(),
-        )
+        let event = Event::builder(DbusSignalPayload {
+            bus: parse_bus_type(bus_type),
+            sender,
+            path: path.to_string(),
+            interface: interface.to_string(),
+            signal: member.to_string(),
+            args: privacy_engine.process_json(args, ProcessingContext::Dbus),
+            timestamp,
+        })
+        .with_provenance(material.initial_provenance())
+        .build()
+        .expect("valid provenance: builder always sets it")
         .to_json_event()?;
         Self::send_event(tx, event, "dbus_generic_signal", material).await?;
 
@@ -873,19 +881,19 @@ impl DbusWatcher {
             .with_context("component", "dbus_method_redaction")
             .with_std_error(error)
         })?;
-        let event = Event::new(
-            DbusMethodCalledPayload {
-                bus: parse_bus_type(bus_type),
-                sender,
-                destination,
-                path: path.to_string(),
-                interface: interface.to_string(),
-                method: member.to_string(),
-                args: privacy_engine.process_json(args, ProcessingContext::Dbus),
-                timestamp,
-            },
-            material.initial_provenance(),
-        )
+        let event = Event::builder(DbusMethodCalledPayload {
+            bus: parse_bus_type(bus_type),
+            sender,
+            destination,
+            path: path.to_string(),
+            interface: interface.to_string(),
+            method: member.to_string(),
+            args: privacy_engine.process_json(args, ProcessingContext::Dbus),
+            timestamp,
+        })
+        .with_provenance(material.initial_provenance())
+        .build()
+        .expect("valid provenance: builder always sets it")
         .to_json_event()?;
         Self::send_event(tx, event, "dbus_generic_method_call", material).await?;
 
