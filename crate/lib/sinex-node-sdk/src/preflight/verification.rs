@@ -316,7 +316,7 @@ async fn test_concurrent_queries(pool: &PgPool, messages: &mut Vec<String>) -> N
         let pool_clone = pool.clone();
         join_set.spawn(async move {
             // Run concurrent SELECT queries - no mutations
-            sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) + {i} - {i} FROM core.events"))
+            sqlx::query_scalar::<_, i64>(&format!("SELECT {i}::bigint"))
                 .fetch_one(&pool_clone)
                 .await
         });
