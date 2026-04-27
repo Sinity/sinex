@@ -2463,7 +2463,15 @@ async fn recv_invalidation(
     use futures::StreamExt;
     match sub.as_mut() {
         Some(s) => match s.next().await {
-            Some(Ok(msg)) => Some(msg.payload.to_vec()),
+            Some(Ok(msg)) => {
+                let payload = msg.payload.to_vec();
+                // Ack so the JetStream consumer does not redeliver this
+                // invalidation message after the ack wait timeout.
+                if let Err(e) = msg.ack().await {
+                    warn!("Failed to ack invalidation message: {e}");
+                }
+                Some(payload)
+            }
             Some(Err(e)) => {
                 warn!("Error receiving invalidation message: {e}");
                 None

@@ -169,11 +169,14 @@ impl IngestService {
         info!("Initializing ingestion service");
 
         let db_pool = Self::init_db_pool(&config).await?;
+        let (nats_client, jetstream) = Self::init_nats(&config).await?;
+        // init_validator calls sync_schemas, which creates/applies the schema
+        // (including sinex_schemas.binary_schema_version). verify_binary_schema_version
+        // must run after sync so the table exists on a fresh database.
+        let validator = Self::init_validator(&config, db_pool.as_ref()).await?;
         if let Some(ref pool) = db_pool {
             Self::verify_binary_schema_version(pool).await?;
         }
-        let (nats_client, jetstream) = Self::init_nats(&config).await?;
-        let validator = Self::init_validator(&config, db_pool.as_ref()).await?;
 
         if let (Some(nats), Some(pool)) = (&nats_client, &db_pool)
             && let Err(e) = Self::broadcast_active_schemas(&validator, nats, pool).await
