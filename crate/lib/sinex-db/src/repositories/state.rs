@@ -1242,6 +1242,10 @@ impl StateRepository<'_> {
                     as "checkpoint_recorded_at?: sinex_primitives::temporal::Timestamp",
                 pending.pending_invalidation_count as "pending_invalidation_count?",
                 error_rate.error_rate_5m as "error_rate_5m?",
+                lag_p50.event_lag_p50_ms as "event_lag_p50_ms?",
+                lag_p99.event_lag_p99_ms as "event_lag_p99_ms?",
+                tick_p99.tick_runtime_p99_ms as "tick_runtime_p99_ms?",
+                throughput.throughput_eps as "throughput_eps?",
                 COALESCE(outputs.recent_output_count, 0)::bigint as "recent_output_count!",
                 outputs.last_output_at as "last_output_at?: sinex_primitives::temporal::Timestamp",
                 outputs.last_replay_at as "last_replay_at?: sinex_primitives::temporal::Timestamp"
@@ -1313,6 +1317,54 @@ impl StateRepository<'_> {
                 ORDER BY e.id DESC
                 LIMIT 1
             ) error_rate ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    (e.payload->>'value')::float8 AS event_lag_p50_ms
+                FROM core.events e
+                WHERE e.source = 'sinex'
+                  AND e.event_type = 'metric.gauge'
+                  AND e.payload->>'name' = 'derived.event_lag_p50_ms'
+                  AND e.payload->'labels'->>'node' = nm.node_name::text
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'node_run_id' = nr.id::text)
+                ORDER BY e.id DESC
+                LIMIT 1
+            ) lag_p50 ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    (e.payload->>'value')::float8 AS event_lag_p99_ms
+                FROM core.events e
+                WHERE e.source = 'sinex'
+                  AND e.event_type = 'metric.gauge'
+                  AND e.payload->>'name' = 'derived.event_lag_p99_ms'
+                  AND e.payload->'labels'->>'node' = nm.node_name::text
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'node_run_id' = nr.id::text)
+                ORDER BY e.id DESC
+                LIMIT 1
+            ) lag_p99 ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    (e.payload->>'value')::float8 AS tick_runtime_p99_ms
+                FROM core.events e
+                WHERE e.source = 'sinex'
+                  AND e.event_type = 'metric.gauge'
+                  AND e.payload->>'name' = 'derived.tick_runtime_p99_ms'
+                  AND e.payload->'labels'->>'node' = nm.node_name::text
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'node_run_id' = nr.id::text)
+                ORDER BY e.id DESC
+                LIMIT 1
+            ) tick_p99 ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    (e.payload->>'value')::float8 AS throughput_eps
+                FROM core.events e
+                WHERE e.source = 'sinex'
+                  AND e.event_type = 'metric.gauge'
+                  AND e.payload->>'name' = 'derived.throughput_eps'
+                  AND e.payload->'labels'->>'node' = nm.node_name::text
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'node_run_id' = nr.id::text)
+                ORDER BY e.id DESC
+                LIMIT 1
+            ) throughput ON true
             LEFT JOIN LATERAL (
                 SELECT
                     COUNT(*) FILTER (
@@ -1567,6 +1619,10 @@ pub struct AutomataStatusRow {
     pub checkpoint_recorded_at: Option<Timestamp>,
     pub pending_invalidation_count: Option<i64>,
     pub error_rate_5m: Option<f64>,
+    pub event_lag_p50_ms: Option<f64>,
+    pub event_lag_p99_ms: Option<f64>,
+    pub tick_runtime_p99_ms: Option<f64>,
+    pub throughput_eps: Option<f64>,
     pub recent_output_count: i64,
     pub last_output_at: Option<Timestamp>,
     pub last_replay_at: Option<Timestamp>,
