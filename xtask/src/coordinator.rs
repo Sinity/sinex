@@ -61,7 +61,9 @@ pub struct CoordinationState {
     pub job_id: i64,
     pub pid: u32,
     pub is_foreground: bool,
+    #[serde(default)]
     pub tree_fingerprint: String,
+    #[serde(default)]
     pub scope_key: String,
     pub started_at: String,
     pub args: Vec<String>,
@@ -80,7 +82,9 @@ pub struct QueuedWork {
     pub args: Vec<String>,
     pub is_foreground: bool,
     pub output_format: OutputFormat,
+    #[serde(default)]
     pub tree_fingerprint: String,
+    #[serde(default)]
     pub scope_key: String,
 }
 
@@ -759,7 +763,9 @@ fn extract_explicit_packages(command: &str, args: &[String]) -> Vec<String> {
                 .map(ToOwned::to_owned)
                 .collect();
         }
-        return vec![];
+        // Unknown --scope= format: fall through and parse -p/--package flags
+        // instead of silently dropping them.  A future scope variant will get
+        // package resolution for free without a separate special-case here.
     }
 
     let mut packages = Vec::new();
@@ -873,11 +879,9 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
         match command {
             "build" => matches!(arg, "-p" | "--package"),
             "test" => matches!(arg, "-p" | "--package" | "-E"),
-            // Check scope includes -p/--all so narrow checks (e.g., -p sinex-primitives)
-            // don't satisfy broader scopes (e.g., --all or workspace default).
-            // Lint flags (--lint, --fmt, --forbidden) are intentionally excluded from
-            // scope — they don't change which packages are compiled.
-            "check" => matches!(arg, "-p" | "--package"),
+            // Check and fix scope: -p narrows the scope; lint/fmt flags are intentionally
+            // excluded — they don't change which packages are compiled.
+            "check" | "fix" => matches!(arg, "-p" | "--package"),
             _ => false,
         }
     }
@@ -887,7 +891,7 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
         match command {
             "build" => arg == "--release" || arg.starts_with("--all"),
             "test" => arg == "--heavy" || arg == "--include-ignored" || arg == "--all",
-            "check" => arg == "--all",
+            "check" | "fix" => arg == "--all",
             _ => false,
         }
     }
@@ -901,7 +905,9 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
                     || arg.starts_with("--package=")
                     || (arg.starts_with("-E") && arg.len() > 2)
             }
-            "check" => (arg.starts_with("-p") && arg.len() > 2) || arg.starts_with("--package="),
+            "check" | "fix" => {
+                (arg.starts_with("-p") && arg.len() > 2) || arg.starts_with("--package=")
+            }
             _ => false,
         }
     }

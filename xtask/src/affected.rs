@@ -343,9 +343,13 @@ fn extract_simple_test_name_terms(filter: &str) -> Option<Vec<String>> {
     }
 
     stripped.push_str(&filter[cursor..]);
+    // Allow only whitespace and boolean connectives (|, &, parentheses).
+    // Do NOT allow `!` (negation): `!test(foo)` means "skip foo", so inferring
+    // packages that define `foo` and sending them to nextest is wrong — it would
+    // target the packages whose tests we want to EXCLUDE.
     if stripped
         .chars()
-        .all(|ch| ch.is_whitespace() || matches!(ch, '(' | ')' | '|' | '&' | '!'))
+        .all(|ch| ch.is_whitespace() || matches!(ch, '(' | ')' | '|' | '&'))
     {
         Some(names)
     } else {
