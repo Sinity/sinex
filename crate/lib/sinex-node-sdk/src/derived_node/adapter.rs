@@ -860,6 +860,69 @@ where
         self.throughput_window.record(Instant::now());
     }
 
+    /// Emit telemetry for a whole-batch processing cycle (event bridge path).
+    ///
+    /// Emits `derived.batch_runtime_ms` rather than `derived.tick_runtime_ms`
+    /// so the batch metric does not overwrite the per-event samples recorded by
+    /// `observe_processing_latency`.
+    #[cfg(feature = "messaging")]
+    async fn observe_batch_processing_latency(
+        &mut self,
+        lag_ms: f64,
+        batch_runtime_ms: f64,
+        batch_size: usize,
+    ) {
+        if lag_ms.is_finite() {
+            self.lag_window.record(lag_ms);
+        }
+        self.throughput_window.record(Instant::now());
+
+        let Some(obs) = self.self_observer.as_ref() else {
+            return;
+        };
+        let mut labels = self.derived_metric_labels();
+        labels.insert("batch_size".to_string(), batch_size.to_string());
+
+        if lag_ms.is_finite() {
+            if let Err(error) = obs
+                .emit_gauge("derived.event_lag_ms", lag_ms, Some(labels.clone()))
+                .await
+            {
+                log_self_observation_failure(self.node.name(), "derived.event_lag_ms", &error);
+            }
+        }
+
+        if batch_runtime_ms.is_finite() {
+            if let Err(error) = obs
+                .emit_gauge(
+                    "derived.batch_runtime_ms",
+                    batch_runtime_ms,
+                    Some(labels.clone()),
+                )
+                .await
+            {
+                log_self_observation_failure(
+                    self.node.name(),
+                    "derived.batch_runtime_ms",
+                    &error,
+                );
+            }
+        }
+    }
+
+    #[cfg(not(feature = "messaging"))]
+    async fn observe_batch_processing_latency(
+        &mut self,
+        lag_ms: f64,
+        _batch_runtime_ms: f64,
+        _batch_size: usize,
+    ) {
+        if lag_ms.is_finite() {
+            self.lag_window.record(lag_ms);
+        }
+        self.throughput_window.record(Instant::now());
+    }
+
     #[cfg(feature = "messaging")]
     async fn observe_checkpoint_state(&self, state: &CheckpointState) {
         let Some(obs) = self.self_observer.as_ref() else {
@@ -1370,7 +1433,14 @@ where
                             keys.push(sk.clone());
                         }
                     }
-                    Ok(None) => {}
+                    Ok(None) => {
+                        debug!(
+                            node = %self.node.name(),
+                            event_id = %id,
+                            "Event not found in DB while deriving invalidation scope keys; \
+                             skipping (may be archived or not yet persisted)"
+                        );
+                    }
                     Err(error) => {
                         return Err(SinexError::database(
                             "Failed to load affected event while deriving invalidation scope keys",
@@ -2637,8 +2707,12 @@ where
             .fold(0.0_f64, f64::max);
         let start = std::time::Instant::now();
         let outputs = self.process_batch(matching).await?;
-        let runtime_ms = start.elapsed().as_secs_f64() * 1000.0;
-        self.observe_processing_latency(max_lag_ms, runtime_ms).await;
+        let batch_runtime_ms = start.elapsed().as_secs_f64() * 1000.0;
+        // Use a distinct metric name (`derived.batch_runtime_ms`) for the whole-batch
+        // runtime so it does not overwrite the per-event `derived.tick_runtime_ms`
+        // samples emitted from the per-event NATS processing path.
+        self.observe_batch_processing_latency(max_lag_ms, batch_runtime_ms, batch_size)
+            .await;
         let output_count = outputs.len();
 
         if !outputs.is_empty() {
@@ -2655,7 +2729,7 @@ where
 
         Ok(ProcessingStats {
             processed: batch_size,
-            duration: std::time::Duration::from_secs_f64(runtime_ms / 1000.0),
+            duration: std::time::Duration::from_secs_f64(batch_runtime_ms / 1000.0),
             ..ProcessingStats::default()
         })
     }
