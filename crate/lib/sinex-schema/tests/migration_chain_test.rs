@@ -162,6 +162,7 @@ async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> T
     assert!(
         definition.contains("command.executed")
             && definition.contains("shell.kitty")
+            && definition.contains("shell.atuin")
             && definition.contains("shell.history.%")
             && definition.contains("time_bucket(")
             && definition.contains("ts_orig"),
