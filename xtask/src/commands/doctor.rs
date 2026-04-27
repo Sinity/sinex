@@ -413,7 +413,7 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         "hostname": cfg.hostname,
         "state_dir": cfg.state_dir.display().to_string(),
         "cache_dir": cfg.cache_dir.display().to_string(),
-        "database_url": cfg.database_url,
+        "database_url": cfg.database_url.as_deref().map(redact_database_url_password),
         "nats_url": cfg.nats_url,
         "gateway_url": cfg.gateway_url,
         "test_results_dir": cfg.test_results_dir.as_ref().map(|p| p.display().to_string()),
@@ -1080,7 +1080,7 @@ fn resolve_deployment_nats_config(
 
     let mut config = apply_descriptor_nats_overrides(base_config, descriptor);
     if !descriptor_declares_server
-        && config.url == "nats://localhost:4222"
+        && config.url == NatsConnectionConfig::default().url
         && let Some(url) = nats_url
     {
         config.url = url.to_string();
@@ -1204,6 +1204,20 @@ fn database_url_has_password(database_url: &str) -> bool {
         .ok()
         .and_then(|value| value.password().map(str::to_string))
         .is_some()
+}
+
+/// Redact the password component of a database URL for safe display/logging.
+///
+/// Replaces the password with `***` if present.  Returns the original string
+/// unchanged if it is not a valid URL or contains no password.
+fn redact_database_url_password(database_url: &str) -> String {
+    let Ok(mut parsed) = url::Url::parse(database_url) else {
+        return database_url.to_string();
+    };
+    if parsed.password().is_some() {
+        let _ = parsed.set_password(Some("***"));
+    }
+    parsed.to_string()
 }
 
 fn read_database_password(password_file: &Path) -> Result<String> {
