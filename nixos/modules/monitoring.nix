@@ -24,6 +24,13 @@ let
       "::1"
     else
       cfg.database.host;
+  # Wrap bare IPv6 addresses in brackets for URL use (e.g. ::1 → [::1]).
+  # Grafana datasource URLs must be http://[::1]:port, not http://::1:port.
+  grafanaPostgresHostUrl =
+    if builtins.match ".*:.*" grafanaPostgresHost != null then
+      "[${grafanaPostgresHost}]"
+    else
+      grafanaPostgresHost;
   grafanaPostgresSslMode =
     if builtins.elem grafanaPostgresHost [
       "127.0.0.1"
@@ -177,7 +184,7 @@ in
               name = "Sinex PostgreSQL";
               type = "postgres";
               uid = grafanaPostgresUid;
-              url = "${grafanaPostgresHost}:${toString cfg.database.port}";
+              url = "${grafanaPostgresHostUrl}:${toString cfg.database.port}";
               database = cfg.database.name;
               user = cfg.database.user;
               isDefault = true;
