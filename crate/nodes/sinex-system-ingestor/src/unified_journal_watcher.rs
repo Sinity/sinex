@@ -799,8 +799,9 @@ impl UnifiedJournalWatcher {
                     journal_unit = ?unit,
                     error = %err,
                     reason = "journal_line_too_large",
-                    "Failed to route oversized journal line to DLQ"
+                    "Failed to route oversized journal line to DLQ; cursor will not advance"
                 );
+                return Err(err);
             }
         }
 
@@ -1284,13 +1285,17 @@ impl UnifiedJournalWatcher {
                             Ok(entry) => {
                                 // Emit journal event
                                 if let Some(event) = self.parse_journal_entry(&entry, material)? {
-                                    // Update cursor
-                                    if let Some(cursor) =
-                                        event.payload.get("cursor").and_then(|v| v.as_str())
-                                    {
-                                        self.remember_processed_cursor(cursor).await?;
-                                    }
+                                    // Extract cursor BEFORE send_event (which moves event).
+                                    let cursor = event
+                                        .payload
+                                        .get("cursor")
+                                        .and_then(|v| v.as_str())
+                                        .map(String::from);
 
+                                    // Send event BEFORE advancing cursor.
+                                    // If send_event fails (channel closed), the cursor
+                                    // must not advance — the event will be re-read on
+                                    // restart and re-emitted.
                                     self.send_event(
                                         journal_tx,
                                         event,
@@ -1298,6 +1303,11 @@ impl UnifiedJournalWatcher {
                                         material,
                                     )
                                     .await?;
+
+                                    // Only advance cursor after successful send.
+                                    if let Some(ref cursor) = cursor {
+                                        self.remember_processed_cursor(cursor).await?;
+                                    }
                                 }
 
                                 // Emit systemd event if applicable
