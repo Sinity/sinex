@@ -1211,6 +1211,17 @@ impl UnifiedJournalWatcher {
         let unit_refs: Vec<&str> = unit_args.iter().map(std::string::String::as_str).collect();
         args.extend(unit_refs);
 
+        // Exclude self-units to prevent feedback loops (sinex logs → sinex inputs).
+        // Default excludes sinex-*.service, sinex-*.timer, sinex-*.socket.
+        let exclude_args: Vec<String> = self
+            .journal_config
+            .exclude_units
+            .iter()
+            .map(|u| format!("--exclude-unit={u}"))
+            .collect();
+        let exclude_refs: Vec<&str> = exclude_args.iter().map(std::string::String::as_str).collect();
+        args.extend(exclude_refs);
+
         // Add priority filter
         let priority_arg;
         if !self.journal_config.priorities.is_empty() {

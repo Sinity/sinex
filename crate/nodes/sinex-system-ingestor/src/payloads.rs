@@ -308,6 +308,9 @@ pub struct JournalConfig {
     pub include_user: bool,
     /// Fields to exclude from additional fields
     pub exclude_fields: Vec<String>,
+    /// Units to explicitly exclude even when `units` is empty (catch-all mode).
+    /// Defaults to sinex-* self-units to prevent feedback loops.
+    pub exclude_units: Vec<String>,
     /// Cursor file to track position
     pub cursor_file: Option<String>,
     /// Batch size for imports
@@ -325,7 +328,8 @@ impl Default for JournalConfig {
         Self {
             follow: true,
             import_hours: 24,
-            units: vec![],      // Empty = capture all units
+            units: vec![],      // Empty = capture all units (excluding sinex-* self-units by default)
+            exclude_units: default_journal_exclude_units(),
             priorities: vec![], // Empty = capture all priorities
             include_kernel: true,
             include_user: true,
@@ -341,6 +345,18 @@ impl Default for JournalConfig {
             cursor_flush_interval_secs: Seconds::from_secs(10),
         }
     }
+}
+
+/// Self-units excluded from journal capture by default.
+/// Prevents the self-amplification feedback loop where sinex logs
+/// become sinex inputs under failure (issue #581).
+#[must_use]
+pub fn default_journal_exclude_units() -> Vec<String> {
+    vec![
+        "sinex-*.service".into(),
+        "sinex-*.timer".into(),
+        "sinex-*.socket".into(),
+    ]
 }
 
 /// `SystemD` unit types
