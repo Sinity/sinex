@@ -614,6 +614,7 @@ async fn test_journal_config_custom_units_and_priorities() -> TestResult<()> {
         include_kernel: false,
         include_user: false,
         exclude_fields: vec![],
+        exclude_units: vec![],
         cursor_file: None,
         batch_size: 500,
         cursor_flush_event_threshold: 50,
