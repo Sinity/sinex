@@ -85,6 +85,88 @@ pub enum SinexError {
     Coordination(ErrorDetails),
 }
 
+/// Classification of a `SinexError` by its inherent semantics.
+///
+/// Every error variant maps to one class. This is the default mapping — callers
+/// should use [`SinexError::error_class`] rather than matching variants directly.
+/// For contextual overrides (e.g. `ChannelSend` during shutdown is not fatal),
+/// see `FailurePolicy` in the `settlement` module.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ErrorClass {
+    /// This event is invalid — DLQ it and continue.
+    /// Schema validation failures, malformed payloads, domain rule violations.
+    DataError,
+    /// A transient infrastructure hiccup — retry with finite backoff.
+    /// Network timeouts, brief NATS disconnections, CAS races on first attempt.
+    TransientInfra,
+    /// The node or runtime is permanently broken — halt, do NOT retry.
+    /// Checkpoint CAS failure (stale revision), lifecycle state corruption,
+    /// output channel closed, invalid runtime configuration, permission denied.
+    NodeFatal,
+    /// Transport is degraded — pause consumption, circuit-break, alert.
+    /// DLQ stream unavailable, confirmation stream unavailable,
+    /// JetStream publish failing beyond retry budget.
+    TransportDegraded,
+}
+
+impl ErrorClass {
+    #[must_use]
+    pub fn is_fatal(self) -> bool {
+        matches!(self, Self::NodeFatal | Self::TransportDegraded)
+    }
+
+    #[must_use]
+    pub fn is_data_error(self) -> bool {
+        matches!(self, Self::DataError)
+    }
+}
+
+impl SinexError {
+    /// Default error classification. Callers may override with `FailurePolicy`
+    /// for context-specific settlement (e.g. `ChannelSend` during normal
+    /// shutdown is not fatal).
+    #[must_use]
+    pub fn error_class(&self) -> ErrorClass {
+        match self {
+            SinexError::Checkpoint(_) => ErrorClass::NodeFatal,
+            SinexError::Lifecycle(_) => ErrorClass::NodeFatal,
+            SinexError::Configuration(_) => ErrorClass::NodeFatal,
+            SinexError::PermissionDenied(_) => ErrorClass::NodeFatal,
+            SinexError::ChannelSend(_) => ErrorClass::NodeFatal,
+            SinexError::Validation(_) => ErrorClass::DataError,
+            SinexError::Parse(_) => ErrorClass::DataError,
+            SinexError::Serialization(_) => ErrorClass::DataError,
+            SinexError::Processing(_) => ErrorClass::DataError,
+            SinexError::Automaton(_) => ErrorClass::DataError,
+            SinexError::NotFound(_) => ErrorClass::DataError,
+            SinexError::AlreadyExists(_) => ErrorClass::DataError,
+            SinexError::InvalidState(_) => ErrorClass::DataError,
+            SinexError::Network(_) => ErrorClass::TransientInfra,
+            SinexError::Timeout(_) => ErrorClass::TransientInfra,
+            SinexError::Cancelled(_) => ErrorClass::TransientInfra,
+            SinexError::MaxRetriesExceeded(_) => ErrorClass::TransientInfra,
+            SinexError::Io(_) => ErrorClass::TransientInfra,
+            SinexError::Database(_) => ErrorClass::TransientInfra,
+            SinexError::DbPersistenceFailed(_) => ErrorClass::TransientInfra,
+            SinexError::Service(_) => ErrorClass::TransientInfra,
+            SinexError::ResourceExhausted(_) => ErrorClass::TransientInfra,
+            SinexError::Kv(_) => ErrorClass::TransientInfra,
+            SinexError::ChannelReceive(_) => ErrorClass::TransientInfra,
+            SinexError::Unknown(_) => ErrorClass::TransientInfra,
+            #[cfg(feature = "nats")]
+            SinexError::Nats(_) => ErrorClass::TransientInfra,
+            #[cfg(feature = "nats")]
+            SinexError::NatsAckFailed(_) => ErrorClass::TransientInfra,
+            #[cfg(feature = "nats")]
+            SinexError::NatsPublish(_) => ErrorClass::TransientInfra,
+            #[cfg(feature = "nats")]
+            SinexError::NatsSubscribe(_) => ErrorClass::TransientInfra,
+            SinexError::BlobStorage(_) => ErrorClass::TransientInfra,
+            SinexError::Coordination(_) => ErrorClass::TransientInfra,
+        }
+    }
+}
+
 /// Detailed error information including message, context, and sources.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorDetails {
