@@ -2724,6 +2724,61 @@ mod tests {
     use tokio::time::sleep;
     use xtask::sandbox::{EnvGuard, sinex_test};
 
+    /// Subscribe to scope-invalidation messages in tests.
+    ///
+    /// `js.publish` requires the target subject to be covered by an existing
+    /// JetStream stream, and the production stream bootstrap (in
+    /// `sinex_ingestd::jetstream_consumer::bootstrap_streams`) does not run
+    /// in test contexts that use ephemeral NATS. This helper:
+    ///
+    /// 1. `get_or_create_stream`s the canonical
+    ///    `SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS` stream so publishes succeed.
+    /// 2. Creates an ephemeral push consumer and forwards each delivered
+    ///    payload onto an `mpsc::UnboundedReceiver<Vec<u8>>` so call sites
+    ///    can `.recv()` the bytes directly without juggling the
+    ///    `Result<jetstream::Message, _>` shape.
+    async fn spawn_invalidation_listener_for_test(
+        nats_client: &async_nats::Client,
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>> {
+        use async_nats::jetstream::{consumer::push, stream as js_stream};
+        let env = sinex_primitives::environment::environment();
+        let stream_name = env.nats_stream_name("SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS");
+        let invalidation_subject = env.nats_subject(INVALIDATION_SUBJECT);
+        let js = async_nats::jetstream::new(nats_client.clone());
+        let stream = js
+            .get_or_create_stream(js_stream::Config {
+                name: stream_name,
+                subjects: vec![invalidation_subject],
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| eyre!("failed to bootstrap invalidation stream: {e}"))?;
+        let deliver_subject = nats_client.new_inbox();
+        let consumer = stream
+            .create_consumer(push::Config {
+                deliver_subject,
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| eyre!("failed to create invalidation consumer: {e}"))?;
+        let mut messages = consumer
+            .messages()
+            .await
+            .map_err(|e| eyre!("failed to start invalidation message stream: {e}"))?;
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Some(item) = messages.next().await {
+                let Ok(msg) = item else { break };
+                let _ = msg.ack().await;
+                if tx.send(msg.payload.to_vec()).is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(rx)
+    }
+
     fn sample_scope() -> ReplayScope {
         ReplayScope {
             node_id: "fs-test".to_string(),
@@ -4465,14 +4520,8 @@ mod tests {
             .approve(planned.operation_id, "admin:approver".into())
             .await?;
 
-        let invalidation_subject = environment().nats_subject(INVALIDATION_SUBJECT);
-        let js = async_nats::jetstream::new(ctx.nats_client());
-        let mut invalidation_sub = js
-            .subscribe(invalidation_subject)
-            .await
-            .map_err(|error| {
-                eyre!("failed to subscribe for invalidation publish failure test: {error}")
-            })?;
+        let mut invalidation_rx =
+            spawn_invalidation_listener_for_test(&ctx.nats_client()).await?;
 
         let executor = ReplayExecutionEngine::new(replay.clone(), ctx.nats_client())
             .with_scope_invalidation_publish_failures(Arc::new(AtomicUsize::new(1)));
@@ -4523,11 +4572,10 @@ mod tests {
             "scope invalidation publish failure must not leave archived rows behind"
         );
 
-        let invalidation_msg =
-            tokio::time::timeout(Duration::from_secs(1), invalidation_sub.next())
-                .await?
-                .expect("compensating invalidation should still publish after restore");
-        let payload = String::from_utf8(invalidation_msg.payload.to_vec())?;
+        let payload_bytes = tokio::time::timeout(Duration::from_secs(1), invalidation_rx.recv())
+            .await?
+            .expect("compensating invalidation should still publish after restore");
+        let payload = String::from_utf8(payload_bytes)?;
         assert!(payload.contains("scope://scope-invalidation-test/replay"));
         assert!(payload.contains(&target_id.to_string()));
 
@@ -4876,12 +4924,8 @@ mod tests {
             )
             .await?;
 
-        let invalidation_subject = environment().nats_subject(INVALIDATION_SUBJECT);
-        let js = async_nats::jetstream::new(ctx.nats_client());
-        let mut invalidation_sub = js
-            .subscribe(invalidation_subject)
-            .await
-            .map_err(|error| eyre!("failed to subscribe for invalidation test: {error}"))?;
+        let mut invalidation_rx =
+            spawn_invalidation_listener_for_test(&ctx.nats_client()).await?;
 
         let err = engine
             .abort_before_scan_ack(
@@ -4909,11 +4953,10 @@ mod tests {
             "aborted replay should restore the archived event"
         );
 
-        let invalidation_msg =
-            tokio::time::timeout(Duration::from_secs(1), invalidation_sub.next())
-                .await?
-                .expect("compensating invalidation should be published");
-        let payload = String::from_utf8(invalidation_msg.message.payload.to_vec())?;
+        let payload_bytes = tokio::time::timeout(Duration::from_secs(1), invalidation_rx.recv())
+            .await?
+            .expect("compensating invalidation should be published");
+        let payload = String::from_utf8(payload_bytes)?;
         assert!(payload.contains("scope://fs-test/replay-compensating-invalidation"));
         assert!(payload.contains(&event_id.to_string()));
 
