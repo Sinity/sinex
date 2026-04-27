@@ -456,6 +456,22 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                     name: "events_node_model_valid",
                     expression: "node_model IS NULL OR node_model IN ('transducer', 'windowed', 'scope_reconciler')",
                 },
+                NamedConstraint {
+                    name: "events_host_bounds",
+                    expression: "length(host) BETWEEN 1 AND 255",
+                },
+                NamedConstraint {
+                    name: "events_scope_key_bounds",
+                    expression: "scope_key IS NULL OR length(scope_key) BETWEEN 1 AND 512",
+                },
+                NamedConstraint {
+                    name: "events_equivalence_key_bounds",
+                    expression: "equivalence_key IS NULL OR length(equivalence_key) BETWEEN 1 AND 512",
+                },
+                NamedConstraint {
+                    name: "events_semantics_version_bounds",
+                    expression: "semantics_version IS NULL OR length(semantics_version) BETWEEN 1 AND 64",
+                },
             ],
             foreign_keys: vec![NamedForeignKey {
                 name: "events_node_run_id_fkey",
@@ -481,7 +497,16 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
         ConvergibleTable {
             meta: find_meta("core.node_manifests")?,
             statement_fn: NodeManifests::create_table_statement,
-            named_constraints: vec![],
+            named_constraints: vec![
+                NamedConstraint {
+                    name: "node_manifests_node_name_bounds",
+                    expression: "length(node_name) BETWEEN 1 AND 128",
+                },
+                NamedConstraint {
+                    name: "node_manifests_version_bounds",
+                    expression: "length(version) BETWEEN 1 AND 64",
+                },
+            ],
             foreign_keys: vec![],
             columns_to_drop: &[],
             mirror: None,
@@ -502,7 +527,12 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
         ConvergibleTable {
             meta: find_meta("core.tags")?,
             statement_fn: Tags::create_table_statement,
-            named_constraints: vec![],
+            named_constraints: vec![
+                NamedConstraint {
+                    name: "tags_name_bounds",
+                    expression: "length(name) BETWEEN 1 AND 256",
+                },
+            ],
             foreign_keys: vec![],
             columns_to_drop: &[],
             mirror: None,
@@ -535,6 +565,14 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                 NamedConstraint {
                     name: "entities_confidence_score_range",
                     expression: "confidence_score >= 0 AND confidence_score <= 1.0",
+                },
+                NamedConstraint {
+                    name: "entities_entity_type_bounds",
+                    expression: "length(entity_type) BETWEEN 1 AND 128",
+                },
+                NamedConstraint {
+                    name: "entities_name_bounds",
+                    expression: "length(name) BETWEEN 1 AND 512",
                 },
             ],
             foreign_keys: vec![],
