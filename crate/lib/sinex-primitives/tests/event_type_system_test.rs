@@ -454,8 +454,16 @@ async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> TestResult<()>
     // Wait for all 30 events
     scope.wait_for_event_count(30).await?;
 
-    // Verify all IDs are unique by querying from DB
-    let events = ctx.pool().events().get_recent(50).await?;
+    // Filter by source to avoid heartbeat/telemetry events that may also be present
+    // in the shared pipeline during the wait window.
+    let events = ctx
+        .pool()
+        .events()
+        .get_by_source(
+            &sinex_primitives::EventSource::from_static("fs-watcher"),
+            sinex_primitives::Pagination::new(Some(50), None),
+        )
+        .await?;
     assert_eq!(events.len(), 30, "Should have 30 events in the DB");
 
     let mut all_ids = HashSet::new();

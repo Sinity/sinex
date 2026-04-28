@@ -121,9 +121,12 @@ async fn gap_closed_window_emits_completed_session() -> TestResult<()> {
     assert_eq!(payload.start_time, first_start);
     assert_eq!(payload.end_time, first_start + Duration::seconds(240));
     assert_eq!(payload.primary_source, ActivitySourceKind::Terminal);
+    // activity_sources comes from BTreeMap::keys() which is sorted by Ord.
+    // ActivitySourceKind discriminants: Unknown=0, Window=1, Browser=2, Terminal=3.
+    // Window(1) < Terminal(3), so BTreeMap yields [Window, Terminal].
     assert_eq!(
         payload.activity_sources,
-        vec![ActivitySourceKind::Terminal, ActivitySourceKind::Window]
+        vec![ActivitySourceKind::Window, ActivitySourceKind::Terminal]
     );
     assert_eq!(
         payload

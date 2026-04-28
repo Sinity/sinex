@@ -18,18 +18,21 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().build().await?;
     let scope = ctx.pipeline().await?;
 
+    // All timestamps must be within [2000-01-01, now+1h] or ingestd routes them to DLQ.
+    // TS_ORIG_LOWER_BOUND = 2000-01-01; SUSPICIOUS_TS_ORIG_FUTURE_SKEW = 1 hour.
+    let current = now();
     let timestamp_cases = &[
-        // Unix epoch
-        Timestamp::from_unix_timestamp(0).unwrap(),
-        // Far future (year 9999)
+        // Just after the lower bound (2001-01-01)
+        Timestamp::from_unix_timestamp(978_307_200).unwrap(),
+        // Mid-range historical
         Timestamp::new(time::OffsetDateTime::new_utc(
-            time::Date::from_calendar_date(9999, time::Month::December, 31).unwrap(),
-            time::Time::from_hms(23, 59, 59).unwrap(),
+            time::Date::from_calendar_date(2010, time::Month::June, 15).unwrap(),
+            time::Time::from_hms(12, 0, 0).unwrap(),
         )),
-        // Near boundaries
-        Timestamp::from_unix_timestamp(i64::from(i32::MAX)).unwrap(),
+        // Recent past
+        current - Duration::hours(1),
         // Current time
-        now(),
+        current,
     ];
 
     let source = "timestamp_test";
