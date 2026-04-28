@@ -112,7 +112,10 @@ async fn health_aggregator_rejects_missing_ts_orig(ctx: TestContext) -> TestResu
     .await
     .expect_err("missing ts_orig must be rejected");
 
-    assert!(error.to_string().contains("missing ts_orig"));
+    assert!(
+        matches!(&error, NodeLogicError::InputParsing(msg) if msg.contains("missing ts_orig")),
+        "expected InputParsing with 'missing ts_orig', got: {error:?}"
+    );
     Ok(())
 }
 
@@ -693,8 +696,10 @@ async fn health_aggregator_rejects_invalid_event_ids_in_system_reports(
     .await
     .expect_err("corrupt persisted event ids must fail honestly");
 
-    assert!(error.to_string().contains("invalid event_id"));
-    assert!(error.to_string().contains("system status"));
+    assert!(
+        matches!(&error, NodeLogicError::InputParsing(msg) if msg.contains("invalid event_id") && msg.contains("system status")),
+        "expected InputParsing with 'invalid event_id' and 'system status', got: {error:?}"
+    );
     Ok(())
 }
 
@@ -749,8 +754,10 @@ async fn health_aggregator_rejects_invalid_event_ids_in_component_reports(
     .await
     .expect_err("corrupt persisted event ids must fail honestly");
 
-    assert!(error.to_string().contains("invalid event_id"));
-    assert!(error.to_string().contains("component report"));
+    assert!(
+        matches!(&error, NodeLogicError::InputParsing(msg) if msg.contains("invalid event_id") && msg.contains("component report")),
+        "expected InputParsing with 'invalid event_id' and 'component report', got: {error:?}"
+    );
     Ok(())
 }
 
@@ -770,8 +777,10 @@ async fn health_aggregator_rejects_invalid_status_values(ctx: TestContext) -> Te
         .await
         .expect_err("invalid health statuses must fail honestly");
 
-    assert!(error.to_string().contains("current_status"));
-    assert!(error.to_string().contains("mystery-state"));
+    assert!(
+        matches!(&error, NodeLogicError::InputParsing(msg) if msg.contains("current_status") && msg.contains("mystery-state")),
+        "expected InputParsing with 'current_status' and 'mystery-state', got: {error:?}"
+    );
     Ok(())
 }
 
@@ -791,9 +800,8 @@ async fn health_aggregator_rejects_missing_component(ctx: TestContext) -> TestRe
         .expect_err("missing component names must fail honestly");
 
     assert!(
-        error
-            .to_string()
-            .contains("missing required field 'component'")
+        matches!(&error, NodeLogicError::InputParsing(msg) if msg.contains("missing required field 'component'")),
+        "expected InputParsing with missing component message, got: {error:?}"
     );
     Ok(())
 }
