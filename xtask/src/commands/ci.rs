@@ -578,6 +578,19 @@ fn git_show_reports_missing_object(stderr: &str) -> bool {
         || stderr.contains("unknown revision or path not in the working tree")
 }
 
+/// Check that a schema change is backwards-compatible.
+///
+/// Three classes of breaking changes are detected:
+///
+/// 1. **New required fields** — adding a field to `required` breaks consumers
+///    that previously omitted it.
+/// 2. **Type changes on existing properties** — changing a field's `type`
+///    breaks any party that serialized or deserialized the old type.
+/// 3. **Enum value removals** — removing a value from a field's `enum` array
+///    breaks producers that emit the removed value.
+///
+/// Note: this is a shallow check on the top-level `properties` object.
+/// Nested schema objects are not recursed into.
 fn check_schema_contract_guard(old_json_str: &str, new_json_str: &str) -> Result<bool> {
     use color_eyre::eyre::Context;
 
@@ -586,6 +599,9 @@ fn check_schema_contract_guard(old_json_str: &str, new_json_str: &str) -> Result
     let new: serde_json::Value = serde_json::from_str(new_json_str)
         .context("failed to parse candidate schema JSON for contract guard")?;
 
+    let mut ok = true;
+
+    // 1. New required fields.
     let old_required: Vec<&str> = old
         .get("required")
         .and_then(|r| r.as_array())
@@ -600,11 +616,59 @@ fn check_schema_contract_guard(old_json_str: &str, new_json_str: &str) -> Result
     for req in &new_required {
         if !old_required.contains(req) {
             eprintln!("  Breaking: new required field '{req}' not in old schema");
-            return Ok(false);
+            ok = false;
         }
     }
 
-    Ok(true)
+    // 2. Type changes and 3. enum value removals — checked per-property.
+    let empty_obj = serde_json::Value::Object(serde_json::Map::new());
+    let old_props = old
+        .get("properties")
+        .and_then(|p| p.as_object())
+        .unwrap_or_else(|| empty_obj.as_object().unwrap());
+    let new_props = new
+        .get("properties")
+        .and_then(|p| p.as_object())
+        .unwrap_or_else(|| empty_obj.as_object().unwrap());
+
+    for (field, new_prop) in new_props {
+        let Some(old_prop) = old_props.get(field) else {
+            // New property — not breaking (it will be optional unless required, already checked).
+            continue;
+        };
+
+        // 2. Type change.
+        let old_type = old_prop.get("type");
+        let new_type = new_prop.get("type");
+        if old_type != new_type
+            && old_type.is_some()
+            && new_type.is_some()
+        {
+            eprintln!(
+                "  Breaking: field '{field}' type changed from {} to {}",
+                old_type.unwrap(),
+                new_type.unwrap()
+            );
+            ok = false;
+        }
+
+        // 3. Enum value removals.
+        if let (Some(old_enum), Some(new_enum)) = (
+            old_prop.get("enum").and_then(|e| e.as_array()),
+            new_prop.get("enum").and_then(|e| e.as_array()),
+        ) {
+            for old_val in old_enum {
+                if !new_enum.contains(old_val) {
+                    eprintln!(
+                        "  Breaking: enum value {old_val} removed from field '{field}'"
+                    );
+                    ok = false;
+                }
+            }
+        }
+    }
+
+    Ok(ok)
 }
 
 fn resolve_socket_dir(
@@ -701,6 +765,62 @@ mod tests {
         assert!(
             !success,
             "new required fields should fail the contract guard"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_schema_contract_guard_rejects_type_changes()
+    -> ::xtask::sandbox::TestResult<()> {
+        let success = check_schema_contract_guard(
+            r#"{"type":"object","properties":{"count":{"type":"integer"}}}"#,
+            r#"{"type":"object","properties":{"count":{"type":"string"}}}"#,
+        )?;
+        assert!(
+            !success,
+            "property type change should fail the contract guard"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_schema_contract_guard_rejects_enum_value_removals()
+    -> ::xtask::sandbox::TestResult<()> {
+        let success = check_schema_contract_guard(
+            r#"{"type":"object","properties":{"status":{"enum":["active","inactive","pending"]}}}"#,
+            r#"{"type":"object","properties":{"status":{"enum":["active","inactive"]}}}"#,
+        )?;
+        assert!(
+            !success,
+            "enum value removal should fail the contract guard"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_schema_contract_guard_allows_new_optional_properties()
+    -> ::xtask::sandbox::TestResult<()> {
+        let success = check_schema_contract_guard(
+            r#"{"type":"object","properties":{"a":{"type":"string"}}}"#,
+            r#"{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"integer"}}}"#,
+        )?;
+        assert!(
+            success,
+            "adding new optional properties should pass the contract guard"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_check_schema_contract_guard_allows_enum_value_additions()
+    -> ::xtask::sandbox::TestResult<()> {
+        let success = check_schema_contract_guard(
+            r#"{"type":"object","properties":{"status":{"enum":["active","inactive"]}}}"#,
+            r#"{"type":"object","properties":{"status":{"enum":["active","inactive","pending"]}}}"#,
+        )?;
+        assert!(
+            success,
+            "adding new enum values should pass the contract guard"
         );
         Ok(())
     }
