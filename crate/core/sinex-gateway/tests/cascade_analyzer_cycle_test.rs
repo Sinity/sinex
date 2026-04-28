@@ -192,7 +192,10 @@ async fn timeout_prevents_indefinite_transaction_hold(ctx: TestContext) -> color
         "core.prepare_cascade_session missing; run migrations before tests"
     );
 
-    // Create a very short timeout to test the timeout mechanism
+    // Create a very short timeout to test the timeout mechanism.
+    // 1 ns was too fast to be meaningful on most platforms — the DB call
+    // itself takes longer. 50 ms is still fast enough to keep the test quick
+    // while actually exercising the timeout path before analysis finishes.
     let analyzer = StreamingCascadeAnalyzer::with_config(
         pool.clone(),
         CascadeAnalyzerConfig {
@@ -200,14 +203,17 @@ async fn timeout_prevents_indefinite_transaction_hold(ctx: TestContext) -> color
             max_depth: 1000, // Large depth
             include_weak_dependencies: false,
             memory_limit_bytes: Some(1024 * 1024),
-            timeout: std::time::Duration::from_nanos(1), // Force timeout before analysis can complete
+            timeout: std::time::Duration::from_millis(50), // Short enough to timeout before analysis
         },
     );
+
+    // Use a per-test unique path so parallel test runs don't collide.
+    let unique_path = format!("/tmp/sinex-test-timeout-{}", Uuid::now_v7());
 
     // Create a simple material-backed event that satisfies the provenance invariant.
     let material = pool
         .source_materials()
-        .register_in_flight("timeout.source", Some("/timeout"), json!({}))
+        .register_in_flight("timeout.source", Some(&unique_path), json!({}))
         .await?;
     let event_id = CoreUuid::now_v7();
     sqlx::query!(
