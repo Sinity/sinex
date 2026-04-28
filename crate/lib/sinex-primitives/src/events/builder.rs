@@ -185,6 +185,32 @@ impl<T> EventBuilder<T, HasProvenance> {
             SinexError::invalid_state("EventBuilder missing provenance when building")
         })?;
 
+        // Enforce the same offset invariants as Deserialize: offsets must be
+        // either all-present (start + end + kind) or all-absent.
+        if let Provenance::Material {
+            offset_start,
+            offset_end,
+            offset_kind,
+            ..
+        } = &provenance
+        {
+            match (offset_start, offset_end) {
+                (Some(_), None) | (None, Some(_)) => {
+                    return Err(SinexError::invalid_state(
+                        "Material provenance offsets must include both offset_start and offset_end",
+                    ));
+                }
+                (None, None) if *offset_kind != OffsetKind::Byte => {
+                    // A non-default offset_kind without offsets is invalid —
+                    // OffsetKind::Byte is the sentinel "no offsets" value.
+                    return Err(SinexError::invalid_state(
+                        "Material provenance offset_kind requires both offset_start and offset_end",
+                    ));
+                }
+                _ => {}
+            }
+        }
+
         // Auto-sync: synthesis operation lineage lives in the dedicated DB
         // column, so keep the event-level field aligned with provenance.
         let created_by_operation_id = provenance.operation_uuid();

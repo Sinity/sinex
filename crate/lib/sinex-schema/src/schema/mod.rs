@@ -217,14 +217,6 @@ const ALL_TABLES: &[TableMeta] = &[
         cleanup_protected: false,
     },
     TableMeta {
-        schema: "sinex_schemas",
-        name: "binary_schema_version",
-        qualified_name: "sinex_schemas.binary_schema_version",
-        is_hypertable: false,
-        has_triggers: false,
-        cleanup_protected: false,
-    },
-    TableMeta {
         schema: "core",
         name: "operations_log",
         qualified_name: "core.operations_log",
