@@ -505,8 +505,29 @@ fn format_coordinator_state() -> SnapshotContextField {
 fn format_active_jobs(ctx: &CommandContext) -> SnapshotContextField {
     match ctx.try_with_history_db_query(crate::history::HistoryDb::get_active_background_jobs) {
         Some(Ok(active)) => {
+            // Filter out rows whose PID is no longer alive. The DB status field
+            // is updated by the job runner, but the process may have exited between
+            // the last heartbeat and this read (e.g. crash, OOM kill). Reporting
+            // stale rows as "running" misleads the agent reading the snapshot.
             let items: Vec<String> = active
                 .iter()
+                .filter(|j| {
+                    // Keep jobs with no PID (status not yet set by runner),
+                    // and jobs whose PID is verifiably alive via kill(pid, 0).
+                    j.pid.map_or(true, |pid| {
+                        // SAFETY: kill(pid, 0) probes without sending a signal.
+                        // Returns 0 if the process exists; ESRCH if it does not.
+                        #[cfg(unix)]
+                        {
+                            // SAFETY: pid is a u32 cast to i32; signal 0 is safe.
+                            unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+                        }
+                        #[cfg(not(unix))]
+                        {
+                            std::path::Path::new(&format!("/proc/{pid}")).exists()
+                        }
+                    })
+                })
                 .map(|j| {
                     format!(
                         "{{id:{}, command:\"{}\", status:\"{}\"}}",
