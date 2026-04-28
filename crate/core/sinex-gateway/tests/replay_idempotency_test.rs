@@ -3,110 +3,15 @@
 //! Verifies the guard added in `create_operation()` that prevents concurrent
 //! replay operations targeting the same `node_id`.
 
-use color_eyre::eyre::bail;
 use serde_json::json;
-use sinex_gateway::{ServiceContainer, config::GatewayConfig, rpc_server};
 use sinex_primitives::rpc::methods;
 use sinex_primitives::temporal::Timestamp;
-use std::net::TcpListener;
-use std::time::Duration;
-use tempfile::NamedTempFile;
-use tokio::sync::watch;
 use xtask::sandbox::{EnvGuard, prelude::*};
 
+mod common;
+use common::LiveGateway;
+
 const RPC_TOKEN: &str = "idempotency-test-token:admin";
-
-struct LiveGateway {
-    port: u16,
-    _shutdown_tx: watch::Sender<bool>,
-    _handle: tokio::task::JoinHandle<()>,
-    _cert_file: NamedTempFile,
-    _key_file: NamedTempFile,
-    client: reqwest::Client,
-}
-
-impl LiveGateway {
-    async fn start(database_url: &str, env_guard: &mut EnvGuard) -> TestResult<Self> {
-        let cert =
-            rcgen::generate_simple_self_signed(vec!["localhost".into(), "127.0.0.1".into()])?;
-        let cert_file = NamedTempFile::new()?;
-        let key_file = NamedTempFile::new()?;
-        tokio::fs::write(cert_file.path(), cert.cert.pem()).await?;
-        tokio::fs::write(key_file.path(), cert.key_pair.serialize_pem()).await?;
-
-        env_guard.set(
-            "SINEX_GATEWAY_TLS_CERT",
-            cert_file.path().to_string_lossy().to_string(),
-        );
-        env_guard.set(
-            "SINEX_GATEWAY_TLS_KEY",
-            key_file.path().to_string_lossy().to_string(),
-        );
-        env_guard.clear("SINEX_GATEWAY_TLS_CLIENT_CA");
-        env_guard.set("SINEX_RPC_TOKEN", RPC_TOKEN);
-        env_guard.set("DATABASE_URL", database_url);
-        env_guard.set("SINEX_ALLOW_TEST_ACTORS", "1");
-
-        let listener = TcpListener::bind("127.0.0.1:0")?;
-        let port = listener.local_addr()?.port();
-        drop(listener);
-
-        let mut config = GatewayConfig::load()?;
-        config.database_url = database_url.to_string();
-        config.tcp_listen = format!("127.0.0.1:{port}");
-        config.rpc_rate_limit_enabled = false;
-        let services = ServiceContainer::new(&config).await?;
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let handle = tokio::spawn(async move {
-            if let Err(e) = rpc_server::run(&config, services, shutdown_rx).await {
-                eprintln!("Gateway RPC server failed: {e:#}");
-            }
-        });
-
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-        loop {
-            match tokio::net::TcpStream::connect(format!("127.0.0.1:{port}")).await {
-                Ok(_) => break,
-                Err(_) if tokio::time::Instant::now() < deadline => {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
-                Err(e) => bail!("Gateway port {port} not ready: {e}"),
-            }
-        }
-
-        let client = reqwest::Client::builder()
-            .danger_accept_invalid_certs(true)
-            .build()?;
-
-        Ok(Self {
-            port,
-            _shutdown_tx: shutdown_tx,
-            _handle: handle,
-            _cert_file: cert_file,
-            _key_file: key_file,
-            client,
-        })
-    }
-
-    async fn rpc(&self, method: &str, params: serde_json::Value) -> TestResult<serde_json::Value> {
-        let body = json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-            "id": 1,
-        });
-
-        let resp = self
-            .client
-            .post(format!("https://127.0.0.1:{}/rpc", self.port))
-            .header("Authorization", format!("Bearer {RPC_TOKEN}"))
-            .json(&body)
-            .send()
-            .await?;
-
-        Ok(resp.json().await?)
-    }
-}
 
 fn scope_for_node(node_id: &str) -> serde_json::Value {
     let ts = Timestamp::now();
@@ -127,12 +32,13 @@ async fn duplicate_plan_for_same_node_rejected(ctx: TestContext) -> TestResult<(
     let ctx = ctx.with_nats().dedicated().await?;
     let mut env_guard = EnvGuard::new();
     env_guard.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
+    env_guard.set("SINEX_ALLOW_TEST_ACTORS", "1");
 
-    let gw = LiveGateway::start(ctx.database_url(), &mut env_guard).await?;
+    let gw = LiveGateway::start(ctx.database_url(), RPC_TOKEN, &mut env_guard).await?;
 
     // First creation: succeeds
     let first = gw
-        .rpc(
+        .rpc_envelope(
             methods::REPLAY_CREATE_OPERATION,
             scope_for_node("idem-node"),
         )
@@ -144,7 +50,7 @@ async fn duplicate_plan_for_same_node_rejected(ctx: TestContext) -> TestResult<(
 
     // Second creation for same node: should fail
     let second = gw
-        .rpc(
+        .rpc_envelope(
             methods::REPLAY_CREATE_OPERATION,
             scope_for_node("idem-node"),
         )
@@ -170,14 +76,15 @@ async fn concurrent_duplicate_plan_for_same_node_rejected(ctx: TestContext) -> T
     let ctx = ctx.with_nats().dedicated().await?;
     let mut env_guard = EnvGuard::new();
     env_guard.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
+    env_guard.set("SINEX_ALLOW_TEST_ACTORS", "1");
 
-    let gw = LiveGateway::start(ctx.database_url(), &mut env_guard).await?;
+    let gw = LiveGateway::start(ctx.database_url(), RPC_TOKEN, &mut env_guard).await?;
 
-    let first = gw.rpc(
+    let first = gw.rpc_envelope(
         methods::REPLAY_CREATE_OPERATION,
         scope_for_node("idem-race-node"),
     );
-    let second = gw.rpc(
+    let second = gw.rpc_envelope(
         methods::REPLAY_CREATE_OPERATION,
         scope_for_node("idem-race-node"),
     );
@@ -227,11 +134,12 @@ async fn different_nodes_allowed_concurrent(ctx: TestContext) -> TestResult<()> 
     let ctx = ctx.with_nats().dedicated().await?;
     let mut env_guard = EnvGuard::new();
     env_guard.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
+    env_guard.set("SINEX_ALLOW_TEST_ACTORS", "1");
 
-    let gw = LiveGateway::start(ctx.database_url(), &mut env_guard).await?;
+    let gw = LiveGateway::start(ctx.database_url(), RPC_TOKEN, &mut env_guard).await?;
 
     let first = gw
-        .rpc(methods::REPLAY_CREATE_OPERATION, scope_for_node("node-a"))
+        .rpc_envelope(methods::REPLAY_CREATE_OPERATION, scope_for_node("node-a"))
         .await?;
     assert!(
         first.get("result").is_some(),
@@ -239,7 +147,7 @@ async fn different_nodes_allowed_concurrent(ctx: TestContext) -> TestResult<()> 
     );
 
     let second = gw
-        .rpc(methods::REPLAY_CREATE_OPERATION, scope_for_node("node-b"))
+        .rpc_envelope(methods::REPLAY_CREATE_OPERATION, scope_for_node("node-b"))
         .await?;
     assert!(
         second.get("result").is_some(),
@@ -255,12 +163,13 @@ async fn cancelled_allows_new_operation(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
     let mut env_guard = EnvGuard::new();
     env_guard.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
+    env_guard.set("SINEX_ALLOW_TEST_ACTORS", "1");
 
-    let gw = LiveGateway::start(ctx.database_url(), &mut env_guard).await?;
+    let gw = LiveGateway::start(ctx.database_url(), RPC_TOKEN, &mut env_guard).await?;
 
     // Create and cancel
     let create_resp = gw
-        .rpc(
+        .rpc_envelope(
             methods::REPLAY_CREATE_OPERATION,
             scope_for_node("cancel-node"),
         )
@@ -271,7 +180,7 @@ async fn cancelled_allows_new_operation(ctx: TestContext) -> TestResult<()> {
         .to_string();
 
     let cancel_resp = gw
-        .rpc(
+        .rpc_envelope(
             methods::REPLAY_CANCEL_OPERATION,
             json!({ "operation_id": op_id, "reason": "testing idempotency" }),
         )
@@ -283,7 +192,7 @@ async fn cancelled_allows_new_operation(ctx: TestContext) -> TestResult<()> {
 
     // New operation for same node after cancel: should succeed
     let new_resp = gw
-        .rpc(
+        .rpc_envelope(
             methods::REPLAY_CREATE_OPERATION,
             scope_for_node("cancel-node"),
         )
