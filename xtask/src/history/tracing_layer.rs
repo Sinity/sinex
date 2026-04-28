@@ -346,9 +346,9 @@ fn flush_batch(conn: &mut Connection, batch: &mut Vec<TraceRecord>) {
             ],
         ) {
             warn_trace_history_once(&format!(
-                "failed to persist trace event; remaining trace batch entries will be dropped: {err}"
+                "failed to persist trace event (skipping row, continuing batch): {err}"
             ));
-            return;
+            continue;
         }
     }
     if let Err(err) = tx.commit() {

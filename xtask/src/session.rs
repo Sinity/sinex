@@ -63,7 +63,6 @@ impl WatchLoop {
         F: FnMut(bool) -> Fut,
         Fut: std::future::Future<Output = Result<WatchAction>>,
     {
-        let shutdown_signal = shutdown_signal;
         tokio::pin!(shutdown_signal);
         let mut first = true;
         loop {

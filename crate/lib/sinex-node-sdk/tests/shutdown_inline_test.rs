@@ -42,7 +42,9 @@ async fn test_checkpoint_state_roundtrip_to_file() -> TestResult<()> {
             "done": true,
         })),
         version: 2,
-        revision: 0,
+        // Use a non-zero revision so the round-trip assertion is non-vacuous
+        // (revision == 0 is the default, so asserting 0 == 0 proves nothing).
+        revision: 5,
     };
     state.save_to_file(&checkpoint_path).await.unwrap();
 
@@ -54,6 +56,9 @@ async fn test_checkpoint_state_roundtrip_to_file() -> TestResult<()> {
     assert_eq!(loaded.last_activity, state.last_activity);
     assert_eq!(loaded.data, state.data);
     assert_eq!(loaded.version, state.version);
+    // Ensure persistence captured the actual revision, not silently
+    // defaulting to 0 when the stored value is non-zero.
+    assert_eq!(loaded.revision, state.revision);
 
     CheckpointState::delete_file(&checkpoint_path)
         .await

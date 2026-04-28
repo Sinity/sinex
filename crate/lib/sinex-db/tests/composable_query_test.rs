@@ -452,6 +452,120 @@ async fn test_nested_text_search_populates_relevance_and_snippet(
     Ok(())
 }
 
+/// Test: cursor pagination is stable when multiple events share the same relevance score.
+///
+/// When two events have identical relevance scores the cursor must break the tie by ID so
+/// that page boundaries land without dropping or duplicating rows.  The test seeds three
+/// events with exactly two occurrences of "equalterm" each, then paginates with limit=2
+/// and verifies the second page contains exactly the remaining event without repeating any
+/// event from the first page.
+#[sinex_test]
+async fn test_text_search_cursor_stable_at_equal_score_boundary(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("text-search-equal-score"))
+        .await?;
+
+    // Insert three events that each contain "equalterm" twice — identical tsvector weight.
+    let mut inserted_ids = Vec::new();
+    for i in 0..3 {
+        let event = ctx
+            .pool
+            .events()
+            .insert(
+                DynamicPayload::new(
+                    "equal-score-source",
+                    "document.indexed",
+                    json!({"content": format!("equalterm equalterm entry {i}")}),
+                )
+                .from_material(material_id)
+                .build()?,
+            )
+            .await?;
+        inserted_ids.push(event.id.expect("inserted event must have id"));
+    }
+
+    // Page 1: limit=2 should return two of the three events.
+    let page1 = ctx
+        .pool
+        .events()
+        .query(EventQuery {
+            sources: vec![EventSource::from_static("equal-score-source")],
+            payload: Some(PayloadFilter::TextSearch {
+                text: "equalterm".to_string(),
+            }),
+            limit: 2,
+            ..Default::default()
+        })
+        .await?;
+
+    let EventQueryResult::Events {
+        events: page1_events,
+        next_cursor,
+        ..
+    } = page1
+    else {
+        panic!("Expected Events result for page 1")
+    };
+
+    assert_eq!(page1_events.len(), 2, "page 1 should return exactly 2 events");
+    assert!(
+        next_cursor.is_some(),
+        "next_cursor must be set when there are more results"
+    );
+
+    // Page 2: must return the remaining event without repeating page 1.
+    let page2 = ctx
+        .pool
+        .events()
+        .query(EventQuery {
+            sources: vec![EventSource::from_static("equal-score-source")],
+            payload: Some(PayloadFilter::TextSearch {
+                text: "equalterm".to_string(),
+            }),
+            cursor: next_cursor,
+            limit: 2,
+            ..Default::default()
+        })
+        .await?;
+
+    let EventQueryResult::Events {
+        events: page2_events,
+        ..
+    } = page2
+    else {
+        panic!("Expected Events result for page 2")
+    };
+
+    assert_eq!(
+        page2_events.len(),
+        1,
+        "page 2 should contain exactly the remaining event"
+    );
+
+    let page1_ids: Vec<_> = page1_events.iter().filter_map(|e| e.event.id).collect();
+    let page2_ids: Vec<_> = page2_events.iter().filter_map(|e| e.event.id).collect();
+
+    for id in &page2_ids {
+        assert!(
+            !page1_ids.contains(id),
+            "page 2 must not repeat any event from page 1 (id={id})"
+        );
+    }
+
+    // Together the two pages must cover all three inserted events exactly once.
+    let all_returned: Vec<_> = page1_ids.iter().chain(page2_ids.iter()).copied().collect();
+    for id in &inserted_ids {
+        assert!(
+            all_returned.contains(id),
+            "event {id} was inserted but not returned across both pages"
+        );
+    }
+
+    Ok(())
+}
+
 /// Test: ranked text-search queries reject UUID-only cursors.
 #[sinex_test]
 async fn test_text_search_cursor_requires_relevance_score(ctx: TestContext) -> TestResult<()> {

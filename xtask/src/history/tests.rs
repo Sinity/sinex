@@ -1485,9 +1485,9 @@ impl HistoryDb {
         let mut stmt = self.conn.prepare(
             r"
             SELECT
-                SUM(CASE WHEN status = 'pass' THEN 1 ELSE 0 END),
-                SUM(CASE WHEN status = 'fail' THEN 1 ELSE 0 END),
-                SUM(CASE WHEN status = 'skip' THEN 1 ELSE 0 END)
+                COALESCE(SUM(CASE WHEN status = 'pass' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'fail' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'skip' THEN 1 ELSE 0 END), 0)
             FROM test_results
             WHERE invocation_id = ?1
             ",
