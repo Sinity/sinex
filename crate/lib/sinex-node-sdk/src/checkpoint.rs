@@ -85,9 +85,11 @@ pub struct CheckpointState {
 }
 
 fn checkpoint_states_match(lhs: &CheckpointState, rhs: &CheckpointState) -> bool {
+    // Intentionally excludes `last_activity`: it is set to `Timestamp::now()` on every save,
+    // so including it would prevent the idempotent create-on-conflict path from matching two
+    // concurrent saves of the same logical checkpoint state.
     lhs.checkpoint == rhs.checkpoint
         && lhs.processed_count == rhs.processed_count
-        && lhs.last_activity == rhs.last_activity
         && lhs.data == rhs.data
         && lhs.version == rhs.version
 }
