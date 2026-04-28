@@ -149,14 +149,16 @@ async fn duplicate_plan_for_same_node_rejected(ctx: TestContext) -> TestResult<(
             scope_for_node("idem-node"),
         )
         .await?;
-    let error_msg = second
+    // Check the JSON-RPC error code: -32803 maps to SinexError::InvalidState.
+    // This is more robust than matching the human-readable message string.
+    let error_code = second
         .get("error")
-        .and_then(|e| e.get("message"))
-        .and_then(|m| m.as_str())
-        .unwrap_or("");
-    assert!(
-        error_msg.contains("already active"),
-        "Second create should be rejected with 'already active' error, got: {second}"
+        .and_then(|e| e.get("code"))
+        .and_then(|c| c.as_i64());
+    assert_eq!(
+        error_code,
+        Some(-32803),
+        "Second create should be rejected with InvalidState (code -32803), got: {second}"
     );
 
     Ok(())
@@ -201,11 +203,19 @@ async fn concurrent_duplicate_plan_for_same_node_rejected(ctx: TestContext) -> T
         successes, 1,
         "exactly one concurrent create should succeed: first={first}, second={second}"
     );
+    // Check the JSON-RPC error code: -32803 maps to SinexError::InvalidState.
+    let error_codes: Vec<i64> = [&first, &second]
+        .into_iter()
+        .filter_map(|response| {
+            response
+                .get("error")
+                .and_then(|error| error.get("code"))
+                .and_then(|code| code.as_i64())
+        })
+        .collect();
     assert!(
-        errors
-            .iter()
-            .any(|message| message.contains("already active")),
-        "one concurrent create should be rejected as already active: first={first}, second={second}"
+        error_codes.contains(&-32803),
+        "one concurrent create should be rejected with InvalidState (code -32803): first={first}, second={second}"
     );
 
     Ok(())

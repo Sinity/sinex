@@ -5,6 +5,7 @@
 
 use color_eyre::Result as EyreResult;
 use sinex_gateway::{ServiceContainer, service_container::GatewayHealthStatus};
+use sinex_primitives::SinexError;
 use std::sync::Arc;
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
@@ -79,18 +80,17 @@ async fn test_service_container_invalid_database_url(_ctx: TestContext) -> TestR
 
     let result = ServiceContainer::from_database_url("not-a-postgres-url").await;
 
-    assert!(result.is_err(), "Should fail with invalid database URL");
-    match result {
-        Err(error) => {
-            let message = error.to_string();
-            assert!(
-                message.contains("failed to parse DATABASE_URL")
-                    || message.contains("DATABASE_URL"),
-                "Error should surface database URL validation failure, got: {message}"
-            );
-        }
-        Ok(_) => panic!("Expected error but got success"),
-    }
+    let error = result.expect_err("Should fail with invalid database URL");
+    // Downcast to SinexError and assert the Configuration variant, which is
+    // what pool::validate_database_url returns for a malformed URL.  Checking
+    // the variant is more stable than matching the human-readable message.
+    let sinex_err = error
+        .downcast_ref::<SinexError>()
+        .unwrap_or_else(|| panic!("Expected SinexError, got: {error}"));
+    assert!(
+        matches!(sinex_err, SinexError::Configuration(_)),
+        "Expected SinexError::Configuration, got: {sinex_err:?}"
+    );
     Ok(())
 }
 

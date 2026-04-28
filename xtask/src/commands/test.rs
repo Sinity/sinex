@@ -1890,7 +1890,25 @@ mod tests {
 
         let args = command.semantic_invocation_args(&WorkloadScope::Workspace);
         assert!(args.contains(&"--heavy".to_string()));
-        assert!(args.contains(&"--threads=4".to_string()));
+
+        // The thread cap is min(available_parallelism, HEAVY_TEST_THREAD_CAP).
+        // Asserting exactly "--threads=4" is brittle on machines with fewer than 4
+        // logical CPUs.  Instead verify a thread arg is present and within range.
+        let thread_arg = args.iter().find(|a| a.starts_with("--threads="));
+        assert!(
+            thread_arg.is_some(),
+            "heavy invocation must include a --threads=N arg, got: {args:?}"
+        );
+        let n: usize = thread_arg
+            .unwrap()
+            .strip_prefix("--threads=")
+            .unwrap()
+            .parse()
+            .expect("--threads= value must be numeric");
+        assert!(
+            (1..=HEAVY_TEST_THREAD_CAP).contains(&n),
+            "--threads={n} is outside the expected range 1..={HEAVY_TEST_THREAD_CAP}"
+        );
         Ok(())
     }
 
