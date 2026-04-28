@@ -77,18 +77,30 @@ pub fn validate_node_name(node_name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Sanitize a node name for use as a filename component.
+///
+/// Replaces any character that is not alphanumeric, `-`, or `_` with `_`.
+/// This is the lenient counterpart to [`validate_node_name`]; callers that
+/// reach this from runtime contexts where validation has already happened
+/// can use it as a defense-in-depth fallback.
+fn sanitize_node_name_for_filename(name: &str) -> String {
+    if name.is_empty() {
+        return "_".to_string();
+    }
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 /// Default checkpoint file path for a node.
-///
-/// # Panics
-///
-/// Panics if `node_name` fails [`validate_node_name`].  Node names are
-/// compile-time constants in production code, so a panic here indicates a
-/// programming error rather than a runtime condition.
 #[must_use]
 pub fn default_checkpoint_path(node_name: &str) -> PathBuf {
-    if let Err(e) = validate_node_name(node_name) {
-        panic!("invalid node name passed to default_checkpoint_path: {e}");
-    }
     let runtime_dir = env_nonempty_string_optional("SINEX_RUNTIME_DIR", "shutdown checkpoint path")
         .or_else(|| env_nonempty_string_optional("SINEX_WORK_DIR", "shutdown checkpoint path"))
         .map(PathBuf::from)
