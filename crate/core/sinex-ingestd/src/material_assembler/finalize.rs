@@ -880,22 +880,17 @@ impl MaterialAssembler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::MaterialReadySet;
     use crate::material_assembler::FinalizationState;
     use crate::material_assembler::finalization_transaction::{
         FinalizationErrorKind, FinalizationRequest, FinalizationTransaction,
     };
     use crate::material_assembler::{io, state};
-    use camino::Utf8PathBuf;
     use serde_json::json;
     use sinex_db::{
         models::blob::Blob,
         repositories::{DbPoolExt, source_materials::status},
     };
-    use sinex_node_sdk::content_store::{
-        ContentStoreConfig, ContentStoreKey, MaterialContentStore,
-    };
-    use std::sync::Arc;
+    use sinex_node_sdk::content_store::ContentStoreKey;
     use tokio::time::timeout;
     use tokio_stream::StreamExt;
     use xtask::sandbox::prelude::*;
@@ -903,33 +898,7 @@ mod tests {
     async fn test_assembler(
         ctx: &TestContext,
     ) -> TestResult<(MaterialAssembler, tempfile::TempDir, tempfile::TempDir)> {
-        let content_store_dir = tempfile::tempdir()?;
-        let repo_path = Utf8PathBuf::from_path_buf(content_store_dir.path().to_path_buf())
-            .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
-        MaterialContentStore::init(&repo_path, Some("finalize-test")).await?;
-        let content_store = Arc::new(MaterialContentStore::new(ContentStoreConfig {
-            root_path: repo_path,
-            num_copies: None,
-            large_files: None,
-        })?);
-
-        let state_dir = tempfile::tempdir()?;
-        let assembler = MaterialAssembler::new(
-            ctx.nats_client(),
-            ctx.pool.clone(),
-            content_store,
-            state_dir.path().to_path_buf(),
-            Some(ctx.pipeline_namespace().prefix().to_string()),
-            1_000,
-            Some(MaterialReadySet::default()),
-            100,
-            512 * 1024 * 1024,
-            300,
-            3_600,
-            90,
-        )?;
-
-        Ok((assembler, content_store_dir, state_dir))
+        super::super::test_support::build_test_assembler(ctx, "finalize-test").await
     }
 
     #[sinex_test]
