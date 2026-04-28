@@ -668,6 +668,10 @@ async fn test_fk_violation_with_valid_schema_and_node_run_retries_until_material
     Ok(())
 }
 
+/// A bogus `payload_schema_id` FK violation is now handled by stripping the
+/// schema ID and retrying — the event is persisted without the schema
+/// annotation rather than being routed to the DLQ.  This test validates that
+/// recovery path: the event lands in DB with `payload_schema_id = NULL`.
 #[sinex_test]
 async fn test_non_material_fk_violation_routes_to_dlq() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
@@ -679,11 +683,6 @@ async fn test_non_material_fk_violation_routes_to_dlq() -> TestResult<()> {
     let setup =
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
             .await?;
-
-    let mut dlq_sub = setup
-        .nats_client
-        .subscribe(setup.topology.dlq_publish_subject.clone())
-        .await?;
 
     let event_id = Uuid::now_v7();
     let bogus_schema_id = Uuid::now_v7();
@@ -711,27 +710,33 @@ async fn test_non_material_fk_violation_routes_to_dlq() -> TestResult<()> {
     .await?;
     setup.nats_client.flush().await?;
 
-    let msg = tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), dlq_sub.next())
-        .await
-        .map_err(|_| SinexError::network("timed out waiting for schema FK DLQ entry"))?
-        .ok_or_else(|| SinexError::network("DLQ subscription closed"))?;
-    let entry: serde_json::Value = serde_json::from_slice(&msg.payload)?;
-    let error_field = entry["error"].as_str().unwrap_or("");
-    assert!(
-        error_field.contains("Persistence error"),
-        "DLQ error should contain 'Persistence error', got: {error_field}"
-    );
+    // The consumer strips the bogus payload_schema_id and retries the INSERT.
+    // The event should be persisted (without schema annotation) rather than DLQ'd.
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = ctx.pool.clone();
+            async move {
+                let found = pool
+                    .events()
+                    .get_by_id(event_id.into())
+                    .await?
+                    .is_some();
+                Ok::<bool, SinexError>(found)
+            }
+        },
+        Timeouts::STANDARD,
+    )
+    .await?;
+
+    let persisted = ctx
+        .pool
+        .events()
+        .get_by_id(event_id.into())
+        .await?
+        .ok_or_else(|| SinexError::not_found("event should have been persisted after schema-id strip"))?;
     assert_eq!(
-        entry["original_payload"]["payload_schema_id"].as_str(),
-        Some(bogus_schema_id_str.as_str())
-    );
-    assert!(
-        ctx.pool
-            .events()
-            .get_by_id(event_id.into())
-            .await?
-            .is_none(),
-        "invalid schema FK event must not persist"
+        persisted.payload_schema_id, None,
+        "payload_schema_id should be NULL after schema-FK strip-and-retry"
     );
 
     setup.handle.abort();
@@ -756,11 +761,6 @@ async fn test_mixed_batch_isolates_non_retryable_row_and_persists_rest() -> Test
         Duration::from_secs(2),
     )
     .await?;
-
-    let mut dlq_sub = setup
-        .nats_client
-        .subscribe(setup.topology.dlq_publish_subject.clone())
-        .await?;
 
     let source = format!("batch.isolate.{suffix}");
     let event_type = "batch.isolate";
@@ -798,27 +798,17 @@ async fn test_mixed_batch_isolates_non_retryable_row_and_persists_rest() -> Test
     }
     setup.nats_client.flush().await?;
 
-    let expected_good = good_event_ids.len() as i64;
+    // With the schema-FK strip-and-retry recovery path, the bogus payload_schema_id
+    // event is stripped and retried — all 10 events persist and nothing goes to DLQ.
+    let expected_all = 10i64;
     let readiness = WaitHelpers::wait_for_condition(
         || {
             let pool = ctx.pool.clone();
-            let js = setup.js.clone();
-            let dlq_stream = setup.topology.dlq_stream.clone();
             let source = source.clone();
             async move {
                 let event_source: sinex_primitives::EventSource = source.as_str().into();
                 let source_count = pool.events().count_by_source(&event_source).await?;
-                let mut stream = js
-                    .get_stream(&dlq_stream)
-                    .await
-                    .map_err(|e| SinexError::network(e.to_string()))?;
-                let dlq_messages = stream
-                    .info()
-                    .await
-                    .map_err(|e| SinexError::network(e.to_string()))?
-                    .state
-                    .messages as i64;
-                Ok::<bool, SinexError>(source_count >= expected_good && dlq_messages >= 1)
+                Ok::<bool, SinexError>(source_count >= expected_all)
             }
         },
         Timeouts::STANDARD,
@@ -827,33 +817,13 @@ async fn test_mixed_batch_isolates_non_retryable_row_and_persists_rest() -> Test
     if let Err(error) = readiness {
         let event_source: sinex_primitives::EventSource = source.as_str().into();
         let source_count = ctx.pool.events().count_by_source(&event_source).await?;
-        let mut stream = setup
-            .js
-            .get_stream(&setup.topology.dlq_stream)
-            .await
-            .map_err(|e| SinexError::network(e.to_string()))?;
-        let dlq_messages = stream
-            .info()
-            .await
-            .map_err(|e| SinexError::network(e.to_string()))?
-            .state
-            .messages;
         return Err(color_eyre::eyre::eyre!(
-            "mixed-batch isolation never converged: source_count={source_count}, dlq_messages={dlq_messages}, consumer_finished={}, wait_error={error:#}",
+            "mixed-batch schema-strip recovery never converged: source_count={source_count}, consumer_finished={}, wait_error={error:#}",
             setup.handle.is_finished(),
         ));
     }
 
-    let msg = tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), dlq_sub.next())
-        .await
-        .map_err(|_| SinexError::network("timed out waiting for isolated batch DLQ entry"))?
-        .ok_or_else(|| SinexError::network("DLQ subscription closed"))?;
-    let entry: serde_json::Value = serde_json::from_slice(&msg.payload)?;
-    assert_eq!(
-        entry["original_payload"]["payload"]["index"].as_u64(),
-        Some(u64::from(bad_index))
-    );
-
+    // All 9 good events must persist.
     for event_id in good_event_ids {
         assert!(
             ctx.pool
@@ -861,18 +831,38 @@ async fn test_mixed_batch_isolates_non_retryable_row_and_persists_rest() -> Test
                 .get_by_id(event_id.into())
                 .await?
                 .is_some(),
-            "good event {event_id} should persist despite a poisoned sibling row"
+            "good event {event_id} should persist"
         );
     }
 
+    // The bad event (index=7) is also persisted, but with payload_schema_id stripped.
     let bad_event_id = bad_event_id.expect("bad event id must be set");
-    assert!(
-        ctx.pool
-            .events()
-            .get_by_id(bad_event_id.into())
-            .await?
-            .is_none(),
-        "isolated bad event must not persist"
+    let bad_event = ctx
+        .pool
+        .events()
+        .get_by_id(bad_event_id.into())
+        .await?
+        .ok_or_else(|| SinexError::not_found("bad event should persist after schema-id strip"))?;
+    assert_eq!(
+        bad_event.payload_schema_id, None,
+        "schema-FK event must persist with payload_schema_id = NULL after strip-and-retry"
+    );
+
+    // DLQ must be empty — nothing was irrecoverably failed.
+    let mut stream = setup
+        .js
+        .get_stream(&setup.topology.dlq_stream)
+        .await
+        .map_err(|e| SinexError::network(e.to_string()))?;
+    let dlq_messages = stream
+        .info()
+        .await
+        .map_err(|e| SinexError::network(e.to_string()))?
+        .state
+        .messages;
+    assert_eq!(
+        dlq_messages, 0,
+        "DLQ must be empty when schema-FK violations are recovered by strip-and-retry"
     );
 
     setup.handle.abort();

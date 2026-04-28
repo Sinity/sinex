@@ -192,10 +192,9 @@ async fn timeout_prevents_indefinite_transaction_hold(ctx: TestContext) -> color
         "core.prepare_cascade_session missing; run migrations before tests"
     );
 
-    // Create a very short timeout to test the timeout mechanism.
-    // 1 ns was too fast to be meaningful on most platforms — the DB call
-    // itself takes longer. 50 ms is still fast enough to keep the test quick
-    // while actually exercising the timeout path before analysis finishes.
+    // Use a 1 ns timeout — short enough that tokio::time::timeout fires before
+    // even the initial pool.begin() DB call can return.  This guarantees the
+    // timeout path is exercised regardless of how fast the analysis is.
     let analyzer = StreamingCascadeAnalyzer::with_config(
         pool.clone(),
         CascadeAnalyzerConfig {
@@ -203,7 +202,7 @@ async fn timeout_prevents_indefinite_transaction_hold(ctx: TestContext) -> color
             max_depth: 1000, // Large depth
             include_weak_dependencies: false,
             memory_limit_bytes: Some(1024 * 1024),
-            timeout: std::time::Duration::from_millis(50), // Short enough to timeout before analysis
+            timeout: std::time::Duration::from_nanos(1),
         },
     );
 

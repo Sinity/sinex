@@ -90,6 +90,16 @@ async fn detects_replaced_default_on_existing_column(ctx: TestContext) -> TestRe
         matched[0].observed_summary
     );
 
+    // Restore the original DEFAULT so this slot is not contaminated for the
+    // `check_strict_returns_empty_after_apply` test, which runs in the same
+    // sandbox DB pool.  DDL mutations persist across the pool's data-cleaning
+    // pass, so we must undo the structural change explicitly here.
+    sqlx::query(
+        "ALTER TABLE core.events ALTER COLUMN ts_persisted SET DEFAULT CURRENT_TIMESTAMP",
+    )
+    .execute(&ctx.pool)
+    .await?;
+
     Ok(())
 }
 
