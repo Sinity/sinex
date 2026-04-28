@@ -447,18 +447,21 @@ const DECLARED_FK_ACTIONS: &[DeclaredForeignKeyAction] = &[
         expected_delete_action_marker: Some("ON DELETE CASCADE"),
         expected_update_action_marker: None,
     },
-    // Two other FK declarations were considered and intentionally NOT
-    // pinned in this slice. Both surfaced as real schema bugs the strict
+    // One other FK declaration was considered and intentionally NOT
+    // pinned in this slice — it surfaced as a real schema bug the strict
     // diff caught against a freshly applied schema:
     //
     // - `core.tags(parent_tag_id)` self-FK: source declares SET NULL but
     //   live shows CASCADE. Tracked in #578.
-    // - `core.event_annotations(event_id)` → `core.events`: declared
-    //   CASCADE but TimescaleDB does not allow hypertables as FK
-    //   targets, so the constraint is silently absent. Tracked in #579.
     //
-    // The detector correctly catches both as drift. Re-add to this list
-    // once those issues are resolved.
+    // The detector correctly catches it as drift. Re-add to this list
+    // once #578 is resolved.
+    //
+    // Note: `core.event_annotations(event_id)` → `core.events` was
+    // previously listed here as #579. That FK declaration has been
+    // removed from the source (TimescaleDB does not allow hypertables
+    // as FK targets — timescale/timescaledb#865). Cascade-on-delete is
+    // now enforced by `core.fn_archive_before_delete` instead.
 ];
 
 async fn check_foreign_key_actions(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyError> {
