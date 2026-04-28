@@ -80,7 +80,9 @@ async fn test_service_container_invalid_database_url(_ctx: TestContext) -> TestR
 
     let result = ServiceContainer::from_database_url("not-a-postgres-url").await;
 
-    let error = result.expect_err("Should fail with invalid database URL");
+    let error = result
+        .err()
+        .expect("Should fail with invalid database URL");
     // Downcast to SinexError and assert the Configuration variant, which is
     // what pool::validate_database_url returns for a malformed URL.  Checking
     // the variant is more stable than matching the human-readable message.

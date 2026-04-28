@@ -61,7 +61,6 @@ pub mod health_reporter;
 #[cfg(feature = "messaging")]
 pub mod heartbeat;
 pub mod ids;
-#[cfg(test)]
 pub mod ingestion_helpers;
 #[cfg(feature = "messaging")]
 pub mod ingestor_node;

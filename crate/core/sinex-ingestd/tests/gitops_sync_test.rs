@@ -159,6 +159,7 @@ async fn test_sync_cycle_empty_db_zero_sources(ctx: TestContext) -> TestResult<(
         pool.clone(),
         work_dir.path().to_path_buf(),
         shutdown,
+        std::sync::Arc::new(tokio::sync::Notify::new()),
     );
 
     // Run a single sync cycle.
@@ -205,6 +206,7 @@ async fn test_sync_state_update_on_unreachable_repo(ctx: TestContext) -> TestRes
         pool.clone(),
         work_dir.path().to_path_buf(),
         shutdown,
+        std::sync::Arc::new(tokio::sync::Notify::new()),
     );
 
     let stats = service.run_sync_cycle().await?;
@@ -278,6 +280,7 @@ async fn test_sync_cycle_ignores_disabled_sources(ctx: TestContext) -> TestResul
         pool.clone(),
         work_dir.path().to_path_buf(),
         shutdown,
+        std::sync::Arc::new(tokio::sync::Notify::new()),
     );
 
     let stats = service.run_sync_cycle().await?;
@@ -321,6 +324,7 @@ async fn test_sync_cycle_skips_recently_synced_source(ctx: TestContext) -> TestR
         pool.clone(),
         work_dir.path().to_path_buf(),
         shutdown,
+        std::sync::Arc::new(tokio::sync::Notify::new()),
     );
 
     let stats = service.run_sync_cycle().await?;
