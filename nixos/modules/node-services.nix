@@ -1081,9 +1081,62 @@ let
         wantsUnits = runtimeRootUnits;
         beforeUnits = [ "sinex-preflight.service" ] ++ map (unit: "${unit}.service") (attrNames units);
       };
+      # Hyprland rotates instance signature directories under
+      # /run/user/UID/hypr/<sig> on every compositor restart.  The oneshot
+      # access-setup unit only runs at boot, so newly-created instance
+      # directories never receive the u:sinex:rw- ACL grant on their
+      # sockets, and reconnection from the desktop ingestor fails with
+      # Permission denied (issue #680).  Add a non-RemainAfterExit refresh
+      # service plus a path unit that re-runs the ACL setup whenever the
+      # Hyprland runtime root changes.
+      aclRefreshUnits =
+        if accessSetupScript == null || targetUid == null then { }
+        else {
+          "sinex-desktop-acl-refresh" = {
+            description = "Re-apply Sinex desktop target-user ACLs on Hyprland instance rotation";
+            after = runtimeRootUnits;
+            wants = runtimeRootUnits;
+            serviceConfig =
+              {
+                Type = "oneshot";
+                ExecStart = accessSetupScript;
+                # No RemainAfterExit — we want the unit to be re-runnable
+                # via the path trigger.
+              }
+              // mkHelperServiceConfig {
+                user = "root";
+                group = "root";
+                remainAfterExit = false;
+                protectHome = false;
+                privateTmp = true;
+                restrictAddressFamilies = [ ];
+                readWritePaths = unique (readWritePaths ++ accessWritePaths);
+              };
+          };
+        };
+      aclRefreshPaths =
+        if accessSetupScript == null || targetUid == null then { }
+        else {
+          "sinex-desktop-acl-refresh" = {
+            description = "Watch Hyprland instance rotation to re-apply Sinex desktop ACLs";
+            wantedBy = [ "multi-user.target" ];
+            pathConfig = {
+              # PathChanged fires when sub-entries are created/removed.
+              # Hyprland creates a fresh instance dir under hypr/ on each
+              # restart; we re-run the ACL grant in response.
+              PathChanged = "/run/user/${toString targetUid}/hypr";
+              # MakeDirectory ensures the watch path itself can be created
+              # on first compositor start, otherwise the path unit would
+              # stay inactive until the directory exists.
+              MakeDirectory = true;
+            };
+          };
+        };
     in
     {
-      inherit units supportUnits;
+      inherit units;
+      supportUnits = supportUnits // aclRefreshUnits;
+      paths = aclRefreshPaths;
     };
 
   mkBrowserUnits =
@@ -1643,7 +1696,7 @@ let
       browserUnits =
         if nodesCfg.browser.enable then mkBrowserUnits else { units = { }; supportUnits = { }; };
       desktopUnits =
-        if nodesCfg.desktop.enable then mkDesktopUnits else { units = { }; supportUnits = { }; };
+        if nodesCfg.desktop.enable then mkDesktopUnits else { units = { }; supportUnits = { }; paths = { }; };
       systemUnits = if nodesCfg.system.enable then mkSystemUnits else { };
     in
     {
@@ -1657,6 +1710,7 @@ let
         terminalUnits.supportUnits
         // browserUnits.supportUnits
         // desktopUnits.supportUnits;
+      paths = desktopUnits.paths or { };
     };
 
   documentScanService =
@@ -1702,6 +1756,7 @@ in
         documentScanService.supportUnits
         automataServices
       ];
+      systemd.paths = nodeservices.paths or { };
       systemd.timers = mkMerge [
         (optionalAttrs (nodesEnabled && nodesCfg.document.enable && nodesCfg.document.schedule != null) {
           "sinex-document-scan" = {
