@@ -276,19 +276,26 @@ impl XtaskCommand for CheckCommand {
         // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)
         preflight::ensure_ready(ctx)?;
 
-        // Resource warning before heavy operation
-        if ctx.is_human() {
-            match resources::ResourceStatus::capture() {
-                Ok(status) => {
-                    if let Some(warning) = status.warning(resources::thresholds::CARGO_CHECK_GB) {
-                        eprintln!("  ⚠ {warning}");
-                    }
+        // Resource warning before heavy operation.  Captured regardless of output
+        // mode so that machine-facing callers (agents, CI) can surface the
+        // warning through the CommandResult rather than silently ignoring it.
+        let resource_warning = match resources::ResourceStatus::capture() {
+            Ok(status) => {
+                let warning = status.warning(resources::thresholds::CARGO_CHECK_GB);
+                if let Some(ref msg) = warning
+                    && ctx.is_human()
+                {
+                    eprintln!("  ⚠ {msg}");
                 }
-                Err(error) => {
+                warning
+            }
+            Err(error) => {
+                if ctx.is_human() {
                     eprintln!("  ⚠ Failed to inspect local resources: {error:#}");
                 }
+                None
             }
-        }
+        };
 
         let mut result = CommandResult::success();
 
@@ -571,12 +578,21 @@ impl XtaskCommand for CheckCommand {
             result = result.with_warning(warning);
         }
 
+        // Surface resource warning through CommandResult so machine callers
+        // (agents, CI) can inspect it even when is_human() is false.
+        if let Some(ref warning) = resource_warning {
+            result = result.with_warning(warning.clone());
+        }
+
         // Merge diagnostic counts into any existing breakdown data already in result.
         // with_data() replaces — so we must merge here to preserve lint_breakdown/file_breakdown.
         let mut final_data = result.data.take().unwrap_or(serde_json::json!({}));
         final_data["diagnostics_recorded"] = serde_json::json!(ctx.invocation_id().is_some());
         if let Some(fixable_count) = fixable_count {
             final_data["fixable"] = serde_json::json!(fixable_count);
+        }
+        if let Some(ref warning) = resource_warning {
+            final_data["resource_warning"] = serde_json::json!(warning);
         }
         result = result.with_data(final_data);
 
