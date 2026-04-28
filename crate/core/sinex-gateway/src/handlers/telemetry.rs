@@ -50,9 +50,9 @@ fn resolve_time_range(
         Some(s) => parse_rfc3339(s)?,
         None => resolved_to - time::Duration::hours(default_hours),
     };
-    if resolved_from > resolved_to {
+    if resolved_from >= resolved_to {
         return Err(eyre!(
-            "invalid telemetry time range: 'from' must be earlier than or equal to 'to'"
+            "invalid telemetry time range: 'from' must be strictly earlier than 'to' (zero-width ranges are not allowed)"
         ));
     }
     Ok((resolved_from, resolved_to))

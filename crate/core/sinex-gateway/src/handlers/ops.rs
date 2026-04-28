@@ -166,10 +166,19 @@ pub async fn handle_ops_cancel(
         .parse::<Id<DbOperation>>()
         .map_err(|e| SinexError::parse(format!("Invalid operation ID: {e}")))?;
 
+    // Log the reason length and a stable truncated hash for correlation rather
+    // than the raw reason text, which may contain sensitive information.
+    let reason_len = request.reason.as_deref().map_or(0, str::len);
+    let reason_hash = request.reason.as_deref().map(|r| {
+        let hash = blake3::hash(r.as_bytes());
+        // First 8 bytes (16 hex chars) is sufficient for correlation purposes.
+        hash.to_hex()[..16].to_string()
+    });
     info!(
         actor = %auth.actor_id(),
         operation_id = %operation_id,
-        reason = ?request.reason,
+        reason_len = reason_len,
+        reason_hash = ?reason_hash,
         "Operation cancel initiated"
     );
 
