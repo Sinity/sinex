@@ -484,13 +484,11 @@ async fn ensure_pool_database_exists_inner(
     let admin_url = admin_url_from_slot(slot_url)?;
     let base_url = base_url_from_slot(slot_url)?;
     let db_url = url_with_db_name(&base_url, db_name)?;
-    let mut lifecycle_admin_conn = connect_admin_with_retry(&admin_url).await?;
     let start = std::time::Instant::now();
-    let Some(lock_id) =
-        acquire_slot_lifecycle_lock(&mut lifecycle_admin_conn, db_name, lock_mode).await?
-    else {
-        return Ok(EnsurePoolDatabaseOutcome::Deferred);
-    };
+
+    // Canonical lock order: template first, then lifecycle.
+    // Both recreate_pool_database and this function must acquire locks in the same
+    // order to prevent deadlocks when concurrent callers race on the same slot.
     let template_guard = super::template::ensure_template_database_for_key(
         &admin_url,
         &base_url,
@@ -500,6 +498,13 @@ async fn ensure_pool_database_exists_inner(
     .await?;
     let template_name = template_guard.info.name.clone();
     let template_extensions = template_guard.info.extensions.clone();
+
+    let mut lifecycle_admin_conn = connect_admin_with_retry(&admin_url).await?;
+    let Some(lock_id) =
+        acquire_slot_lifecycle_lock(&mut lifecycle_admin_conn, db_name, lock_mode).await?
+    else {
+        return Ok(EnsurePoolDatabaseOutcome::Deferred);
+    };
 
     let provision_result: TestResult<EnsurePoolDatabaseOutcome> = async {
         let mut created_from_fresh_template_clone = false;
@@ -522,7 +527,11 @@ async fn ensure_pool_database_exists_inner(
             }
         }
         let verification = if created_from_fresh_template_clone {
-            PoolCleanVerification::TrustedTemplateClone
+            // Even fresh template clones must pass schema verification: the template
+            // trust stamp could be stale (e.g. after a toolchain upgrade that changed
+            // DefaultHasher output). Verification is cheap compared to the cost of
+            // silently serving a drifted schema to tests.
+            PoolCleanVerification::RequireSchemaVerification
         } else {
             // Existing or raced slot databases may still need grants and convergence.
             grant_pool_database_permissions_checked(db_name).await?;

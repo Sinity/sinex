@@ -15,8 +15,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use tracing::warn;
 
 use super::config::replace_db_name;
@@ -164,11 +162,17 @@ fn sanitize_adhoc_template_slug(key: &str) -> String {
     }
 }
 
+fn stable_hash_u64(data: &str) -> u64 {
+    // Use Sha256 (stable across toolchain upgrades) instead of DefaultHasher
+    // (which is SipHash with randomised seeds and not guaranteed stable).
+    let digest = Sha256::digest(data.as_bytes());
+    // Take the first 8 bytes as a u64.
+    u64::from_le_bytes(digest[..8].try_into().expect("sha256 is at least 8 bytes"))
+}
+
 fn adhoc_template_name_for_key(key: &str) -> String {
     let semantic_key = normalize_adhoc_template_key(key);
-    let mut hasher = DefaultHasher::new();
-    semantic_key.hash(&mut hasher);
-    let hash = hasher.finish();
+    let hash = stable_hash_u64(semantic_key);
     let slug = sanitize_adhoc_template_slug(semantic_key);
     format!("{ADHOC_TEMPLATE_BASE_NAME}_{slug}_{hash:016x}")
 }
@@ -178,9 +182,7 @@ fn template_name_for_key(key: &str) -> String {
         return adhoc_template_name_for_key(key);
     }
 
-    let mut hasher = DefaultHasher::new();
-    key.hash(&mut hasher);
-    let shard = (hasher.finish() as usize) % SHARED_POOL_TEMPLATE_SHARD_COUNT;
+    let shard = (stable_hash_u64(key) as usize) % SHARED_POOL_TEMPLATE_SHARD_COUNT;
     shared_template_name_for_shard(
         SHARED_TEMPLATE_BASE_NAME,
         SHARED_POOL_TEMPLATE_SHARD_COUNT,
