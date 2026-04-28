@@ -469,8 +469,12 @@ async fn verify_binary_schema_version(pool: &sqlx::PgPool) -> Result<(), SinexEr
             "Schema version mismatch: binary expects '{EXPECTED_BINARY_SCHEMA_VERSION}', database has '{v}'"
         )).with_operation("gateway.verify_binary_schema_version")),
         None => {
+            // Use ON CONFLICT DO NOTHING to handle a concurrent insert race: two
+            // gateway processes starting simultaneously could both observe NULL and
+            // then collide on the unique (id) key. After the upsert, re-read to
+            // verify that whoever won wrote our expected version.
             sqlx::query(
-                "INSERT INTO sinex_schemas.binary_schema_version (id, version) VALUES (1, $1)",
+                "INSERT INTO sinex_schemas.binary_schema_version (id, version) VALUES (1, $1) ON CONFLICT (id) DO NOTHING",
             )
             .bind(EXPECTED_BINARY_SCHEMA_VERSION)
             .execute(pool)
@@ -480,8 +484,29 @@ async fn verify_binary_schema_version(pool: &sqlx::PgPool) -> Result<(), SinexEr
                     .with_operation("gateway.verify_binary_schema_version")
                     .with_source(e.to_string())
             })?;
-            info!(version = %EXPECTED_BINARY_SCHEMA_VERSION, "Initialized binary_schema_version");
-            Ok(())
+            // Re-read to verify the winner (could be us or a concurrent process)
+            let winner: Option<String> = sqlx::query_scalar(
+                "SELECT version FROM sinex_schemas.binary_schema_version WHERE id = 1",
+            )
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| {
+                SinexError::database("Failed to re-read binary_schema_version after insert")
+                    .with_operation("gateway.verify_binary_schema_version")
+                    .with_source(e.to_string())
+            })?;
+            match winner {
+                Some(v) if v == EXPECTED_BINARY_SCHEMA_VERSION => {
+                    info!(version = %EXPECTED_BINARY_SCHEMA_VERSION, "Initialized binary_schema_version");
+                    Ok(())
+                }
+                Some(v) => Err(SinexError::configuration(format!(
+                    "Schema version mismatch after concurrent insert: binary expects '{EXPECTED_BINARY_SCHEMA_VERSION}', database has '{v}'"
+                )).with_operation("gateway.verify_binary_schema_version")),
+                None => Err(SinexError::database(
+                    "binary_schema_version row missing after insert attempt",
+                ).with_operation("gateway.verify_binary_schema_version")),
+            }
         }
     }
 }
