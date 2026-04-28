@@ -58,7 +58,10 @@ async fn missing_ts_orig_is_rejected() -> TestResult<()> {
         .await
         .expect_err("missing ts_orig must be rejected");
 
-    assert!(error.to_string().contains("missing ts_orig"));
+    assert!(
+        matches!(&error, NodeLogicError::InputParsing(msg) if msg.contains("missing ts_orig")),
+        "expected InputParsing with 'missing ts_orig', got: {error:?}"
+    );
     Ok(())
 }
 

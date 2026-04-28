@@ -6,11 +6,11 @@ use std::process::{Command, Stdio};
 
 /// Validate a PostgreSQL identifier (role name, database name) against a strict allowlist.
 ///
-/// Accepts only lowercase letters, digits, and underscores; must start with a letter or
+/// Accepts only ASCII letters, digits, and underscores; must start with a letter or
 /// underscore; length bounded to 63 bytes (PostgreSQL identifier limit).  This rejects
 /// anything that could escape a bare (un-quoted) identifier context and prevents SQL
 /// injection via `format!`-constructed DDL statements.
-fn validate_pg_identifier(ident: &str, kind: &str) -> Result<()> {
+pub(crate) fn validate_pg_identifier(ident: &str, kind: &str) -> Result<()> {
     let valid = !ident.is_empty()
         && ident.len() <= 63
         && ident
@@ -376,7 +376,6 @@ impl PostgresManager {
     }
 
     pub fn drop_db(&self, db: &str, creator: &str) -> Result<()> {
-        validate_pg_identifier(db, "database")?;
         // WITH (FORCE) terminates any remaining connections before dropping (PG 13+)
         self.psql(
             creator,
@@ -387,8 +386,6 @@ impl PostgresManager {
     }
 
     pub fn ensure_db(&self, db: &str, owner: &str, creator: &str) -> Result<()> {
-        validate_pg_identifier(db, "database")?;
-        validate_pg_identifier(owner, "role")?;
         let exists = self.psql(
             creator,
             "postgres",
@@ -514,7 +511,6 @@ impl PostgresManager {
     where
         F: FnMut(&str, &str, &str) -> Result<String>,
     {
-        validate_pg_identifier(role, "role")?;
         let exists = psql(
             creator,
             "postgres",
