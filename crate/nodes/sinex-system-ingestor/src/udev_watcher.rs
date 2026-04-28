@@ -384,18 +384,14 @@ impl UdevWatcher {
 #[cfg(test)]
 mod tests {
     use super::UdevWatcher;
-    use crate::{WatcherMaterialContext, material_context::MaterialContext};
-    use async_trait::async_trait;
+    use crate::material_context::test_material_context as test_material;
     use notify::{
         Event as NotifyEvent, EventKind,
         event::{CreateKind, ModifyKind},
     };
     use serde_json::json;
-    use sinex_db::models::{Event, Provenance};
-    use sinex_node_sdk::NodeResult;
-    use sinex_primitives::{Id, JsonValue};
+    use sinex_db::models::Event;
     use std::path::PathBuf;
-    use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::sync::mpsc;
     use xtask::sandbox::prelude::*;
@@ -404,38 +400,6 @@ mod tests {
     use std::ffi::OsString;
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
-
-    #[derive(Debug)]
-    struct TestMaterialContext;
-
-    #[async_trait]
-    impl MaterialContext for TestMaterialContext {
-        fn initial_provenance(&self) -> Provenance {
-            Provenance::Material {
-                id: Id::new(),
-                anchor_byte: 0,
-                offset_start: None,
-                offset_end: None,
-                offset_kind: sinex_primitives::events::OffsetKind::Byte,
-            }
-        }
-
-        async fn decorate_event(&self, _event: &mut Event<JsonValue>) -> NodeResult<()> {
-            Ok(())
-        }
-
-        async fn finalize(&self, _reason: &str) -> NodeResult<()> {
-            Ok(())
-        }
-
-        fn event_count(&self) -> u64 {
-            0
-        }
-    }
-
-    fn test_material() -> WatcherMaterialContext {
-        Arc::new(TestMaterialContext)
-    }
 
     fn notify_event(kind: EventKind, path: PathBuf) -> NotifyEvent {
         NotifyEvent::new(kind).add_path(path)

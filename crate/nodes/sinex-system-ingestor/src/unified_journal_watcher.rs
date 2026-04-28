@@ -1883,41 +1883,10 @@ impl WatcherLifecycle for UnifiedJournalWatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::material_context::MaterialContext;
-    use async_trait::async_trait;
-    use sinex_primitives::events::Provenance;
-    use sinex_primitives::{Id, JsonValue};
+    use crate::material_context::test_material_context as test_material;
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::process::ExitStatusExt;
     use xtask::sandbox::prelude::*;
-
-    #[derive(Debug)]
-    struct TestMaterialContext;
-
-    #[async_trait]
-    impl MaterialContext for TestMaterialContext {
-        fn initial_provenance(&self) -> Provenance {
-            Provenance::Material {
-                id: Id::new(),
-                anchor_byte: 0,
-                offset_start: None,
-                offset_end: None,
-                offset_kind: sinex_primitives::events::OffsetKind::Byte,
-            }
-        }
-
-        async fn decorate_event(&self, _event: &mut Event<JsonValue>) -> NodeResult<()> {
-            Ok(())
-        }
-
-        async fn finalize(&self, _reason: &str) -> NodeResult<()> {
-            Ok(())
-        }
-
-        fn event_count(&self) -> u64 {
-            0
-        }
-    }
 
     fn test_watcher() -> UnifiedJournalWatcher {
         UnifiedJournalWatcher {
@@ -1938,10 +1907,6 @@ mod tests {
             channel_drops: Arc::new(AtomicU64::new(0)),
             dlq_publisher: None,
         }
-    }
-
-    fn test_material() -> WatcherMaterialContext {
-        Arc::new(TestMaterialContext)
     }
 
     #[sinex_test]
