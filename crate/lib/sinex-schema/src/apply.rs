@@ -794,7 +794,7 @@ BEGIN
         result_message = p_summary->>'message',
         duration_ms = COALESCE(
             duration_ms,
-            EXTRACT(MILLISECONDS FROM (NOW() - uuid_extract_timestamp(p_operation_id)))::integer
+            (EXTRACT(EPOCH FROM (NOW() - uuid_extract_timestamp(p_operation_id))) * 1000)::integer
         ),
         preview_summary = COALESCE(preview_summary, '{}'::jsonb) || p_summary
     WHERE id = p_operation_id;
@@ -815,7 +815,7 @@ BEGIN
         result_message = p_error->>'error',
         duration_ms = COALESCE(
             duration_ms,
-            EXTRACT(MILLISECONDS FROM (NOW() - uuid_extract_timestamp(p_operation_id)))::integer
+            (EXTRACT(EPOCH FROM (NOW() - uuid_extract_timestamp(p_operation_id))) * 1000)::integer
         ),
         preview_summary = COALESCE(preview_summary, '{}'::jsonb) || p_error
     WHERE id = p_operation_id;
