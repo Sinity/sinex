@@ -558,9 +558,15 @@ impl IngestService {
     ) -> IngestdResult<()> {
         let shutdown_flag = self.shutdown_flag.clone();
         let shutdown_notify = self.shutdown_notify.clone();
+        // `critical_tasks` is the JoinSet of wrapper futures used for completion
+        // reporting. `abort_handles` is a parallel list of `AbortHandle`s for the
+        // same underlying tasks; on timeout we call `.abort()` on each directly
+        // because `JoinSet::abort_all()` only cancels the wrapper futures and would
+        // merely drop (detach) the inner `JoinHandle`s without stopping the tasks.
         let mut critical_tasks = JoinSet::new();
-        Self::track_critical_task(&mut critical_tasks, "JetStream consumer", js_handle);
-        Self::track_critical_task(&mut critical_tasks, "MaterialAssembler", ma_handle);
+        let mut abort_handles: Vec<(&'static str, tokio::task::AbortHandle)> = Vec::new();
+        Self::track_critical_task(&mut critical_tasks, &mut abort_handles, "JetStream consumer", js_handle);
+        Self::track_critical_task(&mut critical_tasks, &mut abort_handles, "MaterialAssembler", ma_handle);
 
         let result = tokio::select! {
             maybe_task = critical_tasks.join_next(), if !critical_tasks.is_empty() => {
@@ -584,7 +590,7 @@ impl IngestService {
         };
 
         let cleanup_error =
-            Self::wait_for_critical_tasks(&mut critical_tasks, Duration::from_secs(5)).await;
+            Self::wait_for_critical_tasks(&mut critical_tasks, &mut abort_handles, Duration::from_secs(5)).await;
         match (result, cleanup_error) {
             (Ok(()), Some(error)) => Err(error),
             (Err(error), _) => Err(error),
@@ -594,16 +600,24 @@ impl IngestService {
 
     fn track_critical_task(
         tasks: &mut JoinSet<CriticalTaskOutcome>,
+        abort_handles: &mut Vec<(&'static str, tokio::task::AbortHandle)>,
         name: &'static str,
         handle: Option<JoinHandle<IngestdResult<()>>>,
     ) {
         if let Some(handle) = handle {
+            // Obtain an AbortHandle *before* moving `handle` into the JoinSet
+            // wrapper.  The AbortHandle and JoinHandle both refer to the same
+            // underlying task, so calling `abort_handle.abort()` cancels the real
+            // task — not just the wrapper future that surrounds it.
+            let abort_handle = handle.abort_handle();
+            abort_handles.push((name, abort_handle));
             tasks.spawn(async move { (name, handle.await) });
         }
     }
 
     async fn wait_for_critical_tasks(
         tasks: &mut JoinSet<CriticalTaskOutcome>,
+        abort_handles: &mut Vec<(&'static str, tokio::task::AbortHandle)>,
         timeout: Duration,
     ) -> Option<SinexError> {
         if tasks.is_empty() {
@@ -654,6 +668,14 @@ impl IngestService {
                         remaining,
                         timeout
                     );
+                    // Abort the real underlying tasks via their AbortHandles.
+                    // `JoinSet::abort_all()` only cancels the wrapper futures spawned
+                    // in `track_critical_task`; it would drop the inner `JoinHandle`
+                    // and detach the real task instead of stopping it.
+                    for (task_name, abort_handle) in abort_handles.drain(..) {
+                        debug!(task = task_name, "Aborting critical task due to shutdown timeout");
+                        abort_handle.abort();
+                    }
                     tasks.abort_all();
                     while let Some(result) = tasks.join_next().await {
                         if let Err(error) = result {
