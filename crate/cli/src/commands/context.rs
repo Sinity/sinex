@@ -4,6 +4,7 @@ use console::style;
 use serde_json::json;
 use sinex_primitives::query::{EventQuery, EventQueryResult, SortDirection, TimeRange};
 use sinex_primitives::temporal::{Duration, Timestamp};
+use sinex_primitives::utils::timestamp_helpers::parse_relative_duration;
 use std::collections::HashMap;
 
 use crate::client::GatewayClient;
@@ -280,32 +281,6 @@ fn truncate(s: &str, max: usize) -> String {
 
 /// Parse "2h", "30m", "45s", "1d" into a `time::Duration`.
 fn parse_duration_str(s: &str) -> Result<Duration> {
-    let s = s.trim();
-    if s.is_empty() {
-        return Err(color_eyre::eyre::eyre!("Duration cannot be empty"));
-    }
-
-    let mut num_str = String::new();
-    let mut unit = String::new();
-
-    for ch in s.chars() {
-        if ch.is_ascii_digit() {
-            num_str.push(ch);
-        } else {
-            unit.push(ch);
-        }
-    }
-
-    let num: i64 = num_str
-        .parse()
-        .map_err(|_| color_eyre::eyre::eyre!("Invalid duration number in: {s}"))?;
-
-    match unit.as_str() {
-        "s" | "sec" | "second" | "seconds" => Ok(Duration::seconds(num)),
-        "m" | "min" | "minute" | "minutes" => Ok(Duration::minutes(num)),
-        "h" | "hr" | "hour" | "hours" => Ok(Duration::hours(num)),
-        "d" | "day" | "days" => Ok(Duration::days(num)),
-        "w" | "week" | "weeks" => Ok(Duration::weeks(num)),
-        _ => Err(color_eyre::eyre::eyre!("Unknown duration unit: {unit}")),
-    }
+    parse_relative_duration(s)
+        .ok_or_else(|| color_eyre::eyre::eyre!("Invalid duration: {s}"))
 }
