@@ -135,8 +135,8 @@ pub async fn handle_nodes_list_active(pool: &PgPool, params: Value) -> Result<Va
                 }),
                 Err(error) => {
                     tracing::warn!(
-                        service_name = %node.service_name,
-                        heartbeat_source = %node.heartbeat_source,
+                        service_name = ?node.service_name,
+                        heartbeat_source = ?node.heartbeat_source,
                         error = %error,
                         "Skipping node with unrecognised heartbeat_source in listing"
                     );
