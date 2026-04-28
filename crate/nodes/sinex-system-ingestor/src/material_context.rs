@@ -154,6 +154,46 @@ impl MaterialContext for RealWatcherMaterialContext {
     }
 }
 
+/// Stub `MaterialContext` for watcher tests that exercise parsing/error paths
+/// in isolation from the real source-material acquisition machinery. Returns
+/// a fresh material id per call and short-circuits decorate/finalize.
+#[cfg(test)]
+#[derive(Debug)]
+pub(crate) struct TestMaterialContext;
+
+#[cfg(test)]
+#[async_trait]
+impl MaterialContext for TestMaterialContext {
+    fn initial_provenance(&self) -> Provenance {
+        Provenance::Material {
+            id: Id::new(),
+            anchor_byte: 0,
+            offset_start: None,
+            offset_end: None,
+            offset_kind: sinex_primitives::events::OffsetKind::Byte,
+        }
+    }
+
+    async fn decorate_event(&self, _event: &mut Event<JsonValue>) -> NodeResult<()> {
+        Ok(())
+    }
+
+    async fn finalize(&self, _reason: &str) -> NodeResult<()> {
+        Ok(())
+    }
+
+    fn event_count(&self) -> u64 {
+        0
+    }
+}
+
+/// Convenience constructor matching the inline `test_material()` helpers in
+/// the watcher test modules.
+#[cfg(test)]
+pub(crate) fn test_material_context() -> WatcherMaterialContext {
+    Arc::new(TestMaterialContext)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{MaterialContext, RealWatcherMaterialContext};

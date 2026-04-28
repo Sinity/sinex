@@ -1354,50 +1354,15 @@ impl DbusWatcher {
 #[cfg(test)]
 mod tests {
     use super::DbusWatcher;
-    use crate::{WatcherMaterialContext, material_context::MaterialContext};
-    use async_trait::async_trait;
+    use crate::material_context::test_material_context as test_material;
     use serde_json::json;
-    use sinex_db::models::{Event, Provenance};
-    use sinex_node_sdk::NodeResult;
+    use sinex_db::models::Event;
     use sinex_primitives::events::enums::PlaybackStatus;
-    use sinex_primitives::{Id, JsonValue, temporal::Timestamp};
-    use std::sync::Arc;
+    use sinex_primitives::temporal::Timestamp;
     use tokio::sync::mpsc;
     use xtask::sandbox::prelude::*;
 
     // Inline because these exercise private D-Bus parsing helpers directly.
-
-    #[derive(Debug)]
-    struct TestMaterialContext;
-
-    #[async_trait]
-    impl MaterialContext for TestMaterialContext {
-        fn initial_provenance(&self) -> Provenance {
-            Provenance::Material {
-                id: Id::new(),
-                anchor_byte: 0,
-                offset_start: None,
-                offset_end: None,
-                offset_kind: sinex_primitives::events::OffsetKind::Byte,
-            }
-        }
-
-        async fn decorate_event(&self, _event: &mut Event<JsonValue>) -> NodeResult<()> {
-            Ok(())
-        }
-
-        async fn finalize(&self, _reason: &str) -> NodeResult<()> {
-            Ok(())
-        }
-
-        fn event_count(&self) -> u64 {
-            0
-        }
-    }
-
-    fn test_material() -> WatcherMaterialContext {
-        Arc::new(TestMaterialContext)
-    }
 
     #[sinex_test]
     async fn require_message_field_rejects_missing_values() -> TestResult<()> {
