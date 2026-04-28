@@ -5,7 +5,7 @@
 //! automata to enrich the raw event stream with notes, tags, and other forms
 //! of metadata.
 
-use crate::schema::{Events, TableDef};
+use crate::schema::TableDef;
 use sea_query::{
     Alias, ColumnDef, Expr, ForeignKey, ForeignKeyAction, Iden, Index, IndexCreateStatement, Table,
     TableCreateStatement,
@@ -309,12 +309,14 @@ impl EventAnnotations {
                     .not_null()
                     .default(Expr::current_timestamp()),
             )
-            .foreign_key(
-                ForeignKey::create()
-                    .from(Self::table_iden(), EventAnnotations::EventId)
-                    .to(Events::table_iden(), Alias::new("id")) // `Events::Iden` is fine
-                    .on_delete(ForeignKeyAction::Cascade), // If the event is deleted, its annotations are also deleted.
-            )
+            // No declarative FK to core.events(id): TimescaleDB does not allow
+            // hypertables as FK targets (timescale/timescaledb#865), so any
+            // `FOREIGN KEY (event_id) REFERENCES core.events(id)` declaration
+            // is silently absent after apply. Cascade-on-event-delete is
+            // enforced by the `core.fn_archive_before_delete` trigger
+            // (see crate/lib/sinex-schema/src/schema/events.rs), which
+            // archives + deletes matching annotation rows in the same
+            // transaction as the parent event delete.
             .to_owned()
     }
 
