@@ -2288,12 +2288,28 @@ impl ReplayExecutionEngine {
             "Archived replay cascade, dispatching scan to node"
         );
 
+        // TODO(#554): transactional outbox — archive_cascade commits to the DB above, but
+        // publish_scope_invalidations below is a separate NATS operation with no transactional
+        // coupling. If the process crashes between these two points, the archive is durable but
+        // the scope invalidation signals are permanently lost, leaving derived nodes with stale
+        // cached state until the next replay or manual reconciliation. A transactional outbox
+        // (write invalidation rows inside the archive TX, publish-and-delete after commit with
+        // retry on failure) would close this gap. For now, `abort_before_scan_ack` handles the
+        // "process survives but NATS fails" case by restoring the cascade; crash recovery is not
+        // covered.
+
         // Publish scope invalidation signals for archived derived events
         if !scope_metadata.is_empty()
             && let Err(invalidation_error) = self
                 .publish_scope_invalidations(&scope_metadata, operation_id)
                 .await
         {
+            error!(
+                operation_id = %operation_id,
+                archived_count,
+                scope_buckets = scope_metadata.len(),
+                "Replay scope invalidation publish failed after archive commit; restoring cascade: {invalidation_error}"
+            );
             return self
                     .abort_before_scan_ack(
                         pool,
