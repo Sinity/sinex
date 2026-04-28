@@ -995,6 +995,10 @@ impl StateRepository<'_> {
             .then(Timestamp::now)
             .map(|timestamp| timestamp.inner());
 
+        // Guard against resurrecting a terminal row. Once a run is failed or
+        // stopped the row is immutable — new runs create new rows via
+        // `start_node_run`. Setting last_heartbeat_at on a terminal row would
+        // also transiently make it appear live to the presence query.
         let result = sqlx::query!(
             r#"
             UPDATE core.node_runs
@@ -1005,6 +1009,7 @@ impl StateRepository<'_> {
                     ELSE COALESCE(ended_at, $3::timestamptz)
                 END
             WHERE id = $1::uuid
+              AND status NOT IN ('failed', 'stopped')
             "#,
             node_run_id,
             status.to_string(),
@@ -1261,7 +1266,10 @@ impl StateRepository<'_> {
                     nr.last_heartbeat_at
                 FROM core.node_runs nr
                 WHERE nr.node_manifest_id = nm.id
-                ORDER BY nr.started_at DESC
+                -- Prefer an active (running/draining/paused) run over a more-recently-started
+                -- terminal run, so a restarted node doesn't immediately appear as failed/stopped.
+                ORDER BY (CASE WHEN nr.status IN ('running', 'draining', 'paused') THEN 1 ELSE 0 END) DESC,
+                         nr.started_at DESC
                 LIMIT 1
             ) nr ON true
             LEFT JOIN LATERAL (
