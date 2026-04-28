@@ -9,148 +9,17 @@ use color_eyre::eyre::bail;
 use futures::StreamExt;
 use serde_json::json;
 use sinex_db::{DbPool, repositories::DbPoolExt};
-use sinex_gateway::{ServiceContainer, config::GatewayConfig, rpc_server};
 use sinex_node_sdk::{Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ScanReport};
 use sinex_primitives::rpc::methods;
 use sinex_primitives::{DynamicPayload, Id, temporal::Timestamp};
 use std::collections::HashMap;
-use std::net::TcpListener;
 use std::time::Duration;
-use tempfile::NamedTempFile;
-use tokio::sync::watch;
 use xtask::sandbox::{EnvGuard, prelude::*, sinex_test};
 
+mod common;
+use common::LiveGateway;
+
 const RPC_TOKEN: &str = "live-rpc-test-token:admin";
-
-/// An in-process gateway with HTTP RPC for testing.
-///
-/// Starts the full gateway stack (RPC server with TLS) and provides a
-/// `reqwest`-based client for making JSON-RPC 2.0 calls. This exercises the
-/// same HTTP path that sinexctl uses, rather than raw NATS control subjects.
-struct LiveGateway {
-    port: u16,
-    _shutdown_tx: watch::Sender<bool>,
-    _handle: tokio::task::JoinHandle<()>,
-    _cert_file: NamedTempFile,
-    _key_file: NamedTempFile,
-    client: reqwest::Client,
-}
-
-impl LiveGateway {
-    async fn start(database_url: &str, env_guard: &mut EnvGuard) -> TestResult<Self> {
-        let cert =
-            rcgen::generate_simple_self_signed(vec!["localhost".into(), "127.0.0.1".into()])?;
-        let cert_file = NamedTempFile::new()?;
-        let key_file = NamedTempFile::new()?;
-        tokio::fs::write(cert_file.path(), cert.cert.pem()).await?;
-        tokio::fs::write(key_file.path(), cert.key_pair.serialize_pem()).await?;
-
-        env_guard.set(
-            "SINEX_GATEWAY_TLS_CERT",
-            cert_file.path().to_string_lossy().to_string(),
-        );
-        env_guard.set(
-            "SINEX_GATEWAY_TLS_KEY",
-            key_file.path().to_string_lossy().to_string(),
-        );
-        env_guard.clear("SINEX_GATEWAY_TLS_CLIENT_CA");
-        env_guard.set("SINEX_RPC_TOKEN", RPC_TOKEN);
-        env_guard.set("DATABASE_URL", database_url);
-
-        let listener = TcpListener::bind("127.0.0.1:0")?;
-        let port = listener.local_addr()?.port();
-        drop(listener);
-
-        let mut config = GatewayConfig::load()?;
-        config.database_url = database_url.to_string();
-        config.tcp_listen = format!("127.0.0.1:{port}");
-        config.rpc_rate_limit_enabled = false;
-        let services = ServiceContainer::new(&config).await?;
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let handle = tokio::spawn(async move {
-            if let Err(e) = rpc_server::run(&config, services, shutdown_rx).await {
-                eprintln!("Gateway RPC server failed: {e:#}");
-            }
-        });
-
-        // Wait for port readiness
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-        loop {
-            match tokio::net::TcpStream::connect(format!("127.0.0.1:{port}")).await {
-                Ok(_) => break,
-                Err(_) if tokio::time::Instant::now() < deadline => {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
-                Err(e) => {
-                    bail!("Gateway port {port} not ready after 30s: {e}");
-                }
-            }
-        }
-
-        let client = reqwest::Client::builder()
-            .danger_accept_invalid_certs(true)
-            .build()?;
-
-        Ok(Self {
-            port,
-            _shutdown_tx: shutdown_tx,
-            _handle: handle,
-            _cert_file: cert_file,
-            _key_file: key_file,
-            client,
-        })
-    }
-
-    fn rpc_url(&self) -> String {
-        format!("https://127.0.0.1:{}/rpc", self.port)
-    }
-
-    /// Make an authenticated JSON-RPC 2.0 call, returning the `result` field.
-    async fn rpc(&self, method: &str, params: serde_json::Value) -> TestResult<serde_json::Value> {
-        let body = json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-            "id": 1,
-        });
-
-        let resp = self
-            .client
-            .post(self.rpc_url())
-            .header("Authorization", format!("Bearer {RPC_TOKEN}"))
-            .json(&body)
-            .send()
-            .await?;
-
-        let status = resp.status();
-        let response: serde_json::Value = resp.json().await?;
-
-        if let Some(error) = response.get("error") {
-            bail!("JSON-RPC error on {method} (HTTP {status}): {error}");
-        }
-
-        response
-            .get("result")
-            .cloned()
-            .ok_or_else(|| color_eyre::eyre::eyre!("No 'result' field in JSON-RPC response"))
-    }
-
-    /// Make a JSON-RPC call without authentication.
-    async fn rpc_unauthed(
-        &self,
-        method: &str,
-        params: serde_json::Value,
-    ) -> TestResult<reqwest::Response> {
-        let body = json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-            "id": 1,
-        });
-
-        Ok(self.client.post(self.rpc_url()).json(&body).send().await?)
-    }
-}
 
 /// Spawn a fake scan node on NATS that accepts the scan command and reports success.
 async fn spawn_fake_scan_node(
@@ -254,7 +123,7 @@ async fn replay_full_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<()>
     let mut env_guard = EnvGuard::new();
     env_guard.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
 
-    let gw = LiveGateway::start(ctx.database_url(), &mut env_guard).await?;
+    let gw = LiveGateway::start(ctx.database_url(), RPC_TOKEN, &mut env_guard).await?;
 
     // ── Seed a target event with material provenance ────────────────
     let material_id = ctx.create_source_material(Some("rpc-live-match")).await?;
@@ -431,7 +300,7 @@ async fn replay_cancel_lifecycle_over_http_rpc(ctx: TestContext) -> TestResult<(
     let mut env_guard = EnvGuard::new();
     env_guard.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
 
-    let gw = LiveGateway::start(ctx.database_url(), &mut env_guard).await?;
+    let gw = LiveGateway::start(ctx.database_url(), RPC_TOKEN, &mut env_guard).await?;
 
     let ts = Timestamp::now();
     let scope_start = ts - time::Duration::seconds(1);
@@ -503,7 +372,7 @@ async fn replay_rpc_requires_authentication(ctx: TestContext) -> TestResult<()> 
     let mut env_guard = EnvGuard::new();
     env_guard.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
 
-    let gw = LiveGateway::start(ctx.database_url(), &mut env_guard).await?;
+    let gw = LiveGateway::start(ctx.database_url(), RPC_TOKEN, &mut env_guard).await?;
 
     let resp = gw
         .rpc_unauthed(methods::REPLAY_LIST_OPERATIONS, json!({}))
