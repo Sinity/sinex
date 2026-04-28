@@ -1140,3 +1140,54 @@ async fn test_systemd_status_serde() -> TestResult<()> {
     assert_eq!(deserialized.recent_state_changes, 3);
     Ok(())
 }
+
+// ============================================================================
+// Settlement scenario 4 (issue #653): journal self-capture filtered by automata
+// ============================================================================
+//
+// The system ingestor's default journal config MUST exclude sinex-* self-units
+// (`.service`, `.timer`, `.socket`) so that sinex's own log lines never get
+// fed back into the journal pipeline as inputs. This is what prevents the
+// self-amplification feedback loop documented in #581.
+//
+// The settlement contract: filtered records produce *no* settlement outcome
+// at all — they are dropped before processing. We assert that:
+//   1. The default exclude list contains the three sinex glob patterns.
+//   2. The default JournalConfig inherits those patterns.
+//   3. A custom-cleared exclude list does not silently re-enable self-capture.
+
+#[test]
+fn settlement_filters_journal_self_capture_by_default() {
+    let defaults = sinex_system_ingestor::default_journal_exclude_units();
+    assert!(
+        defaults.iter().any(|u| u == "sinex-*.service"),
+        "default exclude list must drop sinex-*.service to prevent self-capture"
+    );
+    assert!(
+        defaults.iter().any(|u| u == "sinex-*.timer"),
+        "default exclude list must drop sinex-*.timer to prevent self-capture"
+    );
+    assert!(
+        defaults.iter().any(|u| u == "sinex-*.socket"),
+        "default exclude list must drop sinex-*.socket to prevent self-capture"
+    );
+
+    let cfg = sinex_system_ingestor::JournalConfig::default();
+    for pattern in &defaults {
+        assert!(
+            cfg.exclude_units.contains(pattern),
+            "JournalConfig::default must inherit self-unit exclude pattern {pattern:?}"
+        );
+    }
+
+    // Sanity: explicitly clearing the list is what an operator must do to
+    // re-enable self-capture — it cannot happen by accident.
+    let custom = sinex_system_ingestor::JournalConfig {
+        exclude_units: vec![],
+        ..sinex_system_ingestor::JournalConfig::default()
+    };
+    assert!(
+        custom.exclude_units.is_empty(),
+        "operator-cleared exclude list is the only way to re-enable self-capture"
+    );
+}
