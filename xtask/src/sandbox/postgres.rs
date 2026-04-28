@@ -5,7 +5,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::infra::services::postgres::{PostgresConfig as SharedPgConfig, PostgresManager};
+use crate::infra::services::postgres::{
+    PostgresConfig as SharedPgConfig, PostgresManager, validate_pg_identifier,
+};
 
 /// Configuration for an ephemeral Postgres instance
 #[derive(Debug, Clone)]
@@ -105,6 +107,7 @@ pub fn setup_ephemeral(config: &PostgresConfig) -> Result<(PgInstance, PgEnv)> {
     }
 
     // Set operation ID default for the role
+    validate_pg_identifier(&config.app_user, "role")?;
     let stmt = format!(
         "ALTER ROLE {} SET sinex.operation_id = '{}';",
         config.app_user, config.operation_id

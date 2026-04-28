@@ -6,11 +6,11 @@ use std::process::{Command, Stdio};
 
 /// Validate a PostgreSQL identifier (role name, database name) against a strict allowlist.
 ///
-/// Accepts only lowercase letters, digits, and underscores; must start with a letter or
+/// Accepts only ASCII letters, digits, and underscores; must start with a letter or
 /// underscore; length bounded to 63 bytes (PostgreSQL identifier limit).  This rejects
 /// anything that could escape a bare (un-quoted) identifier context and prevents SQL
 /// injection via `format!`-constructed DDL statements.
-fn validate_pg_identifier(ident: &str, kind: &str) -> Result<()> {
+pub(crate) fn validate_pg_identifier(ident: &str, kind: &str) -> Result<()> {
     let valid = !ident.is_empty()
         && ident.len() <= 63
         && ident
