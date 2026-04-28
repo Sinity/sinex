@@ -1,8 +1,10 @@
+use crate::fmt::{format_json, format_yaml};
 use crate::model::OutputFormat;
 use clap::Args;
 use color_eyre::Result;
 use console::style;
 use futures::StreamExt;
+use serde_json::json;
 use sinex_primitives::query::{
     EventQuery, EventQueryResult, PayloadFilter, SortDirection, SubscriptionFilter, TimeRange,
 };
@@ -227,7 +229,7 @@ pub struct RecentCommand {
 }
 
 impl RecentCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let since = parse_duration(&self.since)?;
         let query = EventQuery {
             sources: self
@@ -247,6 +249,28 @@ impl RecentCommand {
             EventQueryResult::Events { events, .. } => events,
             _ => vec![],
         };
+
+        match format {
+            OutputFormat::Json | OutputFormat::Dot => {
+                let payload = json!({
+                    "since": self.since,
+                    "count": events.len(),
+                    "events": events,
+                });
+                println!("{}", format_json(&payload)?);
+                return Ok(());
+            }
+            OutputFormat::Yaml => {
+                let payload = json!({
+                    "since": self.since,
+                    "count": events.len(),
+                    "events": events,
+                });
+                println!("{}", format_yaml(&payload)?);
+                return Ok(());
+            }
+            OutputFormat::Table => {}
+        }
 
         if events.is_empty() {
             println!("No events found in the last {}", self.since);
@@ -313,7 +337,7 @@ pub struct ErrorsCommand {
 }
 
 impl ErrorsCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let since = parse_duration(&self.since)?;
 
         // Search for error-related events
@@ -333,6 +357,28 @@ impl ErrorsCommand {
             EventQueryResult::Events { events, .. } => events,
             _ => vec![],
         };
+
+        match format {
+            OutputFormat::Json | OutputFormat::Dot => {
+                let payload = json!({
+                    "since": self.since,
+                    "count": events.len(),
+                    "events": events,
+                });
+                println!("{}", format_json(&payload)?);
+                return Ok(());
+            }
+            OutputFormat::Yaml => {
+                let payload = json!({
+                    "since": self.since,
+                    "count": events.len(),
+                    "events": events,
+                });
+                println!("{}", format_yaml(&payload)?);
+                return Ok(());
+            }
+            OutputFormat::Table => {}
+        }
 
         if events.is_empty() {
             println!(
@@ -407,7 +453,10 @@ pub struct WatchCommand {
 }
 
 impl WatchCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    /// `--format json` emits one newline-delimited JSON object per stream
+    /// message (`{"kind":"event"|"gap"|"error",...}`). `--format yaml` emits
+    /// each message as a YAML document separated by `---`.
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let filter = SubscriptionFilter {
             sources: self
                 .source
@@ -422,72 +471,114 @@ impl WatchCommand {
             ..Default::default()
         };
 
-        println!(
-            "{}",
-            style("Connecting to event stream... (Ctrl+C to stop)").dim()
-        );
+        let table_mode = matches!(format, OutputFormat::Table);
+
+        if table_mode {
+            println!(
+                "{}",
+                style("Connecting to event stream... (Ctrl+C to stop)").dim()
+            );
+        }
 
         let mut stream = client.subscribe_events(filter).await?;
 
-        println!("{}", style("─".repeat(80)).dim());
+        if table_mode {
+            println!("{}", style("─".repeat(80)).dim());
+        }
 
         while let Some(result) = stream.next().await {
             match result {
-                Ok(SseClientMessage::Event { event }) => {
-                    let timestamp = event.ts_orig.map_or_else(
-                        || "unknown".to_string(),
-                        |ts| {
-                            ts.format(time::macros::format_description!(
-                                "[hour]:[minute]:[second]"
-                            ))
-                            .unwrap_or_else(|_| "invalid".to_string())
-                        },
-                    );
-                    let source = style(event.source.as_str()).cyan();
-                    let event_type = style(event.event_type.as_str()).yellow();
+                Ok(SseClientMessage::Event { event }) => match format {
+                    OutputFormat::Json | OutputFormat::Dot => {
+                        let line = json!({ "kind": "event", "event": event });
+                        println!("{}", serde_json::to_string(&line)?);
+                    }
+                    OutputFormat::Yaml => {
+                        let doc = json!({ "kind": "event", "event": event });
+                        println!("---");
+                        print!("{}", format_yaml(&doc)?);
+                    }
+                    OutputFormat::Table => {
+                        let timestamp = event.ts_orig.map_or_else(
+                            || "unknown".to_string(),
+                            |ts| {
+                                ts.format(time::macros::format_description!(
+                                    "[hour]:[minute]:[second]"
+                                ))
+                                .unwrap_or_else(|_| "invalid".to_string())
+                            },
+                        );
+                        let source = style(event.source.as_str()).cyan();
+                        let event_type = style(event.event_type.as_str()).yellow();
 
-                    // Show a short payload summary
-                    let summary = event
-                        .payload
-                        .as_object()
-                        .and_then(|obj| {
-                            obj.get("path")
-                                .or(obj.get("command"))
-                                .or(obj.get("title"))
-                                .and_then(|v| v.as_str())
-                        })
-                        .unwrap_or("");
-                    let summary_display = if summary.len() > 60 {
-                        format!("{}...", &summary[..57])
-                    } else {
-                        summary.to_string()
-                    };
+                        let summary = event
+                            .payload
+                            .as_object()
+                            .and_then(|obj| {
+                                obj.get("path")
+                                    .or(obj.get("command"))
+                                    .or(obj.get("title"))
+                                    .and_then(|v| v.as_str())
+                            })
+                            .unwrap_or("");
+                        let summary_display = if summary.len() > 60 {
+                            format!("{}...", &summary[..57])
+                        } else {
+                            summary.to_string()
+                        };
 
-                    println!(
-                        "{} [{}] {} {}",
-                        style(timestamp).dim(),
-                        source,
-                        event_type,
-                        summary_display
-                    );
-                }
-                Ok(SseClientMessage::Gap { dropped, .. }) => {
-                    eprintln!(
-                        "{}",
-                        style(format!("⚠ {dropped} events dropped (slow consumer)")).yellow()
-                    );
-                }
+                        println!(
+                            "{} [{}] {} {}",
+                            style(timestamp).dim(),
+                            source,
+                            event_type,
+                            summary_display
+                        );
+                    }
+                },
+                Ok(SseClientMessage::Gap { dropped, .. }) => match format {
+                    OutputFormat::Json | OutputFormat::Dot => {
+                        let line = json!({ "kind": "gap", "dropped": dropped });
+                        println!("{}", serde_json::to_string(&line)?);
+                    }
+                    OutputFormat::Yaml => {
+                        let doc = json!({ "kind": "gap", "dropped": dropped });
+                        println!("---");
+                        print!("{}", format_yaml(&doc)?);
+                    }
+                    OutputFormat::Table => {
+                        eprintln!(
+                            "{}",
+                            style(format!("⚠ {dropped} events dropped (slow consumer)")).yellow()
+                        );
+                    }
+                },
                 Ok(SseClientMessage::Heartbeat) => {
-                    // Silent keepalive
+                    // Silent keepalive in all formats.
                 }
                 Err(e) => {
-                    eprintln!("{}", style(format!("Stream error: {e}")).red());
+                    match format {
+                        OutputFormat::Json | OutputFormat::Dot => {
+                            let line = json!({ "kind": "error", "message": e.to_string() });
+                            println!("{}", serde_json::to_string(&line)?);
+                        }
+                        OutputFormat::Yaml => {
+                            let doc = json!({ "kind": "error", "message": e.to_string() });
+                            println!("---");
+                            print!("{}", format_yaml(&doc)?);
+                        }
+                        OutputFormat::Table => {
+                            eprintln!("{}", style(format!("Stream error: {e}")).red());
+                        }
+                    }
                     break;
                 }
             }
         }
 
-        println!("{}", style("Event stream ended.").dim());
+        if table_mode {
+            println!("{}", style("Event stream ended.").dim());
+        }
         Ok(())
     }
 }

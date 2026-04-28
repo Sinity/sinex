@@ -1,6 +1,7 @@
 use clap::{Args, Subcommand};
 use color_eyre::Result;
 use console::style;
+use serde_json::json;
 use sinex_primitives::events::{EventPayload, payloads::ActivitySessionBoundaryPayload};
 use sinex_primitives::query::{
     AggregationMode, EventQuery, EventQueryResult, GroupByField, GroupedValue, NumericField,
@@ -9,6 +10,8 @@ use sinex_primitives::query::{
 use sinex_primitives::temporal::{OffsetDateTime, Timestamp};
 
 use crate::client::GatewayClient;
+use crate::fmt::{format_json, format_yaml};
+use crate::model::OutputFormat;
 
 const SESSION_QUERY_LIMIT: i64 = 256;
 const SESSION_SOURCE_LIMIT: i64 = 5;
@@ -29,8 +32,8 @@ pub struct ReportCommand {
 }
 
 impl ReportCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
-        self.cmd.execute(client).await
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        self.cmd.execute(client, format).await
     }
 }
 
@@ -55,7 +58,7 @@ pub struct CalendarArgs {
 }
 
 impl ReportCommands {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let (time_range, label) = match self {
             Self::Today => {
                 let (start, end) = today_range();
@@ -66,11 +69,11 @@ impl ReportCommands {
                 (time_range_new(start, end), label_for_yesterday())
             }
             Self::Calendar(args) => {
-                return print_calendar(client, args.days, args.offset).await;
+                return run_calendar(client, args.days, args.offset, format).await;
             }
         };
 
-        print_report(client, time_range, &label).await
+        run_report(client, time_range, &label, format).await
     }
 }
 
@@ -253,6 +256,113 @@ async fn fetch_session_summary(
 
 // ─── Report rendering ─────────────────────────────────────────────────────────
 
+async fn collect_report_data(
+    client: &GatewayClient,
+    time_range: TimeRange,
+) -> Result<serde_json::Value> {
+    let count_query = EventQuery {
+        time_range: Some(time_range),
+        aggregation: Some(AggregationMode::Count),
+        ..Default::default()
+    };
+    let total = match client.query_events(count_query).await? {
+        EventQueryResult::Count { count } => count,
+        _ => 0,
+    };
+
+    let session_summary = if total > 0 {
+        fetch_session_summary(client, time_range).await?
+    } else {
+        None
+    };
+
+    let sources_query = EventQuery {
+        time_range: Some(time_range),
+        aggregation: Some(AggregationMode::CountBy {
+            field: GroupByField::Source,
+            limit: 10,
+        }),
+        direction: SortDirection::Desc,
+        ..Default::default()
+    };
+    let top_sources = match client.query_events(sources_query).await {
+        Ok(EventQueryResult::GroupedCounts { groups }) => groups,
+        _ => Vec::new(),
+    };
+
+    let types_query = EventQuery {
+        time_range: Some(time_range),
+        aggregation: Some(AggregationMode::CountBy {
+            field: GroupByField::EventType,
+            limit: 10,
+        }),
+        direction: SortDirection::Desc,
+        ..Default::default()
+    };
+    let top_event_types = match client.query_events(types_query).await {
+        Ok(EventQueryResult::GroupedCounts { groups }) => groups,
+        _ => Vec::new(),
+    };
+
+    let heatmap_query = EventQuery {
+        time_range: Some(time_range),
+        aggregation: Some(AggregationMode::TimeSeries {
+            interval_minutes: 60,
+            order: TimeSeriesOrder::TimeAsc,
+        }),
+        ..Default::default()
+    };
+    let hourly_buckets = match client.query_events(heatmap_query).await {
+        Ok(EventQueryResult::TimeSeries { buckets }) => buckets,
+        _ => Vec::new(),
+    };
+
+    let session_summary_json = session_summary.as_ref().map(|s| {
+        json!({
+            "session_count": s.session_count,
+            "total_duration_secs": s.total_duration_secs,
+            "avg_duration_secs": s.avg_duration_secs,
+            "longest_session": s.longest_session,
+            "by_primary_source": s.by_primary_source,
+        })
+    });
+
+    Ok(json!({
+        "total_events": total,
+        "sessions": session_summary_json,
+        "top_sources": top_sources,
+        "top_event_types": top_event_types,
+        "hourly_activity": hourly_buckets,
+    }))
+}
+
+async fn run_report(
+    client: &GatewayClient,
+    time_range: TimeRange,
+    label: &str,
+    format: OutputFormat,
+) -> Result<()> {
+    match format {
+        OutputFormat::Json | OutputFormat::Dot => {
+            let mut data = collect_report_data(client, time_range).await?;
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert("label".to_string(), json!(label));
+            }
+            println!("{}", format_json(&data)?);
+            Ok(())
+        }
+        OutputFormat::Yaml => {
+            let mut data = collect_report_data(client, time_range).await?;
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert("label".to_string(), json!(label));
+            }
+            println!("{}", format_yaml(&data)?);
+            Ok(())
+        }
+        OutputFormat::Table => print_report(client, time_range, label).await,
+    }
+}
+
 async fn print_report(client: &GatewayClient, time_range: TimeRange, label: &str) -> Result<()> {
     println!();
     println!("{}", style(format!("Daily Report: {label}")).bold().cyan());
@@ -398,6 +508,90 @@ async fn print_report(client: &GatewayClient, time_range: TimeRange, label: &str
 }
 
 // ─── Calendar view ──────────────────────────────────────────────────────────
+
+async fn collect_calendar_data(
+    client: &GatewayClient,
+    days: u32,
+    offset: u32,
+) -> Result<serde_json::Value> {
+    let now = OffsetDateTime::now_utc();
+    let end_date = now.date() - time::Duration::days(i64::from(offset));
+    let start_date = end_date - time::Duration::days(i64::from(days) - 1);
+
+    let mut day_entries = Vec::new();
+    for i in 0..days {
+        let date = start_date + time::Duration::days(i64::from(i));
+        #[allow(clippy::expect_used)]
+        let day_start =
+            Timestamp::new(date.with_hms(0, 0, 0).expect("midnight valid").assume_utc());
+        let next_date = date + time::Duration::days(1);
+        #[allow(clippy::expect_used)]
+        let day_end = Timestamp::new(
+            next_date
+                .with_hms(0, 0, 0)
+                .expect("midnight valid")
+                .assume_utc(),
+        );
+        let time_range = TimeRange::new(Some(day_start), Some(day_end)).expect("day range valid");
+
+        let count_query = EventQuery {
+            time_range: Some(time_range),
+            aggregation: Some(AggregationMode::Count),
+            ..Default::default()
+        };
+        let total = match client.query_events(count_query).await? {
+            EventQueryResult::Count { count } => count,
+            _ => 0,
+        };
+
+        let sources_query = EventQuery {
+            time_range: Some(time_range),
+            aggregation: Some(AggregationMode::CountBy {
+                field: GroupByField::Source,
+                limit: 5,
+            }),
+            direction: SortDirection::Desc,
+            ..Default::default()
+        };
+        let top_sources = match client.query_events(sources_query).await {
+            Ok(EventQueryResult::GroupedCounts { groups }) => groups,
+            _ => Vec::new(),
+        };
+
+        day_entries.push(json!({
+            "date": format_date(date),
+            "total_events": total,
+            "top_sources": top_sources,
+        }));
+    }
+
+    Ok(json!({
+        "start_date": format_date(start_date),
+        "end_date": format_date(end_date),
+        "days": day_entries,
+    }))
+}
+
+async fn run_calendar(
+    client: &GatewayClient,
+    days: u32,
+    offset: u32,
+    format: OutputFormat,
+) -> Result<()> {
+    match format {
+        OutputFormat::Json | OutputFormat::Dot => {
+            let data = collect_calendar_data(client, days, offset).await?;
+            println!("{}", format_json(&data)?);
+            Ok(())
+        }
+        OutputFormat::Yaml => {
+            let data = collect_calendar_data(client, days, offset).await?;
+            println!("{}", format_yaml(&data)?);
+            Ok(())
+        }
+        OutputFormat::Table => print_calendar(client, days, offset).await,
+    }
+}
 
 async fn print_calendar(client: &GatewayClient, days: u32, offset: u32) -> Result<()> {
     let now = OffsetDateTime::now_utc();

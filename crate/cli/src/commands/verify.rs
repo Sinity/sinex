@@ -3,6 +3,7 @@ use std::{path::PathBuf, time::Duration};
 use clap::Args;
 use color_eyre::{Result, eyre::eyre};
 use console::{StyledObject, style};
+use serde::Serialize;
 use serde_json::json;
 use sinex_primitives::DeploymentReadinessDescriptor;
 use sinex_primitives::domain::{EventSource, EventType};
@@ -14,6 +15,8 @@ use sinex_primitives::temporal::Timestamp;
 use tokio::process::Command;
 
 use crate::client::GatewayClient;
+use crate::fmt::{format_json, format_yaml};
+use crate::model::OutputFormat;
 
 #[derive(Debug, Args, Default)]
 pub struct VerifyCommand {
@@ -146,9 +149,15 @@ const HISTORICAL_SIGNAL_CHECKS: &[HistoricalSignalCheck] = &[
 ];
 
 impl VerifyCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
-        print_verification_header();
-        let mut summary = VerificationSummary::default();
+    /// `--format json|yaml` suppresses the human-readable check log and
+    /// emits a structured summary with per-check status/message records and
+    /// the overall pass/skip/warn/fail counts at the end.
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let table_mode = matches!(format, OutputFormat::Table);
+        if table_mode {
+            print_verification_header();
+        }
+        let mut summary = VerificationSummary::new(format);
         let descriptor = load_deployment_descriptor(&mut summary);
         let enabled_automata = enabled_automata(descriptor.as_ref());
 
@@ -162,7 +171,22 @@ impl VerifyCommand {
         .await?;
         run_active_verification(self, &mut summary, client, descriptor.as_ref()).await?;
         report_historical_proof(self, &mut summary, client, descriptor.as_ref()).await?;
-        print_verification_footer(&summary);
+
+        match format {
+            OutputFormat::Table => print_verification_footer(&summary),
+            OutputFormat::Json | OutputFormat::Dot => {
+                println!("{}", format_json(&summary.as_json())?);
+                if summary.fail > 0 {
+                    std::process::exit(1);
+                }
+            }
+            OutputFormat::Yaml => {
+                println!("{}", format_yaml(&summary.as_json())?);
+                if summary.fail > 0 {
+                    std::process::exit(1);
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -384,15 +408,40 @@ struct PassiveSignalCheck {
     zero_message: &'static str,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Serialize)]
+struct VerificationRecord {
+    status: &'static str,
+    message: String,
+}
+
+#[derive(Debug)]
 struct VerificationSummary {
     pass: u32,
     skip: u32,
     warn: u32,
     fail: u32,
+    format: OutputFormat,
+    records: Vec<VerificationRecord>,
+}
+
+impl Default for VerificationSummary {
+    fn default() -> Self {
+        Self::new(OutputFormat::Table)
+    }
 }
 
 impl VerificationSummary {
+    fn new(format: OutputFormat) -> Self {
+        Self {
+            pass: 0,
+            skip: 0,
+            warn: 0,
+            fail: 0,
+            format,
+            records: Vec::new(),
+        }
+    }
+
     fn pass(&mut self, message: impl AsRef<str>) {
         self.record(VerificationStatus::Pass, message.as_ref());
     }
@@ -410,13 +459,29 @@ impl VerificationSummary {
     }
 
     fn record(&mut self, status: VerificationStatus, message: &str) {
-        println!("{} {}", status.symbol(), message);
+        if matches!(self.format, OutputFormat::Table) {
+            println!("{} {}", status.symbol(), message);
+        }
+        self.records.push(VerificationRecord {
+            status: status.label(),
+            message: message.to_string(),
+        });
         match status {
             VerificationStatus::Pass => self.pass += 1,
             VerificationStatus::Skip => self.skip += 1,
             VerificationStatus::Warn => self.warn += 1,
             VerificationStatus::Fail => self.fail += 1,
         }
+    }
+
+    fn as_json(&self) -> serde_json::Value {
+        json!({
+            "pass": self.pass,
+            "skip": self.skip,
+            "warn": self.warn,
+            "fail": self.fail,
+            "records": self.records,
+        })
     }
 }
 
@@ -435,6 +500,15 @@ impl VerificationStatus {
             Self::Skip => style("·").dim(),
             Self::Warn => style("⚠").yellow(),
             Self::Fail => style("✗").red(),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Skip => "skip",
+            Self::Warn => "warn",
+            Self::Fail => "fail",
         }
     }
 }

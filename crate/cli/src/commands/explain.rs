@@ -6,6 +6,8 @@ use sinex_primitives::query::{LineageDirection, LineageQuery};
 use sinex_primitives::{Event, Id};
 
 use crate::client::GatewayClient;
+use crate::fmt::{format_json, format_yaml};
+use crate::model::OutputFormat;
 
 #[derive(Debug, Args)]
 #[command(after_help = "\
@@ -18,7 +20,7 @@ pub struct ExplainCommand {
 }
 
 impl ExplainCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let event_id: Id<Event<serde_json::Value>> =
             Id::from_uuid(self.event_id.parse().map_err(|e| {
                 color_eyre::eyre::eyre!("Invalid event ID '{}': {}", self.event_id, e)
@@ -31,6 +33,19 @@ impl ExplainCommand {
         };
 
         let result = client.trace_lineage(query).await?;
+
+        match format {
+            OutputFormat::Json | OutputFormat::Dot => {
+                println!("{}", format_json(&result)?);
+                return Ok(());
+            }
+            OutputFormat::Yaml => {
+                println!("{}", format_yaml(&result)?);
+                return Ok(());
+            }
+            OutputFormat::Table => {}
+        }
+
         let event = &result.root;
 
         println!();
