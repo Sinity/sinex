@@ -57,16 +57,21 @@ pub struct TestIngestdHandle {
 }
 
 async fn terminate_test_child(child: &mut tokio::process::Child, process_name: &str) -> Result<()> {
-    if let Some(status) = child
-        .try_wait()
-        .wrap_err_with(|| format!("failed to inspect {process_name} child status before stop"))?
+    // Attempt kill first; treat ESRCH / no-such-process as "already gone".
+    // This avoids the TOCTOU race of is_alive() → kill() where the process can
+    // exit between the two calls and the kill is applied to a recycled PID.
+    if let Err(kill_err) =
+        crate::process::terminate_tokio_child_process_group(child, process_name, "sandbox stop")
     {
-        eprintln!("📋 {process_name} exited before explicit stop: {status}");
-        return Ok(());
+        // If the process already exited, try_wait() will confirm it.
+        if let Ok(Some(status)) = child.try_wait() {
+            eprintln!("📋 {process_name} exited before explicit stop: {status}");
+            return Ok(());
+        }
+        return Err(kill_err)
+            .wrap_err_with(|| format!("failed to terminate {process_name} process group"));
     }
 
-    crate::process::terminate_tokio_child_process_group(child, process_name, "sandbox stop")
-        .wrap_err_with(|| format!("failed to terminate {process_name} process group"))?;
     child
         .wait()
         .await
