@@ -4,123 +4,20 @@
 //! - Archived events preserve original content (payload, `ts_orig`)
 //! - Double-replaying the same scope is idempotent (event count stable)
 
-use color_eyre::eyre::bail;
 use futures::StreamExt;
 use serde_json::json;
 use sinex_db::{DbPool, repositories::DbPoolExt};
-use sinex_gateway::{ServiceContainer, config::GatewayConfig, rpc_server};
 use sinex_node_sdk::{Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ScanReport};
 use sinex_primitives::rpc::methods;
 use sinex_primitives::{DynamicPayload, Id, temporal::Timestamp};
 use std::collections::HashMap;
-use std::net::TcpListener;
 use std::time::Duration;
-use tempfile::NamedTempFile;
-use tokio::sync::watch;
 use xtask::sandbox::{EnvGuard, prelude::*};
 
+mod common;
+use common::LiveGateway;
+
 const RPC_TOKEN: &str = "determinism-test-token:admin";
-
-struct LiveGateway {
-    port: u16,
-    _shutdown_tx: watch::Sender<bool>,
-    _handle: tokio::task::JoinHandle<()>,
-    _cert_file: NamedTempFile,
-    _key_file: NamedTempFile,
-    client: reqwest::Client,
-}
-
-impl LiveGateway {
-    async fn start(database_url: &str, env_guard: &mut EnvGuard) -> TestResult<Self> {
-        let cert =
-            rcgen::generate_simple_self_signed(vec!["localhost".into(), "127.0.0.1".into()])?;
-        let cert_file = NamedTempFile::new()?;
-        let key_file = NamedTempFile::new()?;
-        tokio::fs::write(cert_file.path(), cert.cert.pem()).await?;
-        tokio::fs::write(key_file.path(), cert.key_pair.serialize_pem()).await?;
-
-        env_guard.set(
-            "SINEX_GATEWAY_TLS_CERT",
-            cert_file.path().to_string_lossy().to_string(),
-        );
-        env_guard.set(
-            "SINEX_GATEWAY_TLS_KEY",
-            key_file.path().to_string_lossy().to_string(),
-        );
-        env_guard.clear("SINEX_GATEWAY_TLS_CLIENT_CA");
-        env_guard.set("SINEX_RPC_TOKEN", RPC_TOKEN);
-        env_guard.set("DATABASE_URL", database_url);
-
-        let listener = TcpListener::bind("127.0.0.1:0")?;
-        let port = listener.local_addr()?.port();
-        drop(listener);
-
-        let mut config = GatewayConfig::load()?;
-        config.database_url = database_url.to_string();
-        config.tcp_listen = format!("127.0.0.1:{port}");
-        config.rpc_rate_limit_enabled = false;
-        let services = ServiceContainer::new(&config).await?;
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let handle = tokio::spawn(async move {
-            if let Err(e) = rpc_server::run(&config, services, shutdown_rx).await {
-                eprintln!("Gateway RPC server failed: {e:#}");
-            }
-        });
-
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-        loop {
-            match tokio::net::TcpStream::connect(format!("127.0.0.1:{port}")).await {
-                Ok(_) => break,
-                Err(_) if tokio::time::Instant::now() < deadline => {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
-                Err(e) => bail!("Gateway port {port} not ready: {e}"),
-            }
-        }
-
-        let client = reqwest::Client::builder()
-            .danger_accept_invalid_certs(true)
-            .build()?;
-
-        Ok(Self {
-            port,
-            _shutdown_tx: shutdown_tx,
-            _handle: handle,
-            _cert_file: cert_file,
-            _key_file: key_file,
-            client,
-        })
-    }
-
-    async fn rpc(&self, method: &str, params: serde_json::Value) -> TestResult<serde_json::Value> {
-        let body = json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-            "id": 1,
-        });
-
-        let resp = self
-            .client
-            .post(format!("https://127.0.0.1:{}/rpc", self.port))
-            .header("Authorization", format!("Bearer {RPC_TOKEN}"))
-            .json(&body)
-            .send()
-            .await?;
-
-        let status = resp.status();
-        let response: serde_json::Value = resp.json().await?;
-
-        if let Some(error) = response.get("error") {
-            bail!("JSON-RPC error on {method} (HTTP {status}): {error}");
-        }
-
-        response
-            .get("result")
-            .cloned()
-            .ok_or_else(|| color_eyre::eyre::eyre!("No 'result' field in JSON-RPC response"))
-    }
-}
 
 async fn spawn_fake_reemitting_scan_node(
     pool: DbPool,
@@ -267,7 +164,7 @@ async fn material_replay_archives_preserve_content(ctx: TestContext) -> TestResu
     let mut env_guard = EnvGuard::new();
     env_guard.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
 
-    let gw = LiveGateway::start(ctx.database_url(), &mut env_guard).await?;
+    let gw = LiveGateway::start(ctx.database_url(), RPC_TOKEN, &mut env_guard).await?;
 
     // Seed 3 material events with known payloads
     let material_id = ctx.create_source_material(Some("determinism-test")).await?;
@@ -345,7 +242,7 @@ async fn double_replay_idempotent(ctx: TestContext) -> TestResult<()> {
     let mut env_guard = EnvGuard::new();
     env_guard.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
 
-    let gw = LiveGateway::start(ctx.database_url(), &mut env_guard).await?;
+    let gw = LiveGateway::start(ctx.database_url(), RPC_TOKEN, &mut env_guard).await?;
 
     let material_id = ctx.create_source_material(Some("double-replay")).await?;
 
