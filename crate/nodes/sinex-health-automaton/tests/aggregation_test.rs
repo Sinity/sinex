@@ -697,8 +697,8 @@ async fn health_aggregator_rejects_invalid_event_ids_in_system_reports(
     .expect_err("corrupt persisted event ids must fail honestly");
 
     assert!(
-        matches!(&error, NodeLogicError::InputParsing(msg) if msg.contains("invalid event_id") && msg.contains("system status")),
-        "expected InputParsing with 'invalid event_id' and 'system status', got: {error:?}"
+        matches!(&error, NodeLogicError::Processing(msg) if msg.contains("invalid event_id") && msg.contains("system status")),
+        "expected Processing with 'invalid event_id' and 'system status', got: {error:?}"
     );
     Ok(())
 }
@@ -755,8 +755,8 @@ async fn health_aggregator_rejects_invalid_event_ids_in_component_reports(
     .expect_err("corrupt persisted event ids must fail honestly");
 
     assert!(
-        matches!(&error, NodeLogicError::InputParsing(msg) if msg.contains("invalid event_id") && msg.contains("component report")),
-        "expected InputParsing with 'invalid event_id' and 'component report', got: {error:?}"
+        matches!(&error, NodeLogicError::Processing(msg) if msg.contains("invalid event_id") && msg.contains("component report")),
+        "expected Processing with 'invalid event_id' and 'component report', got: {error:?}"
     );
     Ok(())
 }

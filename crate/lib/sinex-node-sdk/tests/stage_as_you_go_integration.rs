@@ -155,11 +155,13 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     )
     .await?;
 
+    // `total_bytes` is a dedicated column on source_material_registry (not JSONB metadata);
+    // the RESERVED_METADATA_KEYS guard strips it from the JSONB field on write.
     let material_row = sqlx::query!(
         r#"
             SELECT
                 status,
-                (metadata->>'total_bytes')::bigint AS "total_bytes?",
+                total_bytes AS "total_bytes?",
                 metadata->>'encoding' AS encoding
             FROM raw.source_material_registry
             WHERE id = $1

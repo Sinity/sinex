@@ -289,7 +289,8 @@ sinex_proptest! {
         prop_assert_eq!(event.event_type.as_str(), event_type);
         prop_assert_eq!(event.payload, payload);
         prop_assert_eq!(event.ts_orig, Some(ts_orig));
-        prop_assert_eq!(event.host.as_str(), host);
+        // HostName::new normalizes to lowercase; compare against the normalized value.
+        prop_assert_eq!(event.host.as_str(), host.to_ascii_lowercase());
         Ok(())
     }
 

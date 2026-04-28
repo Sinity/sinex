@@ -1,5 +1,5 @@
 error: unrecognized event_payload attribute
- --> tests/compile_fail/unrecognized_attr.rs:5:68
+ --> tests/compile_fail/unrecognized_attr.rs:8:5
   |
-5 | #[event_payload(source = "test-source", event_type = "test.event", unknown_key = "value")]
-  |                                                                    ^^^^^^^^^^^
+8 |     unknown_key = "value"
+  |     ^^^^^^^^^^^

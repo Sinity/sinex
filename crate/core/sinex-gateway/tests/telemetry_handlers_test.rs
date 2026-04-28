@@ -551,7 +551,7 @@ async fn telemetry_handlers_reject_inverted_time_ranges(ctx: TestContext) -> Tes
     )
     .await
     .expect_err("inverted telemetry time ranges must be rejected");
-    assert!(error.to_string().contains("from' must be earlier"));
+    assert!(error.to_string().contains("from' must be strictly earlier"));
     Ok(())
 }
 

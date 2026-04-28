@@ -824,7 +824,9 @@ mod tests {
     #[sinex_test]
     async fn convergible_tables_resolve_known_metadata() -> TestResult<()> {
         let tables = convergible_tables()?;
-        assert_eq!(tables.len(), 2);
+        // The convergible table registry now includes all tables that need column
+        // convergence, named-constraint idempotency, and FK management.
+        assert_eq!(tables.len(), 13);
         assert_eq!(tables[0].meta.qualified_name, "core.events");
         assert_eq!(tables[1].meta.qualified_name, "core.node_manifests");
         Ok(())
