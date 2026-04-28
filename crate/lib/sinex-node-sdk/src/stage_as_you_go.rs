@@ -477,7 +477,7 @@ impl StageAsYouGoContext {
             .insert(material_id, handle);
 
         info!(
-            blob_id = %material_id,
+            source_material_id = %material_id,
             material_type = material_type,
             "Opened in-flight source material handle"
         );

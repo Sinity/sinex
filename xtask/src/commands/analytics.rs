@@ -105,9 +105,9 @@ fn execute_workspace_health(
     let report = analysis.workspace_health_report()?;
 
     if ctx.is_json() {
-        println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(CommandResult::success()
             .with_message("workspace health computed")
+            .with_data(serde_json::to_value(&report)?)
             .with_duration(ctx.elapsed()));
     }
 
@@ -182,9 +182,9 @@ fn execute_hotspots(
     let hotspots = analysis.diagnostic_hotspots(limit)?;
 
     if ctx.is_json() {
-        println!("{}", serde_json::to_string_pretty(&hotspots)?);
         return Ok(CommandResult::success()
             .with_message(format!("{} hotspots", hotspots.len()))
+            .with_data(serde_json::to_value(&hotspots)?)
             .with_duration(ctx.elapsed()));
     }
 
@@ -235,9 +235,9 @@ fn execute_reliability(
     let reliability = analysis.package_reliability(limit)?;
 
     if ctx.is_json() {
-        println!("{}", serde_json::to_string_pretty(&reliability)?);
         return Ok(CommandResult::success()
             .with_message(format!("{} packages", reliability.len()))
+            .with_data(serde_json::to_value(&reliability)?)
             .with_duration(ctx.elapsed()));
     }
 
@@ -290,15 +290,12 @@ fn execute_velocity(analysis: &HistoryAnalysis<'_>, ctx: &CommandContext) -> Res
     let baseline_trends = analysis.workspace_baseline_velocity_trends()?;
 
     if ctx.is_json() {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "loop": loop_trends,
-                "baseline": baseline_trends,
-            }))?
-        );
         return Ok(CommandResult::success()
             .with_message("velocity trends computed")
+            .with_data(serde_json::json!({
+                "loop": loop_trends,
+                "baseline": baseline_trends,
+            }))
             .with_duration(ctx.elapsed()));
     }
 
@@ -365,9 +362,9 @@ fn execute_recommend(
     let recs = analysis.recommendations()?;
 
     if ctx.is_json() {
-        println!("{}", serde_json::to_string_pretty(&recs)?);
         return Ok(CommandResult::success()
             .with_message(format!("{} recommendations", recs.len()))
+            .with_data(serde_json::to_value(&recs)?)
             .with_duration(ctx.elapsed()));
     }
 
@@ -404,9 +401,9 @@ fn execute_resources(
     let rows = db.get_resource_usage(command, limit)?;
 
     if ctx.is_json() {
-        println!("{}", serde_json::to_string_pretty(&rows)?);
         return Ok(CommandResult::success()
             .with_message(format!("{} resource records", rows.len()))
+            .with_data(serde_json::to_value(&rows)?)
             .with_duration(ctx.elapsed()));
     }
 
@@ -522,9 +519,9 @@ fn execute_stages(
     let stages = db.get_slowest_stages(command, limit)?;
 
     if ctx.is_json() {
-        println!("{}", serde_json::to_string_pretty(&stages)?);
         return Ok(CommandResult::success()
             .with_message(format!("{} stage stats", stages.len()))
+            .with_data(serde_json::to_value(&stages)?)
             .with_duration(ctx.elapsed()));
     }
 

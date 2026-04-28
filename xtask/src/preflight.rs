@@ -450,11 +450,25 @@ fn collect_rust_sources_from_dir(
         let name = entry.file_name().into_string().map_err(|_| {
             color_eyre::eyre::eyre!("source file entry in {} is not valid UTF-8", dir.display())
         })?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            // Recurse into subdirectories so the hash covers payloads/**/*.rs, not
+            // just the top-level directory.
+            let child_prefix = if prefix.is_empty() {
+                name
+            } else {
+                format!("{prefix}/{name}")
+            };
+            let child_contents = collect_rust_sources_from_dir(&path, &child_prefix)?;
+            file_contents.extend(child_contents);
+            continue;
+        }
+
         if !name.ends_with(".rs") {
             continue;
         }
 
-        let path = entry.path();
         let contents = std::fs::read(&path)
             .wrap_err_with(|| format!("failed to read source file {}", path.display()))?;
         let key = if prefix.is_empty() {
@@ -1530,6 +1544,24 @@ mod tests {
 
         assert_ne!(hash, "empty");
         assert_eq!(hash, hash_after_non_rust_change);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_hash_contracts_dir_from_recurses_into_subdirectories() -> TestResult<()> {
+        let dir = tempdir()?;
+        let subdir = dir.path().join("nested");
+        std::fs::create_dir_all(&subdir)?;
+        std::fs::write(dir.path().join("top.rs"), "pub struct Top;")?;
+        std::fs::write(subdir.join("inner.rs"), "pub struct Inner;")?;
+
+        let hash = hash_contracts_dir_from(dir.path())?;
+        assert_ne!(hash, "empty");
+
+        // Changing the nested file must change the hash.
+        std::fs::write(subdir.join("inner.rs"), "pub struct InnerChanged;")?;
+        let hash_after_nested_change = hash_contracts_dir_from(dir.path())?;
+        assert_ne!(hash, hash_after_nested_change);
         Ok(())
     }
 

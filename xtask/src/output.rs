@@ -319,10 +319,14 @@ impl OutputWriter {
             }
         }
 
-        // Data: only print string values in human mode (F3 fix — object/array data is
-        // intended for machine consumption via --json, not for human display).
-        if let Some(serde_json::Value::String(s)) = &result.data {
-            writeln!(out, "{s}")?;
+        // Data: print all value types in human mode. Strings are rendered as-is;
+        // other JSON types (number, bool, null, array, object) are rendered as
+        // compact JSON so the output is unambiguous.
+        if let Some(data) = &result.data {
+            match data {
+                serde_json::Value::String(s) => writeln!(out, "{s}")?,
+                other => writeln!(out, "{}", serde_json::to_string(other).unwrap_or_default())?,
+            }
         }
 
         // Errors
