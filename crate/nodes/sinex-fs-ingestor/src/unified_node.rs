@@ -1122,7 +1122,10 @@ fn survey_watch_tree(
         max_depth: Option<usize>,
         follow_symlinks: bool,
         ignored_directory_names: &HashSet<String>,
+        visited: &mut HashSet<(u64, u64)>,
     ) -> NodeResult<WatchTreeSurvey> {
+        use std::os::unix::fs::MetadataExt;
+
         let metadata = match std::fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
             Err(error) if depth > 0 && is_permission_denied(&error) => {
@@ -1152,6 +1155,23 @@ fn survey_watch_tree(
                 filtered_targets: vec![path.to_path_buf()],
                 ..WatchTreeSurvey::default()
             });
+        }
+
+        // Resolve the inode to detect symlink cycles. For symlinks pointing at
+        // directories, follow to the real inode so both the link and the target
+        // share the same (dev, ino) key.
+        let resolved_meta = if metadata.file_type().is_symlink() {
+            std::fs::metadata(path).unwrap_or(metadata)
+        } else {
+            metadata
+        };
+        let inode_key = (resolved_meta.dev(), resolved_meta.ino());
+        if !visited.insert(inode_key) {
+            warn!(
+                path = %path.display(),
+                "Symlink cycle detected while surveying watch strategy; skipping"
+            );
+            return Ok(WatchTreeSurvey::default());
         }
 
         let mut survey = WatchTreeSurvey {
@@ -1236,6 +1256,7 @@ fn survey_watch_tree(
                     max_depth,
                     follow_symlinks,
                     ignored_directory_names,
+                    visited,
                 )?;
                 survey.accessible_watch_count += child_survey.accessible_watch_count;
                 survey.filtered_watch_count += child_survey.filtered_watch_count;
@@ -1250,12 +1271,14 @@ fn survey_watch_tree(
         Ok(survey)
     }
 
+    let mut visited: HashSet<(u64, u64)> = HashSet::new();
     inspect_path(
         path,
         depth,
         max_depth,
         follow_symlinks,
         ignored_directory_names,
+        &mut visited,
     )
 }
 
