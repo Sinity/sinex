@@ -804,8 +804,11 @@ impl ReplayControlServer {
     ) -> Result<ReplayControlResponse> {
         let response = match request {
             ReplayControlRequest::Plan { actor, scope } => {
-                // Server-side validation of actor (defense in depth)
+                // Server-side validation of actor and scope (defense in depth).
+                // The client also validates, but requests arrive over NATS and must
+                // be trusted only after server-side re-validation.
                 validate_actor_for_action(&actor, ReplayAction::Plan)?;
+                scope.validate()?;
 
                 let op = replay
                     .create_operation(scope.clone(), actor.clone())

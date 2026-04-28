@@ -462,64 +462,6 @@ impl JetStreamConsumer {
         }
     }
 
-    async fn record_suspicious_ts_orig(&self, event: &Event<JsonValue>) {
-        let Some(ts_orig) = event.ts_orig else {
-            return;
-        };
-
-        let now = Timestamp::now();
-
-        if is_implausibly_old_ts_orig(ts_orig) {
-            self.stats
-                .suspicious_past_ts_orig
-                .fetch_add(1, Ordering::Relaxed);
-
-            warn!(
-                event_id = ?event.id,
-                source = %event.source,
-                event_type = %event.event_type,
-                ts_orig = %ts_orig,
-                lower_bound = %TS_ORIG_LOWER_BOUND,
-                "Event ts_orig predates 2000-01-01 — implausibly old for sinex"
-            );
-
-            if let Some(ref observer) = self.observer
-                && let Err(error) = observer
-                    .emit_counter("suspicious_past_ts_orig_total", 1, None)
-                    .await
-            {
-                Self::log_observer_error("ingestd.suspicious_past_ts_orig", &error);
-            }
-        }
-
-        if !is_suspicious_future_ts_orig(ts_orig, now) {
-            return;
-        }
-        let latest_expected = now + SUSPICIOUS_TS_ORIG_FUTURE_SKEW;
-
-        self.stats
-            .suspicious_future_ts_orig
-            .fetch_add(1, Ordering::Relaxed);
-
-        warn!(
-            event_id = ?event.id,
-            source = %event.source,
-            event_type = %event.event_type,
-            ts_orig = %ts_orig,
-            latest_expected = %latest_expected,
-            skew_seconds = (ts_orig - now).whole_seconds(),
-            "Event ts_orig is implausibly far in the future"
-        );
-
-        if let Some(ref observer) = self.observer
-            && let Err(error) = observer
-                .emit_counter("suspicious_future_ts_orig_total", 1, None)
-                .await
-        {
-            Self::log_observer_error("ingestd.suspicious_ts_orig", &error);
-        }
-    }
-
     fn require_inserted_ids(
         inserted_ids: Option<Vec<Uuid>>,
         attempted_rows: usize,
@@ -1046,7 +988,68 @@ impl JetStreamConsumer {
             return Ok(None);
         }
 
-        self.record_suspicious_ts_orig(&event).await;
+        // Route implausibly-timestamped events to DLQ rather than merely warning.
+        // - Past: ts_orig predates 2000-01-01. sinex never observed events that old.
+        // - Future: ts_orig exceeds (now + SUSPICIOUS_TS_ORIG_FUTURE_SKEW).
+        //   1-hour skew is the hardcoded bound; TODO: make configurable.
+        if let Some(ts_orig) = event.ts_orig {
+            let now = Timestamp::now();
+            if is_implausibly_old_ts_orig(ts_orig) {
+                error!(
+                    event_id = ?event.id,
+                    source = %event.source,
+                    event_type = %event.event_type,
+                    ts_orig = %ts_orig,
+                    lower_bound = %TS_ORIG_LOWER_BOUND,
+                    "Event ts_orig predates 2000-01-01 — implausibly old; routing to DLQ"
+                );
+                self.stats
+                    .suspicious_past_ts_orig
+                    .fetch_add(1, Ordering::Relaxed);
+                if let Some(ref observer) = self.observer {
+                    let _ = observer
+                        .emit_counter("suspicious_past_ts_orig_total", 1, None)
+                        .await;
+                }
+                self.route_validation_failure(
+                    &msg,
+                    format!(
+                        "ts_orig {ts_orig} predates lower bound {TS_ORIG_LOWER_BOUND} (implausibly old)"
+                    ),
+                )
+                .await?;
+                return Ok(None);
+            }
+            if is_suspicious_future_ts_orig(ts_orig, now) {
+                let latest_expected = now + SUSPICIOUS_TS_ORIG_FUTURE_SKEW;
+                error!(
+                    event_id = ?event.id,
+                    source = %event.source,
+                    event_type = %event.event_type,
+                    ts_orig = %ts_orig,
+                    latest_expected = %latest_expected,
+                    skew_seconds = (ts_orig - now).whole_seconds(),
+                    "Event ts_orig is implausibly far in the future; routing to DLQ"
+                );
+                self.stats
+                    .suspicious_future_ts_orig
+                    .fetch_add(1, Ordering::Relaxed);
+                if let Some(ref observer) = self.observer {
+                    let _ = observer
+                        .emit_counter("suspicious_future_ts_orig_total", 1, None)
+                        .await;
+                }
+                self.route_validation_failure(
+                    &msg,
+                    format!(
+                        "ts_orig {ts_orig} exceeds latest expected {latest_expected} by {} seconds (implausibly future)",
+                        (ts_orig - now).whole_seconds()
+                    ),
+                )
+                .await?;
+                return Ok(None);
+            }
+        }
 
         // Validate anchor_byte: negative values violate the DB CHECK constraint and would
         // fail on insert anyway. Catch them here to produce a clear DLQ entry rather than
