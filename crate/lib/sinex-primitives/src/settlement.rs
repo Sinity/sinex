@@ -176,6 +176,9 @@ pub fn derived_output_effect_id(
 }
 
 /// Deterministic idempotency key for a processing failure effect.
+///
+/// Variable-length string fields are length-prefixed (8-byte big-endian) before
+/// their bytes so that field boundaries cannot be shifted to produce collisions.
 #[must_use]
 pub fn processing_failure_effect_id(
     node_id: &str,
@@ -185,14 +188,24 @@ pub fn processing_failure_effect_id(
 ) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"processing-failure");
+    // node_id: length-prefixed variable string
+    hasher.update(&(node_id.len() as u64).to_be_bytes());
     hasher.update(node_id.as_bytes());
+    // input_event_id: fixed-size UUID bytes (no length prefix needed)
     hasher.update(input_event_id.as_bytes());
+    // error_fingerprint: length-prefixed variable string
+    hasher.update(&(error_fingerprint.len() as u64).to_be_bytes());
     hasher.update(error_fingerprint.as_bytes());
+    // policy_version: length-prefixed variable string
+    hasher.update(&(policy_version.len() as u64).to_be_bytes());
     hasher.update(policy_version.as_bytes());
     hasher.finalize().to_hex()[..32].to_string()
 }
 
 /// Deterministic idempotency key for a scope invalidation effect.
+///
+/// Variable-length string fields are length-prefixed (8-byte big-endian) before
+/// their bytes so that field boundaries cannot be shifted to produce collisions.
 #[must_use]
 pub fn invalidation_effect_id(
     operation_id: uuid::Uuid,
@@ -201,8 +214,13 @@ pub fn invalidation_effect_id(
 ) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"scope-invalidation");
+    // operation_id: fixed-size UUID bytes (no length prefix needed)
     hasher.update(operation_id.as_bytes());
+    // scope_hash: length-prefixed variable string
+    hasher.update(&(scope_hash.len() as u64).to_be_bytes());
     hasher.update(scope_hash.as_bytes());
+    // invalidation_kind: length-prefixed variable string
+    hasher.update(&(invalidation_kind.len() as u64).to_be_bytes());
     hasher.update(invalidation_kind.as_bytes());
     hasher.finalize().to_hex()[..32].to_string()
 }
