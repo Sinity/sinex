@@ -31,6 +31,8 @@ pub mod testing;
 pub mod units;
 pub mod utils;
 pub mod validation;
+#[cfg(feature = "nats")]
+pub mod transport;
 
 pub mod buffers {
     pub use crate::constants::buffers::*;
