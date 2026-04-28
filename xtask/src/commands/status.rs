@@ -313,6 +313,7 @@ fn collect_runtime_metrics_if_postgres_ready(
     if *target_kind == RuntimeTargetKind::DevCheckout && !pg_probe.ready() {
         return Some(RuntimeMetrics::unavailable());
     }
+    collect_runtime_metrics(runtime_db_url)
 }
 
 fn describe_thread_panic(payload: &(dyn Any + Send)) -> String {
