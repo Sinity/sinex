@@ -72,13 +72,23 @@ Add to your NixOS configuration:
     users.target = "yourusername";  # REQUIRED: match the user defined above
   };
 
-  environment.etc."sinex/gateway-admin-token".text = "replace-me-admin:admin";
+  # Gateway admin token MUST come from a runtime-only secret, not a plain text= value.
+  # Using environment.etc."...".text = "..." bakes the token into the world-readable
+  # Nix store — do NOT do that for real tokens.
+  #
+  # Recommended: use agenix (token is auto-resolved from sinex-gateway-admin-token.age):
+  #   age.secrets.sinex-gateway-admin-token.file = ./secrets/sinex-gateway-admin-token.age;
+  #
+  # Alternative: point directly at a runtime secret file:
+  #   services.sinex.secrets.gatewayAdminTokenFile = "/run/secrets/sinex-gateway-admin-token";
+  #
+  # The module asserts that one of the above is present and refuses to start without it.
 }
 ```
 
-The module picks that up automatically. Set
-`services.sinex.secrets.gatewayAdminTokenFile` only when you need a non-standard
-token path.
+The module auto-resolves the token from agenix (`sinex-gateway-admin-token`) or from
+`services.sinex.secrets.gatewayAdminTokenFile`. It will refuse to start if neither is
+configured, preventing accidental no-auth deployments.
 
 Apply with:
 ```bash
