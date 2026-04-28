@@ -287,16 +287,16 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Lifecycle { cmd } => cmd.execute(&client).await?,
                 Commands::GitOps { cmd } => cmd.execute(&client, format).await?,
                 Commands::Telemetry { cmd } => cmd.execute(&client).await?,
-                Commands::Report { cmd } => cmd.execute(&client).await?,
+                Commands::Report { cmd } => cmd.execute(&client, format).await?,
                 Commands::Status(cmd) => {
                     cmd.execute(&client, config.runtime_target.as_ref(), format).await?;
                 }
-                Commands::Recent(cmd) => cmd.execute(&client).await?,
-                Commands::Errors(cmd) => cmd.execute(&client).await?,
-                Commands::Watch(cmd) => cmd.execute(&client).await?,
-                Commands::Context(cmd) => cmd.execute(&client).await?,
-                Commands::Explain(cmd) => cmd.execute(&client).await?,
-                Commands::Verify(cmd) => cmd.execute(&client).await?,
+                Commands::Recent(cmd) => cmd.execute(&client, format).await?,
+                Commands::Errors(cmd) => cmd.execute(&client, format).await?,
+                Commands::Watch(cmd) => cmd.execute(&client, format).await?,
+                Commands::Context(cmd) => cmd.execute(&client, format).await?,
+                Commands::Explain(cmd) => cmd.execute(&client, format).await?,
+                Commands::Verify(cmd) => cmd.execute(&client, format).await?,
                 Commands::Completions(_) => unreachable!("Completions command handled above"),
             }
         }
