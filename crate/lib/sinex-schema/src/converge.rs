@@ -272,9 +272,12 @@ async fn drop_legacy_columns(
 
 /// Ensures all named CHECK constraints are present on the table.
 ///
-/// Missing constraints are added with `NOT VALID` (skips full table scan) and
-/// then validated in a second pass. Changed constraint expressions are NOT
-/// auto-converged — this function only adds missing ones.
+/// Missing constraints are added with `NOT VALID` (skips the full table scan
+/// that a plain ADD CONSTRAINT would require). The constraints are left in the
+/// NOT VALID state; the caller or a subsequent maintenance operation is
+/// responsible for running `VALIDATE CONSTRAINT` when it is appropriate to pay
+/// the table-scan cost. Changed constraint expressions are NOT auto-converged
+/// — this function only adds missing ones.
 ///
 /// Caller must verify the table exists before calling.
 async fn converge_named_constraints(
@@ -316,15 +319,6 @@ async fn converge_named_constraints(
         .collect();
     let alter = format!("ALTER TABLE {schema}.{table} {}", clauses.join(", "));
     pool.execute(alter.as_str()).await?;
-
-    // Validate each constraint separately — allows per-constraint error isolation.
-    for nc in &missing {
-        let sql = format!(
-            "ALTER TABLE {schema}.{table} VALIDATE CONSTRAINT {}",
-            nc.name
-        );
-        pool.execute(sql.as_str()).await?;
-    }
 
     Ok(())
 }
