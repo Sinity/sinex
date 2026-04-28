@@ -3,8 +3,8 @@
 //! Validates source filtering, JSON field extraction, exit code parsing,
 //! timestamp fallback, and empty-command handling.
 
-use sinex_node_sdk::TransducerNode;
 use sinex_node_sdk::derived_node::DerivedTriggerContext;
+use sinex_node_sdk::{NodeLogicError, TransducerNode};
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
 use sinex_primitives::events::EventPayload;
@@ -165,7 +165,10 @@ async fn test_missing_ts_orig_is_rejected() -> TestResult<()> {
         .await
         .expect_err("missing ts_orig must be rejected");
 
-    assert!(error.to_string().contains("missing ts_orig"));
+    assert!(
+        matches!(&error, NodeLogicError::InputParsing(msg) if msg.contains("missing ts_orig")),
+        "expected InputParsing with 'missing ts_orig', got: {error:?}"
+    );
     Ok(())
 }
 
