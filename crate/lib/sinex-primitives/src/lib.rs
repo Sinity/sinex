@@ -26,6 +26,7 @@ pub mod query;
 pub mod rpc;
 pub mod settlement;
 pub mod runtime_target;
+pub mod source_unit;
 pub mod temporal;
 pub mod testing;
 pub mod units;
