@@ -48,6 +48,35 @@ pub mod relation_types {
     /// Example: a JSONL row-stream material backed by a `SQLite` snapshot material.
     pub const BACKED_BY: &str = "backed_by";
 }
+/// Top-level metadata keys reserved for system use.
+///
+/// These keys are set exclusively by the DB layer or the node SDK and must not
+/// be overwritten by caller-supplied payloads passed to `update_metadata`.
+/// The `update_metadata` path re-applies existing values for these keys on top
+/// of any caller merge, so the system always wins on conflicts.
+const RESERVED_METADATA_KEYS: &[&str] = &[
+    "encoding",
+    "content_preview",
+    "retention_policy",
+    "blake3",
+    "total_bytes",
+    "staged_by",
+    "staged_on_host",
+    "_meta",
+];
+
+/// Strip reserved system keys from a caller-supplied metadata object so they
+/// cannot be overwritten via `update_metadata`. Non-object values are
+/// returned unchanged (they carry no top-level keys to strip).
+fn strip_reserved_metadata_keys(mut metadata: JsonValue) -> JsonValue {
+    if let JsonValue::Object(ref mut map) = metadata {
+        for key in RESERVED_METADATA_KEYS {
+            map.remove(*key);
+        }
+    }
+    metadata
+}
+
 /// Source material registration payload
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceMaterial {
@@ -271,11 +300,39 @@ impl SourceMaterialLink {
         Self::new(from_material_id, to_material_id, relation_types::BACKED_BY)
     }
 
-    /// Merge additional metadata into this link payload.
+    /// Deep-merge additional metadata into this link payload.
+    ///
+    /// Existing keys are overwritten by `metadata` on conflict; nested objects
+    /// are merged recursively (rather than replaced wholesale).
     #[must_use]
     pub fn with_metadata(mut self, metadata: JsonValue) -> Self {
-        self.metadata = metadata;
+        match (&mut self.metadata, metadata) {
+            (JsonValue::Object(existing), JsonValue::Object(incoming)) => {
+                merge_json_objects(existing, incoming);
+            }
+            (existing, incoming) => {
+                *existing = incoming;
+            }
+        }
         self
+    }
+}
+
+/// Recursively merge `incoming` into `target`, with incoming values winning on conflict.
+fn merge_json_objects(target: &mut JsonMap<String, JsonValue>, incoming: JsonMap<String, JsonValue>) {
+    for (key, incoming_val) in incoming {
+        match (target.get_mut(&key), incoming_val) {
+            (Some(JsonValue::Object(existing_obj)), JsonValue::Object(incoming_obj)) => {
+                merge_json_objects(existing_obj, incoming_obj);
+            }
+            (existing_slot, incoming_val) => {
+                if let Some(slot) = existing_slot {
+                    *slot = incoming_val;
+                } else {
+                    target.insert(key, incoming_val);
+                }
+            }
+        }
     }
 }
 
@@ -905,11 +962,22 @@ impl SourceMaterialRepository<'_> {
     where
         E: sqlx::Executor<'e, Database = sqlx::Postgres>,
     {
+        // Strip caller-supplied values for reserved system keys before merging,
+        // then re-apply existing system values on top so they always win.
+        // Reserved keys are set exclusively by the DB/SDK internals and must not
+        // be overwritten by caller-supplied metadata.
+        let caller_metadata = strip_reserved_metadata_keys(metadata);
         sqlx::query_as!(
             SourceMaterialRecord,
             r#"
             UPDATE raw.source_material_registry
-            SET metadata = core.jsonb_merge_deep(metadata, $2)
+            SET metadata = core.jsonb_merge_deep(
+                    core.jsonb_merge_deep(metadata, $2),
+                    -- Re-apply existing reserved keys on top so system wins.
+                    (SELECT jsonb_object_agg(k, metadata->k)
+                     FROM unnest($3::text[]) AS k
+                     WHERE metadata ? k)
+                )
             WHERE id = $1
             RETURNING
                 id as "id!: uuid::Uuid",
@@ -927,7 +995,8 @@ impl SourceMaterialRepository<'_> {
                 total_bytes as "total_bytes?: i64"
             "#,
             id.to_uuid(),
-            metadata
+            caller_metadata,
+            RESERVED_METADATA_KEYS as &[&str],
         )
         .fetch_optional(executor)
         .await
