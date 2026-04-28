@@ -310,6 +310,7 @@ pub struct JournalConfig {
     pub exclude_fields: Vec<String>,
     /// Units to explicitly exclude even when `units` is empty (catch-all mode).
     /// Defaults to sinex-* self-units to prevent feedback loops.
+    #[serde(default = "default_journal_exclude_units")]
     pub exclude_units: Vec<String>,
     /// Cursor file to track position
     pub cursor_file: Option<String>,
