@@ -11,6 +11,7 @@ use clap::Args;
 use color_eyre::eyre::{Result, WrapErr, eyre};
 use sinex_schema::apply::SHARED_ACCESS_ROLES;
 use std::path::Path;
+use time::OffsetDateTime;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::infra::services::postgres::PostgresManager;
@@ -133,7 +134,48 @@ impl XtaskCommand for ResetCommand {
         // ── History DB ───────────────────────────────────────────────────────
         if all || self.history {
             let path = cfg.history_db_path();
-            let _ = remove_file_if_present(&path, verbose)?;
+            // History is the user's accumulated dev-loop record across weeks
+            // or months — never silently delete on reset.  Rename to a
+            // timestamped backup alongside the live file so the data
+            // survives every `xtask reset --history` / `--all` invocation
+            // and can be inspected/recovered if the wipe was unintended.
+            // Also rename the WAL/SHM/integrity-stamp/cleanup-lock siblings
+            // so the next open starts on a clean slate without inheriting
+            // stale auxiliary files.
+            if path.exists() {
+                let stamp = OffsetDateTime::now_utc()
+                    .format(&time::format_description::well_known::Iso8601::DEFAULT)
+                    .unwrap_or_else(|_| "unknown".to_string())
+                    .replace(':', "")
+                    .replace('-', "");
+                let backup_path = path
+                    .with_extension(format!("db.reset.bak.{stamp}"));
+                std::fs::rename(&path, &backup_path).with_context(|| {
+                    format!(
+                        "rename {} -> {} (preserve history before reset)",
+                        path.display(),
+                        backup_path.display()
+                    )
+                })?;
+                if verbose {
+                    println!(
+                        "  preserved history at {} (renamed from {})",
+                        backup_path.display(),
+                        path.display()
+                    );
+                }
+                // Move auxiliary SQLite/runtime artifacts out of the way so
+                // the recreated DB does not pick up the old ones.
+                for ext in ["db-wal", "db-shm", "db.integrity.json", "cleanup.lock"] {
+                    let aux = path.with_extension(ext);
+                    if aux.exists() {
+                        let _ = std::fs::rename(
+                            &aux,
+                            aux.with_extension(format!("{ext}.reset.bak.{stamp}")),
+                        );
+                    }
+                }
+            }
             if self.seed {
                 // Reseed with synthetic data after wipe.
                 // Exception: reset deletes then recreates the DB — ctx.with_history_db()
@@ -148,9 +190,9 @@ impl XtaskCommand for ResetCommand {
                     );
                     println!("  to clear: xtask reset --yes --history");
                 }
-                actions.push("xtask history database reseeded with synthetic data");
+                actions.push("xtask history database renamed to .reset.bak.<ts>; fresh DB seeded");
             } else {
-                actions.push("xtask history database deleted");
+                actions.push("xtask history database renamed to .reset.bak.<ts>");
             }
         }
 

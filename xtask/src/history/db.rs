@@ -761,28 +761,68 @@ impl HistoryDb {
             }
         };
         if current_version != HISTORY_DB_SCHEMA_VERSION {
-            // Schema mismatch — backup then drop and recreate. History DB is
-            // dev tooling data (command timings, test results), not user data.
-            // A fresh start is simpler and safer than incremental migrations.
+            // Schema mismatch — preserve the prior DB by renaming it to a
+            // versioned backup, then create a fresh DB at the live path.
+            // History accumulates the user's dev-loop record across weeks
+            // and months; never silently overwrite or drop it.  The rename
+            // also moves the original off the live path atomically so the
+            // recreated DB starts on a clean inode without inheriting any
+            // mid-corruption state from the previous schema.
             if current_version != 0 {
+                drop(db);
                 let backup_path = path.with_extension(format!("db.v{current_version}.bak"));
-                match std::fs::copy(path, &backup_path) {
+                match std::fs::rename(path, &backup_path) {
                     Ok(_) => eprintln!(
                         "⚠️  History DB schema v{current_version} != v{HISTORY_DB_SCHEMA_VERSION}, \
-                         backed up to {} and recreating",
+                         renamed to {} and creating fresh DB",
                         backup_path.display()
                     ),
-                    Err(e) => eprintln!(
-                        "⚠️  History DB schema v{current_version} != v{HISTORY_DB_SCHEMA_VERSION}, \
-                         backup failed ({e}), recreating anyway"
-                    ),
+                    Err(e) => {
+                        eprintln!(
+                            "⚠️  History DB schema v{current_version} != v{HISTORY_DB_SCHEMA_VERSION}, \
+                             rename to backup failed ({e}); refusing to drop the live DB"
+                        );
+                        return Err(e).context(
+                            "could not preserve history DB before schema upgrade; refusing to wipe",
+                        );
+                    }
                 }
+                // Move auxiliary SQLite/runtime artifacts so the recreated
+                // DB does not pick up the old WAL/SHM contents.
+                for ext in ["db-wal", "db-shm", "db.integrity.json", "cleanup.lock"] {
+                    let aux = path.with_extension(ext);
+                    if aux.exists() {
+                        let _ = std::fs::rename(
+                            &aux,
+                            aux.with_extension(format!("{ext}.v{current_version}.bak")),
+                        );
+                    }
+                }
+                let conn = Connection::open(path)
+                    .with_context(|| {
+                        format!(
+                            "failed to create fresh history database after schema upgrade: {}",
+                            path.display()
+                        )
+                    })?;
+                Self::configure_connection(&conn, mode)?;
+                let mut recreated = Self {
+                    conn,
+                    is_synthetic: false,
+                };
+                recreated.init_schema()?;
+                recreated.ensure_compat_schema()?;
+                recreated.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
+                refresh_history_integrity_stamp(path, OffsetDateTime::now_utc());
+                db = recreated;
+            } else {
+                // current_version == 0 means the DB was just created and is empty;
+                // nothing to preserve.
+                db.init_schema()?;
+                db.ensure_compat_schema()?;
+                db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
+                refresh_history_integrity_stamp(path, OffsetDateTime::now_utc());
             }
-            db.drop_all_tables()?;
-            db.init_schema()?;
-            db.ensure_compat_schema()?;
-            db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
-            refresh_history_integrity_stamp(path, OffsetDateTime::now_utc());
         }
         db.ensure_compat_schema()?;
         db.is_synthetic = db.check_synthetic()?;
