@@ -38,9 +38,7 @@ pub enum VerificationStatus {
     Fail,
 }
 
-pub(crate) fn deployment_descriptor_result(
-    _log_context: &str,
-) -> NodeResult<Option<DeploymentReadinessDescriptor>> {
+pub(crate) fn deployment_descriptor_result() -> NodeResult<Option<DeploymentReadinessDescriptor>> {
     DeploymentReadinessDescriptor::load()
 }
 
@@ -54,7 +52,7 @@ pub(crate) fn runtime_database_expected() -> NodeResult<bool> {
     }
 
     Ok(
-        deployment_descriptor_result("preflight runtime expectation")?
+        deployment_descriptor_result()?
             .is_none_or(|descriptor| descriptor.expectations.schema_apply),
     )
 }
