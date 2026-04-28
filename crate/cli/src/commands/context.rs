@@ -1,11 +1,14 @@
 use clap::Args;
 use color_eyre::Result;
 use console::style;
+use serde_json::json;
 use sinex_primitives::query::{EventQuery, EventQueryResult, SortDirection, TimeRange};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use std::collections::HashMap;
 
 use crate::client::GatewayClient;
+use crate::fmt::{format_json, format_yaml};
+use crate::model::OutputFormat;
 
 /// Show activity context for session resumption ("what was I doing?")
 #[derive(Debug, Args)]
@@ -31,7 +34,7 @@ pub struct ContextCommand {
 }
 
 impl ContextCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let since = parse_duration_str(&self.since)?;
         let now = Timestamp::now();
         let cutoff = now - since;
@@ -50,6 +53,52 @@ impl ContextCommand {
             EventQueryResult::Events { events, .. } => events,
             _ => vec![],
         };
+
+        if !matches!(format, OutputFormat::Table) {
+            // Aggregate by source for the structured output (latest event per
+            // source). Events are already sorted Desc so first-seen wins.
+            let mut by_source: HashMap<String, &sinex_primitives::query::QueryResultEvent> =
+                HashMap::new();
+            for result_event in &events {
+                let key = result_event.event.source.as_str().to_string();
+                by_source.entry(key).or_insert(result_event);
+            }
+            let mut sources: Vec<_> = by_source.iter().collect();
+            sources.sort_by(|a, b| {
+                let ts_a = a.1.event.ts_orig.unwrap_or(Timestamp::UNIX_EPOCH);
+                let ts_b = b.1.event.ts_orig.unwrap_or(Timestamp::UNIX_EPOCH);
+                ts_b.inner().cmp(&ts_a.inner())
+            });
+
+            let source_entries: Vec<_> = sources
+                .iter()
+                .map(|(source_key, result_event)| {
+                    json!({
+                        "source": source_key,
+                        "label": display_source(source_key),
+                        "latest_ts": result_event.event.ts_orig,
+                        "latest_event": result_event,
+                    })
+                })
+                .collect();
+
+            let payload = json!({
+                "since": self.since,
+                "total_events": events.len(),
+                "source_count": by_source.len(),
+                "sources": source_entries,
+            });
+            match format {
+                OutputFormat::Json | OutputFormat::Dot => {
+                    println!("{}", format_json(&payload)?);
+                }
+                OutputFormat::Yaml => {
+                    println!("{}", format_yaml(&payload)?);
+                }
+                OutputFormat::Table => unreachable!(),
+            }
+            return Ok(());
+        }
 
         if events.is_empty() {
             println!(
