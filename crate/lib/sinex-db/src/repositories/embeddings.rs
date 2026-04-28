@@ -35,7 +35,8 @@ impl<'a> EmbeddingRepository<'a> {
             "#,
         )
         .fetch_optional(self.pool)
-        .await?;
+        .await?
+        .flatten();
 
         if let Some(declared) = declared_dim {
             if declared != dimensions {

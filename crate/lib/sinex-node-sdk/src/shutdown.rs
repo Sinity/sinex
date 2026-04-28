@@ -96,6 +96,7 @@ fn sanitize_node_name_for_filename(name: &str) -> String {
             }
         })
         .collect()
+}
 
 /// Default checkpoint file path for a node.
 ///
