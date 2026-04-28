@@ -71,27 +71,6 @@ fn sanitize_node_name_for_filename(name: &str) -> String {
         .collect()
 }
 
-/// Sanitize a node name for use as a filename component.
-///
-/// Replaces any character that is not alphanumeric, `-`, or `_` with `_`.
-/// This is the lenient counterpart to [`validate_node_name`]; callers that
-/// reach this from runtime contexts where validation has already happened
-/// can use it as a defense-in-depth fallback.
-fn sanitize_node_name_for_filename(name: &str) -> String {
-    if name.is_empty() {
-        return "_".to_string();
-    }
-    name.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
 /// Default checkpoint file path for a node.
 #[must_use]
 pub fn default_checkpoint_path(node_name: &str) -> PathBuf {
