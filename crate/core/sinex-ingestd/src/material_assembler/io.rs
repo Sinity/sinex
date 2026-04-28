@@ -1420,14 +1420,10 @@ pub(super) async fn import_into_content_store(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::MaterialReadySet;
     use crate::material_assembler::state::MaterialEndMessage;
-    use camino::Utf8PathBuf;
     use serde_json::json;
-    use sinex_node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
-    use std::sync::Arc;
     use tokio::time::timeout;
     use tokio_stream::StreamExt;
     use xtask::sandbox::prelude::*;
@@ -1435,40 +1431,17 @@ mod tests {
     async fn test_assembler(
         ctx: &TestContext,
     ) -> TestResult<(MaterialAssembler, tempfile::TempDir, tempfile::TempDir)> {
-        test_assembler_with_config(ctx, 300).await
+        super::super::test_support::build_test_assembler(ctx, "io-test").await
     }
 
     async fn test_assembler_with_config(
         ctx: &TestContext,
         slice_timeout_secs: u64,
     ) -> TestResult<(MaterialAssembler, tempfile::TempDir, tempfile::TempDir)> {
-        let content_store_dir = tempfile::tempdir()?;
-        let repo_path = Utf8PathBuf::from_path_buf(content_store_dir.path().to_path_buf())
-            .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
-        MaterialContentStore::init(&repo_path, Some("io-test")).await?;
-        let content_store = Arc::new(MaterialContentStore::new(ContentStoreConfig {
-            root_path: repo_path,
-            num_copies: None,
-            large_files: None,
-        })?);
-
-        let state_dir = tempfile::tempdir()?;
-        let assembler = MaterialAssembler::new(
-            ctx.nats_client(),
-            ctx.pool.clone(),
-            content_store,
-            state_dir.path().to_path_buf(),
-            Some(ctx.pipeline_namespace().prefix().to_string()),
-            1_000,
-            Some(MaterialReadySet::default()),
-            100,
-            512 * 1024 * 1024,
-            slice_timeout_secs,
-            3_600,
-            90,
-        )?;
-
-        Ok((assembler, content_store_dir, state_dir))
+        super::super::test_support::TestAssemblerBuilder::new("io-test")
+            .slice_timeout_secs(slice_timeout_secs)
+            .build(ctx)
+            .await
     }
 
     async fn write_wal_entry(wal_path: &std::path::Path, entry: WalEntry) -> TestResult<()> {
@@ -1606,31 +1579,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let content_store_dir = tempfile::tempdir()?;
-        let repo_path = Utf8PathBuf::from_path_buf(content_store_dir.path().to_path_buf())
-            .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
-        MaterialContentStore::init(&repo_path, Some("io-test")).await?;
-        let content_store = Arc::new(MaterialContentStore::new(ContentStoreConfig {
-            root_path: repo_path,
-            num_copies: None,
-            large_files: None,
-        })?);
-
-        let state_dir = tempfile::tempdir()?;
-        let assembler = MaterialAssembler::new(
-            ctx.nats_client(),
-            ctx.pool.clone(),
-            content_store,
-            state_dir.path().to_path_buf(),
-            Some(ctx.pipeline_namespace().prefix().to_string()),
-            1_000,
-            Some(MaterialReadySet::default()),
-            100,
-            512 * 1024 * 1024,
-            300,
-            3_600,
-            90,
-        )?;
+        let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
 
         let material_id = Uuid::now_v7();
         handle_slice(&assembler, material_id, 4, b"late".to_vec()).await?;
@@ -1651,31 +1600,11 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let content_store_dir = tempfile::tempdir()?;
-        let repo_path = Utf8PathBuf::from_path_buf(content_store_dir.path().to_path_buf())
-            .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
-        MaterialContentStore::init(&repo_path, Some("io-test")).await?;
-        let content_store = Arc::new(MaterialContentStore::new(ContentStoreConfig {
-            root_path: repo_path,
-            num_copies: None,
-            large_files: None,
-        })?);
-
-        let state_dir = tempfile::tempdir()?;
-        let assembler = MaterialAssembler::new(
-            ctx.nats_client(),
-            ctx.pool.clone(),
-            content_store,
-            state_dir.path().to_path_buf(),
-            Some(ctx.pipeline_namespace().prefix().to_string()),
-            1_000,
-            Some(MaterialReadySet::default()),
-            100,
-            8,
-            300,
-            3_600,
-            90,
-        )?;
+        let (assembler, _content_store_dir, _state_dir) =
+            super::super::test_support::TestAssemblerBuilder::new("io-test")
+                .max_material_size_bytes(8)
+                .build(&ctx)
+                .await?;
 
         let material_id = Uuid::now_v7();
         handle_slice(&assembler, material_id, 0, b"12345".to_vec()).await?;
@@ -1693,31 +1622,11 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let content_store_dir = tempfile::tempdir()?;
-        let repo_path = Utf8PathBuf::from_path_buf(content_store_dir.path().to_path_buf())
-            .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
-        MaterialContentStore::init(&repo_path, Some("io-test")).await?;
-        let content_store = Arc::new(MaterialContentStore::new(ContentStoreConfig {
-            root_path: repo_path,
-            num_copies: None,
-            large_files: None,
-        })?);
-
-        let state_dir = tempfile::tempdir()?;
-        let assembler = MaterialAssembler::new(
-            ctx.nats_client(),
-            ctx.pool.clone(),
-            content_store,
-            state_dir.path().to_path_buf(),
-            Some(ctx.pipeline_namespace().prefix().to_string()),
-            1_000,
-            Some(MaterialReadySet::default()),
-            1,
-            512 * 1024 * 1024,
-            300,
-            3_600,
-            90,
-        )?;
+        let (assembler, _content_store_dir, _state_dir) =
+            super::super::test_support::TestAssemblerBuilder::new("io-test")
+                .buffered_slice_limit(1)
+                .build(&ctx)
+                .await?;
 
         let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
         let mut dlq_sub = ctx.nats_client().subscribe(dlq_subject).await?;
