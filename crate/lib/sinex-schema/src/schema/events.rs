@@ -585,6 +585,15 @@ impl ArchivedEvents {
     ///
     /// Security hardening beyond this safety gate (for example stricter DB role controls)
     /// remains an explicit follow-up concern.
+    ///
+    /// ## Annotation cascade (#579)
+    ///
+    /// `core.event_annotations` has a FK to `core.events`, but TimescaleDB hypertables
+    /// cannot be the target of FK references from other tables — so `ON DELETE CASCADE`
+    /// on that FK is not enforced by PostgreSQL. This trigger compensates by archiving
+    /// annotations to `audit.archived_annotations` (idempotent via `ON CONFLICT (id) DO
+    /// NOTHING` so the Rust application path that pre-archives in bulk before the DELETE
+    /// batch does not produce duplicates) and then deleting them from the live table.
     #[must_use]
     pub fn create_archive_trigger_sql() -> &'static str {
         r"
@@ -604,6 +613,20 @@ impl ArchivedEvents {
 
           -- Atomically copy the deleted row to the archive with additional context.
           INSERT INTO audit.archived_events SELECT OLD.*, now(), who, why, sup_id;
+
+          -- Cascade annotations: TimescaleDB does not enforce FK ON DELETE CASCADE when
+          -- core.events is the referenced (hypertable) side (#579). Archive then delete
+          -- any annotations attached to this event. ON CONFLICT (id) DO NOTHING makes this
+          -- idempotent — the application layer (execute_cascade_archive) pre-archives in bulk
+          -- before the DELETE batch, so the trigger only catches any remainder.
+          INSERT INTO audit.archived_annotations
+            SELECT a.*, now(), who, why
+            FROM core.event_annotations a
+            WHERE a.event_id = OLD.id
+          ON CONFLICT (id) DO NOTHING;
+
+          DELETE FROM core.event_annotations WHERE event_id = OLD.id;
+
           RETURN OLD;
         END $$;
 
