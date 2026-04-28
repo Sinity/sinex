@@ -196,7 +196,15 @@ pub fn config() -> Config {
 /// Missing files fall back to defaults. Read/parse failures are surfaced to
 /// stderr and also fall back to defaults so xtask remains usable.
 pub(crate) fn load_user_preferences() -> UserPreferences {
-    let config_dir = dirs::config_dir().unwrap_or_else(|| PathBuf::from("~/.config"));
+    let config_dir = dirs::config_dir().unwrap_or_else(|| {
+        // dirs::config_dir() returns None only in unusual environments (no $HOME set).
+        // Fall back to $HOME/.config rather than the literal "~/.config" path, which
+        // the OS would not expand and would fail to locate the file.
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/"));
+        home.join(".config")
+    });
     let path = config_dir.join("xtask/preferences.toml");
     match load_user_preferences_from(&config_dir) {
         Ok(prefs) => prefs,
