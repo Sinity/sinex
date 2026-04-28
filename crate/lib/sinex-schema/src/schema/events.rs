@@ -433,11 +433,16 @@ impl Events {
             END IF;
 
             -- Resolve schema: prefer the FK, fall back to (source, event_type).
+            -- If the FK references an inactive schema (schema_jsonb stays NULL)
+            -- fall through to the source/event_type lookup so the active schema
+            -- still validates the payload — a stale FK should not silently
+            -- bypass validation.
             IF NEW.payload_schema_id IS NOT NULL THEN
                 SELECT schema_content INTO schema_jsonb
                 FROM sinex_schemas.event_payload_schemas
                 WHERE id = NEW.payload_schema_id AND is_active = true;
-            ELSE
+            END IF;
+            IF schema_jsonb IS NULL THEN
                 SELECT schema_content INTO schema_jsonb
                 FROM sinex_schemas.event_payload_schemas
                 WHERE source = NEW.source
