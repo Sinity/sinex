@@ -160,7 +160,12 @@ pkgs.testers.nixosTest {
     with subtest("Event generation and query"):
         # Generate some events
         generate_test_events(5)
-        machine.sleep(3)  # Allow time for ingestion
+        # Poll until at least one event is visible (up to 30 s) instead of a
+        # fixed sleep that races against pipeline latency.
+        machine.wait_until_succeeds(
+            "sinexctl --insecure recent -n 1 -f json 2>/dev/null | grep -q '{'",
+            timeout=30
+        )
 
         # Query events
         query_result = sinexctl("query -s 1h -n 10 -f json", check=False)

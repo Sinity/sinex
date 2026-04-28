@@ -86,6 +86,10 @@ async fn test_multi_instance_leader_election() -> TestResult<()> {
     let leader_entered = Arc::new(Notify::new());
     let hold_leader = Arc::new(Notify::new());
 
+    // Subscribe to the notification BEFORE spawning so a fast leader-election
+    // can't fire notify_waiters() before we call .notified() here.
+    let leader_entered_fut = leader_entered.notified();
+
     let count1 = processing_count.clone();
     let entered1 = leader_entered.clone();
     let hold1 = hold_leader.clone();
@@ -146,7 +150,7 @@ async fn test_multi_instance_leader_election() -> TestResult<()> {
         Ok::<(), color_eyre::Report>(())
     });
 
-    timeout(COORDINATION_TIMEOUT, leader_entered.notified()).await?;
+    timeout(COORDINATION_TIMEOUT, leader_entered_fut).await?;
     assert_eq!(
         processing_count.load(Ordering::SeqCst),
         1,
