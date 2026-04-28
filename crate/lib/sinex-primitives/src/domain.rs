@@ -775,8 +775,11 @@ impl<'de> serde::Deserialize<'de> for HostName {
 
 impl HostName {
     /// Parse a string into a validated `HostName`.
+    ///
+    /// The input is lowercased before validation so that `HostName::new("Host-A")`
+    /// and `HostName::new("host-a")` produce equal values.
     pub fn new(s: impl Into<String>) -> Result<Self, crate::SinexError> {
-        let s = s.into();
+        let s = s.into().to_lowercase();
         Self::validate_str(&s)?;
         Ok(Self(Cow::Owned(s)))
     }
