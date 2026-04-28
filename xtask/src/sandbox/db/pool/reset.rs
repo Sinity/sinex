@@ -20,6 +20,27 @@ pub(super) struct CleanDatabaseResult {
     pub(super) recreated: bool,
 }
 
+/// Drop+recreate the slot database, then return a fresh pool connected to it.
+/// Records a cleanup-failure metric on recreate failure and wraps the error
+/// with `error_context` so callers can distinguish failure modes.
+async fn recreate_and_reconnect(
+    db_name: &str,
+    db_url: &str,
+    error_context: &str,
+) -> TestResult<DbPool> {
+    recreate_pool_database(db_name, db_url)
+        .await
+        .map_err(|recreate_err| {
+            POOL_METRICS.record_cleanup_failure();
+            eyre!("{error_context} for {db_name}: {recreate_err}")
+        })?;
+    Ok(
+        super::slot_pool_options(SLOT_MAX_CONNECTIONS, Duration::from_secs(5))
+            .connect(db_url)
+            .await?,
+    )
+}
+
 // ── Clean database ──────────────────────────────────────────────────────────
 
 /// Clean a database for reuse
@@ -62,17 +83,9 @@ pub(super) async fn clean_database(
                         slot = db_name,
                         reason = reason
                     );
-                    recreate_pool_database(db_name, db_url)
-                        .await
-                        .map_err(|recreate_err| {
-                            POOL_METRICS.record_cleanup_failure();
-                            eyre!("Schema mismatch recreate failed for {db_name}: {recreate_err}")
-                        })?;
-                    let fresh_pool =
-                        super::slot_pool_options(SLOT_MAX_CONNECTIONS, Duration::from_secs(5))
-                            .connect(db_url)
+                    working_pool =
+                        recreate_and_reconnect(db_name, db_url, "Schema mismatch recreate failed")
                             .await?;
-                    working_pool = fresh_pool;
                     schema_recreated = true;
                     recreated = true;
                     slot.schema_verified.store(false, Ordering::SeqCst);
@@ -93,19 +106,12 @@ pub(super) async fn clean_database(
                             error = error,
                             attempt = attempt
                         );
-                        recreate_pool_database(db_name, db_url)
-                            .await
-                            .map_err(|recreate_err| {
-                                POOL_METRICS.record_cleanup_failure();
-                                eyre!(
-                                    "Schema check failed and recreate failed for {db_name}: {recreate_err}"
-                                )
-                            })?;
-                        let fresh_pool =
-                            super::slot_pool_options(SLOT_MAX_CONNECTIONS, Duration::from_secs(5))
-                                .connect(db_url)
-                                .await?;
-                        working_pool = fresh_pool;
+                        working_pool = recreate_and_reconnect(
+                            db_name,
+                            db_url,
+                            "Schema check failed and recreate failed",
+                        )
+                        .await?;
                         schema_recreated = true;
                         recreated = true;
                         slot.schema_verified.store(false, Ordering::SeqCst);
@@ -206,20 +212,12 @@ pub(super) async fn clean_database(
                         error = e,
                         attempt = attempt
                     );
-                    recreate_pool_database(db_name, db_url)
-                        .await
-                        .map_err(|recreate_err| {
-                            POOL_METRICS.record_cleanup_failure();
-                            eyre!(
-                                "Cleanup failed and recreate failed for {db_name}: {recreate_err}"
-                            )
-                        })?;
-                    // Fresh pool for the recreated database
-                    let fresh_pool =
-                        super::slot_pool_options(SLOT_MAX_CONNECTIONS, Duration::from_secs(5))
-                            .connect(db_url)
-                            .await?;
-                    working_pool = fresh_pool;
+                    working_pool = recreate_and_reconnect(
+                        db_name,
+                        db_url,
+                        "Cleanup failed and recreate failed",
+                    )
+                    .await?;
                     recreated = true;
                     continue;
                 }
