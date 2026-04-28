@@ -318,23 +318,15 @@ fn collect_diagnostic_files(ctx: &CommandContext) -> Result<Vec<String>> {
 // U2: Changed files collection
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Return files changed since HEAD.
+/// Return files changed since HEAD (staged + unstaged via `git diff --name-only HEAD`).
 ///
-/// Combines two git queries:
-/// - `git diff --name-only HEAD` — staged and unstaged modifications relative to HEAD
-/// - `git diff --name-only --cached` — staged changes only (superset already captured
-///   by HEAD diff; included for completeness so newly staged renames appear)
-///
-/// Deduplication after merging ensures each path is listed at most once.
+/// `git diff HEAD` already covers staged changes (index vs HEAD) as well as unstaged
+/// changes (working tree vs HEAD), so a separate `--cached` call is not needed.
 fn collect_changed_files() -> Result<Vec<String>> {
     let mut files = git_name_only(
         &["diff", "--name-only", "HEAD"],
         "git diff --name-only HEAD",
     )?;
-    files.extend(git_name_only(
-        &["diff", "--name-only", "--cached"],
-        "git diff --name-only --cached",
-    )?);
     files.sort();
     files.dedup();
     Ok(files)
