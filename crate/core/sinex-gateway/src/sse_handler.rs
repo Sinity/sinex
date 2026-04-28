@@ -161,8 +161,15 @@ pub(crate) async fn handle_sse_stream(
             Some(&auth_ctx),
             Some("too many active subscriptions"),
         );
+        let mut headers = HeaderMap::new();
+        // Suggest a 30-second retry interval so clients do not spin.
+        headers.insert(
+            HeaderName::from_static("retry-after"),
+            axum::http::HeaderValue::from_static("30"),
+        );
         return (
             StatusCode::TOO_MANY_REQUESTS,
+            headers,
             "Too many active event streams. Retry after existing subscriptions drain.",
         )
             .into_response();
