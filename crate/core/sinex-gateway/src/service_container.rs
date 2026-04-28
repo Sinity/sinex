@@ -344,7 +344,11 @@ impl ServiceContainer {
         }
 
         let healthy = db_ok && nats.connected && replay.connected;
-        let serving = db_ok;
+        // Gateway is ready to serve end-to-end RPC traffic only when both
+        // the database (query/write path) and NATS (event publishing path)
+        // are reachable. Replay control is coordination-only and does not
+        // gate serving.
+        let serving = db_ok && nats.connected;
         let status = if !db_ok {
             GatewayHealthStatus::Unhealthy
         } else if healthy {
@@ -395,6 +399,10 @@ pub struct GatewayHealthReport {
     /// True only when the gateway and its coordination dependencies are fully healthy.
     pub healthy: bool,
     /// Whether the gateway is ready to serve end-to-end RPC traffic.
+    ///
+    /// Requires both database connectivity (query/write path) and NATS
+    /// connectivity (event publishing path). Replay control availability is
+    /// coordination-only and does not gate this flag.
     pub serving: bool,
     /// Reasons the gateway is not fully healthy.
     pub degradation_reasons: Vec<String>,
