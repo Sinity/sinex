@@ -879,7 +879,26 @@ impl WindowManagerWatcher {
 
         if previous_window_title.is_none() {
             if let Some(window) = self.windows.get_mut(window_address) {
+                // Title hasn't changed — just refresh the last-seen timestamp.
                 window.last_seen = SystemTime::now();
+            } else {
+                // Window is not yet tracked. Seed it with the current title so
+                // subsequent title-change events can observe the delta correctly.
+                self.windows.insert(
+                    window_address.to_string(),
+                    WindowInfo {
+                        address: window_address.to_string(),
+                        class: String::new(),
+                        title: window_title,
+                        workspace_id: self
+                            .current_workspace
+                            .clone()
+                            .unwrap_or_default(),
+                        last_seen: SystemTime::now(),
+                        floating: false,
+                        fullscreen: false,
+                    },
+                );
             }
             return Ok(());
         }
