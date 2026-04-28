@@ -276,7 +276,7 @@ pub async fn verify_service_dependencies() -> NodeResult<(VerificationStatus, Va
 async fn verify_binary_availability(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut binary_info = HashMap::new();
     let mut missing_binaries = Vec::new();
-    let descriptor = deployment_descriptor_result("service verification")?;
+    let descriptor = deployment_descriptor_result()?;
     let require_service_binaries = descriptor.is_none();
 
     let mut required_binaries = vec![("systemctl", "SystemD control", true)];
@@ -460,7 +460,7 @@ async fn get_binary_version(binary_path: &str) -> Option<String> {
 
 async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut service_info = HashMap::new();
-    let descriptor = deployment_descriptor_result("managed systemd verification")?;
+    let descriptor = deployment_descriptor_result()?;
     let descriptor_loaded = descriptor.is_some();
     let sinex_services = descriptor
         .as_ref()
@@ -468,8 +468,12 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value
         .map(|value| value.managed_units.clone());
     let enforce_declared_units = sinex_services.is_some();
 
-    // System services that Sinex depends on
-    let dependency_services = vec!["postgresql.service", "systemd-resolved.service"];
+    // System services that Sinex depends on. postgresql.service is only expected
+    // when a runtime database is required (i.e. not edge mode and schema_apply is set).
+    let mut dependency_services: Vec<&str> = vec!["systemd-resolved.service"];
+    if runtime_database_expected()? {
+        dependency_services.push("postgresql.service");
+    }
     let mut missing_declared_units = Vec::new();
     let mut notify_contract_violations = Vec::new();
 
