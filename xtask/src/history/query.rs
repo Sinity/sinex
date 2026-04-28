@@ -1012,7 +1012,12 @@ impl<'db> HistoryAnalysis<'db> {
         let baseline_candidate = match command {
             "build" => scope_kind == VelocityScopeKind::Workspace,
             "check" => {
-                scope_kind == VelocityScopeKind::Workspace && !Self::has_flag(&args, "--fix")
+                scope_kind == VelocityScopeKind::Workspace
+                    && !Self::has_flag(&args, "--fix")
+                    && !Self::has_flag(&args, "--lint")
+                    && !Self::has_flag(&args, "--fmt")
+                    && !Self::has_flag(&args, "--forbidden")
+                    && !Self::has_flag(&args, "--nix")
             }
             "test" => {
                 scope_kind == VelocityScopeKind::Workspace
@@ -1067,8 +1072,16 @@ impl<'db> HistoryAnalysis<'db> {
                 }
             }
 
-            let fallback_scope = scopes.first();
-            let comparable_scope = scopes.iter().find(|(_, _, durations)| durations.len() >= 4);
+            // Prefer scoped workloads (non-None scope_label) over workspace-wide ones so that
+            // per-package velocity wins when the history contains both.
+            let fallback_scope = scopes
+                .iter()
+                .find(|(_, label, _)| label.is_some())
+                .or_else(|| scopes.first());
+            let comparable_scope = scopes
+                .iter()
+                .find(|(_, label, durations)| label.is_some() && durations.len() >= 4)
+                .or_else(|| scopes.iter().find(|(_, _, durations)| durations.len() >= 4));
 
             let Some((_, scope_label, durations)) = comparable_scope.or(fallback_scope) else {
                 trends.push(VelocityTrend {
@@ -1734,7 +1747,7 @@ impl HistoryDb {
             bound_params.push(Box::new(before_invocation_id));
         }
         if let Some(since_rfc3339) = &q.since_rfc3339 {
-            where_clauses.push("i.started_at >= ?".into());
+            where_clauses.push("datetime(i.started_at) >= datetime(?)".into());
             bound_params.push(Box::new(since_rfc3339.clone()));
         }
 
@@ -1745,7 +1758,7 @@ impl HistoryDb {
         };
 
         let order_sql = match q.sort_by {
-            InvocationSort::Started => "i.id DESC",
+            InvocationSort::Started => "i.started_at DESC, i.id DESC",
             InvocationSort::Duration => "i.duration_secs DESC NULLS LAST, i.id DESC",
             InvocationSort::Status => "i.status ASC, i.id DESC",
         };
@@ -1775,7 +1788,62 @@ impl HistoryDb {
     }
 
     pub(crate) fn count_invocation_query(&self, q: &InvocationQuery) -> Result<usize> {
-        Ok(self.run_invocation_query(q)?.len())
+        let conn = &self.conn;
+        let mut where_clauses = Vec::<String>::new();
+        let mut bound_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(cmd) = &q.base.command_filter {
+            where_clauses.push("i.command = ?".into());
+            bound_params.push(Box::new(cmd.clone()));
+        }
+        if let Some(status) = &q.status_filter {
+            where_clauses.push("i.status = ?".into());
+            bound_params.push(Box::new(status.as_str().to_string()));
+        }
+        if let Some(days) = q.base.days {
+            where_clauses.push(format!("i.started_at > datetime('now', '-{days} days')"));
+        }
+        if let Some(pkg) = &q.base.package_filter {
+            where_clauses.push(
+                "EXISTS (SELECT 1 FROM invocation_packages ip WHERE ip.invocation_id = i.id AND ip.package = ?)".into()
+            );
+            bound_params.push(Box::new(pkg.clone()));
+        }
+        if let Some(invocation_id) = q.invocation_id {
+            where_clauses.push("i.id = ?".into());
+            bound_params.push(Box::new(invocation_id));
+        }
+        if let Some(after_invocation_id) = q.after_invocation_id {
+            where_clauses.push("i.id > ?".into());
+            bound_params.push(Box::new(after_invocation_id));
+        }
+        if let Some(before_invocation_id) = q.before_invocation_id {
+            where_clauses.push("i.id < ?".into());
+            bound_params.push(Box::new(before_invocation_id));
+        }
+        if let Some(since_rfc3339) = &q.since_rfc3339 {
+            where_clauses.push("datetime(i.started_at) >= datetime(?)".into());
+            bound_params.push(Box::new(since_rfc3339.clone()));
+        }
+
+        let where_sql = if where_clauses.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", where_clauses.join(" AND "))
+        };
+
+        let sql = format!("SELECT COUNT(*) FROM invocations i{where_sql}");
+
+        let param_refs: Vec<&dyn rusqlite::ToSql> = bound_params
+            .iter()
+            .map(std::convert::AsRef::as_ref)
+            .collect();
+        let count: i64 = conn.query_row(
+            &sql,
+            rusqlite::params_from_iter(param_refs),
+            |row| row.get(0),
+        )?;
+        Ok(count as usize)
     }
 
     /// Execute a `TestResultQuery` and return results.
