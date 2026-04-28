@@ -750,7 +750,7 @@ impl StateRepository<'_> {
             UPDATE core.operations_log
             SET result_status = 'cancelled',
                 result_message = $2,
-                duration_ms = EXTRACT(MILLISECONDS FROM (NOW() - uuid_extract_timestamp(id)))::integer
+                duration_ms = (EXTRACT(EPOCH FROM (NOW() - uuid_extract_timestamp(id))) * 1000)::integer
             WHERE id = $1
             "#,
             id.to_uuid(),
