@@ -665,13 +665,25 @@ fn execute_list(
         .transpose()?;
 
     let after_id = after_invocation
-        .map(|value| db.resolve_invocation_id(value, command))
-        .transpose()?
-        .flatten();
+        .map(|value| {
+            db.resolve_invocation_id(value, command)?.ok_or_else(|| {
+                color_eyre::eyre::eyre!(
+                    "--after-invocation '{}' did not match any recorded invocation",
+                    value
+                )
+            })
+        })
+        .transpose()?;
     let before_id = before_invocation
-        .map(|value| db.resolve_invocation_id(value, command))
-        .transpose()?
-        .flatten();
+        .map(|value| {
+            db.resolve_invocation_id(value, command)?.ok_or_else(|| {
+                color_eyre::eyre::eyre!(
+                    "--before-invocation '{}' did not match any recorded invocation",
+                    value
+                )
+            })
+        })
+        .transpose()?;
 
     let mut query = InvocationQuery::new().limit(limit).offset(offset);
     if let Some(command) = command {
