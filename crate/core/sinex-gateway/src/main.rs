@@ -10,8 +10,7 @@ mod build {
 
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::eyre::{Result, eyre};
-use std::io;
-use tracing::{error, info, warn};
+use tracing::info;
 
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;
@@ -23,7 +22,7 @@ static GLOBAL: MiMalloc = MiMalloc;
 use sinex_gateway::config::GatewayConfig;
 use sinex_gateway::service_container::ServiceContainer;
 use sinex_gateway::{native_messaging, rpc_server};
-use sinex_primitives::strict_env_filter_source;
+use sinex_node_sdk::service_runtime::{self, TracingFormat};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum LogFormat {
@@ -87,31 +86,17 @@ fn setup_tracing(format: LogFormat, tokio_console: bool) -> Result<()> {
         }
         #[cfg(not(feature = "tokio-console"))]
         {
-            return Err(color_eyre::eyre::eyre!(
+            return Err(eyre!(
                 "--tokio-console requires compilation with --features tokio-console"
             ));
         }
     }
 
-    let env_filter = load_env_filter("sinex_gateway=info")?;
-
-    match format {
-        LogFormat::Json => tracing_subscriber::fmt()
-            .json()
-            .with_writer(std::io::stderr)
-            .with_env_filter(env_filter)
-            .with_target(true)
-            .with_thread_ids(true)
-            .try_init()
-            .map_err(|e| color_eyre::eyre::eyre!("Failed to initialize tracing: {e}")),
-        LogFormat::Text => tracing_subscriber::fmt()
-            .with_writer(std::io::stderr)
-            .with_env_filter(env_filter)
-            .with_target(true)
-            .with_thread_ids(true)
-            .try_init()
-            .map_err(|e| color_eyre::eyre::eyre!("Failed to initialize tracing: {e}")),
-    }
+    let format = match format {
+        LogFormat::Json => TracingFormat::Json,
+        LogFormat::Text => TracingFormat::Text,
+    };
+    service_runtime::install_tracing(format, "sinex_gateway=info")
 }
 
 fn load_gateway_config(database_url: Option<String>) -> Result<GatewayConfig> {
@@ -121,16 +106,6 @@ fn load_gateway_config(database_url: Option<String>) -> Result<GatewayConfig> {
         None => GatewayConfig::load()
             .map_err(|error| eyre!("Failed to load gateway config").wrap_err(error)),
     }
-}
-
-fn load_env_filter(default_filter: &str) -> Result<tracing_subscriber::EnvFilter> {
-    let raw = strict_env_filter_source(default_filter)?;
-    tracing_subscriber::EnvFilter::try_new(&raw).map_err(|error| {
-        eyre!(
-            "Invalid {} directive `{raw}`: {error}",
-            tracing_subscriber::EnvFilter::DEFAULT_ENV
-        )
-    })
 }
 
 #[tokio::main]
@@ -147,29 +122,7 @@ async fn main() -> Result<()> {
 
     setup_tracing(cli.log_format, tokio_console)?;
 
-    // Issue 128: Set up graceful shutdown signal handling
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-    let shutdown_task = {
-        let shutdown_tx = shutdown_tx.clone();
-        tokio::spawn(async move {
-            match sinex_node_sdk::wait_for_os_shutdown_signal().await {
-                Ok(signal_name) => {
-                    info!(
-                        signal = signal_name,
-                        "Received shutdown signal, initiating graceful shutdown"
-                    );
-                }
-                Err(error) => {
-                    error!(error = %error, "Failed to listen for gateway shutdown signal");
-                }
-            }
-
-            if shutdown_tx.send(true).is_err() {
-                warn!("Gateway shutdown receiver was already dropped before signal delivery");
-            }
-        })
-    };
+    let shutdown_rx = service_runtime::spawn_shutdown_task("gateway");
 
     match cli.command {
         Commands::RpcServer {
@@ -196,8 +149,6 @@ async fn main() -> Result<()> {
                 .await
                 .map_err(|e| color_eyre::eyre::eyre!("RPC server failed").wrap_err(e));
 
-            // Clean up shutdown task
-            shutdown_task.abort();
             result?;
         }
 
@@ -216,8 +167,6 @@ async fn main() -> Result<()> {
                 .await
                 .map_err(|e| color_eyre::eyre::eyre!("Native messaging failed").wrap_err(e));
 
-            // Clean up shutdown task
-            shutdown_task.abort();
             result?;
         }
     }
@@ -241,7 +190,7 @@ mod tests {
         let mut env = EnvGuard::new();
         env.clear("RUST_LOG");
 
-        load_env_filter("sinex_gateway=info")?;
+        service_runtime::load_env_filter("sinex_gateway=info")?;
         Ok(())
     }
 
@@ -250,7 +199,7 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set("RUST_LOG", "sinex_gateway=wat");
 
-        let error = load_env_filter("sinex_gateway=info")
+        let error = service_runtime::load_env_filter("sinex_gateway=info")
             .expect_err("invalid directives must fail honestly");
         let message = error.to_string();
 
@@ -265,7 +214,7 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set("RUST_LOG", OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]));
 
-        let error = load_env_filter("sinex_gateway=info")
+        let error = service_runtime::load_env_filter("sinex_gateway=info")
             .expect_err("non-UTF8 RUST_LOG must fail honestly");
         let message = error.to_string();
 
