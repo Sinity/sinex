@@ -1,6 +1,7 @@
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, parser::ValueSource};
 use color_eyre::eyre::eyre;
-use sinex_primitives::{RuntimeTargetDescriptor, strict_env_filter_source};
+use sinex_node_sdk::service_runtime;
+use sinex_primitives::RuntimeTargetDescriptor;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
     AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand, ConfigCommands,
@@ -67,18 +68,6 @@ struct Cli {
 
 fn cli_value_is_explicit(matches: &clap::ArgMatches, id: &str) -> bool {
     matches.value_source(id) == Some(ValueSource::CommandLine)
-}
-
-fn load_env_filter(
-    default_filter: &str,
-) -> color_eyre::eyre::Result<tracing_subscriber::EnvFilter> {
-    let raw = strict_env_filter_source(default_filter)?;
-    tracing_subscriber::EnvFilter::try_new(&raw).map_err(|error| {
-        eyre!(
-            "Invalid {} directive `{raw}`: {error}",
-            tracing_subscriber::EnvFilter::DEFAULT_ENV
-        )
-    })
 }
 
 fn load_runtime_target_override(
@@ -217,7 +206,7 @@ async fn main() -> color_eyre::Result<()> {
 
     // Initialize tracing
     tracing_subscriber::fmt()
-        .with_env_filter(load_env_filter("warn")?)
+        .with_env_filter(service_runtime::load_env_filter("warn")?)
         .init();
 
     // Parse CLI arguments and preserve whether values came from the command line,
@@ -417,10 +406,6 @@ fn command_path(cmd: &Commands) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(unix)]
-    use std::ffi::OsString;
-    #[cfg(unix)]
-    use std::os::unix::ffi::OsStringExt;
     use xtask::sandbox::prelude::*;
 
     use xtask::sandbox::EnvGuard;
@@ -429,28 +414,6 @@ mod tests {
         let matches = Cli::command().try_get_matches_from(args)?;
         let cli = Cli::from_arg_matches(&matches).map_err(|error| eyre!(error.to_string()))?;
         Ok((matches, cli))
-    }
-
-    #[sinex_serial_test]
-    async fn load_env_filter_defaults_when_rust_log_is_missing() -> TestResult<()> {
-        let mut env = EnvGuard::new();
-        env.clear("RUST_LOG");
-
-        load_env_filter("warn")?;
-        Ok(())
-    }
-
-    #[sinex_serial_test]
-    async fn load_env_filter_rejects_invalid_rust_log_directive() -> TestResult<()> {
-        let mut env = EnvGuard::new();
-        env.set("RUST_LOG", "sinexctl=wat");
-
-        let error = load_env_filter("warn").expect_err("invalid directives must fail honestly");
-        let message = error.to_string();
-
-        assert!(message.contains("RUST_LOG"));
-        assert!(message.contains("sinexctl=wat"));
-        Ok(())
     }
 
     #[sinex_serial_test]
@@ -484,20 +447,6 @@ mod tests {
             Some(ValueSource::CommandLine)
         );
         assert_eq!(token_override.as_deref(), Some("cli-token"));
-        Ok(())
-    }
-
-    #[cfg(unix)]
-    #[sinex_serial_test]
-    async fn load_env_filter_rejects_non_utf8_rust_log() -> TestResult<()> {
-        let mut env = EnvGuard::new();
-        env.set("RUST_LOG", OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]));
-
-        let error = load_env_filter("warn").expect_err("non-UTF8 RUST_LOG must fail honestly");
-        let message = error.to_string();
-
-        assert!(message.contains("RUST_LOG"));
-        assert!(message.contains("UTF-8"));
         Ok(())
     }
 
