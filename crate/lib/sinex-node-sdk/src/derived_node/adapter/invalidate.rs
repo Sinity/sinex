@@ -14,7 +14,8 @@ use crate::derived_node::traits::DerivedNodeImpl;
 use crate::{NodeResult, SinexError};
 
 use sinex_primitives::events::Event;
-use sinex_primitives::{JsonValue, Uuid};
+use sinex_primitives::events::builder::Operation;
+use sinex_primitives::{Id, JsonValue, Uuid};
 
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
