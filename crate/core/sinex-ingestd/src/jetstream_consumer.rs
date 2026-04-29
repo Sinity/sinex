@@ -1975,9 +1975,11 @@ impl JetStreamConsumer {
         let subject = format!("{}{}", self.topology.confirmations_prefix, event_id_str);
         let payload = serde_json::to_vec(&confirmation)?;
 
-        // Add idempotency header
+        // transport::Class::Confirmation — best-effort ACK signal; failure
+        // routes to the durable retry queue then durability-gap warn (not DLQ).
         let mut headers = async_nats::HeaderMap::new();
         headers.insert("Nats-Msg-Id", event_id_str.as_str());
+        insert_traffic_class_header(&mut headers, NatsTrafficClass::Control);
 
         self.js
             .publish_with_headers(subject, headers, payload.into())

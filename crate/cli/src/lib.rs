@@ -19,4 +19,9 @@ pub mod validation;
 pub use client::GatewayClient;
 pub use color_eyre::Result;
 pub use config::{Config, default_rpc_url};
-pub use model::{NodeRole, OutputFormat};
+pub use model::{FormatCapability, NodeRole, OutputFormat};
+pub use model::format_registry::{
+    registry as format_registry,
+    render_format_matrix_terminal,
+    validate_format,
+};

@@ -188,7 +188,7 @@ fn setup_tracing(format: LogFormat, tokio_console: bool, default_filter: &str) -
         }
         #[cfg(not(feature = "tokio-console"))]
         {
-            return Err(color_eyre::eyre::eyre!(
+            return Err(eyre!(
                 "--tokio-console requires compilation with --features tokio-console"
             ));
         }
@@ -204,7 +204,51 @@ fn setup_tracing(format: LogFormat, tokio_console: bool, default_filter: &str) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::ffi::OsString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
     use xtask::sandbox::prelude::*;
+
+    use xtask::sandbox::EnvGuard;
+
+    #[sinex_serial_test]
+    async fn load_env_filter_defaults_when_rust_log_is_missing() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.clear("RUST_LOG");
+
+        service_runtime::load_env_filter("sinex_ingestd=info")?;
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn load_env_filter_rejects_invalid_rust_log_directive() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("RUST_LOG", "sinex_ingestd=wat");
+
+        let error = service_runtime::load_env_filter("sinex_ingestd=info")
+            .expect_err("invalid directives must fail honestly");
+        let message = error.to_string();
+
+        assert!(message.contains("RUST_LOG"));
+        assert!(message.contains("sinex_ingestd=wat"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_serial_test]
+    async fn load_env_filter_rejects_non_utf8_rust_log() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("RUST_LOG", OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]));
+
+        let error = service_runtime::load_env_filter("sinex_ingestd=info")
+            .expect_err("non-UTF8 RUST_LOG must fail honestly");
+        let message = error.to_string();
+
+        assert!(message.contains("RUST_LOG"));
+        assert!(message.contains("UTF-8"));
+        Ok(())
+    }
 
     fn test_args() -> Args {
         Args {
