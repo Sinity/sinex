@@ -12,6 +12,8 @@ use crate::processing::ErrorAction;
 use crate::runtime::stream::{Checkpoint, NodeRuntimeState, ScanArgs, ScanReport};
 use crate::{NodeResult, SinexError};
 
+use sinex_primitives::Id;
+use sinex_primitives::events::builder::Operation;
 use sinex_primitives::temporal::Timestamp;
 
 use std::collections::HashMap;
