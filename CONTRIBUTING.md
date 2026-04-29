@@ -112,6 +112,24 @@ The cost of this section is two minutes of writing. The cost of
 skipping it has been entire audit cycles re-doing forensic work on
 issues that "closed."
 
+## Source-unit promotion gate (ingestors)
+
+A new ingestor is not promotable until its
+[`SourceUnitDescriptor`](crate/lib/sinex-primitives/docs/source_unit.md)
+is filled in and the declared proof obligations pass. The descriptor is
+the executable form of the contract — identity, emitted
+`(source, event_type)` pairs, checkpoint family, privacy tier, runtime
+shape, horizons, retention, proof obligations, occurrence identity.
+
+Register with `register_source_unit!` in the ingestor crate's
+`src/lib.rs`. See `crate/nodes/sinex-terminal-ingestor/src/lib.rs` for
+the canonical example.
+
+This is a hard gate, not a convention: a PR adding a new ingestor
+without a descriptor should be sent back. The descriptor compiles
+against typed fields, so a missing or malformed one fails at build
+time.
+
 ## Generated Agent Docs
 
 `AGENTS.md` is generated output. Do not edit it directly.
