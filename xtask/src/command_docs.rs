@@ -292,6 +292,20 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 ],
                 notes: &[],
             },
+            GuideEntry {
+                path: "docs issue-drift",
+                fallback_summary: "Detect drift between GitHub issue bodies and the live workspace",
+                when: "you want to find stale issue references — dropped crates, removed commands, closed umbrella children, or candidate-duplicate issues",
+                examples: &[
+                    "xtask docs issue-drift",
+                    "xtask docs issue-drift --format json",
+                    "xtask docs issue-drift --issue 480",
+                    "xtask docs issue-drift --no-duplicates",
+                ],
+                notes: &[
+                    "Read-only — never modifies issues. Requires `gh` CLI authenticated to the repo.",
+                ],
+            },
         ],
     },
 ];

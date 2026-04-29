@@ -15,6 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
+use crate::commands::issue_drift::IssueDriftCommand;
 use crate::commands::snapshot::SnapshotCommand;
 
 /// Documentation subcommand variants
@@ -150,6 +151,18 @@ pub enum DocsSubcommand {
 
     /// Generate a codebase snapshot for AI context (via repomix)
     Snapshot(SnapshotCommand),
+
+    /// Detect drift between GitHub issue bodies and the live workspace.
+    ///
+    /// Pulls open and closed issues via `gh issue list`, then checks for:
+    /// - stale `sinexctl`/`xtask` command references (removed commands)
+    /// - stale crate references (removed workspace members)
+    /// - stale function references (e.g. `Event::new()` removed in #616)
+    /// - umbrella issues with open checklist items pointing to CLOSED children
+    /// - candidate duplicate issues by body-text similarity
+    ///
+    /// Read-only — never modifies issues. Requires `gh` authenticated to the repo.
+    IssueDrift(IssueDriftCommand),
 }
 
 /// Generate and verify repo documentation surfaces.
@@ -204,6 +217,7 @@ impl XtaskCommand for DocsCommand {
             DocsSubcommand::Sync => execute_sync(ctx),
             DocsSubcommand::Check => execute_check(ctx),
             DocsSubcommand::Snapshot(cmd) => cmd.execute(ctx).await,
+            DocsSubcommand::IssueDrift(cmd) => cmd.execute(ctx).await,
         }
     }
 
