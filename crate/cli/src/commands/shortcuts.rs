@@ -8,8 +8,8 @@ use serde_json::json;
 use sinex_primitives::query::{
     EventQuery, EventQueryResult, PayloadFilter, SortDirection, SubscriptionFilter, TimeRange,
 };
-use sinex_primitives::temporal::{Duration, Timestamp};
-use sinex_primitives::utils::timestamp_helpers::parse_relative_duration;
+use sinex_primitives::temporal::Timestamp;
+use crate::parse::parse_duration;
 use sinex_primitives::{RuntimeTargetDescriptor, RuntimeTargetKind};
 
 use crate::client::{GatewayClient, gateway::SseClientMessage};
@@ -584,8 +584,3 @@ impl WatchCommand {
     }
 }
 
-/// Parse duration string like "1h", "2d", "30m"
-fn parse_duration(s: &str) -> Result<Duration> {
-    parse_relative_duration(s)
-        .ok_or_else(|| color_eyre::eyre::eyre!("Invalid duration: {s}"))
-}
