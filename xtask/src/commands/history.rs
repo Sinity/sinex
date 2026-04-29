@@ -784,8 +784,7 @@ fn execute_list(
             }
         }
     } else {
-        let json = serde_json::to_string_pretty(&invocations)?;
-        println!("{json}");
+        ctx.print_json(&invocations)?;
     }
 
     let mut result = CommandResult::success()
@@ -821,8 +820,7 @@ fn execute_last(db: &HistoryDb, command: &str, ctx: &CommandContext) -> Result<C
             None => println!("No history for command: {command}"),
         }
     } else {
-        let json = serde_json::to_string_pretty(&inv)?;
-        println!("{json}");
+        ctx.print_json(&inv)?;
     }
 
     let message = if inv.is_some() {
@@ -861,8 +859,7 @@ fn execute_stats(
             println!("  Success:   {rate:.1}%");
         }
     } else {
-        let json = serde_json::to_string_pretty(&stats)?;
-        println!("{json}");
+        ctx.print_json(&stats)?;
     }
 
     Ok(CommandResult::success()
@@ -906,8 +903,7 @@ fn execute_stats_all_packages(db: &HistoryDb, ctx: &CommandContext) -> Result<Co
             println!("{table}");
         }
     } else {
-        let json = serde_json::to_string_pretty(&health)?;
-        println!("{json}");
+        ctx.print_json(&health)?;
     }
 
     Ok(CommandResult::success()
@@ -972,13 +968,12 @@ fn execute_stats_all_commands(
             println!("{table}");
         }
     } else {
-        let json = serde_json::to_string_pretty(
+        ctx.print_json(
             &all_stats
                 .iter()
                 .map(|(cmd, s)| serde_json::json!({"command": cmd, "stats": s}))
                 .collect::<Vec<_>>(),
         )?;
-        println!("{json}");
     }
 
     Ok(CommandResult::success()
@@ -1002,8 +997,7 @@ fn execute_prune(db: &HistoryDb, older_than: u32, ctx: &CommandContext) -> Resul
 
 fn execute_export(db: &HistoryDb, limit: usize, ctx: &CommandContext) -> Result<CommandResult> {
     let invocations = db.get_recent(limit, None)?;
-    let json = serde_json::to_string_pretty(&invocations)?;
-    println!("{json}");
+    ctx.print_json(&invocations)?;
 
     Ok(CommandResult::success()
         .with_message(format!("Exported {} entries", invocations.len()))
@@ -1118,8 +1112,7 @@ fn execute_tests_slowest(
                 }
             }
         } else {
-            let json = serde_json::to_string_pretty(&tests)?;
-            println!("{json}");
+            ctx.print_json(&tests)?;
         }
 
         return Ok(CommandResult::success()
@@ -1155,8 +1148,7 @@ fn execute_tests_slowest(
             }
         }
     } else {
-        let json = serde_json::to_string_pretty(&tests)?;
-        println!("{json}");
+        ctx.print_json(&tests)?;
     }
 
     Ok(CommandResult::success()
@@ -1191,8 +1183,7 @@ fn execute_tests_flaky(
             println!("{table}");
         }
     } else {
-        let json = serde_json::to_string_pretty(&tests)?;
-        println!("{json}");
+        ctx.print_json(&tests)?;
     }
 
     Ok(CommandResult::success()
@@ -1234,8 +1225,7 @@ fn execute_tests_getting_slower(
             println!("{table}");
         }
     } else {
-        let json = serde_json::to_string_pretty(&tests)?;
-        println!("{json}");
+        ctx.print_json(&tests)?;
     }
 
     Ok(CommandResult::success()
@@ -1269,8 +1259,7 @@ fn execute_tests_trends(
             }
         }
     } else {
-        let json = serde_json::to_string_pretty(&tests)?;
-        println!("{json}");
+        ctx.print_json(&tests)?;
     }
 
     Ok(CommandResult::success()
@@ -1543,8 +1532,7 @@ fn execute_diagnostics_current(
             render_diagnostics_table(&diagnostics, mode);
         }
     } else {
-        let json = serde_json::to_string_pretty(&diagnostics)?;
-        println!("{json}");
+        ctx.print_json(&diagnostics)?;
     }
 
     Ok(CommandResult::success()
@@ -1585,8 +1573,7 @@ fn execute_diagnostics_all(
             render_diagnostics_table(&diagnostics, DiagnosticsDisplayMode::All);
         }
     } else {
-        let json = serde_json::to_string_pretty(&diagnostics)?;
-        println!("{json}");
+        ctx.print_json(&diagnostics)?;
     }
 
     Ok(CommandResult::success()
@@ -1635,8 +1622,7 @@ fn execute_diagnostics_invocation(
             render_diagnostics_table(&diagnostics, DiagnosticsDisplayMode::Invocation);
         }
     } else {
-        let json = serde_json::to_string_pretty(&diagnostics)?;
-        println!("{json}");
+        ctx.print_json(&diagnostics)?;
     }
 
     Ok(CommandResult::success()
@@ -1741,7 +1727,7 @@ fn execute_diagnostics_trend(
             "count": points.len(),
             "trend": compute_trend_direction(&points).0,
         });
-        println!("{}", serde_json::to_string_pretty(&json_output)?);
+        ctx.print_json(&json_output)?;
     }
 
     Ok(CommandResult::success()
@@ -1883,8 +1869,7 @@ fn execute_tests_failures(
             }
         }
     } else {
-        let json = serde_json::to_string_pretty(&tests)?;
-        println!("{json}");
+        ctx.print_json(&tests)?;
     }
 
     Ok(CommandResult::success()
@@ -2050,8 +2035,7 @@ fn execute_tests_analyze(
                     println!("  {}", style(issue).yellow());
                 }
             } else {
-                let json = serde_json::to_string_pretty(&analysis)?;
-                println!("{json}");
+                ctx.print_json(&analysis)?;
             }
 
             let mut result = CommandResult::success()
@@ -2109,8 +2093,7 @@ fn execute_tests_output(
             }
         }
     } else {
-        let json = serde_json::to_string_pretty(&entries)?;
-        println!("{json}");
+        ctx.print_json(&entries)?;
     }
 
     Ok(CommandResult::success()
@@ -2141,8 +2124,7 @@ fn execute_tests_eta(db: &HistoryDb, ctx: &CommandContext) -> Result<CommandResu
             }
         }
     } else {
-        let json = serde_json::to_string_pretty(&estimate)?;
-        println!("{json}");
+        ctx.print_json(&estimate)?;
     }
 
     Ok(CommandResult::success()
@@ -2216,8 +2198,7 @@ fn execute_tests_grep(
             }
         }
     } else {
-        let json = serde_json::to_string_pretty(&results)?;
-        println!("{json}");
+        ctx.print_json(&results)?;
     }
 
     Ok(CommandResult::success()
@@ -2275,8 +2256,7 @@ fn execute_tests_by_package(
             println!("{table}");
         }
     } else {
-        let json = serde_json::to_string_pretty(&stats)?;
-        println!("{json}");
+        ctx.print_json(&stats)?;
     }
 
     Ok(CommandResult::success()
@@ -2316,13 +2296,12 @@ fn execute_tests_duration_p95(
             println!("{table}");
         }
     } else {
-        let json = serde_json::to_string_pretty(
+        ctx.print_json(
             &results
                 .iter()
                 .map(|(n, p, d)| serde_json::json!({"test_name": n, "package": p, "p95_secs": d}))
                 .collect::<Vec<_>>(),
         )?;
-        println!("{json}");
     }
 
     Ok(CommandResult::success()
@@ -2366,8 +2345,7 @@ fn execute_tests_regression(
             println!("{table}");
         }
     } else {
-        let json = serde_json::to_string_pretty(&regressions)?;
-        println!("{json}");
+        ctx.print_json(&regressions)?;
     }
 
     Ok(CommandResult::success()
@@ -2480,8 +2458,7 @@ fn execute_diagnostics_delta(
             println!("\n{}", style("No changes — diagnostics are stable.").dim());
         }
     } else {
-        let json = serde_json::to_string_pretty(&delta)?;
-        println!("{json}");
+        ctx.print_json(&delta)?;
     }
 
     Ok(CommandResult::success()
@@ -2584,7 +2561,7 @@ fn execute_diagnostics_by_code(
                 })
             })
             .collect();
-        println!("{}", serde_json::to_string_pretty(&grouped)?);
+        ctx.print_json(&grouped)?;
     }
 
     Ok(CommandResult::success()
@@ -2629,7 +2606,7 @@ fn execute_stages(
                 }
             }
         } else {
-            println!("{}", serde_json::to_string_pretty(&points)?);
+            ctx.print_json(&points)?;
         }
         return Ok(CommandResult::success()
             .with_message(format!(
@@ -2663,7 +2640,7 @@ fn execute_stages(
                 println!("{table}");
             }
         } else {
-            println!("{}", serde_json::to_string_pretty(&timings)?);
+            ctx.print_json(&timings)?;
         }
         return Ok(CommandResult::success()
             .with_message(format!("{} stage timings for inv {inv_id}", timings.len()))
@@ -2701,7 +2678,7 @@ fn execute_stages(
             println!("{table}");
         }
     } else {
-        println!("{}", serde_json::to_string_pretty(&stats)?);
+        ctx.print_json(&stats)?;
     }
 
     Ok(CommandResult::success()
@@ -2779,7 +2756,7 @@ fn execute_fix_sessions(
             }
         }
     } else {
-        println!("{}", serde_json::to_string_pretty(&fix_sessions)?);
+        ctx.print_json(&fix_sessions)?;
     }
 
     Ok(CommandResult::success()
@@ -2843,7 +2820,7 @@ fn execute_diagnostics_lifecycle(
             println!("{table}");
         }
     } else {
-        println!("{}", serde_json::to_string_pretty(&entries)?);
+        ctx.print_json(&entries)?;
     }
 
     Ok(CommandResult::success()
@@ -2911,13 +2888,12 @@ fn execute_view(db: &HistoryDb, name: Option<&str>, ctx: &CommandContext) -> Res
                 println!("  {:30} {}", style(v.name).bold(), v.description);
             }
         } else {
-            let json = serde_json::to_string_pretty(
+            ctx.print_json(
                 &views
                     .iter()
                     .map(|v| serde_json::json!({"name": v.name, "description": v.description}))
                     .collect::<Vec<_>>(),
             )?;
-            println!("{json}");
         }
         return Ok(CommandResult::success()
             .with_message(format!("{} views available", views.len()))
@@ -2935,7 +2911,7 @@ fn execute_view(db: &HistoryDb, name: Option<&str>, ctx: &CommandContext) -> Res
                     render_diagnostics_table(&diags, DiagnosticsDisplayMode::Fixable);
                 }
             } else {
-                println!("{}", serde_json::to_string_pretty(&diags)?);
+                ctx.print_json(&diags)?;
             }
             Ok(CommandResult::success()
                 .with_message(format!("{} fixable diagnostics", diags.len()))
@@ -2969,7 +2945,7 @@ fn execute_view(db: &HistoryDb, name: Option<&str>, ctx: &CommandContext) -> Res
                     println!("{table}");
                 }
             } else {
-                println!("{}", serde_json::to_string_pretty(&tests)?);
+                ctx.print_json(&tests)?;
             }
             Ok(CommandResult::success()
                 .with_message(format!("{} flaky tests", tests.len()))
@@ -2997,7 +2973,7 @@ fn execute_view(db: &HistoryDb, name: Option<&str>, ctx: &CommandContext) -> Res
                     println!("{table}");
                 }
             } else {
-                println!("{}", serde_json::to_string_pretty(&stages)?);
+                ctx.print_json(&stages)?;
             }
             Ok(CommandResult::success()
                 .with_message(format!("{} stages", stages.len()))
@@ -3028,7 +3004,7 @@ fn execute_view(db: &HistoryDb, name: Option<&str>, ctx: &CommandContext) -> Res
                     println!("{table}");
                 }
             } else {
-                println!("{}", serde_json::to_string_pretty(&health)?);
+                ctx.print_json(&health)?;
             }
             Ok(CommandResult::success()
                 .with_message(format!("{} packages", health.len()))
@@ -3067,7 +3043,7 @@ fn execute_view(db: &HistoryDb, name: Option<&str>, ctx: &CommandContext) -> Res
                     println!("{table}");
                 }
             } else {
-                println!("{}", serde_json::to_string_pretty(&regressions)?);
+                ctx.print_json(&regressions)?;
             }
             Ok(CommandResult::success()
                 .with_message(format!("{} regressions", regressions.len()))
@@ -3116,7 +3092,7 @@ fn execute_query(db: &HistoryDb, sql: &str, ctx: &CommandContext) -> Result<Comm
             println!("{table}");
         }
     } else {
-        println!("{}", serde_json::to_string_pretty(&rows)?);
+        ctx.print_json(&rows)?;
     }
 
     Ok(CommandResult::success()
@@ -3192,7 +3168,7 @@ fn execute_schema(db: &HistoryDb, ctx: &CommandContext) -> Result<CommandResult>
             .iter()
             .map(|(n, s)| serde_json::json!({"name": n, "sql": s}))
             .collect();
-        println!("{}", serde_json::to_string_pretty(&json)?);
+        ctx.print_json(&json)?;
     }
 
     Ok(CommandResult::success()
@@ -3217,7 +3193,7 @@ fn execute_timeline(
             render_timeline_table(&entries);
         }
     } else {
-        println!("{}", serde_json::to_string_pretty(&entries)?);
+        ctx.print_json(&entries)?;
     }
 
     Ok(CommandResult::success()
@@ -3349,7 +3325,7 @@ fn execute_diff(
             "resolved_diagnostics": delta.resolved,
             "persistent_diagnostics": delta.persistent,
         });
-        println!("{}", serde_json::to_string_pretty(&json)?);
+        ctx.print_json(&json)?;
     }
 
     Ok(CommandResult::success()
@@ -3409,7 +3385,7 @@ fn execute_sessions(
             println!("{table}");
         }
     } else {
-        println!("{}", serde_json::to_string_pretty(&sessions)?);
+        ctx.print_json(&sessions)?;
     }
 
     Ok(CommandResult::success()
@@ -3501,19 +3477,16 @@ fn execute_invocation(
             }
         }
     } else if full {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "invocation": inv_full.invocation,
-                "stages": inv_full.stages,
-                "diagnostics": inv_full.diagnostics,
-                "error_count": inv_full.error_count,
-                "warning_count": inv_full.warning_count,
-                "resource_usage": resource_usage,
-            }))?
-        );
+        ctx.print_json(&serde_json::json!({
+            "invocation": inv_full.invocation,
+            "stages": inv_full.stages,
+            "diagnostics": inv_full.diagnostics,
+            "error_count": inv_full.error_count,
+            "warning_count": inv_full.warning_count,
+            "resource_usage": resource_usage,
+        }))?;
     } else {
-        println!("{}", serde_json::to_string_pretty(&inv_full.invocation)?);
+        ctx.print_json(&inv_full.invocation)?;
     }
 
     Ok(CommandResult::success()
@@ -3723,8 +3696,7 @@ fn execute_progress(
             }
         }
     } else {
-        let json = serde_json::to_string_pretty(&progress)?;
-        println!("{json}");
+        ctx.print_json(&progress)?;
     }
 
     Ok(CommandResult::success()
@@ -3763,7 +3735,7 @@ fn execute_eta(
                 "median_secs": estimate,
                 "window": window,
             });
-            println!("{}", serde_json::to_string_pretty(&json)?);
+            ctx.print_json(&json)?;
         }
         Ok(CommandResult::success()
             .with_message(format!(
@@ -3809,13 +3781,10 @@ fn execute_eta(
                     })
                 })
                 .collect();
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "command": command,
-                    "phases": json,
-                }))?
-            );
+            ctx.print_json(&serde_json::json!({
+                "command": command,
+                "phases": json,
+            }))?;
         }
         Ok(CommandResult::success()
             .with_message(format!("ETA phases for '{command}': {}", phases.len()))
@@ -3875,10 +3844,7 @@ fn execute_exercise_history(
             }
             json_runs.push(run);
         }
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({ "runs": json_runs }))?
-        );
+        ctx.print_json(&serde_json::json!({ "runs": json_runs }))?;
     } else {
         if rows.is_empty() {
             println!("No exercise runs recorded yet. Run `xtask exercise` first.");
