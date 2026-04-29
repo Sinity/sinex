@@ -1354,7 +1354,9 @@ impl NodeCoordination {
         // Step 1: Finish current critical work
         self.finish_critical_work().await?;
 
-        // Step 2: Signal ready by publishing to handoff_ready subject
+        // Step 2: Signal ready by publishing to handoff_ready subject.
+        // transport::Class::Control — request-reply coordination; drop
+        // pending on SIGTERM; timeout error returned to caller.
         let subject = format!(
             "sinex.coordination.{}.handoff_ready",
             self.instance.service_name

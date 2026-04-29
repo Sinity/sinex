@@ -181,8 +181,9 @@ impl NatsPublisher {
 
     /// Publish an event to the raw-ingest DLQ.
     ///
-    /// This exists for the operator-facing raw DLQ and its retry tooling.
-    /// Derived/runtime processing failures must use `publish_processing_failure`.
+    /// transport::Class::Critical (DLQ routing) — operator-facing raw DLQ;
+    /// retry tooling available via `sinexctl dlq retry`. Derived/runtime
+    /// processing failures must use `publish_processing_failure`.
     pub async fn publish_to_raw_ingest_dlq(
         &self,
         event: &Event,
@@ -262,6 +263,10 @@ impl NatsPublisher {
         Ok(())
     }
 
+    /// Publish a raw ingestor event.
+    ///
+    /// transport::Class::Critical — provenance-bearing; failure routes to
+    /// local recovery spool. Drain: wait for in-flight ACKs.
     pub async fn publish(&self, event: &Event) -> NodeResult<()> {
         self.publish_event_with_class(
             event,
@@ -272,6 +277,10 @@ impl NatsPublisher {
         .await
     }
 
+    /// Publish a self-observation telemetry event.
+    ///
+    /// transport::Class::Telemetry — loss acceptable; drop with warn on
+    /// failure. Drain: best-effort flush.
     pub async fn publish_telemetry(&self, event: &Event) -> NodeResult<()> {
         self.publish_event_with_class(
             event,
@@ -282,6 +291,11 @@ impl NatsPublisher {
         .await
     }
 
+    /// Publish a derived-node processing failure envelope.
+    ///
+    /// transport::Class::Derived (failure routing) — routes to the
+    /// processing-failure stream (`events.processing_failures.*`), not the
+    /// raw-ingest DLQ. Re-runnable via automaton replay.
     pub async fn publish_processing_failure(
         &self,
         event: &Event,

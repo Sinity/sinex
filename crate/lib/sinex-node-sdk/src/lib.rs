@@ -85,6 +85,7 @@ pub mod runtime {
 pub mod schema_validator;
 #[cfg(feature = "messaging")]
 pub mod self_observation;
+pub mod service_runtime;
 pub mod shutdown;
 pub mod source_material;
 pub mod sqlite_source;

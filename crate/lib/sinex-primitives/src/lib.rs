@@ -26,11 +26,14 @@ pub mod query;
 pub mod rpc;
 pub mod settlement;
 pub mod runtime_target;
+pub mod source_unit;
 pub mod temporal;
 pub mod testing;
 pub mod units;
 pub mod utils;
 pub mod validation;
+#[cfg(feature = "nats")]
+pub mod transport;
 
 pub mod buffers {
     pub use crate::constants::buffers::*;

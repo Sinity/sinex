@@ -14,6 +14,7 @@ pub mod git_stack;
 pub mod gitops;
 pub mod history;
 pub mod infra;
+pub mod issue_drift;
 pub mod jobs;
 pub mod lint_forbidden;
 pub mod privacy;

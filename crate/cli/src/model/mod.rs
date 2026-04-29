@@ -1,3 +1,7 @@
+pub mod format_registry;
+
+pub use format_registry::FormatCapability;
+
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
