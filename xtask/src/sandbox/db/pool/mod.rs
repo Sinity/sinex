@@ -1722,6 +1722,20 @@ mod tests {
     use crate::sandbox::EnvGuard;
     use crate::sandbox::sinex_test;
 
+    /// Drop (if present), wait for absence, then recreate a pool database.
+    ///
+    /// Shared setup step in tests that need a clean slot database with current
+    /// schema before running the actual assertion.
+    async fn reset_slot_database_for_test(
+        admin_conn: &mut sqlx::postgres::PgConnection,
+        db_name: &str,
+        slot_url: &str,
+    ) -> TestResult<()> {
+        drop_database_if_exists_admin(admin_conn, db_name).await?;
+        wait_for_database_absence_admin(admin_conn, db_name).await?;
+        recreate_pool_database(db_name, slot_url).await
+    }
+
     #[sinex_test]
     async fn test_format_acquisition_timeout_message_includes_hint_and_attempts() -> TestResult<()>
     {
@@ -1919,9 +1933,7 @@ mod tests {
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;
         let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
 
-        drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
-        wait_for_database_absence_admin(&mut admin_conn, &db_name).await?;
-        recreate_pool_database(&db_name, &slot_url).await?;
+        reset_slot_database_for_test(&mut admin_conn, &db_name, &slot_url).await?;
         let meta = load_pool_meta(&mut admin_conn, &db_name)
             .await?
             .ok_or_else(|| eyre!("missing pool metadata after slot recreation"))?;
@@ -1984,9 +1996,7 @@ mod tests {
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;
         let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
 
-        drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
-        wait_for_database_absence_admin(&mut admin_conn, &db_name).await?;
-        recreate_pool_database(&db_name, &slot_url).await?;
+        reset_slot_database_for_test(&mut admin_conn, &db_name, &slot_url).await?;
         let meta = load_pool_meta(&mut admin_conn, &db_name)
             .await?
             .ok_or_else(|| eyre!("missing pool metadata after slot recreation"))?;
@@ -2059,9 +2069,7 @@ mod tests {
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;
         let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
 
-        drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
-        wait_for_database_absence_admin(&mut admin_conn, &db_name).await?;
-        recreate_pool_database(&db_name, &slot_url).await?;
+        reset_slot_database_for_test(&mut admin_conn, &db_name, &slot_url).await?;
 
         let meta = load_pool_meta(&mut admin_conn, &db_name)
             .await?
@@ -2112,9 +2120,7 @@ mod tests {
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;
         let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
 
-        drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
-        wait_for_database_absence_admin(&mut admin_conn, &db_name).await?;
-        recreate_pool_database(&db_name, &slot_url).await?;
+        reset_slot_database_for_test(&mut admin_conn, &db_name, &slot_url).await?;
 
         let slot_pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(2)
@@ -2193,9 +2199,7 @@ mod tests {
         let slot_url = url_with_db_name(&config.base_url, &db_name)?;
         let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
 
-        drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
-        wait_for_database_absence_admin(&mut admin_conn, &db_name).await?;
-        recreate_pool_database(&db_name, &slot_url).await?;
+        reset_slot_database_for_test(&mut admin_conn, &db_name, &slot_url).await?;
 
         let quoted = quote_ident(&db_name);
         sqlx::query(&format!(
