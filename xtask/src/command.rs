@@ -759,6 +759,15 @@ impl CommandContext {
         }
     }
 
+    /// Serialize `value` as pretty-printed JSON and write it to stdout.
+    ///
+    /// Prefer this over the repeated `let json = serde_json::to_string_pretty(&x)?; println!("{json}")`
+    /// pattern in JSON-mode branches of history/analytics commands.
+    pub fn print_json(&self, value: &impl serde::Serialize) -> color_eyre::eyre::Result<()> {
+        println!("{}", serde_json::to_string_pretty(value)?);
+        Ok(())
+    }
+
     /// Record a diagnostic to the history database.
     ///
     /// This is used by check/build commands to capture compiler warnings/errors.
