@@ -58,6 +58,41 @@ CLI flags still win so one-off overrides remain possible.
 - Keep operator behavior on the gateway surface; avoid hidden direct-DB fallback modes.
 - Prefer explicit operator intent for destructive flows (`dlq purge --confirm`, lifecycle tombstone approvals).
 
+## Format-Capability Registry
+
+Every command declares its output-format contract in a central registry
+(`crate/cli/src/model/format_registry.rs`). The registry maps command paths
+(e.g. `"node list"`, `"replay watch"`) to a [`FormatCapability`] struct that
+records:
+
+- `supported`: which [`OutputFormat`] values the command handles
+- `streaming`: whether the command emits an unbounded stream (NDJSON/YAML lines)
+
+### Early rejection
+
+When `--format` is passed explicitly on the command line the chosen format is
+validated against the registry before the command executes:
+
+```
+sinexctl --format dot completions
+error: command `completions` does not support --format Dot; \
+       supported: none (--format not applicable for this command)
+```
+
+### Browsing the matrix
+
+```bash
+sinexctl --list-formats   # full format-support matrix in terminal-friendly text
+```
+
+### Extending the registry
+
+When adding a new command:
+1. Add a leaf entry to `build()` in `format_registry.rs`.
+2. Add the corresponding arm to `command_path()` in `main.rs`.
+3. If the command is streaming, use `FormatCapability::streaming(...)`.
+
+
 ## Pointers
 
 - Entrypoint: `crate/cli/src/main.rs`

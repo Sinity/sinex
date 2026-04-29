@@ -10,7 +10,7 @@ use sinexctl::commands::{
     TuiCommand, VerifyCommand, WatchCommand,
 };
 use sinexctl::model::OutputFormat;
-use sinexctl::{Config, default_rpc_url};
+use sinexctl::{Config, default_rpc_url, render_format_matrix_terminal, validate_format};
 use std::path::PathBuf;
 
 /// Sinex control CLI
@@ -57,8 +57,12 @@ struct Cli {
     #[arg(long, env = "SINEX_RUNTIME_TARGET_CONFIG", global = true)]
     runtime_target: Option<PathBuf>,
 
+    /// Print the format-support matrix for all commands and exit
+    #[arg(long, global = true)]
+    list_formats: bool,
+
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 fn cli_value_is_explicit(matches: &clap::ArgMatches, id: &str) -> bool {
@@ -256,8 +260,27 @@ async fn main() -> color_eyre::Result<()> {
         format_override,
     );
 
+    // Handle --list-formats before requiring a subcommand.
+    if cli.list_formats {
+        print!("{}", render_format_matrix_terminal());
+        return Ok(());
+    }
+
     let format = config.default_format;
-    let command = cli.command;
+    let command = cli
+        .command
+        .ok_or_else(|| eyre!("a subcommand is required; see `sinexctl --help`"))?;
+
+    // Validate --format against the declared capability of the command.
+    // Only check when --format was explicitly provided on the command line so
+    // that the default value "table" never causes false rejections.
+    if cli_value_is_explicit(&matches, "format") {
+        let path = command_path(&command);
+        if let Err(msg) = validate_format(&path, format) {
+            return Err(eyre!("{msg}"));
+        }
+    }
+
     match command {
         Commands::Config { cmd } => cmd.execute()?,
         Commands::Completions(cmd) => {
@@ -303,6 +326,92 @@ async fn main() -> color_eyre::Result<()> {
     }
 
     Ok(())
+}
+
+/// Derive the registry key for a [`Commands`] variant.
+fn command_path(cmd: &Commands) -> String {
+    use sinexctl::commands::{
+        DlqCommands, GatewayCommands, LifecycleCommands, NodeCommands, OpsCommands, ReplayCommands,
+        TelemetryCommands,
+    };
+    match cmd {
+        Commands::Gateway { cmd } => match cmd {
+            GatewayCommands::Ping => "gateway ping".to_string(),
+            GatewayCommands::Version => "gateway version".to_string(),
+        },
+        Commands::Blob { .. } => "blob sweep-orphans".to_string(),
+        Commands::Core { .. } => "core health".to_string(),
+        Commands::Node { cmd } => match cmd {
+            NodeCommands::List { .. } => "node list".to_string(),
+            NodeCommands::Status { .. } => "node status".to_string(),
+            NodeCommands::Drain { .. } => "node drain".to_string(),
+            NodeCommands::Resume { .. } => "node resume".to_string(),
+            NodeCommands::SetHorizon { .. } => "node set-horizon".to_string(),
+        },
+        Commands::Automata(_) => "automata".to_string(),
+        Commands::Replay { cmd } => match cmd {
+            ReplayCommands::Plan { .. } => "replay plan".to_string(),
+            ReplayCommands::Preview { .. } => "replay preview".to_string(),
+            ReplayCommands::Approve { .. } => "replay approve".to_string(),
+            ReplayCommands::Execute { .. } => "replay execute".to_string(),
+            ReplayCommands::Submit { .. } => "replay submit".to_string(),
+            ReplayCommands::Cancel { .. } => "replay cancel".to_string(),
+            ReplayCommands::Status { .. } => "replay list".to_string(),
+            ReplayCommands::Watch { .. } => "replay watch".to_string(),
+            ReplayCommands::List { .. } => "replay list".to_string(),
+            ReplayCommands::Run { .. } => "replay run".to_string(),
+        },
+        Commands::Dlq { cmd } => match cmd {
+            DlqCommands::List { .. } => "dlq list".to_string(),
+            DlqCommands::Peek { .. } => "dlq peek".to_string(),
+            DlqCommands::Requeue { .. } => "dlq list".to_string(),
+            DlqCommands::Purge { .. } => "dlq list".to_string(),
+        },
+        Commands::Query(_) => "query".to_string(),
+        Commands::Trace(_) => "trace".to_string(),
+        Commands::Ops { cmd } => match cmd {
+            OpsCommands::Start { .. } => "ops start".to_string(),
+            OpsCommands::List { .. } => "ops list".to_string(),
+            OpsCommands::Get { .. } => "ops get".to_string(),
+            OpsCommands::Cancel { .. } => "ops cancel".to_string(),
+        },
+        Commands::Audit(_) => "audit".to_string(),
+        Commands::Tui(_) => "tui".to_string(),
+        Commands::Config { .. } => "config show".to_string(),
+        Commands::Demo(_) => "demo".to_string(),
+        Commands::Lifecycle { cmd } => match cmd {
+            LifecycleCommands::Status(_) => "lifecycle status".to_string(),
+            LifecycleCommands::Archive(_) => "lifecycle archive".to_string(),
+            LifecycleCommands::Restore(_) => "lifecycle restore".to_string(),
+            LifecycleCommands::Tombstone(_) => "lifecycle tombstone create".to_string(),
+        },
+        Commands::GitOps { .. } => "gitops".to_string(),
+        Commands::Telemetry { cmd } => match cmd {
+            TelemetryCommands::CurrentHealth { .. } => "telemetry health".to_string(),
+            TelemetryCommands::CurrentDeviceState { .. } => "telemetry device-state".to_string(),
+            TelemetryCommands::WindowFocus { .. } => "telemetry window-focus".to_string(),
+            TelemetryCommands::CommandFrequency { .. } => "telemetry command-frequency".to_string(),
+            TelemetryCommands::FileActivity { .. } => "telemetry file-activity".to_string(),
+            TelemetryCommands::RecentActivity { .. } => "telemetry recent-activity".to_string(),
+            TelemetryCommands::SystemState { .. } => "telemetry system-state".to_string(),
+            TelemetryCommands::GatewayStats { .. } => "telemetry gateway-stats".to_string(),
+            TelemetryCommands::StreamStats { .. } => "telemetry stream-stats".to_string(),
+            TelemetryCommands::AssemblyStats { .. } => "telemetry assembly-stats".to_string(),
+            TelemetryCommands::NodeStats { .. } => "telemetry node-stats".to_string(),
+            TelemetryCommands::MetricCounters { .. } => "telemetry metric-counters".to_string(),
+            TelemetryCommands::IngestdBatchStats { .. } => "telemetry ingestd-batch-stats".to_string(),
+            TelemetryCommands::IngestdValidation { .. } => "telemetry ingestd-validation".to_string(),
+        },
+        Commands::Report { .. } => "report today".to_string(),
+        Commands::Status(_) => "status".to_string(),
+        Commands::Recent(_) => "recent".to_string(),
+        Commands::Errors(_) => "errors".to_string(),
+        Commands::Watch(_) => "watch".to_string(),
+        Commands::Context(_) => "context".to_string(),
+        Commands::Explain(_) => "explain".to_string(),
+        Commands::Verify(_) => "verify".to_string(),
+        Commands::Completions(_) => "completions".to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -423,7 +532,7 @@ mod tests {
         let (_matches, cli) = parse_cli(&["sinexctl", "automata"])?;
 
         assert!(
-            matches!(cli.command, Commands::Automata(_)),
+            matches!(cli.command, Some(Commands::Automata(_))),
             "automata command must remain exposed as a top-level operator surface"
         );
         Ok(())
@@ -527,4 +636,40 @@ mod tests {
         );
         Ok(())
     }
+    #[sinex_test]
+    async fn list_formats_flag_parses_without_subcommand() -> TestResult<()> {
+        let (_, cli) = parse_cli(&["sinexctl", "--list-formats"])?;
+        assert!(cli.list_formats, "--list-formats must be parsed correctly");
+        assert!(cli.command.is_none(), "--list-formats without subcommand must parse");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn format_matrix_terminal_output_contains_key_commands() -> TestResult<()> {
+        let output = sinexctl::render_format_matrix_terminal();
+        assert!(output.contains("query"), "matrix must list `query`");
+        assert!(output.contains("watch"), "matrix must list `watch`");
+        assert!(output.contains("stream"), "matrix must mark `watch` as streaming");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn validate_format_rejects_dot_for_status() -> TestResult<()> {
+        let result = sinexctl::validate_format("status", sinexctl::OutputFormat::Dot);
+        assert!(result.is_err(), "status must reject dot format");
+        let msg = result.unwrap_err();
+        assert!(msg.contains("status"), "error must name the command");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn validate_format_accepts_dot_for_trace() -> TestResult<()> {
+        assert!(
+            sinexctl::validate_format("trace", sinexctl::OutputFormat::Dot).is_ok(),
+            "trace must accept dot format"
+        );
+        Ok(())
+    }
+
+
 }
