@@ -1966,6 +1966,10 @@ impl ReplayExecutionEngine {
             match serde_json::to_vec(&invalidation) {
                 Ok(payload) => {
                     self.maybe_fail_scope_invalidation_publish()?;
+                    // transport::Class::Invalidation — JetStream-backed scope
+                    // fan-out; failure propagated to caller (replay operation
+                    // decides abort/continue). No Sinex-Traffic-Class header on
+                    // the plain js.publish path (no header map variant here).
                     if let Err(e) = self
                         .js
                         .publish(
