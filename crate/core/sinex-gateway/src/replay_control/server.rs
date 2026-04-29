@@ -14,9 +14,8 @@ use super::protocol::{ReplayControlRequest, ReplayControlResponse};
 use super::validation::{
     ReplayAction, ensure_preview_allowed, run_safety_analysis, validate_actor_for_action,
 };
-use super::{
-    ReplayControlError, ReplayControlHealthState, ReplayExecutionEngine, ReplayPreviewSummary,
-};
+use super::execution::{ReplayExecutionEngine, ReplayPreviewSummary};
+use super::{ReplayControlError, ReplayControlHealthState};
 
 pub(super) const REPLAY_CONTROL_SUBSCRIBE_ATTEMPTS: usize = 5;
 pub(super) const REPLAY_CONTROL_SUBSCRIBE_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
