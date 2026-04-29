@@ -1,4 +1,4 @@
-#![doc = include_str!("../docs/replay_control.md")]
+#![doc = include_str!("../../docs/replay_control.md")]
 
 use crate::cascade_analyzer::{CascadeAnalyzerConfig, Severity, StreamingCascadeAnalyzer};
 use crate::config::env_bool_optional;
