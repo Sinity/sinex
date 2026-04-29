@@ -13,6 +13,7 @@ pub mod config;
 pub mod error;
 pub mod fmt;
 pub mod model;
+pub mod parse;
 pub mod validation;
 
 pub use client::GatewayClient;

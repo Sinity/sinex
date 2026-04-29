@@ -4,7 +4,7 @@ use console::style;
 use serde_json::json;
 use sinex_primitives::query::{EventQuery, EventQueryResult, SortDirection, TimeRange};
 use sinex_primitives::temporal::{Duration, Timestamp};
-use sinex_primitives::utils::timestamp_helpers::parse_relative_duration;
+use crate::parse::parse_duration;
 use std::collections::HashMap;
 
 use crate::client::GatewayClient;
@@ -36,7 +36,7 @@ pub struct ContextCommand {
 
 impl ContextCommand {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
-        let since = parse_duration_str(&self.since)?;
+        let since = parse_duration(&self.since)?;
         let now = Timestamp::now();
         let cutoff = now - since;
 
@@ -279,8 +279,3 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
-/// Parse "2h", "30m", "45s", "1d" into a `time::Duration`.
-fn parse_duration_str(s: &str) -> Result<Duration> {
-    parse_relative_duration(s)
-        .ok_or_else(|| color_eyre::eyre::eyre!("Invalid duration: {s}"))
-}
