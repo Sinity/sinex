@@ -3,7 +3,7 @@ mod build {
 }
 
 use clap::{Parser, ValueEnum};
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, eyre};
 use sinex_ingestd::{IngestService, IngestdConfig};
 use sinex_node_sdk::service_runtime::{self, TracingFormat};
 use tracing::{error, info};
