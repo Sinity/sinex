@@ -11,7 +11,7 @@ let
   # break URL structure: @, :, /, ?, #, [, ], %, space, and common punctuation.
   encodeUrlChar = c:
     let
-      safe = builtins.match "[A-Za-z0-9\\-._~!$&'()*+,;=]" c != null;
+      safe = builtins.match "[A-Za-z0-9._~!$&'()*+,;=-]" c != null;
     in
     if safe then c
     else
