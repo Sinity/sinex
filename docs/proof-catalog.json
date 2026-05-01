@@ -95,8 +95,40 @@
       "proof_obligations": []
     },
     {
-      "subject": "source_unit:desktop",
-      "id": "desktop",
+      "subject": "source_unit:desktop.activitywatch",
+      "id": "desktop.activitywatch",
+      "namespace": "desktop",
+      "runner_pack": "desktop",
+      "modes": [
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "activitywatch",
+          "event_type": "window.active"
+        },
+        {
+          "source": "activitywatch",
+          "event_type": "afk.changed"
+        },
+        {
+          "source": "activitywatch",
+          "event_type": "browser.tab.active"
+        }
+      ],
+      "privacy_tier": "secret",
+      "runtime_shape": "on_demand",
+      "retention_policy": "forever",
+      "checkpoint_family": "mutable_snapshot",
+      "occurrence_identity": "uuid5:(source_unit, bucket_id, event_timestamp)",
+      "access_policy": "target_home_read:activitywatch_sqlite",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:desktop",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:desktop.clipboard",
+      "id": "desktop.clipboard",
       "namespace": "desktop",
       "runner_pack": "desktop",
       "modes": [
@@ -106,19 +138,7 @@
       "output_event_types": [
         {
           "source": "desktop",
-          "event_type": "desktop.monitoring_started"
-        },
-        {
-          "source": "desktop",
-          "event_type": "desktop.snapshot"
-        },
-        {
-          "source": "desktop",
           "event_type": "clipboard.historical"
-        },
-        {
-          "source": "desktop",
-          "event_type": "window.wm_historical"
         },
         {
           "source": "clipboard",
@@ -127,6 +147,59 @@
         {
           "source": "clipboard",
           "event_type": "clipboard.selected"
+        }
+      ],
+      "privacy_tier": "secret",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "live_observation",
+      "occurrence_identity": "material_anchor",
+      "access_policy": "target_runtime_bridge:clipboard",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:desktop",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:desktop.monitor",
+      "id": "desktop.monitor",
+      "namespace": "desktop",
+      "runner_pack": "desktop",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "desktop",
+          "event_type": "desktop.monitoring_started"
+        },
+        {
+          "source": "desktop",
+          "event_type": "desktop.snapshot"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "live_observation",
+      "occurrence_identity": "uuid5:(source_unit, run_id)",
+      "access_policy": "runtime_self_observation",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:desktop",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:desktop.window-manager",
+      "id": "desktop.window-manager",
+      "namespace": "desktop",
+      "runner_pack": "desktop",
+      "modes": [
+        "continuous",
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "desktop",
+          "event_type": "window.wm_historical"
         },
         {
           "source": "wm.hyprland",
@@ -159,26 +232,14 @@
         {
           "source": "wm.hyprland",
           "event_type": "state.captured"
-        },
-        {
-          "source": "activitywatch",
-          "event_type": "window.active"
-        },
-        {
-          "source": "activitywatch",
-          "event_type": "afk.changed"
-        },
-        {
-          "source": "activitywatch",
-          "event_type": "browser.tab.active"
         }
       ],
-      "privacy_tier": "secret",
+      "privacy_tier": "sensitive",
       "runtime_shape": "continuous",
       "retention_policy": "forever",
       "checkpoint_family": "live_observation",
       "occurrence_identity": "material_anchor",
-      "access_policy": "target_runtime_bridge:desktop",
+      "access_policy": "target_runtime_bridge:window_manager",
       "package_impact": "no_new_output",
       "implementation_mode": "rust_in_pack:desktop",
       "proof_obligations": []
