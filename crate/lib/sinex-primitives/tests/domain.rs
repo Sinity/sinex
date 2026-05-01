@@ -129,14 +129,22 @@ async fn content_key_validation_and_parsing() -> TestResult<()> {
     let components = key.parse_components();
     assert_eq!(components.prefix, "SHA256E-s12345-m1234567890");
     assert_eq!(components.backend, "SHA256E");
+    assert_eq!(components.size, Some("12345"));
     assert_eq!(components.name, "filename.txt");
+    assert_eq!(key.parse_size_bytes(), Ok(Some(12345)));
 
     let simple_key = ContentKey::from_str("BLAKE2B--document.pdf")
         .map_err(|err| eyre!("invalid content key: {err}"))?;
     let simple_components = simple_key.parse_components();
     assert_eq!(simple_components.prefix, "BLAKE2B");
     assert_eq!(simple_components.backend, "BLAKE2B");
+    assert_eq!(simple_components.size, None);
     assert_eq!(simple_components.name, "document.pdf");
+    assert_eq!(simple_key.parse_size_bytes(), Ok(None));
+
+    let invalid_size = ContentKey::from_str("SHA256E-snope--document.pdf")
+        .map_err(|err| eyre!("invalid content key: {err}"))?;
+    assert!(invalid_size.parse_size_bytes().is_err());
     Ok(())
 }
 

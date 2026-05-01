@@ -5,9 +5,11 @@ use camino::{Utf8Path, Utf8PathBuf};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value as JsonValue;
+use sinex_primitives::domain::ContentKey;
 use std::ffi::OsStr;
 use std::path::Path;
 use std::process::Command;
+use std::str::FromStr;
 use std::sync::{
     OnceLock,
     atomic::{AtomicU64, Ordering},
@@ -285,32 +287,31 @@ pub struct ContentVerificationResult {
 
 impl ContentStoreKey {
     pub fn parse(key_str: &str) -> NodeResult<Self> {
-        // Parse content-store key format: BACKEND-s<size>--digest
-        // Example: SHA256E-s12345--hash.dat
-        let (prefix, digest) = key_str.split_once("--").ok_or_else(|| {
-            SinexError::processing(format!(
-                "Invalid content-store key format (missing '--'): {key_str}"
-            ))
+        let content_key = ContentKey::from_str(key_str).map_err(|err| {
+            SinexError::processing(format!("Invalid content-store key format: {key_str}"))
+                .with_context("reason", err)
         })?;
-
-        let (backend, size_part) = prefix.split_once("-s").ok_or_else(|| {
-            SinexError::processing(format!(
-                "Invalid size format in content-store key (missing '-s'): {key_str}"
-            ))
-        })?;
-
-        let size = size_part.parse::<u64>().map_err(|e| {
-            SinexError::processing(format!(
-                "Failed to parse size from content-store key: {key_str}"
-            ))
-            .with_source(e)
-        })?;
+        let components = content_key.parse_components();
+        let size = match content_key.parse_size_bytes() {
+            Ok(Some(size)) => size,
+            Ok(None) => {
+                return Err(SinexError::processing(format!(
+                    "Invalid size format in content-store key (missing '-s'): {key_str}"
+                )));
+            }
+            Err(err) => {
+                return Err(SinexError::processing(format!(
+                    "Failed to parse size from content-store key: {key_str}"
+                ))
+                .with_context("reason", err));
+            }
+        };
 
         Ok(ContentStoreKey {
             key: key_str.to_string(),
-            backend: ContentBackend::from_storage_backend(backend),
+            backend: ContentBackend::from_storage_backend(components.backend),
             size,
-            digest: digest.to_string(),
+            digest: components.name.to_string(),
         })
     }
 
