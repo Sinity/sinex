@@ -124,10 +124,7 @@
           };
 
           # Build workspace dependencies once (cached layer).
-          # SQLX_OFFLINE=true only here: deps have no live database, so SQLx macros
-          # must use offline mode. buildPackage (mkPackage) overrides this via preBuild
-          # which starts an ephemeral Postgres and sets DATABASE_URL.
-          cargoArtifacts = craneLib.buildDepsOnly (commonArgs // { SQLX_OFFLINE = "true"; });
+          cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
           # Build the schema bootstrap binary once, then reuse it in every build
           # that needs a live SQLx validation database.
@@ -138,7 +135,6 @@
               pname = "schema-apply-bootstrap";
               cargoExtraArgs = "-p sinex-schema --bin schema-apply-bootstrap";
               doCheck = false;
-              SQLX_OFFLINE = "true";
             }
           );
 
@@ -179,9 +175,8 @@
           '';
 
           # Build a specific package from the workspace.
-          # SQLX_OFFLINE=false: preBuild starts an ephemeral Postgres and sets DATABASE_URL,
-          # so sqlx::query! macros validate against a live schema (overrides the "true" in
-          # cargoArtifacts/buildDepsOnly which only compiled external deps without project macros).
+          # preBuild starts an ephemeral Postgres and sets DATABASE_URL so
+          # sqlx::query! macros validate against a live schema.
           mkPackage =
             pname:
             craneLib.buildPackage (
@@ -190,7 +185,6 @@
                 inherit cargoArtifacts pname;
                 cargoExtraArgs = "-p ${pname}";
                 doCheck = false;
-                SQLX_OFFLINE = "false";
 
                 preBuild = postgresPreBuild;
                 postBuild = postgresPostBuild;
@@ -226,7 +220,6 @@
               pname = "sinex";
               cargoExtraArgs = runtimeCargoExtraArgs;
               doCheck = false;
-              SQLX_OFFLINE = "false";
 
               preBuild = postgresPreBuild;
               postBuild = postgresPostBuild;
