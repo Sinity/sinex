@@ -155,6 +155,12 @@ pub mod services {
     pub const STARTUP_GRACE_PERIOD: Duration = Duration::from_secs(10);
 }
 
+/// Replay and archive cascade constants.
+pub mod replay {
+    /// Default descendant traversal depth for replay/archive cascade previews and execution.
+    pub const DEFAULT_CASCADE_MAX_DEPTH: usize = 100;
+}
+
 /// Redis stream constants
 pub mod redis {
     use super::Duration;
