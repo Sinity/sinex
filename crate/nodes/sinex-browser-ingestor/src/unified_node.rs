@@ -211,7 +211,7 @@ impl BrowserNode {
         };
 
         let event = payload
-            .from_material(anchor.material_id)
+            .from_material_at(anchor.material_id, anchor.offset_start)
             .with_offset_start(anchor.offset_start)?
             .with_offset_end(anchor.offset_end)?
             .build()?
