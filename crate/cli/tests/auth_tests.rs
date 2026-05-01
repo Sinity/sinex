@@ -227,7 +227,7 @@ async fn test_load_root_ca_invalid_pem() -> TestResult<()> {
 
     let result = load_root_ca(&ca_path);
     // Invalid PEM that doesn't parse as certificate
-    // rustls_pemfile::certs will return empty vec for non-PEM content
+    // Certificate iteration returns an empty store for content with no PEM sections.
     let store = result.unwrap();
     assert!(store.is_empty());
     Ok(())
@@ -240,7 +240,7 @@ async fn test_load_root_ca_malformed_certificate() -> TestResult<()> {
 
     // Malformed base64 inside PEM markers should fail parsing
     let result = load_root_ca(&ca_path);
-    // This may succeed with empty store or fail depending on rustls_pemfile behavior
+    // This may succeed with an empty store or fail depending on PEM parser behavior.
     // The important thing is it doesn't panic
     if let Ok(store) = result {
         assert!(store.is_empty());
