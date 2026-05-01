@@ -233,7 +233,7 @@ tokio-retry = "0.3"
 parking_lot = "0.12"
 
 # Message bus
-async-nats = "0.46"
+async-nats = "0.47"
 time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
 
 # System integration
