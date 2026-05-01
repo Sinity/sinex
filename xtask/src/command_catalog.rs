@@ -110,12 +110,16 @@ mod tests {
             "public command catalog unexpectedly shrank to {} entries",
             commands.len()
         );
-        for command in ["check", "test", "build", "status", "docs"] {
+        for command in ["check", "test", "build", "status", "docs", "schema"] {
             assert!(
                 find_command(&commands, command).is_some(),
                 "missing public xtask command `{command}`"
             );
         }
+        assert!(
+            find_command(&commands, "schema strict-diff").is_some(),
+            "strict schema drift check must stay discoverable"
+        );
         assert!(
             find_command(&commands, "docs proof-catalog").is_some(),
             "proof catalog command must stay discoverable"
