@@ -91,46 +91,44 @@ async fn collect_cascade_ids(
     root_ids: &[Uuid],
     source: CascadeSource,
 ) -> Result<(Vec<Uuid>, usize)> {
-    let mut tx = pool.begin().await.map_err(|e| {
-        SinexError::database("Failed to begin cascade analysis transaction")
-            .with_source(e.to_string())
-    })?;
-    let repo = pool.events();
-    let mut repo_tx = repo.as_tx(&mut tx);
     let session_id = fresh_cascade_session_id(session_prefix);
 
-    let table_name = repo_tx
-        .prepare_cascade_session(&session_id, true)
-        .await
-        .map_err(|e| {
-            SinexError::database("Failed to prepare cascade session").with_source(e.to_string())
-        })?;
-    repo_tx
-        .populate_cascade_roots_from(&table_name, root_ids, source)
-        .await
-        .map_err(|e| {
-            SinexError::database("Failed to populate cascade roots").with_source(e.to_string())
-        })?;
-    let cascade_depth = repo_tx
-        .expand_cascade_from(&table_name, 100, source)
-        .await
-        .map_err(|e| SinexError::database("Failed to expand cascade").with_source(e.to_string()))?;
-    let cascade_ids = repo_tx.get_cascade_ids(&table_name).await.map_err(|e| {
-        SinexError::database("Failed to get cascade IDs").with_source(e.to_string())
-    })?;
+    pool.with_transaction(async |tx| {
+        let repo = pool.events();
+        let mut repo_tx = repo.as_tx(tx);
 
-    repo_tx
-        .cleanup_cascade_session(&table_name)
-        .await
-        .map_err(|e| {
-            SinexError::database("Failed to cleanup cascade session").with_source(e.to_string())
+        let table_name = repo_tx
+            .prepare_cascade_session(&session_id, true)
+            .await
+            .map_err(|e| {
+                SinexError::database("Failed to prepare cascade session").with_source(e.to_string())
+            })?;
+        repo_tx
+            .populate_cascade_roots_from(&table_name, root_ids, source)
+            .await
+            .map_err(|e| {
+                SinexError::database("Failed to populate cascade roots").with_source(e.to_string())
+            })?;
+        let cascade_depth = repo_tx
+            .expand_cascade_from(&table_name, 100, source)
+            .await
+            .map_err(|e| {
+                SinexError::database("Failed to expand cascade").with_source(e.to_string())
+            })?;
+        let cascade_ids = repo_tx.get_cascade_ids(&table_name).await.map_err(|e| {
+            SinexError::database("Failed to get cascade IDs").with_source(e.to_string())
         })?;
-    tx.commit().await.map_err(|e| {
-        SinexError::database("Failed to commit cascade analysis transaction")
-            .with_source(e.to_string())
-    })?;
 
-    Ok((cascade_ids, cascade_depth))
+        repo_tx
+            .cleanup_cascade_session(&table_name)
+            .await
+            .map_err(|e| {
+                SinexError::database("Failed to cleanup cascade session").with_source(e.to_string())
+            })?;
+
+        Ok((cascade_ids, cascade_depth))
+    })
+    .await
 }
 
 /// Handle lifecycle.status - get status of all lifecycle tiers
