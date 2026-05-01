@@ -22,7 +22,7 @@ use std::time::Instant;
 use time::Duration;
 
 use crate::client::GatewayClient;
-use crate::fmt::format_heartbeat_age;
+use crate::fmt::{format_bytes, format_heartbeat_age};
 use sinex_primitives::rpc::coordination::InstanceInfo;
 use sinex_primitives::rpc::dlq::DlqListResponse;
 
@@ -559,7 +559,7 @@ fn render_dlq(f: &mut Frame, area: Rect, app: &App) {
             let items = vec![
                 ListItem::new(format!("Total Messages: {}", stats.total_messages))
                     .style(Style::default().fg(Color::Yellow)),
-                ListItem::new(format!("Total Size: {} bytes", stats.total_bytes)),
+                ListItem::new(format!("Total Size: {}", format_bytes(stats.total_bytes))),
                 ListItem::new(format!("First Sequence: {}", stats.first_seq)),
                 ListItem::new(format!("Last Sequence: {}", stats.last_seq)),
                 ListItem::new(""),

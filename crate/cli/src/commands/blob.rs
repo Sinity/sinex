@@ -9,7 +9,7 @@ use sinex_node_sdk::content_store::{
 };
 
 use crate::Result;
-use crate::fmt::CommandOutput;
+use crate::fmt::{CommandOutput, format_bytes};
 use crate::model::OutputFormat;
 
 #[derive(Debug, Subcommand)]
@@ -139,8 +139,10 @@ fn format_blob_sweep_summary(summary: &BlobSweepSummary) -> String {
         output.push_str("  Orphaned Keys:\n");
         for orphan in &summary.orphaned_keys {
             output.push_str(&format!(
-                "    {}  {}  ({} bytes)\n",
-                orphan.number, orphan.key, orphan.size_bytes
+                "    {}  {}  ({})\n",
+                orphan.number,
+                orphan.key,
+                format_bytes(orphan.size_bytes)
             ));
         }
     }
