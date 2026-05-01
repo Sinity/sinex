@@ -46,7 +46,7 @@ async fn document_node_emits_events_for_targets(ctx: TestContext) -> TestResult<
         .expect("document ingestor should emit a document.ingested event");
 
     assert_eq!(event.event_type.as_str(), "document.ingested");
-    assert!(event.payload["_source_material_id"].as_str().is_some());
+    assert!(event.payload["_source_material_id"].as_str().is_none());
     assert!(event.payload["file_path"].as_str().is_some());
     assert!(event.payload["source_material_id"].as_str().is_some());
 

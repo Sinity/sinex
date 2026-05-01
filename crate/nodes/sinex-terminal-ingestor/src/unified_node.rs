@@ -2242,7 +2242,7 @@ fn build_material_json_event<P: EventPayload>(
     encode_error_context: &str,
 ) -> NodeResult<sinex_primitives::events::Event<serde_json::Value>> {
     payload
-        .from_material(material_id)
+        .from_material_at(material_id, offset_start)
         .with_offset_start(offset_start)
         .map_err(|error| SinexError::service(build_error_context).with_source(error))?
         .with_offset_end(offset_end)
