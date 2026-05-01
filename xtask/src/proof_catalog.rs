@@ -334,7 +334,7 @@ mod tests {
             catalog
                 .source_units
                 .iter()
-                .any(|unit| unit.subject.as_str() == "source_unit:system")
+                .any(|unit| unit.subject.as_str() == "source_unit:system.udev")
         );
         assert!(
             catalog

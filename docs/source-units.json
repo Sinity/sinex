@@ -512,88 +512,19 @@
       "dedicated_build_rationale": null
     },
     {
-      "subject": "source_unit:system",
-      "id": "system",
+      "subject": "source_unit:system.dbus",
+      "id": "system.dbus",
       "domain": "system",
       "role": "source_adapter",
       "modes": [
-        "continuous",
-        "historical"
+        "continuous"
       ],
-      "acquisition_shape": "journal",
+      "acquisition_shape": "live_observation",
       "material_policy": "source_material_provenance",
-      "checkpoint_policy": "journal_cursor",
-      "occurrence_policy": "uuid5:(source_unit, journal_cursor)",
-      "output_event_type": "system/monitoring.started,system/scan.started,system/scan.completed,system/snapshot,systemd/unit.starting,systemd/unit.started,systemd/unit.stopping,systemd/unit.stopped,systemd/unit.failed,systemd/unit.reloaded,systemd/unit.state_changed,systemd/unit.status,systemd/timer.triggered,journald/entry.written,journald/log_entry.captured,journald/node.heartbeat,journald/sync.completed,dbus/signal.received,dbus/method.called,dbus/power.state_changed,dbus/bluetooth.device_changed,dbus/network.state_changed,dbus/device.connected,dbus/media.state_changed,dbus/mount.event,dbus/notification.sent,udev/device.added,udev/device.changed,log_processor/log.line",
+      "checkpoint_policy": "live_observation_state",
+      "occurrence_policy": "material_anchor",
+      "output_event_type": "dbus/signal.received,dbus/method.called,dbus/power.state_changed,dbus/bluetooth.device_changed,dbus/network.state_changed,dbus/device.connected,dbus/media.state_changed,dbus/mount.event,dbus/notification.sent",
       "output_event_types": [
-        {
-          "source": "system",
-          "event_type": "monitoring.started"
-        },
-        {
-          "source": "system",
-          "event_type": "scan.started"
-        },
-        {
-          "source": "system",
-          "event_type": "scan.completed"
-        },
-        {
-          "source": "system",
-          "event_type": "snapshot"
-        },
-        {
-          "source": "systemd",
-          "event_type": "unit.starting"
-        },
-        {
-          "source": "systemd",
-          "event_type": "unit.started"
-        },
-        {
-          "source": "systemd",
-          "event_type": "unit.stopping"
-        },
-        {
-          "source": "systemd",
-          "event_type": "unit.stopped"
-        },
-        {
-          "source": "systemd",
-          "event_type": "unit.failed"
-        },
-        {
-          "source": "systemd",
-          "event_type": "unit.reloaded"
-        },
-        {
-          "source": "systemd",
-          "event_type": "unit.state_changed"
-        },
-        {
-          "source": "systemd",
-          "event_type": "unit.status"
-        },
-        {
-          "source": "systemd",
-          "event_type": "timer.triggered"
-        },
-        {
-          "source": "journald",
-          "event_type": "entry.written"
-        },
-        {
-          "source": "journald",
-          "event_type": "log_entry.captured"
-        },
-        {
-          "source": "journald",
-          "event_type": "node.heartbeat"
-        },
-        {
-          "source": "journald",
-          "event_type": "sync.completed"
-        },
         {
           "source": "dbus",
           "event_type": "signal.received"
@@ -629,24 +560,190 @@
         {
           "source": "dbus",
           "event_type": "notification.sent"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "system_bus_session_bus_read",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "system",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:system",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:system.journald",
+      "id": "system.journald",
+      "domain": "system",
+      "role": "source_adapter",
+      "modes": [
+        "continuous",
+        "historical"
+      ],
+      "acquisition_shape": "journal",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "journal_cursor",
+      "occurrence_policy": "uuid5:(source_unit, journal_cursor)",
+      "output_event_type": "journald/entry.written,journald/sync.completed",
+      "output_event_types": [
+        {
+          "source": "journald",
+          "event_type": "entry.written"
+        },
+        {
+          "source": "journald",
+          "event_type": "sync.completed"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "systemd_journal_read",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "system",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:system",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:system.monitor",
+      "id": "system.monitor",
+      "domain": "system",
+      "role": "source_adapter",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "live_observation",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "live_observation_state",
+      "occurrence_policy": "uuid5:(source_unit, run_id)",
+      "output_event_type": "system/monitoring.started",
+      "output_event_types": [
+        {
+          "source": "system",
+          "event_type": "monitoring.started"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "runtime_self_observation",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "system",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:system",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:system.systemd",
+      "id": "system.systemd",
+      "domain": "system",
+      "role": "source_adapter",
+      "modes": [
+        "continuous",
+        "historical"
+      ],
+      "acquisition_shape": "journal",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "journal_cursor",
+      "occurrence_policy": "uuid5:(source_unit, journal_cursor)",
+      "output_event_type": "systemd/unit.started,systemd/unit.stopped,systemd/unit.failed,systemd/unit.reloaded,systemd/timer.triggered",
+      "output_event_types": [
+        {
+          "source": "systemd",
+          "event_type": "unit.started"
+        },
+        {
+          "source": "systemd",
+          "event_type": "unit.stopped"
+        },
+        {
+          "source": "systemd",
+          "event_type": "unit.failed"
+        },
+        {
+          "source": "systemd",
+          "event_type": "unit.reloaded"
+        },
+        {
+          "source": "systemd",
+          "event_type": "timer.triggered"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "systemd_journal_read",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "system",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:system",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:system.udev",
+      "id": "system.udev",
+      "domain": "system",
+      "role": "source_adapter",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "live_observation",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "live_observation_state",
+      "occurrence_policy": "material_anchor",
+      "output_event_type": "udev/device.connected,udev/device.disconnected,udev/device.changed,udev/device.driver_changed,udev/device.other",
+      "output_event_types": [
+        {
+          "source": "udev",
+          "event_type": "device.connected"
         },
         {
           "source": "udev",
-          "event_type": "device.added"
+          "event_type": "device.disconnected"
         },
         {
           "source": "udev",
           "event_type": "device.changed"
         },
         {
-          "source": "log_processor",
-          "event_type": "log.line"
+          "source": "udev",
+          "event_type": "device.driver_changed"
+        },
+        {
+          "source": "udev",
+          "event_type": "device.other"
         }
       ],
       "privacy_context": "sensitive",
       "retention_policy": "forever",
       "resource_profile": "continuous",
-      "access_policy": "system_bus_journal_udev",
+      "access_policy": "udev_monitor_read",
       "service_policy": "dedicated_instance:on-failure",
       "runner_pack": "system",
       "package_impact": "no_new_output",
@@ -1004,10 +1101,14 @@
     {
       "id": "system",
       "source_unit_ids": [
-        "system"
+        "system.dbus",
+        "system.journald",
+        "system.monitor",
+        "system.systemd",
+        "system.udev"
       ],
       "shared_binary": "sinex-system-ingestor",
-      "source_unit_count": 1
+      "source_unit_count": 5
     },
     {
       "id": "terminal",
@@ -1134,12 +1235,48 @@
       "host_identity": "runtime_hostname"
     },
     {
-      "source_unit_id": "system",
-      "service_name": "sinex-source@system",
+      "source_unit_id": "system.dbus",
+      "service_name": "sinex-source@system.dbus",
       "runner_pack": "system",
       "binary": "sinex-system-ingestor",
-      "checkpoint_identity": "system",
-      "control_identity": "system",
+      "checkpoint_identity": "system.dbus",
+      "control_identity": "system.dbus",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "system.journald",
+      "service_name": "sinex-source@system.journald",
+      "runner_pack": "system",
+      "binary": "sinex-system-ingestor",
+      "checkpoint_identity": "system.journald",
+      "control_identity": "system.journald",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "system.monitor",
+      "service_name": "sinex-source@system.monitor",
+      "runner_pack": "system",
+      "binary": "sinex-system-ingestor",
+      "checkpoint_identity": "system.monitor",
+      "control_identity": "system.monitor",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "system.systemd",
+      "service_name": "sinex-source@system.systemd",
+      "runner_pack": "system",
+      "binary": "sinex-system-ingestor",
+      "checkpoint_identity": "system.systemd",
+      "control_identity": "system.systemd",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "system.udev",
+      "service_name": "sinex-source@system.udev",
+      "runner_pack": "system",
+      "binary": "sinex-system-ingestor",
+      "checkpoint_identity": "system.udev",
+      "control_identity": "system.udev",
       "host_identity": "runtime_hostname"
     },
     {
@@ -1207,12 +1344,12 @@
     }
   ],
   "package_impact": {
-    "total_source_units": 20,
-    "zero_crate_impact": 20,
-    "zero_binary_impact": 20,
-    "zero_nix_output_impact": 20,
-    "zero_derivation_impact": 20,
-    "zero_sqlx_validation_impact": 20,
+    "total_source_units": 24,
+    "zero_crate_impact": 24,
+    "zero_binary_impact": 24,
+    "zero_nix_output_impact": 24,
+    "zero_derivation_impact": 24,
+    "zero_sqlx_validation_impact": 24,
     "dedicated_build_rationales": []
   },
   "proof_obligations": [
