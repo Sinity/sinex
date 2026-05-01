@@ -830,7 +830,9 @@ impl ExplorationProvider for DocumentNode {
     }
 
     fn get_ingestion_history(&self, _limit: u64) -> NodeResult<Vec<IngestionHistoryEntry>> {
-        Ok(Vec::new())
+        Err(SinexError::invalid_state(
+            "ingestion history is not implemented for document ingestor sources",
+        ))
     }
 
     fn get_coverage_analysis(
@@ -925,6 +927,17 @@ mod tests {
             ))
         );
         assert!(!state.healthy);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn document_node_reports_ingestion_history_unavailable()
+    -> ::xtask::sandbox::TestResult<()> {
+        let node = DocumentNode::new();
+        let error = node
+            .get_ingestion_history(10)
+            .expect_err("document node should not report empty ingestion history as success");
+        assert!(error.to_string().contains("not implemented"));
         Ok(())
     }
 }

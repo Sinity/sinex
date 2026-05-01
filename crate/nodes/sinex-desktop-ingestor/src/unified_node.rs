@@ -1101,8 +1101,9 @@ impl IngestorNode for DesktopNode {
         _state: &Self::State,
         _limit: u64,
     ) -> NodeResult<Vec<IngestionHistoryEntry>> {
-        // Desktop node doesn't maintain granular ingestion history yet
-        Ok(vec![])
+        Err(SinexError::invalid_state(
+            "ingestion history is not implemented for desktop watcher sources",
+        ))
     }
 
     fn get_coverage_analysis(
