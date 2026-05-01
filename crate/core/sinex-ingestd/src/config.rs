@@ -5,10 +5,11 @@
 use crate::{IngestdResult, SinexError, material_assembler::DurabilityThresholds};
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
+use sinex_db::{PoolConfig, PoolSessionPolicy, create_pool_with_config_and_session_policy};
 use sinex_primitives::{
     env as shared_env,
     environment::environment,
-    units::{Bytes, Milliseconds},
+    units::{Bytes, Milliseconds, Seconds},
     validation::deserialize_validated_utf8_path,
 };
 use std::time::Duration;
@@ -493,12 +494,15 @@ impl IngestdConfig {
 
     /// Test database connection
     async fn test_database_connection(&self) -> IngestdResult<()> {
-        use sqlx::postgres::PgPoolOptions;
+        let mut config = self.pool_config();
+        config.max_connections = 1;
 
-        let pool = PgPoolOptions::new()
-            .max_connections(1)
-            .connect(&self.database_url)
-            .await?;
+        let pool = create_pool_with_config_and_session_policy(
+            &self.database_url,
+            &config,
+            PoolSessionPolicy::SqlxDefaults,
+        )
+        .await?;
 
         // Test basic query with a simple SELECT 1
         sqlx::query!("SELECT 1 as one")
@@ -529,18 +533,33 @@ impl IngestdConfig {
 
     /// Get database connection options
     #[must_use]
-    pub fn get_db_options(&self) -> sqlx::postgres::PgPoolOptions {
-        sqlx::postgres::PgPoolOptions::new()
-            .max_connections(self.database_pool_size)
-            .acquire_timeout(std::time::Duration::from_secs(
-                self.pool_acquire_timeout_secs,
-            ))
-            .idle_timeout(std::time::Duration::from_secs(self.pool_idle_timeout_secs))
-            .max_lifetime(std::time::Duration::from_mins(30))
+    pub fn pool_config(&self) -> PoolConfig {
+        PoolConfig {
+            max_connections: self.database_pool_size,
+            min_connections: 0,
+            acquire_timeout_secs: Seconds::from_secs(self.pool_acquire_timeout_secs),
+            idle_timeout_secs: Seconds::from_secs(self.pool_idle_timeout_secs),
+            statement_timeout_secs: Seconds::from_secs(0),
+            max_lifetime_secs: Some(Seconds::from_secs(30 * 60)),
+            validate_against_postgres_max: false,
+        }
         // Intentionally rely on sqlx's built-in connection health checks.
         // A custom before_acquire rollback/reset hook can deadlock after
         // specific protocol exchanges (for example COPY IN).
         // See: https://github.com/launchbadge/sqlx/issues/3117
+    }
+
+    pub async fn create_db_pool(&self) -> IngestdResult<sinex_db::DbPool> {
+        create_pool_with_config_and_session_policy(
+            &self.database_url,
+            &self.pool_config(),
+            PoolSessionPolicy::SqlxDefaults,
+        )
+        .await
+        .map_err(|e| {
+            SinexError::database(format!("Failed to connect to database: {e}"))
+                .with_operation("service.init_db_pool")
+        })
     }
 }
 
@@ -1148,6 +1167,30 @@ mod tests {
             config.material_durability_thresholds()?,
             DurabilityThresholds::default_checked()?
         );
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn pool_config_preserves_ingestd_pool_policy() -> xtask::sandbox::TestResult<()> {
+        let config = IngestdConfig {
+            database_pool_size: 7,
+            pool_acquire_timeout_secs: 11,
+            pool_idle_timeout_secs: 29,
+            ..IngestdConfig::default()
+        };
+
+        let pool = config.pool_config();
+
+        assert_eq!(pool.max_connections, 7);
+        assert_eq!(pool.min_connections, 0);
+        assert_eq!(pool.acquire_timeout_secs.as_secs(), 11);
+        assert_eq!(pool.idle_timeout_secs.as_secs(), 29);
+        assert_eq!(pool.statement_timeout_secs.as_secs(), 0);
+        assert_eq!(
+            pool.max_lifetime_secs.map(|value| value.as_secs()),
+            Some(30 * 60)
+        );
+        assert!(!pool.validate_against_postgres_max);
         Ok(())
     }
 

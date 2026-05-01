@@ -398,6 +398,7 @@ async fn pool_acquire_timeout_is_reported(ctx: TestContext) -> TestResult<()> {
         acquire_timeout_secs: Seconds::from_secs(30),
         idle_timeout_secs: Seconds::from_secs(300),
         statement_timeout_secs: Seconds::from_secs(60),
+        max_lifetime_secs: None,
         validate_against_postgres_max: false,
     };
     let pool = create_pool_with_config(ctx.database_url(), &config).await?;
