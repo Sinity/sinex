@@ -51,6 +51,7 @@ nix = { version = "0.27", features = [
     "fs",
     "signal",
     "process",
+    "term",
 ] }
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
@@ -110,7 +111,6 @@ blake3 = { workspace = true }
 shadow-rs = "0.35"
 
 [dev-dependencies]
-portable-pty = "0.8"
 vt100 = "0.15"
 
 [lints]

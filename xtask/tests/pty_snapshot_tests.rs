@@ -5,11 +5,15 @@
 //! rendered screen. This catches regressions in line wrapping, table borders,
 //! spacing, and terminal-oriented output that JSON snapshots cannot see.
 
+use std::fs::File;
 use std::io::Read;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use color_eyre::eyre::{Result, eyre};
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use nix::pty::{Winsize, openpty};
+use nix::unistd::dup;
 use rusqlite::params;
 use xtask::commands::exercise::{ExerciseReport, ReportEntry, StepEntry};
 use xtask::history::{HistoryDb, InvocationStatus};
@@ -43,41 +47,45 @@ fn history_db_path(state_dir: &Path) -> PathBuf {
     state_dir.join("xtask-history.db")
 }
 
+fn duplicate_fd(fd: &OwnedFd) -> Result<OwnedFd> {
+    let raw = dup(fd.as_raw_fd()).map_err(|error| eyre!("failed to duplicate PTY fd: {error}"))?;
+    // SAFETY: `dup` returns a fresh owned file descriptor on success.
+    Ok(unsafe { OwnedFd::from_raw_fd(raw) })
+}
+
 fn run_in_pty(state_dir: &Path, args: &[&str]) -> Result<String> {
-    let pty_system = native_pty_system();
-    let pair = pty_system
-        .openpty(PtySize {
-            rows: ROWS,
-            cols: COLS,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(|error| eyre!("failed to open PTY: {error}"))?;
-
+    let winsize = Winsize {
+        ws_row: ROWS,
+        ws_col: COLS,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    let pty =
+        openpty(Some(&winsize), None).map_err(|error| eyre!("failed to open PTY: {error}"))?;
     let bin = xtask_bin()?;
-    let mut cmd = CommandBuilder::new(bin);
-    cmd.cwd("/realm/project/sinex");
-    cmd.env("SINEX_STATE_DIR", state_dir);
-    // PTY child xtask invocations must read the seeded fixture DB, not any
-    // suite-level XTASK_HISTORY_DB override inherited from the parent process.
-    cmd.env("XTASK_HISTORY_DB", history_db_path(state_dir));
-    cmd.env("NO_COLOR", "1");
-    for arg in args {
-        cmd.arg(arg);
-    }
+    let stdin_fd = duplicate_fd(&pty.slave)?;
+    let stdout_fd = duplicate_fd(&pty.slave)?;
+    let stderr_fd = duplicate_fd(&pty.slave)?;
 
-    let mut child = pair
-        .slave
-        .spawn_command(cmd)
+    let mut child = Command::new(bin)
+        .current_dir("/realm/project/sinex")
+        .env("SINEX_STATE_DIR", state_dir)
+        // PTY child xtask invocations must read the seeded fixture DB, not any
+        // suite-level XTASK_HISTORY_DB override inherited from the parent process.
+        .env("XTASK_HISTORY_DB", history_db_path(state_dir))
+        .env("NO_COLOR", "1")
+        .args(args)
+        .stdin(Stdio::from(File::from(stdin_fd)))
+        .stdout(Stdio::from(File::from(stdout_fd)))
+        .stderr(Stdio::from(File::from(stderr_fd)))
+        .spawn()
         .map_err(|error| eyre!("failed to spawn PTY command: {error}"))?;
-    drop(pair.slave);
 
-    let mut reader = pair
-        .master
-        .try_clone_reader()
-        .map_err(|error| eyre!("failed to clone PTY reader: {error}"))?;
+    drop(pty.slave);
+
+    let mut reader = File::from(pty.master);
     let mut bytes = Vec::new();
-    reader.read_to_end(&mut bytes)?;
+    read_pty_to_end(&mut reader, &mut bytes)?;
     let status = child.wait()?;
     if !status.success() {
         return Err(eyre!(
@@ -99,6 +107,18 @@ fn normalize_screen(screen: &str) -> String {
         .join("\n")
         .trim_end()
         .to_string()
+}
+
+fn read_pty_to_end(reader: &mut File, bytes: &mut Vec<u8>) -> Result<()> {
+    let mut chunk = [0_u8; 8192];
+    loop {
+        match reader.read(&mut chunk) {
+            Ok(0) => return Ok(()),
+            Ok(n) => bytes.extend_from_slice(&chunk[..n]),
+            Err(error) if error.raw_os_error() == Some(libc::EIO) => return Ok(()),
+            Err(error) => return Err(error.into()),
+        }
+    }
 }
 
 fn set_fixed_timestamps(state_dir: &Path, invocation_id: i64) -> Result<()> {
