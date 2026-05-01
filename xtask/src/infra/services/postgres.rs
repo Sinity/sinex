@@ -17,9 +17,7 @@ pub(crate) fn validate_pg_identifier(ident: &str, kind: &str) -> Result<()> {
             .chars()
             .next()
             .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && ident
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_');
+        && ident.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
     if valid {
         Ok(())
     } else {
@@ -28,6 +26,15 @@ pub(crate) fn validate_pg_identifier(ident: &str, kind: &str) -> Result<()> {
             ident
         )
     }
+}
+
+fn pg_identifier(ident: &str, kind: &str) -> Result<String> {
+    validate_pg_identifier(ident, kind)?;
+    Ok(format!("\"{ident}\""))
+}
+
+fn pg_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 const MANAGED_CONFIG_BEGIN: &str = "# >>> sinex-dev managed configuration >>>";
@@ -145,7 +152,8 @@ fn absolute_path(path: &Path) -> Result<PathBuf> {
     if let Ok(canonical) = path.canonicalize() {
         return Ok(canonical);
     }
-    let cwd = env::current_dir().context("failed to read current dir while resolving postgres path")?;
+    let cwd =
+        env::current_dir().context("failed to read current dir while resolving postgres path")?;
     Ok(cwd.join(path))
 }
 
@@ -426,26 +434,30 @@ impl PostgresManager {
     }
 
     pub fn drop_db(&self, db: &str, creator: &str) -> Result<()> {
+        let db_ident = pg_identifier(db, "database")?;
         // WITH (FORCE) terminates any remaining connections before dropping (PG 13+)
         self.psql(
             creator,
             "postgres",
-            &format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+            &format!("DROP DATABASE IF EXISTS {db_ident} WITH (FORCE)"),
         )?;
         Ok(())
     }
 
     pub fn ensure_db(&self, db: &str, owner: &str, creator: &str) -> Result<()> {
+        let db_ident = pg_identifier(db, "database")?;
+        let owner_ident = pg_identifier(owner, "role")?;
+        let db_literal = pg_literal(db);
         let exists = self.psql(
             creator,
             "postgres",
-            &format!("SELECT 1 FROM pg_database WHERE datname = '{db}'"),
+            &format!("SELECT 1 FROM pg_database WHERE datname = {db_literal}"),
         )?;
         if exists.is_empty() {
             self.psql(
                 creator,
                 "postgres",
-                &format!("CREATE DATABASE {db} OWNER {owner}"),
+                &format!("CREATE DATABASE {db_ident} OWNER {owner_ident}"),
             )?;
         }
         Ok(())
@@ -534,16 +546,18 @@ impl PostgresManager {
         F: FnMut(&str, &str, &str) -> Result<String>,
     {
         for ext in &["timescaledb", "vector", "pg_jsonschema", "pg_trgm"] {
+            let ext_ident = pg_identifier(ext, "extension")?;
+            let ext_literal = pg_literal(ext);
             let check = psql(
                 superuser,
                 db,
-                &format!("SELECT 1 FROM pg_available_extensions WHERE name = '{ext}'"),
+                &format!("SELECT 1 FROM pg_available_extensions WHERE name = {ext_literal}"),
             )?;
             if !check.is_empty() {
                 psql(
                     superuser,
                     db,
-                    &format!("CREATE EXTENSION IF NOT EXISTS \"{ext}\" CASCADE"),
+                    &format!("CREATE EXTENSION IF NOT EXISTS {ext_ident} CASCADE"),
                 )
                 .wrap_err_with(|| format!("failed to install postgres extension {ext}"))?;
             }
@@ -562,13 +576,15 @@ impl PostgresManager {
     where
         F: FnMut(&str, &str, &str) -> Result<String>,
     {
+        let role_ident = pg_identifier(role, "role")?;
+        let role_literal = pg_literal(role);
         let exists = psql(
             creator,
             "postgres",
-            &format!("SELECT 1 FROM pg_roles WHERE rolname = '{role}'"),
+            &format!("SELECT 1 FROM pg_roles WHERE rolname = {role_literal}"),
         )?;
         if exists.is_empty() {
-            let mut sql = format!("CREATE ROLE {role}");
+            let mut sql = format!("CREATE ROLE {role_ident}");
             if login {
                 sql.push_str(" LOGIN");
             } else {
@@ -756,6 +772,24 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn postgres_identifier_rendering_rejects_sql_fragments() -> TestResult<()> {
+        assert_eq!(
+            pg_identifier("sinex_test_db", "database")?,
+            "\"sinex_test_db\""
+        );
+        assert!(pg_identifier("sinex-test-db", "database").is_err());
+        assert!(pg_identifier("sinex;DROP_DATABASE", "database").is_err());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn postgres_literal_rendering_escapes_single_quotes() -> TestResult<()> {
+        assert_eq!(pg_literal("sinex"), "'sinex'");
+        assert_eq!(pg_literal("sin'ex"), "'sin''ex'");
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_install_extensions_reports_create_failures() -> TestResult<()> {
         let error = PostgresManager::install_extensions_with("postgres", "sinex", |_, _, sql| {
             if sql.contains("SELECT 1 FROM pg_available_extensions") {
@@ -832,7 +866,7 @@ mod tests {
                 (
                     "postgres".to_string(),
                     "postgres".to_string(),
-                    "CREATE ROLE sinex_gateway NOLOGIN".to_string(),
+                    "CREATE ROLE \"sinex_gateway\" NOLOGIN".to_string(),
                 ),
             ]
         );
@@ -866,6 +900,21 @@ mod tests {
                 "SELECT 1 FROM pg_roles WHERE rolname = 'sinex_readonly'".to_string(),
             )]
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ensure_role_rejects_invalid_role_identifiers() -> TestResult<()> {
+        let error = PostgresManager::ensure_role_with(
+            "sinex;drop role postgres",
+            false,
+            false,
+            "postgres",
+            |_, _, _| Ok(String::new()),
+        )
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("invalid PostgreSQL role identifier"));
         Ok(())
     }
 
