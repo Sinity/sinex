@@ -610,11 +610,13 @@ let
         ];
       historySourcesWithUnits =
         map
-          (source: source // {
-            sourceUnitId =
-              if source.sourceUnitId != null then source.sourceUnitId
-              else terminalSourceUnitIdForShell source.shell;
-          })
+          (source:
+            let explicit = source.sourceUnitId or null;
+            in source // {
+              sourceUnitId =
+                if explicit != null then explicit
+                else terminalSourceUnitIdForShell source.shell;
+            })
           effectiveHistorySources;
       sourceUnitGroups =
         mapAttrsToList
