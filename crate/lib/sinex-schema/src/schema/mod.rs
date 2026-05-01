@@ -11,6 +11,7 @@ use sea_query::Alias;
 // domain of the database.
 pub mod annotations;
 pub mod blobs;
+pub mod documents;
 pub mod embeddings;
 pub mod entities;
 pub mod events;
@@ -22,6 +23,7 @@ pub mod temporal_ledger;
 // Re-export all schema definitions for easy access from apply orchestration and repositories.
 pub use annotations::*;
 pub use blobs::*;
+pub use documents::*;
 pub use embeddings::*;
 pub use entities::*;
 pub use events::*;
@@ -34,6 +36,7 @@ pub use temporal_ledger::*;
 pub mod records {
     pub use super::annotations::{EventAnnotationRecord, TagRecord};
     pub use super::blobs::BlobRecord;
+    pub use super::documents::{DocumentChunkRecord, DocumentRecord};
     pub use super::embeddings::EmbeddingModelRecord;
     pub use super::entities::EntityRecord;
     pub use super::events::{EventRecord, EventReplacementRecord};
@@ -311,6 +314,22 @@ const ALL_TABLES: &[TableMeta] = &[
         is_hypertable: false,
         has_triggers: false,
         cleanup_protected: true,
+    },
+    TableMeta {
+        schema: "core",
+        name: "documents",
+        qualified_name: "core.documents",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "core",
+        name: "document_chunks",
+        qualified_name: "core.document_chunks",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
     },
 ];
 
