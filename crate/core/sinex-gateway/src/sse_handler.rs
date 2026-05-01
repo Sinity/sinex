@@ -242,62 +242,81 @@ fn parse_last_event_id(headers: &HeaderMap) -> Result<Option<Id<Event<JsonValue>
 fn format_sse_message(msg: SseMessage) -> SseEvent {
     match msg {
         SseMessage::Event { seq, event } => {
-            let data = serialize_sse_payload("event", &SseEventPayload { event: &event });
-            let mut frame = SseEvent::default().event("event").data(data);
-            if let Some(event_id) = event.id {
-                frame = frame.id(event_id.to_string());
-            } else {
-                frame = frame.id(seq.to_string());
+            match serialize_sse_payload("event", &SseEventPayload { event: &event }) {
+                Ok(data) => {
+                    let mut frame = SseEvent::default().event("event").data(data);
+                    if let Some(event_id) = event.id {
+                        frame = frame.id(event_id.to_string());
+                    } else {
+                        frame = frame.id(seq.to_string());
+                    }
+                    frame
+                }
+                Err(error) => format_sse_error_event(error),
             }
-            frame
         }
         SseMessage::Gap {
             from_seq,
             to_seq,
             dropped,
         } => {
-            let data = serialize_sse_payload(
-                "gap",
-                &SseGapPayload {
-                    from_seq,
-                    to_seq,
-                    dropped,
-                },
-            );
-            SseEvent::default().event("gap").data(data)
+            let payload = SseGapPayload {
+                from_seq,
+                to_seq,
+                dropped,
+            };
+            match serialize_sse_payload("gap", &payload) {
+                Ok(data) => SseEvent::default().event("gap").data(data),
+                Err(error) => format_sse_error_event(error),
+            }
         }
         SseMessage::Heartbeat { ts } => {
-            let data = serialize_sse_payload("heartbeat", &SseHeartbeatPayload { ts });
-            SseEvent::default().event("heartbeat").data(data)
+            let payload = SseHeartbeatPayload { ts };
+            match serialize_sse_payload("heartbeat", &payload) {
+                Ok(data) => SseEvent::default().event("heartbeat").data(data),
+                Err(error) => format_sse_error_event(error),
+            }
+        }
+        SseMessage::Error { code, message } => {
+            format_sse_error_event(SseErrorPayload { code, message })
         }
     }
 }
 
-fn serialize_sse_payload<T: Serialize>(payload_kind: &str, payload: &T) -> String {
+fn format_sse_error_event(payload: SseErrorPayload) -> SseEvent {
+    SseEvent::default()
+        .event("error")
+        .data(serialize_sse_error_payload(&payload))
+}
+
+fn serialize_sse_error_payload(payload: &SseErrorPayload) -> String {
     match serde_json::to_string(payload) {
-        Ok(data) => data,
-        Err(error) => {
+        Ok(error_payload) => error_payload,
+        Err(fallback_error) => {
             tracing::error!(
-                payload_kind,
-                error = %error,
-                "Failed to serialize SSE payload"
+                error = %fallback_error,
+                "Failed to serialize SSE fallback error payload"
             );
-            match serde_json::to_string(&SseErrorPayload {
-                code: "serialization_error".to_string(),
-                message: format!("failed to serialize SSE {payload_kind} payload: {error}"),
-            }) {
-                Ok(error_payload) => error_payload,
-                Err(fallback_error) => {
-                    tracing::error!(
-                        payload_kind,
-                        error = %fallback_error,
-                        "Failed to serialize SSE fallback error payload"
-                    );
-                    r#"{"code":"serialization_error","message":"failed to serialize SSE fallback error payload"}"#.to_string()
-                }
-            }
+            r#"{"code":"serialization_error","message":"failed to serialize SSE fallback error payload"}"#.to_string()
         }
     }
+}
+
+fn serialize_sse_payload<T: Serialize>(
+    payload_kind: &str,
+    payload: &T,
+) -> Result<String, SseErrorPayload> {
+    serde_json::to_string(payload).map_err(|error| {
+        tracing::error!(
+            payload_kind,
+            error = %error,
+            "Failed to serialize SSE payload"
+        );
+        SseErrorPayload {
+            code: "serialization_error".to_string(),
+            message: format!("failed to serialize SSE {payload_kind} payload: {error}"),
+        }
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -352,14 +371,14 @@ mod tests {
 
     #[sinex_test]
     async fn serialize_sse_payload_surfaces_serialization_failures() -> TestResult<()> {
-        let rendered = serialize_sse_payload("event", &FailingSerialize);
-        let payload: serde_json::Value = serde_json::from_str(&rendered)?;
+        let payload = serialize_sse_payload("event", &FailingSerialize)
+            .expect_err("serialization failure should produce structured error payload");
 
-        assert_eq!(payload["code"], "serialization_error");
+        assert_eq!(payload.code, "serialization_error");
         assert!(
-            payload["message"]
-                .as_str()
-                .is_some_and(|message| message.contains("event") && message.contains("boom"))
+            payload.message.contains("event") && payload.message.contains("boom"),
+            "unexpected error message: {}",
+            payload.message
         );
         Ok(())
     }
