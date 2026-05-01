@@ -685,7 +685,9 @@ where
         &self,
         _limit: u64,
     ) -> NodeResult<Vec<crate::exploration::IngestionHistoryEntry>> {
-        Ok(Vec::new())
+        Err(SinexError::invalid_state(
+            "ingestion history is not implemented for derived nodes",
+        ))
     }
 
     fn get_coverage_analysis(
@@ -702,7 +704,9 @@ where
         _path: &sinex_primitives::domain::SanitizedPath,
         _format: crate::exploration::ExportFormat,
     ) -> NodeResult<()> {
-        Ok(())
+        Err(SinexError::invalid_state(
+            "data export is not implemented for derived nodes",
+        ))
     }
 }
 
