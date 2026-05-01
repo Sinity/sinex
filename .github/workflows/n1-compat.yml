@@ -58,8 +58,6 @@ jobs:
 
       - name: Build sinex-gateway (master)
         run: xtask build -p sinex-gateway --release
-        env:
-          SQLX_OFFLINE: "true"
 
       - name: Download latest sinex-terminal-ingestor release
         id: download-ingestor
