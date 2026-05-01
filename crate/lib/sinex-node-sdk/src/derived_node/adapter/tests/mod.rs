@@ -8,7 +8,7 @@
         DerivedNodeConfig, DerivedOutput, DerivedTriggerContext, InputProvenanceFilter,
         ScopeReconcilerWrapper, TransducerWrapper,
     };
-    use crate::exploration::ExplorationProvider;
+    use crate::exploration::{ExplorationProvider, ExportFormat};
     #[cfg(feature = "messaging")]
     use crate::health_reporter::{HealthReporter, HealthThresholds};
     use crate::runtime::stream::{
@@ -25,7 +25,9 @@
     use serde::{Deserialize, Serialize};
     use serde_json::json;
     use sinex_db::DbPoolExt;
-    use sinex_primitives::domain::{EventSource, EventType, ProcessingMode, TriggerKind};
+    use sinex_primitives::domain::{
+        EventSource, EventType, ProcessingMode, SanitizedPath, TriggerKind,
+    };
     use sinex_primitives::events::{DynamicPayload, Event};
     use sinex_primitives::privacy::ProcessingContext;
     use sinex_primitives::temporal::Timestamp;
@@ -673,6 +675,29 @@
         Ok(())
     }
 
+    #[sinex_test]
+    async fn derived_ingestion_history_is_explicitly_unavailable() -> TestResult<()> {
+        let adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
+
+        let error = ExplorationProvider::get_ingestion_history(&adapter, 10)
+            .expect_err("derived nodes must not report an empty ingestion history as success");
+
+        assert!(error.to_string().contains("derived nodes"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn derived_export_is_explicitly_unavailable() -> TestResult<()> {
+        let adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
+        let path = SanitizedPath::from_static("/tmp/derived-export.json");
+
+        let error = ExplorationProvider::export_data(&adapter, &path, ExportFormat::Json)
+            .expect_err("derived nodes must not report export success without writing data");
+
+        assert!(error.to_string().contains("derived nodes"));
+        Ok(())
+    }
+
     #[cfg(feature = "messaging")]
     #[sinex_test]
     async fn derived_source_state_reflects_failed_health_reporter(
@@ -880,4 +905,3 @@
         );
         Ok(())
     }
-
