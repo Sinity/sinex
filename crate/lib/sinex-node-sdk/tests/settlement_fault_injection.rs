@@ -411,7 +411,12 @@ async fn settlement_quarantines_and_halts_when_dlq_unavailable_runtime(
     .build()?;
 
     let publish_err = publisher
-        .publish_processing_failure(&event, "synthetic fault", "dlq-unavail-test")
+        .publish_processing_failure(
+            &event,
+            "synthetic fault",
+            "dlq-unavail-test",
+            sinex_primitives::transport::Class::Derived,
+        )
         .await
         .expect_err("publish_processing_failure must fail when target stream is absent");
 
@@ -541,7 +546,7 @@ async fn settlement_opens_circuit_breaker_when_nats_down_runtime(
     .build()?;
 
     let publish_err = publisher
-        .publish(&event)
+        .publish(&event, sinex_primitives::transport::Class::Critical)
         .await
         .expect_err("publish must fail after NATS is shut down");
 
