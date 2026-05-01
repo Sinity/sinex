@@ -12,7 +12,10 @@ use serde::Serialize;
 use sinex_primitives::events::schema_registry::get_all_payloads;
 use sinex_primitives::proof::{
     self, Claim, Exemption, PROOF_CATALOG_SCHEMA_VERSION, ProofObligation, RunnerBinding,
-    RuntimeUnitDescriptor, SourceUnitDescriptor,
+    RuntimeUnitDescriptor,
+};
+use sinex_primitives::source_unit::{
+    self, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
 };
 
 use crate::command_catalog::{CommandInfo, collect_command_catalog};
@@ -22,7 +25,7 @@ use crate::commands::test::{ScenarioCatalogEntry, discover_scenario_catalog};
 pub struct ProofCatalog {
     pub schema_version: u32,
     pub runtime_units: Vec<RuntimeUnitDescriptor>,
-    pub source_units: Vec<SourceUnitDescriptor>,
+    pub source_units: Vec<SourceUnitSubject>,
     pub claims: Vec<Claim>,
     pub runner_bindings: Vec<RunnerBinding>,
     pub obligations: Vec<ProofObligation>,
@@ -39,6 +42,31 @@ pub struct EventPayloadSubject {
     pub event_type: String,
     pub version: String,
     pub type_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct SourceUnitEventPair {
+    pub source: String,
+    pub event_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct SourceUnitSubject {
+    pub subject: String,
+    pub id: String,
+    pub namespace: String,
+    pub runner_pack: String,
+    pub modes: Vec<String>,
+    pub output_event_types: Vec<SourceUnitEventPair>,
+    pub privacy_tier: String,
+    pub runtime_shape: String,
+    pub retention_policy: String,
+    pub checkpoint_family: String,
+    pub occurrence_identity: String,
+    pub access_policy: String,
+    pub package_impact: String,
+    pub implementation_mode: String,
+    pub proof_obligations: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -65,15 +93,17 @@ pub struct ScenarioSubject {
 }
 
 pub fn build_proof_catalog(workspace_root: &Path) -> Result<ProofCatalog> {
+    crate::source_unit_inventory::link_source_unit_inventories();
+
     let mut runtime_units = proof::runtime_unit_descriptors()
         .copied()
         .collect::<Vec<_>>();
     runtime_units.sort_by(|left, right| left.subject.as_str().cmp(right.subject.as_str()));
 
-    let mut source_units = proof::source_unit_descriptors()
-        .copied()
+    let mut source_units = source_unit::all_source_units()
+        .map(source_unit_subject)
         .collect::<Vec<_>>();
-    source_units.sort_by(|left, right| left.subject.as_str().cmp(right.subject.as_str()));
+    source_units.sort_by(|left, right| left.subject.cmp(&right.subject));
 
     let mut claims = proof::claims().copied().collect::<Vec<_>>();
     claims.sort_by(|left, right| left.id.cmp(right.id));
@@ -122,6 +152,93 @@ fn collect_event_payload_subjects() -> Vec<EventPayloadSubject> {
         .collect::<Vec<_>>();
     subjects.sort_by(|left, right| left.subject.cmp(&right.subject));
     subjects
+}
+
+fn source_unit_subject(unit: &'static source_unit::SourceUnitDescriptor) -> SourceUnitSubject {
+    SourceUnitSubject {
+        subject: format!("source_unit:{}", unit.id),
+        id: unit.id.to_string(),
+        namespace: unit.namespace.to_string(),
+        runner_pack: unit.runner_pack.to_string(),
+        modes: unit
+            .horizons
+            .iter()
+            .map(|horizon| horizon_name(*horizon).to_string())
+            .collect(),
+        output_event_types: unit
+            .event_types
+            .iter()
+            .map(|(source, event_type)| SourceUnitEventPair {
+                source: (*source).to_string(),
+                event_type: (*event_type).to_string(),
+            })
+            .collect(),
+        privacy_tier: privacy_tier_name(unit.privacy_tier).to_string(),
+        runtime_shape: runtime_shape_name(unit.runtime_shape).to_string(),
+        retention_policy: retention_policy(unit.retention),
+        checkpoint_family: checkpoint_family_name(unit.checkpoint_family).to_string(),
+        occurrence_identity: occurrence_identity(unit.occurrence_identity),
+        access_policy: unit.access_policy.to_string(),
+        package_impact: unit.package_impact.to_string(),
+        implementation_mode: unit.implementation_mode.to_string(),
+        proof_obligations: unit
+            .proof_obligations
+            .iter()
+            .map(|obligation| (*obligation).to_string())
+            .collect(),
+    }
+}
+
+fn horizon_name(horizon: Horizon) -> &'static str {
+    match horizon {
+        Horizon::Continuous => "continuous",
+        Horizon::Historical => "historical",
+    }
+}
+
+fn privacy_tier_name(tier: PrivacyTier) -> &'static str {
+    match tier {
+        PrivacyTier::Public => "public",
+        PrivacyTier::Sensitive => "sensitive",
+        PrivacyTier::Secret => "secret",
+    }
+}
+
+fn runtime_shape_name(shape: RuntimeShape) -> &'static str {
+    match shape {
+        RuntimeShape::Continuous => "continuous",
+        RuntimeShape::OnDemand => "on_demand",
+        RuntimeShape::Scheduled => "scheduled",
+    }
+}
+
+fn retention_policy(policy: RetentionPolicy) -> String {
+    match policy {
+        RetentionPolicy::Forever => "forever".to_string(),
+        RetentionPolicy::Days { days } => format!("days:{days}"),
+        RetentionPolicy::Tiered {
+            hot_days,
+            warm_days,
+        } => format!("tiered:hot={hot_days}:warm={warm_days}"),
+    }
+}
+
+fn checkpoint_family_name(family: source_unit::CheckpointFamily) -> &'static str {
+    match family {
+        source_unit::CheckpointFamily::AppendStream => "append_stream",
+        source_unit::CheckpointFamily::MutableSnapshot { .. } => "mutable_snapshot",
+        source_unit::CheckpointFamily::Journal => "journal",
+        source_unit::CheckpointFamily::Polling => "polling",
+        source_unit::CheckpointFamily::LiveObservation => "live_observation",
+    }
+}
+
+fn occurrence_identity(identity: OccurrenceIdentity) -> String {
+    match identity {
+        OccurrenceIdentity::Uuid5From(source) => format!("uuid5:{source}"),
+        OccurrenceIdentity::Natural => "natural_key".to_string(),
+        OccurrenceIdentity::Anchor => "material_anchor".to_string(),
+    }
 }
 
 fn collect_xtask_command_subjects() -> Vec<XtaskCommandSubject> {
@@ -199,7 +316,25 @@ mod tests {
             catalog
                 .source_units
                 .iter()
-                .any(|unit| unit.subject.as_str() == "source_unit:terminal.atuin-history")
+                .any(|unit| unit.subject.as_str() == "source_unit:terminal")
+        );
+        assert!(
+            catalog
+                .source_units
+                .iter()
+                .any(|unit| unit.subject.as_str() == "source_unit:fs")
+        );
+        assert!(
+            catalog
+                .source_units
+                .iter()
+                .any(|unit| unit.subject.as_str() == "source_unit:desktop")
+        );
+        assert!(
+            catalog
+                .source_units
+                .iter()
+                .any(|unit| unit.subject.as_str() == "source_unit:system")
         );
         assert!(
             catalog
