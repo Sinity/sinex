@@ -198,7 +198,8 @@ fn setup_tracing(format: LogFormat, tokio_console: bool, default_filter: &str) -
         LogFormat::Json => TracingFormat::Json,
         LogFormat::Text => TracingFormat::Text,
     };
-    service_runtime::install_tracing(format, default_filter)
+    service_runtime::install_tracing(format, default_filter)?;
+    Ok(())
 }
 
 #[cfg(test)]

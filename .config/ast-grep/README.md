@@ -20,6 +20,7 @@ Within xtask automation, `error` severity is blocking; `warning` and `hint` rema
 | `anyhow-in-lib` | `warning` | `rust` | Use SinexError instead of anyhow in library code |
 | `bare-offset-datetime` | `warning` | `rust` | Use Timestamp wrapper instead of bare OffsetDateTime |
 | `chrono-usage` | `warning` | `rust` | Use 'time' crate instead of 'chrono' |
+| `color-eyre-in-runtime` | `warning` | `rust` | Keep color_eyre at binary/CLI/test presentation boundaries; use SinexError in shared runtime and library code |
 | `context-erasure` | `warning` | `rust` | Error context erasure: use .with_context() instead of .map_err(|_| ...) |
 | `double-clone` | `warning` | `rust` | Double clone detected - likely unnecessary |
 | `expect-hardcoded` | `warning` | `rust` | Hardcoded expect() message - consider using context |
@@ -139,6 +140,22 @@ Within xtask automation, `error` severity is blocking; `warning` and `hint` rema
 - Intent:
   The codebase standardizes on the 'time' crate for date/time handling.
   Use time::OffsetDateTime, time::Duration, etc. instead of chrono types.
+
+## `color-eyre-in-runtime`
+
+- Severity: `warning`
+- Language: `rust`
+- Message: Keep color_eyre at binary/CLI/test presentation boundaries; use SinexError in shared runtime and library code
+- Ignore globs:
+  - `**/*_test.rs`
+  - `**/main.rs`
+  - `**/tests/**`
+  - `crate/cli/**`
+  - `xtask/**`
+- Intent:
+  Shared library and runtime surfaces should return SinexError so callers can
+  preserve error class, context, and protocol mapping. color_eyre is still
+  acceptable at binary/CLI/devtool presentation boundaries and in tests.
 
 ## `context-erasure`
 
