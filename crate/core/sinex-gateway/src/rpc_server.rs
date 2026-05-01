@@ -24,7 +24,6 @@ use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as HyperBuilder;
 use hyper_util::service::TowerToHyperService;
 use parking_lot::RwLock;
-use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_node_sdk::systemd_notify;
@@ -32,12 +31,10 @@ use sinex_primitives::Timestamp;
 use sinex_primitives::rpc::JsonRpcError;
 use sinex_primitives::{Bytes, Uuid};
 use std::borrow::Cow;
-use std::convert::TryFrom;
-use std::fs::File;
-use std::io::BufReader;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::task::JoinHandle;
+use tokio_rustls::rustls::pki_types::pem::PemObject;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::rustls::server::WebPkiClientVerifier;
 use tokio_rustls::{TlsAcceptor, rustls};
@@ -1089,37 +1086,15 @@ fn load_rustls_config(
     key_path: &str,
     client_ca_path: Option<&str>,
 ) -> color_eyre::eyre::Result<rustls::ServerConfig> {
-    let cert_file = &mut BufReader::new(File::open(cert_path)?);
-    let key_file = &mut BufReader::new(File::open(key_path)?);
-
-    let cert_chain: Vec<CertificateDer<'static>> = certs(cert_file)
+    let cert_chain: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(cert_path)?
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|e| eyre!("Failed to read TLS certificate from {cert_path}: {e}"))?;
 
-    let mut keys: Vec<PrivateKeyDer<'static>> = pkcs8_private_keys(key_file)
-        .map(|key| {
-            key.map(PrivateKeyDer::Pkcs8)
-                .map_err(|e| eyre!("Failed to read TLS private key (pkcs8) from {key_path}: {e}"))
-        })
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    if keys.is_empty() {
-        let mut key_file = BufReader::new(File::open(key_path)?);
-        keys = rsa_private_keys(&mut key_file)
-            .map(|key| {
-                key.map(PrivateKeyDer::Pkcs1)
-                    .map_err(|e| eyre!("Failed to read TLS private key (rsa) from {key_path}: {e}"))
-            })
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-    }
-
-    let key = keys
-        .into_iter()
-        .next()
-        .ok_or_else(|| eyre!("No private keys found in {}", key_path))?;
+    let key = PrivateKeyDer::from_pem_file(key_path)
+        .map_err(|e| eyre!("Failed to read TLS private key from {key_path}: {e}"))?;
 
     if let Some(ca_path) = client_ca_path {
-        let mut ca_reader = BufReader::new(File::open(ca_path)?);
-        let client_certs: Vec<CertificateDer<'static>> = certs(&mut ca_reader)
+        let client_certs: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(ca_path)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| eyre!("Failed to read client CA bundle from {ca_path}: {e}"))?;
         let mut roots = rustls::RootCertStore::empty();
