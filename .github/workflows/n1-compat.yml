@@ -57,7 +57,7 @@ jobs:
             | sh -s -- -b /usr/local/bin
 
       - name: Build sinex-gateway (master)
-        run: cargo build -p sinex-gateway --release
+        run: xtask build -p sinex-gateway --release
         env:
           SQLX_OFFLINE: "true"
 
@@ -68,16 +68,16 @@ jobs:
             --jq '.tag_name' 2>/dev/null || echo "")
           if [ -z "$LATEST" ]; then
             echo "No releases found — building from source as N-0 baseline"
-            cargo build -p sinex-terminal-ingestor --release
-            cp target/release/sinex-terminal-ingestor /tmp/sinex-terminal-ingestor-prev
+            xtask build -p sinex-terminal-ingestor --release
+            cp .sinex/target/release/sinex-terminal-ingestor /tmp/sinex-terminal-ingestor-prev
             echo "source=local" >> $GITHUB_OUTPUT
           else
             ASSET_URL=$(gh api repos/${{ github.repository }}/releases/latest \
               --jq '.assets[] | select(.name == "sinex-terminal-ingestor") | .browser_download_url')
             if [ -z "$ASSET_URL" ]; then
               echo "Release $LATEST has no sinex-terminal-ingestor asset — skipping download, building from source"
-              cargo build -p sinex-terminal-ingestor --release
-              cp target/release/sinex-terminal-ingestor /tmp/sinex-terminal-ingestor-prev
+              xtask build -p sinex-terminal-ingestor --release
+              cp .sinex/target/release/sinex-terminal-ingestor /tmp/sinex-terminal-ingestor-prev
               echo "source=local" >> $GITHUB_OUTPUT
             else
               curl -L "$ASSET_URL" -o /tmp/sinex-terminal-ingestor-prev
@@ -106,14 +106,14 @@ jobs:
           # Run sinex-gateway schema application (gateway owns migrations)
           DATABASE_URL="postgresql://sinex:sinex@localhost/sinex" \
           SINEX_NATS_URL="nats://127.0.0.1:4222" \
-          ./target/release/sinex-gateway schema-apply --skip-if-applied || true
+          ./.sinex/target/release/sinex-gateway schema-apply --skip-if-applied || true
 
       - name: Start sinex-gateway (master)
         run: |
           DATABASE_URL="postgresql://sinex:sinex@localhost/sinex" \
           SINEX_NATS_URL="nats://127.0.0.1:4222" \
           RUST_LOG="info" \
-          ./target/release/sinex-gateway rpc-server &
+          ./.sinex/target/release/sinex-gateway rpc-server &
           echo "GATEWAY_PID=$!" >> $GITHUB_ENV
           sleep 3
 
