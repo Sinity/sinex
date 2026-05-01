@@ -4,7 +4,8 @@
 //! the new unified Node interface from Part 16.
 
 use crate::{
-    NodeResult,
+    NodeResult, SinexError,
+    acquisition_manager::{AcquisitionManager, RotationPolicy, SourceMaterialHandle},
     runtime::stream::{
         Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType, ScanArgs,
         ScanEstimate, ScanReport, TimeHorizon,
@@ -12,6 +13,7 @@ use crate::{
 };
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{DirDiscoveredPayload, FileDiscoveredPayload};
 use sinex_primitives::temporal::Timestamp;
@@ -93,6 +95,29 @@ impl FilesystemNode {
 
         info!(path = %path.as_str(), "Scanning directory");
 
+        let runtime = self.runtime.as_ref();
+        let mut material_context = if emit_events {
+            if let Some(runtime) = runtime {
+                let manager =
+                    runtime.acquisition_manager(RotationPolicy::default(), "filesystem.example")?;
+                let handle = manager
+                    .begin_material_with_metadata(
+                        path.as_str(),
+                        json!({
+                            "example": true,
+                            "scan_kind": "directory_simple",
+                            "source_path": path.as_str(),
+                        }),
+                    )
+                    .await?;
+                Some((manager, handle))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let mut entries = fs::read_dir(path).await?;
 
         while let Some(entry) = entries.next_entry().await? {
@@ -112,7 +137,7 @@ impl FilesystemNode {
             if emit_events {
                 use std::os::unix::fs::PermissionsExt;
 
-                let event = if metadata.is_file() {
+                if metadata.is_file() {
                     let modified_time = metadata
                         .modified()
                         .ok()
@@ -127,13 +152,11 @@ impl FilesystemNode {
                         permissions: Some(metadata.permissions().mode()),
                     };
 
-                    // Example uses synthesis provenance with a placeholder parent ID
-                    let placeholder_parent =
-                        sinex_primitives::events::builder::EventId::from_uuid(uuid::Uuid::now_v7());
-                    payload
-                        .from_parents([placeholder_parent])?
-                        .build()?
-                        .to_json_event()?
+                    if let (Some(runtime), Some((manager, handle))) =
+                        (runtime, material_context.as_mut())
+                    {
+                        Self::emit_payload_from_material(runtime, manager, handle, payload).await?;
+                    }
                 } else if metadata.is_dir() {
                     let modified_time = metadata
                         .modified()
@@ -147,19 +170,13 @@ impl FilesystemNode {
                         modified_at: modified_time,
                     };
 
-                    // Example uses synthesis provenance with a placeholder parent ID
-                    let placeholder_parent =
-                        sinex_primitives::events::builder::EventId::from_uuid(uuid::Uuid::now_v7());
-                    payload
-                        .from_parents([placeholder_parent])?
-                        .build()?
-                        .to_json_event()?
+                    if let (Some(runtime), Some((manager, handle))) =
+                        (runtime, material_context.as_mut())
+                    {
+                        Self::emit_payload_from_material(runtime, manager, handle, payload).await?;
+                    }
                 } else {
                     continue;
-                };
-
-                if let Some(runtime) = self.runtime.as_ref() {
-                    runtime.event_emitter().emit(event).await?;
                 }
             }
 
@@ -168,8 +185,47 @@ impl FilesystemNode {
             // Note: Not recursing into subdirectories for simplicity in this example
         }
 
+        if let Some((manager, mut handle)) = material_context {
+            manager
+                .finalize_with_metadata(
+                    &mut handle,
+                    "scan_complete",
+                    json!({
+                        "scan_kind": "directory_simple",
+                        "source_path": path.as_str(),
+                        "events": event_count,
+                    }),
+                )
+                .await?;
+        }
+
         debug!(path = %path.as_str(), events = event_count, "Directory scan completed");
         Ok(event_count)
+    }
+
+    async fn emit_payload_from_material<P>(
+        runtime: &NodeRuntimeState,
+        manager: &AcquisitionManager,
+        handle: &mut SourceMaterialHandle,
+        payload: P,
+    ) -> NodeResult<()>
+    where
+        P: EventPayload,
+    {
+        let mut record = serde_json::to_vec(&payload)?;
+        record.push(b'\n');
+        let anchors = manager
+            .append_record_batch(handle, std::slice::from_ref(&record))
+            .await?;
+        let anchor = anchors.first().copied().ok_or_else(|| {
+            SinexError::invalid_state("material append returned no anchor for filesystem event")
+        })?;
+        let event = payload
+            .from_material_at(anchor.material_id, anchor.offset_start)
+            .build()?
+            .to_json_event()?;
+        runtime.event_emitter().emit(event).await?;
+        Ok(())
     }
 
     /// Take a snapshot of current filesystem state
@@ -451,7 +507,9 @@ impl ExplorationProvider for FilesystemNode {
         })
     }
     fn get_ingestion_history(&self, _limit: u64) -> NodeResult<Vec<IngestionHistoryEntry>> {
-        Ok(Vec::new())
+        Err(SinexError::invalid_state(
+            "ingestion history is not implemented in the example filesystem node",
+        ))
     }
     fn get_coverage_analysis(
         &self,
@@ -462,6 +520,40 @@ impl ExplorationProvider for FilesystemNode {
         )
     }
     fn export_data(&self, _path: &SanitizedPath, _format: ExportFormat) -> NodeResult<()> {
+        Err(SinexError::invalid_state(
+            "data export is not implemented in the example filesystem node",
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FilesystemNode, Utf8PathBuf};
+    use crate::exploration::{ExplorationProvider, ExportFormat};
+    use sinex_primitives::SanitizedPath;
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn example_ingestion_history_is_explicitly_unavailable() -> xtask::sandbox::TestResult<()>
+    {
+        let node = FilesystemNode::new(Vec::<Utf8PathBuf>::new());
+
+        let error = ExplorationProvider::get_ingestion_history(&node, 10)
+            .expect_err("example must not report empty ingestion history as success");
+
+        assert!(error.to_string().contains("example filesystem node"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn example_export_is_explicitly_unavailable() -> xtask::sandbox::TestResult<()> {
+        let node = FilesystemNode::new(Vec::<Utf8PathBuf>::new());
+        let path = SanitizedPath::from_static("/tmp/filesystem-example-export.json");
+
+        let error = ExplorationProvider::export_data(&node, &path, ExportFormat::Json)
+            .expect_err("example must not report export success without writing data");
+
+        assert!(error.to_string().contains("example filesystem node"));
         Ok(())
     }
 }
