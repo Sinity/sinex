@@ -10,7 +10,11 @@ use crate::config::workspace_root;
 use crate::output::StructuredError;
 use color_eyre::eyre::{Context, Result};
 use serde::Serialize;
-use sinex_primitives::proof::{self, ProofObligation, SourceUnitDescriptor};
+use sinex_primitives::proof::{self, ProofObligation};
+use sinex_primitives::source_unit::{
+    self, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
+    RuntimeShape,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -77,6 +81,42 @@ struct SourceUnitManifest {
     package_impact: SourceUnitImpactReport,
     proof_obligations: Vec<ProofObligation>,
     descriptor_contract: DescriptorContract,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct SourceUnitDescriptor {
+    subject: String,
+    id: String,
+    domain: String,
+    role: String,
+    modes: Vec<String>,
+    acquisition_shape: String,
+    material_policy: String,
+    checkpoint_policy: String,
+    occurrence_policy: String,
+    output_event_type: String,
+    output_event_types: Vec<SourceUnitEventType>,
+    privacy_context: String,
+    retention_policy: String,
+    resource_profile: String,
+    access_policy: String,
+    service_policy: String,
+    runner_pack: String,
+    package_impact: String,
+    implementation_mode: String,
+    proof_obligations: Vec<String>,
+    crate_impact: String,
+    binary_impact: String,
+    nix_output_impact: String,
+    derivation_impact: String,
+    sqlx_validation_impact: String,
+    dedicated_build_rationale: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct SourceUnitEventType {
+    source: String,
+    event_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -202,10 +242,17 @@ fn execute_check(output: Option<&Path>, ctx: &CommandContext) -> Result<CommandR
 }
 
 fn build_source_unit_manifest() -> SourceUnitManifest {
-    let mut source_units = proof::source_unit_descriptors()
-        .copied()
+    crate::source_unit_inventory::link_source_unit_inventories();
+
+    let mut source_units = source_unit::all_source_units()
+        .map(canonical_source_unit_descriptor)
         .collect::<Vec<_>>();
-    source_units.sort_by(|left, right| left.subject.as_str().cmp(right.subject.as_str()));
+    source_units.extend(
+        proof::source_unit_descriptors()
+            .copied()
+            .map(legacy_proof_source_unit_descriptor),
+    );
+    source_units.sort_by(|left, right| left.subject.cmp(&right.subject));
 
     let mut obligations = proof::obligations()
         .copied()
@@ -237,6 +284,106 @@ fn build_source_unit_manifest() -> SourceUnitManifest {
     }
 }
 
+fn canonical_source_unit_descriptor(
+    unit: &'static source_unit::SourceUnitDescriptor,
+) -> SourceUnitDescriptor {
+    let runner_pack = runner_pack_for(unit);
+    SourceUnitDescriptor {
+        subject: format!("source_unit:{}", unit.id),
+        id: unit.id.to_string(),
+        domain: unit.namespace.to_string(),
+        role: role_for(unit).to_string(),
+        modes: unit
+            .horizons
+            .iter()
+            .map(|horizon| horizon_name(*horizon).to_string())
+            .collect(),
+        acquisition_shape: checkpoint_family_name(unit.checkpoint_family).to_string(),
+        material_policy: material_policy_for(unit).to_string(),
+        checkpoint_policy: checkpoint_policy(unit.checkpoint_family),
+        occurrence_policy: occurrence_policy(unit.occurrence_identity),
+        output_event_type: unit
+            .event_types
+            .iter()
+            .map(|(source, event_type)| format!("{source}/{event_type}"))
+            .collect::<Vec<_>>()
+            .join(","),
+        output_event_types: unit
+            .event_types
+            .iter()
+            .map(|(source, event_type)| SourceUnitEventType {
+                source: (*source).to_string(),
+                event_type: (*event_type).to_string(),
+            })
+            .collect(),
+        privacy_context: privacy_tier_name(unit.privacy_tier).to_string(),
+        retention_policy: retention_policy(unit.retention),
+        resource_profile: runtime_shape_name(unit.runtime_shape).to_string(),
+        access_policy: "declared_by_runtime_descriptor".to_string(),
+        service_policy: service_policy(unit.runtime_shape).to_string(),
+        runner_pack: runner_pack.clone(),
+        package_impact: "no_new_output".to_string(),
+        implementation_mode: format!("rust_in_pack:{runner_pack}"),
+        proof_obligations: unit
+            .proof_obligations
+            .iter()
+            .map(|obligation| (*obligation).to_string())
+            .collect(),
+        crate_impact: "0".to_string(),
+        binary_impact: "0".to_string(),
+        nix_output_impact: "0".to_string(),
+        derivation_impact: "0".to_string(),
+        sqlx_validation_impact: "0".to_string(),
+        dedicated_build_rationale: None,
+    }
+}
+
+fn legacy_proof_source_unit_descriptor(unit: proof::SourceUnitDescriptor) -> SourceUnitDescriptor {
+    SourceUnitDescriptor {
+        subject: unit.subject.as_str().to_string(),
+        id: unit.id.to_string(),
+        domain: unit.domain.to_string(),
+        role: unit.role.to_string(),
+        modes: unit.modes.iter().map(|mode| (*mode).to_string()).collect(),
+        acquisition_shape: unit.acquisition_shape.to_string(),
+        material_policy: unit.material_policy.to_string(),
+        checkpoint_policy: unit.checkpoint_policy.to_string(),
+        occurrence_policy: unit.occurrence_policy.to_string(),
+        output_event_type: unit.output_event_type.to_string(),
+        output_event_types: output_event_types_from_legacy(unit.output_event_type),
+        privacy_context: unit.privacy_context.to_string(),
+        retention_policy: "not_declared_in_legacy_proof_descriptor".to_string(),
+        resource_profile: unit.resource_profile.to_string(),
+        access_policy: unit.access_policy.to_string(),
+        service_policy: unit.service_policy.to_string(),
+        runner_pack: unit.runner_pack.to_string(),
+        package_impact: unit.package_impact.to_string(),
+        implementation_mode: unit.implementation_mode.to_string(),
+        proof_obligations: unit
+            .proof_obligations
+            .iter()
+            .map(|obligation| (*obligation).to_string())
+            .collect(),
+        crate_impact: unit.crate_impact.to_string(),
+        binary_impact: unit.binary_impact.to_string(),
+        nix_output_impact: unit.nix_output_impact.to_string(),
+        derivation_impact: unit.derivation_impact.to_string(),
+        sqlx_validation_impact: unit.sqlx_validation_impact.to_string(),
+        dedicated_build_rationale: unit.dedicated_build_rationale.map(str::to_string),
+    }
+}
+
+fn output_event_types_from_legacy(output_event_type: &str) -> Vec<SourceUnitEventType> {
+    output_event_type
+        .split(',')
+        .filter_map(|pair| pair.split_once('/'))
+        .map(|(source, event_type)| SourceUnitEventType {
+            source: source.to_string(),
+            event_type: event_type.to_string(),
+        })
+        .collect()
+}
+
 fn runner_pack_manifests(source_units: &[SourceUnitDescriptor]) -> Vec<RunnerPackManifest> {
     let mut by_pack = BTreeMap::<String, Vec<String>>::new();
     for unit in source_units {
@@ -265,9 +412,9 @@ fn service_manifests(source_units: &[SourceUnitDescriptor]) -> Vec<SourceUnitSer
         .iter()
         .map(|unit| SourceUnitServiceManifest {
             source_unit_id: unit.id.to_string(),
-            service_name: source_unit_service_name(unit.id),
+            service_name: source_unit_service_name(&unit.id),
             runner_pack: unit.runner_pack.to_string(),
-            binary: runner_pack_binary(unit.runner_pack).to_string(),
+            binary: runner_pack_binary(&unit.runner_pack).to_string(),
             checkpoint_identity: unit.id.to_string(),
             control_identity: unit.id.to_string(),
             host_identity: "runtime_hostname",
@@ -302,9 +449,109 @@ fn package_impact_report(source_units: &[SourceUnitDescriptor]) -> SourceUnitImp
             .iter()
             .filter_map(|unit| {
                 unit.dedicated_build_rationale
+                    .as_ref()
                     .map(|rationale| format!("{}: {rationale}", unit.id))
             })
             .collect(),
+    }
+}
+
+fn runner_pack_for(unit: &source_unit::SourceUnitDescriptor) -> String {
+    match unit.id {
+        "terminal-canonicalizer" => "terminal".to_string(),
+        "session-detector" => "session".to_string(),
+        "hourly-summarizer" => "hourly".to_string(),
+        "daily-summarizer" => "daily".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn role_for(unit: &source_unit::SourceUnitDescriptor) -> &'static str {
+    if unit.namespace == "derived" {
+        "derived_node"
+    } else {
+        "source_adapter"
+    }
+}
+
+fn material_policy_for(unit: &source_unit::SourceUnitDescriptor) -> &'static str {
+    if unit.namespace == "derived" {
+        "synthesis_provenance"
+    } else {
+        "source_material_provenance"
+    }
+}
+
+fn checkpoint_family_name(family: CheckpointFamily) -> &'static str {
+    match family {
+        CheckpointFamily::AppendStream => "append_stream",
+        CheckpointFamily::MutableSnapshot { .. } => "mutable_snapshot",
+        CheckpointFamily::Journal => "journal",
+        CheckpointFamily::Polling => "polling",
+        CheckpointFamily::LiveObservation => "live_observation",
+    }
+}
+
+fn checkpoint_policy(family: CheckpointFamily) -> String {
+    match family {
+        CheckpointFamily::AppendStream => "append_stream_cursor".to_string(),
+        CheckpointFamily::MutableSnapshot {
+            backing_store_kind,
+            occurrence_anchor,
+        } => format!("mutable_snapshot:{backing_store_kind}:{occurrence_anchor}"),
+        CheckpointFamily::Journal => "journal_cursor".to_string(),
+        CheckpointFamily::Polling => "polling_diff".to_string(),
+        CheckpointFamily::LiveObservation => "live_observation_state".to_string(),
+    }
+}
+
+fn occurrence_policy(identity: OccurrenceIdentity) -> String {
+    match identity {
+        OccurrenceIdentity::Uuid5From(source) => format!("uuid5:{source}"),
+        OccurrenceIdentity::Natural => "natural_key".to_string(),
+        OccurrenceIdentity::Anchor => "material_anchor".to_string(),
+    }
+}
+
+fn horizon_name(horizon: Horizon) -> &'static str {
+    match horizon {
+        Horizon::Continuous => "continuous",
+        Horizon::Historical => "historical",
+    }
+}
+
+fn privacy_tier_name(tier: PrivacyTier) -> &'static str {
+    match tier {
+        PrivacyTier::Public => "public",
+        PrivacyTier::Sensitive => "sensitive",
+        PrivacyTier::Secret => "secret",
+    }
+}
+
+fn retention_policy(policy: RetentionPolicy) -> String {
+    match policy {
+        RetentionPolicy::Forever => "forever".to_string(),
+        RetentionPolicy::Days { days } => format!("days:{days}"),
+        RetentionPolicy::Tiered {
+            hot_days,
+            warm_days,
+        } => format!("tiered:hot={hot_days}:warm={warm_days}"),
+    }
+}
+
+fn runtime_shape_name(shape: RuntimeShape) -> &'static str {
+    match shape {
+        RuntimeShape::Continuous => "continuous",
+        RuntimeShape::OnDemand => "on_demand",
+        RuntimeShape::Scheduled => "scheduled",
+    }
+}
+
+fn service_policy(shape: RuntimeShape) -> &'static str {
+    match shape {
+        RuntimeShape::Continuous => "dedicated_instance:on-failure",
+        RuntimeShape::OnDemand => "invoked_on_demand",
+        RuntimeShape::Scheduled => "scheduled_runner",
     }
 }
 
@@ -313,7 +560,7 @@ fn validate_source_units(
     stale_manifest: bool,
 ) -> SourceUnitValidation {
     let duplicate_subjects = duplicates(source_units.iter().map(|unit| unit.subject.as_str()));
-    let duplicate_ids = duplicates(source_units.iter().map(|unit| unit.id));
+    let duplicate_ids = duplicates(source_units.iter().map(|unit| unit.id.as_str()));
     let empty_fields = source_units
         .iter()
         .flat_map(required_empty_fields)
@@ -340,7 +587,7 @@ fn validate_source_units(
         source_unit_count: source_units.len(),
         runner_pack_count: source_units
             .iter()
-            .map(|unit| unit.runner_pack)
+            .map(|unit| unit.runner_pack.as_str())
             .collect::<BTreeSet<_>>()
             .len(),
         duplicate_subjects,
@@ -365,26 +612,27 @@ fn duplicates<'a>(values: impl Iterator<Item = &'a str>) -> Vec<String> {
 
 fn required_empty_fields(unit: &SourceUnitDescriptor) -> Vec<String> {
     [
-        ("id", unit.id),
-        ("domain", unit.domain),
-        ("role", unit.role),
-        ("acquisition_shape", unit.acquisition_shape),
-        ("material_policy", unit.material_policy),
-        ("checkpoint_policy", unit.checkpoint_policy),
-        ("occurrence_policy", unit.occurrence_policy),
-        ("output_event_type", unit.output_event_type),
-        ("privacy_context", unit.privacy_context),
-        ("resource_profile", unit.resource_profile),
-        ("access_policy", unit.access_policy),
-        ("service_policy", unit.service_policy),
-        ("runner_pack", unit.runner_pack),
-        ("package_impact", unit.package_impact),
-        ("implementation_mode", unit.implementation_mode),
-        ("crate_impact", unit.crate_impact),
-        ("binary_impact", unit.binary_impact),
-        ("nix_output_impact", unit.nix_output_impact),
-        ("derivation_impact", unit.derivation_impact),
-        ("sqlx_validation_impact", unit.sqlx_validation_impact),
+        ("id", unit.id.as_str()),
+        ("domain", unit.domain.as_str()),
+        ("role", unit.role.as_str()),
+        ("acquisition_shape", unit.acquisition_shape.as_str()),
+        ("material_policy", unit.material_policy.as_str()),
+        ("checkpoint_policy", unit.checkpoint_policy.as_str()),
+        ("occurrence_policy", unit.occurrence_policy.as_str()),
+        ("output_event_type", unit.output_event_type.as_str()),
+        ("privacy_context", unit.privacy_context.as_str()),
+        ("retention_policy", unit.retention_policy.as_str()),
+        ("resource_profile", unit.resource_profile.as_str()),
+        ("access_policy", unit.access_policy.as_str()),
+        ("service_policy", unit.service_policy.as_str()),
+        ("runner_pack", unit.runner_pack.as_str()),
+        ("package_impact", unit.package_impact.as_str()),
+        ("implementation_mode", unit.implementation_mode.as_str()),
+        ("crate_impact", unit.crate_impact.as_str()),
+        ("binary_impact", unit.binary_impact.as_str()),
+        ("nix_output_impact", unit.nix_output_impact.as_str()),
+        ("derivation_impact", unit.derivation_impact.as_str()),
+        ("sqlx_validation_impact", unit.sqlx_validation_impact.as_str()),
     ]
     .into_iter()
     .filter(|(_, value)| value.is_empty())
@@ -394,6 +642,16 @@ fn required_empty_fields(unit: &SourceUnitDescriptor) -> Vec<String> {
 
 fn runner_pack_binary(runner_pack: &str) -> &str {
     match runner_pack {
+        "analytics" => "sinex-analytics-automaton",
+        "browser" => "sinex-browser-ingestor",
+        "daily" => "sinex-daily-summarizer",
+        "desktop" => "sinex-desktop-ingestor",
+        "document" => "sinex-document-ingestor",
+        "fs" => "sinex-fs-ingestor",
+        "health" => "sinex-health-automaton",
+        "hourly" => "sinex-hourly-summarizer",
+        "session" => "sinex-session-detector",
+        "system" => "sinex-system-ingestor",
         "terminal" => "sinex-terminal-ingestor",
         other => other,
     }
@@ -448,6 +706,35 @@ mod tests {
                 .source_unit_ids
                 .contains(&"terminal.atuin-history".to_string())
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_unit_manifest_includes_node_crate_descriptors() -> TestResult<()> {
+        let manifest = build_source_unit_manifest();
+        let source_unit_ids = manifest
+            .source_units
+            .iter()
+            .map(|unit| unit.id.as_str())
+            .collect::<BTreeSet<_>>();
+
+        for expected in [
+            "fs",
+            "desktop",
+            "browser",
+            "system",
+            "document",
+            "terminal",
+            "terminal-canonicalizer",
+            "session-detector",
+            "analytics",
+            "health",
+        ] {
+            assert!(
+                source_unit_ids.contains(expected),
+                "source-unit manifest should include descriptor registered by {expected}"
+            );
+        }
         Ok(())
     }
 

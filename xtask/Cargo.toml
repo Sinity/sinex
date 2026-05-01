@@ -75,6 +75,22 @@ sinex-schema = { path = "../crate/lib/sinex-schema" }
 # Database and node SDK (for test sandbox)
 sinex-db = { path = "../crate/lib/sinex-db" }
 sinex-node-sdk = { path = "../crate/lib/sinex-node-sdk" }
+
+# Source-unit inventory links. xtask source-unit/proof tooling must see the
+# descriptors declared by shipped node crates, not only descriptors hardcoded in
+# sinex-primitives.
+sinex-analytics-automaton = { path = "../crate/nodes/sinex-analytics-automaton" }
+sinex-browser-ingestor = { path = "../crate/nodes/sinex-browser-ingestor" }
+sinex-daily-summarizer = { path = "../crate/nodes/sinex-daily-summarizer" }
+sinex-desktop-ingestor = { path = "../crate/nodes/sinex-desktop-ingestor" }
+sinex-document-ingestor = { path = "../crate/nodes/sinex-document-ingestor" }
+sinex-fs-ingestor = { path = "../crate/nodes/sinex-fs-ingestor" }
+sinex-health-automaton = { path = "../crate/nodes/sinex-health-automaton" }
+sinex-hourly-summarizer = { path = "../crate/nodes/sinex-hourly-summarizer" }
+sinex-session-detector = { path = "../crate/nodes/sinex-session-detector" }
+sinex-system-ingestor = { path = "../crate/nodes/sinex-system-ingestor" }
+sinex-terminal-command-canonicalizer = { path = "../crate/nodes/sinex-terminal-command-canonicalizer" }
+sinex-terminal-ingestor = { path = "../crate/nodes/sinex-terminal-ingestor" }
 url = { workspace = true }
 rand = { workspace = true }
 tokio-stream = "0.1"
