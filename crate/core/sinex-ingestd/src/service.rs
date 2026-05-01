@@ -210,14 +210,7 @@ impl IngestService {
             return Ok(None);
         }
 
-        let pool = config
-            .get_db_options()
-            .connect(&config.database_url)
-            .await
-            .map_err(|e| {
-                SinexError::database(format!("Failed to connect to database: {e}"))
-                    .with_operation("service.init_db_pool")
-            })?;
+        let pool = config.create_db_pool().await?;
         Ok(Some(pool))
     }
 
