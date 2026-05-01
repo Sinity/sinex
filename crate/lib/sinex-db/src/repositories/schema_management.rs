@@ -465,7 +465,10 @@ impl<'a> SchemaManagementRepository<'a> {
     }
 
     /// Get a schema by ID
-    pub async fn get_schema_by_id(&self, schema_id: &Uuid) -> DbResult<EventPayloadSchema> {
+    pub async fn get_schema_by_id(
+        &self,
+        schema_id: &Id<EventPayloadSchema>,
+    ) -> DbResult<EventPayloadSchema> {
         let row = sqlx::query!(
             r#"
             SELECT 
@@ -480,7 +483,7 @@ impl<'a> SchemaManagementRepository<'a> {
             FROM sinex_schemas.event_payload_schemas
             WHERE id = $1::uuid
             "#,
-            schema_id
+            schema_id.as_uuid()
         )
         .fetch_one(self.pool)
         .await
@@ -609,7 +612,7 @@ impl<'a> SchemaManagementRepository<'a> {
     ) -> DbResult<ValidationResult> {
         // Get the appropriate schema
         let schema = if let Some(sid) = schema_id {
-            self.get_schema_by_id(&sid).await?
+            self.get_schema_by_id(&Id::from_uuid(sid)).await?
         } else {
             self.get_active_schema(event.source.as_ref(), event.event_type.as_ref())
                 .await?
@@ -656,7 +659,7 @@ impl<'a> SchemaManagementRepository<'a> {
         .map_err(|e| db_error(e, "load event for validation"))?;
 
         let schema = if let Some(schema_id) = event_row.payload_schema_id {
-            self.get_schema_by_id(&schema_id).await?
+            self.get_schema_by_id(&Id::from_uuid(schema_id)).await?
         } else {
             self.get_active_schema(&event_row.source, &event_row.event_type)
                 .await?
@@ -801,14 +804,14 @@ impl<'a> SchemaManagementRepository<'a> {
     }
 
     /// Deprecate a schema
-    pub async fn deprecate_schema(&self, schema_id: &Uuid) -> DbResult<()> {
+    pub async fn deprecate_schema(&self, schema_id: &Id<EventPayloadSchema>) -> DbResult<()> {
         sqlx::query!(
             r#"
             UPDATE sinex_schemas.event_payload_schemas
             SET is_active = false, updated_at = NOW()
             WHERE id = $1::uuid
             "#,
-            schema_id
+            schema_id.as_uuid()
         )
         .execute(self.pool)
         .await

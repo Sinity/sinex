@@ -12,10 +12,12 @@ use async_nats::{Client as NatsClient, jetstream};
 use serde::Serialize;
 use sinex_db::DbPoolExt;
 use sinex_db::advisory_lock::AdvisoryLock;
+use sinex_db::repositories::EventPayloadSchema;
 use sinex_node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
 use sinex_node_sdk::heartbeat::HeartbeatEmitter;
 use sinex_node_sdk::systemd_notify;
 use sinex_node_sdk::{SelfObserver, SelfObserverConfig};
+use sinex_primitives::Id;
 use sinex_primitives::domain::{NodeName, NodeType};
 use sinex_primitives::environment as sinex_environment;
 use sinex_primitives::nats::create_or_open_kv_store;
@@ -1336,9 +1338,9 @@ impl IngestService {
 
         // Parse schema IDs and fetch in bulk via centralized repository
         let parsed_entries = Self::parse_schema_broadcast_entries(entries)?;
-        let schema_ids: Vec<uuid::Uuid> = parsed_entries
+        let schema_ids: Vec<Id<EventPayloadSchema>> = parsed_entries
             .iter()
-            .map(|(schema_id, _entry)| *schema_id)
+            .map(|(schema_id, _entry)| Id::from_uuid(*schema_id))
             .collect();
 
         let schemas = pool
@@ -1347,10 +1349,11 @@ impl IngestService {
             .await
             .map_err(|e| SinexError::database("Failed to fetch schemas").with_source(e))?;
 
-        let resolved_ids: HashSet<uuid::Uuid> = schemas.iter().map(|schema| schema.id).collect();
+        let resolved_ids: HashSet<Id<EventPayloadSchema>> =
+            schemas.iter().map(|schema| schema.id).collect();
         if let Some((missing_schema_id, entry)) = parsed_entries
             .iter()
-            .find(|(schema_id, _entry)| !resolved_ids.contains(schema_id))
+            .find(|(schema_id, _entry)| !resolved_ids.contains(&Id::from_uuid(*schema_id)))
         {
             return Err(SinexError::invalid_state(
                 "schema broadcast references schema missing from repository",
