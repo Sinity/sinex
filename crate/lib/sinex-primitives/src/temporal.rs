@@ -1,12 +1,12 @@
 //! Temporal utilities for the Sinex ecosystem.
 //!
-//! This module provides a centralized location for time-related operations,
-//! ensuring consistent behavior and simplifying the migration between
-//! underlying time libraries.
+//! This module provides the small set of project-level timestamp conveniences
+//! that are actually shared across crates.
 //!
 //! The preferred type for absolute time is [`Timestamp`], which provides
 //! built-in serialization and database support. [`OffsetDateTime`] and
-//! [`Duration`] from the `time` crate are also available for lower-level operations.
+//! [`Duration`] from the `time` crate are re-exported for lower-level operations
+//! where the raw time API is clearer than a thin wrapper.
 
 pub use crate::primitives::Timestamp;
 pub use time::format_description::well_known::Rfc3339;
@@ -18,18 +18,6 @@ pub fn now() -> Timestamp {
     Timestamp::now()
 }
 
-/// Create a Timestamp from a Unix timestamp in seconds.
-#[must_use]
-pub fn from_unix_timestamp(secs: i64) -> Option<Timestamp> {
-    Timestamp::from_unix_timestamp(secs)
-}
-
-/// Create a Timestamp from a Unix timestamp in milliseconds.
-#[must_use]
-pub fn from_unix_timestamp_millis(ms: i64) -> Option<Timestamp> {
-    Timestamp::from_unix_timestamp_millis(ms)
-}
-
 /// Parse a timestamp from an RFC3339 string.
 pub fn parse_rfc3339(s: &str) -> std::result::Result<Timestamp, time::error::Parse> {
     Timestamp::parse_rfc3339(s)
@@ -39,12 +27,6 @@ pub fn parse_rfc3339(s: &str) -> std::result::Result<Timestamp, time::error::Par
 #[must_use]
 pub fn format_rfc3339(ts: Timestamp) -> String {
     ts.format_rfc3339()
-}
-
-/// Returns the current time in UTC as a raw `OffsetDateTime`.
-#[must_use]
-pub fn now_utc() -> OffsetDateTime {
-    OffsetDateTime::now_utc()
 }
 
 /// Parse a duration from a string (e.g., "1h", "30m").

@@ -24,16 +24,16 @@ pub mod privacy;
 pub mod proof;
 pub mod query;
 pub mod rpc;
-pub mod settlement;
 pub mod runtime_target;
+pub mod settlement;
 pub mod source_unit;
 pub mod temporal;
 pub mod testing;
+#[cfg(feature = "nats")]
+pub mod transport;
 pub mod units;
 pub mod utils;
 pub mod validation;
-#[cfg(feature = "nats")]
-pub mod transport;
 
 pub mod buffers {
     pub use crate::constants::buffers::*;
@@ -97,7 +97,7 @@ pub use runtime_target::{
     RuntimeTargetState,
 };
 pub use serde_json::Value as JsonValue;
-pub use temporal::{OffsetDateTime, now, now_utc};
+pub use temporal::{OffsetDateTime, now};
 pub use units::{Bytes, Seconds};
 pub use validation::{
     sanitize_filename_component, validate_json, validate_json_value, validate_path,
