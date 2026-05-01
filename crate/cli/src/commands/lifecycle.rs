@@ -12,11 +12,11 @@
 //! - **tombstone**: Move archived events to tombstones (one-way, permanent!)
 
 use clap::{Args, Subcommand, ValueEnum};
-use humantime::parse_duration;
 use sinex_primitives::rpc::lifecycle::{
     TombstoneApproveResponse, TombstoneCreateResponse, TombstoneListResponse,
     TombstoneOperationState, TombstonePreviewResponse, TombstoneStatusResponse,
 };
+use sinex_primitives::utils::timestamp_helpers::parse_relative_std_duration;
 use std::time::Duration;
 
 use crate::Result;
@@ -531,7 +531,7 @@ impl TombstoneStatusCommand {
 
 /// Parse duration argument (e.g., "30d", "90d", "1y")
 fn parse_duration_arg(s: &str) -> std::result::Result<Duration, String> {
-    parse_duration(s).map_err(|e| format!("Invalid duration '{s}': {e}"))
+    parse_relative_std_duration(s).ok_or_else(|| format!("Invalid duration '{s}'"))
 }
 
 // ==================== Table Formatters ====================
