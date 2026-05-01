@@ -3,6 +3,7 @@
 // This module provides timing patterns and coordination primitives
 // for sandboxed development and testing.
 use crate::sandbox::prelude::*;
+use sinex_primitives::units::Seconds;
 use sinex_primitives::utils::CoordinationPrimitive;
 
 use color_eyre::eyre::Result;
@@ -185,6 +186,10 @@ fn collect_event_ids(events: Vec<Event<JsonValue>>) -> Option<Vec<EventId>> {
     Some(ids)
 }
 
+fn timeout_seconds(timeout_secs: u64) -> Seconds {
+    Seconds::from_secs(timeout_secs)
+}
+
 /// Wait helpers that use production query builders (NO RAW SQL)
 pub struct WaitHelpers;
 
@@ -196,7 +201,7 @@ impl WaitHelpers {
         timeout_secs: u64,
     ) -> TestResult<usize> {
         let pool = pool.clone(); // Clone for closure
-        sinex_primitives::utils::wait_for_condition_adaptive(
+        sinex_primitives::utils::wait_for_condition_adaptive_secs(
             || async {
                 let count = pool
                     .events()
@@ -206,7 +211,7 @@ impl WaitHelpers {
                     as usize;
                 Ok(count >= expected_count)
             },
-            timeout_secs,
+            timeout_seconds(timeout_secs),
             &format!("event count >= {expected_count}"),
         )
         .await
@@ -237,13 +242,13 @@ impl WaitHelpers {
         let pool = pool.clone(); // Clone for closure
         let source_str = source.to_string(); // Clone for closure
 
-        sinex_primitives::utils::wait_for_condition_adaptive(
+        sinex_primitives::utils::wait_for_condition_adaptive_secs(
             || async {
                 let event_source: sinex_primitives::EventSource = source_str.as_str().into();
                 let count = pool.events().count_by_source(&event_source).await?;
                 Ok(count as usize >= expected_count)
             },
-            timeout_secs,
+            timeout_seconds(timeout_secs),
             &format!("source '{source}' event count >= {expected_count}"),
         )
         .await
@@ -272,12 +277,12 @@ impl WaitHelpers {
         let pool = pool.clone();
         let event_type = event_type.clone();
 
-        sinex_primitives::utils::wait_for_condition_adaptive(
+        sinex_primitives::utils::wait_for_condition_adaptive_secs(
             || async {
                 let count = pool.events().count_by_event_type(&event_type).await? as usize;
                 Ok(count >= expected_count)
             },
-            timeout_secs,
+            timeout_seconds(timeout_secs),
             &format!("event type '{event_type}' count >= {expected_count}"),
         )
         .await
@@ -302,9 +307,9 @@ impl WaitHelpers {
     ) -> TestResult<()> {
         let pool = pool.clone();
 
-        sinex_primitives::utils::wait_for_condition_adaptive(
+        sinex_primitives::utils::wait_for_condition_adaptive_secs(
             || async { Ok(pool.events().get_by_id(event_id).await?.is_some()) },
-            timeout_secs,
+            timeout_seconds(timeout_secs),
             &format!("event id {event_id} persisted"),
         )
         .await
@@ -334,7 +339,7 @@ impl WaitHelpers {
 
         let check_pool = pool.clone();
         let check_expected = expected.clone();
-        sinex_primitives::utils::wait_for_condition_adaptive(
+        sinex_primitives::utils::wait_for_condition_adaptive_secs(
             move || {
                 let pool = check_pool.clone();
                 let expected = check_expected.clone();
@@ -346,7 +351,7 @@ impl WaitHelpers {
                     Ok(ids.as_slice() == expected.as_slice())
                 }
             },
-            timeout_secs,
+            timeout_seconds(timeout_secs),
             &format!("recent event ids len={expected_len}"),
         )
         .await
@@ -385,7 +390,7 @@ impl WaitHelpers {
         let check_pool = pool.clone();
         let check_expected = expected.clone();
         let check_source = event_source.clone();
-        sinex_primitives::utils::wait_for_condition_adaptive(
+        sinex_primitives::utils::wait_for_condition_adaptive_secs(
             move || {
                 let pool = check_pool.clone();
                 let expected = check_expected.clone();
@@ -407,7 +412,7 @@ impl WaitHelpers {
                     Ok(ids.as_slice() == expected.as_slice())
                 }
             },
-            timeout_secs,
+            timeout_seconds(timeout_secs),
             &format!("source '{source_label}' event ids len={expected_len}"),
         )
         .await
@@ -456,7 +461,7 @@ impl WaitHelpers {
         let check_pool = pool.clone();
         let check_expected = expected.clone();
         let check_event_type = event_type.clone();
-        sinex_primitives::utils::wait_for_condition_adaptive(
+        sinex_primitives::utils::wait_for_condition_adaptive_secs(
             move || {
                 let pool = check_pool.clone();
                 let expected = check_expected.clone();
@@ -478,7 +483,7 @@ impl WaitHelpers {
                     Ok(ids.as_slice() == expected.as_slice())
                 }
             },
-            timeout_secs,
+            timeout_seconds(timeout_secs),
             &format!("event type '{event_type_label}' event ids len={expected_len}"),
         )
         .await
@@ -514,13 +519,13 @@ impl WaitHelpers {
         Fut: Future<Output = Result<bool, E>>,
         E: std::fmt::Display,
     {
-        sinex_primitives::utils::wait_for_condition_adaptive(
+        sinex_primitives::utils::wait_for_condition_adaptive_secs(
             || async {
                 condition()
                     .await
                     .map_err(|e| SinexError::unknown(e.to_string()))
             },
-            timeout_secs,
+            timeout_seconds(timeout_secs),
             "custom test condition",
         )
         .await
@@ -556,15 +561,18 @@ impl WaitHelpers {
             }));
         }
 
-        sinex_primitives::utils::wait_for_multiple_conditions(prod_conditions, timeout_secs)
-            .await
-            .map_err(|e| {
-                SinexError::timeout("Multiple conditions wait failed")
-                    .with_context("condition_count", condition_count)
-                    .with_context("timeout_duration", format!("{timeout_secs}s"))
-                    .with_source(e)
-                    .with_operation("wait_for_multiple_conditions")
-            })?;
+        sinex_primitives::utils::wait_for_multiple_conditions_secs(
+            prod_conditions,
+            timeout_seconds(timeout_secs),
+        )
+        .await
+        .map_err(|e| {
+            SinexError::timeout("Multiple conditions wait failed")
+                .with_context("condition_count", condition_count)
+                .with_context("timeout_duration", format!("{timeout_secs}s"))
+                .with_source(e)
+                .with_operation("wait_for_multiple_conditions")
+        })?;
         Ok(())
     }
 }
