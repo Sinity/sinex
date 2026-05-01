@@ -47,6 +47,11 @@ pub struct PostgresConfig {
     pub database: String,
     pub superuser: String,
     pub app_user: String,
+    /// `listen_addresses` value for postgresql.conf. Empty disables TCP and
+    /// forces clients onto the Unix socket (the default for dev infra). CI /
+    /// sandbox sets `"127.0.0.1"` so sqlx clients connecting via
+    /// `postgresql://...@127.0.0.1:port/...` can reach the cluster.
+    pub listen_addresses: String,
 }
 
 pub struct PostgresManager {
@@ -101,6 +106,47 @@ fn format_command_output(output: &std::process::Output) -> String {
         (true, false) => format!(" stderr: {stderr}"),
         (false, false) => format!(" stdout: {stdout}; stderr: {stderr}"),
     }
+}
+
+/// Read the tail of the postgres log so failures surface the FATAL line that
+/// pg_ctl's "stopped waiting" stderr message asks the operator to consult.
+fn format_postgres_log_tail(log_path: &Path) -> String {
+    const TAIL_LINES: usize = 40;
+    match fs::read_to_string(log_path) {
+        Ok(contents) if !contents.is_empty() => {
+            let lines: Vec<&str> = contents.lines().collect();
+            let start = lines.len().saturating_sub(TAIL_LINES);
+            format!(
+                "\n--- postgres.log tail ({} of {} lines) ---\n{}\n--- end postgres.log ---",
+                lines.len() - start,
+                lines.len(),
+                lines[start..].join("\n")
+            )
+        }
+        Ok(_) => format!(
+            "\n(postgres log at {} is empty — no FATAL line was written before the failure)",
+            log_path.display()
+        ),
+        Err(err) => format!(
+            "\n(could not read postgres log at {}: {err})",
+            log_path.display()
+        ),
+    }
+}
+
+/// Resolve `path` to an absolute form without requiring it to exist on disk.
+/// `Path::canonicalize` requires existence and will fail when called before
+/// initdb has populated the data directory. This helper falls back to joining
+/// the current working directory.
+fn absolute_path(path: &Path) -> Result<PathBuf> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    if let Ok(canonical) = path.canonicalize() {
+        return Ok(canonical);
+    }
+    let cwd = env::current_dir().context("failed to read current dir while resolving postgres path")?;
+    Ok(cwd.join(path))
 }
 
 fn utf8_path<'a>(path: &'a Path, label: &str) -> Result<&'a str> {
@@ -228,9 +274,10 @@ impl PostgresManager {
                 .context("Failed to start PostgreSQL")?;
             if !output.status.success() {
                 bail!(
-                    "pg_ctl start failed with status {}{}",
+                    "pg_ctl start failed with status {}{}{}",
                     output.status,
-                    format_command_output(&output)
+                    format_command_output(&output),
+                    format_postgres_log_tail(&log_path)
                 );
             }
         }
@@ -246,7 +293,10 @@ impl PostgresManager {
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
 
-        bail!("PostgreSQL failed to start within 30 seconds")
+        bail!(
+            "PostgreSQL failed to start within 30 seconds{}",
+            format_postgres_log_tail(&log_path)
+        )
     }
 
     pub fn stop(&self, verbose: bool) -> Result<()> {
@@ -418,6 +468,7 @@ impl PostgresManager {
 
     fn pg_ctl_start_command(&self, log_path: &Path) -> Result<Command> {
         let run_dir = utf8_path(&self.config.run_dir, "postgres run dir")?;
+        let abs_log_path = absolute_path(log_path)?;
         let mut pg_ctl = self.pg_command("pg_ctl");
         pg_ctl
             .arg("-D")
@@ -425,7 +476,7 @@ impl PostgresManager {
             .arg("start")
             .arg("-w")
             .arg("-l")
-            .arg(log_path)
+            .arg(&abs_log_path)
             .arg("-o")
             .arg(format!("-k {run_dir} -p {}", self.config.port));
         Ok(pg_ctl)
@@ -532,12 +583,21 @@ impl PostgresManager {
     }
 
     fn render_runtime_config(&self) -> Result<String> {
-        let run_dir = utf8_path(&self.config.run_dir, "postgres run dir")?;
-        let logs_dir = utf8_path(&self.config.logs_dir, "postgres logs dir")?;
+        // Postgres interprets relative `unix_socket_directories` and `log_directory`
+        // against the cluster data directory, not the process cwd. A repo-relative
+        // logs_dir like `.sinex/ci-pgdata` therefore double-nests as
+        // `<data_dir>/.sinex/ci-pgdata`, which doesn't exist — the postmaster bails
+        // with `could not open log file ... No such file or directory` and pg_ctl
+        // reports only the unhelpful "stopped waiting" stderr. Resolve to absolute
+        // before rendering postgresql.conf.
+        let abs_run_dir = absolute_path(&self.config.run_dir)?;
+        let abs_logs_dir = absolute_path(&self.config.logs_dir)?;
+        let run_dir = utf8_path(&abs_run_dir, "postgres run dir")?;
+        let logs_dir = utf8_path(&abs_logs_dir, "postgres logs dir")?;
         Ok(format!(
             "{MANAGED_CONFIG_BEGIN}
 unix_socket_directories = '{}'
-listen_addresses = ''
+listen_addresses = '{}'
 port = {}
 max_connections = 800
 max_worker_processes = {}
@@ -549,6 +609,7 @@ log_directory = '{}'
 log_filename = 'postgres.log'
 {MANAGED_CONFIG_END}",
             run_dir,
+            self.config.listen_addresses,
             self.config.port,
             POSTGRES_MAX_WORKER_PROCESSES,
             TIMESCALEDB_MAX_BACKGROUND_WORKERS,
@@ -636,6 +697,7 @@ mod tests {
             database: "sinex".to_string(),
             superuser: "postgres".to_string(),
             app_user: "sinex".to_string(),
+            listen_addresses: String::new(),
         })
     }
 
@@ -923,6 +985,7 @@ mod tests {
             database: "sinex".to_string(),
             superuser: "postgres".to_string(),
             app_user: "sinex".to_string(),
+            listen_addresses: String::new(),
         });
 
         let stop_args: Vec<OsString> = manager
@@ -960,6 +1023,7 @@ mod tests {
             database: "sinex".to_string(),
             superuser: "postgres".to_string(),
             app_user: "sinex".to_string(),
+            listen_addresses: String::new(),
         });
 
         let error = manager.render_runtime_config().unwrap_err();
@@ -979,6 +1043,7 @@ mod tests {
             database: "sinex".to_string(),
             superuser: "postgres".to_string(),
             app_user: "sinex".to_string(),
+            listen_addresses: String::new(),
         });
 
         let error = manager
