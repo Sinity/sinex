@@ -94,7 +94,6 @@ xtask-macros = { path = "./macros" }
 sysinfo = "0.38.0"
 
 # Shell-style command composition
-xshell = "0.2"
 
 # Pretty table output
 tabled = "0.17"
