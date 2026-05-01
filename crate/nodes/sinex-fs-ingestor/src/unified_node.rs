@@ -1030,7 +1030,9 @@ impl ExplorationProvider for FilesystemNode {
     }
 
     fn get_ingestion_history(&self, _limit: u64) -> NodeResult<Vec<IngestionHistoryEntry>> {
-        Ok(Vec::new())
+        Err(SinexError::invalid_state(
+            "ingestion history is not implemented for filesystem watcher sources",
+        ))
     }
 
     fn get_coverage_analysis(
@@ -2597,6 +2599,15 @@ mod tests {
         let node = FilesystemNode::new();
         let error = sinex_node_sdk::ExplorationProvider::get_coverage_analysis(&node, None)
             .expect_err("filesystem node should not fabricate coverage analysis");
+        assert!(error.to_string().contains("not implemented"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_node_reports_ingestion_history_unavailable() -> TestResult<()> {
+        let node = FilesystemNode::new();
+        let error = sinex_node_sdk::ExplorationProvider::get_ingestion_history(&node, 10)
+            .expect_err("filesystem node should not report empty ingestion history as success");
         assert!(error.to_string().contains("not implemented"));
         Ok(())
     }

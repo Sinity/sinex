@@ -1218,7 +1218,9 @@ impl IngestorNode for SystemNode {
         _state: &Self::State,
         _limit: u64,
     ) -> NodeResult<Vec<sinex_node_sdk::exploration::IngestionHistoryEntry>> {
-        Ok(vec![])
+        Err(SinexError::invalid_state(
+            "ingestion history is not implemented for system watcher sources",
+        ))
     }
 
     fn get_coverage_analysis(
@@ -1502,6 +1504,16 @@ mod tests {
         let error =
             IngestorNode::get_coverage_analysis(&node, &SystemPersistentState::default(), None)
                 .expect_err("system node should not fabricate coverage analysis");
+        assert!(error.to_string().contains("not implemented"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn system_node_reports_ingestion_history_unavailable() -> TestResult<()> {
+        let node = SystemNode::new();
+        let error =
+            IngestorNode::get_ingestion_history(&node, &SystemPersistentState::default(), 10)
+                .expect_err("system node should not report empty ingestion history as success");
         assert!(error.to_string().contains("not implemented"));
         Ok(())
     }
