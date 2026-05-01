@@ -23,6 +23,7 @@ use console::style;
 use serde::Serialize;
 use sinex_primitives::{
     RuntimeStatusSignalStatus, RuntimeStatusSnapshot, RuntimeTargetDescriptor, RuntimeTargetKind,
+    utils::redact_url_credentials_for_display,
 };
 use std::any::Any;
 use std::path::Path;
@@ -1161,7 +1162,11 @@ async fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
             let infra_duration = started_at.elapsed();
 
             let runtime_metrics_started_at = Instant::now();
-            let runtime_metrics = collect_runtime_metrics_if_postgres_ready(&pg, runtime_db_url, &runtime_target_kind_for_thread);
+            let runtime_metrics = collect_runtime_metrics_if_postgres_ready(
+                &pg,
+                runtime_db_url,
+                &runtime_target_kind_for_thread,
+            );
             let runtime_duration = runtime_metrics_started_at.elapsed();
 
             (
@@ -2327,13 +2332,7 @@ fn format_age(mins: i64) -> String {
 }
 
 fn redact_runtime_target_url(url: &str) -> String {
-    let Some((scheme, rest)) = url.split_once("://") else {
-        return url.to_string();
-    };
-    let authority_and_path = rest
-        .rsplit_once('@')
-        .map_or(rest, |(_, after_auth)| after_auth);
-    format!("{scheme}://{authority_and_path}")
+    redact_url_credentials_for_display(url)
 }
 
 fn runtime_target_kind_label(kind: &RuntimeTargetKind) -> &'static str {
@@ -2386,7 +2385,11 @@ async fn collect_status_data(
             let infra_duration = started_at.elapsed();
 
             let runtime_metrics_started_at = Instant::now();
-            let runtime_metrics = collect_runtime_metrics_if_postgres_ready(&pg, runtime_db_url, &runtime_target_kind_for_thread);
+            let runtime_metrics = collect_runtime_metrics_if_postgres_ready(
+                &pg,
+                runtime_db_url,
+                &runtime_target_kind_for_thread,
+            );
             let runtime_duration = runtime_metrics_started_at.elapsed();
 
             (

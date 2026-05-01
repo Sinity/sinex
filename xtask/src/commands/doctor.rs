@@ -15,7 +15,10 @@ use sinex_node_sdk::preflight::configuration::{
 use sinex_node_sdk::preflight::services::{SystemdServiceDetails, inspect_systemd_service};
 use sinex_primitives::{
     DeploymentDatabaseRuntime, DeploymentReadinessDescriptor, DeploymentReadinessMode,
-    environment::SinexEnvironment, nats::NatsConnectionConfig, rpc::system::SystemHealthResponse,
+    environment::SinexEnvironment,
+    nats::NatsConnectionConfig,
+    rpc::system::SystemHealthResponse,
+    utils::{InvalidUrlPolicy, redact_url_password_for_diagnostics},
 };
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -1220,13 +1223,7 @@ fn database_url_has_password(database_url: &str) -> bool {
 /// Replaces the password with `***` if present.  Returns the original string
 /// unchanged if it is not a valid URL or contains no password.
 fn redact_database_url_password(database_url: &str) -> String {
-    let Ok(mut parsed) = url::Url::parse(database_url) else {
-        return database_url.to_string();
-    };
-    if parsed.password().is_some() {
-        let _ = parsed.set_password(Some("***"));
-    }
-    parsed.to_string()
+    redact_url_password_for_diagnostics(database_url, InvalidUrlPolicy::PreserveInput)
 }
 
 fn read_database_password(password_file: &Path) -> Result<String> {
