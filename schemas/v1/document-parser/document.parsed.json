@@ -1,0 +1,71 @@
+{
+  "$defs": {
+    "DocumentKind": {
+      "description": "Corpus that produced a document. v1 ships exactly two — see the document\nlayer design doc's \"Two corpora, no more\" table.",
+      "oneOf": [
+        {
+          "const": "dendron_markdown",
+          "description": "Dendron-style markdown file under a configured vault root.",
+          "type": "string"
+        },
+        {
+          "const": "terminal_output",
+          "description": "Captured stdout/stderr from a single terminal command, transduced via\n`command.canonical`.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Synthesis event emitted once per parsed document.\n\nProvenance is `from_parents([parent_event_id])`:\n- For Dendron, the parent is the originating `document.ingested` event.\n- For terminal output, the parent is the `command.canonical` event.\n\nThe corresponding chunks are emitted as `document.chunked` events whose\nown provenance threads back to *this* `document.parsed` event ID\n(chunks are derived from the document, not directly from source bytes).",
+  "properties": {
+    "chunk_count": {
+      "description": "Number of `document.chunked` events emitted alongside this\n`document.parsed`. Used by the projection writer for completeness\nchecks; not load-bearing for replay.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "document_id": {
+      "description": "Deterministic document identity. UUIDv5 over `(NS_DOCUMENTS,\nsource_unit || \"/\" || natural_key)` — replay against the same source\nproduces the same id.",
+      "format": "uuid",
+      "type": "string"
+    },
+    "extraction_version": {
+      "description": "Bumped when the parser's output schema changes; downstream consumers\n(entities, embeddings) key off `(document_id, extraction_version)`\nfor invalidation. v1 ships at 1.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "kind": {
+      "$ref": "#/$defs/DocumentKind",
+      "description": "Which corpus this document belongs to (see `DocumentKind`)."
+    },
+    "natural_key": {
+      "description": "Vault-relative path for Dendron, stringified parent event id for\nterminal output. Together with `kind` this is the natural key.",
+      "type": "string"
+    },
+    "side_data": {
+      "description": "Kind-specific structured fields. For Dendron: `{ frontmatter,\nwikilinks, title }`. For terminal: `{ command, exit_code, shell }`.\nSchema-less by design — see the design doc's \"Open questions\" item\non frontmatter schema."
+    },
+    "text_byte_len": {
+      "description": "Total bytes of *post-redaction* extracted text across all chunks.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "document_id",
+    "kind",
+    "natural_key",
+    "extraction_version",
+    "chunk_count",
+    "text_byte_len",
+    "side_data"
+  ],
+  "title": "DocumentParsedPayload",
+  "type": "object",
+  "x-sinex-event-type": "document.parsed",
+  "x-sinex-source": "document-parser",
+  "x-sinex-version": "1.0.0"
+}
