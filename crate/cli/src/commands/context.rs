@@ -8,6 +8,7 @@ use crate::parse::parse_duration;
 use std::collections::HashMap;
 
 use crate::client::GatewayClient;
+use crate::fmt::format_duration_age;
 use crate::fmt::{format_json, format_yaml};
 use crate::model::OutputFormat;
 
@@ -242,26 +243,7 @@ fn short_event_type(event_type: &str) -> &str {
 
 /// Format a Duration into a compact "`XmYs` ago" / "Xs ago" / "Xh ago" string.
 fn format_age(d: time::Duration) -> String {
-    let total_secs = d.whole_seconds().max(0) as u64;
-    if total_secs < 60 {
-        format!("{total_secs}s ago")
-    } else if total_secs < 3600 {
-        let mins = total_secs / 60;
-        let secs = total_secs % 60;
-        if secs == 0 {
-            format!("{mins}m ago")
-        } else {
-            format!("{mins}m{secs}s ago")
-        }
-    } else {
-        let hours = total_secs / 3600;
-        let mins = (total_secs % 3600) / 60;
-        if mins == 0 {
-            format!("{hours}h ago")
-        } else {
-            format!("{hours}h{mins}m ago")
-        }
-    }
+    format_duration_age(d)
 }
 
 /// Truncate a string with ellipsis if over `max` chars.

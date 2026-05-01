@@ -10,7 +10,7 @@ use sinex_primitives::query::{
 use sinex_primitives::temporal::{OffsetDateTime, Timestamp};
 
 use crate::client::GatewayClient;
-use crate::fmt::{format_json, format_yaml};
+use crate::fmt::{format_duration_compact_secs, format_json, format_yaml};
 use crate::model::OutputFormat;
 
 const SESSION_QUERY_LIMIT: i64 = 256;
@@ -396,7 +396,10 @@ async fn print_report(client: &GatewayClient, time_range: TimeRange, label: &str
             "  {} total  ·  avg {}  ·  focused time {}",
             style(format_count(session_summary.session_count)).bold(),
             style(format_optional_duration(session_summary.avg_duration_secs)).cyan(),
-            style(format_duration_compact(session_summary.total_duration_secs)).cyan()
+            style(format_duration_compact_secs(
+                session_summary.total_duration_secs
+            ))
+            .cyan()
         );
 
         if let Some(longest_session) = &session_summary.longest_session {
@@ -404,7 +407,7 @@ async fn print_report(client: &GatewayClient, time_range: TimeRange, label: &str
                 "  Longest: {} → {}  ({})  [{}]",
                 style(format_clock_time(longest_session.start_time)).dim(),
                 style(format_clock_time(longest_session.end_time)).dim(),
-                style(format_duration_compact(longest_session.duration_secs)).bold(),
+                style(format_duration_compact_secs(longest_session.duration_secs)).bold(),
                 style(longest_session.primary_source.to_string()).yellow()
             );
         }
@@ -415,7 +418,10 @@ async fn print_report(client: &GatewayClient, time_range: TimeRange, label: &str
                 println!(
                     "    {:<16} {}",
                     style(&group.key).cyan(),
-                    style(format_duration_compact(group.value.max(0.0).round() as u64)).dim()
+                    style(format_duration_compact_secs(
+                        group.value.max(0.0).round() as u64
+                    ))
+                    .dim()
                 );
             }
         }
@@ -701,30 +707,8 @@ fn format_clock_time(timestamp: Timestamp) -> String {
         .unwrap_or_else(|_| "??:??".to_string())
 }
 
-fn format_duration_compact(total_secs: u64) -> String {
-    let hours = total_secs / 3600;
-    let minutes = (total_secs % 3600) / 60;
-    let seconds = total_secs % 60;
-
-    if hours > 0 {
-        if minutes > 0 {
-            format!("{hours}h {minutes}m")
-        } else {
-            format!("{hours}h")
-        }
-    } else if minutes > 0 {
-        if seconds > 0 {
-            format!("{minutes}m {seconds}s")
-        } else {
-            format!("{minutes}m")
-        }
-    } else {
-        format!("{seconds}s")
-    }
-}
-
 fn format_optional_duration(duration_secs: Option<u64>) -> String {
-    duration_secs.map_or_else(|| "n/a".to_string(), format_duration_compact)
+    duration_secs.map_or_else(|| "n/a".to_string(), format_duration_compact_secs)
 }
 
 /// Format a count with thousands separators.
@@ -769,9 +753,9 @@ mod tests {
 
     #[sinex_test]
     async fn format_duration_compact_handles_hours_minutes_and_seconds() -> TestResult<()> {
-        assert_eq!(format_duration_compact(47), "47s");
-        assert_eq!(format_duration_compact(120), "2m");
-        assert_eq!(format_duration_compact(198 * 60), "3h 18m");
+        assert_eq!(format_duration_compact_secs(47), "47s");
+        assert_eq!(format_duration_compact_secs(120), "2m");
+        assert_eq!(format_duration_compact_secs(198 * 60), "3h 18m");
         Ok(())
     }
 
