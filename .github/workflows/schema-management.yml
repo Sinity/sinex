@@ -26,6 +26,7 @@ jobs:
   validate-schemas:
     name: Validate JSON Schemas
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     concurrency:
       group: schema-management-validate-${{ github.ref }}
       cancel-in-progress: true
@@ -49,20 +50,44 @@ jobs:
         with:
           node-version: '20'
           
-      - name: Install ajv-cli for schema validation
-        run: npm install -g ajv-cli ajv-formats
+      - name: Install AJV for schema validation
+        run: npm install -g ajv ajv-formats
         
       - name: Validate all schemas
         run: |
           echo "Validating JSON schemas..."
-          find schemas -name "*.json" -type f ! -name "registry.json" | while read schema; do
-            echo "Validating: $schema"
-            ajv compile -s "$schema" --spec=draft7 --strict=false
-          done
+          export NODE_PATH="$(npm root -g)"
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const Ajv2020 = require('ajv/dist/2020');
+          const addFormats = require('ajv-formats');
+
+          const ajv = new Ajv2020({ strict: false, validateFormats: false });
+          addFormats(ajv);
+
+          function* schemaFiles(dir) {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const fullPath = path.join(dir, entry.name);
+              if (entry.isDirectory()) {
+                yield* schemaFiles(fullPath);
+              } else if (entry.isFile() && entry.name.endsWith('.json') && entry.name !== 'registry.json') {
+                yield fullPath;
+              }
+            }
+          }
+
+          for (const schemaPath of schemaFiles('schemas')) {
+            console.log(`Validating: ${schemaPath}`);
+            const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+            ajv.compile(schema);
+          }
+          NODE
 
   sync-schema-bundle:
     name: Sync Schema Bundle from Rust Registry
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: validate-schemas
     concurrency:
       group: schema-management-sync-${{ github.ref }}
@@ -113,6 +138,7 @@ jobs:
   deploy-schemas:
     name: Deploy Schemas to Database
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [validate-schemas, sync-schema-bundle]
     env:
       PROD_DATABASE_URL: ${{ secrets.SINEX_PROD_DATABASE_URL }}
