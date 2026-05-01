@@ -49,7 +49,7 @@ let
     else if normalized == "zsh" then "terminal.zsh-history"
     else if normalized == "fish" then "terminal.fish-history"
     else if normalized == "bash" then "terminal.bash-history"
-    else "terminal.${normalized}-history";
+    else "terminal.text-history";
 
 in
 {

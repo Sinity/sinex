@@ -471,46 +471,6 @@
       "proof_obligations": []
     },
     {
-      "subject": "source_unit:terminal",
-      "id": "terminal",
-      "namespace": "shell",
-      "runner_pack": "terminal",
-      "modes": [
-        "continuous",
-        "historical"
-      ],
-      "output_event_types": [
-        {
-          "source": "shell.atuin",
-          "event_type": "command.executed"
-        },
-        {
-          "source": "shell.history",
-          "event_type": "command.imported"
-        },
-        {
-          "source": "shell.history.fish",
-          "event_type": "command.executed"
-        },
-        {
-          "source": "terminal",
-          "event_type": "shell.terminal_monitoring_started"
-        }
-      ],
-      "privacy_tier": "sensitive",
-      "runtime_shape": "continuous",
-      "retention_policy": "forever",
-      "checkpoint_family": "mutable_snapshot",
-      "occurrence_identity": "uuid5:(source_unit, atuin_history_id)",
-      "access_policy": "target_home_read:shell_history",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
-      "proof_obligations": [
-        "terminal_smoke",
-        "terminal_history_replay"
-      ]
-    },
-    {
       "subject": "source_unit:terminal-canonicalizer",
       "id": "terminal-canonicalizer",
       "namespace": "derived",
@@ -611,6 +571,58 @@
       "checkpoint_family": "mutable_snapshot",
       "occurrence_identity": "natural_key",
       "access_policy": "target_home_read:.local/share/fish/fish_history",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:terminal",
+      "proof_obligations": [
+        "obligation:source_unit.material_provenance",
+        "obligation:source_unit.package_impact_rationale"
+      ]
+    },
+    {
+      "subject": "source_unit:terminal.monitor",
+      "id": "terminal.monitor",
+      "namespace": "terminal",
+      "runner_pack": "terminal",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "terminal",
+          "event_type": "shell.terminal_monitoring_started"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "live_observation",
+      "occurrence_identity": "uuid5:(source_unit, run_id)",
+      "access_policy": "runtime_self_observation",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:terminal",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:terminal.text-history",
+      "id": "terminal.text-history",
+      "namespace": "terminal",
+      "runner_pack": "terminal",
+      "modes": [
+        "continuous",
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "shell.history",
+          "event_type": "command.imported"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "material_anchor",
+      "access_policy": "target_home_read:shell_history_text",
       "package_impact": "no_new_output",
       "implementation_mode": "rust_in_pack:terminal",
       "proof_obligations": [
