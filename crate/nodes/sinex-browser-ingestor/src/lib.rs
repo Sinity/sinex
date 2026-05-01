@@ -10,3 +10,37 @@ mod visit;
 
 pub use sqlite_sources::{BrowserSqliteFormat, BrowserSqliteSourceConfig};
 pub use unified_node::{BrowserIngestorConfig, BrowserNode};
+
+use sinex_primitives::register_source_unit;
+use sinex_primitives::source_unit::{
+    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
+    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape,
+    SourceUnitDescriptor,
+};
+
+// Source-unit descriptor (issue #690 / #734). Browser history backing stores
+// are SQLite databases (Firefox `places.sqlite`, Chromium `History`); the
+// occurrence anchor is the row's stable visit_id within the snapshot.
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "browser",
+        namespace: "web",
+        checkpoint_family: SuCheckpointFamily::MutableSnapshot {
+            backing_store_kind: "sqlite",
+            occurrence_anchor: "visit_id",
+        },
+        event_types: &[
+            ("webhistory", "page.visited"),
+        ],
+        // URLs and titles routinely contain auth tokens, search queries.
+        privacy_tier: SuPrivacyTier::Secret,
+        runtime_shape: SuRuntimeShape::Continuous,
+        horizons: &[SuHorizon::Continuous, SuHorizon::Historical],
+        retention: SuRetentionPolicy::Forever,
+        proof_obligations: &[],
+        occurrence_identity: SuOccurrenceIdentity::Uuid5From(
+            "(source_unit, browser_profile, visit_id)",
+        ),
+    }
+}

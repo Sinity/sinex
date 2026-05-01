@@ -18,3 +18,49 @@ pub use window_manager::{WindowManagerType, WindowManagerWatcher};
 pub use unified_node::{
     ClipboardStatus, DesktopMonitorHealth, DesktopNode, DesktopState, WindowManagerStatus,
 };
+
+use sinex_primitives::register_source_unit;
+use sinex_primitives::source_unit::{
+    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
+    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape,
+    SourceUnitDescriptor,
+};
+
+// Source-unit descriptor (issue #690 / #734). The desktop ingestor observes
+// the active window manager (Hyprland today) plus clipboard and ActivityWatch
+// state. State is observed live (no journal cursor); occurrences are anchored
+// by event timestamp + content fingerprint.
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "desktop",
+        namespace: "desktop",
+        checkpoint_family: SuCheckpointFamily::LiveObservation,
+        event_types: &[
+            ("desktop", "desktop.monitoring_started"),
+            ("desktop", "desktop.snapshot"),
+            ("desktop", "clipboard.historical"),
+            ("desktop", "window.wm_historical"),
+            ("clipboard", "clipboard.copied"),
+            ("clipboard", "clipboard.selected"),
+            ("wm.hyprland", "window.opened"),
+            ("wm.hyprland", "window.closed"),
+            ("wm.hyprland", "window.focused"),
+            ("wm.hyprland", "window.moved"),
+            ("wm.hyprland", "window.title_changed"),
+            ("wm.hyprland", "workspace.switched"),
+            ("wm.hyprland", "monitor.focused"),
+            ("wm.hyprland", "state.captured"),
+            ("activitywatch", "window.active"),
+            ("activitywatch", "afk.changed"),
+            ("activitywatch", "browser.tab.active"),
+        ],
+        // Clipboard contents and window titles routinely contain secrets.
+        privacy_tier: SuPrivacyTier::Secret,
+        runtime_shape: SuRuntimeShape::Continuous,
+        horizons: &[SuHorizon::Continuous, SuHorizon::Historical],
+        retention: SuRetentionPolicy::Forever,
+        proof_obligations: &[],
+        occurrence_identity: SuOccurrenceIdentity::Anchor,
+    }
+}

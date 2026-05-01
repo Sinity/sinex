@@ -181,3 +181,34 @@ impl WindowedNode for SessionDetector {
 
 /// Node type alias for use with `node_entrypoint!`.
 pub type SessionDetectorNode = WindowedNodeAdapter<SessionDetector>;
+
+// --- Source-unit descriptor (issue #690 / #734) ---
+
+use sinex_primitives::register_source_unit;
+use sinex_primitives::source_unit::{
+    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
+    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape,
+    SourceUnitDescriptor,
+};
+
+// Session detector consumes activity-window summaries and emits session
+// boundary events when the inactivity gap closes the current window.
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "session-detector",
+        namespace: "derived",
+        checkpoint_family: SuCheckpointFamily::AppendStream,
+        event_types: &[
+            ("derived.session-detector", "activity.session.boundary"),
+        ],
+        privacy_tier: SuPrivacyTier::Sensitive,
+        runtime_shape: SuRuntimeShape::Continuous,
+        horizons: &[SuHorizon::Continuous],
+        retention: SuRetentionPolicy::Forever,
+        proof_obligations: &[],
+        occurrence_identity: SuOccurrenceIdentity::Uuid5From(
+            "(source_unit, parent_event_ids)",
+        ),
+    }
+}

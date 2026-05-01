@@ -928,3 +928,34 @@ mod tests {
         Ok(())
     }
 }
+
+// --- Source-unit descriptor (issue #690 / #734) ---
+
+use sinex_primitives::register_source_unit;
+use sinex_primitives::source_unit::{
+    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
+    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape,
+    SourceUnitDescriptor,
+};
+
+// The document ingestor stages files as raw source material and emits a
+// `document.ingested` event per file. Until the parser/chunker train (#733)
+// lands the ingestor is a single-event, append-stream source.
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "document",
+        namespace: "document",
+        checkpoint_family: SuCheckpointFamily::AppendStream,
+        event_types: &[
+            ("document-ingestor", "document.ingested"),
+        ],
+        // Document contents are arbitrary user files — secrets are routine.
+        privacy_tier: SuPrivacyTier::Secret,
+        runtime_shape: SuRuntimeShape::OnDemand,
+        horizons: &[SuHorizon::Continuous, SuHorizon::Historical],
+        retention: SuRetentionPolicy::Forever,
+        proof_obligations: &[],
+        occurrence_identity: SuOccurrenceIdentity::Anchor,
+    }
+}
