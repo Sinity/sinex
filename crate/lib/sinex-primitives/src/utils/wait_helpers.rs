@@ -114,19 +114,6 @@ where
     })
 }
 
-/// Typed wrapper for `wait_for_condition` using `Seconds`.
-pub async fn wait_for_condition_secs<F, Fut>(
-    condition_fn: F,
-    timeout: Seconds,
-    check_name: &str,
-) -> Result<()>
-where
-    F: Fn() -> Fut,
-    Fut: Future<Output = Result<bool>>,
-{
-    wait_for_condition(condition_fn, timeout.as_secs(), check_name).await
-}
-
 /// Wait for a service to be ready by checking a health endpoint
 pub async fn wait_for_service_ready<F, Fut>(
     service_name: &str,
@@ -143,19 +130,6 @@ where
         &format!("{service_name} readiness"),
     )
     .await
-}
-
-/// Typed wrapper for `wait_for_service_ready` using `Seconds`.
-pub async fn wait_for_service_ready_secs<F, Fut>(
-    service_name: &str,
-    health_check: F,
-    timeout: Seconds,
-) -> Result<()>
-where
-    F: Fn() -> Fut,
-    Fut: Future<Output = Result<()>>,
-{
-    wait_for_service_ready(service_name, health_check, timeout.as_secs()).await
 }
 
 /// Wait for a specific duration with cancellation support
