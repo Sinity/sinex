@@ -29,10 +29,9 @@
 
 ### Advanced Features ✅
 
-**Syntax Highlighting:**
-- Beautiful colored JSON/YAML output (syntect)
-- Auto-detects terminal capabilities
-- base16-ocean.dark theme
+**Structured Output:**
+- JSON/YAML formatting for machine-readable output
+- Plain terminal rendering without an unused syntax-highlighter dependency
 
 **Interactive TUI:**
 - Full terminal dashboard (ratatui + crossterm)
@@ -47,7 +46,7 @@
 **Before:** Functional MVP with basic CRUD
 **After:** Production-ready CLI with:
 - ✅ Robust error handling & retries
-- ✅ Beautiful syntax highlighting
+- ✅ Structured JSON/YAML output
 - ✅ Interactive TUI dashboard
 - ✅ Comprehensive validation
 - ✅ Clean, tested codebase
