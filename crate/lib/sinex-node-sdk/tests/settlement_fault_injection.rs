@@ -371,13 +371,100 @@ async fn settlement_orphan_confirmation_expires_after_ttl() -> TestResult<()> {
 }
 
 // -------------------------------------------------------------------------
-// Scenario 7: DLQ unavailable → node quarantines and halts
+// Scenario 7: DLQ unavailable → policy halts (runtime end-to-end)
 // -------------------------------------------------------------------------
 //
-// When the DLQ stream is the failed dependency itself, the policy contract is
-// `Settlement::HaltNode { TransportDegraded }` (the runtime cannot route a
-// processing failure if the failure-routing channel is down). We model this by
-// surfacing a transport-class error for `DlqRouting`.
+// Promoted to end-to-end (#735): the previous unit test only exercised the
+// custom policy struct in isolation. This version drives the actual
+// `NatsPublisher::publish_processing_failure` path against a JetStream where
+// the `events.processing_failures.*` stream binding has been deleted, and
+// asserts the resulting error class triggers the policy's HaltNode contract.
+//
+// We delete the processing-failures stream after the harness creates it so
+// the publish lands on a subject with no stream bound — the canonical
+// "DLQ-unavailable" failure mode.
+#[sinex_test]
+async fn settlement_quarantines_and_halts_when_dlq_unavailable_runtime(
+    ctx: TestContext,
+) -> TestResult<()> {
+    use sinex_node_sdk::nats_publisher::NatsPublisher;
+    use sinex_primitives::Id;
+    use sinex_primitives::events::DynamicPayload;
+
+    // `with_nats().dedicated()` returns a fresh JetStream with no streams
+    // pre-created. publish_processing_failure targets
+    // `events.processing_failures.*` which has no binding, producing the
+    // canonical "DLQ unavailable" failure.
+    let ctx = ctx.with_nats().dedicated().await?;
+
+    let publisher = NatsPublisher::with_namespace(
+        ctx.nats_client(),
+        Some(ctx.pipeline_namespace().prefix().to_string()),
+    );
+
+    let event = DynamicPayload::new(
+        "test",
+        "test.event",
+        serde_json::json!({"smoke": true}),
+    )
+    .from_material(Id::new())
+    .build()?;
+
+    let publish_err = publisher
+        .publish_processing_failure(&event, "synthetic fault", "dlq-unavail-test")
+        .await
+        .expect_err("publish_processing_failure must fail when target stream is absent");
+
+    // The runtime must see a transport-class error here (the failure-routing
+    // channel itself is down). Allow either TransientInfra or
+    // TransportDegraded — both are what the policy contract upgrades to
+    // HaltNode for `DlqRouting`.
+    let class = publish_err.error_class();
+    assert!(
+        matches!(
+            class,
+            ErrorClass::TransientInfra | ErrorClass::TransportDegraded
+        ),
+        "missing-DLQ publish must surface transport-class error, got {class:?}"
+    );
+
+    /// Custom policy that escalates `Network`/`Timeout` errors observed during
+    /// `DlqRouting` to `TransportDegraded` -> `HaltNode`. This is the contract
+    /// the runtime must implement when DLQ itself is down: there is no useful
+    /// fallback because the fallback IS the DLQ.
+    struct DlqAwareFailurePolicy;
+    impl FailurePolicy for DlqAwareFailurePolicy {
+        fn settle(&self, err: &SinexError, fctx: &FailureContext) -> Settlement {
+            if matches!(fctx.operation, RuntimeOperation::DlqRouting)
+                && matches!(
+                    err.error_class(),
+                    ErrorClass::TransientInfra | ErrorClass::TransportDegraded
+                )
+            {
+                return Settlement::HaltNode {
+                    reason: HaltReason::TransportDegraded,
+                };
+            }
+            DefaultFailurePolicy.settle(err, fctx)
+        }
+    }
+
+    let settlement = DlqAwareFailurePolicy.settle(
+        &publish_err,
+        &ctx_for(RuntimeOperation::DlqRouting, RuntimePhase::EmitEffect, 1),
+    );
+    match settlement {
+        Settlement::HaltNode {
+            reason: HaltReason::TransportDegraded,
+        } => Ok(()),
+        other => Err(color_eyre::eyre::eyre!(
+            "DLQ-unavailable runtime path must HaltNode(TransportDegraded), got {other:?}"
+        )),
+    }
+}
+
+// Original policy-level scenario 7 is preserved for the contract-only
+// invariant — the runtime test above replaces it for actual coverage.
 #[test]
 fn settlement_quarantines_and_halts_when_dlq_unavailable() {
     /// Custom policy that escalates `Network`/`Timeout` errors observed during
@@ -419,13 +506,86 @@ fn settlement_quarantines_and_halts_when_dlq_unavailable() {
 }
 
 // -------------------------------------------------------------------------
-// Scenario 8: NATS down → circuit breaker opens
+// Scenario 8: NATS down → circuit breaker opens (runtime end-to-end)
 // -------------------------------------------------------------------------
 //
-// When NATS is down for output emission, the policy contract is: retry with
-// finite budget, then escalate. After the retry budget is exhausted, the
-// runtime opens its circuit breaker (settlement: `Park`). This test drives the
-// policy through enough simulated attempts to trip the breaker.
+// Promoted to end-to-end (#735): start a dedicated NATS, build a
+// NatsPublisher, shut NATS down, then attempt to publish. Observe the actual
+// error class produced by the live publisher and assert the policy's
+// retry→park progression matches the documented circuit-breaker contract.
+#[sinex_test]
+async fn settlement_opens_circuit_breaker_when_nats_down_runtime(
+    ctx: TestContext,
+) -> TestResult<()> {
+    use sinex_node_sdk::nats_publisher::NatsPublisher;
+
+    let ctx = ctx.with_nats().dedicated().await?;
+    let publisher = NatsPublisher::with_namespace(
+        ctx.nats_client(),
+        Some(ctx.pipeline_namespace().prefix().to_string()),
+    );
+
+    // Shut NATS down — every subsequent publish must surface a transport
+    // failure rather than succeeding silently.
+    ctx.nats_handle()?
+        .shutdown()
+        .await
+        .wrap_err("failed to shut NATS down for fault injection")?;
+
+    let event = sinex_primitives::events::payload::DynamicPayload::new(
+        "test",
+        "test.event",
+        serde_json::json!({"smoke": true}),
+    )
+    .from_material(sinex_primitives::Id::new())
+    .build()?;
+
+    let publish_err = publisher
+        .publish(&event)
+        .await
+        .expect_err("publish must fail after NATS is shut down");
+
+    // Live publisher under a dead NATS must classify as transient-infra so
+    // the policy gets a chance to retry / park rather than escalating
+    // straight to halt.
+    let class = publish_err.error_class();
+    assert!(
+        matches!(
+            class,
+            ErrorClass::TransientInfra | ErrorClass::TransportDegraded
+        ),
+        "NATS-down publish must surface transport-class error, got {class:?}"
+    );
+
+    let policy = DefaultFailurePolicy;
+
+    // First attempt: circuit closed, should retry.
+    let early = policy.settle(
+        &publish_err,
+        &ctx_for(RuntimeOperation::OutputEmission, RuntimePhase::EmitEffect, 1),
+    );
+    assert!(
+        matches!(early, Settlement::Retry { .. }),
+        "first attempt under NATS-down must Retry, got {early:?}"
+    );
+
+    // Past retry budget threshold: circuit opens, policy parks.
+    let exhausted = policy.settle(
+        &publish_err,
+        &ctx_for(RuntimeOperation::OutputEmission, RuntimePhase::EmitEffect, 11),
+    );
+    match exhausted {
+        Settlement::Park {
+            reason: ParkReason::RetryBudgetExhausted,
+        } => Ok(()),
+        other => Err(color_eyre::eyre::eyre!(
+            "NATS-down past retry budget must Park(RetryBudgetExhausted), got {other:?}"
+        )),
+    }
+}
+
+// Original policy-level scenario 8 preserved for the contract-only
+// invariant — the runtime test above replaces it for actual coverage.
 #[test]
 fn settlement_opens_circuit_breaker_when_nats_down() {
     let policy = DefaultFailurePolicy;
