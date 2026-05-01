@@ -7,6 +7,7 @@ pub mod file_watcher;
 pub mod json_helpers;
 pub mod resource_guard;
 pub mod timestamp_helpers;
+pub mod url_redaction;
 pub mod wait_helpers;
 
 // Re-export all utilities
@@ -15,4 +16,5 @@ pub use file_watcher::*;
 pub use json_helpers::*;
 pub use resource_guard::*;
 pub use timestamp_helpers::*;
+pub use url_redaction::*;
 pub use wait_helpers::*;
