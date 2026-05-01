@@ -34,7 +34,6 @@ tokio = { workspace = true, features = ["sync", "time"] }
 indexmap = { version = "2.1", features = ["serde"] }
 displaydoc = "0.2"
 serde_path_to_error = "0.1"
-color-eyre = { workspace = true }
 tracing = { workspace = true }
 regex = { workspace = true }
 
@@ -68,6 +67,7 @@ optional = true
 tokio = { workspace = true, features = ["full"] }
 sinex-primitives = { path = ".", features = ["testing", "sqlx"] }
 proptest = { workspace = true }
+color-eyre = { workspace = true }
 sinex-db = { path = "../sinex-db" }
 tempfile = { workspace = true }
 xtask = { path = "../../../xtask" }
