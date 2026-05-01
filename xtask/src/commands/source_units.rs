@@ -10,6 +10,7 @@ use crate::config::workspace_root;
 use crate::output::StructuredError;
 use color_eyre::eyre::{Context, Result};
 use serde::Serialize;
+use sinex_primitives::events::schema_registry::get_all_payloads;
 use sinex_primitives::proof::{self, ProofObligation};
 use sinex_primitives::source_unit::{
     self, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
@@ -165,6 +166,7 @@ struct SourceUnitValidation {
     duplicate_ids: Vec<String>,
     empty_fields: Vec<String>,
     invalid_physical_impact: Vec<String>,
+    invalid_output_event_pairs: Vec<String>,
     runner_packs_with_multiple_units: Vec<String>,
     stale_manifest: bool,
 }
@@ -215,6 +217,7 @@ fn execute_check(output: Option<&Path>, ctx: &CommandContext) -> Result<CommandR
         || !validation.duplicate_ids.is_empty()
         || !validation.empty_fields.is_empty()
         || !validation.invalid_physical_impact.is_empty()
+        || !validation.invalid_output_event_pairs.is_empty()
         || validation.runner_packs_with_multiple_units.is_empty()
         || validation.stale_manifest;
 
@@ -568,6 +571,25 @@ fn validate_source_units(
         })
         .map(|unit| unit.id.to_string())
         .collect::<Vec<_>>();
+    let payload_pairs = get_all_payloads()
+        .map(|payload| (payload.source, payload.event_type))
+        .collect::<BTreeSet<_>>();
+    let invalid_output_event_pairs = source_units
+        .iter()
+        .flat_map(|unit| {
+            unit.output_event_types
+                .iter()
+                .filter_map(|event_pair| {
+                    let pair = (event_pair.source.as_str(), event_pair.event_type.as_str());
+                    (!payload_pairs.contains(&pair)).then(|| {
+                        format!(
+                            "{}:{}/{}",
+                            unit.subject, event_pair.source, event_pair.event_type
+                        )
+                    })
+                })
+        })
+        .collect::<Vec<_>>();
     let runner_packs_with_multiple_units = runner_pack_manifests(source_units)
         .into_iter()
         .filter(|pack| pack.source_unit_count >= 2)
@@ -585,6 +607,7 @@ fn validate_source_units(
         duplicate_ids,
         empty_fields,
         invalid_physical_impact,
+        invalid_output_event_pairs,
         runner_packs_with_multiple_units,
         stale_manifest,
     }
@@ -772,10 +795,34 @@ mod tests {
         assert!(validation.duplicate_ids.is_empty());
         assert!(validation.empty_fields.is_empty());
         assert!(validation.invalid_physical_impact.is_empty());
+        assert!(validation.invalid_output_event_pairs.is_empty());
         assert!(
             validation
                 .runner_packs_with_multiple_units
                 .contains(&"terminal".to_string())
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_unit_validation_rejects_unregistered_output_pairs() -> TestResult<()> {
+        let manifest = build_source_unit_manifest();
+        let mut unit = manifest
+            .source_units
+            .iter()
+            .find(|unit| unit.id == "fs")
+            .expect("fs descriptor should be present")
+            .clone();
+        unit.output_event_type.push_str(",missing/source.event");
+        unit.output_event_types.push(SourceUnitEventType {
+            source: "missing".to_string(),
+            event_type: "source.event".to_string(),
+        });
+
+        let validation = validate_source_units(&[unit], false);
+        assert_eq!(
+            validation.invalid_output_event_pairs,
+            vec!["source_unit:fs:missing/source.event".to_string()]
         );
         Ok(())
     }
