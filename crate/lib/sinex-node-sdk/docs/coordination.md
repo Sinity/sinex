@@ -5,7 +5,7 @@ The `coordination` module implements high-level distributed patterns required fo
 ## 🏆 Leadership Election
 
 Sinex uses a **Single Leader** model for stateful automata to prevent conflicting state updates.
-- **Lease Persistence**: Leadership is maintained via NATS KV keys with a 15-second TTL.
+- **Lease Persistence**: Leadership is maintained via NATS KV keys with a 30-second TTL.
 - **Heartbeat**: Leaders must refresh their lease every 5 seconds.
 - **Standby Mode**: Non-leader instances run in standby mode, monitoring the lease for takeover opportunities if the leader's TTL expires.
 
@@ -47,7 +47,7 @@ Keep that discipline intact when changing the module:
 ## 🚨 Error Recovery
 
 ### Leader Crash
-If a leader crashes without releasing its lease, the NATS KV TTL will expire after 15 seconds. A standby instance will then automatically acquire the lease.
+If a leader crashes without releasing its lease, the NATS KV TTL will expire after 30 seconds. A standby instance will then automatically acquire the lease.
 
 ### Critical Failure
 Leaders can broadcast a **Critical Failure Signal** (`sinex.coordination.<service>.failure`) for observability and external coordination tooling. Standby takeover is still lease/CAS-driven.
