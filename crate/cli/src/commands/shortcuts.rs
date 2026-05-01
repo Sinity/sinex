@@ -557,6 +557,28 @@ impl WatchCommand {
                 Ok(SseClientMessage::Heartbeat) => {
                     // Silent keepalive in all formats.
                 }
+                Ok(SseClientMessage::Error { code, message }) => {
+                    match format {
+                        OutputFormat::Json | OutputFormat::Dot => {
+                            let line =
+                                json!({ "kind": "error", "code": code, "message": message });
+                            println!("{}", serde_json::to_string(&line)?);
+                        }
+                        OutputFormat::Yaml => {
+                            let doc =
+                                json!({ "kind": "error", "code": code, "message": message });
+                            println!("---");
+                            print!("{}", format_yaml(&doc)?);
+                        }
+                        OutputFormat::Table => {
+                            eprintln!(
+                                "{}",
+                                style(format!("Stream error [{code}]: {message}")).red()
+                            );
+                        }
+                    }
+                    break;
+                }
                 Err(e) => {
                     match format {
                         OutputFormat::Json | OutputFormat::Dot => {

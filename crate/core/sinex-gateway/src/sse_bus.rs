@@ -61,6 +61,8 @@ pub enum SseMessage {
     },
     /// Keepalive.
     Heartbeat { ts: Timestamp },
+    /// Structured stream error.
+    Error { code: String, message: String },
 }
 
 /// Wire format for the SSE `event` type.
@@ -85,7 +87,6 @@ pub(crate) struct SseHeartbeatPayload {
 
 /// Wire format for the SSE `error` type.
 #[derive(Serialize)]
-#[allow(dead_code)]
 pub(crate) struct SseErrorPayload {
     pub code: String,
     pub message: String,

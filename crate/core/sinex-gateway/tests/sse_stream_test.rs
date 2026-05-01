@@ -744,7 +744,7 @@ async fn slow_consumer_gap_arrives_before_resumed_event(
                     break;
                 }
             }
-            Some(SseMessage::Heartbeat { .. }) | None => {}
+            Some(SseMessage::Heartbeat { .. }) | Some(SseMessage::Error { .. }) | None => {}
         }
     }
 
