@@ -110,12 +110,9 @@ impl<T> EventBuilder<T, NoProvenance> {
     where
         I: IntoIterator<Item = EventId>,
     {
-        let mut iter = parents.into_iter();
-        let first = iter.next().ok_or_else(|| {
+        let provenance = Provenance::from_synthesis(parents).ok_or_else(|| {
             SinexError::validation("from_parents requires at least one parent ID")
         })?;
-        let rest: Vec<EventId> = iter.collect();
-        let provenance = Provenance::from_synthesis_safe(first, rest);
         Ok(self.with_provenance(provenance))
     }
 }
@@ -181,9 +178,12 @@ impl<T> EventBuilder<T, HasProvenance> {
     }
 
     pub fn build(self) -> Result<Event<T>> {
-        let provenance = self.provenance_data.ok_or_else(|| {
-            SinexError::invalid_state("EventBuilder missing provenance when building")
-        })?;
+        let provenance = self
+            .provenance_data
+            .ok_or_else(|| {
+                SinexError::invalid_state("EventBuilder missing provenance when building")
+            })?
+            .into_canonical();
 
         // Enforce the same offset invariants as Deserialize: offsets must be
         // either all-present (start + end + kind) or all-absent.
@@ -432,7 +432,7 @@ impl<'de> Deserialize<'de> for Provenance {
                 })
             }
             (None, Some(ids)) => {
-                let source_event_ids = NonEmptyVec::from_vec(ids).ok_or_else(|| {
+                let source_event_ids = canonicalize_source_event_ids(ids).ok_or_else(|| {
                     serde::de::Error::custom("source_event_ids cannot be empty for Synthesis")
                 })?;
                 Ok(Provenance::Synthesis {
@@ -471,18 +471,23 @@ impl Provenance {
     }
 
     pub fn from_synthesis<I: IntoIterator<Item = EventId>>(ids: I) -> Option<Self> {
-        let vec: Vec<EventId> = ids.into_iter().collect();
-        NonEmptyVec::from_vec(vec).map(|source_event_ids| Provenance::Synthesis {
+        canonicalize_source_event_ids(ids).map(|source_event_ids| Provenance::Synthesis {
             source_event_ids,
             operation_id: None,
         })
     }
 
     #[must_use]
-    pub(crate) fn from_synthesis_safe(first: EventId, rest: Vec<EventId>) -> Self {
-        Provenance::Synthesis {
-            source_event_ids: NonEmptyVec::from_head_tail(first, rest),
-            operation_id: None,
+    pub fn into_canonical(self) -> Self {
+        match self {
+            Provenance::Synthesis {
+                source_event_ids,
+                operation_id,
+            } => Provenance::Synthesis {
+                source_event_ids: canonicalize_non_empty_source_event_ids(source_event_ids),
+                operation_id,
+            },
+            material => material,
         }
     }
 
@@ -514,6 +519,31 @@ impl Provenance {
     pub fn operation_uuid(&self) -> Option<Uuid> {
         self.operation_id().map(|id| id.to_uuid())
     }
+}
+
+fn canonicalize_source_event_ids<I>(ids: I) -> Option<NonEmptyVec<EventId>>
+where
+    I: IntoIterator<Item = EventId>,
+{
+    let mut ids: Vec<EventId> = ids.into_iter().collect();
+    ids.sort_unstable();
+    ids.dedup();
+    NonEmptyVec::from_vec(ids)
+}
+
+fn canonicalize_non_empty_source_event_ids(ids: NonEmptyVec<EventId>) -> NonEmptyVec<EventId> {
+    let mut ids = ids.into_vec();
+    ids.sort_unstable();
+    ids.dedup();
+
+    // The input was non-empty, so sorting and deduplication cannot make it
+    // empty. Rebuild without unwrap/expect to keep the invariant explicit.
+    let mut iter = ids.into_iter();
+    let first = match iter.next() {
+        Some(first) => first,
+        None => unreachable!("deduplicating a non-empty parent set cannot produce an empty set"),
+    };
+    NonEmptyVec::from_head_tail(first, iter.collect())
 }
 
 /// Cached stable host identity.

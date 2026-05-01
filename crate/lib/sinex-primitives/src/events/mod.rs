@@ -240,6 +240,9 @@ impl Event<JsonValue> {
         payload: JsonValue,
         provenance: Provenance,
     ) -> Self {
+        let provenance = provenance.into_canonical();
+        let created_by_operation_id = provenance.operation_uuid();
+
         Self {
             id: None,
             source: source.into(),
@@ -255,7 +258,7 @@ impl Event<JsonValue> {
             semantics_version: None,
             scope_key: None,
             equivalence_key: None,
-            created_by_operation_id: None,
+            created_by_operation_id,
             node_model: None,
         }
     }
