@@ -115,7 +115,19 @@ pub struct PoolConfig {
     #[validate(custom(function = "validate_statement_timeout_secs"))]
     pub statement_timeout_secs: Seconds,
 
+    pub max_lifetime_secs: Option<Seconds>,
+
     pub validate_against_postgres_max: bool,
+}
+
+/// Session setup policy applied when constructing a PostgreSQL pool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PoolSessionPolicy {
+    /// Configure `statement_timeout` after connect and before reusing pooled
+    /// connections.
+    ConfigureStatementTimeout,
+    /// Use sqlx's built-in pool health checks without Sinex session hooks.
+    SqlxDefaults,
 }
 
 impl Default for PoolConfig {
@@ -126,6 +138,7 @@ impl Default for PoolConfig {
             acquire_timeout_secs: Seconds::from_secs(30),
             idle_timeout_secs: Seconds::from_secs(300),
             statement_timeout_secs: Seconds::from_secs(60),
+            max_lifetime_secs: None,
             validate_against_postgres_max: true,
         }
     }
@@ -195,6 +208,19 @@ pub async fn create_pool(database_url: &str) -> Result<DbPool> {
 }
 
 pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) -> Result<DbPool> {
+    create_pool_with_config_and_session_policy(
+        database_url,
+        config,
+        PoolSessionPolicy::ConfigureStatementTimeout,
+    )
+    .await
+}
+
+pub async fn create_pool_with_config_and_session_policy(
+    database_url: &str,
+    config: &PoolConfig,
+    session_policy: PoolSessionPolicy,
+) -> Result<DbPool> {
     config
         .validate()
         .map_err(|e| SinexError::validation("pool config validation failed").with_std_error(&e))?;
@@ -203,8 +229,21 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
         validate_pool_size_against_postgres_max(database_url, config.max_connections).await?;
     }
 
-    let statement_timeout_secs = config.statement_timeout_secs.as_secs();
-    let pool = PgPoolOptions::new()
+    let pool_options = pool_options_from_config(config, session_policy);
+    let pool = pool_options
+        .connect(database_url)
+        .await
+        .map_err(SinexError::from)?;
+
+    info!("Database pool created successfully");
+    Ok(pool)
+}
+
+fn pool_options_from_config(
+    config: &PoolConfig,
+    session_policy: PoolSessionPolicy,
+) -> PgPoolOptions {
+    let mut options = PgPoolOptions::new()
         .max_connections(config.max_connections)
         .min_connections(config.min_connections)
         .acquire_timeout(std::time::Duration::from_secs(
@@ -212,7 +251,25 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
         ))
         .idle_timeout(std::time::Duration::from_secs(
             config.idle_timeout_secs.as_secs(),
-        ))
+        ));
+
+    if let Some(max_lifetime_secs) = config.max_lifetime_secs {
+        options = options.max_lifetime(std::time::Duration::from_secs(max_lifetime_secs.as_secs()));
+    }
+
+    match session_policy {
+        PoolSessionPolicy::ConfigureStatementTimeout => {
+            with_statement_timeout_session_hooks(options, config.statement_timeout_secs.as_secs())
+        }
+        PoolSessionPolicy::SqlxDefaults => options,
+    }
+}
+
+fn with_statement_timeout_session_hooks(
+    options: PgPoolOptions,
+    statement_timeout_secs: u64,
+) -> PgPoolOptions {
+    options
         .after_connect(move |conn, _meta| {
             Box::pin(async move {
                 configure_session_timeout(conn, statement_timeout_secs).await?;
@@ -229,12 +286,6 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
                 Ok(true)
             })
         })
-        .connect(database_url)
-        .await
-        .map_err(SinexError::from)?;
-
-    info!("Database pool created successfully");
-    Ok(pool)
 }
 
 pub fn resolve_effective_database_url(base_url: &str) -> Result<String> {
@@ -315,6 +366,7 @@ pub async fn create_test_pool(database_url: &str) -> Result<DbPool> {
         acquire_timeout_secs: Seconds::from_secs(30),
         idle_timeout_secs: Seconds::from_secs(300),
         statement_timeout_secs: Seconds::from_secs(60),
+        max_lifetime_secs: None,
         validate_against_postgres_max: false,
     };
     create_pool_with_config(database_url, &test_config).await
