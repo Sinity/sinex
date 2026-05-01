@@ -1,9 +1,10 @@
 use crate::schema::{
     ArchivedEventAnnotations, ArchivedEventEmbeddings, ArchivedEvents, ArchivedTaggedItems, BinarySchemaVersion, Blobs,
-    EmbeddingCache, EmbeddingModels, Entities, EntityRelations, EventAnnotations,
-    EventClusterMembers, EventClusters, EventEmbeddings, EventPayloadSchemas, EventReplacements,
-    EventTombstones, Events, GitopsSchemaSources, NodeManifests, NodeRuns, OperationsLog,
-    SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger, ValidationCache,
+    DocumentChunks, Documents, EmbeddingCache, EmbeddingModels, Entities, EntityRelations,
+    EventAnnotations, EventClusterMembers, EventClusters, EventEmbeddings, EventPayloadSchemas,
+    EventReplacements, EventTombstones, Events, GitopsSchemaSources, NodeManifests, NodeRuns,
+    OperationsLog, SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger,
+    ValidationCache,
 };
 use crate::schema_registry;
 use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement};
@@ -399,6 +400,8 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         render_table(&EventClusterMembers::create_table_statement()),
         render_table(&EventTombstones::create_table_statement()),
         render_table(&EventReplacements::create_table_statement()),
+        render_table(&Documents::create_table_statement()),
+        render_table(&DocumentChunks::create_table_statement()),
     ];
 
     for sql in table_sql {
@@ -472,6 +475,8 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(render_indexes(NodeRuns::create_indexes()));
     index_sql.extend(render_indexes(GitopsSchemaSources::create_indexes()));
     index_sql.extend(render_indexes(EventReplacements::create_indexes()));
+    index_sql.extend(render_indexes(Documents::create_indexes()));
+    index_sql.extend(render_indexes(DocumentChunks::create_indexes()));
     index_sql.extend(render_indexes(OperationsLog::create_indexes()));
     index_sql.extend(OperationsLog::create_gin_indexes_sql());
 

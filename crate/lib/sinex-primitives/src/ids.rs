@@ -193,3 +193,27 @@ mod sqlx_impl {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// UUIDv5 derivations
+// ---------------------------------------------------------------------------
+
+/// Derive the deterministic document id used by the document layer (#733).
+///
+/// `source_unit` is `"dendron"` or `"terminal"`; `natural_key` is the
+/// vault-relative path (Dendron) or the parent `command.canonical` event
+/// id stringified (terminal). The result is `UUIDv5(NAMESPACE_OID,
+/// "sinex.documents.v1/<source_unit>/<natural_key>")`.
+///
+/// Anchoring on RFC 4122's well-known `NAMESPACE_OID` (rather than a fresh
+/// random 16-byte constant) keeps the derivation auditable: every byte that
+/// determines the output is either RFC-defined or appears in the input
+/// string. There is no opaque sinex-specific salt to pin down or to
+/// suspect of fabrication. Replaying parser logic across cluster
+/// generations produces the same document id because the inputs are
+/// stable, not because a constant is privileged.
+#[must_use]
+pub fn derive_document_id(source_unit: &str, natural_key: &str) -> ::uuid::Uuid {
+    let canonical = format!("sinex.documents.v1/{source_unit}/{natural_key}");
+    ::uuid::Uuid::new_v5(&::uuid::Uuid::NAMESPACE_OID, canonical.as_bytes())
+}
