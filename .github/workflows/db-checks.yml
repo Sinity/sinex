@@ -39,7 +39,7 @@ jobs:
     needs: changes
     if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.schema == 'true'
     concurrency:
-      group: db-checks-schema-${{ github.ref }}
+      group: db-checks-schema-${{ github.head_ref || github.ref_name }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v5
