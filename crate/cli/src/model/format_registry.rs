@@ -220,28 +220,32 @@ pub fn registry() -> &'static HashMap<&'static str, FormatCapability> {
 
 /// Validate that `format` is supported for `command_path`.
 ///
-/// Returns `Ok(())` if the command is unknown or if `format` is in the
-/// supported set.  Returns `Err(message)` when the command is known and
-/// `format` is **not** supported.
+/// Returns `Ok(())` if `format` is in the supported set. Returns
+/// `Err(message)` when the command is unknown or when the format is not
+/// supported.
 pub fn validate_format(command_path: &str, format: OutputFormat) -> Result<(), String> {
     let reg = registry();
-    if let Some(cap) = reg.get(command_path) {
-        if !cap.supports(format) {
-            let supported: Vec<String> = cap
-                .supported
-                .iter()
-                .map(|f| format!("{f:?}").to_lowercase())
-                .collect();
-            return Err(format!(
-                "command `{command_path}` does not support --format {format:?}; supported: {supported}",
-                format = format,
-                supported = if supported.is_empty() {
-                    "none (--format not applicable for this command)".to_string()
-                } else {
-                    supported.join(", ")
-                },
-            ));
-        }
+    let Some(cap) = reg.get(command_path) else {
+        return Err(format!(
+            "command `{command_path}` is missing from the output-format registry"
+        ));
+    };
+
+    if !cap.supports(format) {
+        let supported: Vec<String> = cap
+            .supported
+            .iter()
+            .map(|f| format!("{f:?}").to_lowercase())
+            .collect();
+        return Err(format!(
+            "command `{command_path}` does not support --format {format:?}; supported: {supported}",
+            format = format,
+            supported = if supported.is_empty() {
+                "none (--format not applicable for this command)".to_string()
+            } else {
+                supported.join(", ")
+            },
+        ));
     }
     Ok(())
 }
@@ -340,8 +344,13 @@ mod tests {
     }
 
     #[test]
-    fn validate_format_allows_unknown_command() {
-        assert!(validate_format("nonexistent command", OutputFormat::Json).is_ok());
+    fn validate_format_rejects_unknown_command() {
+        let result = validate_format("nonexistent command", OutputFormat::Json);
+        assert!(result.is_err(), "unknown commands should fail closed");
+        assert!(
+            result.unwrap_err().contains("missing from the output-format registry"),
+            "error should explain the missing registry entry"
+        );
     }
 
     #[test]
