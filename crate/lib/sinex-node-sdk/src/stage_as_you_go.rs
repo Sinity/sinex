@@ -10,7 +10,7 @@ use serde_json::{Map as JsonMap, json};
 use sinex_primitives::Id;
 use sinex_primitives::JsonValue;
 use sinex_primitives::Timestamp;
-use sinex_primitives::events::{Event, EventPayload, payloads::LogLinePayload};
+use sinex_primitives::events::Event;
 use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::sync::Arc;
@@ -167,55 +167,6 @@ mod tests {
         assert!(super::signal_reconciliation_shutdown(&tx));
         rx.changed().await?;
         assert!(*rx.borrow());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn missing_material_started_at_is_rejected() -> TestResult<()> {
-        let (tx, _rx) = mpsc::channel(1);
-        let emitter = EventEmitter::new(tx, false);
-        let context = StageAsYouGoContext::from_optional_emitter(emitter);
-        let material_id = Uuid::now_v7();
-
-        let error = context
-            .require_material_started_at(material_id)
-            .await
-            .expect_err("missing in-flight timestamp should be rejected");
-
-        assert!(
-            error
-                .to_string()
-                .contains("stage-as-you-go lost in-flight material timestamp"),
-            "unexpected error: {error}"
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn require_log_file_source_uri_rejects_missing_values() -> TestResult<()> {
-        let error = super::require_log_file_source_uri(None)
-            .expect_err("missing source URI should fail honestly");
-
-        assert!(
-            error
-                .to_string()
-                .contains("log-file staging requires a non-empty source URI"),
-            "unexpected error: {error}"
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn require_log_file_source_uri_rejects_blank_values() -> TestResult<()> {
-        let error = super::require_log_file_source_uri(Some("   "))
-            .expect_err("blank source URI should fail honestly");
-
-        assert!(
-            error
-                .to_string()
-                .contains("log-file staging requires a non-empty source URI"),
-            "unexpected error: {error}"
-        );
         Ok(())
     }
 
@@ -522,16 +473,6 @@ impl StageAsYouGoContext {
             .await
             .get(&material_id)
             .map(|info| info.started_at)
-    }
-
-    async fn require_material_started_at(
-        &self,
-        material_id: Uuid,
-    ) -> NodeResult<sinex_primitives::temporal::Timestamp> {
-        self.material_started_at(material_id).await.ok_or_else(|| {
-            SinexError::processing("stage-as-you-go lost in-flight material timestamp")
-                .with_context("source_material_id", material_id.to_string())
-        })
     }
 
     /// Create and send an event with attached source material reference
@@ -875,23 +816,6 @@ where
     Ok(())
 }
 
-/// Helper trait for nodes that support Stage-as-You-Go
-#[allow(async_fn_in_trait)]
-pub trait StageAsYouGoNode: Send + Sync {
-    /// Process content with Stage-as-You-Go pattern
-    ///
-    /// This method should:
-    /// 1. Register in-flight source material
-    /// 2. Process content and emit events with `source_material_id`
-    /// 3. Finalize source material with complete details
-    async fn process_with_staging(
-        &mut self,
-        content: &[u8],
-        source_uri: Option<&str>,
-        metadata: serde_json::Value,
-    ) -> NodeResult<StageAsYouGoResult>;
-}
-
 async fn reconcile_shared(
     registry: &Arc<Mutex<HashMap<Uuid, StageMaterialInfo>>>,
     handles: &Arc<Mutex<HashMap<Uuid, SourceMaterialHandle>>>,
@@ -960,30 +884,6 @@ async fn reconcile_shared(
     Ok(summary)
 }
 
-/// Result of Stage-as-You-Go processing
-#[derive(Debug)]
-pub struct StageAsYouGoResult {
-    /// ID of the source material
-    pub source_material_id: Uuid,
-    /// IDs of events emitted
-    pub event_ids: Vec<String>,
-    /// Total bytes processed
-    pub bytes_processed: usize,
-    /// Processing duration
-    pub duration: std::time::Duration,
-}
-
-/// Example implementation for a log file node
-///
-/// Usage:
-/// ```ignore
-/// let node = LogFileStageNode::new(context, "nginx");
-/// ```
-pub struct LogFileStageNode {
-    context: StageAsYouGoContext,
-    log_source: String, // "nginx", "apache", "syslog", etc.
-}
-
 impl StageAsYouGoContext {
     #[allow(clippy::expect_used)] // Post-normalization: value guaranteed to be Object
     fn build_finalize_metadata(
@@ -1007,24 +907,6 @@ impl StageAsYouGoContext {
             }
         }
         base
-    }
-}
-
-impl LogFileStageNode {
-    pub fn new(context: StageAsYouGoContext, log_source: impl Into<String>) -> Self {
-        Self {
-            context,
-            log_source: log_source.into(),
-        }
-    }
-}
-
-fn require_log_file_source_uri(source_uri: Option<&str>) -> NodeResult<&str> {
-    match source_uri {
-        Some(uri) if !uri.trim().is_empty() => Ok(uri),
-        _ => Err(SinexError::processing(
-            "log-file staging requires a non-empty source URI".to_string(),
-        )),
     }
 }
 
@@ -1058,114 +940,5 @@ impl StageAsYouGoContext {
                 .or_insert_with(|| JsonValue::String(uri.to_string()));
         }
         normalized
-    }
-}
-
-impl StageAsYouGoNode for LogFileStageNode {
-    async fn process_with_staging(
-        &mut self,
-        content: &[u8],
-        source_uri: Option<&str>,
-        metadata: serde_json::Value,
-    ) -> NodeResult<StageAsYouGoResult> {
-        let start_time = std::time::Instant::now();
-        let source_uri = require_log_file_source_uri(source_uri)?;
-
-        // Step 1: Register in-flight source material
-        let source_material_id = self
-            .context
-            .register_in_flight("log_file", Some(source_uri), metadata)
-            .await?;
-
-        // Step 2: Process content line by line, emitting events with provenance
-        let mut event_ids = Vec::new();
-        let content_str = String::from_utf8_lossy(content);
-        let lines: Vec<&str> = content_str.lines().collect();
-
-        for (line_num, line) in lines.iter().enumerate() {
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            // Calculate byte offsets for this line
-            let offset_start = lines[..line_num]
-                .iter()
-                .map(|l| l.len() + 1) // +1 for newline
-                .sum::<usize>() as i64;
-            let offset_end = offset_start + line.len() as i64;
-
-            // Build the log-line event with material provenance up front instead of
-            // fabricating placeholder synthesis ancestry only to overwrite it later.
-            let payload = LogLinePayload {
-                line: line.to_string(),
-                line_number: (line_num + 1) as u64,
-                log_source: self.log_source.clone(),
-                log_file: source_uri.to_string(),
-                offset_start,
-                offset_end,
-                source_material_id: source_material_id.to_string(),
-            };
-
-            let mut event = payload
-                .from_material(source_material_id)
-                .with_offset_start(offset_start)
-                .map_err(|error| {
-                    SinexError::processing("Failed to set log line offset start").with_source(error)
-                })?
-                .with_offset_end(offset_end)
-                .map_err(|error| {
-                    SinexError::processing("Failed to set log line offset end").with_source(error)
-                })?
-                .build()
-                .map_err(|error| {
-                    SinexError::processing("Failed to build log line event").with_source(error)
-                })?
-                .to_json_event()
-                .map_err(|error| {
-                    SinexError::serialization("Failed to convert log line event to JSON")
-                        .with_source(error)
-                })?;
-            // Use the material's started_at as fallback ts_orig — this value is
-            // persisted in the temporal ledger by ingestd, making it reproducible
-            // on replay. If the in-flight handle vanished, fail honestly instead
-            // of fabricating wall-clock time.
-            if event.ts_orig.is_none() {
-                let fallback_ts = self
-                    .context
-                    .require_material_started_at(source_material_id)
-                    .await?;
-                event.ts_orig = Some(fallback_ts);
-            }
-
-            // Emit with provenance
-            let event_id = self
-                .context
-                .emit_event_with_provenance(
-                    event,
-                    source_material_id,
-                    Some(offset_start),
-                    Some(offset_end),
-                )
-                .await?;
-
-            event_ids.push(event_id.to_string());
-        }
-
-        // Step 3: Finalize source material with complete details
-        self.context
-            .finalize_source_material(
-                source_material_id,
-                content,
-                Some("text/plain"),
-                Some("utf-8"),
-            )
-            .await?;
-
-        Ok(StageAsYouGoResult {
-            source_material_id,
-            event_ids,
-            bytes_processed: content.len(),
-            duration: start_time.elapsed(),
-        })
     }
 }
