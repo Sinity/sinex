@@ -7,7 +7,30 @@ use sinex_primitives::{
     environment::{SinexEnvironment, environment},
     events::{Event, OffsetKind, Provenance},
     nats::{NatsTrafficClass, insert_traffic_class_header},
+    transport,
 };
+
+/// HTTP-style header used to carry the *semantic* `transport::Class` for an
+/// event that the wire-level `Sinex-Traffic-Class` header cannot fully
+/// distinguish — Critical and Derived both ride the raw-events lane, so the
+/// wire mapping is lossy. Downstream observability (telemetry, replay) reads
+/// this header to recover the publisher's declared intent.
+const SEMANTIC_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
+
+fn class_header_value(class: transport::Class) -> &'static str {
+    match class {
+        transport::Class::Critical => "critical",
+        transport::Class::Derived => "derived",
+        transport::Class::Confirmation => "confirmation",
+        transport::Class::Invalidation => "invalidation",
+        transport::Class::Control => "control",
+        transport::Class::Telemetry => "telemetry",
+    }
+}
+
+fn insert_semantic_class_header(headers: &mut async_nats::HeaderMap, class: transport::Class) {
+    headers.insert(SEMANTIC_TRANSPORT_CLASS_HEADER, class_header_value(class));
+}
 use std::{
     future::IntoFuture,
     sync::atomic::{AtomicU64, Ordering},
@@ -189,7 +212,12 @@ impl NatsPublisher {
         event: &Event,
         error: &str,
         node_name: &str,
+        class: transport::Class,
     ) -> NodeResult<()> {
+        debug_assert!(
+            matches!(class, transport::Class::Critical),
+            "publish_to_raw_ingest_dlq is exclusively for Class::Critical; got {class:?}"
+        );
         let _permit = acquire_lane_permit(
             &self.semaphores.raw_ingest_dlq,
             "raw-ingest DLQ",
@@ -241,6 +269,7 @@ impl NatsPublisher {
         headers.insert("Original-Subject", original_subject.as_str());
         headers.insert("Retry-Count", "0");
         insert_traffic_class_header(&mut headers, NatsTrafficClass::RawIngestDlq);
+        insert_semantic_class_header(&mut headers, class);
 
         let ack_future = self
             .publish_with_headers(
@@ -263,14 +292,33 @@ impl NatsPublisher {
         Ok(())
     }
 
-    /// Publish a raw ingestor event.
+    /// Publish a raw ingestor or derived-automaton event with an explicit
+    /// `transport::Class` declaration.
     ///
-    /// transport::Class::Critical — provenance-bearing; failure routes to
-    /// local recovery spool. Drain: wait for in-flight ACKs.
-    pub async fn publish(&self, event: &Event) -> NodeResult<()> {
+    /// Both `Class::Critical` (ingestor source-bearing events) and
+    /// `Class::Derived` (automaton synthesis outputs) ride the same raw-events
+    /// lane on the wire, so the `Sinex-Traffic-Class` header alone can't
+    /// distinguish them. The semantic class supplied here is also written to
+    /// the `Sinex-Transport-Class` header so downstream observability can tell
+    /// the two apart and policy/replay can branch on intent.
+    ///
+    /// Drain semantics: wait for in-flight ACKs (both Critical and Derived).
+    /// Failure routing differs — see `transport::Class` docs.
+    pub async fn publish(
+        &self,
+        event: &Event,
+        class: transport::Class,
+    ) -> NodeResult<()> {
+        debug_assert!(
+            matches!(class, transport::Class::Critical | transport::Class::Derived),
+            "NatsPublisher::publish accepts Critical or Derived; got {class:?}. \
+             Use publish_telemetry for Class::Telemetry. \
+             Confirmation/Invalidation/Control are not raw-events publishers."
+        );
         self.publish_event_with_class(
             event,
             NatsTrafficClass::RawEvent,
+            class,
             &self.semaphores.raw_event,
             "raw event",
         )
@@ -279,12 +327,23 @@ impl NatsPublisher {
 
     /// Publish a self-observation telemetry event.
     ///
-    /// transport::Class::Telemetry — loss acceptable; drop with warn on
-    /// failure. Drain: best-effort flush.
-    pub async fn publish_telemetry(&self, event: &Event) -> NodeResult<()> {
+    /// `transport::Class::Telemetry` is implicit (the method name pins the
+    /// semantic class); the parameter remains positional for symmetry with
+    /// `publish` and is asserted internally to catch accidental misuse.
+    /// Loss acceptable; drop with warn on failure. Drain: best-effort flush.
+    pub async fn publish_telemetry(
+        &self,
+        event: &Event,
+        class: transport::Class,
+    ) -> NodeResult<()> {
+        debug_assert!(
+            matches!(class, transport::Class::Telemetry),
+            "publish_telemetry is exclusively for Class::Telemetry; got {class:?}"
+        );
         self.publish_event_with_class(
             event,
             NatsTrafficClass::Telemetry,
+            class,
             &self.semaphores.telemetry,
             "telemetry event",
         )
@@ -301,7 +360,12 @@ impl NatsPublisher {
         event: &Event,
         error: &str,
         node_name: &str,
+        class: transport::Class,
     ) -> NodeResult<()> {
+        debug_assert!(
+            matches!(class, transport::Class::Derived),
+            "publish_processing_failure is exclusively for Class::Derived; got {class:?}"
+        );
         let _permit = acquire_lane_permit(
             &self.semaphores.processing_failure,
             "processing failure",
@@ -355,6 +419,7 @@ impl NatsPublisher {
         headers.insert("Event-Id", event_id.as_str());
         headers.insert("Original-Subject", original_subject.as_str());
         insert_traffic_class_header(&mut headers, NatsTrafficClass::ProcessingFailure);
+        insert_semantic_class_header(&mut headers, class);
 
         let ack_future = self
             .publish_with_headers(
@@ -387,6 +452,7 @@ impl NatsPublisher {
         &self,
         event: &Event,
         traffic_class: NatsTrafficClass,
+        semantic_class: transport::Class,
         semaphore: &Arc<Semaphore>,
         lane_label: &'static str,
     ) -> NodeResult<()> {
@@ -414,6 +480,7 @@ impl NatsPublisher {
         let mut headers = async_nats::HeaderMap::new();
         headers.insert("Nats-Msg-Id", event_id_str.as_str());
         insert_traffic_class_header(&mut headers, traffic_class);
+        insert_semantic_class_header(&mut headers, semantic_class);
 
         // Publish to JetStream, then wait for acknowledgment (bounded by timeout).
         let ack_future = self
