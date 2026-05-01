@@ -1,6 +1,5 @@
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use console::{Emoji, style};
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use serde::Deserialize;
 use std::io::BufRead;
 use std::thread;
@@ -135,9 +134,34 @@ pub struct TestStats {
 }
 
 pub struct TestReporter {
-    pb: ProgressBar,
+    progress: TerminalProgress,
     human: bool,
     interactive: bool,
+}
+
+#[derive(Clone, Default)]
+struct TerminalProgress;
+
+impl TerminalProgress {
+    fn hidden() -> Self {
+        Self
+    }
+
+    fn set_length(&self, _len: u64) {}
+
+    fn set_message(&self, message: impl AsRef<str>) {
+        eprintln!("  ▸ {}", message.as_ref());
+    }
+
+    fn println(&self, message: impl AsRef<str>) {
+        eprintln!("{}", message.as_ref());
+    }
+
+    fn inc(&self, _delta: u64) {}
+
+    fn finish_with_message(&self, message: impl AsRef<str>) {
+        eprintln!("  ▸ {}", message.as_ref());
+    }
 }
 
 impl TestReporter {
@@ -147,24 +171,8 @@ impl TestReporter {
     pub fn new(human: bool) -> Self {
         let interactive = human && crate::output::is_tty();
 
-        // Use hidden progress bar when not in human mode or when stdout isn't a TTY.
-        // ProgressBar::hidden() is a complete no-op — zero CPU, no output.
-        let pb = if interactive {
-            let mp = MultiProgress::new();
-            let pb = mp.add(ProgressBar::new(0)); // Will update total when known
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
-                    .expect("valid progress bar template")
-                    .progress_chars("#>-"),
-            );
-            pb
-        } else {
-            ProgressBar::hidden()
-        };
-
         Self {
-            pb,
+            progress: TerminalProgress::hidden(),
             human,
             interactive,
         }
@@ -172,7 +180,7 @@ impl TestReporter {
 
     fn emit_line(&self, msg: &str) {
         if self.interactive {
-            self.pb.println(msg);
+            self.progress.println(msg);
         } else {
             eprintln!("{msg}");
         }
@@ -193,7 +201,7 @@ impl TestReporter {
             println!("{}", style("\n🚀 Launching tests...").bold());
             // Progress bar won't tick until suite-started; indicate compilation phase
             if self.interactive {
-                self.pb.set_message("Compiling test binaries...");
+                self.progress.set_message("Compiling test binaries...");
             } else {
                 eprintln!("  ▸ Compiling test binaries...");
             }
@@ -229,14 +237,14 @@ impl TestReporter {
         update_progress_snapshot(None, 0, 0, 0, None);
 
         // Spawn stderr handler
-        let pb_stderr = self.pb.clone();
+        let progress_stderr = self.progress.clone();
         let interactive_stderr = self.interactive;
         let stderr_thread = thread::spawn(move || -> Result<()> {
             for line_res in stderr.lines() {
                 let line = line_res.wrap_err("failed to read nextest stderr output")?;
                 // Print stderr (build output) above the progress bar
                 if interactive_stderr {
-                    pb_stderr.println(style(line).yellow().dim().to_string());
+                    progress_stderr.println(style(line).yellow().dim().to_string());
                 } else {
                     eprintln!("{line}");
                 }
@@ -262,7 +270,7 @@ impl TestReporter {
                     suite_started = true;
                     // Each test binary emits suite-started, so accumulate total
                     let new_total = stats.total + s.test_count;
-                    self.pb.set_length(new_total as u64);
+                    self.progress.set_length(new_total as u64);
                     stats.total = new_total;
                     update_progress_snapshot(
                         Some(stats.total),
@@ -302,7 +310,9 @@ impl TestReporter {
                     }
                 }
                 Message::TestStarted(t) => {
-                    self.pb.set_message(format!("Running {}", t.name));
+                    if self.interactive {
+                        self.progress.set_message(format!("Running {}", t.name));
+                    }
                     if !self.human {
                         eprintln!("  ▸ {}", t.name);
                     }
@@ -314,7 +324,7 @@ impl TestReporter {
                     match t.result.as_str() {
                         "passed" => {
                             stats.passed += 1;
-                            self.pb.inc(1);
+                            self.progress.inc(1);
                             // Show slow tests (>5s) even in normal mode
                             if duration > 5.0 {
                                 let msg =
@@ -324,7 +334,7 @@ impl TestReporter {
                         }
                         "failed" => {
                             stats.failed += 1;
-                            self.pb.inc(1);
+                            self.progress.inc(1);
                             // Log failure immediately above bar
                             let msg =
                                 format!("  {} {} ({:.1}s)", Emoji("❌", "x"), t.name, duration);
@@ -332,10 +342,10 @@ impl TestReporter {
                         }
                         "ignored" => {
                             stats.ignored += 1;
-                            self.pb.inc(1);
+                            self.progress.inc(1);
                         }
                         _ => {
-                            self.pb.inc(1);
+                            self.progress.inc(1);
                         }
                     }
 
@@ -397,7 +407,7 @@ impl TestReporter {
             .map_err(|panic| eyre!("nextest stderr reader thread panicked: {panic:?}"))??;
 
         if self.interactive {
-            self.pb.finish_with_message("done");
+            self.progress.finish_with_message("done");
         }
 
         if suite_finished {

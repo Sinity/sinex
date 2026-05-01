@@ -31,7 +31,6 @@ serde_yaml = "0.9"
 rusqlite = { workspace = true }
 console = "0.15"
 quick-xml = "0.38"
-indicatif = "0.17"
 num_cpus = "1.16"
 dirs = "5.0"
 toml = { workspace = true }

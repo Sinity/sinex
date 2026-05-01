@@ -1,94 +1,87 @@
-use indicatif::{ProgressBar, ProgressStyle};
-
-/// Progress reporter for known-duration operations (progress bar)
+/// Progress reporter for known-duration operations.
 pub struct ProgressReporter {
-    bar: ProgressBar,
+    total: u64,
+    pos: std::sync::atomic::AtomicU64,
+    message: String,
 }
 
 impl ProgressReporter {
-    /// Create a new progress reporter with a progress bar
-    #[allow(clippy::unwrap_used)]
+    /// Create a new progress reporter.
     #[must_use]
     pub fn new(total: u64, message: &str) -> Self {
-        let bar = ProgressBar::new(total);
-        bar.set_style(
-            ProgressStyle::default_bar()
-                .template("{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})")
-                .unwrap()
-                .progress_chars("#>-"),
-        );
-        bar.set_message(message.to_string());
-
-        Self { bar }
+        eprintln!("{message}: 0/{total}");
+        Self {
+            total,
+            pos: std::sync::atomic::AtomicU64::new(0),
+            message: message.to_string(),
+        }
     }
 
-    /// Update progress
+    /// Update progress.
     pub fn set_position(&self, pos: u64) {
-        self.bar.set_position(pos);
+        self.pos
+            .store(pos.min(self.total), std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Increment progress
+    /// Increment progress.
     pub fn inc(&self, delta: u64) {
-        self.bar.inc(delta);
+        let current = self
+            .pos
+            .fetch_add(delta, std::sync::atomic::Ordering::Relaxed)
+            .saturating_add(delta)
+            .min(self.total);
+        if self.total > 0 && (current == self.total || current % 100 == 0) {
+            eprintln!("{}: {current}/{}", self.message, self.total);
+        }
     }
 
-    /// Finish progress with message
+    /// Finish progress with message.
     pub fn finish_with_message(&self, message: &str) {
-        self.bar.finish_with_message(message.to_string());
+        eprintln!("✓ {message}");
     }
 
-    /// Abandon progress (for errors)
+    /// Abandon progress for errors.
     pub fn abandon_with_message(&self, message: &str) {
-        self.bar.abandon_with_message(message.to_string());
+        eprintln!("✗ {message}");
     }
 }
 
-/// Spinner for unknown-duration operations
+/// Spinner for unknown-duration operations.
 pub struct Spinner {
-    bar: ProgressBar,
+    message: String,
 }
 
 impl Spinner {
-    /// Create a new spinner with a message
-    #[allow(clippy::unwrap_used)]
+    /// Create a new spinner with a message.
     #[must_use]
     pub fn new(message: &str) -> Self {
-        let bar = ProgressBar::new_spinner();
-        bar.set_style(
-            ProgressStyle::default_spinner()
-                .template("{spinner:.cyan} {msg}")
-                .unwrap()
-                .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
-        );
-        bar.set_message(message.to_string());
-        bar.enable_steady_tick(std::time::Duration::from_millis(80));
-
-        Self { bar }
+        eprintln!("{message}");
+        Self {
+            message: message.to_string(),
+        }
     }
 
-    /// Update the spinner message
-    pub fn set_message(&self, message: &str) {
-        self.bar.set_message(message.to_string());
+    /// Update the spinner message.
+    pub fn set_message(&mut self, message: &str) {
+        self.message = message.to_string();
+        eprintln!("{message}");
     }
 
-    /// Finish the spinner with a success message
-    pub fn finish_with_message(&self, message: &str) {
-        self.bar.finish_with_message(format!("✓ {message}"));
+    /// Finish the spinner with a success message.
+    pub fn finish_with_message(self, message: &str) {
+        eprintln!("✓ {message}");
     }
 
-    /// Finish the spinner, clearing it
-    pub fn finish_and_clear(&self) {
-        self.bar.finish_and_clear();
-    }
+    /// Finish the spinner, clearing it.
+    pub fn finish_and_clear(self) {}
 
-    /// Abandon the spinner with an error message
-    pub fn abandon_with_message(&self, message: &str) {
-        self.bar.abandon_with_message(format!("✗ {message}"));
+    /// Abandon the spinner with an error message.
+    pub fn abandon_with_message(self, message: &str) {
+        eprintln!("✗ {message}");
     }
 }
 
-/// Execute an async operation with a spinner
-/// Returns the result of the operation
+/// Execute an async operation with a spinner.
 pub async fn with_spinner<T, F>(message: &str, f: F) -> T
 where
     F: AsyncFnOnce() -> T,
@@ -100,19 +93,6 @@ where
 }
 
 /// Execute an async Result-returning operation with a spinner that handles success/failure.
-///
-/// The spinner automatically shows success on Ok, or abandons with error message on Err.
-/// This provides RAII-style cleanup - the spinner is properly cleaned up even on panic.
-///
-/// # Examples
-///
-/// ```ignore
-/// let result = with_spinner_result(
-///     "Draining node...",
-///     "Node drained successfully",
-///     client.drain_node(node_id)
-/// ).await?;
-/// ```
 pub async fn with_spinner_result<T, E, F>(
     message: impl Into<String>,
     success_msg: impl Into<String>,
@@ -138,29 +118,6 @@ where
 }
 
 /// RAII guard for spinners that automatically cleans up on drop.
-///
-/// This ensures the spinner is properly abandoned/finished even if the
-/// operation panics or returns early.
-///
-/// # Examples
-///
-/// ```ignore
-/// async fn complex_operation() -> Result<()> {
-///     let mut spinner = SpinnerGuard::new("Starting operation...");
-///
-///     // Step 1
-///     some_work().await?;
-///     spinner.update_message("Processing step 2...");
-///
-///     // Step 2
-///     more_work().await?;
-///
-///     // On success, mark as complete
-///     spinner.finish("Operation completed");
-///     Ok(())
-///     // If there's an error, Drop abandons the spinner automatically
-/// }
-/// ```
 pub struct SpinnerGuard {
     spinner: Option<Spinner>,
     default_error_msg: String,
@@ -186,8 +143,8 @@ impl SpinnerGuard {
     }
 
     /// Update the spinner message during operation.
-    pub fn update_message(&self, message: &str) {
-        if let Some(ref spinner) = self.spinner {
+    pub fn update_message(&mut self, message: &str) {
+        if let Some(ref mut spinner) = self.spinner {
             spinner.set_message(message);
         }
     }
@@ -209,7 +166,6 @@ impl SpinnerGuard {
 
 impl Drop for SpinnerGuard {
     fn drop(&mut self) {
-        // If spinner wasn't explicitly finished/abandoned, abandon it with default error
         if let Some(spinner) = self.spinner.take() {
             spinner.abandon_with_message(&self.default_error_msg);
         }
