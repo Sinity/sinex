@@ -21,6 +21,8 @@ ignores:
   # constructor surface).
   - "crate/lib/sinex-db/src/repositories/events/conversions.rs"
   - "crate/lib/sinex-node-sdk/src/runtime/stream/mod.rs"
+  - "crate/lib/sinex-node-sdk/src/runtime/stream/runner/provisional.rs"
+  - "crate/lib/sinex-node-sdk/src/derived_node/adapter/output.rs"
   - "crate/lib/sinex-node-sdk/src/derived_node/adapter.rs"
   # Tests and test infrastructure legitimately construct events with arbitrary
   # provenance shapes for failure injection and fixture builders. Production
@@ -40,6 +42,7 @@ ignores:
   - "crate/nodes/sinex-system-ingestor/src/unified_journal_watcher.rs"
   - "crate/lib/sinex-node-sdk/src/runtime/stream/handles.rs"
   - "crate/cli/src/commands/report.rs"
+  - "crate/nodes/sinex-system-ingestor/src/material_context.rs"
 note: |
   See issue #559. The XOR-provenance invariant is encoded in:
     - EventBuilder typestate (NoProvenance has no .build())

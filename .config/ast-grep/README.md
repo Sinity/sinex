@@ -59,10 +59,13 @@ Within xtask automation, `error` severity is blocking; `warning` and `hint` rema
   - `crate/cli/src/commands/report.rs`
   - `crate/lib/sinex-db/src/repositories/events/conversions.rs`
   - `crate/lib/sinex-node-sdk/src/derived_node/adapter.rs`
+  - `crate/lib/sinex-node-sdk/src/derived_node/adapter/output.rs`
   - `crate/lib/sinex-node-sdk/src/runtime/stream/handles.rs`
   - `crate/lib/sinex-node-sdk/src/runtime/stream/mod.rs`
+  - `crate/lib/sinex-node-sdk/src/runtime/stream/runner/provisional.rs`
   - `crate/lib/sinex-primitives/**`
   - `crate/nodes/sinex-system-ingestor/src/dbus_watcher.rs`
+  - `crate/nodes/sinex-system-ingestor/src/material_context.rs`
   - `crate/nodes/sinex-system-ingestor/src/udev_watcher.rs`
   - `crate/nodes/sinex-system-ingestor/src/unified_journal_watcher.rs`
   - `crate/nodes/sinex-system-ingestor/src/unified_node.rs`

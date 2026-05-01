@@ -240,10 +240,10 @@ impl IngestService {
                 "Schema version mismatch: binary expects '{EXPECTED_BINARY_SCHEMA_VERSION}', database has '{v}'"
             )).with_operation("service.verify_binary_schema_version")),
             None => {
-                sqlx::query(
+                sqlx::query!(
                     "INSERT INTO sinex_schemas.binary_schema_version (id, version) VALUES (1, $1)",
+                    EXPECTED_BINARY_SCHEMA_VERSION,
                 )
-                .bind(EXPECTED_BINARY_SCHEMA_VERSION)
                 .execute(pool)
                 .await
                 .map_err(|e| {
