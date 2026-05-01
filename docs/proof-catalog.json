@@ -245,8 +245,8 @@
       "proof_obligations": []
     },
     {
-      "subject": "source_unit:document",
-      "id": "document",
+      "subject": "source_unit:document.staging",
+      "id": "document.staging",
       "namespace": "document",
       "runner_pack": "document",
       "modes": [

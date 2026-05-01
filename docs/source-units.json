@@ -307,8 +307,8 @@
       "dedicated_build_rationale": null
     },
     {
-      "subject": "source_unit:document",
-      "id": "document",
+      "subject": "source_unit:document.staging",
+      "id": "document.staging",
       "domain": "document",
       "role": "source_adapter",
       "modes": [
@@ -1061,7 +1061,7 @@
     {
       "id": "document",
       "source_unit_ids": [
-        "document"
+        "document.staging"
       ],
       "shared_binary": "sinex-document-ingestor",
       "source_unit_count": 1
@@ -1190,12 +1190,12 @@
       "host_identity": "runtime_hostname"
     },
     {
-      "source_unit_id": "document",
-      "service_name": "sinex-source@document",
+      "source_unit_id": "document.staging",
+      "service_name": "sinex-source@document.staging",
       "runner_pack": "document",
       "binary": "sinex-document-ingestor",
-      "checkpoint_identity": "document",
-      "control_identity": "document",
+      "checkpoint_identity": "document.staging",
+      "control_identity": "document.staging",
       "host_identity": "runtime_hostname"
     },
     {
