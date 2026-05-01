@@ -39,7 +39,7 @@
 //! }
 //! ```
 
-use color_eyre::eyre::{Result, eyre};
+use sinex_primitives::error::{Result, SinexError};
 use sinex_primitives::strict_env_filter_source;
 use tokio::sync::watch;
 use tracing::{error, info, warn};
@@ -64,10 +64,11 @@ pub enum TracingFormat {
 pub fn load_env_filter(default_filter: &str) -> Result<EnvFilter> {
     let raw = strict_env_filter_source(default_filter)?;
     EnvFilter::try_new(&raw).map_err(|error| {
-        eyre!(
-            "Invalid {} directive `{raw}`: {error}",
+        SinexError::configuration(format!(
+            "Invalid {} directive `{raw}`",
             EnvFilter::DEFAULT_ENV
-        )
+        ))
+        .with_std_error(&error)
     })
 }
 
@@ -98,7 +99,10 @@ pub fn install_tracing(format: TracingFormat, default_filter: &str) -> Result<()
             .try_init(),
     };
 
-    result.map_err(|error| eyre!("Failed to initialize tracing subscriber: {error}"))
+    result.map_err(|error| {
+        SinexError::service("Failed to initialize tracing subscriber")
+            .with_std_error(error.as_ref())
+    })
 }
 
 /// Spawn a task that waits for SIGINT/SIGTERM and flips a `watch` channel.

@@ -96,7 +96,8 @@ fn setup_tracing(format: LogFormat, tokio_console: bool) -> Result<()> {
         LogFormat::Json => TracingFormat::Json,
         LogFormat::Text => TracingFormat::Text,
     };
-    service_runtime::install_tracing(format, "sinex_gateway=info")
+    service_runtime::install_tracing(format, "sinex_gateway=info")?;
+    Ok(())
 }
 
 fn load_gateway_config(database_url: Option<String>) -> Result<GatewayConfig> {
