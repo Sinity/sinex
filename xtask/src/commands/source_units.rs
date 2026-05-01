@@ -696,7 +696,7 @@ mod tests {
             "system.journald",
             "system.dbus",
             "system.udev",
-            "document",
+            "document.staging",
             "terminal.monitor",
             "terminal.text-history",
             "terminal-canonicalizer",
