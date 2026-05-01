@@ -34,7 +34,7 @@ const HELP_CATEGORIES: &[HelpCategory] = &[
     },
     HelpCategory {
         title: "Diagnostics",
-        command_paths: &["doctor", "privacy"],
+        command_paths: &["doctor", "privacy", "schema"],
     },
     HelpCategory {
         title: "Documentation",
@@ -243,6 +243,18 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 ],
                 notes: &[
                     "PR creation reuses existing pull requests when possible and uses the generated per-slice `pr-body.md` files.",
+                ],
+            },
+            GuideEntry {
+                path: "schema strict-diff",
+                fallback_summary: "Check strict live-schema drift",
+                when: "you need to verify the database has no drift in categories the declarative apply engine does not reconcile",
+                examples: &[
+                    "xtask schema strict-diff",
+                    "xtask ci postgres -- xtask ci schema-only",
+                ],
+                notes: &[
+                    "The CI schema-only lane applies schema, checks readiness, then runs this strict drift gate.",
                 ],
             },
             GuideEntry {

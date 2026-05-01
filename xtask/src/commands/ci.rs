@@ -308,7 +308,7 @@ async fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<Com
         .with_duration(ctx.elapsed()))
 }
 
-/// Shared schema setup: declarative apply + check-ready.
+/// Shared schema setup: declarative apply + check-ready + strict drift check.
 /// Called from both workspace and schema-only pipelines.
 async fn run_schema_setup(target_dir: &str, ctx: &CommandContext) -> Result<()> {
     unsafe { env::set_var("CARGO_TARGET_DIR", target_dir) };
@@ -334,6 +334,27 @@ async fn run_schema_setup(target_dir: &str, ctx: &CommandContext) -> Result<()> 
     }
     let stage = ctx.start_stage("check_ready");
     execute_check_ready(None, None, ctx)?;
+    ctx.finish_stage(stage, true);
+
+    if ctx.is_human() {
+        println!("Checking strict schema drift...");
+    }
+    let stage = ctx.start_stage("strict_schema_diff");
+    let drifts = crate::commands::schema::run_strict_diff(&super_url).await?;
+    if !drifts.is_empty() {
+        ctx.finish_stage(stage, false);
+        let details = drifts
+            .iter()
+            .take(10)
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        bail!(
+            "Strict schema drift detected: {} finding(s)\n{}",
+            drifts.len(),
+            details
+        );
+    }
     ctx.finish_stage(stage, true);
 
     Ok(())

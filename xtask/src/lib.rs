@@ -53,8 +53,8 @@ pub mod watcher;
 use command::{CommandContext, HistoryAccessMode, XtaskCommand};
 use commands::{
     AnalyticsCommand, BuildCommand, CheckCommand, DoctorCommand, FixCommand, GitStackCommand,
-    JobsCommand, PrivacyCommand, ResetCommand, StatusCommand, TestCommand, WorkCommand,
-    ci::CiCommand, completions::CompletionsCommand, source_units::SourceUnitsCommand,
+    JobsCommand, PrivacyCommand, ResetCommand, SchemaCommand, StatusCommand, TestCommand,
+    WorkCommand, ci::CiCommand, completions::CompletionsCommand, source_units::SourceUnitsCommand,
 };
 use config::config;
 use history::HistoryDb;
@@ -296,6 +296,8 @@ enum Commands {
     Doctor(DoctorCommand),
     #[command(hide = true)]
     Privacy(PrivacyCommand),
+    #[command(hide = true)]
+    Schema(SchemaCommand),
 
     // ─── Generation ────────────────────────────────────────────────
     #[command(hide = true)]
@@ -411,6 +413,7 @@ pub async fn run_cli() -> Result<()> {
         Commands::SourceUnits(cmd) => ("source-units", None, None, cmd.metadata()),
         Commands::Doctor(cmd) => ("doctor", None, None, cmd.metadata()),
         Commands::Privacy(cmd) => ("privacy", None, None, cmd.metadata()),
+        Commands::Schema(cmd) => ("schema", None, None, cmd.metadata()),
         Commands::Exercise(cmd) => ("exercise", None, None, cmd.metadata()),
         Commands::Reset(cmd) => ("reset", None, None, cmd.metadata()),
         Commands::Work(cmd) => ("work", None, None, cmd.metadata()),
@@ -529,6 +532,7 @@ pub async fn run_cli() -> Result<()> {
             Commands::SourceUnits(cmd) => cmd.execute(&ctx).await,
             Commands::Doctor(cmd) => cmd.execute(&ctx).await,
             Commands::Privacy(cmd) => cmd.execute(&ctx).await,
+            Commands::Schema(cmd) => cmd.execute(&ctx).await,
             Commands::Exercise(cmd) => cmd.execute(&ctx).await,
             Commands::Reset(cmd) => cmd.execute(&ctx).await,
             Commands::Work(cmd) => cmd.execute(&ctx).await,
