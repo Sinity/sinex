@@ -205,6 +205,20 @@
       "content_hash": "55eebee2a647cb4ce08a191ff922d9cfce7104571e5e30603b801ce70041f62a"
     },
     {
+      "source": "document-parser",
+      "event_type": "document.chunked",
+      "version": "1.0.0",
+      "path": "document-parser/document.chunked.json",
+      "content_hash": "fbe99655e076c065431609ed5b631a81856e533f06f3b7a6218ebd2df714ef20"
+    },
+    {
+      "source": "document-parser",
+      "event_type": "document.parsed",
+      "version": "1.0.0",
+      "path": "document-parser/document.parsed.json",
+      "content_hash": "937db86243b3a93cd8d78bf39300479b9d8d47257f31650209b2676aff169602"
+    },
+    {
       "source": "fs-watcher",
       "event_type": "dir.created",
       "version": "1.0.0",
