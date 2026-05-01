@@ -63,6 +63,9 @@ pub trait DbPoolExt {
     fn state(&self) -> state::StateRepository<'_>;
     fn schemas(&self) -> schema_management::SchemaManagementRepository<'_>;
     fn schema_cache(&self) -> schema_cache::SchemaCacheRepository<'_>;
+    async fn with_transaction<F, T>(&self, f: F) -> crate::DbResult<T>
+    where
+        F: for<'tx> AsyncFnOnce(&'tx mut crate::DbTransaction<'_>) -> crate::DbResult<T>;
 }
 
 impl DbPoolExt for PgPool {
@@ -100,5 +103,12 @@ impl DbPoolExt for PgPool {
 
     fn schema_cache(&self) -> schema_cache::SchemaCacheRepository<'_> {
         schema_cache::SchemaCacheRepository::new(self)
+    }
+
+    async fn with_transaction<F, T>(&self, f: F) -> crate::DbResult<T>
+    where
+        F: for<'tx> AsyncFnOnce(&'tx mut crate::DbTransaction<'_>) -> crate::DbResult<T>,
+    {
+        crate::query_helpers::with_transaction(self, f).await
     }
 }

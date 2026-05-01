@@ -149,11 +149,10 @@ pub fn is_retryable_db_error(err: &SinexError) -> bool {
         || rendered.contains("current transaction is aborted")
 }
 
-/// Execute a closure within a transaction
-pub async fn with_transaction<F, Fut, T>(pool: &PgPool, mut f: F) -> DbResult<T>
+/// Execute a single operation within a transaction.
+pub async fn with_transaction<F, T>(pool: &PgPool, f: F) -> DbResult<T>
 where
-    F: FnMut(&mut DbTransaction<'_>) -> Fut,
-    Fut: std::future::Future<Output = DbResult<T>>,
+    F: for<'tx> AsyncFnOnce(&'tx mut DbTransaction<'_>) -> DbResult<T>,
 {
     let mut tx = pool
         .begin()
@@ -206,6 +205,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::rollback_failure;
+    use crate::repositories::DbPoolExt;
     use xtask::sandbox::prelude::*;
 
     // Inline because these exercise the private rollback-error composition helper directly.
@@ -223,6 +223,24 @@ mod tests {
         assert!(rendered.contains("rollback broke too"));
         assert!(rendered.contains("original failure"));
         assert!(rendered.contains("with_transaction"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn db_pool_ext_with_transaction_runs_single_operation(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let value = ctx
+            .pool()
+            .with_transaction(async |tx| {
+                sqlx::query_scalar::<_, i32>("SELECT 41 + 1")
+                    .fetch_one(&mut **tx)
+                    .await
+                    .map_err(|e| crate::db_error(e, "select through transaction helper"))
+            })
+            .await?;
+
+        ctx.assert("transaction helper result").eq(&value, &42)?;
         Ok(())
     }
 }
