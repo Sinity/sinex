@@ -5,10 +5,11 @@
 //! for unified error handling across the codebase.
 
 use crate::error::{Result, SinexError};
+use crate::query::Pagination;
 use crate::temporal::Timestamp;
 
 /// Maximum allowed limit value for pagination
-pub const DEFAULT_MAX_LIMIT: u32 = 10_000;
+pub const DEFAULT_MAX_LIMIT: u32 = Pagination::MAX_LIMIT as u32;
 
 /// Validate a generic ID (`UUIDv7` or similar identifier)
 ///
@@ -59,7 +60,7 @@ pub fn validate_id(id: &str) -> Result<()> {
 ///
 /// assert!(validate_limit(100, DEFAULT_MAX_LIMIT).is_ok());
 /// assert!(validate_limit(0, DEFAULT_MAX_LIMIT).is_err()); // Zero not allowed
-/// assert!(validate_limit(20000, DEFAULT_MAX_LIMIT).is_err()); // Exceeds max
+/// assert!(validate_limit(DEFAULT_MAX_LIMIT + 1, DEFAULT_MAX_LIMIT).is_err()); // Exceeds max
 /// ```
 pub fn validate_limit(limit: u32, max: u32) -> Result<()> {
     if limit == 0 {

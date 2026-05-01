@@ -1,6 +1,7 @@
+use sinex_primitives::query::Pagination;
 use sinex_primitives::temporal::Duration;
 use sinex_primitives::validation::query_validation::{
-    validate_id, validate_limit, validate_offset, validate_time_range,
+    validate_id, validate_limit, validate_offset, validate_time_range, DEFAULT_MAX_LIMIT,
 };
 use xtask::sandbox::prelude::*;
 
@@ -28,6 +29,9 @@ async fn test_validate_limit() -> TestResult<()> {
     assert!(validate_limit(100, 100).is_ok());
     assert!(validate_limit(0, 100).is_err());
     assert!(validate_limit(101, 100).is_err());
+    assert_eq!(Pagination::MAX_LIMIT, i64::from(DEFAULT_MAX_LIMIT));
+    assert!(validate_limit(DEFAULT_MAX_LIMIT, DEFAULT_MAX_LIMIT).is_ok());
+    assert!(validate_limit(DEFAULT_MAX_LIMIT + 1, DEFAULT_MAX_LIMIT).is_err());
     Ok(())
 }
 
