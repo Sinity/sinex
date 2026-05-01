@@ -10,7 +10,7 @@ use serde_json::{Map as JsonMap, json};
 use sinex_primitives::Id;
 use sinex_primitives::JsonValue;
 use sinex_primitives::Timestamp;
-use sinex_primitives::events::Event;
+use sinex_primitives::events::{Event, Provenance};
 use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::sync::Arc;
@@ -84,19 +84,21 @@ mod tests {
         let emitter = EventEmitter::new(tx, false);
         let context = StageAsYouGoContext::from_optional_emitter(emitter);
 
+        let material_id = Uuid::now_v7();
         let event = DynamicPayload::new(
             "stage.test",
             "line.captured",
             serde_json::json!({"line": "hello"}),
         )
-        .from_parents([Id::from_uuid(Uuid::now_v7())])?
+        .from_material_at(material_id, 12)
+        .with_offset_start(12)?
+        .with_offset_end(34)?
         .at_time(
             sinex_primitives::Timestamp::from_unix_timestamp_millis(1_710_000_000_123)
                 .ok_or_else(|| color_eyre::eyre::eyre!("test timestamp should be valid"))?,
         )
         .build()
         .expect("infallible: test provenance set");
-        let material_id = Uuid::now_v7();
         let emitted_id = context
             .emit_event_with_provenance(event, material_id, Some(12), Some(34))
             .await?;
@@ -135,7 +137,63 @@ mod tests {
                 ));
             }
         }
+        assert!(
+            emitted.payload.get("_source_material_id").is_none(),
+            "source material identity belongs in provenance, not payload metadata"
+        );
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn emit_event_rejects_synthesis_provenance() -> TestResult<()> {
+        let (tx, _rx) = mpsc::channel(1);
+        let emitter = EventEmitter::new(tx, false);
+        let context = StageAsYouGoContext::from_optional_emitter(emitter);
+
+        let material_id = Uuid::now_v7();
+        let event = DynamicPayload::new(
+            "stage.test",
+            "line.captured",
+            serde_json::json!({"line": "hello"}),
+        )
+        .from_parents([Id::from_uuid(Uuid::now_v7())])?
+        .build()
+        .expect("infallible: test provenance set");
+
+        let err = context
+            .emit_event_with_provenance(event, material_id, Some(12), Some(34))
+            .await
+            .expect_err("stage-as-you-go should not rewrite synthesis provenance");
+
+        assert!(err.to_string().contains("material-provenance events"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn emit_event_rejects_offset_mismatch() -> TestResult<()> {
+        let (tx, _rx) = mpsc::channel(1);
+        let emitter = EventEmitter::new(tx, false);
+        let context = StageAsYouGoContext::from_optional_emitter(emitter);
+
+        let material_id = Uuid::now_v7();
+        let event = DynamicPayload::new(
+            "stage.test",
+            "line.captured",
+            serde_json::json!({"line": "hello"}),
+        )
+        .from_material_at(material_id, 1)
+        .with_offset_start(1)?
+        .with_offset_end(2)?
+        .build()
+        .expect("infallible: test provenance set");
+
+        let err = context
+            .emit_event_with_provenance(event, material_id, Some(12), Some(34))
+            .await
+            .expect_err("stage-as-you-go should not rewrite material offsets");
+
+        assert!(err.to_string().contains("offsets do not match"));
         Ok(())
     }
 
@@ -243,6 +301,52 @@ fn signal_reconciliation_shutdown(shutdown: &watch::Sender<bool>) -> bool {
         return false;
     }
     true
+}
+
+fn validate_stage_material_provenance(
+    provenance: &Provenance,
+    source_material_id: Uuid,
+    anchor_byte: i64,
+    offset_start: Option<i64>,
+    offset_end: Option<i64>,
+) -> NodeResult<()> {
+    let Provenance::Material {
+        id,
+        anchor_byte: event_anchor_byte,
+        offset_start: event_offset_start,
+        offset_end: event_offset_end,
+        ..
+    } = provenance
+    else {
+        return Err(SinexError::processing(
+            "Stage-as-You-Go can only emit material-provenance events",
+        ));
+    };
+
+    if id.to_uuid() != source_material_id {
+        return Err(SinexError::processing(
+            "Stage-as-You-Go event source material does not match emission material",
+        )
+        .with_context("event_source_material_id", id.to_string())
+        .with_context("source_material_id", source_material_id.to_string()));
+    }
+
+    if *event_anchor_byte != anchor_byte
+        || *event_offset_start != offset_start
+        || *event_offset_end != offset_end
+    {
+        return Err(SinexError::processing(
+            "Stage-as-You-Go event offsets do not match emission offsets",
+        )
+        .with_context("event_anchor_byte", event_anchor_byte.to_string())
+        .with_context("anchor_byte", anchor_byte.to_string())
+        .with_context("event_offset_start", format!("{event_offset_start:?}"))
+        .with_context("offset_start", format!("{offset_start:?}"))
+        .with_context("event_offset_end", format!("{event_offset_end:?}"))
+        .with_context("offset_end", format!("{offset_end:?}")));
+    }
+
+    Ok(())
 }
 
 impl Drop for ReconciliationTask {
@@ -498,34 +602,34 @@ impl StageAsYouGoContext {
             timestamp
         };
 
-        if event.id.is_none() {
-            event.id = Some(Id::from_uuid(deterministic_material_event_id(
-                event.source.as_str(),
-                event.event_type.as_str(),
-                source_material_id,
-                anchor_byte,
-                offset_start,
-                offset_end,
-                ts_orig,
-            )));
-        }
-
-        // Attach source material provenance to the event via the documented
-        // constructor; struct-literal construction would bypass the builder
-        // typestate guarantees (see issue #559 / #559-tracked ast-grep work).
-        event.provenance = sinex_primitives::events::builder::Provenance::from_material(
+        validate_stage_material_provenance(
+            &event.provenance,
             source_material_id,
             anchor_byte,
             offset_start,
             offset_end,
-        );
+        )?;
 
-        // Add source material reference to payload metadata if not already present
-        if let Some(obj) = event.payload.as_object_mut() {
-            obj.insert(
-                "_source_material_id".to_string(),
-                serde_json::json!(source_material_id.to_string()),
-            );
+        let expected_event_id = deterministic_material_event_id(
+            event.source.as_str(),
+            event.event_type.as_str(),
+            source_material_id,
+            anchor_byte,
+            offset_start,
+            offset_end,
+            ts_orig,
+        );
+        if let Some(existing_id) = event.id {
+            if existing_id.to_uuid() != expected_event_id {
+                return Err(SinexError::processing(
+                    "Stage-as-You-Go event ID does not match material provenance",
+                )
+                .with_context("event_id", existing_id.to_string())
+                .with_context("expected_event_id", expected_event_id.to_string())
+                .with_context("source_material_id", source_material_id.to_string()));
+            }
+        } else {
+            event.id = Some(Id::from_uuid(expected_event_id));
         }
 
         // Send event via event channel
