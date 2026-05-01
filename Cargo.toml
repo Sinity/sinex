@@ -271,7 +271,6 @@ tempfile = "3.0"
 rcgen = "0.13"
 jsonschema = "0.42"
 validator = { version = "0.20", features = ["derive"] }
-figment = { version = "0.10.19", features = ["toml", "yaml", "json", "env"] }
 uncased = "0.9"
 
 # Build-time registry
