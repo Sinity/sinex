@@ -187,7 +187,7 @@ async fn test_filesystem_payload_system(ctx: TestContext) -> TestResult<()> {
     // Build a typed event and convert to JSON for storage
     let material_id = ensure_material(&ctx, "shell-kitty").await?;
     let prov = Provenance::from_material(material_id, 0, None, None);
-    let file_event = file_payload.into_event(prov);
+    let file_event = file_payload.into_event(prov)?;
     ctx.pool
         .events()
         .insert(file_event.clone().to_json_event()?)
@@ -206,7 +206,7 @@ async fn test_filesystem_payload_system(ctx: TestContext) -> TestResult<()> {
 
     let material_id = ensure_material(&ctx, "shell-atuin").await?;
     let prov = Provenance::from_material(material_id, 0, None, None);
-    let modified_event = modified_payload.into_event(prov);
+    let modified_event = modified_payload.into_event(prov)?;
     ctx.pool
         .events()
         .insert(modified_event.clone().to_json_event()?)
@@ -243,7 +243,7 @@ async fn test_shell_payload_system(ctx: TestContext) -> TestResult<()> {
 
     let material_id = ensure_material(&ctx, "clipboard").await?;
     let prov = Provenance::from_material(material_id, 0, None, None);
-    let kitty_event = kitty_payload.into_event(prov);
+    let kitty_event = kitty_payload.into_event(prov)?;
     ctx.pool
         .events()
         .insert(kitty_event.clone().to_json_event()?)
@@ -261,7 +261,7 @@ async fn test_shell_payload_system(ctx: TestContext) -> TestResult<()> {
 
     let material_id = ensure_material(&ctx, "shell-atuin").await?;
     let prov = Provenance::from_material(material_id, 0, None, None);
-    let atuin_event = atuin_payload.into_event(prov);
+    let atuin_event = atuin_payload.into_event(prov)?;
     ctx.pool
         .events()
         .insert(atuin_event.clone().to_json_event()?)
@@ -285,7 +285,7 @@ async fn test_clipboard_payload_system(ctx: TestContext) -> TestResult<()> {
 
     let material_id = ensure_material(&ctx, "clipboard").await?;
     let prov = Provenance::from_material(material_id, 0, None, None);
-    let clipboard_event = clipboard_payload.into_event(prov);
+    let clipboard_event = clipboard_payload.into_event(prov)?;
     ctx.pool
         .events()
         .insert(clipboard_event.clone().to_json_event()?)
@@ -496,7 +496,7 @@ async fn test_payload_validation_system(ctx: TestContext) -> TestResult<()> {
 
     let material_id = ensure_material(&ctx, "payload-valid").await?;
     let prov = Provenance::from_material(material_id, 0, None, None);
-    let valid_event = valid_payload.into_event(prov);
+    let valid_event = valid_payload.into_event(prov)?;
     ctx.pool
         .events()
         .insert(valid_event.clone().to_json_event()?)
@@ -528,9 +528,9 @@ async fn test_event_type_constants_consistency(ctx: TestContext) -> TestResult<(
     let fs_material = ensure_material(&ctx, "event-constants-fs").await?;
     let prov = Provenance::from_material(fs_material, 0, None, None);
     // Use fluent API for typed payloads
-    let created_event = file_created.into_event(prov.clone());
-    let modified_event = file_modified.into_event(prov.clone());
-    let deleted_event = file_deleted.into_event(prov.clone());
+    let created_event = file_created.into_event(prov.clone())?;
+    let modified_event = file_modified.into_event(prov.clone())?;
+    let deleted_event = file_deleted.into_event(prov.clone())?;
 
     // All should have same source
     assert_eq!(created_event.source.as_str(), "fs-watcher");
@@ -549,8 +549,8 @@ async fn test_event_type_constants_consistency(ctx: TestContext) -> TestResult<(
     let shell_material = ensure_material(&ctx, "event-constants-shell").await?;
     let shell_prov = Provenance::from_material(shell_material, 0, None, None);
     // Use fluent API for typed payloads
-    let kitty_event = kitty_executed.into_event(shell_prov.clone());
-    let atuin_event = atuin_executed.into_event(shell_prov);
+    let kitty_event = kitty_executed.into_event(shell_prov.clone())?;
+    let atuin_event = atuin_executed.into_event(shell_prov)?;
 
     // Different sources but same event type
     assert_eq!(kitty_event.source.as_str(), "shell.kitty");
