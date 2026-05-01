@@ -1003,6 +1003,13 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_quote_ident_escapes_embedded_quotes() -> TestResult<()> {
+        assert_eq!(quote_ident("sinex_test"), "\"sinex_test\"");
+        assert_eq!(quote_ident("sinex\"test"), "\"sinex\"\"test\"");
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_retryable_sqlstate_set() -> TestResult<()> {
         assert!(RETRYABLE_CONNECTION_SQLSTATES.contains(&"08006"));
         assert!(RETRYABLE_CONNECTION_SQLSTATES.contains(&"57P01"));
