@@ -15,6 +15,7 @@ use color_eyre::eyre::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
+use crate::process::ProcessBuilder;
 use crate::proof_catalog::build_proof_catalog;
 
 // ─── CLI definition ───────────────────────────────────────────────────────────
@@ -113,12 +114,12 @@ pub struct DriftReport {
 
 /// All known crate names in the workspace.
 fn collect_workspace_crates(workspace_root: &Path) -> Result<HashSet<String>> {
-    let output = Command::new("cargo")
+    let output = ProcessBuilder::cargo()
         .args(["metadata", "--no-deps", "--format-version", "1"])
         .current_dir(workspace_root)
-        .output()
+        .run()
         .context("failed to run cargo metadata")?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = output.stdout;
     let meta: serde_json::Value =
         serde_json::from_str(&stdout).context("failed to parse cargo metadata")?;
     let mut names = HashSet::new();
