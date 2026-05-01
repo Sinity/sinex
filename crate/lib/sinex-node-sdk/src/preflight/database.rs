@@ -10,7 +10,10 @@
 
 use crate::{NodeResult, SinexError};
 use serde_json::{Value, json};
-use sinex_primitives::constants::timeouts;
+use sinex_primitives::{
+    constants::timeouts,
+    utils::{InvalidUrlPolicy, redact_url_password_for_diagnostics},
+};
 use sqlx::PgPool;
 use std::collections::HashMap;
 use tracing::{debug, error, info};
@@ -666,15 +669,7 @@ fn test_connection_pool_health(pool: &PgPool) -> Value {
 
 /// Redact password from database URL for logging
 fn redact_password(url: &str) -> String {
-    if let Ok(parsed) = url::Url::parse(url) {
-        let mut redacted = parsed.clone();
-        if redacted.password().is_some() {
-            redacted.set_password(Some("***")).ok();
-        }
-        redacted.to_string()
-    } else {
-        "[INVALID_URL]".to_string()
-    }
+    redact_url_password_for_diagnostics(url, InvalidUrlPolicy::InvalidUrlMarker)
 }
 
 #[cfg(test)]
