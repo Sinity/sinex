@@ -9,6 +9,10 @@ async fn content_key_parse_extracts_components() -> TestResult<()> {
     assert_eq!(key.storage_backend(), "SHA256E");
     assert_eq!(key.size, 12345);
     assert!(key.digest.contains("abcdef123456"));
+
+    assert!(ContentStoreKey::parse("SHA256E--abcdef123456.dat").is_err());
+    assert!(ContentStoreKey::parse("SHA256E-snope--abcdef123456.dat").is_err());
+    assert!(ContentStoreKey::parse("SHA256E-s1--abc--def.dat").is_err());
     Ok(())
 }
 
