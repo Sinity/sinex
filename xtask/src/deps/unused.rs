@@ -30,6 +30,15 @@ pub struct UnusedDependency {
 /// Detector for unused dependencies
 pub struct UnusedDetector;
 
+fn is_machete_dependency_name(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_ascii_alphanumeric() || first == '_')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || ch == '.')
+}
+
 impl UnusedDetector {
     /// Detect unused dependencies using available tool
     ///
@@ -148,8 +157,8 @@ impl UnusedDetector {
         let mut unused_deps = Vec::new();
         let mut current_package: Option<String> = None;
 
-        for line in text.lines() {
-            let line = line.trim();
+        for raw_line in text.lines() {
+            let line = raw_line.trim();
 
             // Skip empty lines and info messages
             if line.is_empty()
@@ -173,15 +182,22 @@ impl UnusedDetector {
                 }
                 current_package = Some(package_name.to_string());
             }
+            // cargo-machete appends advisory prose after the dependency list.
+            else if line.starts_with("If you believe cargo-machete") {
+                break;
+            }
             // Dependency line (indented): "    dep-name"
-            else if let Some(ref package) = current_package {
-                let dep_name = line.trim();
-                if !dep_name.is_empty() {
-                    unused_deps.push(UnusedDependency {
-                        package: package.clone(),
-                        dependency: dep_name.to_string(),
-                    });
-                }
+            else if raw_line.chars().next().is_some_and(char::is_whitespace)
+                && current_package.is_some()
+                && is_machete_dependency_name(line)
+            {
+                let package = current_package
+                    .as_ref()
+                    .expect("current package checked above");
+                unused_deps.push(UnusedDependency {
+                    package: package.clone(),
+                    dependency: line.to_string(),
+                });
             } else {
                 bail!("cargo-machete emitted a dependency line before any package header: {line}");
             }
@@ -346,6 +362,48 @@ mod tests {
         assert_eq!(report.unused.len(), 2);
         assert_eq!(report.unused[0].package, "sinex-db");
         assert_eq!(report.unused[0].dependency, "serde");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_machete_text_output_ignores_footer() -> TestResult<()> {
+        let report = UnusedDetector::parse_machete_text_output(
+            r#"cargo-machete found the following unused dependencies in this directory:
+sinex-db -- ./crate/lib/sinex-db/Cargo.toml:
+    serde
+    tokio-test
+
+If you believe cargo-machete has detected an unused dependency incorrectly,
+you can add the dependency to the list of dependencies to ignore in the
+`[package.metadata.cargo-machete]` section of the appropriate Cargo.toml.
+For example:
+
+[package.metadata.cargo-machete]
+ignored = ["prost"]
+
+Done!
+"#,
+        )?;
+
+        let deps: Vec<_> = report
+            .unused
+            .iter()
+            .map(|dep| dep.dependency.as_str())
+            .collect();
+        assert_eq!(deps, vec!["serde", "tokio-test"]);
+        assert!(!deps.contains(&"If you believe cargo-machete"));
+        assert!(!deps.contains(&"ignored"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_machete_text_output_rejects_unindented_dependency() -> TestResult<()> {
+        let error = UnusedDetector::parse_machete_text_output("sinex-db -- ./Cargo.toml:\nserde\n")
+            .expect_err("dependency entries must be indented");
+        assert!(
+            format!("{error:#}")
+                .contains("cargo-machete emitted a dependency line before any package header")
+        );
         Ok(())
     }
 
