@@ -11,11 +11,14 @@ use serde_json::json;
 use sinex_db::models::Event;
 use sinex_node_sdk::acquisition_manager::AcquisitionManager;
 use sinex_node_sdk::nats_publisher::NatsPublisher;
-use sinex_node_sdk::stage_as_you_go::{LogFileStageNode, StageAsYouGoContext, StageAsYouGoNode};
-use sinex_node_sdk::{EventBatcherConfig, EventTransport, spawn_event_batcher};
+use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
+use sinex_node_sdk::{
+    EventBatcherConfig, EventTransport, NodeResult, SinexError, spawn_event_batcher,
+};
 // Channel size constant - not in sinex_primitives::constants, use local
 const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1000;
 use sinex_primitives::JsonValue;
+use sinex_primitives::events::{EventPayload, payloads::LogLinePayload};
 use tokio::io::{AsyncRead, ReadBuf};
 use tokio::sync::{mpsc, oneshot};
 use tracing::info;
@@ -60,6 +63,134 @@ impl AsyncRead for FailingReader {
         }
 
         Poll::Ready(Ok(()))
+    }
+}
+
+struct TestLogFileStageNode {
+    context: StageAsYouGoContext,
+    log_source: String,
+}
+
+struct TestStageAsYouGoResult {
+    source_material_id: Uuid,
+    event_ids: Vec<String>,
+    bytes_processed: usize,
+}
+
+impl TestLogFileStageNode {
+    fn new(context: StageAsYouGoContext, log_source: impl Into<String>) -> Self {
+        Self {
+            context,
+            log_source: log_source.into(),
+        }
+    }
+
+    async fn process_with_staging(
+        &mut self,
+        content: &[u8],
+        source_uri: Option<&str>,
+        metadata: serde_json::Value,
+    ) -> NodeResult<TestStageAsYouGoResult> {
+        let source_uri = require_log_file_source_uri(source_uri)?;
+        let source_material_id = self
+            .context
+            .register_in_flight("log_file", Some(source_uri), metadata)
+            .await?;
+
+        let mut event_ids = Vec::new();
+        let content_str = String::from_utf8_lossy(content);
+        let lines: Vec<&str> = content_str.lines().collect();
+
+        for (line_num, line) in lines.iter().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let offset_start = lines[..line_num]
+                .iter()
+                .map(|line| line.len() + 1)
+                .sum::<usize>() as i64;
+            let offset_end = offset_start + line.len() as i64;
+
+            let payload = LogLinePayload {
+                line: line.to_string(),
+                line_number: (line_num + 1) as u64,
+                log_source: self.log_source.clone(),
+                log_file: source_uri.to_string(),
+                offset_start,
+                offset_end,
+                source_material_id: source_material_id.to_string(),
+            };
+
+            let mut event = payload
+                .from_material(source_material_id)
+                .with_offset_start(offset_start)
+                .map_err(|error| {
+                    SinexError::processing("Failed to set log line offset start").with_source(error)
+                })?
+                .with_offset_end(offset_end)
+                .map_err(|error| {
+                    SinexError::processing("Failed to set log line offset end").with_source(error)
+                })?
+                .build()
+                .map_err(|error| {
+                    SinexError::processing("Failed to build log line event").with_source(error)
+                })?
+                .to_json_event()
+                .map_err(|error| {
+                    SinexError::serialization("Failed to convert log line event to JSON")
+                        .with_source(error)
+                })?;
+
+            if event.ts_orig.is_none() {
+                event.ts_orig = Some(
+                    self.context
+                        .material_started_at(source_material_id)
+                        .await
+                        .ok_or_else(|| {
+                            SinexError::processing(
+                                "test log staging lost in-flight material timestamp",
+                            )
+                        })?,
+                );
+            }
+
+            let event_id = self
+                .context
+                .emit_event_with_provenance(
+                    event,
+                    source_material_id,
+                    Some(offset_start),
+                    Some(offset_end),
+                )
+                .await?;
+
+            event_ids.push(event_id.to_string());
+        }
+
+        self.context
+            .finalize_source_material(
+                source_material_id,
+                content,
+                Some("text/plain"),
+                Some("utf-8"),
+            )
+            .await?;
+
+        Ok(TestStageAsYouGoResult {
+            source_material_id,
+            event_ids,
+            bytes_processed: content.len(),
+        })
+    }
+}
+
+fn require_log_file_source_uri(source_uri: Option<&str>) -> NodeResult<&str> {
+    match source_uri {
+        Some(uri) if !uri.trim().is_empty() => Ok(uri),
+        _ => Err(SinexError::processing(
+            "log-file staging requires a non-empty source URI",
+        )),
     }
 }
 
@@ -121,7 +252,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
         event_tx,
         false,
     );
-    let mut node = LogFileStageNode::new(context, "integration-log");
+    let mut node = TestLogFileStageNode::new(context, "integration-log");
 
     let content = b"alpha\nbeta\ngamma\n";
     let metadata = serde_json::json!({ "integration": true });

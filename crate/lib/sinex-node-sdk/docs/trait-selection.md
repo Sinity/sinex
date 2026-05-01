@@ -8,7 +8,7 @@ flowchart and comparison matrix.
 ```
 Does your node capture data from the external world?
   ├── YES → Does it handle large binary content (files, documents)?
-  │           ├── YES → IngestorNode + StageAsYouGoNode pattern
+  │           ├── YES → IngestorNode + StageAsYouGoContext
   │           └── NO  → IngestorNode
   └── NO → Does it transform/filter existing events?
             ├── YES → Is it 1:1 stateless transformation?
@@ -21,11 +21,11 @@ Does your node capture data from the external world?
 
 ## Trait Comparison Matrix
 
-| Aspect | IngestorNode | TransducerNode | WindowedNode | ScopeReconcilerNode | StageAsYouGoNode | Node (base) |
+| Aspect | IngestorNode | TransducerNode | WindowedNode | ScopeReconcilerNode | StageAsYouGoContext | Node (base) |
 |--------|-------------|--------|---------|-----------|-----------|-------------|
 | **Purpose** | External world → events | 1:1 event transformation | Time-windowed aggregation | State reconciliation | Binary content staging | Runtime dispatch |
 | **Input** | External sources | Single event → output | Event stream over window | Scope state updates | Raw bytes + metadata | Checkpoint + TimeHorizon |
-| **Output** | `ScanReport` (batched) | `Option<Output>` | Windowed aggregate | Reconciled state events | `StageAsYouGoResult` | `ScanReport` |
+| **Output** | `ScanReport` (batched) | `Option<Output>` | Windowed aggregate | Reconciled state events | Material-linked events | `ScanReport` |
 | **Scan modes** | Snapshot, historical, continuous | Continuous only | Continuous only | Continuous only | N/A (helper pattern) | All (delegated) |
 | **State type** | Custom `S` in `IngestorState<S>` | Custom `S` in `PersistedState<S>` | Custom `S` in `PersistedState<S>` | Custom `S` in `PersistedState<S>` | N/A | Via adapter |
 | **Checkpoint** | Explicit (user returns in state) | Automatic (every N events / M secs) | Automatic (window-based) | Automatic (scope-driven) | Via enclosing ingestor | In `ScanReport` |
@@ -107,9 +107,9 @@ When sources for the same logical activity arrive with different latencies:
 Do not introduce a general-purpose derived-event provisional/final model just
 because the runtime transport itself is provisional-before-confirmed.
 
-### StageAsYouGoNode — "I need streaming content capture"
+### StageAsYouGoContext — "I need streaming content capture"
 
-Not a standalone node — a **pattern** used within `IngestorNode` implementations.
+Not a node trait — a **context helper** used within `IngestorNode` implementations.
 
 Use when your ingestor handles large binary content that should be staged
 progressively into JetStream rather than buffered in memory.
@@ -131,11 +131,11 @@ a node type that doesn't fit the ingestor/derived-node model.
 
 | Node | Trait | Adapter | Crate |
 |------|-------|---------|-------|
-| sinex-fs-ingestor | `IngestorNode` + `StageAsYouGoNode` | `IngestorNodeAdapter` | `crate/nodes/sinex-fs-ingestor` |
+| sinex-fs-ingestor | `IngestorNode` + `StageAsYouGoContext` | `IngestorNodeAdapter` | `crate/nodes/sinex-fs-ingestor` |
 | sinex-terminal-ingestor | `IngestorNode` | `IngestorNodeAdapter` | `crate/nodes/sinex-terminal-ingestor` |
 | sinex-desktop-ingestor | `IngestorNode` | `IngestorNodeAdapter` | `crate/nodes/sinex-desktop-ingestor` |
 | sinex-system-ingestor | `IngestorNode` | `IngestorNodeAdapter` | `crate/nodes/sinex-system-ingestor` |
-| sinex-document-ingestor | `IngestorNode` + `StageAsYouGoNode` | `IngestorNodeAdapter` | `crate/nodes/sinex-document-ingestor` |
+| sinex-document-ingestor | `IngestorNode` + `StageAsYouGoContext` | `IngestorNodeAdapter` | `crate/nodes/sinex-document-ingestor` |
 | sinex-analytics-automaton | `WindowedNode` | `WindowedNodeAdapter` | `crate/nodes/sinex-analytics-automaton` |
 | sinex-terminal-command-canonicalizer | `TransducerNode` | `TransducerNodeAdapter` | `crate/nodes/sinex-terminal-command-canonicalizer` |
 | sinex-health-automaton | `ScopeReconcilerNode` | `ScopeReconcilerNodeAdapter` | `crate/nodes/sinex-health-automaton` |
