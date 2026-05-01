@@ -7,8 +7,10 @@
 //! - `sinex-ingestd/service.rs` (schema content for NATS KV)
 
 use crate::repositories::common::db_error;
+use crate::repositories::events::EventPayloadSchema;
 use crate::{DbResult, JsonValue};
 use serde::{Deserialize, Serialize};
+use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{EventSource, EventType};
 use sqlx::PgPool;
@@ -17,7 +19,7 @@ use uuid::Uuid;
 /// Minimal schema record for cache operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedSchema {
-    pub id: Uuid,
+    pub id: Id<EventPayloadSchema>,
     pub source: EventSource,
     pub event_type: EventType,
     pub schema_version: String,
@@ -44,7 +46,7 @@ impl<'a> SchemaCacheRepository<'a> {
         &self,
         source: &EventSource,
         event_type: &EventType,
-    ) -> DbResult<Option<Uuid>> {
+    ) -> DbResult<Option<Id<EventPayloadSchema>>> {
         let result = sqlx::query_scalar!(
             r#"
             SELECT id::uuid as "id!"
@@ -62,18 +64,21 @@ impl<'a> SchemaCacheRepository<'a> {
         .await
         .map_err(|e| db_error(e, "lookup schema id"))?;
 
-        Ok(result)
+        Ok(result.map(Id::from_uuid))
     }
 
     /// Look up the schema version for a given schema ID
-    pub async fn lookup_schema_version(&self, schema_id: Uuid) -> DbResult<Option<String>> {
+    pub async fn lookup_schema_version(
+        &self,
+        schema_id: Id<EventPayloadSchema>,
+    ) -> DbResult<Option<String>> {
         let result = sqlx::query_scalar!(
             r#"
             SELECT schema_version
             FROM sinex_schemas.event_payload_schemas
             WHERE id = $1::uuid
             "#,
-            schema_id
+            schema_id.as_uuid()
         )
         .fetch_optional(self.pool)
         .await
@@ -85,14 +90,17 @@ impl<'a> SchemaCacheRepository<'a> {
     /// Fetch the full schema content for a given schema ID
     ///
     /// Used by sinex-ingestd to store schemas in NATS KV.
-    pub async fn get_schema_content(&self, schema_id: Uuid) -> DbResult<Option<JsonValue>> {
+    pub async fn get_schema_content(
+        &self,
+        schema_id: Id<EventPayloadSchema>,
+    ) -> DbResult<Option<JsonValue>> {
         let result = sqlx::query_scalar!(
             r#"
             SELECT schema_content
             FROM sinex_schemas.event_payload_schemas
             WHERE id = $1 AND is_active = true
             "#,
-            schema_id
+            schema_id.as_uuid()
         )
         .fetch_optional(self.pool)
         .await
@@ -127,7 +135,7 @@ impl<'a> SchemaCacheRepository<'a> {
         Ok(rows
             .into_iter()
             .map(|row| CachedSchema {
-                id: row.id,
+                id: Id::from_uuid(row.id),
                 source: row.source.into(),
                 event_type: row.event_type.into(),
                 schema_version: row.schema_version,
@@ -162,7 +170,7 @@ impl<'a> SchemaCacheRepository<'a> {
         Ok(rows
             .into_iter()
             .map(|row| CachedSchema {
-                id: row.id,
+                id: Id::from_uuid(row.id),
                 source: row.source.into(),
                 event_type: row.event_type.into(),
                 schema_version: row.schema_version,
@@ -175,12 +183,18 @@ impl<'a> SchemaCacheRepository<'a> {
     /// Bulk fetch schema content for multiple schema IDs
     ///
     /// Used by sinex-ingestd to efficiently load schemas for NATS KV storage.
-    pub async fn get_schemas_by_ids(&self, schema_ids: &[Uuid]) -> DbResult<Vec<CachedSchema>> {
+    pub async fn get_schemas_by_ids(
+        &self,
+        schema_ids: &[Id<EventPayloadSchema>],
+    ) -> DbResult<Vec<CachedSchema>> {
         if schema_ids.is_empty() {
             return Ok(Vec::new());
         }
 
-        let uuids: Vec<_> = schema_ids.to_vec();
+        let uuids: Vec<_> = schema_ids
+            .iter()
+            .map(|schema_id| *schema_id.as_uuid())
+            .collect();
 
         let rows = sqlx::query!(
             r#"
@@ -203,7 +217,7 @@ impl<'a> SchemaCacheRepository<'a> {
         Ok(rows
             .into_iter()
             .map(|row| CachedSchema {
-                id: row.id,
+                id: Id::from_uuid(row.id),
                 source: row.source.into(),
                 event_type: row.event_type.into(),
                 schema_version: row.schema_version,
@@ -219,7 +233,7 @@ impl<'a> SchemaCacheRepository<'a> {
     /// This is optimized for the use case where only metadata is needed (no `schema_content`).
     pub async fn preload_schema_metadata(
         &self,
-    ) -> DbResult<Vec<(Uuid, EventSource, EventType, String)>> {
+    ) -> DbResult<Vec<(Id<EventPayloadSchema>, EventSource, EventType, String)>> {
         let rows = sqlx::query!(
             r#"
             SELECT
@@ -239,7 +253,7 @@ impl<'a> SchemaCacheRepository<'a> {
             .into_iter()
             .map(|row| {
                 (
-                    row.id,
+                    Id::from_uuid(row.id),
                     row.source.into(),
                     row.event_type.into(),
                     row.schema_version,
@@ -255,7 +269,7 @@ mod tests {
     use crate::repositories::schema_management::{NewEventSchema, SchemaManagementRepository};
     use xtask::sandbox::{TestResult, sinex_test};
 
-    async fn setup_test_schema(pool: &PgPool) -> TestResult<Uuid> {
+    async fn setup_test_schema(pool: &PgPool) -> TestResult<Id<EventPayloadSchema>> {
         let repo = SchemaManagementRepository::new(pool);
         let schema = NewEventSchema {
             source: EventSource::from_static("test-source"),
@@ -269,7 +283,7 @@ mod tests {
             }),
         };
         let result = repo.register_schema(schema).await?;
-        Ok(*result.id.as_uuid())
+        Ok(result.id)
     }
 
     #[sinex_test]
