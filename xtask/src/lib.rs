@@ -39,6 +39,7 @@ pub mod resources;
 pub mod runtime_metrics;
 pub mod runtime_target;
 pub mod sandbox;
+mod source_unit_inventory;
 pub use sandbox::context::Sandbox;
 pub use sandbox::events::EventPublisher;
 pub use sandbox::nats::EventOverrides;
