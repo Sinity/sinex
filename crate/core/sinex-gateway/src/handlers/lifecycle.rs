@@ -8,6 +8,7 @@ use sinex_primitives::rpc::lifecycle::{
     LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
     LifecycleRestoreResponse, LifecycleStatusRequest, LifecycleStatusResponse, TierStatus,
 };
+use sinex_primitives::temporal::parse_duration;
 use sinex_primitives::{SinexError, Timestamp, Uuid};
 use sqlx::PgPool;
 use std::str::FromStr;
@@ -496,14 +497,8 @@ pub async fn handle_lifecycle_restore(
 
 /// Parse a duration string (e.g., "30d", "90d") to a timestamp in the past
 fn parse_duration_to_timestamp(duration_str: &str) -> Result<Option<Timestamp>> {
-    let duration = humantime::parse_duration(duration_str)
-        .map_err(|e| SinexError::validation(format!("Invalid duration '{duration_str}': {e}")))?;
-    let duration = time::Duration::try_from(duration).map_err(|error| {
-        SinexError::validation(format!(
-            "Invalid duration '{duration_str}': cannot represent parsed duration precisely"
-        ))
-        .with_std_error(&error)
-    })?;
+    let duration = parse_duration(duration_str)
+        .ok_or_else(|| SinexError::validation(format!("Invalid duration '{duration_str}'")))?;
 
     let ts = Timestamp::now() - duration;
     Ok(Some(ts))

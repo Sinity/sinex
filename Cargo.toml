@@ -204,6 +204,7 @@ console-subscriber = "0.4"
 # IDs and time
 
 uuid = { version = "1.17.0", features = ["v4", "v5", "v7", "serde"] }
+humantime = "2.1"
 
 # HTTP and metrics
 axum = "0.7"
