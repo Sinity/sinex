@@ -164,6 +164,36 @@ pub mod replay {
     pub const DEFAULT_CASCADE_MAX_DEPTH: usize = 100;
 }
 
+/// Canonical environment-variable names used by runtime configuration readers.
+pub mod env_vars {
+    /// Whether NATS stream topology is provisioned by deployment tooling instead of services.
+    pub const NATS_STREAMS_MANAGED_EXTERNALLY: &str = "SINEX_NATS_STREAMS_MANAGED_EXTERNALLY";
+
+    /// CLI/gateway RPC endpoint URL.
+    pub const RPC_URL: &str = "SINEX_RPC_URL";
+
+    /// Explicit privacy config TOML path.
+    pub const PRIVACY_CONFIG: &str = "SINEX_PRIVACY_CONFIG";
+    /// Master privacy switch.
+    pub const PRIVACY_ENABLED: &str = "SINEX_PRIVACY_ENABLED";
+    /// Built-in privacy rule category selector.
+    pub const PRIVACY_BUILTIN: &str = "SINEX_PRIVACY_BUILTIN";
+    /// JSON array of extra privacy rules.
+    pub const PRIVACY_EXTRA_RULES: &str = "SINEX_PRIVACY_EXTRA_RULES";
+    /// JSON map of per-rule privacy overrides.
+    pub const PRIVACY_OVERRIDES: &str = "SINEX_PRIVACY_OVERRIDES";
+    /// Default privacy strategy override.
+    pub const PRIVACY_DEFAULT_STRATEGY: &str = "SINEX_PRIVACY_DEFAULT_STRATEGY";
+    /// Secret-category privacy strategy override.
+    pub const PRIVACY_SECRET_STRATEGY: &str = "SINEX_PRIVACY_SECRET_STRATEGY";
+    /// Path to the privacy encryption key file.
+    pub const PRIVACY_KEY_FILE: &str = "SINEX_PRIVACY_KEY_FILE";
+    /// Hex-encoded privacy encryption key for development.
+    pub const PRIVACY_KEY: &str = "SINEX_PRIVACY_KEY";
+    /// Enables per-rule privacy match counts.
+    pub const PRIVACY_STATS: &str = "SINEX_PRIVACY_STATS";
+}
+
 /// Redis stream constants
 pub mod redis {
     use super::Duration;
