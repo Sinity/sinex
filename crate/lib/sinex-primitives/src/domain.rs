@@ -1085,6 +1085,8 @@ pub struct ContentKeyComponents<'a> {
     pub prefix: &'a str,
     /// Backend token (prefix up to first `-`, or full prefix if no metadata modifiers).
     pub backend: &'a str,
+    /// Size metadata from a `-sNNN` prefix modifier, when present.
+    pub size: Option<&'a str>,
     /// Key name after `--`.
     pub name: &'a str,
 }
@@ -1133,11 +1135,32 @@ impl ContentKey {
             unreachable!("ContentKey invariant violated: missing '--' separator");
         };
         let backend = prefix.split('-').next().unwrap_or(prefix);
+        let size = prefix
+            .strip_prefix(backend)
+            .unwrap_or_default()
+            .split('-')
+            .find_map(|part| part.strip_prefix('s'))
+            .filter(|size| !size.is_empty());
         ContentKeyComponents {
             prefix,
             backend,
+            size,
             name,
         }
+    }
+
+    /// Parse the optional `-sNNN` size metadata from the content key prefix.
+    ///
+    /// This method is infallible when size metadata is absent. If the key carries
+    /// `-s` metadata, the value must parse as an unsigned byte count.
+    pub fn parse_size_bytes(&self) -> Result<Option<u64>, String> {
+        let Some(size) = self.parse_components().size else {
+            return Ok(None);
+        };
+
+        size.parse::<u64>()
+            .map(Some)
+            .map_err(|err| format!("invalid content key size metadata '{size}': {err}"))
     }
 }
 
