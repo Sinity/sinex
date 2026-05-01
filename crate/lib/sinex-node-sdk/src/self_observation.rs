@@ -341,7 +341,10 @@ impl SelfObserver {
             }
         };
 
-        if let Err(e) = publisher.publish_telemetry(&event).await {
+        if let Err(e) = publisher
+            .publish_telemetry(&event, sinex_primitives::transport::Class::Telemetry)
+            .await
+        {
             self.release_metric_slot(&metric_key).await;
             warn!(
                 component = %self.component,

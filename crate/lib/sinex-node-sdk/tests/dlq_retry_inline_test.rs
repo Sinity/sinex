@@ -108,7 +108,12 @@ async fn dlq_retry_by_id_requeues_node_sdk_entry(ctx: TestContext) -> TestResult
     let mut original_sub = client.subscribe(original_subject.clone()).await?;
 
     publisher
-        .publish_to_raw_ingest_dlq(&event, "boom", "test.node")
+        .publish_to_raw_ingest_dlq(
+            &event,
+            "boom",
+            "test.node",
+            sinex_primitives::transport::Class::Critical,
+        )
         .await?;
 
     let handler = DlqRetryHandler::new(client.clone(), env, DlqRetryConfig::default());
