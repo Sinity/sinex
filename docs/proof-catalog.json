@@ -533,6 +533,118 @@
       "package_impact": "no_new_output",
       "implementation_mode": "rust_in_pack:terminal",
       "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:terminal.atuin-history",
+      "id": "terminal.atuin-history",
+      "namespace": "terminal",
+      "runner_pack": "terminal",
+      "modes": [
+        "continuous",
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "shell.atuin",
+          "event_type": "command.executed"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "mutable_snapshot",
+      "occurrence_identity": "natural_key",
+      "access_policy": "target_home_read:.local/share/atuin/history.db",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:terminal",
+      "proof_obligations": [
+        "obligation:source_unit.material_provenance",
+        "obligation:source_unit.package_impact_rationale"
+      ]
+    },
+    {
+      "subject": "source_unit:terminal.bash-history",
+      "id": "terminal.bash-history",
+      "namespace": "terminal",
+      "runner_pack": "terminal",
+      "modes": [
+        "continuous",
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "shell.history",
+          "event_type": "command.imported"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "material_anchor",
+      "access_policy": "target_home_read:.bash_history",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:terminal",
+      "proof_obligations": [
+        "obligation:source_unit.material_provenance",
+        "obligation:source_unit.package_impact_rationale"
+      ]
+    },
+    {
+      "subject": "source_unit:terminal.fish-history",
+      "id": "terminal.fish-history",
+      "namespace": "terminal",
+      "runner_pack": "terminal",
+      "modes": [
+        "continuous",
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "shell.history.fish",
+          "event_type": "command.executed"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "mutable_snapshot",
+      "occurrence_identity": "natural_key",
+      "access_policy": "target_home_read:.local/share/fish/fish_history",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:terminal",
+      "proof_obligations": [
+        "obligation:source_unit.material_provenance",
+        "obligation:source_unit.package_impact_rationale"
+      ]
+    },
+    {
+      "subject": "source_unit:terminal.zsh-history",
+      "id": "terminal.zsh-history",
+      "namespace": "terminal",
+      "runner_pack": "terminal",
+      "modes": [
+        "continuous",
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "shell.history",
+          "event_type": "command.imported"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "material_anchor",
+      "access_policy": "target_home_read:.zsh_history",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:terminal",
+      "proof_obligations": [
+        "obligation:source_unit.material_provenance",
+        "obligation:source_unit.package_impact_rationale"
+      ]
     }
   ],
   "claims": [

@@ -24,10 +24,9 @@ use sinex_primitives::source_unit::{
 
 // Source-unit declaration & promotion contract (issue #690).
 //
-// Terminal is the proven case: it ships against multiple shell-history
-// backing stores (Atuin SQLite, Fish SQLite, generic shell history files)
-// and emits four (source, event_type) pairs. The descriptor is the typed
-// promise this binary makes about itself.
+// Terminal is the runner-level source unit for the binary. The shell-history
+// adapters below are the operator-visible logical source units hosted by this
+// same runner pack.
 register_source_unit! {
     SourceUnitDescriptor {
         id: "terminal",
@@ -60,6 +59,104 @@ register_source_unit! {
             "(source_unit, atuin_history_id)",
         ),
         access_policy: "target_home_read:shell_history",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pack:terminal",
+        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+    }
+}
+
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "terminal.atuin-history",
+        namespace: "terminal",
+        runner_pack: "terminal",
+        checkpoint_family: CheckpointFamily::MutableSnapshot {
+            backing_store_kind: "sqlite",
+            occurrence_anchor: "atuin_history_id",
+        },
+        event_types: &[("shell.atuin", "command.executed")],
+        privacy_tier: PrivacyTier::Sensitive,
+        runtime_shape: RuntimeShape::Continuous,
+        horizons: &[Horizon::Continuous, Horizon::Historical],
+        retention: RetentionPolicy::Forever,
+        proof_obligations: &[
+            "obligation:source_unit.material_provenance",
+            "obligation:source_unit.package_impact_rationale",
+        ],
+        occurrence_identity: OccurrenceIdentity::Natural,
+        access_policy: "target_home_read:.local/share/atuin/history.db",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pack:terminal",
+        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+    }
+}
+
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "terminal.zsh-history",
+        namespace: "terminal",
+        runner_pack: "terminal",
+        checkpoint_family: CheckpointFamily::AppendStream,
+        event_types: &[("shell.history", "command.imported")],
+        privacy_tier: PrivacyTier::Sensitive,
+        runtime_shape: RuntimeShape::Continuous,
+        horizons: &[Horizon::Continuous, Horizon::Historical],
+        retention: RetentionPolicy::Forever,
+        proof_obligations: &[
+            "obligation:source_unit.material_provenance",
+            "obligation:source_unit.package_impact_rationale",
+        ],
+        occurrence_identity: OccurrenceIdentity::Anchor,
+        access_policy: "target_home_read:.zsh_history",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pack:terminal",
+        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+    }
+}
+
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "terminal.fish-history",
+        namespace: "terminal",
+        runner_pack: "terminal",
+        checkpoint_family: CheckpointFamily::MutableSnapshot {
+            backing_store_kind: "sqlite",
+            occurrence_anchor: "fish_history_row_id",
+        },
+        event_types: &[("shell.history.fish", "command.executed")],
+        privacy_tier: PrivacyTier::Sensitive,
+        runtime_shape: RuntimeShape::Continuous,
+        horizons: &[Horizon::Continuous, Horizon::Historical],
+        retention: RetentionPolicy::Forever,
+        proof_obligations: &[
+            "obligation:source_unit.material_provenance",
+            "obligation:source_unit.package_impact_rationale",
+        ],
+        occurrence_identity: OccurrenceIdentity::Natural,
+        access_policy: "target_home_read:.local/share/fish/fish_history",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pack:terminal",
+        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+    }
+}
+
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "terminal.bash-history",
+        namespace: "terminal",
+        runner_pack: "terminal",
+        checkpoint_family: CheckpointFamily::AppendStream,
+        event_types: &[("shell.history", "command.imported")],
+        privacy_tier: PrivacyTier::Sensitive,
+        runtime_shape: RuntimeShape::Continuous,
+        horizons: &[Horizon::Continuous, Horizon::Historical],
+        retention: RetentionPolicy::Forever,
+        proof_obligations: &[
+            "obligation:source_unit.material_provenance",
+            "obligation:source_unit.package_impact_rationale",
+        ],
+        occurrence_identity: OccurrenceIdentity::Anchor,
+        access_policy: "target_home_read:.bash_history",
         package_impact: "no_new_output",
         implementation_mode: "rust_in_pack:terminal",
         build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
