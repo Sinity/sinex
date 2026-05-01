@@ -6,6 +6,7 @@
 use crate::NodeResult;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sinex_primitives::constants::buffers::DEFAULT_CONFIRMATION_BUFFER_CAPACITY;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::builder::EventId;
 use std::collections::HashMap;
@@ -76,9 +77,6 @@ pub trait ConfirmedEventHandler: Send + Sync {
     async fn handle_confirmed(&self, event: &ProvisionalEvent) -> NodeResult<()>;
 }
 
-/// Default maximum capacity for the confirmation buffer
-pub const DEFAULT_MAX_PENDING_EVENTS: usize = 10_000;
-
 /// Buffer for provisional events awaiting confirmation.
 ///
 /// Locking contract:
@@ -103,7 +101,7 @@ pub struct ConfirmationBuffer {
 impl ConfirmationBuffer {
     #[must_use]
     pub fn new(timeout: std::time::Duration) -> Self {
-        Self::with_capacity(timeout, DEFAULT_MAX_PENDING_EVENTS)
+        Self::with_capacity(timeout, DEFAULT_CONFIRMATION_BUFFER_CAPACITY)
     }
 
     #[must_use]

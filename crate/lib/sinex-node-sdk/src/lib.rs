@@ -117,8 +117,8 @@ pub use checkpoint::{
 };
 pub use config::{AutomatonConfig, EventSourceConfig, NodeConfig};
 pub use confirmation_handler::{
-    ConfirmationBuffer, ConfirmedEventHandler, DEFAULT_MAX_PENDING_EVENTS, EventConfirmation,
-    ProcessingModel, ProvisionalEvent, ProvisionalEventHandler,
+    ConfirmationBuffer, ConfirmedEventHandler, EventConfirmation, ProcessingModel,
+    ProvisionalEvent, ProvisionalEventHandler,
 };
 #[cfg(feature = "messaging")]
 pub use coordination::{HandoffRequest, InstanceMode, NodeCoordination};
