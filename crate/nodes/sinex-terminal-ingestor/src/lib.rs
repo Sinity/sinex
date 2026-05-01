@@ -32,6 +32,7 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "terminal",
         namespace: "shell",
+        runner_pack: "terminal",
         // Atuin SQLite is the primary backing store; Fish history is also
         // SQLite. Generic shell history files (zsh/bash) are append-stream
         // but funnel through the same checkpoint family for consistency.
@@ -58,5 +59,9 @@ register_source_unit! {
         occurrence_identity: OccurrenceIdentity::Uuid5From(
             "(source_unit, atuin_history_id)",
         ),
+        access_policy: "target_home_read:shell_history",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pack:terminal",
+        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
     }
 }

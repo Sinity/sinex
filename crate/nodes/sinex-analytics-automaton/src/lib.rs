@@ -328,8 +328,7 @@ use sinex_primitives::register_source_unit;
 use sinex_primitives::source_unit::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape,
-    SourceUnitDescriptor,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
 };
 
 // Analytics is a derived source: it consumes trusted-activity inputs and
@@ -339,6 +338,7 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "analytics",
         namespace: "derived",
+        runner_pack: "analytics",
         checkpoint_family: SuCheckpointFamily::AppendStream,
         event_types: &[
             ("derived.activity-window", "activity.window.summary"),
@@ -352,5 +352,9 @@ register_source_unit! {
         occurrence_identity: SuOccurrenceIdentity::Uuid5From(
             "(source_unit, parent_event_ids)",
         ),
+        access_policy: "event_stream_read",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pack:analytics",
+        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
     }
 }
