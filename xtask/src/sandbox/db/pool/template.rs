@@ -380,7 +380,7 @@ mod tests {
         ADHOC_TEMPLATE_BASE_NAME, SHARED_POOL_TEMPLATE_SHARD_COUNT, SHARED_TEMPLATE_BASE_NAME,
         check_template_reuse, connect_admin_with_retry, ensure_template_database_for_key,
         is_managed_pool_slot_name, load_template_trust_stamp, normalize_adhoc_template_key,
-        schema_fingerprint, schema_fingerprint_sources, schema_fingerprint_sources_in,
+        quote_ident, schema_fingerprint, schema_fingerprint_sources, schema_fingerprint_sources_in,
         store_template_meta, store_template_trust_stamp, template_name_for_key,
         template_names_for_keys, template_trust_matches, template_trust_state_path_in,
     };
@@ -557,7 +557,8 @@ mod tests {
         let desired_fingerprint = Some(schema_fingerprint()?);
 
         let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
-        let drop_query = format!("DROP DATABASE IF EXISTS {template_name} WITH (FORCE)");
+        let quoted_template = quote_ident(&template_name);
+        let drop_query = format!("DROP DATABASE IF EXISTS {quoted_template} WITH (FORCE)");
         sqlx::query(&drop_query).execute(&mut admin_conn).await?;
         wait_for_database_absence_admin(&mut admin_conn, &template_name).await?;
 
@@ -616,7 +617,7 @@ mod tests {
             "template with actual schema drift must be recreated instead of reused"
         );
 
-        let drop_query = format!("DROP DATABASE IF EXISTS {template_name} WITH (FORCE)");
+        let drop_query = format!("DROP DATABASE IF EXISTS {quoted_template} WITH (FORCE)");
         sqlx::query(&drop_query).execute(&mut admin_conn).await?;
         Ok(())
     }
@@ -628,7 +629,8 @@ mod tests {
         let desired_fingerprint = Some(schema_fingerprint()?);
 
         let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
-        let drop_query = format!("DROP DATABASE IF EXISTS {template_name} WITH (FORCE)");
+        let quoted_template = quote_ident(&template_name);
+        let drop_query = format!("DROP DATABASE IF EXISTS {quoted_template} WITH (FORCE)");
         sqlx::query(&drop_query).execute(&mut admin_conn).await?;
         wait_for_database_absence_admin(&mut admin_conn, &template_name).await?;
 
@@ -687,7 +689,7 @@ mod tests {
             "shared fast-path reuse must reject actual schema drift instead of trusting metadata"
         );
 
-        let drop_query = format!("DROP DATABASE IF EXISTS {template_name} WITH (FORCE)");
+        let drop_query = format!("DROP DATABASE IF EXISTS {quoted_template} WITH (FORCE)");
         sqlx::query(&drop_query).execute(&mut admin_conn).await?;
         Ok(())
     }
@@ -928,11 +930,11 @@ async fn check_template_reuse(
     desired_fingerprint: &Option<String>,
     check_drift: bool,
 ) -> TestResult<Option<HashMap<String, String>>> {
-    let exists: bool = sqlx::query_scalar(&format!(
-        "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = '{template_name}')"
-    ))
-    .fetch_one(&mut *admin_conn)
-    .await?;
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)")
+            .bind(template_name)
+            .fetch_one(&mut *admin_conn)
+            .await?;
 
     if !exists {
         invalidate_template_trust_stamp(template_name);
@@ -1114,16 +1116,17 @@ async fn rebuild_template(
     );
 
     // Terminate connections and drop
-    let terminate_query = format!(
+    let _ = sqlx::query(
         "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
-         WHERE datname = '{template_name}' AND pid <> pg_backend_pid()"
-    );
-    let _ = sqlx::query(&terminate_query)
-        .execute(&mut *admin_conn)
-        .await;
+         WHERE datname = $1 AND pid <> pg_backend_pid()",
+    )
+    .bind(template_name)
+    .execute(&mut *admin_conn)
+    .await;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let drop_query = format!("DROP DATABASE IF EXISTS {template_name} WITH (FORCE)");
+    let quoted_template = quote_ident(template_name);
+    let drop_query = format!("DROP DATABASE IF EXISTS {quoted_template} WITH (FORCE)");
     sqlx::query(&drop_query).execute(&mut *admin_conn).await?;
 
     // Create fresh database
@@ -1172,7 +1175,8 @@ async fn rebuild_template(
 
 /// Create a template database, tolerating "already exists" races.
 async fn create_template_db(admin_conn: &mut PgConnection, template_name: &str) -> TestResult<()> {
-    let create_query = format!("CREATE DATABASE {template_name}");
+    let quoted_template = quote_ident(template_name);
+    let create_query = format!("CREATE DATABASE {quoted_template}");
     match tokio::time::timeout(
         CREATE_TEMPLATE_DB_TIMEOUT,
         sqlx::query(&create_query).execute(&mut *admin_conn),
@@ -1441,7 +1445,8 @@ async fn ensure_extension_installed(pool: &DbPool, extension: &str) -> TestResul
         ));
     }
 
-    let create_stmt = format!("CREATE EXTENSION IF NOT EXISTS {extension}");
+    let quoted_extension = quote_ident(extension);
+    let create_stmt = format!("CREATE EXTENSION IF NOT EXISTS {quoted_extension}");
     sqlx::query(&create_stmt)
         .execute(pool)
         .await

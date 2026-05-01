@@ -1010,7 +1010,8 @@ impl DatabasePool {
 
                 // Drop them
                 for db in dbs_to_drop {
-                    let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS {db}"))
+                    let quoted = quote_ident(&db);
+                    let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS {quoted}"))
                         .execute(&admin_pool)
                         .await;
                 }
@@ -1115,9 +1116,11 @@ impl DatabasePool {
 
                         if needs_recreate {
                             // Terminate connections and drop the database
-                            let _ = sqlx::query(&format!(
-                                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{name}' AND pid <> pg_backend_pid()"
-                                ))
+                            let _ = sqlx::query(
+                                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+                                 WHERE datname = $1 AND pid <> pg_backend_pid()",
+                            )
+                            .bind(&name)
                             .execute(&mut *conn)
                             .await;
 
@@ -1826,7 +1829,8 @@ mod tests {
         let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
 
         drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
-        sqlx::query(&format!("CREATE DATABASE {db_name}"))
+        let quoted = quote_ident(&db_name);
+        sqlx::query(&format!("CREATE DATABASE {quoted}"))
             .execute(&mut admin_conn)
             .await?;
         store_pool_meta(
@@ -1870,7 +1874,8 @@ mod tests {
         let mut admin_conn = connect_admin_with_retry(&config.admin_url).await?;
 
         drop_database_if_exists_admin(&mut admin_conn, &db_name).await?;
-        sqlx::query(&format!("CREATE DATABASE {db_name}"))
+        let quoted = quote_ident(&db_name);
+        sqlx::query(&format!("CREATE DATABASE {quoted}"))
             .execute(&mut admin_conn)
             .await?;
         store_pool_meta(
