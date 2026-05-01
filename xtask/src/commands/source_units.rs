@@ -12,8 +12,7 @@ use color_eyre::eyre::{Context, Result};
 use serde::Serialize;
 use sinex_primitives::proof::{self, ProofObligation};
 use sinex_primitives::source_unit::{
-    self, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
-    RuntimeShape,
+    self, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -287,7 +286,6 @@ fn build_source_unit_manifest() -> SourceUnitManifest {
 fn canonical_source_unit_descriptor(
     unit: &'static source_unit::SourceUnitDescriptor,
 ) -> SourceUnitDescriptor {
-    let runner_pack = runner_pack_for(unit);
     SourceUnitDescriptor {
         subject: format!("source_unit:{}", unit.id),
         id: unit.id.to_string(),
@@ -319,22 +317,25 @@ fn canonical_source_unit_descriptor(
         privacy_context: privacy_tier_name(unit.privacy_tier).to_string(),
         retention_policy: retention_policy(unit.retention),
         resource_profile: runtime_shape_name(unit.runtime_shape).to_string(),
-        access_policy: "declared_by_runtime_descriptor".to_string(),
+        access_policy: unit.access_policy.to_string(),
         service_policy: service_policy(unit.runtime_shape).to_string(),
-        runner_pack: runner_pack.clone(),
-        package_impact: "no_new_output".to_string(),
-        implementation_mode: format!("rust_in_pack:{runner_pack}"),
+        runner_pack: unit.runner_pack.to_string(),
+        package_impact: unit.package_impact.to_string(),
+        implementation_mode: unit.implementation_mode.to_string(),
         proof_obligations: unit
             .proof_obligations
             .iter()
             .map(|obligation| (*obligation).to_string())
             .collect(),
-        crate_impact: "0".to_string(),
-        binary_impact: "0".to_string(),
-        nix_output_impact: "0".to_string(),
-        derivation_impact: "0".to_string(),
-        sqlx_validation_impact: "0".to_string(),
-        dedicated_build_rationale: None,
+        crate_impact: unit.build_impact.crate_impact.to_string(),
+        binary_impact: unit.build_impact.binary_impact.to_string(),
+        nix_output_impact: unit.build_impact.nix_output_impact.to_string(),
+        derivation_impact: unit.build_impact.derivation_impact.to_string(),
+        sqlx_validation_impact: unit.build_impact.sqlx_validation_impact.to_string(),
+        dedicated_build_rationale: unit
+            .build_impact
+            .dedicated_build_rationale
+            .map(str::to_string),
     }
 }
 
@@ -453,16 +454,6 @@ fn package_impact_report(source_units: &[SourceUnitDescriptor]) -> SourceUnitImp
                     .map(|rationale| format!("{}: {rationale}", unit.id))
             })
             .collect(),
-    }
-}
-
-fn runner_pack_for(unit: &source_unit::SourceUnitDescriptor) -> String {
-    match unit.id {
-        "terminal-canonicalizer" => "terminal".to_string(),
-        "session-detector" => "session".to_string(),
-        "hourly-summarizer" => "hourly".to_string(),
-        "daily-summarizer" => "daily".to_string(),
-        other => other.to_string(),
     }
 }
 
@@ -632,7 +623,10 @@ fn required_empty_fields(unit: &SourceUnitDescriptor) -> Vec<String> {
         ("binary_impact", unit.binary_impact.as_str()),
         ("nix_output_impact", unit.nix_output_impact.as_str()),
         ("derivation_impact", unit.derivation_impact.as_str()),
-        ("sqlx_validation_impact", unit.sqlx_validation_impact.as_str()),
+        (
+            "sqlx_validation_impact",
+            unit.sqlx_validation_impact.as_str(),
+        ),
     ]
     .into_iter()
     .filter(|(_, value)| value.is_empty())
@@ -735,6 +729,37 @@ mod tests {
                 "source-unit manifest should include descriptor registered by {expected}"
             );
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn canonical_source_unit_fields_drive_manifest_contract() -> TestResult<()> {
+        let manifest = build_source_unit_manifest();
+        let desktop = manifest
+            .source_units
+            .iter()
+            .find(|unit| unit.id == "desktop")
+            .expect("desktop descriptor should be rendered from canonical registry");
+        assert_eq!(desktop.runner_pack, "desktop");
+        assert_eq!(desktop.access_policy, "target_runtime_bridge:desktop");
+        assert_eq!(desktop.package_impact, "no_new_output");
+        assert_eq!(desktop.implementation_mode, "rust_in_pack:desktop");
+        assert_eq!(desktop.crate_impact, "0");
+        assert_eq!(desktop.binary_impact, "0");
+        assert_eq!(desktop.nix_output_impact, "0");
+        assert_eq!(desktop.derivation_impact, "0");
+        assert_eq!(desktop.sqlx_validation_impact, "0");
+
+        let terminal_canonicalizer = manifest
+            .source_units
+            .iter()
+            .find(|unit| unit.id == "terminal-canonicalizer")
+            .expect("terminal canonicalizer descriptor should be present");
+        assert_eq!(terminal_canonicalizer.runner_pack, "terminal");
+        assert_eq!(
+            terminal_canonicalizer.implementation_mode,
+            "rust_in_pack:terminal"
+        );
         Ok(())
     }
 

@@ -22,6 +22,7 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "fs",
         namespace: "filesystem",
+        runner_pack: "fs",
         checkpoint_family: CheckpointFamily::AppendStream,
         event_types: &[
             ("fs-watcher", "file.created"),
@@ -42,5 +43,9 @@ register_source_unit! {
         retention: RetentionPolicy::Forever,
         proof_obligations: &[],
         occurrence_identity: OccurrenceIdentity::Anchor,
+        access_policy: "configured_watch_roots",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pack:fs",
+        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
     }
 }

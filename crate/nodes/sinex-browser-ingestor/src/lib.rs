@@ -15,8 +15,7 @@ use sinex_primitives::register_source_unit;
 use sinex_primitives::source_unit::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape,
-    SourceUnitDescriptor,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
 };
 
 // Source-unit descriptor (issue #690 / #734). Browser history backing stores
@@ -26,6 +25,7 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "browser",
         namespace: "web",
+        runner_pack: "browser",
         checkpoint_family: SuCheckpointFamily::MutableSnapshot {
             backing_store_kind: "sqlite",
             occurrence_anchor: "visit_id",
@@ -42,5 +42,9 @@ register_source_unit! {
         occurrence_identity: SuOccurrenceIdentity::Uuid5From(
             "(source_unit, browser_profile, visit_id)",
         ),
+        access_policy: "target_home_read:browser_history",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pack:browser",
+        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
     }
 }
