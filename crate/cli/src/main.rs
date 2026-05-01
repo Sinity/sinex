@@ -322,8 +322,8 @@ async fn main() -> color_eyre::Result<()> {
 fn command_path(cmd: &Commands) -> String {
     use sinexctl::commands::lifecycle::TombstoneCommands;
     use sinexctl::commands::{
-        ConfigCommands, DlqCommands, GatewayCommands, LifecycleCommands, NodeCommands, OpsCommands,
-        ReplayCommands, ReportCommands, TelemetryCommands,
+        ConfigCommands, DlqCommands, GatewayCommands, GitOpsCommands, LifecycleCommands,
+        NodeCommands, OpsCommands, ReplayCommands, ReportCommands, TelemetryCommands,
     };
     match cmd {
         Commands::Gateway { cmd } => match cmd {
@@ -347,7 +347,7 @@ fn command_path(cmd: &Commands) -> String {
             ReplayCommands::Execute { .. } => "replay execute".to_string(),
             ReplayCommands::Submit { .. } => "replay submit".to_string(),
             ReplayCommands::Cancel { .. } => "replay cancel".to_string(),
-            ReplayCommands::Status { .. } => "replay list".to_string(),
+            ReplayCommands::Status { .. } => "replay status".to_string(),
             ReplayCommands::Watch { .. } => "replay watch".to_string(),
             ReplayCommands::List { .. } => "replay list".to_string(),
             ReplayCommands::Run { .. } => "replay run".to_string(),
@@ -388,10 +388,17 @@ fn command_path(cmd: &Commands) -> String {
                 TombstoneCommands::Status(_) => "lifecycle tombstone status".to_string(),
             },
         },
-        Commands::GitOps { .. } => "gitops".to_string(),
+        Commands::GitOps { cmd } => match cmd {
+            GitOpsCommands::List { .. } => "git-ops list".to_string(),
+            GitOpsCommands::Create { .. } => "git-ops create".to_string(),
+            GitOpsCommands::Delete { .. } => "git-ops delete".to_string(),
+            GitOpsCommands::Sync { .. } => "git-ops sync".to_string(),
+        },
         Commands::Telemetry { cmd } => match cmd {
-            TelemetryCommands::CurrentHealth { .. } => "telemetry health".to_string(),
-            TelemetryCommands::CurrentDeviceState { .. } => "telemetry device-state".to_string(),
+            TelemetryCommands::CurrentHealth { .. } => "telemetry current-health".to_string(),
+            TelemetryCommands::CurrentDeviceState { .. } => {
+                "telemetry current-device-state".to_string()
+            }
             TelemetryCommands::WindowFocus { .. } => "telemetry window-focus".to_string(),
             TelemetryCommands::CommandFrequency { .. } => "telemetry command-frequency".to_string(),
             TelemetryCommands::FileActivity { .. } => "telemetry file-activity".to_string(),
@@ -428,6 +435,7 @@ fn command_path(cmd: &Commands) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
     use xtask::sandbox::prelude::*;
 
     use xtask::sandbox::EnvGuard;
@@ -445,6 +453,33 @@ mod tests {
             .as_ref()
             .ok_or_else(|| eyre!("test command must include a subcommand"))?;
         Ok(command_path(command))
+    }
+
+    fn clap_leaf_command_paths() -> BTreeSet<String> {
+        fn collect(prefix: &mut Vec<String>, command: &clap::Command, out: &mut BTreeSet<String>) {
+            let visible_children: Vec<&clap::Command> = command
+                .get_subcommands()
+                .filter(|subcommand| !subcommand.is_hide_set())
+                .collect();
+
+            if visible_children.is_empty() {
+                if !prefix.is_empty() {
+                    out.insert(prefix.join(" "));
+                }
+                return;
+            }
+
+            for child in visible_children {
+                prefix.push(child.get_name().to_string());
+                collect(prefix, child, out);
+                prefix.pop();
+            }
+        }
+
+        let command = Cli::command();
+        let mut paths = BTreeSet::new();
+        collect(&mut Vec::new(), &command, &mut paths);
+        paths
     }
 
     #[sinex_serial_test]
@@ -719,6 +754,25 @@ mod tests {
             assert_eq!(actual, expected, "wrong command path for {args:?}");
             sinexctl::validate_format(&actual, OutputFormat::Table).map_err(|msg| eyre!(msg))?;
         }
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn format_registry_exactly_covers_clap_leaf_commands() -> TestResult<()> {
+        let clap_paths = clap_leaf_command_paths();
+        let registry_paths: BTreeSet<String> = sinexctl::format_registry()
+            .keys()
+            .map(|key| (*key).to_string())
+            .collect();
+
+        let missing: Vec<&String> = clap_paths.difference(&registry_paths).collect();
+        let extra: Vec<&String> = registry_paths.difference(&clap_paths).collect();
+
+        assert!(
+            missing.is_empty() && extra.is_empty(),
+            "output-format registry must exactly match clap leaf commands\nmissing: {missing:#?}\nextra: {extra:#?}"
+        );
 
         Ok(())
     }
