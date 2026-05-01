@@ -104,6 +104,8 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     // ── DLQ ──────────────────────────────────────────────────────────────────
     m.insert("dlq list", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("dlq peek", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("dlq requeue", FormatCapability::single_shot(TABLE_ONLY));
+    m.insert("dlq purge", FormatCapability::single_shot(TABLE_ONLY));
 
     // ── Query ────────────────────────────────────────────────────────────────
     m.insert(
@@ -162,6 +164,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     // ── Report ───────────────────────────────────────────────────────────────
     m.insert("report today",     FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("report yesterday", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("report calendar",   FormatCapability::single_shot(TABLE_JSON_YAML));
 
     // ── Blob ─────────────────────────────────────────────────────────────────
     m.insert("blob sweep-orphans", FormatCapability::single_shot(TABLE_JSON_YAML));
@@ -191,6 +194,8 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         .with_note("interactive wizard; --format is not applicable"));
     m.insert("config show", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("config path", FormatCapability::single_shot(TABLE_ONLY));
+    m.insert("config edit", FormatCapability::single_shot(TABLE_ONLY)
+        .with_note("opens $EDITOR; --format is not applicable"));
 
     // ── Demo ─────────────────────────────────────────────────────────────────
     m.insert(
