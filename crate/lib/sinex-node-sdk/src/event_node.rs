@@ -42,7 +42,12 @@ impl EventTransport {
     ) -> NodeResult<()> {
         match self {
             EventTransport::Nats(publisher) => publisher
-                .publish_processing_failure(event, error, node_name)
+                .publish_processing_failure(
+                    event,
+                    error,
+                    node_name,
+                    sinex_primitives::transport::Class::Derived,
+                )
                 .await
                 .map_err(|e| e.with_context("operation", "send_to_processing_failure_queue")),
         }
@@ -298,7 +303,12 @@ impl EventBatcher {
             };
 
             let publish_result = match &self.transport {
-                EventTransport::Nats(publisher) => publisher.publish(&event).await,
+                // Replay re-emits provenance-bearing events from the local
+                // recovery spool — declared as Critical for the original
+                // ingestor lane.
+                EventTransport::Nats(publisher) => publisher
+                    .publish(&event, sinex_primitives::transport::Class::Critical)
+                    .await,
             };
 
             if let Err(error) = publish_result {
@@ -501,7 +511,10 @@ impl EventBatcher {
         let mut failed_events = Vec::new();
 
         for event in events.drain(..) {
-            match publisher.publish(&event).await {
+            match publisher
+                .publish(&event, sinex_primitives::transport::Class::Critical)
+                .await
+            {
                 Ok(()) => {
                     success_count += 1;
                 }
