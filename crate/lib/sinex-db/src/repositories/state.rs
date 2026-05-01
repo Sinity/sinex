@@ -5,6 +5,7 @@
 //! - Operations log (audit trail of system operations)
 
 use super::common::{DbResult, EnhancedRepository, Repository, db_error};
+use crate::models::Event;
 use crate::schema::OperationsLog;
 use crate::{Id, JsonValue};
 use crate::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempotent};
@@ -1917,14 +1918,15 @@ impl StateRepository<'_> {
     }
 
     /// Count how many archived rows currently exist for the given event IDs.
-    pub async fn count_archived_event_ids(&self, event_ids: &[Uuid]) -> DbResult<i64> {
+    pub async fn count_archived_event_ids(&self, event_ids: &[Id<Event>]) -> DbResult<i64> {
         if event_ids.is_empty() {
             return Ok(0);
         }
 
+        let ids: Vec<Uuid> = event_ids.iter().map(|event_id| *event_id.as_uuid()).collect();
         sqlx::query_scalar!(
             r#"SELECT COUNT(*)::bigint as "count!" FROM audit.archived_events WHERE id = ANY($1::uuid[])"#,
-            event_ids
+            &ids
         )
         .fetch_one(self.pool)
         .await
