@@ -116,6 +116,87 @@ async fn synthesis_provenance_round_trips_without_operation_id() -> TestResult<(
 }
 
 #[sinex_test]
+async fn synthesis_provenance_canonicalizes_parent_ids() -> TestResult<()> {
+    let first: EventId = Id::from_uuid(uuid::Uuid::parse_str(
+        "018f0000-0000-7000-8000-000000000003",
+    )?);
+    let second: EventId = Id::from_uuid(uuid::Uuid::parse_str(
+        "018f0000-0000-7000-8000-000000000001",
+    )?);
+    let third: EventId = Id::from_uuid(uuid::Uuid::parse_str(
+        "018f0000-0000-7000-8000-000000000002",
+    )?);
+
+    let provenance = Provenance::from_synthesis([first, second, first, third, second])
+        .expect("non-empty synthesis parent set should construct");
+
+    match provenance {
+        Provenance::Synthesis {
+            source_event_ids, ..
+        } => {
+            assert_eq!(source_event_ids.into_vec(), vec![second, third, first]);
+        }
+        _ => panic!("expected Synthesis provenance"),
+    }
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn synthesis_provenance_wire_read_canonicalizes_parent_ids() -> TestResult<()> {
+    let first = "018f0000-0000-7000-8000-000000000003";
+    let second = "018f0000-0000-7000-8000-000000000001";
+    let third = "018f0000-0000-7000-8000-000000000002";
+
+    let restored: Provenance = serde_json::from_value(json!({
+        "source_event_ids": [first, second, first, third, second],
+    }))?;
+
+    match restored {
+        Provenance::Synthesis {
+            source_event_ids, ..
+        } => {
+            let ids: Vec<String> = source_event_ids
+                .into_vec()
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect();
+            assert_eq!(ids, vec![second, third, first]);
+        }
+        _ => panic!("expected Synthesis provenance"),
+    }
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn direct_dynamic_event_construction_canonicalizes_and_syncs_operation() -> TestResult<()> {
+    use sinex_primitives::events::DynamicPayload;
+
+    let first: EventId = Id::from_uuid(uuid::Uuid::parse_str(
+        "018f0000-0000-7000-8000-000000000003",
+    )?);
+    let second: EventId = Id::from_uuid(uuid::Uuid::parse_str(
+        "018f0000-0000-7000-8000-000000000001",
+    )?);
+    let op_id: Id<Operation> = Id::new();
+
+    let provenance = Provenance::Synthesis {
+        source_event_ids: NonEmptyVec::from_head_tail(first, vec![second, first]),
+        operation_id: Some(op_id),
+    };
+    let event = DynamicPayload::new("test-source", "test.event", json!({})).into_event(provenance);
+
+    assert_eq!(event.created_by_operation_id, Some(op_id.to_uuid()));
+    assert_eq!(
+        event.get_source_event_ids(),
+        Some([second, first].as_slice())
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn material_provenance_never_carries_operation_id() -> TestResult<()> {
     let material_id = Id::new();
 
