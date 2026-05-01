@@ -113,8 +113,51 @@
       "dedicated_build_rationale": null
     },
     {
-      "subject": "source_unit:desktop",
-      "id": "desktop",
+      "subject": "source_unit:desktop.activitywatch",
+      "id": "desktop.activitywatch",
+      "domain": "desktop",
+      "role": "source_adapter",
+      "modes": [
+        "historical"
+      ],
+      "acquisition_shape": "mutable_snapshot",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "mutable_snapshot:sqlite:bucket_event_timestamp",
+      "occurrence_policy": "uuid5:(source_unit, bucket_id, event_timestamp)",
+      "output_event_type": "activitywatch/window.active,activitywatch/afk.changed,activitywatch/browser.tab.active",
+      "output_event_types": [
+        {
+          "source": "activitywatch",
+          "event_type": "window.active"
+        },
+        {
+          "source": "activitywatch",
+          "event_type": "afk.changed"
+        },
+        {
+          "source": "activitywatch",
+          "event_type": "browser.tab.active"
+        }
+      ],
+      "privacy_context": "secret",
+      "retention_policy": "forever",
+      "resource_profile": "on_demand",
+      "access_policy": "target_home_read:activitywatch_sqlite",
+      "service_policy": "invoked_on_demand",
+      "runner_pack": "desktop",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:desktop",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:desktop.clipboard",
+      "id": "desktop.clipboard",
       "domain": "desktop",
       "role": "source_adapter",
       "modes": [
@@ -125,23 +168,11 @@
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "live_observation_state",
       "occurrence_policy": "material_anchor",
-      "output_event_type": "desktop/desktop.monitoring_started,desktop/desktop.snapshot,desktop/clipboard.historical,desktop/window.wm_historical,clipboard/clipboard.copied,clipboard/clipboard.selected,wm.hyprland/window.opened,wm.hyprland/window.closed,wm.hyprland/window.focused,wm.hyprland/window.moved,wm.hyprland/window.title_changed,wm.hyprland/workspace.switched,wm.hyprland/monitor.focused,wm.hyprland/state.captured,activitywatch/window.active,activitywatch/afk.changed,activitywatch/browser.tab.active",
+      "output_event_type": "desktop/clipboard.historical,clipboard/clipboard.copied,clipboard/clipboard.selected",
       "output_event_types": [
         {
           "source": "desktop",
-          "event_type": "desktop.monitoring_started"
-        },
-        {
-          "source": "desktop",
-          "event_type": "desktop.snapshot"
-        },
-        {
-          "source": "desktop",
           "event_type": "clipboard.historical"
-        },
-        {
-          "source": "desktop",
-          "event_type": "window.wm_historical"
         },
         {
           "source": "clipboard",
@@ -150,6 +181,81 @@
         {
           "source": "clipboard",
           "event_type": "clipboard.selected"
+        }
+      ],
+      "privacy_context": "secret",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "target_runtime_bridge:clipboard",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "desktop",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:desktop",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:desktop.monitor",
+      "id": "desktop.monitor",
+      "domain": "desktop",
+      "role": "source_adapter",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "live_observation",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "live_observation_state",
+      "occurrence_policy": "uuid5:(source_unit, run_id)",
+      "output_event_type": "desktop/desktop.monitoring_started,desktop/desktop.snapshot",
+      "output_event_types": [
+        {
+          "source": "desktop",
+          "event_type": "desktop.monitoring_started"
+        },
+        {
+          "source": "desktop",
+          "event_type": "desktop.snapshot"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "runtime_self_observation",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "desktop",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:desktop",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:desktop.window-manager",
+      "id": "desktop.window-manager",
+      "domain": "desktop",
+      "role": "source_adapter",
+      "modes": [
+        "continuous",
+        "historical"
+      ],
+      "acquisition_shape": "live_observation",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "live_observation_state",
+      "occurrence_policy": "material_anchor",
+      "output_event_type": "desktop/window.wm_historical,wm.hyprland/window.opened,wm.hyprland/window.closed,wm.hyprland/window.focused,wm.hyprland/window.moved,wm.hyprland/window.title_changed,wm.hyprland/workspace.switched,wm.hyprland/monitor.focused,wm.hyprland/state.captured",
+      "output_event_types": [
+        {
+          "source": "desktop",
+          "event_type": "window.wm_historical"
         },
         {
           "source": "wm.hyprland",
@@ -182,24 +288,12 @@
         {
           "source": "wm.hyprland",
           "event_type": "state.captured"
-        },
-        {
-          "source": "activitywatch",
-          "event_type": "window.active"
-        },
-        {
-          "source": "activitywatch",
-          "event_type": "afk.changed"
-        },
-        {
-          "source": "activitywatch",
-          "event_type": "browser.tab.active"
         }
       ],
-      "privacy_context": "secret",
+      "privacy_context": "sensitive",
       "retention_policy": "forever",
       "resource_profile": "continuous",
-      "access_policy": "target_runtime_bridge:desktop",
+      "access_policy": "target_runtime_bridge:window_manager",
       "service_policy": "dedicated_instance:on-failure",
       "runner_pack": "desktop",
       "package_impact": "no_new_output",
@@ -859,10 +953,13 @@
     {
       "id": "desktop",
       "source_unit_ids": [
-        "desktop"
+        "desktop.activitywatch",
+        "desktop.clipboard",
+        "desktop.monitor",
+        "desktop.window-manager"
       ],
       "shared_binary": "sinex-desktop-ingestor",
-      "source_unit_count": 1
+      "source_unit_count": 4
     },
     {
       "id": "document",
@@ -956,12 +1053,39 @@
       "host_identity": "runtime_hostname"
     },
     {
-      "source_unit_id": "desktop",
-      "service_name": "sinex-source@desktop",
+      "source_unit_id": "desktop.activitywatch",
+      "service_name": "sinex-source@desktop.activitywatch",
       "runner_pack": "desktop",
       "binary": "sinex-desktop-ingestor",
-      "checkpoint_identity": "desktop",
-      "control_identity": "desktop",
+      "checkpoint_identity": "desktop.activitywatch",
+      "control_identity": "desktop.activitywatch",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "desktop.clipboard",
+      "service_name": "sinex-source@desktop.clipboard",
+      "runner_pack": "desktop",
+      "binary": "sinex-desktop-ingestor",
+      "checkpoint_identity": "desktop.clipboard",
+      "control_identity": "desktop.clipboard",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "desktop.monitor",
+      "service_name": "sinex-source@desktop.monitor",
+      "runner_pack": "desktop",
+      "binary": "sinex-desktop-ingestor",
+      "checkpoint_identity": "desktop.monitor",
+      "control_identity": "desktop.monitor",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "desktop.window-manager",
+      "service_name": "sinex-source@desktop.window-manager",
+      "runner_pack": "desktop",
+      "binary": "sinex-desktop-ingestor",
+      "checkpoint_identity": "desktop.window-manager",
+      "control_identity": "desktop.window-manager",
       "host_identity": "runtime_hostname"
     },
     {
@@ -1083,12 +1207,12 @@
     }
   ],
   "package_impact": {
-    "total_source_units": 17,
-    "zero_crate_impact": 17,
-    "zero_binary_impact": 17,
-    "zero_nix_output_impact": 17,
-    "zero_derivation_impact": 17,
-    "zero_sqlx_validation_impact": 17,
+    "total_source_units": 20,
+    "zero_crate_impact": 20,
+    "zero_binary_impact": 20,
+    "zero_nix_output_impact": 20,
+    "zero_derivation_impact": 20,
+    "zero_sqlx_validation_impact": 20,
     "dedicated_build_rationales": []
   },
   "proof_obligations": [
