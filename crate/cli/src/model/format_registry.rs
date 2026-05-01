@@ -93,6 +93,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     m.insert("replay execute", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("replay submit",  FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("replay cancel",  FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("replay status",  FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("replay list",    FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("replay run",     FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
@@ -142,7 +143,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     m.insert("lifecycle tombstone status",  FormatCapability::single_shot(TABLE_JSON_YAML));
 
     // ── GitOps ───────────────────────────────────────────────────────────────
-    m.insert("gitops", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("git-ops list",   FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("git-ops create", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("git-ops delete", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("git-ops sync",   FormatCapability::single_shot(TABLE_JSON_YAML));
 
     // ── Telemetry ────────────────────────────────────────────────────────────
     m.insert("telemetry window-focus",        FormatCapability::single_shot(TABLE_JSON_YAML));
@@ -152,12 +156,11 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     m.insert("telemetry system-state",        FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("telemetry node-stats",          FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("telemetry stream-stats",        FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("telemetry batch-stats",         FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("telemetry gateway-stats",       FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("telemetry assembly-stats",      FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("telemetry metric-counters",     FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("telemetry device-state",        FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("telemetry health",              FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("telemetry current-device-state", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("telemetry current-health",       FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("telemetry ingestd-batch-stats", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("telemetry ingestd-validation",  FormatCapability::single_shot(TABLE_JSON_YAML));
 
