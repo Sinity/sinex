@@ -10,7 +10,10 @@
 
 use crate::{NodeResult, SinexError};
 use serde_json::{Value, json};
-use sinex_primitives::temporal::parse_duration;
+use sinex_primitives::{
+    temporal::parse_duration,
+    utils::{InvalidUrlPolicy, redact_url_password_for_diagnostics},
+};
 use std::{collections::HashMap, fmt, str::FromStr};
 use tracing::{debug, info};
 
@@ -878,15 +881,7 @@ async fn discover_unit_files_in_path(unit_path: &str) -> NodeResult<Vec<String>>
 }
 
 fn redact_password(url: &str) -> String {
-    if let Ok(parsed) = url::Url::parse(url) {
-        let mut redacted = parsed.clone();
-        if redacted.password().is_some() {
-            redacted.set_password(Some("***")).ok();
-        }
-        redacted.to_string()
-    } else {
-        "[REDACTED]".to_string()
-    }
+    redact_url_password_for_diagnostics(url, InvalidUrlPolicy::RedactedMarker)
 }
 
 #[cfg(test)]

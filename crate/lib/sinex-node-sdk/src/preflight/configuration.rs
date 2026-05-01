@@ -10,7 +10,10 @@
 
 use crate::{NodeResult, SinexError};
 use serde_json::{Value, json};
-use sinex_primitives::DeploymentReadinessDescriptor;
+use sinex_primitives::{
+    DeploymentReadinessDescriptor,
+    utils::{InvalidUrlPolicy, redact_url_password_for_diagnostics},
+};
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::fmt::Display;
@@ -313,8 +316,10 @@ pub fn validate_readable_file(path: &Path) -> NodeResult<()> {
     // Check that the path refers to a regular file, not a directory. File::open() succeeds on
     // directories, which would pass the check silently and produce confusing downstream errors.
     if path.is_dir() {
-        return Err(SinexError::processing("configured path is a directory, not a file")
-            .with_context("path", path.display().to_string()));
+        return Err(
+            SinexError::processing("configured path is a directory, not a file")
+                .with_context("path", path.display().to_string()),
+        );
     }
     std::fs::File::open(path).map(|_| ()).map_err(|error| {
         SinexError::processing("failed to open configured file")
@@ -852,7 +857,11 @@ fn resolve_uid_from_target_user(user: &str) -> Option<u32> {
     // static storage that any concurrent NSS call (including from other threads) can overwrite.
     // getpwnam_r writes into caller-supplied storage and is safe for concurrent use.
     let buf_size = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
-    let buf_size = if buf_size <= 0 { 4096 } else { buf_size as usize };
+    let buf_size = if buf_size <= 0 {
+        4096
+    } else {
+        buf_size as usize
+    };
     let mut buf = vec![0u8; buf_size];
     let mut passwd = std::mem::MaybeUninit::<libc::passwd>::uninit();
     let mut result: *mut libc::passwd = std::ptr::null_mut();
@@ -1168,13 +1177,5 @@ async fn check_nixos_environment() -> NodeResult<Value> {
 }
 
 fn redact_database_url(url: &str) -> String {
-    if let Ok(parsed) = url::Url::parse(url) {
-        let mut redacted = parsed.clone();
-        if redacted.password().is_some() {
-            redacted.set_password(Some("***")).ok();
-        }
-        redacted.to_string()
-    } else {
-        "[REDACTED]".to_string()
-    }
+    redact_url_password_for_diagnostics(url, InvalidUrlPolicy::RedactedMarker)
 }
