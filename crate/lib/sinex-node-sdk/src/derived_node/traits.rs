@@ -19,6 +19,10 @@ use sinex_primitives::events::Event;
 use sinex_primitives::privacy::ProcessingContext;
 use std::collections::HashMap;
 
+const DEFAULT_CHECKPOINT_INTERVAL_EVENTS: u64 = 1000;
+const DEFAULT_CHECKPOINT_TIMEOUT_SECS: u64 = 10;
+const DEFAULT_PROCESSING_BATCH_SIZE: usize = 100;
+
 /// Configuration for the derived node adapter.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct DerivedNodeConfig {
@@ -37,9 +41,9 @@ pub struct DerivedNodeConfig {
 impl Default for DerivedNodeConfig {
     fn default() -> Self {
         Self {
-            checkpoint_interval: 1000,
-            checkpoint_timeout_secs: 10,
-            batch_size: 100,
+            checkpoint_interval: DEFAULT_CHECKPOINT_INTERVAL_EVENTS,
+            checkpoint_timeout_secs: DEFAULT_CHECKPOINT_TIMEOUT_SECS,
+            batch_size: DEFAULT_PROCESSING_BATCH_SIZE,
             consumer_group: None,
             extra: HashMap::new(),
         }
