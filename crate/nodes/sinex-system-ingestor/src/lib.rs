@@ -17,7 +17,6 @@ pub mod unified_node;
 use sinex_primitives::Seconds;
 use std::fmt;
 
-
 pub use dbus_watcher::DbusWatcher;
 pub(crate) use material_context::WatcherMaterialContext;
 pub use payloads::*;
@@ -114,8 +113,7 @@ use sinex_primitives::register_source_unit;
 use sinex_primitives::source_unit::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape,
-    SourceUnitDescriptor,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
 };
 
 // Source-unit descriptor (issue #690 / #734). The system ingestor multiplexes
@@ -126,6 +124,7 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "system",
         namespace: "system",
+        runner_pack: "system",
         checkpoint_family: SuCheckpointFamily::Journal,
         event_types: &[
             ("system", "monitoring.started"),
@@ -166,5 +165,9 @@ register_source_unit! {
         occurrence_identity: SuOccurrenceIdentity::Uuid5From(
             "(source_unit, journal_cursor)",
         ),
+        access_policy: "system_bus_journal_udev",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pack:system",
+        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
     }
 }

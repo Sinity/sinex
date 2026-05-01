@@ -247,14 +247,14 @@ use sinex_primitives::register_source_unit;
 use sinex_primitives::source_unit::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape,
-    SourceUnitDescriptor,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
 };
 
 register_source_unit! {
     SourceUnitDescriptor {
         id: "daily-summarizer",
         namespace: "derived",
+        runner_pack: "daily",
         checkpoint_family: SuCheckpointFamily::AppendStream,
         event_types: &[
             ("derived.daily-summarizer", "activity.summary.daily"),
@@ -267,5 +267,9 @@ register_source_unit! {
         occurrence_identity: SuOccurrenceIdentity::Uuid5From(
             "(source_unit, day_bucket, parent_event_ids)",
         ),
+        access_policy: "event_stream_read",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pack:daily",
+        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
     }
 }
