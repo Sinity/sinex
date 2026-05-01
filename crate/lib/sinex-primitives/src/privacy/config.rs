@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use crate::constants::env_vars;
+
 use super::{PatternRule, RuleCategory, RuleOverride, Strategy};
 
 /// Privacy engine configuration.
@@ -210,7 +212,7 @@ fn parse_builtin_categories_env(value: &str) -> Result<CategorySet, PrivacyConfi
 
             if !invalid.is_empty() {
                 return Err(invalid_env(
-                    "SINEX_PRIVACY_BUILTIN",
+                    env_vars::PRIVACY_BUILTIN,
                     format!(
                         "unknown categories: {}; expected all, none, or comma-separated secret/pii/privacy/custom",
                         invalid.join(", ")
@@ -220,7 +222,7 @@ fn parse_builtin_categories_env(value: &str) -> Result<CategorySet, PrivacyConfi
 
             if categories.is_empty() {
                 return Err(invalid_env(
-                    "SINEX_PRIVACY_BUILTIN",
+                    env_vars::PRIVACY_BUILTIN,
                     "no valid categories were provided",
                 ));
             }
@@ -255,10 +257,10 @@ fn parse_strategy_env(var: &'static str, value: &str) -> Result<Strategy, Privac
 /// or unreadable files fail honestly instead of silently falling back to
 /// defaults.
 fn configured_config_path() -> Result<Option<PathBuf>, PrivacyConfigError> {
-    if let Some(explicit) = std::env::var_os("SINEX_PRIVACY_CONFIG") {
+    if let Some(explicit) = std::env::var_os(env_vars::PRIVACY_CONFIG) {
         let explicit = explicit.into_string().map_err(|value| {
             invalid_env(
-                "SINEX_PRIVACY_CONFIG",
+                env_vars::PRIVACY_CONFIG,
                 format!("contains a non-unicode path: {}", value.to_string_lossy()),
             )
         })?;
@@ -346,41 +348,41 @@ impl PrivacyConfig {
         };
 
         // Env vars override file config
-        if let Ok(val) = std::env::var("SINEX_PRIVACY_ENABLED") {
-            config.enabled = parse_bool_env("SINEX_PRIVACY_ENABLED", &val)?;
+        if let Ok(val) = std::env::var(env_vars::PRIVACY_ENABLED) {
+            config.enabled = parse_bool_env(env_vars::PRIVACY_ENABLED, &val)?;
         }
 
-        if let Ok(val) = std::env::var("SINEX_PRIVACY_BUILTIN") {
+        if let Ok(val) = std::env::var(env_vars::PRIVACY_BUILTIN) {
             config.builtin_categories = parse_builtin_categories_env(&val)?;
         }
 
-        if let Ok(json) = std::env::var("SINEX_PRIVACY_EXTRA_RULES") {
-            config.extra_rules = parse_json_env("SINEX_PRIVACY_EXTRA_RULES", &json)?;
+        if let Ok(json) = std::env::var(env_vars::PRIVACY_EXTRA_RULES) {
+            config.extra_rules = parse_json_env(env_vars::PRIVACY_EXTRA_RULES, &json)?;
         }
 
-        if let Ok(json) = std::env::var("SINEX_PRIVACY_OVERRIDES") {
-            config.overrides = parse_json_env("SINEX_PRIVACY_OVERRIDES", &json)?;
+        if let Ok(json) = std::env::var(env_vars::PRIVACY_OVERRIDES) {
+            config.overrides = parse_json_env(env_vars::PRIVACY_OVERRIDES, &json)?;
         }
 
-        if let Ok(val) = std::env::var("SINEX_PRIVACY_DEFAULT_STRATEGY") {
-            config.default_strategy = parse_strategy_env("SINEX_PRIVACY_DEFAULT_STRATEGY", &val)?;
+        if let Ok(val) = std::env::var(env_vars::PRIVACY_DEFAULT_STRATEGY) {
+            config.default_strategy = parse_strategy_env(env_vars::PRIVACY_DEFAULT_STRATEGY, &val)?;
         }
 
-        if let Ok(val) = std::env::var("SINEX_PRIVACY_SECRET_STRATEGY") {
+        if let Ok(val) = std::env::var(env_vars::PRIVACY_SECRET_STRATEGY) {
             config.secret_strategy =
-                Some(parse_strategy_env("SINEX_PRIVACY_SECRET_STRATEGY", &val)?);
+                Some(parse_strategy_env(env_vars::PRIVACY_SECRET_STRATEGY, &val)?);
         }
 
-        if let Ok(val) = std::env::var("SINEX_PRIVACY_KEY_FILE") {
+        if let Ok(val) = std::env::var(env_vars::PRIVACY_KEY_FILE) {
             config.key.key_file = Some(val);
         }
 
-        if let Ok(val) = std::env::var("SINEX_PRIVACY_KEY") {
+        if let Ok(val) = std::env::var(env_vars::PRIVACY_KEY) {
             config.key.key_hex = Some(val);
         }
 
-        if let Ok(val) = std::env::var("SINEX_PRIVACY_STATS") {
-            config.track_stats = parse_bool_env("SINEX_PRIVACY_STATS", &val)?;
+        if let Ok(val) = std::env::var(env_vars::PRIVACY_STATS) {
+            config.track_stats = parse_bool_env(env_vars::PRIVACY_STATS, &val)?;
         }
 
         Ok(config)
