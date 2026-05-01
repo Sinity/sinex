@@ -3,13 +3,13 @@
 //! Implements the three-tier data lifecycle: Live ↔ Archive → Tombstone
 
 use serde_json::{Value, json};
-use sinex_db::{CascadeSource, DbPoolExt};
+use sinex_db::{CascadeSource, DbPoolExt, Event};
 use sinex_primitives::rpc::lifecycle::{
     LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
     LifecycleRestoreResponse, LifecycleStatusRequest, LifecycleStatusResponse, TierStatus,
 };
 use sinex_primitives::temporal::parse_duration;
-use sinex_primitives::{SinexError, Timestamp, Uuid};
+use sinex_primitives::{Id, SinexError, Timestamp, Uuid};
 use sqlx::PgPool;
 use std::str::FromStr;
 use tracing::{info, warn};
@@ -614,7 +614,7 @@ fn tombstone_duration_ms(
 
 fn parse_previewed_event_ids(
     record: &sinex_db::repositories::state::OperationRecord,
-) -> Result<Vec<Uuid>> {
+) -> Result<Vec<Id<Event>>> {
     let Some(summary) = record.preview_summary.as_ref() else {
         return Err(SinexError::invalid_state(
             "Tombstone operation is missing preview_summary",
@@ -637,6 +637,7 @@ fn parse_previewed_event_ids(
                     )
                 })
                 .and_then(parse_uuid_str)
+                .map(Id::from_uuid)
         })
         .collect()
 }
@@ -979,10 +980,14 @@ pub async fn handle_tombstone_approve(
 
     let repo = pool.events();
     let operation_uuid = parse_operation_uuid(&request.operation_id)?;
+    let previewed_event_uuids: Vec<Uuid> = previewed_event_ids
+        .iter()
+        .map(|event_id| *event_id.as_uuid())
+        .collect();
 
     // Execute tombstone
     let tombstoned_count = match repo
-        .execute_cascade_tombstone(&previewed_event_ids, &operation.reason, operation_uuid)
+        .execute_cascade_tombstone(&previewed_event_uuids, &operation.reason, operation_uuid)
         .await
     {
         Ok(count) => count,
