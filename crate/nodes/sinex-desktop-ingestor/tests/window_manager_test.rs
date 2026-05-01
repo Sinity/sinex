@@ -221,6 +221,19 @@ async fn desktop_node_reports_coverage_analysis_unavailable() -> TestResult<()> 
     Ok(())
 }
 
+#[sinex_test]
+async fn desktop_node_reports_ingestion_history_unavailable() -> TestResult<()> {
+    let node = DesktopNode::new();
+    let error = IngestorNode::get_ingestion_history(
+        &node,
+        &sinex_desktop_ingestor::unified_node::DesktopPersistentState::default(),
+        10,
+    )
+    .expect_err("desktop node should not report empty ingestion history as success");
+    assert!(error.to_string().contains("not implemented"));
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // HyprlandWindowFocusedPayload: serde and trait
 // ---------------------------------------------------------------------------
