@@ -4,6 +4,7 @@ use crate::Result;
 use crate::client::GatewayClient;
 use crate::fmt::{CommandOutput, Spinner, with_spinner_result};
 use crate::model::OutputFormat;
+use crate::prompt;
 
 /// Dead letter queue operations
 #[derive(Debug, Subcommand)]
@@ -137,9 +138,7 @@ impl DlqCommands {
                     "Delete {} messages from DLQ? This cannot be undone.",
                     stats.total_messages
                 );
-                let proceed = inquire::Confirm::new(&prompt_msg)
-                    .with_default(false)
-                    .prompt()?;
+                let proceed = prompt::confirm(&prompt_msg, false)?;
 
                 if !proceed {
                     println!("Cancelled");
