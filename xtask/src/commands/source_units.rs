@@ -686,7 +686,10 @@ mod tests {
 
         for expected in [
             "fs",
-            "desktop",
+            "desktop.monitor",
+            "desktop.clipboard",
+            "desktop.window-manager",
+            "desktop.activitywatch",
             "browser",
             "system",
             "document",
@@ -711,10 +714,10 @@ mod tests {
         let desktop = manifest
             .source_units
             .iter()
-            .find(|unit| unit.id == "desktop")
+            .find(|unit| unit.id == "desktop.clipboard")
             .expect("desktop descriptor should be rendered from canonical registry");
         assert_eq!(desktop.runner_pack, "desktop");
-        assert_eq!(desktop.access_policy, "target_runtime_bridge:desktop");
+        assert_eq!(desktop.access_policy, "target_runtime_bridge:clipboard");
         assert_eq!(desktop.package_impact, "no_new_output");
         assert_eq!(desktop.implementation_mode, "rust_in_pack:desktop");
         assert_eq!(desktop.crate_impact, "0");
