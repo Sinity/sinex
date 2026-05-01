@@ -1387,6 +1387,70 @@ mod tests {
         assert_eq!(window.1.format_rfc3339(), "2025-01-10T08:30:00Z");
         Ok(())
     }
+
+    #[sinex_test]
+    async fn sse_parser_preserves_split_utf8_scalars() -> TestResult<()> {
+        let mut state = SseFrameState::default();
+        let bytes = "data: ż\n".as_bytes();
+        state.push_chunk(&bytes[..7]);
+        assert!(state.try_parse_frame().is_none());
+        state.push_chunk(&bytes[7..]);
+        assert!(state.try_parse_frame().is_none());
+
+        assert_eq!(state.current_data, "ż");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn sse_parser_strips_only_single_optional_value_space() -> TestResult<()> {
+        assert_eq!(
+            parse_sse_field("data:  leading-space-preserved"),
+            ("data", " leading-space-preserved")
+        );
+        assert_eq!(
+            parse_sse_field("data: trailing-space-preserved "),
+            ("data", "trailing-space-preserved ")
+        );
+        assert_eq!(parse_sse_field("data:"), ("data", ""));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn sse_parser_dispatches_empty_data_frame() -> TestResult<()> {
+        let mut state = SseFrameState::default();
+        state.push_chunk(b"event: heartbeat\ndata:\n\n");
+
+        assert!(matches!(
+            state.try_parse_frame().transpose()?,
+            Some(SseClientMessage::Heartbeat)
+        ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn sse_parser_handles_crlf_multiline_data() -> TestResult<()> {
+        let mut state = SseFrameState::default();
+        state.push_chunk(b"data: first\r\ndata: second\r\n");
+        assert!(state.try_parse_frame().is_none());
+
+        assert_eq!(state.current_data, "first\nsecond");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn sse_parser_ignores_control_and_unknown_fields() -> TestResult<()> {
+        let mut state = SseFrameState::default();
+        state.push_chunk(
+            b": comment\nid: abc\nretry: 1000\nfoo: bar\nevent: unknown\ndata: {}\n\n\
+              event: heartbeat\ndata: {}\n\n",
+        );
+
+        assert!(matches!(
+            state.try_parse_frame().transpose()?,
+            Some(SseClientMessage::Heartbeat)
+        ));
+        Ok(())
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1410,18 +1474,32 @@ pub enum SseClientMessage {
 /// Streaming SSE frame parser over a reqwest response.
 struct SseFrameParser {
     stream: reqwest::Response,
-    buffer: String,
+    state: SseFrameState,
+}
+
+struct SseFrameState {
+    buffer: Vec<u8>,
     current_event: Option<String>,
     current_data: String,
+    saw_data_field: bool,
 }
 
 impl SseFrameParser {
     fn new(response: reqwest::Response) -> Self {
         Self {
             stream: response,
-            buffer: String::new(),
+            state: SseFrameState::default(),
+        }
+    }
+}
+
+impl Default for SseFrameState {
+    fn default() -> Self {
+        Self {
+            buffer: Vec::new(),
             current_event: None,
             current_data: String::new(),
+            saw_data_field: false,
         }
     }
 }
@@ -1439,8 +1517,8 @@ impl futures::Stream for SseFrameParser {
 
         loop {
             // Try to parse a complete SSE frame from buffer
-            if let Some(msg) = this.try_parse_frame() {
-                return Poll::Ready(Some(Ok(msg)));
+            if let Some(msg) = this.state.try_parse_frame() {
+                return Poll::Ready(Some(msg));
             }
 
             // Read more data from the response stream
@@ -1460,42 +1538,62 @@ impl futures::Stream for SseFrameParser {
                 }
             };
 
-            this.buffer.push_str(&String::from_utf8_lossy(&chunk));
+            this.state.push_chunk(&chunk);
         }
     }
 }
 
-impl SseFrameParser {
+impl SseFrameState {
+    fn push_chunk(&mut self, chunk: &[u8]) {
+        self.buffer.extend_from_slice(chunk);
+    }
+
     /// Try to parse one complete SSE frame from the internal buffer.
-    fn try_parse_frame(&mut self) -> Option<SseClientMessage> {
+    fn try_parse_frame(&mut self) -> Option<Result<SseClientMessage>> {
         loop {
             // Find the next newline
-            let newline_pos = self.buffer.find('\n')?;
-            let line = self.buffer[..newline_pos]
-                .trim_end_matches('\r')
-                .to_string();
+            let newline_pos = self.buffer.iter().position(|byte| *byte == b'\n')?;
+            let mut line_bytes = self.buffer[..newline_pos].to_vec();
             self.buffer.drain(..=newline_pos);
+            if line_bytes.last() == Some(&b'\r') {
+                line_bytes.pop();
+            }
+            let line = match String::from_utf8(line_bytes) {
+                Ok(line) => line,
+                Err(error) => {
+                    return Some(Err(color_eyre::eyre::eyre!(
+                        "SSE stream contained invalid UTF-8: {}",
+                        error
+                    )));
+                }
+            };
 
             if line.is_empty() {
                 // Empty line = dispatch event
-                if !self.current_data.is_empty() {
+                if self.saw_data_field {
                     let msg = self.dispatch_frame();
-                    self.current_event = None;
-                    self.current_data.clear();
+                    self.reset_frame();
                     if let Some(msg) = msg {
-                        return Some(msg);
+                        return Some(Ok(msg));
                     }
                 }
                 continue;
             }
 
-            if let Some(value) = line.strip_prefix("event:") {
-                self.current_event = Some(value.trim().to_string());
-            } else if let Some(value) = line.strip_prefix("data:") {
+            if line.starts_with(':') {
+                continue;
+            }
+
+            let (field, value) = parse_sse_field(&line);
+
+            if field == "event" {
+                self.current_event = Some(value.to_string());
+            } else if field == "data" {
                 if !self.current_data.is_empty() {
                     self.current_data.push('\n');
                 }
-                self.current_data.push_str(value.trim());
+                self.current_data.push_str(value);
+                self.saw_data_field = true;
             }
             // Ignore `id:`, `retry:`, and comment lines (`:`)
         }
@@ -1533,4 +1631,16 @@ impl SseFrameParser {
             _ => None, // Unknown event type
         }
     }
+
+    fn reset_frame(&mut self) {
+        self.current_event = None;
+        self.current_data.clear();
+        self.saw_data_field = false;
+    }
+}
+
+fn parse_sse_field(line: &str) -> (&str, &str) {
+    let (field, value) = line.split_once(':').unwrap_or((line, ""));
+    let value = value.strip_prefix(' ').unwrap_or(value);
+    (field, value)
 }
