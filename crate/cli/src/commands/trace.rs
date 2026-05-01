@@ -5,6 +5,7 @@ use sinex_primitives::Uuid;
 use sinex_primitives::events::{Event, Provenance};
 use sinex_primitives::ids::Id;
 use sinex_primitives::query::{LineageDirection, LineageNode, LineageQuery, LineageResult};
+use std::io::IsTerminal;
 
 use crate::Result;
 use crate::client::GatewayClient;
@@ -97,7 +98,7 @@ impl TraceCommand {
                     _ = interval.tick() => {
                         let result = client.trace_lineage(query.clone()).await?;
                         // Clear terminal if stdout is a TTY.
-                        if atty::is(atty::Stream::Stdout) {
+                        if std::io::stdout().is_terminal() {
                             // Move cursor to top-left and clear screen.
                             print!("\x1B[2J\x1B[1;1H");
                         }
