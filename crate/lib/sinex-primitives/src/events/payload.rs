@@ -49,6 +49,20 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
         Event::builder(self).from_material(material_id, 0)
     }
 
+    /// Start building an event from this payload with material provenance at
+    /// a specific source-material anchor.
+    #[allow(clippy::wrong_self_convention)] // Intentional: consumes self to build event
+    fn from_material_at(
+        self,
+        material_id: impl Into<Id<SourceMaterial>>,
+        anchor_byte: i64,
+    ) -> EventBuilder<Self, HasProvenance>
+    where
+        Self: Sized,
+    {
+        Event::builder(self).from_material(material_id, anchor_byte)
+    }
+
     /// Start building an event from this payload with synthesis provenance.
     #[allow(clippy::wrong_self_convention)] // Intentional: consumes self to build event
     fn from_parents<I>(self, parents: I) -> Result<EventBuilder<Self, HasProvenance>>
@@ -64,9 +78,7 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     where
         Self: Sized,
     {
-        Event::builder(self)
-            .with_provenance(provenance)
-            .build()
+        Event::builder(self).with_provenance(provenance).build()
     }
 }
 

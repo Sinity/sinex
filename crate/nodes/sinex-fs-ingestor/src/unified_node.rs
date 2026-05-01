@@ -1657,7 +1657,11 @@ async fn handle_file_created(ctx: &WatchContext, _root: &str, path: &Path) -> No
     };
 
     let event = payload
-        .from_material(material_anchor.material_id)
+        .from_material_at(material_anchor.material_id, material_anchor.offset_start)
+        .with_offset_start(material_anchor.offset_start)
+        .map_err(|e| SinexError::processing("Failed to set offset_start").with_source(e))?
+        .with_offset_end(material_anchor.offset_end)
+        .map_err(|e| SinexError::processing("Failed to set offset_end").with_source(e))?
         .build()
         .node_err("Failed to build event")?;
 
@@ -1736,7 +1740,11 @@ async fn handle_file_modified(
     };
 
     let event = payload
-        .from_material(material_anchor.material_id)
+        .from_material_at(material_anchor.material_id, material_anchor.offset_start)
+        .with_offset_start(material_anchor.offset_start)
+        .map_err(|e| SinexError::processing("Failed to set offset_start").with_source(e))?
+        .with_offset_end(material_anchor.offset_end)
+        .map_err(|e| SinexError::processing("Failed to set offset_end").with_source(e))?
         .build()
         .map_err(|e| SinexError::processing("Failed to build event").with_source(e))?;
 
@@ -1781,7 +1789,11 @@ async fn handle_file_deleted(ctx: &WatchContext, _root: &str, path: &Path) -> No
     };
 
     let event = payload
-        .from_material(material_anchor.material_id)
+        .from_material_at(material_anchor.material_id, material_anchor.offset_start)
+        .with_offset_start(material_anchor.offset_start)
+        .map_err(|e| SinexError::processing("Failed to set offset_start").with_source(e))?
+        .with_offset_end(material_anchor.offset_end)
+        .map_err(|e| SinexError::processing("Failed to set offset_end").with_source(e))?
         .build()
         .map_err(|e| SinexError::processing("Failed to build event").with_source(e))?;
 
@@ -1831,7 +1843,11 @@ async fn handle_file_moved(
     };
 
     let event = payload
-        .from_material(material_anchor.material_id)
+        .from_material_at(material_anchor.material_id, material_anchor.offset_start)
+        .with_offset_start(material_anchor.offset_start)
+        .map_err(|e| SinexError::processing("Failed to set offset_start").with_source(e))?
+        .with_offset_end(material_anchor.offset_end)
+        .map_err(|e| SinexError::processing("Failed to set offset_end").with_source(e))?
         .build()
         .map_err(|e| SinexError::processing("Failed to build event").with_source(e))?;
 

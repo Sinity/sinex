@@ -123,7 +123,7 @@ impl TestLogFileStageNode {
             };
 
             let mut event = payload
-                .from_material(source_material_id)
+                .from_material_at(source_material_id, offset_start)
                 .with_offset_start(offset_start)
                 .map_err(|error| {
                     SinexError::processing("Failed to set log line offset start").with_source(error)
