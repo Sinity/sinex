@@ -160,6 +160,9 @@ impl StackConfig {
             database: self.postgres.database.clone(),
             superuser: self.postgres.superuser.clone(),
             app_user: self.postgres.user.clone(),
+            // Dev infra connects via Unix socket (DATABASE_URL=postgresql:///...?host=...).
+            // Disable TCP to avoid contending with a system Postgres on port 5432.
+            listen_addresses: String::new(),
         }
     }
 

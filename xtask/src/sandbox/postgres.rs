@@ -77,6 +77,9 @@ pub fn setup_ephemeral(config: &PostgresConfig) -> Result<(PgInstance, PgEnv)> {
         database: config.database.clone(),
         superuser: config.superuser.clone(),
         app_user: config.app_user.clone(),
+        // CI connects via TCP (DATABASE_URL=postgresql://...@127.0.0.1:port/...).
+        // Bind to loopback so sqlx's pool can reach the postmaster.
+        listen_addresses: "127.0.0.1".to_string(),
     };
 
     let manager = PostgresManager::new(shared_config.clone());
@@ -96,11 +99,16 @@ pub fn setup_ephemeral(config: &PostgresConfig) -> Result<(PgInstance, PgEnv)> {
         operation_id: config.operation_id.clone(),
     };
 
-    // Initialize roles and DB
+    // Initialize roles and DB. The cluster was just initialized via `initdb -U
+    // postgres`, so the only existing login role is `postgres`. Connect as that
+    // role to bootstrap the configured superuser. Falling back to $USER (the
+    // previous behavior) failed on every CI runner where USER != "postgres":
+    // psql would receive PGUSER=runner and the postmaster would reject with
+    // `FATAL: role "runner" does not exist`.
+    const INITDB_BOOTSTRAP_USER: &str = "postgres";
     let mgr = &pg_guard.manager;
-    let initial_user = env::var("USER").unwrap_or_else(|_| config.superuser.clone());
 
-    mgr.ensure_user(&config.superuser, true, &initial_user)?;
+    mgr.ensure_user(&config.superuser, true, INITDB_BOOTSTRAP_USER)?;
     mgr.ensure_user(&config.app_user, true, &config.superuser)?;
     for role in SHARED_ACCESS_ROLES {
         mgr.ensure_role(role, false, false, &config.superuser)?;
