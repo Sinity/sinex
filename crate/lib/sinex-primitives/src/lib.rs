@@ -82,7 +82,7 @@ pub use primitives::Uuid;
 pub use proof::{
     Claim, EvidenceEnvelope, Exemption, PROOF_CATALOG_SCHEMA_VERSION, ProofClaimKind,
     ProofObligation, ProofObligationLevel, RunnerBinding, RuntimeUnitDescriptor,
-    SourceUnitDescriptor, SubjectQuery, SubjectRef,
+    SubjectQuery, SubjectRef,
 };
 pub use query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,
