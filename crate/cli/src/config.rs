@@ -1,5 +1,6 @@
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use sinex_primitives::constants::env_vars;
 use sinex_primitives::env as shared_env;
 use sinex_primitives::{RuntimeTargetDescriptor, RuntimeTargetGatewayTokenRole};
 use std::collections::HashMap;
@@ -288,7 +289,7 @@ impl Config {
     }
 
     fn apply_runtime_env_overrides(&mut self) {
-        env_override("SINEX_RPC_URL", &mut self.rpc_url);
+        env_override(env_vars::RPC_URL, &mut self.rpc_url);
         env_option_override("SINEX_RPC_TOKEN", &mut self.token);
         env_option_override("SINEX_RPC_TOKEN_FILE", &mut self.token_file);
         env_option_override("SINEX_RPC_CA_CERT", &mut self.ca_cert);

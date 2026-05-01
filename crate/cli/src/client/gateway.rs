@@ -4,6 +4,7 @@ use std::time::Duration;
 use reqwest::{ClientBuilder, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sinex_primitives::constants::env_vars;
 use sinex_primitives::domain::EventSource;
 use sinex_primitives::rpc::{
     JsonRpcError,
@@ -141,7 +142,7 @@ struct JsonRpcResponse {
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
-            url: std::env::var("SINEX_RPC_URL")
+            url: std::env::var(env_vars::RPC_URL)
                 .unwrap_or_else(|_| "https://127.0.0.1:9999".to_string()),
             token: None,
             token_file: None,

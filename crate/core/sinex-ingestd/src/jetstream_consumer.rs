@@ -18,8 +18,8 @@
 //! The `BATCH_ATOMICITY_SCOPE` context field is attached to all related error diagnostics
 //! so operators can correlate partial-commit scenarios in logs.
 
-use async_nats::{Client as NatsClient, jetstream};
 use async_nats::jetstream::stream::DiscardPolicy;
+use async_nats::{Client as NatsClient, jetstream};
 use futures::future::{BoxFuture, join_all};
 use serde::{Deserialize, Serialize};
 use sinex_db::repositories::{COPY_BATCH_THRESHOLD, StreamBatchRow};
@@ -28,13 +28,14 @@ use sinex_node_sdk::SelfObserver;
 use sinex_node_sdk::heartbeat::HeartbeatCounterHandle;
 use sinex_node_sdk::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
 use sinex_primitives::Timestamp;
+use sinex_primitives::constants::env_vars;
 use sinex_primitives::{
     JsonValue, Uuid,
     nats::{JetStreamTopology, NatsTrafficClass, insert_traffic_class_header},
 };
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::{Duration, timeout};
 use tracing::{debug, error, info, instrument, warn};
@@ -617,7 +618,7 @@ impl JetStreamConsumer {
         // When SINEX_NATS_STREAMS_MANAGED_EXTERNALLY=true, the NixOS module owns
         // stream configuration. Skip bootstrap so the two sources of truth don't
         // conflict on stream shape or subject overlap.
-        if std::env::var("SINEX_NATS_STREAMS_MANAGED_EXTERNALLY").as_deref() == Ok("true") {
+        if std::env::var(env_vars::NATS_STREAMS_MANAGED_EXTERNALLY).as_deref() == Ok("true") {
             info!("NATS streams managed externally -- skipping bootstrap");
             return Ok(());
         }

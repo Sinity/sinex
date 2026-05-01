@@ -14,6 +14,7 @@ use sinex_node_sdk::{
     SOURCE_MATERIAL_BEGIN_SUBJECT, SOURCE_MATERIAL_END_SUBJECT, SOURCE_MATERIAL_FRAMES_SUBJECT,
     SOURCE_MATERIAL_SLICE_SUBJECT_PREFIX, SOURCE_MATERIAL_STREAM,
 };
+use sinex_primitives::constants::env_vars;
 use std::str::FromStr;
 use std::sync::{
     Arc,
@@ -130,7 +131,7 @@ pub(super) async fn bootstrap_streams(assembler: &MaterialAssembler) -> IngestdR
     // When SINEX_NATS_STREAMS_MANAGED_EXTERNALLY=true, the NixOS module owns
     // stream configuration. Skip bootstrap so the two sources of truth don't
     // conflict on stream shape or subject overlap.
-    if std::env::var("SINEX_NATS_STREAMS_MANAGED_EXTERNALLY").as_deref() == Ok("true") {
+    if std::env::var(env_vars::NATS_STREAMS_MANAGED_EXTERNALLY).as_deref() == Ok("true") {
         info!("NATS streams managed externally -- skipping bootstrap");
         return Ok(());
     }
