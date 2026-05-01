@@ -5,6 +5,7 @@ use petgraph::graphmap::DiGraphMap;
 use serde::{Deserialize, Serialize};
 use sinex_db::query_helpers::db_error;
 use sinex_db::repositories::EventRepositoryTx;
+use sinex_primitives::constants::replay::DEFAULT_CASCADE_MAX_DEPTH;
 use sinex_primitives::SinexError;
 use sqlx::PgPool;
 use std::collections::{HashMap, VecDeque};
@@ -14,11 +15,6 @@ use uuid::Uuid;
 
 // Default cascade analyzer configuration values
 const DEFAULT_CASCADE_BATCH_SIZE: usize = 1000;
-/// Maximum recursion depth used both by the analyzer (preview) and by
-/// `replay_control::derive_cascade_ids` (execution). Both sides MUST use this
-/// constant: a divergence here means the preview promises descendants the
-/// archiver silently truncates, dangling provenance edges. See issue #553.
-pub const DEFAULT_CASCADE_MAX_DEPTH: usize = 100;
 const DEFAULT_CASCADE_MEMORY_LIMIT: usize = 1024 * 1024 * 1024; // 1GB
 const DEFAULT_CASCADE_TIMEOUT_SECS: u64 = 60;
 
