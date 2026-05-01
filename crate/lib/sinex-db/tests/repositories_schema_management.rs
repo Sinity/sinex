@@ -155,7 +155,7 @@ async fn deprecating_schema_disables_active_version(ctx: TestContext) -> TestRes
         })
         .await?;
 
-    repo.deprecate_schema(schema.id.as_uuid()).await?;
+    repo.deprecate_schema(&schema.id).await?;
     let active = repo
         .get_active_schema(source.as_str(), event_type.as_str())
         .await;
@@ -213,7 +213,7 @@ async fn re_registering_schema_reactivates_latest(ctx: TestContext) -> color_eyr
         })
         .await?;
 
-    repo.deprecate_schema(schema.id.as_uuid()).await?;
+    repo.deprecate_schema(&schema.id).await?;
     let inactive = repo
         .find_schema_by_hash(&schema.content_hash)
         .await
@@ -362,7 +362,7 @@ async fn sync_schema_bundle_reactivates_inactive_matching_row(
     };
 
     let registered = repo.register_schema(schema.clone()).await?;
-    repo.deprecate_schema(registered.id.as_uuid()).await?;
+    repo.deprecate_schema(&registered.id).await?;
 
     let sync_result = repo
         .sync_schema_bundle([sinex_primitives::events::schema_registry::SchemaBundleEntry::new(
