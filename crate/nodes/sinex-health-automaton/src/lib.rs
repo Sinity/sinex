@@ -567,3 +567,35 @@ fn parse_health_status_field(
         ))
     })
 }
+
+// --- Source-unit descriptor (issue #690 / #734) ---
+
+use sinex_primitives::register_source_unit;
+use sinex_primitives::source_unit::{
+    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
+    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape,
+    SourceUnitDescriptor,
+};
+
+// Health is a ScopeReconciler over component scopes. State per-component is
+// reconciled and reported as `health.aggregated_report`.
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "health",
+        namespace: "derived",
+        checkpoint_family: SuCheckpointFamily::AppendStream,
+        event_types: &[
+            ("health-aggregator", "health.aggregated_report"),
+        ],
+        // Health metrics describe component liveness, not user content.
+        privacy_tier: SuPrivacyTier::Public,
+        runtime_shape: SuRuntimeShape::Continuous,
+        horizons: &[SuHorizon::Continuous],
+        retention: SuRetentionPolicy::Forever,
+        proof_obligations: &[],
+        occurrence_identity: SuOccurrenceIdentity::Uuid5From(
+            "(source_unit, component_scope, parent_event_ids)",
+        ),
+    }
+}

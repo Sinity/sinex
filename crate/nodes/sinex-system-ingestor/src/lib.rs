@@ -109,3 +109,62 @@ impl Default for SystemConfig {
         }
     }
 }
+
+use sinex_primitives::register_source_unit;
+use sinex_primitives::source_unit::{
+    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
+    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape,
+    SourceUnitDescriptor,
+};
+
+// Source-unit descriptor (issue #690 / #734). The system ingestor multiplexes
+// systemd, journald, dbus, udev, and synthesised log_processor events. The
+// canonical cursor is the systemd journal; other surfaces are observed
+// continuously through D-Bus subscriptions and udev events.
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "system",
+        namespace: "system",
+        checkpoint_family: SuCheckpointFamily::Journal,
+        event_types: &[
+            ("system", "monitoring.started"),
+            ("system", "scan.started"),
+            ("system", "scan.completed"),
+            ("system", "snapshot"),
+            ("systemd", "unit.starting"),
+            ("systemd", "unit.started"),
+            ("systemd", "unit.stopping"),
+            ("systemd", "unit.stopped"),
+            ("systemd", "unit.failed"),
+            ("systemd", "unit.reloaded"),
+            ("systemd", "unit.state_changed"),
+            ("systemd", "unit.status"),
+            ("systemd", "timer.triggered"),
+            ("journald", "entry.written"),
+            ("journald", "log_entry.captured"),
+            ("journald", "node.heartbeat"),
+            ("journald", "sync.completed"),
+            ("dbus", "signal.received"),
+            ("dbus", "method.called"),
+            ("dbus", "power.state_changed"),
+            ("dbus", "bluetooth.device_changed"),
+            ("dbus", "network.state_changed"),
+            ("dbus", "device.connected"),
+            ("dbus", "media.state_changed"),
+            ("dbus", "mount.event"),
+            ("dbus", "notification.sent"),
+            ("udev", "device.added"),
+            ("udev", "device.changed"),
+            ("log_processor", "log.line"),
+        ],
+        privacy_tier: SuPrivacyTier::Sensitive,
+        runtime_shape: SuRuntimeShape::Continuous,
+        horizons: &[SuHorizon::Continuous, SuHorizon::Historical],
+        retention: SuRetentionPolicy::Forever,
+        proof_obligations: &[],
+        occurrence_identity: SuOccurrenceIdentity::Uuid5From(
+            "(source_unit, journal_cursor)",
+        ),
+    }
+}
