@@ -43,8 +43,9 @@ fn highlight_code(code: &str, extension: &str) -> Result<String> {
 /// Check if terminal supports color (for disabling syntax highlighting if needed)
 #[must_use]
 pub fn terminal_supports_color() -> bool {
-    // Check if stdout is a terminal
-    atty::is(atty::Stream::Stdout)
+    use std::io::IsTerminal;
+
+    std::io::stdout().is_terminal()
 }
 
 #[cfg(test)]
