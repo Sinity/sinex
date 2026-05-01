@@ -116,46 +116,41 @@ use sinex_primitives::source_unit::{
     RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
 };
 
-// Source-unit descriptor (issue #690 / #734). The system ingestor multiplexes
-// systemd, journald, dbus, udev, and synthesised log_processor events. The
-// canonical cursor is the systemd journal; other surfaces are observed
-// continuously through D-Bus subscriptions and udev events.
+// Source-unit descriptors (issue #690 / #734). The system ingestor is one
+// runner pack, but its logical source units have different cursors and access
+// surfaces.
 register_source_unit! {
     SourceUnitDescriptor {
-        id: "system",
+        id: "system.monitor",
+        namespace: "system",
+        runner_pack: "system",
+        checkpoint_family: SuCheckpointFamily::LiveObservation,
+        event_types: &[("system", "monitoring.started")],
+        privacy_tier: SuPrivacyTier::Sensitive,
+        runtime_shape: SuRuntimeShape::Continuous,
+        horizons: &[SuHorizon::Continuous],
+        retention: SuRetentionPolicy::Forever,
+        proof_obligations: &[],
+        occurrence_identity: SuOccurrenceIdentity::Uuid5From("(source_unit, run_id)"),
+        access_policy: "runtime_self_observation",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pack:system",
+        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+    }
+}
+
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "system.systemd",
         namespace: "system",
         runner_pack: "system",
         checkpoint_family: SuCheckpointFamily::Journal,
         event_types: &[
-            ("system", "monitoring.started"),
-            ("system", "scan.started"),
-            ("system", "scan.completed"),
-            ("system", "snapshot"),
-            ("systemd", "unit.starting"),
             ("systemd", "unit.started"),
-            ("systemd", "unit.stopping"),
             ("systemd", "unit.stopped"),
             ("systemd", "unit.failed"),
             ("systemd", "unit.reloaded"),
-            ("systemd", "unit.state_changed"),
-            ("systemd", "unit.status"),
             ("systemd", "timer.triggered"),
-            ("journald", "entry.written"),
-            ("journald", "log_entry.captured"),
-            ("journald", "node.heartbeat"),
-            ("journald", "sync.completed"),
-            ("dbus", "signal.received"),
-            ("dbus", "method.called"),
-            ("dbus", "power.state_changed"),
-            ("dbus", "bluetooth.device_changed"),
-            ("dbus", "network.state_changed"),
-            ("dbus", "device.connected"),
-            ("dbus", "media.state_changed"),
-            ("dbus", "mount.event"),
-            ("dbus", "notification.sent"),
-            ("udev", "device.added"),
-            ("udev", "device.changed"),
-            ("log_processor", "log.line"),
         ],
         privacy_tier: SuPrivacyTier::Sensitive,
         runtime_shape: SuRuntimeShape::Continuous,
@@ -165,7 +160,88 @@ register_source_unit! {
         occurrence_identity: SuOccurrenceIdentity::Uuid5From(
             "(source_unit, journal_cursor)",
         ),
-        access_policy: "system_bus_journal_udev",
+        access_policy: "systemd_journal_read",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pack:system",
+        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+    }
+}
+
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "system.journald",
+        namespace: "system",
+        runner_pack: "system",
+        checkpoint_family: SuCheckpointFamily::Journal,
+        event_types: &[
+            ("journald", "entry.written"),
+            ("journald", "sync.completed"),
+        ],
+        privacy_tier: SuPrivacyTier::Sensitive,
+        runtime_shape: SuRuntimeShape::Continuous,
+        horizons: &[SuHorizon::Continuous, SuHorizon::Historical],
+        retention: SuRetentionPolicy::Forever,
+        proof_obligations: &[],
+        occurrence_identity: SuOccurrenceIdentity::Uuid5From(
+            "(source_unit, journal_cursor)",
+        ),
+        access_policy: "systemd_journal_read",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pack:system",
+        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+    }
+}
+
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "system.dbus",
+        namespace: "system",
+        runner_pack: "system",
+        checkpoint_family: SuCheckpointFamily::LiveObservation,
+        event_types: &[
+            ("dbus", "signal.received"),
+            ("dbus", "method.called"),
+            ("dbus", "power.state_changed"),
+            ("dbus", "bluetooth.device_changed"),
+            ("dbus", "network.state_changed"),
+            ("dbus", "device.connected"),
+            ("dbus", "media.state_changed"),
+            ("dbus", "mount.event"),
+            ("dbus", "notification.sent"),
+        ],
+        privacy_tier: SuPrivacyTier::Sensitive,
+        runtime_shape: SuRuntimeShape::Continuous,
+        horizons: &[SuHorizon::Continuous],
+        retention: SuRetentionPolicy::Forever,
+        proof_obligations: &[],
+        occurrence_identity: SuOccurrenceIdentity::Anchor,
+        access_policy: "system_bus_session_bus_read",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pack:system",
+        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+    }
+}
+
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "system.udev",
+        namespace: "system",
+        runner_pack: "system",
+        checkpoint_family: SuCheckpointFamily::LiveObservation,
+        event_types: &[
+            ("udev", "device.connected"),
+            ("udev", "device.disconnected"),
+            ("udev", "device.changed"),
+            ("udev", "device.driver_changed"),
+            ("udev", "device.other"),
+        ],
+        privacy_tier: SuPrivacyTier::Sensitive,
+        runtime_shape: SuRuntimeShape::Continuous,
+        horizons: &[SuHorizon::Continuous],
+        retention: SuRetentionPolicy::Forever,
+        proof_obligations: &[],
+        occurrence_identity: SuOccurrenceIdentity::Anchor,
+        access_policy: "udev_monitor_read",
         package_impact: "no_new_output",
         implementation_mode: "rust_in_pack:system",
         build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,

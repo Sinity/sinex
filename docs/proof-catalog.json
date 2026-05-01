@@ -395,83 +395,14 @@
       "proof_obligations": []
     },
     {
-      "subject": "source_unit:system",
-      "id": "system",
+      "subject": "source_unit:system.dbus",
+      "id": "system.dbus",
       "namespace": "system",
       "runner_pack": "system",
       "modes": [
-        "continuous",
-        "historical"
+        "continuous"
       ],
       "output_event_types": [
-        {
-          "source": "system",
-          "event_type": "monitoring.started"
-        },
-        {
-          "source": "system",
-          "event_type": "scan.started"
-        },
-        {
-          "source": "system",
-          "event_type": "scan.completed"
-        },
-        {
-          "source": "system",
-          "event_type": "snapshot"
-        },
-        {
-          "source": "systemd",
-          "event_type": "unit.starting"
-        },
-        {
-          "source": "systemd",
-          "event_type": "unit.started"
-        },
-        {
-          "source": "systemd",
-          "event_type": "unit.stopping"
-        },
-        {
-          "source": "systemd",
-          "event_type": "unit.stopped"
-        },
-        {
-          "source": "systemd",
-          "event_type": "unit.failed"
-        },
-        {
-          "source": "systemd",
-          "event_type": "unit.reloaded"
-        },
-        {
-          "source": "systemd",
-          "event_type": "unit.state_changed"
-        },
-        {
-          "source": "systemd",
-          "event_type": "unit.status"
-        },
-        {
-          "source": "systemd",
-          "event_type": "timer.triggered"
-        },
-        {
-          "source": "journald",
-          "event_type": "entry.written"
-        },
-        {
-          "source": "journald",
-          "event_type": "log_entry.captured"
-        },
-        {
-          "source": "journald",
-          "event_type": "node.heartbeat"
-        },
-        {
-          "source": "journald",
-          "event_type": "sync.completed"
-        },
         {
           "source": "dbus",
           "event_type": "signal.received"
@@ -507,18 +438,35 @@
         {
           "source": "dbus",
           "event_type": "notification.sent"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "live_observation",
+      "occurrence_identity": "material_anchor",
+      "access_policy": "system_bus_session_bus_read",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:system",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:system.journald",
+      "id": "system.journald",
+      "namespace": "system",
+      "runner_pack": "system",
+      "modes": [
+        "continuous",
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "journald",
+          "event_type": "entry.written"
         },
         {
-          "source": "udev",
-          "event_type": "device.added"
-        },
-        {
-          "source": "udev",
-          "event_type": "device.changed"
-        },
-        {
-          "source": "log_processor",
-          "event_type": "log.line"
+          "source": "journald",
+          "event_type": "sync.completed"
         }
       ],
       "privacy_tier": "sensitive",
@@ -526,7 +474,112 @@
       "retention_policy": "forever",
       "checkpoint_family": "journal",
       "occurrence_identity": "uuid5:(source_unit, journal_cursor)",
-      "access_policy": "system_bus_journal_udev",
+      "access_policy": "systemd_journal_read",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:system",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:system.monitor",
+      "id": "system.monitor",
+      "namespace": "system",
+      "runner_pack": "system",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "system",
+          "event_type": "monitoring.started"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "live_observation",
+      "occurrence_identity": "uuid5:(source_unit, run_id)",
+      "access_policy": "runtime_self_observation",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:system",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:system.systemd",
+      "id": "system.systemd",
+      "namespace": "system",
+      "runner_pack": "system",
+      "modes": [
+        "continuous",
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "systemd",
+          "event_type": "unit.started"
+        },
+        {
+          "source": "systemd",
+          "event_type": "unit.stopped"
+        },
+        {
+          "source": "systemd",
+          "event_type": "unit.failed"
+        },
+        {
+          "source": "systemd",
+          "event_type": "unit.reloaded"
+        },
+        {
+          "source": "systemd",
+          "event_type": "timer.triggered"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "journal",
+      "occurrence_identity": "uuid5:(source_unit, journal_cursor)",
+      "access_policy": "systemd_journal_read",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:system",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:system.udev",
+      "id": "system.udev",
+      "namespace": "system",
+      "runner_pack": "system",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "udev",
+          "event_type": "device.connected"
+        },
+        {
+          "source": "udev",
+          "event_type": "device.disconnected"
+        },
+        {
+          "source": "udev",
+          "event_type": "device.changed"
+        },
+        {
+          "source": "udev",
+          "event_type": "device.driver_changed"
+        },
+        {
+          "source": "udev",
+          "event_type": "device.other"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "live_observation",
+      "occurrence_identity": "material_anchor",
+      "access_policy": "udev_monitor_read",
       "package_impact": "no_new_output",
       "implementation_mode": "rust_in_pack:system",
       "proof_obligations": []
