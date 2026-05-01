@@ -10,7 +10,6 @@ mod window_manager;
 
 pub mod unified_node;
 
-
 pub use clipboard::ClipboardWatcher;
 pub use window_manager::{WindowManagerType, WindowManagerWatcher};
 
@@ -23,8 +22,7 @@ use sinex_primitives::register_source_unit;
 use sinex_primitives::source_unit::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape,
-    SourceUnitDescriptor,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
 };
 
 // Source-unit descriptor (issue #690 / #734). The desktop ingestor observes
@@ -35,6 +33,7 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "desktop",
         namespace: "desktop",
+        runner_pack: "desktop",
         checkpoint_family: SuCheckpointFamily::LiveObservation,
         event_types: &[
             ("desktop", "desktop.monitoring_started"),
@@ -62,5 +61,9 @@ register_source_unit! {
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Anchor,
+        access_policy: "target_runtime_bridge:desktop",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pack:desktop",
+        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
     }
 }

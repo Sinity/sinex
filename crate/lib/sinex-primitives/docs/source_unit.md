@@ -68,6 +68,7 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "terminal",
         namespace: "shell",
+        runner_pack: "terminal",
         checkpoint_family: CheckpointFamily::MutableSnapshot {
             backing_store_kind: "sqlite",
             occurrence_anchor: "atuin_history_id",
@@ -80,6 +81,10 @@ register_source_unit! {
         proof_obligations: &["terminal_smoke", "terminal_history_replay"],
         occurrence_identity: OccurrenceIdentity::Uuid5From(
             "(source_unit, atuin_history_id)"),
+        access_policy: "target_home_read:.local/share/atuin/history.db",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pack:terminal",
+        build_impact: SourceUnitBuildImpact::ZERO,
     }
 }
 ```

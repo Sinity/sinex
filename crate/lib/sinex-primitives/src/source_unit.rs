@@ -28,6 +28,7 @@
 //!     SourceUnitDescriptor {
 //!         id: "terminal",
 //!         namespace: "shell",
+//!         runner_pack: "terminal",
 //!         checkpoint_family: CheckpointFamily::MutableSnapshot {
 //!             backing_store_kind: "sqlite",
 //!             occurrence_anchor: "row_id",
@@ -39,6 +40,10 @@
 //!         retention: RetentionPolicy::Forever,
 //!         proof_obligations: &["terminal_smoke", "terminal_replay"],
 //!         occurrence_identity: OccurrenceIdentity::Uuid5From("(source_unit, row_id)"),
+//!         access_policy: "target_home_read:.local/share/atuin/history.db",
+//!         package_impact: "no_new_output",
+//!         implementation_mode: "rust_in_pack:terminal",
+//!         build_impact: SourceUnitBuildImpact::ZERO,
 //!     }
 //! }
 //! ```
@@ -147,6 +152,33 @@ pub enum OccurrenceIdentity {
     Anchor,
 }
 
+/// Physical/build footprint declared by a source-unit descriptor.
+///
+/// Normal source-unit additions should have zero crate, binary, Nix output,
+/// derivation, and SQLx-validation impact: they are logical capture surfaces
+/// hosted by an existing runner pack. Non-zero impact must carry an explicit
+/// rationale so the descriptor remains a build contract instead of prose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct SourceUnitBuildImpact {
+    pub crate_impact: &'static str,
+    pub binary_impact: &'static str,
+    pub nix_output_impact: &'static str,
+    pub derivation_impact: &'static str,
+    pub sqlx_validation_impact: &'static str,
+    pub dedicated_build_rationale: Option<&'static str>,
+}
+
+impl SourceUnitBuildImpact {
+    pub const ZERO: Self = Self {
+        crate_impact: "0",
+        binary_impact: "0",
+        nix_output_impact: "0",
+        derivation_impact: "0",
+        sqlx_validation_impact: "0",
+        dedicated_build_rationale: None,
+    };
+}
+
 /// The typed declaration every ingestor fills in.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct SourceUnitDescriptor {
@@ -155,6 +187,10 @@ pub struct SourceUnitDescriptor {
     /// Logical namespace this source belongs to (`"shell"`, `"filesystem"`,
     /// `"desktop"`).
     pub namespace: &'static str,
+    /// Runner pack / binary family that hosts this logical source unit. This
+    /// deliberately differs from `id`: one runner pack can host several
+    /// source units without adding a new crate or binary.
+    pub runner_pack: &'static str,
     /// Checkpoint shape — which SDK adapter family this source uses.
     pub checkpoint_family: CheckpointFamily,
     /// `(source, event_type)` pairs this source promises to emit. These match
@@ -179,6 +215,14 @@ pub struct SourceUnitDescriptor {
     pub proof_obligations: &'static [&'static str],
     /// How the source identifies real-world occurrences.
     pub occurrence_identity: OccurrenceIdentity,
+    /// Runtime access policy needed by the source unit.
+    pub access_policy: &'static str,
+    /// Package/output policy for this descriptor.
+    pub package_impact: &'static str,
+    /// Implementation placement, e.g. `rust_in_pack:terminal`.
+    pub implementation_mode: &'static str,
+    /// Physical build and validation impact.
+    pub build_impact: SourceUnitBuildImpact,
 }
 
 inventory::collect!(SourceUnitDescriptor);
@@ -227,6 +271,7 @@ mod tests {
         SourceUnitDescriptor {
             id: "test-source-unit",
             namespace: "test",
+            runner_pack: "test-runner",
             checkpoint_family: CheckpointFamily::AppendStream,
             event_types: &[("test", "test.event")],
             privacy_tier: PrivacyTier::Public,
@@ -235,6 +280,10 @@ mod tests {
             retention: RetentionPolicy::Forever,
             proof_obligations: &["test_smoke"],
             occurrence_identity: OccurrenceIdentity::Anchor,
+            access_policy: "none",
+            package_impact: "no_new_output",
+            implementation_mode: "rust_in_pack:test-runner",
+            build_impact: SourceUnitBuildImpact::ZERO,
         }
     }
 
@@ -254,6 +303,7 @@ mod tests {
         let descriptor = SourceUnitDescriptor {
             id: "mutable",
             namespace: "test",
+            runner_pack: "test-runner",
             checkpoint_family: CheckpointFamily::MutableSnapshot {
                 backing_store_kind: "sqlite",
                 occurrence_anchor: "row_id",
@@ -265,6 +315,10 @@ mod tests {
             retention: RetentionPolicy::Days { days: 90 },
             proof_obligations: &[],
             occurrence_identity: OccurrenceIdentity::Uuid5From("(source, row_id)"),
+            access_policy: "none",
+            package_impact: "no_new_output",
+            implementation_mode: "rust_in_pack:test-runner",
+            build_impact: SourceUnitBuildImpact::ZERO,
         };
         match descriptor.checkpoint_family {
             CheckpointFamily::MutableSnapshot {

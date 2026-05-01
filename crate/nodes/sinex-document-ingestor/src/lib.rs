@@ -935,8 +935,7 @@ use sinex_primitives::register_source_unit;
 use sinex_primitives::source_unit::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape,
-    SourceUnitDescriptor,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
 };
 
 // The document ingestor stages files as raw source material and emits a
@@ -946,6 +945,7 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "document",
         namespace: "document",
+        runner_pack: "document",
         checkpoint_family: SuCheckpointFamily::AppendStream,
         event_types: &[
             ("document-ingestor", "document.ingested"),
@@ -957,5 +957,9 @@ register_source_unit! {
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Anchor,
+        access_policy: "configured_document_roots",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pack:document",
+        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
     }
 }
