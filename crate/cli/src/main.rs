@@ -301,7 +301,8 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Telemetry { cmd } => cmd.execute(&client).await?,
                 Commands::Report { cmd } => cmd.execute(&client, format).await?,
                 Commands::Status(cmd) => {
-                    cmd.execute(&client, config.runtime_target.as_ref(), format).await?;
+                    cmd.execute(&client, config.runtime_target.as_ref(), format)
+                        .await?;
                 }
                 Commands::Recent(cmd) => cmd.execute(&client, format).await?,
                 Commands::Errors(cmd) => cmd.execute(&client, format).await?,
@@ -319,9 +320,10 @@ async fn main() -> color_eyre::Result<()> {
 
 /// Derive the registry key for a [`Commands`] variant.
 fn command_path(cmd: &Commands) -> String {
+    use sinexctl::commands::lifecycle::TombstoneCommands;
     use sinexctl::commands::{
-        DlqCommands, GatewayCommands, LifecycleCommands, NodeCommands, OpsCommands, ReplayCommands,
-        TelemetryCommands,
+        ConfigCommands, DlqCommands, GatewayCommands, LifecycleCommands, NodeCommands, OpsCommands,
+        ReplayCommands, ReportCommands, TelemetryCommands,
     };
     match cmd {
         Commands::Gateway { cmd } => match cmd {
@@ -353,8 +355,8 @@ fn command_path(cmd: &Commands) -> String {
         Commands::Dlq { cmd } => match cmd {
             DlqCommands::List { .. } => "dlq list".to_string(),
             DlqCommands::Peek { .. } => "dlq peek".to_string(),
-            DlqCommands::Requeue { .. } => "dlq list".to_string(),
-            DlqCommands::Purge { .. } => "dlq list".to_string(),
+            DlqCommands::Requeue { .. } => "dlq requeue".to_string(),
+            DlqCommands::Purge { .. } => "dlq purge".to_string(),
         },
         Commands::Query(_) => "query".to_string(),
         Commands::Trace(_) => "trace".to_string(),
@@ -366,13 +368,25 @@ fn command_path(cmd: &Commands) -> String {
         },
         Commands::Audit(_) => "audit".to_string(),
         Commands::Tui(_) => "tui".to_string(),
-        Commands::Config { .. } => "config show".to_string(),
+        Commands::Config { cmd } => match cmd {
+            ConfigCommands::Init { .. } => "config init".to_string(),
+            ConfigCommands::Show { .. } => "config show".to_string(),
+            ConfigCommands::Path => "config path".to_string(),
+            ConfigCommands::Edit => "config edit".to_string(),
+        },
         Commands::Demo(_) => "demo".to_string(),
         Commands::Lifecycle { cmd } => match cmd {
             LifecycleCommands::Status(_) => "lifecycle status".to_string(),
             LifecycleCommands::Archive(_) => "lifecycle archive".to_string(),
             LifecycleCommands::Restore(_) => "lifecycle restore".to_string(),
-            LifecycleCommands::Tombstone(_) => "lifecycle tombstone create".to_string(),
+            LifecycleCommands::Tombstone(cmd) => match cmd {
+                TombstoneCommands::Create(_) => "lifecycle tombstone create".to_string(),
+                TombstoneCommands::Approve(_) => "lifecycle tombstone approve".to_string(),
+                TombstoneCommands::Preview(_) => "lifecycle tombstone preview".to_string(),
+                TombstoneCommands::Cancel(_) => "lifecycle tombstone cancel".to_string(),
+                TombstoneCommands::List(_) => "lifecycle tombstone list".to_string(),
+                TombstoneCommands::Status(_) => "lifecycle tombstone status".to_string(),
+            },
         },
         Commands::GitOps { .. } => "gitops".to_string(),
         Commands::Telemetry { cmd } => match cmd {
@@ -388,10 +402,18 @@ fn command_path(cmd: &Commands) -> String {
             TelemetryCommands::AssemblyStats { .. } => "telemetry assembly-stats".to_string(),
             TelemetryCommands::NodeStats { .. } => "telemetry node-stats".to_string(),
             TelemetryCommands::MetricCounters { .. } => "telemetry metric-counters".to_string(),
-            TelemetryCommands::IngestdBatchStats { .. } => "telemetry ingestd-batch-stats".to_string(),
-            TelemetryCommands::IngestdValidation { .. } => "telemetry ingestd-validation".to_string(),
+            TelemetryCommands::IngestdBatchStats { .. } => {
+                "telemetry ingestd-batch-stats".to_string()
+            }
+            TelemetryCommands::IngestdValidation { .. } => {
+                "telemetry ingestd-validation".to_string()
+            }
         },
-        Commands::Report { .. } => "report today".to_string(),
+        Commands::Report { cmd } => match cmd {
+            ReportCommands::Today => "report today".to_string(),
+            ReportCommands::Yesterday => "report yesterday".to_string(),
+            ReportCommands::Calendar(_) => "report calendar".to_string(),
+        },
         Commands::Status(_) => "status".to_string(),
         Commands::Recent(_) => "recent".to_string(),
         Commands::Errors(_) => "errors".to_string(),
@@ -414,6 +436,15 @@ mod tests {
         let matches = Cli::command().try_get_matches_from(args)?;
         let cli = Cli::from_arg_matches(&matches).map_err(|error| eyre!(error.to_string()))?;
         Ok((matches, cli))
+    }
+
+    fn parsed_command_path(args: &[&str]) -> color_eyre::Result<String> {
+        let (_, cli) = parse_cli(args)?;
+        let command = cli
+            .command
+            .as_ref()
+            .ok_or_else(|| eyre!("test command must include a subcommand"))?;
+        Ok(command_path(command))
     }
 
     #[sinex_serial_test]
@@ -589,7 +620,10 @@ mod tests {
     async fn list_formats_flag_parses_without_subcommand() -> TestResult<()> {
         let (_, cli) = parse_cli(&["sinexctl", "--list-formats"])?;
         assert!(cli.list_formats, "--list-formats must be parsed correctly");
-        assert!(cli.command.is_none(), "--list-formats without subcommand must parse");
+        assert!(
+            cli.command.is_none(),
+            "--list-formats without subcommand must parse"
+        );
         Ok(())
     }
 
@@ -598,7 +632,10 @@ mod tests {
         let output = sinexctl::render_format_matrix_terminal();
         assert!(output.contains("query"), "matrix must list `query`");
         assert!(output.contains("watch"), "matrix must list `watch`");
-        assert!(output.contains("stream"), "matrix must mark `watch` as streaming");
+        assert!(
+            output.contains("stream"),
+            "matrix must mark `watch` as streaming"
+        );
         Ok(())
     }
 
@@ -620,5 +657,69 @@ mod tests {
         Ok(())
     }
 
+    #[sinex_test]
+    async fn command_path_preserves_format_registry_leaf_commands() -> TestResult<()> {
+        let cases = [
+            (vec!["sinexctl", "dlq", "requeue", "--all"], "dlq requeue"),
+            (vec!["sinexctl", "dlq", "purge", "--confirm"], "dlq purge"),
+            (vec!["sinexctl", "config", "init"], "config init"),
+            (vec!["sinexctl", "config", "path"], "config path"),
+            (vec!["sinexctl", "config", "edit"], "config edit"),
+            (vec!["sinexctl", "report", "yesterday"], "report yesterday"),
+            (vec!["sinexctl", "report", "calendar"], "report calendar"),
+            (
+                vec![
+                    "sinexctl",
+                    "lifecycle",
+                    "tombstone",
+                    "approve",
+                    "0196ed62-8f7a-7000-8000-000000000001",
+                    "--yes-i-understand-data-is-gone",
+                ],
+                "lifecycle tombstone approve",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "lifecycle",
+                    "tombstone",
+                    "preview",
+                    "0196ed62-8f7a-7000-8000-000000000001",
+                ],
+                "lifecycle tombstone preview",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "lifecycle",
+                    "tombstone",
+                    "cancel",
+                    "0196ed62-8f7a-7000-8000-000000000001",
+                ],
+                "lifecycle tombstone cancel",
+            ),
+            (
+                vec!["sinexctl", "lifecycle", "tombstone", "list"],
+                "lifecycle tombstone list",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "lifecycle",
+                    "tombstone",
+                    "status",
+                    "0196ed62-8f7a-7000-8000-000000000001",
+                ],
+                "lifecycle tombstone status",
+            ),
+        ];
 
+        for (args, expected) in cases {
+            let actual = parsed_command_path(&args)?;
+            assert_eq!(actual, expected, "wrong command path for {args:?}");
+            sinexctl::validate_format(&actual, OutputFormat::Table).map_err(|msg| eyre!(msg))?;
+        }
+
+        Ok(())
+    }
 }
