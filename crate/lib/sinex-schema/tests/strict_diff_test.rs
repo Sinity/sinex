@@ -263,6 +263,54 @@ async fn detects_changed_foreign_key_action(ctx: TestContext) -> TestResult<()> 
 }
 
 #[sinex_test]
+async fn detects_changed_tags_parent_foreign_key_action(ctx: TestContext) -> TestResult<()> {
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    // The tags(parent_tag_id) self-FK is installed by a raw schema fixup
+    // because the sea-query self-reference path used to emit CASCADE
+    // instead of SET NULL. Simulate that regression.
+    sqlx::query("ALTER TABLE core.tags DROP CONSTRAINT tags_parent_tag_id_fkey")
+        .execute(&ctx.pool)
+        .await?;
+
+    sqlx::query(
+        "ALTER TABLE core.tags
+            ADD CONSTRAINT tags_parent_tag_id_fkey
+            FOREIGN KEY (parent_tag_id) REFERENCES core.tags(id) ON DELETE CASCADE",
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let drifts = check_strict(&ctx.pool).await?;
+    let matched: Vec<_> = drifts
+        .iter()
+        .filter(|d| {
+            d.category == DriftCategory::ForeignKeyAction
+                && d.location.contains("tags")
+                && d.location.contains("parent_tag_id")
+        })
+        .collect();
+
+    assert_eq!(
+        matched.len(),
+        1,
+        "expected exactly one foreign_key_action drift on tags(parent_tag_id), got: {drifts:?}"
+    );
+    assert!(
+        matched[0].declared_summary.contains("ON DELETE SET NULL"),
+        "declared summary should pin SET NULL: {}",
+        matched[0].declared_summary
+    );
+    assert!(
+        matched[0].observed_summary.contains("ON DELETE CASCADE"),
+        "observed summary should show the drifted CASCADE action: {}",
+        matched[0].observed_summary
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn detects_changed_hypertable_chunk_interval(ctx: TestContext) -> TestResult<()> {
     sinex_schema::apply::apply(&ctx.pool).await?;
 
