@@ -60,14 +60,13 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     }
 
     /// Convert this payload directly into an event with explicit provenance.
-    fn into_event(self, provenance: Provenance) -> Event<Self>
+    fn into_event(self, provenance: Provenance) -> Result<Event<Self>>
     where
         Self: Sized,
     {
         Event::builder(self)
             .with_provenance(provenance)
             .build()
-            .expect("valid provenance: builder always sets it")
     }
 }
 
