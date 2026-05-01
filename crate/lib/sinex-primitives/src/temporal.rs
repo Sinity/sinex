@@ -29,34 +29,41 @@ pub fn format_rfc3339(ts: Timestamp) -> String {
     ts.format_rfc3339()
 }
 
-/// Parse a duration from a string (e.g., "1h", "30m").
-/// Supported units: s, m, h, d, w.
+/// Parse an operator-facing duration string.
+///
+/// This uses the project's shared human-duration grammar instead of each
+/// command surface choosing its own parser.
 #[must_use]
 pub fn parse_duration(s: &str) -> Option<Duration> {
-    let s = s.trim();
-    if s.is_empty() {
-        return None;
+    humantime::parse_duration(s.trim())
+        .ok()
+        .and_then(|duration| Duration::try_from(duration).ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_duration_accepts_legacy_compact_units() {
+        assert_eq!(parse_duration("1h"), Some(Duration::hours(1)));
+        assert_eq!(parse_duration("30m"), Some(Duration::minutes(30)));
+        assert_eq!(parse_duration("2d"), Some(Duration::days(2)));
+        assert_eq!(parse_duration("1w"), Some(Duration::weeks(1)));
     }
 
-    let mut num_str = String::new();
-    let mut unit = String::new();
-
-    for ch in s.chars() {
-        if ch.is_ascii_digit() {
-            num_str.push(ch);
-        } else {
-            unit.push(ch);
-        }
+    #[test]
+    fn parse_duration_accepts_human_duration_grammar() {
+        assert_eq!(
+            parse_duration("1 hour 30 minutes"),
+            Some(Duration::minutes(90))
+        );
+        assert_eq!(parse_duration("500ms"), Some(Duration::milliseconds(500)));
     }
 
-    let num: i64 = num_str.parse().ok()?;
-
-    match unit.as_str() {
-        "s" | "sec" | "second" | "seconds" => Some(Duration::seconds(num)),
-        "m" | "min" | "minute" | "minutes" => Some(Duration::minutes(num)),
-        "h" | "hr" | "hour" | "hours" => Some(Duration::hours(num)),
-        "d" | "day" | "days" => Some(Duration::days(num)),
-        "w" | "week" | "weeks" => Some(Duration::weeks(num)),
-        _ => None,
+    #[test]
+    fn parse_duration_rejects_invalid_input() {
+        assert_eq!(parse_duration(""), None);
+        assert_eq!(parse_duration("invalid"), None);
     }
 }

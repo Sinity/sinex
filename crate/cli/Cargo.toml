@@ -59,9 +59,6 @@ workspace = true
 workspace = true
 features = ["runtime-tokio", "tls-rustls", "postgres"]
 
-[dependencies.humantime]
-version = "2.1"
-
 [dependencies.clap]
 workspace = true
 features = ["derive", "env"]
