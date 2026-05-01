@@ -566,57 +566,6 @@
       "dedicated_build_rationale": null
     },
     {
-      "subject": "source_unit:terminal",
-      "id": "terminal",
-      "domain": "shell",
-      "role": "source_adapter",
-      "modes": [
-        "continuous",
-        "historical"
-      ],
-      "acquisition_shape": "mutable_snapshot",
-      "material_policy": "source_material_provenance",
-      "checkpoint_policy": "mutable_snapshot:sqlite:atuin_history_id",
-      "occurrence_policy": "uuid5:(source_unit, atuin_history_id)",
-      "output_event_type": "shell.atuin/command.executed,shell.history/command.imported,shell.history.fish/command.executed,terminal/shell.terminal_monitoring_started",
-      "output_event_types": [
-        {
-          "source": "shell.atuin",
-          "event_type": "command.executed"
-        },
-        {
-          "source": "shell.history",
-          "event_type": "command.imported"
-        },
-        {
-          "source": "shell.history.fish",
-          "event_type": "command.executed"
-        },
-        {
-          "source": "terminal",
-          "event_type": "shell.terminal_monitoring_started"
-        }
-      ],
-      "privacy_context": "sensitive",
-      "retention_policy": "forever",
-      "resource_profile": "continuous",
-      "access_policy": "target_home_read:shell_history",
-      "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "terminal",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
-      "proof_obligations": [
-        "terminal_smoke",
-        "terminal_history_replay"
-      ],
-      "crate_impact": "0",
-      "binary_impact": "0",
-      "nix_output_impact": "0",
-      "derivation_impact": "0",
-      "sqlx_validation_impact": "0",
-      "dedicated_build_rationale": null
-    },
-    {
       "subject": "source_unit:terminal-canonicalizer",
       "id": "terminal-canonicalizer",
       "domain": "derived",
@@ -769,6 +718,80 @@
       "dedicated_build_rationale": null
     },
     {
+      "subject": "source_unit:terminal.monitor",
+      "id": "terminal.monitor",
+      "domain": "terminal",
+      "role": "source_adapter",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "live_observation",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "live_observation_state",
+      "occurrence_policy": "uuid5:(source_unit, run_id)",
+      "output_event_type": "terminal/shell.terminal_monitoring_started",
+      "output_event_types": [
+        {
+          "source": "terminal",
+          "event_type": "shell.terminal_monitoring_started"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "runtime_self_observation",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "terminal",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:terminal",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:terminal.text-history",
+      "id": "terminal.text-history",
+      "domain": "terminal",
+      "role": "source_adapter",
+      "modes": [
+        "continuous",
+        "historical"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "material_anchor",
+      "output_event_type": "shell.history/command.imported",
+      "output_event_types": [
+        {
+          "source": "shell.history",
+          "event_type": "command.imported"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "target_home_read:shell_history_text",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "terminal",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:terminal",
+      "proof_obligations": [
+        "obligation:source_unit.material_provenance",
+        "obligation:source_unit.package_impact_rationale"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
       "subject": "source_unit:terminal.zsh-history",
       "id": "terminal.zsh-history",
       "domain": "terminal",
@@ -892,15 +915,16 @@
     {
       "id": "terminal",
       "source_unit_ids": [
-        "terminal",
         "terminal-canonicalizer",
         "terminal.atuin-history",
         "terminal.bash-history",
         "terminal.fish-history",
+        "terminal.monitor",
+        "terminal.text-history",
         "terminal.zsh-history"
       ],
       "shared_binary": "sinex-terminal-ingestor",
-      "source_unit_count": 6
+      "source_unit_count": 7
     }
   ],
   "services": [
@@ -995,15 +1019,6 @@
       "host_identity": "runtime_hostname"
     },
     {
-      "source_unit_id": "terminal",
-      "service_name": "sinex-source@terminal",
-      "runner_pack": "terminal",
-      "binary": "sinex-terminal-ingestor",
-      "checkpoint_identity": "terminal",
-      "control_identity": "terminal",
-      "host_identity": "runtime_hostname"
-    },
-    {
       "source_unit_id": "terminal-canonicalizer",
       "service_name": "sinex-source@terminal-canonicalizer",
       "runner_pack": "terminal",
@@ -1040,6 +1055,24 @@
       "host_identity": "runtime_hostname"
     },
     {
+      "source_unit_id": "terminal.monitor",
+      "service_name": "sinex-source@terminal.monitor",
+      "runner_pack": "terminal",
+      "binary": "sinex-terminal-ingestor",
+      "checkpoint_identity": "terminal.monitor",
+      "control_identity": "terminal.monitor",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "terminal.text-history",
+      "service_name": "sinex-source@terminal.text-history",
+      "runner_pack": "terminal",
+      "binary": "sinex-terminal-ingestor",
+      "checkpoint_identity": "terminal.text-history",
+      "control_identity": "terminal.text-history",
+      "host_identity": "runtime_hostname"
+    },
+    {
       "source_unit_id": "terminal.zsh-history",
       "service_name": "sinex-source@terminal.zsh-history",
       "runner_pack": "terminal",
@@ -1050,12 +1083,12 @@
     }
   ],
   "package_impact": {
-    "total_source_units": 16,
-    "zero_crate_impact": 16,
-    "zero_binary_impact": 16,
-    "zero_nix_output_impact": 16,
-    "zero_derivation_impact": 16,
-    "zero_sqlx_validation_impact": 16,
+    "total_source_units": 17,
+    "zero_crate_impact": 17,
+    "zero_binary_impact": 17,
+    "zero_nix_output_impact": 17,
+    "zero_derivation_impact": 17,
+    "zero_sqlx_validation_impact": 17,
     "dedicated_build_rationales": []
   },
   "proof_obligations": [
