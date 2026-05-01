@@ -22,132 +22,517 @@
   ],
   "source_units": [
     {
-      "subject": "source_unit:terminal.atuin-history",
-      "id": "terminal.atuin-history",
-      "domain": "terminal",
-      "role": "source_adapter",
+      "subject": "source_unit:analytics",
+      "id": "analytics",
+      "namespace": "derived",
+      "runner_pack": "analytics",
       "modes": [
-        "historical",
         "continuous"
       ],
-      "acquisition_shape": "sqlite_row_stream",
-      "material_policy": "canonical_json_lines",
-      "checkpoint_policy": "sqlite_row_id",
-      "occurrence_policy": "natural_key:atuin.history.id",
-      "output_event_type": "shell.atuin/command.executed",
-      "privacy_context": "command_line_history",
-      "resource_profile": "bounded_sqlite_polling:256M",
-      "access_policy": "target_home_read:.local/share/atuin/history.db",
-      "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "terminal",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
-      "proof_obligations": [
-        "obligation:source_unit.material_provenance",
-        "obligation:source_unit.package_impact_rationale"
+      "output_event_types": [
+        {
+          "source": "derived.activity-window",
+          "event_type": "activity.window.summary"
+        }
       ],
-      "crate_impact": "0",
-      "binary_impact": "0",
-      "nix_output_impact": "0",
-      "derivation_impact": "0",
-      "sqlx_validation_impact": "0",
-      "dedicated_build_rationale": null
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(source_unit, parent_event_ids)",
+      "access_policy": "event_stream_read",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:analytics",
+      "proof_obligations": []
     },
     {
-      "subject": "source_unit:terminal.bash-history",
-      "id": "terminal.bash-history",
-      "domain": "terminal",
-      "role": "source_adapter",
+      "subject": "source_unit:browser",
+      "id": "browser",
+      "namespace": "web",
+      "runner_pack": "browser",
       "modes": [
-        "historical",
-        "continuous"
+        "continuous",
+        "historical"
       ],
-      "acquisition_shape": "append_only_file",
-      "material_policy": "canonical_json_lines",
-      "checkpoint_policy": "byte_offset_and_line",
-      "occurrence_policy": "material_anchor",
-      "output_event_type": "shell.history/command.imported",
-      "privacy_context": "command_line_history",
-      "resource_profile": "bounded_file_polling:256M",
-      "access_policy": "target_home_read:.bash_history",
-      "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "terminal",
+      "output_event_types": [
+        {
+          "source": "webhistory",
+          "event_type": "page.visited"
+        }
+      ],
+      "privacy_tier": "secret",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "mutable_snapshot",
+      "occurrence_identity": "uuid5:(source_unit, browser_profile, visit_id)",
+      "access_policy": "target_home_read:browser_history",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
-      "proof_obligations": [
-        "obligation:source_unit.material_provenance",
-        "obligation:source_unit.package_impact_rationale"
-      ],
-      "crate_impact": "0",
-      "binary_impact": "0",
-      "nix_output_impact": "0",
-      "derivation_impact": "0",
-      "sqlx_validation_impact": "0",
-      "dedicated_build_rationale": null
+      "implementation_mode": "rust_in_pack:browser",
+      "proof_obligations": []
     },
     {
-      "subject": "source_unit:terminal.fish-history",
-      "id": "terminal.fish-history",
-      "domain": "terminal",
-      "role": "source_adapter",
+      "subject": "source_unit:daily-summarizer",
+      "id": "daily-summarizer",
+      "namespace": "derived",
+      "runner_pack": "daily",
       "modes": [
-        "historical",
         "continuous"
       ],
-      "acquisition_shape": "sqlite_row_stream",
-      "material_policy": "canonical_json_lines",
-      "checkpoint_policy": "sqlite_row_id",
-      "occurrence_policy": "sqlite_row_id",
-      "output_event_type": "shell.history.fish/command.executed",
-      "privacy_context": "command_line_history",
-      "resource_profile": "bounded_sqlite_polling:256M",
-      "access_policy": "target_home_read:.local/share/fish/fish_history",
-      "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "terminal",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
-      "proof_obligations": [
-        "obligation:source_unit.material_provenance",
-        "obligation:source_unit.package_impact_rationale"
+      "output_event_types": [
+        {
+          "source": "derived.daily-summarizer",
+          "event_type": "activity.summary.daily"
+        }
       ],
-      "crate_impact": "0",
-      "binary_impact": "0",
-      "nix_output_impact": "0",
-      "derivation_impact": "0",
-      "sqlx_validation_impact": "0",
-      "dedicated_build_rationale": null
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(source_unit, day_bucket, parent_event_ids)",
+      "access_policy": "event_stream_read",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:daily",
+      "proof_obligations": []
     },
     {
-      "subject": "source_unit:terminal.zsh-history",
-      "id": "terminal.zsh-history",
-      "domain": "terminal",
-      "role": "source_adapter",
+      "subject": "source_unit:desktop",
+      "id": "desktop",
+      "namespace": "desktop",
+      "runner_pack": "desktop",
       "modes": [
-        "historical",
+        "continuous",
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "desktop",
+          "event_type": "desktop.monitoring_started"
+        },
+        {
+          "source": "desktop",
+          "event_type": "desktop.snapshot"
+        },
+        {
+          "source": "desktop",
+          "event_type": "clipboard.historical"
+        },
+        {
+          "source": "desktop",
+          "event_type": "window.wm_historical"
+        },
+        {
+          "source": "clipboard",
+          "event_type": "clipboard.copied"
+        },
+        {
+          "source": "clipboard",
+          "event_type": "clipboard.selected"
+        },
+        {
+          "source": "wm.hyprland",
+          "event_type": "window.opened"
+        },
+        {
+          "source": "wm.hyprland",
+          "event_type": "window.closed"
+        },
+        {
+          "source": "wm.hyprland",
+          "event_type": "window.focused"
+        },
+        {
+          "source": "wm.hyprland",
+          "event_type": "window.moved"
+        },
+        {
+          "source": "wm.hyprland",
+          "event_type": "window.title_changed"
+        },
+        {
+          "source": "wm.hyprland",
+          "event_type": "workspace.switched"
+        },
+        {
+          "source": "wm.hyprland",
+          "event_type": "monitor.focused"
+        },
+        {
+          "source": "wm.hyprland",
+          "event_type": "state.captured"
+        },
+        {
+          "source": "activitywatch",
+          "event_type": "window.active"
+        },
+        {
+          "source": "activitywatch",
+          "event_type": "afk.changed"
+        },
+        {
+          "source": "activitywatch",
+          "event_type": "browser.tab.active"
+        }
+      ],
+      "privacy_tier": "secret",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "live_observation",
+      "occurrence_identity": "material_anchor",
+      "access_policy": "target_runtime_bridge:desktop",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:desktop",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:document",
+      "id": "document",
+      "namespace": "document",
+      "runner_pack": "document",
+      "modes": [
+        "continuous",
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "document-ingestor",
+          "event_type": "document.ingested"
+        }
+      ],
+      "privacy_tier": "secret",
+      "runtime_shape": "on_demand",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "material_anchor",
+      "access_policy": "configured_document_roots",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:document",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:fs",
+      "id": "fs",
+      "namespace": "filesystem",
+      "runner_pack": "fs",
+      "modes": [
+        "continuous",
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "fs-watcher",
+          "event_type": "file.created"
+        },
+        {
+          "source": "fs-watcher",
+          "event_type": "file.modified"
+        },
+        {
+          "source": "fs-watcher",
+          "event_type": "file.deleted"
+        },
+        {
+          "source": "fs-watcher",
+          "event_type": "file.moved"
+        },
+        {
+          "source": "fs-watcher",
+          "event_type": "file.discovered"
+        },
+        {
+          "source": "fs-watcher",
+          "event_type": "dir.created"
+        },
+        {
+          "source": "fs-watcher",
+          "event_type": "dir.deleted"
+        },
+        {
+          "source": "fs-watcher",
+          "event_type": "dir.discovered"
+        }
+      ],
+      "privacy_tier": "secret",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "material_anchor",
+      "access_policy": "configured_watch_roots",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:fs",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:health",
+      "id": "health",
+      "namespace": "derived",
+      "runner_pack": "health",
+      "modes": [
         "continuous"
       ],
-      "acquisition_shape": "append_only_file",
-      "material_policy": "canonical_json_lines",
-      "checkpoint_policy": "byte_offset_and_line",
-      "occurrence_policy": "material_anchor",
-      "output_event_type": "shell.history/command.imported",
-      "privacy_context": "command_line_history",
-      "resource_profile": "bounded_file_polling:256M",
-      "access_policy": "target_home_read:.zsh_history",
-      "service_policy": "dedicated_instance:on-failure",
+      "output_event_types": [
+        {
+          "source": "health-aggregator",
+          "event_type": "health.aggregated_report"
+        }
+      ],
+      "privacy_tier": "public",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(source_unit, component_scope, parent_event_ids)",
+      "access_policy": "event_stream_read",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:health",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:hourly-summarizer",
+      "id": "hourly-summarizer",
+      "namespace": "derived",
+      "runner_pack": "hourly",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "derived.hourly-summarizer",
+          "event_type": "activity.summary.hourly"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(source_unit, hour_bucket, parent_event_ids)",
+      "access_policy": "event_stream_read",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:hourly",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:session-detector",
+      "id": "session-detector",
+      "namespace": "derived",
+      "runner_pack": "session",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "derived.session-detector",
+          "event_type": "activity.session.boundary"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(source_unit, parent_event_ids)",
+      "access_policy": "event_stream_read",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:session",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:system",
+      "id": "system",
+      "namespace": "system",
+      "runner_pack": "system",
+      "modes": [
+        "continuous",
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "system",
+          "event_type": "monitoring.started"
+        },
+        {
+          "source": "system",
+          "event_type": "scan.started"
+        },
+        {
+          "source": "system",
+          "event_type": "scan.completed"
+        },
+        {
+          "source": "system",
+          "event_type": "snapshot"
+        },
+        {
+          "source": "systemd",
+          "event_type": "unit.starting"
+        },
+        {
+          "source": "systemd",
+          "event_type": "unit.started"
+        },
+        {
+          "source": "systemd",
+          "event_type": "unit.stopping"
+        },
+        {
+          "source": "systemd",
+          "event_type": "unit.stopped"
+        },
+        {
+          "source": "systemd",
+          "event_type": "unit.failed"
+        },
+        {
+          "source": "systemd",
+          "event_type": "unit.reloaded"
+        },
+        {
+          "source": "systemd",
+          "event_type": "unit.state_changed"
+        },
+        {
+          "source": "systemd",
+          "event_type": "unit.status"
+        },
+        {
+          "source": "systemd",
+          "event_type": "timer.triggered"
+        },
+        {
+          "source": "journald",
+          "event_type": "entry.written"
+        },
+        {
+          "source": "journald",
+          "event_type": "log_entry.captured"
+        },
+        {
+          "source": "journald",
+          "event_type": "node.heartbeat"
+        },
+        {
+          "source": "journald",
+          "event_type": "sync.completed"
+        },
+        {
+          "source": "dbus",
+          "event_type": "signal.received"
+        },
+        {
+          "source": "dbus",
+          "event_type": "method.called"
+        },
+        {
+          "source": "dbus",
+          "event_type": "power.state_changed"
+        },
+        {
+          "source": "dbus",
+          "event_type": "bluetooth.device_changed"
+        },
+        {
+          "source": "dbus",
+          "event_type": "network.state_changed"
+        },
+        {
+          "source": "dbus",
+          "event_type": "device.connected"
+        },
+        {
+          "source": "dbus",
+          "event_type": "media.state_changed"
+        },
+        {
+          "source": "dbus",
+          "event_type": "mount.event"
+        },
+        {
+          "source": "dbus",
+          "event_type": "notification.sent"
+        },
+        {
+          "source": "udev",
+          "event_type": "device.added"
+        },
+        {
+          "source": "udev",
+          "event_type": "device.changed"
+        },
+        {
+          "source": "log_processor",
+          "event_type": "log.line"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "journal",
+      "occurrence_identity": "uuid5:(source_unit, journal_cursor)",
+      "access_policy": "system_bus_journal_udev",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:system",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:terminal",
+      "id": "terminal",
+      "namespace": "shell",
       "runner_pack": "terminal",
+      "modes": [
+        "continuous",
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "shell.atuin",
+          "event_type": "command.executed"
+        },
+        {
+          "source": "shell.history",
+          "event_type": "command.imported"
+        },
+        {
+          "source": "shell.history.fish",
+          "event_type": "command.executed"
+        },
+        {
+          "source": "terminal",
+          "event_type": "shell.terminal_monitoring_started"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "mutable_snapshot",
+      "occurrence_identity": "uuid5:(source_unit, atuin_history_id)",
+      "access_policy": "target_home_read:shell_history",
       "package_impact": "no_new_output",
       "implementation_mode": "rust_in_pack:terminal",
       "proof_obligations": [
-        "obligation:source_unit.material_provenance",
-        "obligation:source_unit.package_impact_rationale"
+        "terminal_smoke",
+        "terminal_history_replay"
+      ]
+    },
+    {
+      "subject": "source_unit:terminal-canonicalizer",
+      "id": "terminal-canonicalizer",
+      "namespace": "derived",
+      "runner_pack": "terminal",
+      "modes": [
+        "continuous"
       ],
-      "crate_impact": "0",
-      "binary_impact": "0",
-      "nix_output_impact": "0",
-      "derivation_impact": "0",
-      "sqlx_validation_impact": "0",
-      "dedicated_build_rationale": null
+      "output_event_types": [
+        {
+          "source": "canonical.terminal",
+          "event_type": "command.canonical"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(source_unit, parent_event_id)",
+      "access_policy": "event_stream_read",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:terminal",
+      "proof_obligations": []
     }
   ],
   "claims": [
@@ -504,6 +889,20 @@
       "event_type": "document.ingested",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::document::DocumentIngestedPayload"
+    },
+    {
+      "subject": "event_payload:document-parser/document.chunked/1.0.0",
+      "source": "document-parser",
+      "event_type": "document.chunked",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::document::DocumentChunkedPayload"
+    },
+    {
+      "subject": "event_payload:document-parser/document.parsed/1.0.0",
+      "source": "document-parser",
+      "event_type": "document.parsed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::document::DocumentParsedPayload"
     },
     {
       "subject": "event_payload:fs-watcher/dir.created/1.0.0",
@@ -1235,6 +1634,11 @@
       "about": "Generate the exhaustive xtask public command reference from the live clap tree"
     },
     {
+      "subject": "xtask_command:docs.issue-drift",
+      "path": "docs.issue-drift",
+      "about": "Detect drift between GitHub issue bodies and the live workspace"
+    },
+    {
       "subject": "xtask_command:docs.proof-catalog",
       "path": "docs.proof-catalog",
       "about": "Generate the proof catalog from Rust descriptors, payloads, commands, and scenarios"
@@ -1721,6 +2125,35 @@
     }
   ],
   "scenarios": [
+    {
+      "subject": "scenario:derived-telemetry.lag-percentile-under-load.v1",
+      "id": "derived-telemetry.lag-percentile-under-load.v1",
+      "test_name": "derived_telemetry_lag_percentile_under_load",
+      "package": "sinex-node-sdk",
+      "path": "crate/lib/sinex-node-sdk/tests/derived_telemetry_heavy_lane.rs",
+      "category": "node_adapter",
+      "lane": "heavy",
+      "cost_tier": "heavy",
+      "tags": [
+        "derived_node",
+        "telemetry",
+        "lag",
+        "percentile",
+        "throughput"
+      ],
+      "fixtures": [
+        "in_process"
+      ],
+      "subject_refs": [
+        "issue:561",
+        "node-sdk:derived-node"
+      ],
+      "claim_ids": [
+        "lag-p99-stays-bounded-under-synthetic-burst",
+        "tick-runtime-p99-stays-bounded-for-noop-transducer",
+        "reservoir-evicts-on-overflow"
+      ]
+    },
     {
       "subject": "scenario:runtime.material-acquisition-restart-recovery.v1",
       "id": "runtime.material-acquisition-restart-recovery.v1",
