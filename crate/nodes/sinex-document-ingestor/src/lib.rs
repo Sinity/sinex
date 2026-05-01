@@ -956,7 +956,7 @@ use sinex_primitives::source_unit::{
 // lands the ingestor is a single-event, append-stream source.
 register_source_unit! {
     SourceUnitDescriptor {
-        id: "document",
+        id: "document.staging",
         namespace: "document",
         runner_pack: "document",
         checkpoint_family: SuCheckpointFamily::AppendStream,
