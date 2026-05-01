@@ -447,15 +447,18 @@ const DECLARED_FK_ACTIONS: &[DeclaredForeignKeyAction] = &[
         expected_delete_action_marker: Some("ON DELETE CASCADE"),
         expected_update_action_marker: None,
     },
-    // One other FK declaration was considered and intentionally NOT
-    // pinned in this slice — it surfaced as a real schema bug the strict
-    // diff caught against a freshly applied schema:
-    //
-    // - `core.tags(parent_tag_id)` self-FK: source declares SET NULL but
-    //   live shows CASCADE. Tracked in #578.
-    //
-    // The detector correctly catches it as drift. Re-add to this list
-    // once #578 is resolved.
+    // Tags(parent_tag_id) → Tags(id) — schema/annotations.rs installs
+    // this self-FK through a raw fixup because sea-query emitted CASCADE
+    // for the self-referential SET NULL declaration. Pin the action here
+    // so regressions in that fixup are visible before apply overwrites a
+    // manually drifted database.
+    DeclaredForeignKeyAction {
+        schema: "core",
+        table: "tags",
+        fk_marker: "FOREIGN KEY (parent_tag_id)",
+        expected_delete_action_marker: Some("ON DELETE SET NULL"),
+        expected_update_action_marker: None,
+    },
     //
     // Note: `core.event_annotations(event_id)` → `core.events` was
     // previously listed here as #579. That FK declaration has been
