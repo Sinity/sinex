@@ -2,7 +2,6 @@ use super::{config::BenchConfig, environment::Environment, stats::RunStats};
 use crate::process::ProcessBuilder;
 use color_eyre::eyre::{Result, WrapErr, bail};
 use console::style;
-use indicatif::{ProgressBar, ProgressStyle};
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock as Lazy;
 use std::{
@@ -158,19 +157,7 @@ impl<'a> BenchRunner<'a> {
             });
         }
 
-        let pb = ProgressBar::new_spinner();
-        pb.set_style(
-            ProgressStyle::default_spinner()
-                .template("{spinner:.cyan} [{elapsed_precise}] {msg}")
-                .expect("valid progress bar template"),
-        );
-        pb.set_message(format!(
-            "Run {}/{} | {}",
-            run_index + 1,
-            total_runs,
-            scenario.key()
-        ));
-        pb.enable_steady_tick(Duration::from_millis(100));
+        eprintln!("Run {}/{} | {}", run_index + 1, total_runs, scenario.key());
 
         let mut builder = ProcessBuilder::cargo().args([
             "nextest",
@@ -204,8 +191,6 @@ impl<'a> BenchRunner<'a> {
             .with_description("cargo nextest run")
             .run_capture()?;
         let elapsed = start.elapsed();
-
-        pb.finish_and_clear();
 
         let success = output.success();
         let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
