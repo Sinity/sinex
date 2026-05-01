@@ -316,7 +316,7 @@ mod tests {
             catalog
                 .source_units
                 .iter()
-                .any(|unit| unit.subject.as_str() == "source_unit:terminal")
+                .any(|unit| unit.subject.as_str() == "source_unit:terminal.monitor")
         );
         assert!(
             catalog
@@ -328,7 +328,7 @@ mod tests {
             catalog
                 .source_units
                 .iter()
-                .any(|unit| unit.subject.as_str() == "source_unit:desktop")
+                .any(|unit| unit.subject.as_str() == "source_unit:desktop.clipboard")
         );
         assert!(
             catalog
