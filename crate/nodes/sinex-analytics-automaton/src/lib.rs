@@ -321,3 +321,36 @@ impl WindowedNode for AnalyticsAutomaton {
 
 /// Node type alias for use with `node_entrypoint!`.
 pub type AnalyticsAutomatonNode = WindowedNodeAdapter<AnalyticsAutomaton>;
+
+// --- Source-unit descriptor (issue #690 / #734) ---
+
+use sinex_primitives::register_source_unit;
+use sinex_primitives::source_unit::{
+    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
+    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape,
+    SourceUnitDescriptor,
+};
+
+// Analytics is a derived source: it consumes trusted-activity inputs and
+// emits `activity.window.summary` rollups. Its checkpoint is the consumer
+// position on the upstream event stream (append-stream).
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "analytics",
+        namespace: "derived",
+        checkpoint_family: SuCheckpointFamily::AppendStream,
+        event_types: &[
+            ("derived.activity-window", "activity.window.summary"),
+        ],
+        // Inherits the privacy tier of its inputs (window titles, commands).
+        privacy_tier: SuPrivacyTier::Sensitive,
+        runtime_shape: SuRuntimeShape::Continuous,
+        horizons: &[SuHorizon::Continuous],
+        retention: SuRetentionPolicy::Forever,
+        proof_obligations: &[],
+        occurrence_identity: SuOccurrenceIdentity::Uuid5From(
+            "(source_unit, parent_event_ids)",
+        ),
+    }
+}
