@@ -102,6 +102,8 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/lib/sinex-db/src/repositories/events/composable_query.rs",
             "crate/lib/sinex-db/src/repositories/events/persistence.rs",
             "crate/lib/sinex-node-sdk/src/preflight/database.rs",
+            // Timescale catalog tables may not exist in compile-time check DBs.
+            "crate/lib/sinex-schema/src/strict_diff.rs",
             "xtask/src/main.rs",
         ];
 
@@ -154,6 +156,7 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/lib/sinex-node-sdk/src/diagnostics/regression.rs",
             // Doc comment code examples (scanner can't distinguish from real code)
             "crate/lib/sinex-node-sdk/src/watcher_handle.rs",
+            "crate/lib/sinex-schema/src/strict_diff.rs",
         ];
         violations.extend(check_println_in_lib(
             "println!",
@@ -549,8 +552,9 @@ fn run_ast_grep_scan() -> Result<Option<AstGrepSummary>> {
             return Ok(None);
         }
         Err(err) => {
-            return Err(err)
-                .with_context(|| format!("failed to invoke ast-grep with {}", config_path.display()));
+            return Err(err).with_context(|| {
+                format!("failed to invoke ast-grep with {}", config_path.display())
+            });
         }
     };
 
