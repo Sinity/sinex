@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Synthesis event emitted once per chunk of a parsed document.\n\nProvenance is `from_parents([document_parsed_event_id])` — chunks are\nderived from the document, not directly from the source material. This\nkeeps replay scoped: re-extraction of one document re-emits its chunks\nwithout touching siblings.\n\n`byte_offset_*` are offsets into the post-redaction extracted text (the\n`text` column of `core.document_chunks`), suitable for in-document chunk\nnavigation. `source_anchor_*` are pre-redaction byte offsets into the\nraw source material — populated for Dendron, `None` for terminal output\n(which has no byte-stream source). See the design doc's \"Anchor-byte\nsemantics\" section.",
+  "properties": {
+    "byte_offset_end": {
+      "description": "Exclusive end offset.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "byte_offset_start": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "chunk_index": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "document_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "source_anchor_end": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "source_anchor_start": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "text": {
+      "description": "Post-privacy-redaction chunk content.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "document_id",
+    "chunk_index",
+    "text",
+    "byte_offset_start",
+    "byte_offset_end"
+  ],
+  "title": "DocumentChunkedPayload",
+  "type": "object",
+  "x-sinex-event-type": "document.chunked",
+  "x-sinex-source": "document-parser",
+  "x-sinex-version": "1.0.0"
+}

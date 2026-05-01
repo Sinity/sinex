@@ -16,6 +16,7 @@ jobs:
   test:
     name: Core verification gate
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     concurrency:
       group: ci-${{ github.ref }}
       cancel-in-progress: true
