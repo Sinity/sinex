@@ -1,0 +1,25 @@
+id: color-eyre-in-runtime
+message: "Keep color_eyre at binary/CLI/test presentation boundaries; use SinexError in shared runtime and library code"
+severity: warning
+language: rust
+rule:
+  any:
+    - pattern: "color_eyre::Report"
+    - pattern: "color_eyre::Result"
+    - pattern: "color_eyre::eyre::Result"
+    - pattern: "color_eyre::eyre::Report"
+    - pattern: "color_eyre::eyre::eyre!($$$)"
+    - pattern: "use color_eyre::$$$"
+ignores:
+  # xtask and CLI binaries are presentation/dev tooling boundaries.
+  - "xtask/**"
+  - "crate/cli/**"
+  # Binary entry points may install color-eyre and render final reports.
+  - "**/main.rs"
+  # Tests may use eyre for assertion ergonomics.
+  - "**/tests/**"
+  - "**/*_test.rs"
+note: |
+  Shared library and runtime surfaces should return SinexError so callers can
+  preserve error class, context, and protocol mapping. color_eyre is still
+  acceptable at binary/CLI/devtool presentation boundaries and in tests.
