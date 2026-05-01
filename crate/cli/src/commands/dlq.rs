@@ -2,7 +2,7 @@ use clap::Subcommand;
 
 use crate::Result;
 use crate::client::GatewayClient;
-use crate::fmt::{CommandOutput, Spinner, with_spinner_result};
+use crate::fmt::{CommandOutput, Spinner, format_bytes, with_spinner_result};
 use crate::model::OutputFormat;
 use crate::prompt;
 
@@ -170,7 +170,10 @@ fn format_dlq_stats_table(stats: &DlqListResponse) -> String {
     let mut output = String::new();
     output.push_str("DLQ Statistics:\n");
     output.push_str(&format!("  Total messages: {}\n", stats.total_messages));
-    output.push_str(&format!("  Total bytes: {}\n", stats.total_bytes));
+    output.push_str(&format!(
+        "  Total bytes: {}\n",
+        format_bytes(stats.total_bytes)
+    ));
     output.push_str(&format!("  First sequence: {}\n", stats.first_seq));
     output.push_str(&format!("  Last sequence: {}\n", stats.last_seq));
     output

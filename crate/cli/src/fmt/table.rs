@@ -1,9 +1,10 @@
 use console::style;
-use sinex_primitives::temporal::Timestamp;
 use tabled::{builder::Builder, settings::Style};
 
+use crate::fmt::format_timestamp_age;
 use sinex_primitives::rpc::coordination::InstanceInfo;
 use sinex_primitives::rpc::replay::{ReplayOperation, ReplayState};
+use sinex_primitives::temporal::Timestamp;
 
 /// Format nodes as a table
 pub fn format_table_nodes(nodes: &[InstanceInfo]) -> String {
@@ -80,38 +81,7 @@ fn format_replay_status(state: &ReplayState) -> String {
 /// Format heartbeat timestamp as "X ago"
 #[must_use]
 pub fn format_heartbeat_age(timestamp: &Timestamp) -> String {
-    format_age(timestamp)
-}
-
-/// Format timestamp as "X ago" or "X from now"
-fn format_age(timestamp: &Timestamp) -> String {
-    let now = Timestamp::now();
-    let duration = *now - **timestamp;
-
-    if duration.whole_seconds() < 0 {
-        // Future timestamp
-        let abs_duration = -duration;
-        if abs_duration.whole_seconds() < 60 {
-            format!("in {}s", abs_duration.whole_seconds())
-        } else if abs_duration.whole_minutes() < 60 {
-            format!("in {}m", abs_duration.whole_minutes())
-        } else if abs_duration.whole_hours() < 24 {
-            format!("in {}h", abs_duration.whole_hours())
-        } else {
-            format!("in {}d", abs_duration.whole_days())
-        }
-    } else {
-        // Past timestamp
-        if duration.whole_seconds() < 60 {
-            format!("{}s ago", duration.whole_seconds())
-        } else if duration.whole_minutes() < 60 {
-            format!("{}m ago", duration.whole_minutes())
-        } else if duration.whole_hours() < 24 {
-            format!("{}h ago", duration.whole_hours())
-        } else {
-            format!("{}d ago", duration.whole_days())
-        }
-    }
+    format_timestamp_age(timestamp)
 }
 
 #[cfg(test)]
@@ -168,7 +138,7 @@ mod tests {
     #[sinex_test]
     async fn format_age_seconds() -> TestResult<()> {
         let ts = make_timestamp_seconds_ago(30);
-        let result = format_age(&ts);
+        let result = format_timestamp_age(&ts);
         assert!(
             result.ends_with("s ago"),
             "expected seconds ago, got: {result}"
@@ -179,7 +149,7 @@ mod tests {
     #[sinex_test]
     async fn format_age_minutes() -> TestResult<()> {
         let ts = make_timestamp_seconds_ago(120);
-        let result = format_age(&ts);
+        let result = format_timestamp_age(&ts);
         assert!(
             result.ends_with("m ago"),
             "expected minutes ago, got: {result}"
@@ -190,7 +160,7 @@ mod tests {
     #[sinex_test]
     async fn format_age_hours() -> TestResult<()> {
         let ts = make_timestamp_seconds_ago(7200);
-        let result = format_age(&ts);
+        let result = format_timestamp_age(&ts);
         assert!(
             result.ends_with("h ago"),
             "expected hours ago, got: {result}"
@@ -201,7 +171,7 @@ mod tests {
     #[sinex_test]
     async fn format_age_days() -> TestResult<()> {
         let ts = make_timestamp_seconds_ago(86400 * 3);
-        let result = format_age(&ts);
+        let result = format_timestamp_age(&ts);
         assert!(
             result.ends_with("d ago"),
             "expected days ago, got: {result}"
@@ -212,7 +182,7 @@ mod tests {
     #[sinex_test]
     async fn format_age_future() -> TestResult<()> {
         let ts = Timestamp::now() + Duration::seconds(120);
-        let result = format_age(&ts);
+        let result = format_timestamp_age(&ts);
         assert!(
             result.starts_with("in "),
             "expected future time, got: {result}"
@@ -223,7 +193,7 @@ mod tests {
     #[sinex_test]
     async fn format_age_zero() -> TestResult<()> {
         let ts = Timestamp::now();
-        let result = format_age(&ts);
+        let result = format_timestamp_age(&ts);
         // Should be "0s ago" or close to it
         assert!(
             result.ends_with("s ago"),
