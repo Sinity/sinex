@@ -1,10 +1,10 @@
 use clap::Subcommand;
 use color_eyre::Result;
-use inquire::{Select, Text};
 use std::process::Command;
 
 use crate::config::Config;
 use crate::model::OutputFormat;
+use crate::prompt;
 
 /// Config subcommands
 #[derive(Debug, Subcommand)]
@@ -78,31 +78,31 @@ fn config_init(force: bool) -> Result<()> {
     println!();
 
     // Default output format
-    let format_options = vec![
+    let format_options = [
         "table (human-readable)",
         "json (for scripting)",
         "yaml (for config files)",
     ];
-    let default_format = Select::new("Default output format:", format_options).prompt()?;
-    let default_format = match default_format {
+    let default_format = prompt::select("Default output format:", &format_options, 0)?;
+    let default_format = match default_format.as_str() {
         "json (for scripting)" => "json",
         "yaml (for config files)" => "yaml",
         _ => "table",
     };
 
-    let editor = Text::new("Preferred editor:")
-        .with_default(
-            &std::env::var("EDITOR")
-                .unwrap_or_else(|_| std::env::var("VISUAL").unwrap_or_else(|_| "vim".to_string())),
-        )
-        .with_help_message("Used by 'sinexctl config edit'")
-        .prompt()?;
+    let default_editor = std::env::var("EDITOR")
+        .unwrap_or_else(|_| std::env::var("VISUAL").unwrap_or_else(|_| "vim".to_string()));
+    let editor = prompt::text(
+        "Preferred editor",
+        Some(&default_editor),
+        Some("Used by 'sinexctl config edit'"),
+    )?;
 
-    let table_style = Select::new(
+    let table_style = prompt::select(
         "Table style:",
-        vec!["rounded", "ascii", "modern", "minimal"],
-    )
-    .prompt()?;
+        &["rounded", "ascii", "modern", "minimal"],
+        0,
+    )?;
 
     // Generate config TOML
     let mut config_content = String::new();

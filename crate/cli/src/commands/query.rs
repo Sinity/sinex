@@ -1,6 +1,5 @@
 use clap::Args;
 use console::style;
-use inquire::{Select, Text};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::query::{
     EventQuery, EventQueryResult, PayloadFilter, QueryResultEvent, SortDirection, TimeRange,
@@ -12,6 +11,7 @@ use crate::Result;
 use crate::client::GatewayClient;
 use crate::fmt::{format_json, format_yaml};
 use crate::model::OutputFormat;
+use crate::prompt;
 use crate::validation::parse_time_input;
 
 /// Query/search events
@@ -375,7 +375,7 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
     println!();
 
     // Time range selection
-    let time_options = vec![
+    let time_options = [
         "Last 15 minutes",
         "Last hour",
         "Last 6 hours",
@@ -384,53 +384,55 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
         "Last 30 days",
         "Custom range...",
     ];
-    let time_choice = Select::new("Time range:", time_options.clone())
-        .with_starting_cursor(1) // Default to "Last hour"
-        .prompt()?;
+    let time_choice = prompt::select("Time range:", &time_options, 1)?;
 
     let (since, until) = if time_choice == "Custom range..." {
-        let since_str = Text::new("Since (e.g., 1h, 2d, 2025-01-15):")
-            .with_help_message("Relative: 1h, 2d, 1w | Absolute: 2025-01-15")
-            .prompt()?;
-        let until_str = Text::new("Until (press Enter for now):")
-            .with_help_message("Leave empty for current time")
-            .prompt_skippable()?
-            .filter(|s| !s.is_empty());
+        let since_str = prompt::text(
+            "Since (e.g., 1h, 2d, 2025-01-15)",
+            None,
+            Some("Relative: 1h, 2d, 1w | Absolute: 2025-01-15"),
+        )?;
+        let until_str = prompt::optional_text(
+            "Until (press Enter for now)",
+            Some("Leave empty for current time"),
+        )?;
 
         let since_time = parse_time(&since_str)?;
         let until_time = until_str.map(|s| parse_time(&s)).transpose()?;
         (since_time, until_time)
     } else {
-        let since_time = parse_preset_time(time_choice)?;
+        let since_time = parse_preset_time(&time_choice)?;
         (since_time, None)
     };
 
-    let selected_sources = Text::new("Sources (comma-separated, optional):")
-        .with_help_message(
+    let selected_sources = prompt::optional_text(
+        "Sources (comma-separated, optional)",
+        Some(
             "Examples: shell.atuin, desktop.hyprland, system.journal. Leave empty to search all sources.",
-        )
-        .prompt_skippable()?
+        ),
+    )?
         .map(|input| parse_event_sources(&input))
         .transpose()?
         .unwrap_or_default();
 
-    let selected_types = Text::new("Event types (comma-separated, optional):")
-        .with_help_message(
+    let selected_types = prompt::optional_text(
+        "Event types (comma-separated, optional)",
+        Some(
             "Examples: shell.command, window.focused, file.created. Leave empty to search all event types.",
-        )
-        .prompt_skippable()?
+        ),
+    )?
         .map(|input| parse_event_types(&input))
         .transpose()?
         .unwrap_or_default();
 
     // Full-text search
-    let text = Text::new("Full-text search (optional):")
-        .with_help_message("Search across all event fields")
-        .prompt_skippable()?
-        .filter(|s| !s.is_empty());
+    let text = prompt::optional_text(
+        "Full-text search (optional)",
+        Some("Search across all event fields"),
+    )?;
 
     // Limit
-    let limit_str = Text::new("Maximum results:").with_default("100").prompt()?;
+    let limit_str = prompt::text("Maximum results", Some("100"), None)?;
     let limit =
         parse_query_limit_arg(&limit_str).map_err(|error| color_eyre::eyre::eyre!(error))?;
 
@@ -462,7 +464,7 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
         print!(" --event-type {et}");
     }
     // Convert time to CLI arg format
-    let since_arg = match time_choice {
+    let since_arg = match time_choice.as_str() {
         "Last 15 minutes" => "15m".to_string(),
         "Last hour" => "1h".to_string(),
         "Last 6 hours" => "6h".to_string(),

@@ -14,14 +14,13 @@ pub mod error;
 pub mod fmt;
 pub mod model;
 pub mod parse;
+pub mod prompt;
 pub mod validation;
 
 pub use client::GatewayClient;
 pub use color_eyre::Result;
 pub use config::{Config, default_rpc_url};
-pub use model::{FormatCapability, NodeRole, OutputFormat};
 pub use model::format_registry::{
-    registry as format_registry,
-    render_format_matrix_terminal,
-    validate_format,
+    registry as format_registry, render_format_matrix_terminal, validate_format,
 };
+pub use model::{FormatCapability, NodeRole, OutputFormat};
