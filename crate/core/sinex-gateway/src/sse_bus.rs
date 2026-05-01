@@ -38,9 +38,6 @@ pub const MAX_ACTIVE_SUBSCRIPTIONS: usize = 512;
 /// Prevents infinite retry loops when the DB persistently misses a confirmed event.
 const CONFIRMATION_RETRY_MAX_ATTEMPTS: u8 = 10;
 
-/// Heartbeat interval for keepalive messages.
-pub const HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
-
 // ─────────────────────────────────────────────────────────────────────
 // Message types
 // ─────────────────────────────────────────────────────────────────────

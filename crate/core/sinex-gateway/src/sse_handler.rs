@@ -6,8 +6,8 @@
 use crate::auth::Role;
 use crate::rpc_server::{AccessOutcome, RpcAuthContext, log_access_audit};
 use crate::sse_bus::{
-    HEARTBEAT_INTERVAL, SseErrorPayload, SseEventPayload, SseGapPayload, SseHeartbeatPayload,
-    SseMessage, SubscriptionBus,
+    SseErrorPayload, SseEventPayload, SseGapPayload, SseHeartbeatPayload, SseMessage,
+    SubscriptionBus,
 };
 use axum::extract::{Query, State};
 use axum::http::header::HeaderName;
@@ -15,6 +15,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
+use sinex_primitives::constants::services::HEARTBEAT_INTERVAL;
 use sinex_primitives::Timestamp;
 use sinex_primitives::events::Event;
 use sinex_primitives::query::SubscriptionFilter;
