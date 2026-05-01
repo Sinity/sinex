@@ -249,11 +249,6 @@ fn build_source_unit_manifest() -> SourceUnitManifest {
     let mut source_units = source_unit::all_source_units()
         .map(canonical_source_unit_descriptor)
         .collect::<Vec<_>>();
-    source_units.extend(
-        proof::source_unit_descriptors()
-            .copied()
-            .map(legacy_proof_source_unit_descriptor),
-    );
     source_units.sort_by(|left, right| left.subject.cmp(&right.subject));
 
     let mut obligations = proof::obligations()
@@ -340,52 +335,6 @@ fn canonical_source_unit_descriptor(
             .dedicated_build_rationale
             .map(str::to_string),
     }
-}
-
-fn legacy_proof_source_unit_descriptor(unit: proof::SourceUnitDescriptor) -> SourceUnitDescriptor {
-    SourceUnitDescriptor {
-        subject: unit.subject.as_str().to_string(),
-        id: unit.id.to_string(),
-        domain: unit.domain.to_string(),
-        role: unit.role.to_string(),
-        modes: unit.modes.iter().map(|mode| (*mode).to_string()).collect(),
-        acquisition_shape: unit.acquisition_shape.to_string(),
-        material_policy: unit.material_policy.to_string(),
-        checkpoint_policy: unit.checkpoint_policy.to_string(),
-        occurrence_policy: unit.occurrence_policy.to_string(),
-        output_event_type: unit.output_event_type.to_string(),
-        output_event_types: output_event_types_from_legacy(unit.output_event_type),
-        privacy_context: unit.privacy_context.to_string(),
-        retention_policy: "not_declared_in_legacy_proof_descriptor".to_string(),
-        resource_profile: unit.resource_profile.to_string(),
-        access_policy: unit.access_policy.to_string(),
-        service_policy: unit.service_policy.to_string(),
-        runner_pack: unit.runner_pack.to_string(),
-        package_impact: unit.package_impact.to_string(),
-        implementation_mode: unit.implementation_mode.to_string(),
-        proof_obligations: unit
-            .proof_obligations
-            .iter()
-            .map(|obligation| (*obligation).to_string())
-            .collect(),
-        crate_impact: unit.crate_impact.to_string(),
-        binary_impact: unit.binary_impact.to_string(),
-        nix_output_impact: unit.nix_output_impact.to_string(),
-        derivation_impact: unit.derivation_impact.to_string(),
-        sqlx_validation_impact: unit.sqlx_validation_impact.to_string(),
-        dedicated_build_rationale: unit.dedicated_build_rationale.map(str::to_string),
-    }
-}
-
-fn output_event_types_from_legacy(output_event_type: &str) -> Vec<SourceUnitEventType> {
-    output_event_type
-        .split(',')
-        .filter_map(|pair| pair.split_once('/'))
-        .map(|(source, event_type)| SourceUnitEventType {
-            source: source.to_string(),
-            event_type: event_type.to_string(),
-        })
-        .collect()
 }
 
 fn runner_pack_manifests(source_units: &[SourceUnitDescriptor]) -> Vec<RunnerPackManifest> {

@@ -657,13 +657,13 @@
       "domain": "terminal",
       "role": "source_adapter",
       "modes": [
-        "historical",
-        "continuous"
+        "continuous",
+        "historical"
       ],
-      "acquisition_shape": "sqlite_row_stream",
-      "material_policy": "canonical_json_lines",
-      "checkpoint_policy": "sqlite_row_id",
-      "occurrence_policy": "natural_key:atuin.history.id",
+      "acquisition_shape": "mutable_snapshot",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "mutable_snapshot:sqlite:atuin_history_id",
+      "occurrence_policy": "natural_key",
       "output_event_type": "shell.atuin/command.executed",
       "output_event_types": [
         {
@@ -671,9 +671,9 @@
           "event_type": "command.executed"
         }
       ],
-      "privacy_context": "command_line_history",
-      "retention_policy": "not_declared_in_legacy_proof_descriptor",
-      "resource_profile": "bounded_sqlite_polling:256M",
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
       "access_policy": "target_home_read:.local/share/atuin/history.db",
       "service_policy": "dedicated_instance:on-failure",
       "runner_pack": "terminal",
@@ -696,12 +696,12 @@
       "domain": "terminal",
       "role": "source_adapter",
       "modes": [
-        "historical",
-        "continuous"
+        "continuous",
+        "historical"
       ],
-      "acquisition_shape": "append_only_file",
-      "material_policy": "canonical_json_lines",
-      "checkpoint_policy": "byte_offset_and_line",
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
       "occurrence_policy": "material_anchor",
       "output_event_type": "shell.history/command.imported",
       "output_event_types": [
@@ -710,9 +710,9 @@
           "event_type": "command.imported"
         }
       ],
-      "privacy_context": "command_line_history",
-      "retention_policy": "not_declared_in_legacy_proof_descriptor",
-      "resource_profile": "bounded_file_polling:256M",
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
       "access_policy": "target_home_read:.bash_history",
       "service_policy": "dedicated_instance:on-failure",
       "runner_pack": "terminal",
@@ -735,13 +735,13 @@
       "domain": "terminal",
       "role": "source_adapter",
       "modes": [
-        "historical",
-        "continuous"
+        "continuous",
+        "historical"
       ],
-      "acquisition_shape": "sqlite_row_stream",
-      "material_policy": "canonical_json_lines",
-      "checkpoint_policy": "sqlite_row_id",
-      "occurrence_policy": "sqlite_row_id",
+      "acquisition_shape": "mutable_snapshot",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "mutable_snapshot:sqlite:fish_history_row_id",
+      "occurrence_policy": "natural_key",
       "output_event_type": "shell.history.fish/command.executed",
       "output_event_types": [
         {
@@ -749,9 +749,9 @@
           "event_type": "command.executed"
         }
       ],
-      "privacy_context": "command_line_history",
-      "retention_policy": "not_declared_in_legacy_proof_descriptor",
-      "resource_profile": "bounded_sqlite_polling:256M",
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
       "access_policy": "target_home_read:.local/share/fish/fish_history",
       "service_policy": "dedicated_instance:on-failure",
       "runner_pack": "terminal",
@@ -774,12 +774,12 @@
       "domain": "terminal",
       "role": "source_adapter",
       "modes": [
-        "historical",
-        "continuous"
+        "continuous",
+        "historical"
       ],
-      "acquisition_shape": "append_only_file",
-      "material_policy": "canonical_json_lines",
-      "checkpoint_policy": "byte_offset_and_line",
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
       "occurrence_policy": "material_anchor",
       "output_event_type": "shell.history/command.imported",
       "output_event_types": [
@@ -788,9 +788,9 @@
           "event_type": "command.imported"
         }
       ],
-      "privacy_context": "command_line_history",
-      "retention_policy": "not_declared_in_legacy_proof_descriptor",
-      "resource_profile": "bounded_file_polling:256M",
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
       "access_policy": "target_home_read:.zsh_history",
       "service_policy": "dedicated_instance:on-failure",
       "runner_pack": "terminal",
