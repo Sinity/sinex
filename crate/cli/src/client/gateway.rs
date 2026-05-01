@@ -1451,6 +1451,25 @@ mod tests {
         ));
         Ok(())
     }
+
+    #[sinex_test]
+    async fn sse_parser_returns_structured_error_frames() -> TestResult<()> {
+        let mut state = SseFrameState::default();
+        state.push_chunk(
+            br#"event: error
+data: {"code":"serialization_error","message":"failed to serialize SSE event payload"}
+
+"#,
+        );
+
+        assert!(matches!(
+            state.try_parse_frame().transpose()?,
+            Some(SseClientMessage::Error { code, message })
+                if code == "serialization_error"
+                    && message == "failed to serialize SSE event payload"
+        ));
+        Ok(())
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1469,6 +1488,10 @@ pub enum SseClientMessage {
         dropped: u64,
     },
     Heartbeat,
+    Error {
+        code: String,
+        message: String,
+    },
 }
 
 /// Streaming SSE frame parser over a reqwest response.
@@ -1628,6 +1651,18 @@ impl SseFrameState {
                 })
             }
             "heartbeat" => Some(SseClientMessage::Heartbeat),
+            "error" => {
+                #[derive(Deserialize)]
+                struct ErrorWrapper {
+                    code: String,
+                    message: String,
+                }
+                let error: ErrorWrapper = serde_json::from_str(&self.current_data).ok()?;
+                Some(SseClientMessage::Error {
+                    code: error.code,
+                    message: error.message,
+                })
+            }
             _ => None, // Unknown event type
         }
     }
