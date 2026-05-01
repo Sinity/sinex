@@ -312,7 +312,7 @@ impl ReplayExecutionEngine {
         repo_tx
             .expand_cascade(
                 &table_name,
-                i32::try_from(crate::cascade_analyzer::DEFAULT_CASCADE_MAX_DEPTH)
+                i32::try_from(sinex_primitives::constants::replay::DEFAULT_CASCADE_MAX_DEPTH)
                     .unwrap_or(i32::MAX),
             )
             .await
