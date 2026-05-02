@@ -24,7 +24,6 @@ use sinex_db::replay::state_machine::{
 };
 
 impl ReplayExecutionEngine {
-
     /// Record replacement relations between archived (old) events and newly-created events.
     ///
     /// After a successful replay scan, this queries for:
@@ -178,8 +177,6 @@ impl ReplayExecutionEngine {
     /// - The cascade analyzer's integrity-violation check (`cascade_analyzer.rs`)
     ///   catches dangling references before the next replay of the same scope,
     ///   so the race is detectable and self-healing rather than silent.
-    ///   so the window is narrow and the blast radius (one dangling reference
-    ///   per replay) is negligible.
     pub(crate) async fn replay_events(
         &self,
         operation_id: Uuid,
@@ -265,15 +262,13 @@ impl ReplayExecutionEngine {
             "Archived replay cascade, dispatching scan to node"
         );
 
-        // TODO(#554): transactional outbox — archive_cascade commits to the DB above, but
-        // publish_scope_invalidations below is a separate NATS operation with no transactional
-        // coupling. If the process crashes between these two points, the archive is durable but
-        // the scope invalidation signals are permanently lost, leaving derived nodes with stale
-        // cached state until the next replay or manual reconciliation. A transactional outbox
-        // (write invalidation rows inside the archive TX, publish-and-delete after commit with
-        // retry on failure) would close this gap. For now, `abort_before_scan_ack` handles the
-        // "process survives but NATS fails" case by restoring the cascade; crash recovery is not
-        // covered.
+        // This DB commit -> NATS publish boundary is intentionally handled as a
+        // replay saga, not a transactional outbox. Issue #554 closed with that
+        // design decision: if the process survives a publish failure, restore
+        // the cascade and emit compensating invalidations; if the process dies
+        // in the narrow post-commit window, surface the ERROR and rely on the
+        // replay integrity checks/operator recovery rather than reintroducing
+        // the retired outbox machinery.
 
         // Publish scope invalidation signals for archived derived events
         if !scope_metadata.is_empty()
