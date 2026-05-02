@@ -9,15 +9,15 @@ use crate::rpc_server::RpcAuthContext;
 use crate::service_container::ServiceContainer;
 use serde_json::Value as JsonValue;
 use sinex_primitives::coordination::CoordinationKvClient;
-use sinex_primitives::error::SinexError;
 use sinex_primitives::rpc::methods;
+use sinex_primitives::{Result, error::SinexError};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
 /// Wraps an async function into a closure returning a pinned boxed future,
-/// automatically converting errors via `Into::into`.
+/// preserving the handler's structured `SinexError` result.
 ///
 /// # Examples
 /// ```ignore
@@ -32,13 +32,13 @@ use std::sync::Arc;
 /// ```
 macro_rules! boxed {
     ($f:expr) => {
-        |a, b| Box::pin(async move { $f(a, b).await.map_err(Into::into) })
+        |a, b| Box::pin(async move { $f(a, b).await })
     };
     ($f:expr, 3) => {
-        |a, b, c| Box::pin(async move { $f(a, b, c).await.map_err(Into::into) })
+        |a, b, c| Box::pin(async move { $f(a, b, c).await })
     };
     ($f:expr, 4) => {
-        |a, b, c, d| Box::pin(async move { $f(a, b, c, d).await.map_err(Into::into) })
+        |a, b, c, d| Box::pin(async move { $f(a, b, c, d).await })
     };
 }
 
@@ -51,8 +51,7 @@ type HandlerFn = Arc<
             JsonValue,
             &'a ServiceContainer,
             &'a RpcAuthContext,
-        )
-            -> Pin<Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>>
+        ) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>
         + Send
         + Sync,
 >;
@@ -97,9 +96,8 @@ impl RpcRegistry {
                 JsonValue,
                 &'a ServiceContainer,
                 &'a RpcAuthContext,
-            ) -> Pin<
-                Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>,
-            > + Send
+            ) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>
+            + Send
             + Sync
             + 'static,
     {
@@ -121,9 +119,8 @@ impl RpcRegistry {
         F: for<'a> Fn(
                 &'a sqlx::PgPool,
                 JsonValue,
-            ) -> Pin<
-                Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>,
-            > + Send
+            ) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>
+            + Send
             + Sync
             + 'static,
     {
@@ -150,9 +147,8 @@ impl RpcRegistry {
                 &'a sqlx::PgPool,
                 JsonValue,
                 &'a RpcAuthContext,
-            ) -> Pin<
-                Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>,
-            > + Send
+            ) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>
+            + Send
             + Sync
             + 'static,
     {
@@ -180,9 +176,8 @@ impl RpcRegistry {
                 &'a ReplayControlClient,
                 JsonValue,
                 &'a RpcAuthContext,
-            ) -> Pin<
-                Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>,
-            > + Send
+            ) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>
+            + Send
             + Sync
             + 'static,
     {
@@ -194,7 +189,7 @@ impl RpcRegistry {
                     let f = Arc::clone(&f);
                     Box::pin(async move {
                         let client = services.replay_control.as_ref().ok_or_else(|| {
-                            color_eyre::eyre::eyre!("Replay control bus is not initialized")
+                            SinexError::configuration("Replay control bus is not initialized")
                         })?;
                         f(client, params, auth).await
                     })
@@ -214,9 +209,8 @@ impl RpcRegistry {
                 &'a async_nats::Client,
                 &'a sinex_primitives::environment::SinexEnvironment,
                 JsonValue,
-            ) -> Pin<
-                Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>,
-            > + Send
+            ) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>
+            + Send
             + Sync
             + 'static,
     {
@@ -228,7 +222,7 @@ impl RpcRegistry {
                     let f = Arc::clone(&f);
                     Box::pin(async move {
                         let nats = services.nats_client().ok_or_else(|| {
-                            color_eyre::eyre::eyre!("NATS client is not available")
+                            SinexError::configuration("NATS client is not available")
                         })?;
                         let env = services.environment();
                         f(nats, env, params).await
@@ -250,9 +244,8 @@ impl RpcRegistry {
                 &'a sinex_primitives::environment::SinexEnvironment,
                 JsonValue,
                 &'a RpcAuthContext,
-            ) -> Pin<
-                Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>,
-            > + Send
+            ) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>
+            + Send
             + Sync
             + 'static,
     {
@@ -264,7 +257,7 @@ impl RpcRegistry {
                     let f = Arc::clone(&f);
                     Box::pin(async move {
                         let nats = services.nats_client().ok_or_else(|| {
-                            color_eyre::eyre::eyre!("NATS client is not available")
+                            SinexError::configuration("NATS client is not available")
                         })?;
                         let env = services.environment();
                         f(nats, env, params, auth).await
@@ -284,9 +277,8 @@ impl RpcRegistry {
         F: for<'a> Fn(
                 &'a CoordinationKvClient,
                 JsonValue,
-            ) -> Pin<
-                Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>,
-            > + Send
+            ) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>
+            + Send
             + Sync
             + 'static,
     {
@@ -302,7 +294,7 @@ impl RpcRegistry {
                             .as_ref()
                             .map(std::convert::AsRef::as_ref)
                             .ok_or_else(|| {
-                                color_eyre::eyre::eyre!(
+                                SinexError::configuration(
                                     "Coordination client is not initialized (NATS connection required)"
                                 )
                             })?;
@@ -341,19 +333,18 @@ impl RpcRegistry {
         params: JsonValue,
         services: &ServiceContainer,
         auth: &RpcAuthContext,
-    ) -> color_eyre::eyre::Result<JsonValue> {
+    ) -> Result<JsonValue> {
         let entry = self
             .methods
             .get(method)
-            .ok_or_else(|| color_eyre::eyre::eyre!("Unknown method: {}", method))?;
+            .ok_or_else(|| SinexError::not_found(format!("Unknown method: {method}")))?;
 
         // Check authorization
         if !auth.has_permission(entry.required_role) {
             return Err(SinexError::permission_denied(format!(
                 "Operation '{}' requires {:?} role, but token has {:?}",
                 method, entry.required_role, auth.role
-            ))
-            .into());
+            )));
         }
 
         // Invoke handler
@@ -414,33 +405,21 @@ fn build_registry_impl() -> RpcRegistry {
             methods::SYSTEM_PING,
             Role::ReadOnly,
             |params, services, _auth| {
-                Box::pin(async move {
-                    handle_system_ping(services, params)
-                        .await
-                        .map_err(Into::into)
-                })
+                Box::pin(async move { handle_system_ping(services, params).await })
             },
         )
         .register(
             methods::SYSTEM_VERSION,
             Role::ReadOnly,
             |params, services, _auth| {
-                Box::pin(async move {
-                    handle_system_version(services, params)
-                        .await
-                        .map_err(Into::into)
-                })
+                Box::pin(async move { handle_system_version(services, params).await })
             },
         )
         .register(
             methods::SYSTEM_HEALTH,
             Role::ReadOnly,
             |params, services, _auth| {
-                Box::pin(async move {
-                    handle_system_health(services, params)
-                        .await
-                        .map_err(Into::into)
-                })
+                Box::pin(async move { handle_system_health(services, params).await })
             },
         )
         // Composable event query methods (ReadOnly)
@@ -479,10 +458,10 @@ fn build_registry_impl() -> RpcRegistry {
         )
         // DLQ read methods (ReadOnly)
         .register("dlq.list", Role::ReadOnly, |params, services, _auth| {
-            Box::pin(async move { handle_dlq_list(services, params).await.map_err(Into::into) })
+            Box::pin(async move { handle_dlq_list(services, params).await })
         })
         .register("dlq.peek", Role::ReadOnly, |params, services, _auth| {
-            Box::pin(async move { handle_dlq_peek(services, params).await.map_err(Into::into) })
+            Box::pin(async move { handle_dlq_peek(services, params).await })
         })
         // Node listing (ReadOnly)
         .nats_rpc("nodes.list", Role::ReadOnly, boxed!(handle_nodes_list, 3))
@@ -591,20 +570,14 @@ fn build_registry_impl() -> RpcRegistry {
         // ─────────────────────────────────────────────────────────────
         // PKM methods (Write)
         .register("pkm.create_note", Role::Write, |params, services, auth| {
-            Box::pin(async move {
-                handle_create_note(services.pkm.as_ref(), params, auth)
-                    .await
-                    .map_err(Into::into)
-            })
+            Box::pin(async move { handle_create_note(services.pkm.as_ref(), params, auth).await })
         })
         .register(
             "pkm.create_entities_from_list",
             Role::Write,
             |params, services, auth| {
                 Box::pin(async move {
-                    handle_create_entities(services.pkm.as_ref(), params, auth)
-                        .await
-                        .map_err(Into::into)
+                    handle_create_entities(services.pkm.as_ref(), params, auth).await
                 })
             },
         )
@@ -612,11 +585,9 @@ fn build_registry_impl() -> RpcRegistry {
             "pkm.link_entities",
             Role::Write,
             |params, services, auth| {
-                Box::pin(async move {
-                    handle_link_entities(services.pkm.as_ref(), params, auth)
-                        .await
-                        .map_err(Into::into)
-                })
+                Box::pin(
+                    async move { handle_link_entities(services.pkm.as_ref(), params, auth).await },
+                )
             },
         )
         // Content methods (Write)
@@ -624,22 +595,14 @@ fn build_registry_impl() -> RpcRegistry {
             "content.store_blob",
             Role::Write,
             |params, services, auth| {
-                Box::pin(async move {
-                    handle_store_blob(services, params, auth)
-                        .await
-                        .map_err(Into::into)
-                })
+                Box::pin(async move { handle_store_blob(services, params, auth).await })
             },
         )
         .register(
             "content.retrieve_blob",
             Role::ReadOnly,
             |params, services, _auth| {
-                Box::pin(async move {
-                    handle_retrieve_blob(services, params)
-                        .await
-                        .map_err(Into::into)
-                })
+                Box::pin(async move { handle_retrieve_blob(services, params).await })
             },
         )
         // Node operations (Write - affects system but not destructive)
@@ -689,18 +652,10 @@ fn build_registry_impl() -> RpcRegistry {
         )
         // DLQ mutation methods (Admin)
         .register("dlq.requeue", Role::Admin, |params, services, auth| {
-            Box::pin(async move {
-                handle_dlq_requeue(services, params, auth)
-                    .await
-                    .map_err(Into::into)
-            })
+            Box::pin(async move { handle_dlq_requeue(services, params, auth).await })
         })
         .register("dlq.purge", Role::Admin, |params, services, auth| {
-            Box::pin(async move {
-                handle_dlq_purge(services, params, auth)
-                    .await
-                    .map_err(Into::into)
-            })
+            Box::pin(async move { handle_dlq_purge(services, params, auth).await })
         })
         // Operations cancel (Admin)
         .pool_auth_rpc("ops.cancel", Role::Admin, boxed!(handle_ops_cancel, 3))
@@ -764,24 +719,12 @@ fn build_registry_impl() -> RpcRegistry {
         )
         // Shadow consumer mutations (Admin)
         .register("shadow.create", Role::Admin, |params, services, _auth| {
-            Box::pin(async move {
-                handle_shadow_create(services, params)
-                    .await
-                    .map_err(Into::into)
-            })
+            Box::pin(async move { handle_shadow_create(services, params).await })
         })
         .register("shadow.list", Role::ReadOnly, |params, services, _auth| {
-            Box::pin(async move {
-                handle_shadow_list(services, params)
-                    .await
-                    .map_err(Into::into)
-            })
+            Box::pin(async move { handle_shadow_list(services, params).await })
         })
         .register("shadow.delete", Role::Admin, |params, services, auth| {
-            Box::pin(async move {
-                handle_shadow_delete(services, params, auth)
-                    .await
-                    .map_err(Into::into)
-            })
+            Box::pin(async move { handle_shadow_delete(services, params, auth).await })
         })
 }
