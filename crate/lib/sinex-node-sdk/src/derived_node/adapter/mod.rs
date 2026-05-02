@@ -133,7 +133,6 @@ fn log_self_observation_failure(
     );
 }
 
-
 /// Shared runtime adapter for all derived node models.
 ///
 /// Generic over `N: DerivedNodeImpl`, which is implemented by the wrapper types
@@ -545,10 +544,7 @@ where
         let batch_size = matching.len();
         // Sample the lag of the oldest event in the batch — operators
         // care about the worst-case backlog, not the average.
-        let max_lag_ms = matching
-            .iter()
-            .map(event_lag_ms)
-            .fold(0.0_f64, f64::max);
+        let max_lag_ms = matching.iter().map(event_lag_ms).fold(0.0_f64, f64::max);
         let start = std::time::Instant::now();
         let outputs = self.process_batch(matching).await?;
         let batch_runtime_ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -690,15 +686,6 @@ where
         ))
     }
 
-    fn get_coverage_analysis(
-        &self,
-        _time_range: Option<(Timestamp, Timestamp)>,
-    ) -> NodeResult<crate::exploration::CoverageAnalysis> {
-        crate::exploration::coverage_analysis_unavailable(
-            "coverage analysis is not implemented for derived nodes",
-        )
-    }
-
     fn export_data(
         &self,
         _path: &sinex_primitives::domain::SanitizedPath,
@@ -721,7 +708,6 @@ pub type WindowedNodeAdapter<N> = DerivedNodeAdapter<super::traits::WindowedWrap
 /// Adapter for a `ScopeReconcilerNode` implementation.
 pub type ScopeReconcilerNodeAdapter<N> =
     DerivedNodeAdapter<super::traits::ScopeReconcilerWrapper<N>>;
-
 
 #[cfg(test)]
 mod tests;

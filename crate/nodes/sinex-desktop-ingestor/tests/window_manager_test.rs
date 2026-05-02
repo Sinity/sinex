@@ -209,19 +209,6 @@ async fn desktop_node_creation() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn desktop_node_reports_coverage_analysis_unavailable() -> TestResult<()> {
-    let node = DesktopNode::new();
-    let error = IngestorNode::get_coverage_analysis(
-        &node,
-        &sinex_desktop_ingestor::unified_node::DesktopPersistentState::default(),
-        None,
-    )
-    .expect_err("desktop node should not fabricate coverage analysis");
-    assert!(error.to_string().contains("not implemented"));
-    Ok(())
-}
-
-#[sinex_test]
 async fn desktop_node_reports_ingestion_history_unavailable() -> TestResult<()> {
     let node = DesktopNode::new();
     let error = IngestorNode::get_ingestion_history(
