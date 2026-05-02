@@ -8,10 +8,9 @@ use tabled::{builder::Builder, settings::Style};
 use color_eyre::eyre::WrapErr;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
-use crate::history::query::HistoryAnalysis;
 use crate::history::{
-    DiagnosticQuery, ExerciseResultRow, HistoryDb, InvocationQuery, InvocationStatus,
-    InvocationTimelineEntry, LifecycleStatus, ResourceUsage,
+    DiagnosticQuery, ExerciseResultRow, HistoryAnalysis, HistoryDb, InvocationQuery,
+    InvocationStatus, InvocationTimelineEntry, LifecycleStatus, ResourceUsage,
 };
 
 mod test_commands;
