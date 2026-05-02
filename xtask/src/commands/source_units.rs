@@ -167,6 +167,7 @@ struct SourceUnitValidation {
     unmapped_runner_packs: Vec<String>,
     invalid_physical_impact: Vec<String>,
     invalid_output_event_pairs: Vec<String>,
+    unbacked_output_event_pairs: Vec<String>,
     runner_packs_with_multiple_units: Vec<String>,
     stale_manifest: bool,
 }
@@ -219,6 +220,7 @@ fn execute_check(output: Option<&Path>, ctx: &CommandContext) -> Result<CommandR
         || !validation.unmapped_runner_packs.is_empty()
         || !validation.invalid_physical_impact.is_empty()
         || !validation.invalid_output_event_pairs.is_empty()
+        || !validation.unbacked_output_event_pairs.is_empty()
         || validation.runner_packs_with_multiple_units.is_empty()
         || validation.stale_manifest;
 
@@ -531,16 +533,34 @@ fn validate_source_units(
     let invalid_output_event_pairs = source_units
         .iter()
         .flat_map(|unit| {
-            unit.output_event_types
-                .iter()
-                .filter_map(|event_pair| {
-                    let pair = (event_pair.source.as_str(), event_pair.event_type.as_str());
-                    (!payload_pairs.contains(&pair)).then(|| {
-                        format!(
-                            "{}:{}/{}",
-                            unit.subject, event_pair.source, event_pair.event_type
-                        )
-                    })
+            unit.output_event_types.iter().filter_map(|event_pair| {
+                let pair = (event_pair.source.as_str(), event_pair.event_type.as_str());
+                (!payload_pairs.contains(&pair)).then(|| {
+                    format!(
+                        "{}:{}/{}",
+                        unit.subject, event_pair.source, event_pair.event_type
+                    )
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    let unbacked_output_event_pairs = source_units
+        .iter()
+        .flat_map(|unit| {
+            static_emitter_event_pairs(&unit.id)
+                .into_iter()
+                .flat_map(move |backed_pairs| {
+                    unit.output_event_types
+                        .iter()
+                        .filter_map(move |event_pair| {
+                            let pair = (event_pair.source.as_str(), event_pair.event_type.as_str());
+                            (!backed_pairs.contains(&pair)).then(|| {
+                                format!(
+                                    "{}:{}/{}",
+                                    unit.subject, event_pair.source, event_pair.event_type
+                                )
+                            })
+                        })
                 })
         })
         .collect::<Vec<_>>();
@@ -563,6 +583,7 @@ fn validate_source_units(
         unmapped_runner_packs,
         invalid_physical_impact,
         invalid_output_event_pairs,
+        unbacked_output_event_pairs,
         runner_packs_with_multiple_units,
         stale_manifest,
     }
@@ -633,6 +654,22 @@ fn runner_pack_binary(runner_pack: &str) -> Option<&'static str> {
         "terminal-canonicalizer" => Some("sinex-terminal-command-canonicalizer"),
         _ => None,
     }
+}
+
+fn static_emitter_event_pairs(
+    source_unit_id: &str,
+) -> Option<BTreeSet<(&'static str, &'static str)>> {
+    let pairs = match source_unit_id {
+        "terminal.monitor" => &[("terminal", "shell.terminal_monitoring_started")][..],
+        "terminal.text-history"
+        | "terminal.bash-history"
+        | "terminal.zsh-history"
+        | "terminal.fish-history" => &[("shell.history", "command.imported")][..],
+        "terminal.atuin-history" => &[("shell.atuin", "command.executed")][..],
+        "terminal-canonicalizer" => &[("canonical.terminal", "command.canonical")][..],
+        _ => return None,
+    };
+    Some(pairs.iter().copied().collect())
 }
 
 fn source_unit_service_name(source_unit_id: &str) -> String {
@@ -747,10 +784,7 @@ mod tests {
             .iter()
             .find(|unit| unit.id == "terminal-canonicalizer")
             .expect("terminal canonicalizer descriptor should be present");
-        assert_eq!(
-            terminal_canonicalizer.runner_pack,
-            "terminal-canonicalizer"
-        );
+        assert_eq!(terminal_canonicalizer.runner_pack, "terminal-canonicalizer");
         assert_eq!(
             terminal_canonicalizer.implementation_mode,
             "rust_in_pack:terminal-canonicalizer"
@@ -769,6 +803,7 @@ mod tests {
         assert!(validation.unmapped_runner_packs.is_empty());
         assert!(validation.invalid_physical_impact.is_empty());
         assert!(validation.invalid_output_event_pairs.is_empty());
+        assert!(validation.unbacked_output_event_pairs.is_empty());
         assert!(
             validation
                 .runner_packs_with_multiple_units
@@ -795,6 +830,35 @@ mod tests {
         assert_eq!(
             validation.invalid_output_event_pairs,
             vec!["source_unit:fs:missing/source.event".to_string()]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_unit_validation_rejects_registered_but_unbacked_terminal_pairs()
+    -> TestResult<()> {
+        let manifest = build_source_unit_manifest();
+        let mut unit = manifest
+            .source_units
+            .iter()
+            .find(|unit| unit.id == "terminal.fish-history")
+            .expect("fish descriptor should be present")
+            .clone();
+        unit.output_event_types = vec![SourceUnitEventType {
+            source: "shell.history.fish".to_string(),
+            event_type: "command.executed".to_string(),
+        }];
+
+        let validation = validate_source_units(&[unit], false);
+        assert!(
+            validation.invalid_output_event_pairs.is_empty(),
+            "fish command.executed is a registered payload pair, so this must be caught by emitter validation"
+        );
+        assert_eq!(
+            validation.unbacked_output_event_pairs,
+            vec![
+                "source_unit:terminal.fish-history:shell.history.fish/command.executed".to_string()
+            ]
         );
         Ok(())
     }
