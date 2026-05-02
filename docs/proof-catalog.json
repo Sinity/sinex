@@ -46,8 +46,8 @@
       "proof_obligations": []
     },
     {
-      "subject": "source_unit:browser",
-      "id": "browser",
+      "subject": "source_unit:browser.history",
+      "id": "browser.history",
       "namespace": "web",
       "runner_pack": "browser",
       "modes": [
@@ -588,7 +588,7 @@
       "subject": "source_unit:terminal-canonicalizer",
       "id": "terminal-canonicalizer",
       "namespace": "derived",
-      "runner_pack": "terminal",
+      "runner_pack": "terminal-canonicalizer",
       "modes": [
         "continuous"
       ],
@@ -605,7 +605,7 @@
       "occurrence_identity": "uuid5:(source_unit, parent_event_id)",
       "access_policy": "event_stream_read",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
+      "implementation_mode": "rust_in_pack:terminal-canonicalizer",
       "proof_obligations": []
     },
     {
@@ -2305,6 +2305,16 @@
       "subject": "xtask_command:run.tether",
       "path": "run.tether",
       "about": "Connect to a remote environment via The Tether"
+    },
+    {
+      "subject": "xtask_command:schema",
+      "path": "schema",
+      "about": "Schema verification command group"
+    },
+    {
+      "subject": "xtask_command:schema.strict-diff",
+      "path": "schema.strict-diff",
+      "about": "Detect strict schema drift that declarative apply does not reconcile"
     },
     {
       "subject": "xtask_command:source-units",

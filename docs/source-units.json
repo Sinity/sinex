@@ -42,8 +42,8 @@
       "dedicated_build_rationale": null
     },
     {
-      "subject": "source_unit:browser",
-      "id": "browser",
+      "subject": "source_unit:browser.history",
+      "id": "browser.history",
       "domain": "web",
       "role": "source_adapter",
       "modes": [
@@ -780,9 +780,9 @@
       "resource_profile": "continuous",
       "access_policy": "event_stream_read",
       "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "terminal",
+      "runner_pack": "terminal-canonicalizer",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
+      "implementation_mode": "rust_in_pack:terminal-canonicalizer",
       "proof_obligations": [],
       "crate_impact": "0",
       "binary_impact": "0",
@@ -1034,7 +1034,7 @@
     {
       "id": "browser",
       "source_unit_ids": [
-        "browser"
+        "browser.history"
       ],
       "shared_binary": "sinex-browser-ingestor",
       "source_unit_count": 1
@@ -1113,7 +1113,6 @@
     {
       "id": "terminal",
       "source_unit_ids": [
-        "terminal-canonicalizer",
         "terminal.atuin-history",
         "terminal.bash-history",
         "terminal.fish-history",
@@ -1122,7 +1121,15 @@
         "terminal.zsh-history"
       ],
       "shared_binary": "sinex-terminal-ingestor",
-      "source_unit_count": 7
+      "source_unit_count": 6
+    },
+    {
+      "id": "terminal-canonicalizer",
+      "source_unit_ids": [
+        "terminal-canonicalizer"
+      ],
+      "shared_binary": "sinex-terminal-command-canonicalizer",
+      "source_unit_count": 1
     }
   ],
   "services": [
@@ -1136,12 +1143,12 @@
       "host_identity": "runtime_hostname"
     },
     {
-      "source_unit_id": "browser",
-      "service_name": "sinex-source@browser",
+      "source_unit_id": "browser.history",
+      "service_name": "sinex-source@browser.history",
       "runner_pack": "browser",
       "binary": "sinex-browser-ingestor",
-      "checkpoint_identity": "browser",
-      "control_identity": "browser",
+      "checkpoint_identity": "browser.history",
+      "control_identity": "browser.history",
       "host_identity": "runtime_hostname"
     },
     {
@@ -1282,8 +1289,8 @@
     {
       "source_unit_id": "terminal-canonicalizer",
       "service_name": "sinex-source@terminal-canonicalizer",
-      "runner_pack": "terminal",
-      "binary": "sinex-terminal-ingestor",
+      "runner_pack": "terminal-canonicalizer",
+      "binary": "sinex-terminal-command-canonicalizer",
       "checkpoint_identity": "terminal-canonicalizer",
       "control_identity": "terminal-canonicalizer",
       "host_identity": "runtime_hostname"
