@@ -1,12 +1,12 @@
 //! System RPC handlers.
 
 use crate::service_container::{GatewayHealthReport, GatewayHealthStatus, ServiceContainer};
-use color_eyre::eyre::{Context, Result};
 use serde_json::Value;
 use sinex_primitives::domain::HealthStatus;
 use sinex_primitives::rpc::system::{
     ComponentHealth, ComponentsHealth, ReplayControlHealth, SystemHealthResponse,
 };
+use sinex_primitives::{Result, SinexError};
 
 pub async fn handle_system_ping(_services: &ServiceContainer, _params: Value) -> Result<Value> {
     Ok(system_ping_response())
@@ -18,7 +18,10 @@ pub async fn handle_system_version(_services: &ServiceContainer, _params: Value)
 
 pub async fn handle_system_health(services: &ServiceContainer, _params: Value) -> Result<Value> {
     let response = system_health_response(services.health_report().await);
-    serde_json::to_value(response).wrap_err("failed to serialize system.health response")
+    serde_json::to_value(response).map_err(|error| {
+        SinexError::serialization("failed to serialize system.health response")
+            .with_std_error(&error)
+    })
 }
 
 pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealthResponse {

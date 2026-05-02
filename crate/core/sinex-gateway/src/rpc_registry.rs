@@ -414,21 +414,33 @@ fn build_registry_impl() -> RpcRegistry {
             methods::SYSTEM_PING,
             Role::ReadOnly,
             |params, services, _auth| {
-                Box::pin(async move { handle_system_ping(services, params).await })
+                Box::pin(async move {
+                    handle_system_ping(services, params)
+                        .await
+                        .map_err(Into::into)
+                })
             },
         )
         .register(
             methods::SYSTEM_VERSION,
             Role::ReadOnly,
             |params, services, _auth| {
-                Box::pin(async move { handle_system_version(services, params).await })
+                Box::pin(async move {
+                    handle_system_version(services, params)
+                        .await
+                        .map_err(Into::into)
+                })
             },
         )
         .register(
             methods::SYSTEM_HEALTH,
             Role::ReadOnly,
             |params, services, _auth| {
-                Box::pin(async move { handle_system_health(services, params).await })
+                Box::pin(async move {
+                    handle_system_health(services, params)
+                        .await
+                        .map_err(Into::into)
+                })
             },
         )
         // Composable event query methods (ReadOnly)
