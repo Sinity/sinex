@@ -18,8 +18,8 @@ use std::{collections::HashMap, fmt, str::FromStr};
 use tracing::{debug, info};
 
 use super::{
-    VerificationStatus, deployment_descriptor_result, run_command_with_timeout,
-    runtime_database_expected,
+    VerificationStatus, connect_preflight_database_pool, deployment_descriptor_result,
+    run_command_with_timeout, runtime_database_expected,
 };
 
 /// `SystemD` service status enumeration
@@ -283,9 +283,6 @@ async fn verify_binary_availability(messages: &mut Vec<String>) -> NodeResult<Va
     let require_service_binaries = descriptor.is_none();
 
     let mut required_binaries = vec![("systemctl", "SystemD control", true)];
-    if runtime_database_expected()? {
-        required_binaries.push(("psql", "PostgreSQL client", true));
-    }
     if require_service_binaries {
         required_binaries.splice(
             0..0,
@@ -306,6 +303,7 @@ async fn verify_binary_availability(messages: &mut Vec<String>) -> NodeResult<Va
     let optional_binaries = vec![
         ("git", "Git version control"),
         ("git-annex", "Hybrid content storage"),
+        ("psql", "PostgreSQL client"),
         ("kitty", "Kitty terminal emulator"),
         ("hyprctl", "Hyprland control"),
         ("atuin", "Shell history"),
@@ -694,29 +692,18 @@ async fn verify_postgresql_service(messages: &mut Vec<String>) -> NodeResult<Val
 async fn test_postgresql_connectivity() -> NodeResult<Value> {
     let database_url = super::resolve_database_url()?;
 
-    let test_output =
-        run_command_with_timeout("psql", &[&database_url, "-c", "SELECT version();"]).await?;
+    let pool = connect_preflight_database_pool(&database_url).await?;
+    let version: String = sqlx::query_scalar("SELECT version()")
+        .fetch_one(&pool)
+        .await
+        .map_err(SinexError::from)?;
 
-    if test_output.status.success() {
-        let version_output = String::from_utf8_lossy(&test_output.stdout);
-        let version_line = version_output
-            .lines()
-            .find(|line| line.contains("PostgreSQL"))
-            .unwrap_or("PostgreSQL version unknown")
-            .trim();
-
-        Ok(json!({
-            "success": true,
-            "version": version_line,
-            "connection_string": redact_password(&database_url)
-        }))
-    } else {
-        let error_output = String::from_utf8_lossy(&test_output.stderr);
-        Err(SinexError::processing(format!(
-            "PostgreSQL connection test failed: {}",
-            error_output.trim()
-        )))
-    }
+    Ok(json!({
+        "success": true,
+        "version": version,
+        "connection_string": redact_password(&database_url),
+        "session_limits": "preflight_bounded"
+    }))
 }
 
 async fn verify_external_dependencies(messages: &mut Vec<String>) -> NodeResult<Value> {
