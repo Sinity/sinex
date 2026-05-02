@@ -36,9 +36,6 @@ use crate::error_helpers::{
 };
 use crate::{BufferedRecordMaterializer, NatsPublisher, deterministic_material_event_id};
 use async_nats::Client as NatsClient;
-use sinex_primitives::Id;
-use sinex_primitives::JsonValue;
-use sinex_primitives::Timestamp;
 use sinex_primitives::events::payloads::{
     AssemblyStatsPayload, GatewayRequestStatsPayload, HealthStatusPayload,
     IngestdBatchStatsPayload, MetricCounterPayload, MetricGaugePayload, MetricHistogramPayload,
@@ -46,6 +43,7 @@ use sinex_primitives::events::payloads::{
     StreamStatsPayload,
 };
 use sinex_primitives::events::{Event, Provenance, SourceMaterial};
+use sinex_primitives::{Id, JsonValue, SinexError, Timestamp};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -311,7 +309,7 @@ impl SelfObserver {
             }
         };
 
-        let mut event = Event::builder(payload)
+        let mut event = match Event::builder(payload)
             .with_provenance(Provenance::from_material(
                 Id::<SourceMaterial>::from_uuid(anchor.material_id),
                 anchor.offset_start,
@@ -319,9 +317,13 @@ impl SelfObserver {
                 Some(anchor.offset_end),
             ))
             .build()
-            .expect("valid provenance: builder always sets it")
-            .with_timestamp(ts_orig)
-            .with_host(host);
+        {
+            Ok(event) => event.with_timestamp(ts_orig).with_host(host),
+            Err(error) => {
+                self.release_metric_slot(&metric_key).await;
+                return Err(SelfObservationError::Build(error));
+            }
+        };
         let event_id = deterministic_material_event_id(
             event.source.as_str(),
             event.event_type.as_str(),
@@ -675,6 +677,8 @@ impl SelfObserver {
 /// Errors from self-observation emission
 #[derive(Debug, thiserror::Error)]
 pub enum SelfObservationError {
+    #[error("Failed to build self-observation event")]
+    Build(#[source] SinexError),
     #[error("Failed to serialize event: {0}")]
     Serialization(String),
     #[error("Self-observation materialization failed: {0}")]
