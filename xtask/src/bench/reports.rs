@@ -292,16 +292,16 @@ pub(super) fn generate_html(
 </body>
 </html>
 "#,
-        env.timestamp,
-        config.mode,
-        config.profile,
+        html_escape(&env.timestamp),
+        html_escape(&config.mode.to_string()),
+        html_escape(&config.profile),
         config.runs,
-        env.git_sha_short,
-        env.cpu_model,
+        html_escape(&env.git_sha_short),
+        html_escape(&env.cpu_model),
         env.cpu_cores,
         env.cpu_threads,
         env.memory_total_kb / 1024 / 1024,
-        env.rustc_version,
+        html_escape(&env.rustc_version),
         probe_issues_section,
         generate_results_table(results),
         history_section,
@@ -334,7 +334,10 @@ fn generate_results_table(results: &[ScenarioResult]) -> String {
 
     for result in results {
         table.push_str("<tr>\n");
-        table.push_str(&format!("<td>{}</td>\n", result.scenario.key()));
+        table.push_str(&format!(
+            "<td>{}</td>\n",
+            html_escape(&result.scenario.key())
+        ));
         table.push_str(&format!("<td>{:.1}</td>\n", result.stats.median_ms));
         table.push_str(&format!("<td>{:.1}</td>\n", result.stats.p95_ms));
         table.push_str(&format!("<td>{:.1}</td>\n", result.stats.mean_ms));
@@ -392,6 +395,8 @@ fn html_escape(input: &str) -> String {
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 fn generate_chart_data(results: &[ScenarioResult]) -> String {
@@ -420,7 +425,7 @@ fn build_history_section(report: &HistoryReport) -> String {
         html.push_str("<div class=\"meta\" style=\"margin-bottom: 12px;\">");
         html.push_str(&format!(
             "<div class=\"meta-item\"><div class=\"meta-label\">Scenario</div><div class=\"meta-value\">{}</div></div>",
-            scenario.scenario_key
+            html_escape(&scenario.scenario_key)
         ));
         let baseline = scenario
             .baseline
@@ -428,7 +433,7 @@ fn build_history_section(report: &HistoryReport) -> String {
             .map(|b| format!("{:.1} / {:.1} ms", b.median_ms, b.p95_ms));
         html.push_str(&format!(
             "<div class=\"meta-item\"><div class=\"meta-label\">Baseline median / p95</div><div class=\"meta-value\">{}</div></div>",
-            baseline.unwrap_or_else(|| "n/a".to_string())
+            html_escape(&baseline.unwrap_or_else(|| "n/a".to_string()))
         ));
         let baseline_tput = scenario
             .baseline
@@ -436,11 +441,11 @@ fn build_history_section(report: &HistoryReport) -> String {
             .map(|b| format!("{:.2} runs/s", b.throughput_runs_per_sec));
         html.push_str(&format!(
             "<div class=\"meta-item\"><div class=\"meta-label\">Baseline throughput</div><div class=\"meta-value\">{}</div></div>",
-            baseline_tput.unwrap_or_else(|| "n/a".to_string())
+            html_escape(&baseline_tput.unwrap_or_else(|| "n/a".to_string()))
         ));
         html.push_str(&format!(
             "<div class=\"meta-item\"><div class=\"meta-label\">Regression</div><div class=\"meta-value\">{}</div></div>",
-            scenario.regression_description()
+            html_escape(&scenario.regression_description())
         ));
         html.push_str("</div>");
 
@@ -451,12 +456,12 @@ fn build_history_section(report: &HistoryReport) -> String {
             for point in &scenario.trend {
                 html.push_str(&format!(
                     "<tr><td>{}</td><td>{:.1}</td><td>{:.1}</td><td>{:.1}</td><td>{:.2}</td><td>{}</td></tr>",
-                    point.timestamp,
+                    html_escape(&point.timestamp),
                     point.median_ms,
                     point.p95_ms,
                     point.mean_ms,
                     point.throughput_runs_per_sec,
-                    point.git_sha
+                    html_escape(&point.git_sha)
                 ));
             }
             html.push_str("</tbody></table>");
@@ -469,8 +474,14 @@ fn build_history_section(report: &HistoryReport) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_probe_issues_html, build_probe_issues_markdown};
+    use super::{
+        build_history_section, build_probe_issues_html, build_probe_issues_markdown,
+        generate_results_table, html_escape,
+    };
     use crate::bench::environment::Environment;
+    use crate::bench::history::{HistoryPoint, HistoryReport, ScenarioHistorySummary};
+    use crate::bench::runner::{RunResult, Scenario, ScenarioResult};
+    use crate::bench::stats::{Regression, RunStats};
     use crate::sandbox::sinex_test;
 
     fn sample_env() -> Environment {
@@ -514,6 +525,65 @@ mod tests {
         let html = build_probe_issues_html(&sample_env());
         assert!(html.contains("&lt;bad&gt;"));
         assert!(!html.contains("<bad>"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn html_escape_covers_text_and_attribute_metacharacters() -> crate::sandbox::TestResult<()>
+    {
+        assert_eq!(
+            html_escape("<tag attr=\"x&y\">it's</tag>"),
+            "&lt;tag attr=&quot;x&amp;y&quot;&gt;it&#39;s&lt;/tag&gt;"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn results_table_escapes_scenario_keys() -> crate::sandbox::TestResult<()> {
+        let html = generate_results_table(&[ScenarioResult {
+            scenario: Scenario {
+                threads: 8,
+                package: "pkg<script>alert(1)</script>".to_string(),
+            },
+            runs: vec![RunResult {
+                success: true,
+                elapsed_ms: 12.0,
+                stdout: String::new(),
+                stderr: String::new(),
+            }],
+            stats: RunStats::from_samples(&[12.0]),
+        }]);
+
+        assert!(html.contains("pkg&lt;script&gt;alert(1)&lt;/script&gt;:t=8"));
+        assert!(!html.contains("<script>alert(1)</script>"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn history_section_escapes_dynamic_text() -> crate::sandbox::TestResult<()> {
+        let html = build_history_section(&HistoryReport {
+            run_id: 42,
+            scenarios: vec![ScenarioHistorySummary {
+                scenario_key: "scenario<img src=x>".to_string(),
+                baseline: Some(RunStats::from_samples(&[10.0])),
+                regression: Regression::None,
+                trend: vec![HistoryPoint {
+                    median_ms: 10.0,
+                    p95_ms: 11.0,
+                    mean_ms: 10.5,
+                    throughput_runs_per_sec: 2.0,
+                    timestamp: "2026-05-02T00:00:00Z<script>".to_string(),
+                    git_sha: "abc<def>".to_string(),
+                }],
+            }],
+        });
+
+        assert!(html.contains("scenario&lt;img src=x&gt;"));
+        assert!(html.contains("2026-05-02T00:00:00Z&lt;script&gt;"));
+        assert!(html.contains("abc&lt;def&gt;"));
+        assert!(!html.contains("<img src=x>"));
+        assert!(!html.contains("<script>"));
+        assert!(!html.contains("abc<def>"));
         Ok(())
     }
 }
