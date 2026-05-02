@@ -78,7 +78,7 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
     insert_metric_gauge(
         &ctx,
         "canonicalizer-test",
-        run.id,
+        run.id.to_uuid(),
         "derived.events_processed.run",
         42.0,
         json!({}),
@@ -87,7 +87,7 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
     insert_metric_gauge(
         &ctx,
         "canonicalizer-test",
-        run.id,
+        run.id.to_uuid(),
         "derived.error_rate_5m",
         0.125,
         json!({}),
@@ -96,7 +96,7 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
     insert_metric_gauge(
         &ctx,
         "canonicalizer-test",
-        run.id,
+        run.id.to_uuid(),
         "derived.invalidations.pending",
         3.0,
         json!({}),
@@ -105,7 +105,7 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
     insert_metric_gauge(
         &ctx,
         "canonicalizer-test",
-        run.id,
+        run.id.to_uuid(),
         "derived.checkpoint.revision",
         7.0,
         json!({
@@ -119,7 +119,7 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
         insert_material_event(&ctx, "test.input", "test.input", json!({ "command": "ls" })).await?;
     let parent_id = parent.id.expect("inserted parent must have id");
     let output = DynamicPayload::new("test.output", "test.output", json!({ "canonical": "ls" }))
-        .node_run_id(run.id)
+        .node_run_id(run.id.to_uuid())
         .from_parents(vec![parent_id])?
         .build()?;
     pool.events().insert(output).await?;
