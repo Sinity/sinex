@@ -119,6 +119,39 @@ async fn events_repository_preserves_provenance(ctx: TestContext) -> TestResult<
 }
 
 #[sinex_test]
+async fn filter_tombstoned_accepts_typed_event_ids(ctx: TestContext) -> TestResult<()> {
+    let tombstoned_id = Id::<Event<serde_json::Value>>::from_uuid(Uuid::now_v7());
+    let live_id = Id::<Event<serde_json::Value>>::from_uuid(Uuid::now_v7());
+
+    sqlx::query!(
+        r#"
+        INSERT INTO core.event_tombstones (
+            id, source, event_type, ts_orig, ts_purged,
+            purge_reason, purge_operation_id, archived_at
+        )
+        VALUES (
+            $1::uuid, 'test.source', 'test.event', NOW(), NOW(),
+            'typed-id regression', $2::uuid, NOW()
+        )
+        "#,
+        tombstoned_id.as_uuid(),
+        Uuid::now_v7(),
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let found = ctx
+        .pool
+        .events()
+        .filter_tombstoned(&[tombstoned_id, live_id])
+        .await?;
+
+    assert!(found.contains(&tombstoned_id));
+    assert!(!found.contains(&live_id));
+    Ok(())
+}
+
+#[sinex_test]
 async fn events_repository_rejects_unknown_node_run_id(ctx: TestContext) -> TestResult<()> {
     let material_record = ctx
         .pool

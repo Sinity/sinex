@@ -628,20 +628,24 @@ impl EventRepository<'_> {
     ///
     /// Returns the set of event IDs that exist in `core.event_tombstones`.
     /// Used by the ingestion pipeline to reject re-ingestion of tombstoned events.
-    pub async fn filter_tombstoned(&self, event_ids: &[Uuid]) -> DbResult<HashSet<Uuid>> {
+    pub async fn filter_tombstoned(
+        &self,
+        event_ids: &[Id<Event<JsonValue>>],
+    ) -> DbResult<HashSet<Id<Event<JsonValue>>>> {
         if event_ids.is_empty() {
             return Ok(HashSet::new());
         }
 
+        let ids: Vec<Uuid> = event_ids.iter().map(Id::to_uuid).collect();
         let rows: Vec<Uuid> = sqlx::query_scalar(
             r#"SELECT id::uuid as "id!" FROM core.event_tombstones WHERE id = ANY($1::uuid[])"#,
         )
-        .bind(event_ids)
+        .bind(&ids)
         .fetch_all(self.pool)
         .await
         .map_err(|e| db_error(e, "filter tombstoned events"))?;
 
-        Ok(rows.into_iter().collect())
+        Ok(rows.into_iter().map(Id::from_uuid).collect())
     }
 }
 
