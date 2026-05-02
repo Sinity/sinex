@@ -94,7 +94,6 @@ struct SourceUnitDescriptor {
     material_policy: String,
     checkpoint_policy: String,
     occurrence_policy: String,
-    output_event_type: String,
     output_event_types: Vec<SourceUnitEventType>,
     privacy_context: String,
     retention_policy: String,
@@ -300,12 +299,6 @@ fn canonical_source_unit_descriptor(
         material_policy: material_policy_for(unit).to_string(),
         checkpoint_policy: checkpoint_policy(unit.checkpoint_family),
         occurrence_policy: occurrence_policy(unit.occurrence_identity),
-        output_event_type: unit
-            .event_types
-            .iter()
-            .map(|(source, event_type)| format!("{source}/{event_type}"))
-            .collect::<Vec<_>>()
-            .join(","),
         output_event_types: unit
             .event_types
             .iter()
@@ -587,7 +580,7 @@ fn duplicates<'a>(values: impl Iterator<Item = &'a str>) -> Vec<String> {
 }
 
 fn required_empty_fields(unit: &SourceUnitDescriptor) -> Vec<String> {
-    [
+    let mut empty_fields = [
         ("id", unit.id.as_str()),
         ("domain", unit.domain.as_str()),
         ("role", unit.role.as_str()),
@@ -595,7 +588,6 @@ fn required_empty_fields(unit: &SourceUnitDescriptor) -> Vec<String> {
         ("material_policy", unit.material_policy.as_str()),
         ("checkpoint_policy", unit.checkpoint_policy.as_str()),
         ("occurrence_policy", unit.occurrence_policy.as_str()),
-        ("output_event_type", unit.output_event_type.as_str()),
         ("privacy_context", unit.privacy_context.as_str()),
         ("retention_policy", unit.retention_policy.as_str()),
         ("resource_profile", unit.resource_profile.as_str()),
@@ -616,7 +608,13 @@ fn required_empty_fields(unit: &SourceUnitDescriptor) -> Vec<String> {
     .into_iter()
     .filter(|(_, value)| value.is_empty())
     .map(|(field, _)| format!("{}:{field}", unit.subject.as_str()))
-    .collect()
+    .collect::<Vec<_>>();
+
+    if unit.output_event_types.is_empty() {
+        empty_fields.push(format!("{}:output_event_types", unit.subject.as_str()));
+    }
+
+    empty_fields
 }
 
 fn runner_pack_binary(runner_pack: &str) -> Option<&'static str> {
@@ -788,7 +786,6 @@ mod tests {
             .find(|unit| unit.id == "fs")
             .expect("fs descriptor should be present")
             .clone();
-        unit.output_event_type.push_str(",missing/source.event");
         unit.output_event_types.push(SourceUnitEventType {
             source: "missing".to_string(),
             event_type: "source.event".to_string(),
@@ -798,6 +795,25 @@ mod tests {
         assert_eq!(
             validation.invalid_output_event_pairs,
             vec!["source_unit:fs:missing/source.event".to_string()]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_unit_validation_requires_output_event_pairs() -> TestResult<()> {
+        let manifest = build_source_unit_manifest();
+        let mut unit = manifest
+            .source_units
+            .iter()
+            .find(|unit| unit.id == "fs")
+            .expect("fs descriptor should be present")
+            .clone();
+        unit.output_event_types.clear();
+
+        let validation = validate_source_units(&[unit], false);
+        assert_eq!(
+            validation.empty_fields,
+            vec!["source_unit:fs:output_event_types".to_string()]
         );
         Ok(())
     }
