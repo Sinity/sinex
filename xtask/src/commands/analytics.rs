@@ -5,8 +5,7 @@ use console::style;
 use tabled::{builder::Builder, settings::Style};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
-use crate::history::query::HistoryAnalysis;
-use crate::history::{HistoryDb, PackageHealth, WorkspaceHealthReport};
+use crate::history::{HistoryAnalysis, HistoryDb, PackageHealth, WorkspaceHealthReport};
 
 /// `xtask analytics` — developer intelligence analytics.
 #[derive(Debug, Clone, clap::Args)]
