@@ -30,7 +30,7 @@ use sinex_node_sdk::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pu
 use sinex_primitives::Timestamp;
 use sinex_primitives::constants::env_vars;
 use sinex_primitives::{
-    JsonValue, Uuid,
+    Id, JsonValue, Uuid,
     nats::{JetStreamTopology, NatsTrafficClass, insert_traffic_class_header},
     transport,
 };
@@ -1919,7 +1919,7 @@ impl JetStreamConsumer {
             return Ok(Vec::new());
         }
 
-        let ids: Vec<Uuid> = batch.iter().map(|p| p.parsed_id).collect();
+        let ids: Vec<Id<Event>> = batch.iter().map(|p| Id::from_uuid(p.parsed_id)).collect();
         let tombstoned_ids = self
             .pool
             .events()
@@ -1947,7 +1947,7 @@ impl JetStreamConsumer {
 
         Ok(batch
             .iter()
-            .filter(|p| !tombstoned_ids.contains(&p.parsed_id))
+            .filter(|p| !tombstoned_ids.contains(&Id::from_uuid(p.parsed_id)))
             .copied()
             .collect())
     }
