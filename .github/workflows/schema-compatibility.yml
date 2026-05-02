@@ -5,12 +5,7 @@ permissions:
   pull-requests: write
 
 on:
-  pull_request:
-    paths:
-      - 'schemas/**'
-      - 'crate/lib/sinex-primitives/src/events/**'
-      - 'crate/lib/sinex-macros/**'
-      - 'xtask/src/**/*.rs'
+  workflow_dispatch:
 
 jobs:
   check-schemas:
