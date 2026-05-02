@@ -357,8 +357,7 @@ fn reset_schema_hash(verbose: bool) -> Result<()> {
 }
 
 fn reset_target(verbose: bool) -> Result<()> {
-    let workspace_root = crate::config::workspace_root();
-    let target_dir = workspace_root.join("target");
+    let target_dir = crate::config::workspace_target_dir();
     if target_dir.exists() {
         if verbose {
             println!(
