@@ -165,6 +165,7 @@ struct SourceUnitValidation {
     duplicate_subjects: Vec<String>,
     duplicate_ids: Vec<String>,
     empty_fields: Vec<String>,
+    unmapped_runner_packs: Vec<String>,
     invalid_physical_impact: Vec<String>,
     invalid_output_event_pairs: Vec<String>,
     runner_packs_with_multiple_units: Vec<String>,
@@ -216,6 +217,7 @@ fn execute_check(output: Option<&Path>, ctx: &CommandContext) -> Result<CommandR
     let has_failures = !validation.duplicate_subjects.is_empty()
         || !validation.duplicate_ids.is_empty()
         || !validation.empty_fields.is_empty()
+        || !validation.unmapped_runner_packs.is_empty()
         || !validation.invalid_physical_impact.is_empty()
         || !validation.invalid_output_event_pairs.is_empty()
         || validation.runner_packs_with_multiple_units.is_empty()
@@ -351,7 +353,7 @@ fn runner_pack_manifests(source_units: &[SourceUnitDescriptor]) -> Vec<RunnerPac
         .map(|(id, mut source_unit_ids)| {
             source_unit_ids.sort();
             RunnerPackManifest {
-                shared_binary: runner_pack_binary(&id).to_string(),
+                shared_binary: runner_pack_binary(&id).unwrap_or(&id).to_string(),
                 source_unit_count: source_unit_ids.len(),
                 id,
                 source_unit_ids,
@@ -367,7 +369,9 @@ fn service_manifests(source_units: &[SourceUnitDescriptor]) -> Vec<SourceUnitSer
             source_unit_id: unit.id.to_string(),
             service_name: source_unit_service_name(&unit.id),
             runner_pack: unit.runner_pack.to_string(),
-            binary: runner_pack_binary(&unit.runner_pack).to_string(),
+            binary: runner_pack_binary(&unit.runner_pack)
+                .unwrap_or(&unit.runner_pack)
+                .to_string(),
             checkpoint_identity: unit.id.to_string(),
             control_identity: unit.id.to_string(),
             host_identity: "runtime_hostname",
@@ -508,6 +512,14 @@ fn validate_source_units(
         .iter()
         .flat_map(required_empty_fields)
         .collect::<Vec<_>>();
+    let unmapped_runner_packs = source_units
+        .iter()
+        .map(|unit| unit.runner_pack.as_str())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter(|runner_pack| runner_pack_binary(runner_pack).is_none())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
     let invalid_physical_impact = source_units
         .iter()
         .filter(|unit| {
@@ -555,6 +567,7 @@ fn validate_source_units(
         duplicate_subjects,
         duplicate_ids,
         empty_fields,
+        unmapped_runner_packs,
         invalid_physical_impact,
         invalid_output_event_pairs,
         runner_packs_with_multiple_units,
@@ -606,21 +619,21 @@ fn required_empty_fields(unit: &SourceUnitDescriptor) -> Vec<String> {
     .collect()
 }
 
-fn runner_pack_binary(runner_pack: &str) -> &str {
+fn runner_pack_binary(runner_pack: &str) -> Option<&'static str> {
     match runner_pack {
-        "analytics" => "sinex-analytics-automaton",
-        "browser" => "sinex-browser-ingestor",
-        "daily" => "sinex-daily-summarizer",
-        "desktop" => "sinex-desktop-ingestor",
-        "document" => "sinex-document-ingestor",
-        "fs" => "sinex-fs-ingestor",
-        "health" => "sinex-health-automaton",
-        "hourly" => "sinex-hourly-summarizer",
-        "session" => "sinex-session-detector",
-        "system" => "sinex-system-ingestor",
-        "terminal" => "sinex-terminal-ingestor",
-        "terminal-canonicalizer" => "sinex-terminal-command-canonicalizer",
-        other => other,
+        "analytics" => Some("sinex-analytics-automaton"),
+        "browser" => Some("sinex-browser-ingestor"),
+        "daily" => Some("sinex-daily-summarizer"),
+        "desktop" => Some("sinex-desktop-ingestor"),
+        "document" => Some("sinex-document-ingestor"),
+        "fs" => Some("sinex-fs-ingestor"),
+        "health" => Some("sinex-health-automaton"),
+        "hourly" => Some("sinex-hourly-summarizer"),
+        "session" => Some("sinex-session-detector"),
+        "system" => Some("sinex-system-ingestor"),
+        "terminal" => Some("sinex-terminal-ingestor"),
+        "terminal-canonicalizer" => Some("sinex-terminal-command-canonicalizer"),
+        _ => None,
     }
 }
 
@@ -755,6 +768,7 @@ mod tests {
         assert!(validation.duplicate_subjects.is_empty());
         assert!(validation.duplicate_ids.is_empty());
         assert!(validation.empty_fields.is_empty());
+        assert!(validation.unmapped_runner_packs.is_empty());
         assert!(validation.invalid_physical_impact.is_empty());
         assert!(validation.invalid_output_event_pairs.is_empty());
         assert!(
@@ -784,6 +798,25 @@ mod tests {
         assert_eq!(
             validation.invalid_output_event_pairs,
             vec!["source_unit:fs:missing/source.event".to_string()]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_unit_validation_requires_runner_pack_binary_mapping() -> TestResult<()> {
+        let manifest = build_source_unit_manifest();
+        let mut unit = manifest
+            .source_units
+            .iter()
+            .find(|unit| unit.id == "fs")
+            .expect("fs descriptor should be present")
+            .clone();
+        unit.runner_pack = "missing-pack".to_string();
+
+        let validation = validate_source_units(&[unit], false);
+        assert_eq!(
+            validation.unmapped_runner_packs,
+            vec!["missing-pack".to_string()]
         );
         Ok(())
     }
