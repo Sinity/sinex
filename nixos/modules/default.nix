@@ -27,7 +27,7 @@ let
     if pkgs ? sinexctl then pkgs.sinexctl else null;
 
   defaultAdminPackage =
-    if pkgs ? xtask then pkgs.xtask else defaultSinexPackage;
+    if pkgs ? xtask then pkgs.xtask else cfg.package;
 
   defaultKittySnippet = ''
     # Enable shell integration boundaries for session capture
