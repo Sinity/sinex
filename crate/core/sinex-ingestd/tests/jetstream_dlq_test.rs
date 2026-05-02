@@ -661,7 +661,7 @@ async fn test_fk_violation_with_valid_schema_and_node_run_retries_until_material
         .await?
         .ok_or_else(|| SinexError::not_found("persisted event after material registration"))?;
     assert_eq!(persisted.payload_schema_id, Some(*schema.id.as_uuid()));
-    assert_eq!(persisted.node_run_id, Some(node_run.id));
+    assert_eq!(persisted.node_run_id, Some(node_run.id.to_uuid()));
 
     setup.handle.abort();
     let _ = setup.handle.await;

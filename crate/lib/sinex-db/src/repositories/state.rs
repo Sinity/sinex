@@ -944,7 +944,7 @@ impl StateRepository<'_> {
                 $6
             )
             RETURNING
-                id as "id!: uuid::Uuid",
+                id as "id!: Id<NodeRun>",
                 node_manifest_id,
                 service_name,
                 instance_id,
@@ -969,7 +969,7 @@ impl StateRepository<'_> {
     }
 
     /// Refresh the heartbeat timestamp for a node run and keep it in `running`.
-    pub async fn update_node_run_heartbeat(&self, node_run_id: Uuid) -> DbResult<bool> {
+    pub async fn update_node_run_heartbeat(&self, node_run_id: Id<NodeRun>) -> DbResult<bool> {
         let result = sqlx::query!(
             r#"
             UPDATE core.node_runs
@@ -978,7 +978,7 @@ impl StateRepository<'_> {
             WHERE id = $1::uuid
               AND status = 'running'
             "#,
-            node_run_id,
+            node_run_id.as_uuid(),
         )
         .execute(self.pool)
         .await
@@ -989,7 +989,7 @@ impl StateRepository<'_> {
     /// Mark a node run as terminal or transitional.
     pub async fn update_node_run_status(
         &self,
-        node_run_id: Uuid,
+        node_run_id: Id<NodeRun>,
         status: NodeState,
     ) -> DbResult<bool> {
         let ended_at = matches!(status, NodeState::Failed | NodeState::Stopped)
@@ -1012,7 +1012,7 @@ impl StateRepository<'_> {
             WHERE id = $1::uuid
               AND status NOT IN ('failed', 'stopped')
             "#,
-            node_run_id,
+            node_run_id.as_uuid(),
             status.to_string(),
             ended_at,
         )
@@ -1566,7 +1566,7 @@ pub struct NodeManifest {
 /// Node run record
 #[derive(Debug, sqlx::FromRow)]
 pub struct NodeRun {
-    pub id: Uuid,
+    pub id: Id<NodeRun>,
     pub node_manifest_id: i32,
     pub service_name: String,
     pub instance_id: String,

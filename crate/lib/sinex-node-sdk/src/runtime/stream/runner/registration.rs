@@ -13,9 +13,9 @@ use sinex_db::DbPool as PgPool;
 #[cfg(feature = "db")]
 use sinex_db::repositories::DbPoolExt;
 #[cfg(feature = "db")]
-use sinex_primitives::Uuid;
-#[cfg(feature = "db")]
 use sinex_primitives::domain::{NodeName, NodeState};
+#[cfg(feature = "db")]
+use sinex_primitives::{Id, Uuid};
 #[cfg(feature = "db")]
 use std::collections::HashMap;
 #[cfg(feature = "db")]
@@ -65,7 +65,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                     self.node.node_name()
                 ))
             })?;
-        Ok(Some(node_run.id))
+        Ok(Some(node_run.id.to_uuid()))
     }
 
     pub(super) async fn update_registered_run_status(
@@ -76,6 +76,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         let Some(node_run_id) = service_info.node_run_id() else {
             return;
         };
+        let node_run_id = Id::<sinex_db::repositories::state::NodeRun>::from_uuid(node_run_id);
         if let Err(error) = pool
             .state()
             .update_node_run_status(node_run_id, status)
@@ -91,5 +92,4 @@ impl<T: Node + 'static> NodeRunner<T> {
             );
         }
     }
-
 }
