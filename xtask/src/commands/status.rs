@@ -12,22 +12,40 @@ use crate::history::{
     VelocityTrend, WorkspaceHealthReport,
 };
 use crate::infra::probe::{NatsProbe, PostgresProbe, probe_nats, probe_postgres};
+#[cfg(test)]
 use crate::infra::stack::StackConfig;
 use crate::runtime_metrics::{IngestdStatus, RuntimeAssessment, RuntimeMetrics};
-use crate::runtime_target::{
-    RuntimeTargetSummary, checkout_runtime_target, checkout_status_snapshot, signal, warning,
-};
+use crate::runtime_target::{RuntimeTargetSummary, checkout_runtime_target};
+#[cfg(test)]
+use crate::runtime_target::{checkout_status_snapshot, signal};
 use crate::session::{WatchAction, WatchLoop};
-use color_eyre::eyre::{Result, WrapErr};
+use color_eyre::eyre::Result;
 use console::style;
 use serde::Serialize;
+#[cfg(test)]
+use sinex_primitives::RuntimeStatusSignalStatus;
 use sinex_primitives::{
-    RuntimeStatusSignalStatus, RuntimeStatusSnapshot, RuntimeTargetDescriptor, RuntimeTargetKind,
+    RuntimeStatusSnapshot, RuntimeTargetDescriptor, RuntimeTargetKind,
     utils::redact_url_credentials_for_display,
 };
+#[cfg(test)]
 use std::any::Any;
-use std::path::Path;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
+
+mod git;
+mod services;
+
+use git::{GitState, probe_git_state};
+#[cfg(test)]
+use services::{
+    active_job_for_service, gateway_service_status_from_readiness,
+    ingestd_service_status_from_runtime_metrics, recover_runtime_metrics_thread,
+};
+use services::{
+    build_runtime_status_snapshot, collect_core_service_statuses,
+    collect_runtime_metrics_if_postgres_ready, describe_thread_panic,
+    resolve_runtime_metrics_database_url, runtime_query_error_message,
+};
 
 /// Inspect workspace status, service health, and recent activity.
 #[derive(Debug, Clone, clap::Args)]
@@ -99,89 +117,6 @@ enum ServiceRunStatus {
     Unknown,
 }
 
-fn service_status_from_active_job(service_name: &str, job: &crate::jobs::Job) -> ServiceStatus {
-    ServiceStatus {
-        name: service_name.to_string(),
-        status: ServiceRunStatus::Running,
-        probe: "background_job",
-        pid: job.pid,
-        message: None,
-    }
-}
-
-fn active_job_for_service<'a>(
-    service_name: &str,
-    active_jobs: &'a [crate::jobs::Job],
-) -> Option<&'a crate::jobs::Job> {
-    active_jobs.iter().find(|job| {
-        job.is_alive()
-            && std::path::Path::new(&job.command)
-                .file_name()
-                .and_then(|value| value.to_str())
-                .is_some_and(|binary| binary == service_name)
-    })
-}
-
-fn gateway_service_status_from_readiness(
-    readiness: crate::commands::doctor::DeploymentReadinessItem,
-    pid: Option<u32>,
-    force_probe: bool,
-) -> ServiceStatus {
-    let (status, message) = match readiness.status.as_str() {
-        "pass" => (ServiceRunStatus::Running, None),
-        "fail" => {
-            if force_probe {
-                (
-                    ServiceRunStatus::Unknown,
-                    Some(format!(
-                        "gateway process is alive but readiness probe failed: {}",
-                        readiness.description
-                    )),
-                )
-            } else {
-                (ServiceRunStatus::Stopped, Some(readiness.description))
-            }
-        }
-        "skip" => {
-            if force_probe {
-                (
-                    ServiceRunStatus::Unknown,
-                    Some(format!(
-                        "gateway process is alive but readiness probe skipped unexpectedly: {}",
-                        readiness.description
-                    )),
-                )
-            } else {
-                (ServiceRunStatus::Skipped, Some(readiness.description))
-            }
-        }
-        other => (
-            ServiceRunStatus::Unknown,
-            Some(format!(
-                "gateway readiness probe returned unexpected status `{other}`: {}",
-                readiness.description
-            )),
-        ),
-    };
-
-    ServiceStatus {
-        name: "sinex-gateway".to_string(),
-        status,
-        probe: "gateway_ready_http",
-        pid,
-        message,
-    }
-}
-
-async fn probe_gateway_service_status(
-    gateway_url: Option<&str>,
-    force_probe: bool,
-    pid: Option<u32>,
-) -> ServiceStatus {
-    let readiness = crate::commands::doctor::check_gateway_ready(gateway_url, None).await;
-    gateway_service_status_from_readiness(readiness, pid, force_probe)
-}
-
 fn status_profile_enabled() -> bool {
     std::env::var("SINEX_STATUS_PROFILE").is_ok_and(|value| {
         matches!(
@@ -203,140 +138,6 @@ fn emit_status_profile(label: &str, started_at: Instant) {
 fn emit_status_profile_duration(label: &str, duration: Duration) {
     if status_profile_enabled() {
         eprintln!("[status-profile] {label}: {:.3}s", duration.as_secs_f64());
-    }
-}
-
-async fn collect_core_service_statuses(
-    gateway_url: Option<&str>,
-    runtime_metrics: Option<&RuntimeMetrics>,
-    active_jobs: &[crate::jobs::Job],
-) -> Vec<ServiceStatus> {
-    let ingestd = active_job_for_service("sinex-ingestd", active_jobs).map_or_else(
-        || ingestd_service_status_from_runtime_metrics(runtime_metrics),
-        |job| service_status_from_active_job("sinex-ingestd", job),
-    );
-    let gateway_process = active_job_for_service("sinex-gateway", active_jobs).map_or_else(
-        || ServiceStatus {
-            name: "sinex-gateway".to_string(),
-            status: ServiceRunStatus::Stopped,
-            probe: "checkout_local",
-            pid: None,
-            message: Some("no active checkout-local gateway job is tracked".to_string()),
-        },
-        |job| service_status_from_active_job("sinex-gateway", job),
-    );
-    let gateway_force_probe = matches!(gateway_process.status, ServiceRunStatus::Running);
-
-    vec![
-        probe_gateway_service_status(gateway_url, gateway_force_probe, gateway_process.pid).await,
-        ingestd,
-    ]
-}
-
-fn resolve_runtime_metrics_database_url(database_url: Option<&str>) -> Result<Option<String>> {
-    if let Some(url) = database_url {
-        return Ok(Some(url.to_string()));
-    }
-
-    let stack_config = StackConfig::for_current_checkout()
-        .wrap_err("failed to load checkout stack config for runtime metrics")?;
-    Ok(Some(stack_config.database_url()))
-}
-
-fn ingestd_service_status_from_runtime_metrics(
-    runtime_metrics: Option<&RuntimeMetrics>,
-) -> ServiceStatus {
-    let (status, message) = match runtime_metrics {
-        Some(metrics) => match metrics.ingestd_status {
-            IngestdStatus::Healthy => (ServiceRunStatus::Running, None),
-            IngestdStatus::Down => (
-                ServiceRunStatus::Stopped,
-                Some(
-                    "no checkout-local ingestd heartbeat found in the local runtime database"
-                        .to_string(),
-                ),
-            ),
-            IngestdStatus::Stale => (
-                ServiceRunStatus::Unknown,
-                Some(
-                    "checkout-local ingestd heartbeat is stale in the local runtime database"
-                        .to_string(),
-                ),
-            ),
-            IngestdStatus::Unknown => (
-                ServiceRunStatus::Unknown,
-                metrics
-                    .query_error
-                    .clone()
-                    .or_else(|| Some("checkout-local ingestd status is unavailable".to_string())),
-            ),
-        },
-        None => (
-            ServiceRunStatus::Unknown,
-            Some("checkout-local runtime database target is unavailable".to_string()),
-        ),
-    };
-
-    ServiceStatus {
-        name: "sinex-ingestd".to_string(),
-        status,
-        probe: "runtime_metrics",
-        pid: None,
-        message,
-    }
-}
-
-fn collect_runtime_metrics(runtime_db_url: Result<Option<String>>) -> Option<RuntimeMetrics> {
-    match runtime_db_url {
-        Ok(Some(url)) => match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(rt) => Some(rt.block_on(crate::runtime_metrics::query_runtime_metrics(&url))),
-            Err(error) => Some(RuntimeMetrics::query_failure(format!(
-                "failed to build runtime probe executor: {error}"
-            ))),
-        },
-        Ok(None) => None,
-        Err(error) => Some(RuntimeMetrics::query_failure(error.to_string())),
-    }
-}
-
-fn collect_runtime_metrics_if_postgres_ready(
-    pg_probe: &PostgresProbe,
-    runtime_db_url: Result<Option<String>>,
-    target_kind: &RuntimeTargetKind,
-) -> Option<RuntimeMetrics> {
-    // Only gate on the local dev-stack probe when the runtime target IS that
-    // local stack.  For deployed or VM targets the runtime database is a
-    // separate system; skipping it because the local dev Postgres is not
-    // running would silently suppress valid runtime telemetry.
-    if *target_kind == RuntimeTargetKind::DevCheckout && !pg_probe.ready() {
-        return Some(RuntimeMetrics::unavailable());
-    }
-    collect_runtime_metrics(runtime_db_url)
-}
-
-fn describe_thread_panic(payload: &(dyn Any + Send)) -> String {
-    if let Some(message) = payload.downcast_ref::<String>() {
-        message.clone()
-    } else if let Some(message) = payload.downcast_ref::<&'static str>() {
-        (*message).to_string()
-    } else {
-        "non-string panic payload".to_string()
-    }
-}
-
-#[cfg(test)]
-fn recover_runtime_metrics_thread(
-    result: std::thread::Result<Option<RuntimeMetrics>>,
-) -> Option<RuntimeMetrics> {
-    match result {
-        Ok(metrics) => metrics,
-        Err(payload) => Some(RuntimeMetrics::query_failure(format!(
-            "runtime metrics collection thread panicked: {}",
-            describe_thread_panic(&*payload)
-        ))),
     }
 }
 
@@ -475,13 +276,6 @@ fn classify_summary_health(
     (health, indicator)
 }
 
-fn runtime_query_error_message(metrics: &RuntimeMetrics) -> Option<String> {
-    metrics
-        .query_error
-        .as_ref()
-        .map(|error| format!("Runtime metrics query failed: {error}"))
-}
-
 fn fallback_checkout_runtime_target(error: impl std::fmt::Display) -> RuntimeTargetDescriptor {
     RuntimeTargetDescriptor {
         version: 1,
@@ -491,112 +285,6 @@ fn fallback_checkout_runtime_target(error: impl std::fmt::Display) -> RuntimeTar
         notes: vec![format!("failed to derive checkout runtime target: {error}")],
         ..RuntimeTargetDescriptor::default()
     }
-}
-
-fn service_signal_status(status: ServiceRunStatus) -> RuntimeStatusSignalStatus {
-    match status {
-        ServiceRunStatus::Running => RuntimeStatusSignalStatus::Healthy,
-        ServiceRunStatus::Stopped => RuntimeStatusSignalStatus::Unhealthy,
-        ServiceRunStatus::Skipped => RuntimeStatusSignalStatus::Skipped,
-        ServiceRunStatus::Unknown => RuntimeStatusSignalStatus::Unknown,
-    }
-}
-
-fn build_runtime_status_snapshot(
-    target: &RuntimeTargetDescriptor,
-    pg_probe: &PostgresProbe,
-    nats_probe: &NatsProbe,
-    services: &[ServiceStatus],
-    runtime_metrics: Option<&RuntimeMetrics>,
-    warnings: &[String],
-) -> RuntimeStatusSnapshot {
-    let mut signals = vec![
-        signal(
-            "postgres",
-            if pg_probe.ready() {
-                RuntimeStatusSignalStatus::Healthy
-            } else {
-                RuntimeStatusSignalStatus::Unhealthy
-            },
-            "checkout-local postgres probe",
-            pg_probe.message.clone(),
-        ),
-        signal(
-            "nats",
-            if nats_probe.ready() {
-                RuntimeStatusSignalStatus::Healthy
-            } else {
-                RuntimeStatusSignalStatus::Unhealthy
-            },
-            "checkout-local nats probe",
-            nats_probe.message.clone(),
-        ),
-    ];
-
-    for service in services {
-        signals.push(signal(
-            service.name.clone(),
-            service_signal_status(service.status),
-            service.probe,
-            service.message.clone(),
-        ));
-    }
-
-    if let Some(metrics) = runtime_metrics {
-        signals.push(signal(
-            "ingestd_heartbeat",
-            match metrics.ingestd_status {
-                IngestdStatus::Healthy => RuntimeStatusSignalStatus::Healthy,
-                IngestdStatus::Stale => RuntimeStatusSignalStatus::Stale,
-                IngestdStatus::Down => RuntimeStatusSignalStatus::Unhealthy,
-                IngestdStatus::Unknown => RuntimeStatusSignalStatus::Unknown,
-            },
-            "checkout-local runtime database telemetry",
-            metrics
-                .last_heartbeat_age_secs
-                .map(|age| format!("heartbeat {age}s ago"))
-                .or_else(|| metrics.query_error.clone()),
-        ));
-
-        signals.push(signal(
-            "consumer_lag",
-            if metrics.consumer_lag_is_stale() {
-                RuntimeStatusSignalStatus::Stale
-            } else if metrics.fresh_consumer_lag_pending().is_some() {
-                RuntimeStatusSignalStatus::Healthy
-            } else {
-                RuntimeStatusSignalStatus::Unknown
-            },
-            "checkout-local runtime database telemetry",
-            metrics
-                .fresh_consumer_lag_pending()
-                .map(|pending| format!("{pending:.0} pending"))
-                .or_else(|| metrics.consumer_lag_stale_note()),
-        ));
-
-        signals.push(signal(
-            "batch_latency",
-            if metrics.batch_latency_is_stale() {
-                RuntimeStatusSignalStatus::Stale
-            } else if metrics.fresh_batch_latency_ms().is_some() {
-                RuntimeStatusSignalStatus::Healthy
-            } else {
-                RuntimeStatusSignalStatus::Unknown
-            },
-            "checkout-local runtime database telemetry",
-            metrics
-                .fresh_batch_latency_ms()
-                .map(|latency| format!("{latency:.0}ms"))
-                .or_else(|| metrics.batch_latency_stale_note()),
-        ));
-    }
-
-    let attributed_warnings = warnings
-        .iter()
-        .map(|message| warning("xtask status", message.clone()))
-        .collect();
-
-    checkout_status_snapshot(target.clone(), signals, attributed_warnings)
 }
 
 #[derive(Debug, Serialize)]
@@ -733,155 +421,6 @@ fn execute_schemas(ctx: &CommandContext) -> CommandResult {
 }
 
 // ─── Data Collection ────────────────────────────────────────────────────────
-
-/// Expanded git state for rich MOTD
-struct GitState {
-    branch: Option<String>,
-    dirty: bool,
-    ahead: u32,
-    behind: u32,
-    probe_message: Option<String>,
-    last_commit_hash: Option<String>,
-    last_commit_message: Option<String>,
-    last_commit_age_mins: Option<i64>,
-    stash_count: Option<usize>,
-    files_changed: Option<String>,
-    uncommitted_count: Option<usize>,
-}
-
-fn summarize_git_probe_output(output: &std::process::Output) -> String {
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if !stderr.is_empty() {
-        return stderr;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if !stdout.is_empty() {
-        return stdout;
-    }
-
-    format!("exit status {}", output.status)
-}
-
-fn record_git_probe_issue(
-    probe_issues: &mut Vec<String>,
-    args: &[&str],
-    detail: impl Into<String>,
-) {
-    probe_issues.push(format!("git {} failed: {}", args.join(" "), detail.into()));
-}
-
-fn run_git_output(
-    cwd: &Path,
-    probe_issues: &mut Vec<String>,
-    args: &[&str],
-) -> Option<std::process::Output> {
-    match std::process::Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-    {
-        Ok(output) if output.status.success() => Some(output),
-        Ok(output) => {
-            record_git_probe_issue(probe_issues, args, summarize_git_probe_output(&output));
-            None
-        }
-        Err(error) => {
-            record_git_probe_issue(probe_issues, args, error.to_string());
-            None
-        }
-    }
-}
-
-fn probe_git_state(cwd: &Path) -> GitState {
-    let mut probe_issues = Vec::new();
-
-    let (branch, dirty, uncommitted_count, ahead, behind) = run_git_output(
-        cwd,
-        &mut probe_issues,
-        &["status", "--porcelain=v2", "--branch"],
-    )
-    .map_or((None, false, None, 0, 0), |output| {
-        parse_git_status_branch_porcelain(
-            &String::from_utf8_lossy(&output.stdout),
-            &mut probe_issues,
-        )
-    });
-
-    let commit = run_git_output(
-        cwd,
-        &mut probe_issues,
-        &["log", "-1", "--format=%h\t%s\t%ct"],
-    )
-    .and_then(|output| {
-        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let parts: Vec<&str> = text.splitn(3, '\t').collect();
-        if parts.len() == 3 {
-            Some((
-                parts[0].to_string(),
-                parts[1].to_string(),
-                parts[2].to_string(),
-            ))
-        } else {
-            record_git_probe_issue(
-                &mut probe_issues,
-                &["log", "-1", "--format=%h\t%s\t%cr"],
-                format!("unexpected output: {text}"),
-            );
-            None
-        }
-    });
-
-    let stash_count = run_git_output(cwd, &mut probe_issues, &["stash", "list"]).map(|output| {
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter(|line| !line.is_empty())
-            .count()
-    });
-
-    let files_changed = run_git_output(cwd, &mut probe_issues, &["diff", "--shortstat", "HEAD"])
-        .and_then(|output| {
-            let shortstat = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            (!shortstat.is_empty()).then_some(shortstat)
-        });
-
-    let now_unix_ts = current_unix_timestamp_secs();
-    let last_age = commit.as_ref().and_then(|(_, _, commit_unix_ts)| {
-        if let Some(now_unix_ts) = now_unix_ts {
-            parse_git_commit_age_mins(commit_unix_ts, now_unix_ts).or_else(|| {
-                record_git_probe_issue(
-                    &mut probe_issues,
-                    &["log", "-1", "--format=%h\t%s\t%ct"],
-                    format!("unexpected commit timestamp: {commit_unix_ts}"),
-                );
-                None
-            })
-        } else {
-            record_git_probe_issue(
-                &mut probe_issues,
-                &["log", "-1", "--format=%h\t%s\t%ct"],
-                "system clock is before the Unix epoch".to_string(),
-            );
-            None
-        }
-    });
-    let last_hash = commit.as_ref().map(|(hash, _, _)| hash.clone());
-    let last_msg = commit.as_ref().map(|(_, message, _)| message.clone());
-
-    GitState {
-        branch,
-        dirty,
-        ahead,
-        behind,
-        probe_message: (!probe_issues.is_empty()).then(|| probe_issues.join("; ")),
-        last_commit_hash: last_hash,
-        last_commit_message: last_msg,
-        last_commit_age_mins: last_age,
-        stash_count,
-        files_changed,
-        uncommitted_count,
-    }
-}
 
 /// Active job detail for rich MOTD
 struct ActiveJobDetail {
@@ -1345,81 +884,6 @@ async fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
         job_issues,
         runtime_metrics,
     }
-}
-
-fn current_unix_timestamp_secs() -> Option<i64> {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
-}
-
-/// Parse a git commit timestamp (`%ct`) into a relative age in minutes.
-fn parse_git_commit_age_mins(commit_unix_ts: &str, now_unix_ts: i64) -> Option<i64> {
-    let commit_unix_ts = commit_unix_ts.parse::<i64>().ok()?;
-    Some((now_unix_ts - commit_unix_ts).max(0) / 60)
-}
-
-fn parse_git_status_branch_porcelain(
-    output: &str,
-    probe_issues: &mut Vec<String>,
-) -> (Option<String>, bool, Option<usize>, u32, u32) {
-    let mut branch = None;
-    let mut ahead = 0u32;
-    let mut behind = 0u32;
-    let mut entry_count = 0usize;
-
-    for line in output.lines() {
-        if let Some(head) = line.strip_prefix("# branch.head ") {
-            let head = head.trim();
-            if !head.is_empty() && head != "(detached)" {
-                branch = Some(head.to_string());
-            }
-            continue;
-        }
-
-        if let Some(ab) = line.strip_prefix("# branch.ab ") {
-            let parts: Vec<&str> = ab.split_whitespace().collect();
-            if parts.len() != 2 {
-                record_git_probe_issue(
-                    probe_issues,
-                    &["status", "--porcelain=v2", "--branch"],
-                    format!("unexpected branch.ab payload: {ab}"),
-                );
-                continue;
-            }
-
-            let parsed_ahead = parts[0]
-                .strip_prefix('+')
-                .and_then(|value| value.parse::<u32>().ok());
-            let parsed_behind = parts[1]
-                .strip_prefix('-')
-                .and_then(|value| value.parse::<u32>().ok());
-
-            match (parsed_ahead, parsed_behind) {
-                (Some(parsed_ahead), Some(parsed_behind)) => {
-                    ahead = parsed_ahead;
-                    behind = parsed_behind;
-                }
-                _ => record_git_probe_issue(
-                    probe_issues,
-                    &["status", "--porcelain=v2", "--branch"],
-                    format!("invalid branch.ab payload: {ab}"),
-                ),
-            }
-            continue;
-        }
-
-        if line.starts_with('#') {
-            continue;
-        }
-
-        if !line.trim().is_empty() {
-            entry_count += 1;
-        }
-    }
-
-    (branch, entry_count > 0, Some(entry_count), ahead, behind)
 }
 
 // ─── Summary / Compact execution ────────────────────────────────────────────
@@ -2893,24 +2357,8 @@ async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<Comman
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
-    use std::path::Path;
     use tempfile::tempdir;
     use xtask::sandbox::EnvGuard;
-
-    fn run_git(args: &[&str], cwd: &Path) -> ::xtask::sandbox::TestResult<()> {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .output()?;
-        assert!(
-            output.status.success(),
-            "git {} failed: stdout={} stderr={}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(())
-    }
 
     #[sinex_test]
     async fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
@@ -3770,82 +3218,6 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_probe_git_state_handles_missing_upstream_without_probe_error()
-    -> ::xtask::sandbox::TestResult<()> {
-        let repo = tempdir()?;
-        run_git(&["init", "-q"], repo.path())?;
-        run_git(&["config", "user.name", "Sinex Test"], repo.path())?;
-        run_git(&["config", "user.email", "sinex@example.test"], repo.path())?;
-        std::fs::write(repo.path().join("README.md"), "hello\n")?;
-        run_git(&["add", "README.md"], repo.path())?;
-        run_git(&["commit", "-qm", "init"], repo.path())?;
-
-        let git = probe_git_state(repo.path());
-
-        assert_eq!(git.ahead, 0);
-        assert_eq!(git.behind, 0);
-        assert!(git.last_commit_hash.is_some());
-        assert_eq!(git.stash_count, Some(0));
-        assert_eq!(git.uncommitted_count, Some(0));
-        assert!(git.probe_message.is_none());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_probe_git_state_reports_non_repo_failures() -> ::xtask::sandbox::TestResult<()> {
-        let dir = tempfile::Builder::new()
-            .prefix("xtask-nongit-")
-            .tempdir_in("/tmp")?;
-
-        let git = probe_git_state(dir.path());
-
-        assert!(!git.dirty);
-        assert!(git.last_commit_hash.is_none());
-        let probe_message = git
-            .probe_message
-            .as_deref()
-            .unwrap_or_else(|| panic!("expected git probe failure message"));
-        assert!(probe_message.contains("git status --porcelain=v2 --branch failed"));
-        assert_eq!(git.stash_count, None);
-        assert_eq!(git.uncommitted_count, None);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_parse_git_status_branch_porcelain_extracts_branch_and_upstream_counts()
-    -> ::xtask::sandbox::TestResult<()> {
-        let mut probe_issues = Vec::new();
-
-        assert_eq!(
-            parse_git_status_branch_porcelain(
-                "# branch.oid abcdef\n# branch.head master\n# branch.upstream origin/master\n# branch.ab +2 -7\n1 .M N... 100644 100644 100644 abcdef abcdef file.txt\n",
-                &mut probe_issues,
-            ),
-            (Some("master".to_string()), true, Some(1), 2, 7)
-        );
-        assert!(probe_issues.is_empty());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_parse_git_status_branch_porcelain_reports_invalid_branch_ab_payload()
-    -> ::xtask::sandbox::TestResult<()> {
-        let mut probe_issues = Vec::new();
-
-        assert_eq!(
-            parse_git_status_branch_porcelain(
-                "# branch.head master\n# branch.ab +2 nope\n",
-                &mut probe_issues,
-            ),
-            (Some("master".to_string()), false, Some(0), 0, 0)
-        );
-        let message = probe_issues.join("; ");
-        assert!(message.contains("git status --porcelain=v2 --branch failed"));
-        assert!(message.contains("invalid branch.ab payload: +2 nope"));
-        Ok(())
-    }
-
-    #[sinex_test]
     async fn test_service_status_skip_serializing_none_pid() -> ::xtask::sandbox::TestResult<()> {
         let stopped = ServiceStatus {
             name: "sinex-ingestd".into(),
@@ -3882,20 +3254,6 @@ mod tests {
         assert_eq!(format_age(120), "2h ago");
         assert_eq!(format_age(60 * 24), "1d ago");
         assert_eq!(format_age(60 * 24 * 3), "3d ago");
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_parse_git_commit_age_mins() -> ::xtask::sandbox::TestResult<()> {
-        assert_eq!(parse_git_commit_age_mins("100", 100), Some(0));
-        assert_eq!(parse_git_commit_age_mins("40", 100), Some(1));
-        assert_eq!(
-            parse_git_commit_age_mins("0", 60 * 60 * 24 * 3),
-            Some(60 * 24 * 3)
-        );
-        assert_eq!(parse_git_commit_age_mins("200", 100), Some(0));
-        assert_eq!(parse_git_commit_age_mins("", 100), None);
-        assert_eq!(parse_git_commit_age_mins("garbage", 100), None);
         Ok(())
     }
 }
