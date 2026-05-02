@@ -864,8 +864,8 @@
       "occurrence_policy": "natural_key",
       "output_event_types": [
         {
-          "source": "shell.history.fish",
-          "event_type": "command.executed"
+          "source": "shell.history",
+          "event_type": "command.imported"
         }
       ],
       "privacy_context": "sensitive",

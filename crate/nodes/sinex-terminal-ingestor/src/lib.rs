@@ -127,7 +127,7 @@ register_source_unit! {
             backing_store_kind: "sqlite",
             occurrence_anchor: "fish_history_row_id",
         },
-        event_types: &[("shell.history.fish", "command.executed")],
+        event_types: &[("shell.history", "command.imported")],
         privacy_tier: PrivacyTier::Sensitive,
         runtime_shape: RuntimeShape::Continuous,
         horizons: &[Horizon::Continuous, Horizon::Historical],
