@@ -324,7 +324,7 @@ pub fn execute_materialize(opts: MaterializeOptions) -> Result<CommandResult> {
     let plan_dir = plan_path
         .parent()
         .context("stack plan path has no parent directory")?;
-    let plan: GitStackPlan = serde_yaml::from_str(
+    let plan: GitStackPlan = serde_yml::from_str(
         &fs::read_to_string(&plan_path)
             .with_context(|| format!("failed to read {}", plan_path.display()))?,
     )
@@ -733,7 +733,7 @@ fn load_plan_bundle(plan_path: &Path) -> Result<(GitStackPlan, PathBuf)> {
         .parent()
         .context("stack plan path has no parent directory")?
         .to_path_buf();
-    let plan: GitStackPlan = serde_yaml::from_str(
+    let plan: GitStackPlan = serde_yml::from_str(
         &fs::read_to_string(plan_path)
             .with_context(|| format!("failed to read {}", plan_path.display()))?,
     )
@@ -1548,7 +1548,7 @@ fn write_plan_bundle(output_dir: &Path, plan: &GitStackPlan) -> Result<WrittenPl
     let summary_path = output_dir.join("summary.md");
     fs::write(
         &plan_path,
-        serde_yaml::to_string(plan).context("failed to serialize stack plan")?,
+        serde_yml::to_string(plan).context("failed to serialize stack plan")?,
     )
     .with_context(|| format!("failed to write {}", plan_path.display()))?;
     fs::write(&summary_path, render_summary_markdown(plan))
