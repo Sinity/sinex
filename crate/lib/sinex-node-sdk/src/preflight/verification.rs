@@ -12,19 +12,20 @@
  */
 
 use crate::{NodeResult, SinexError};
-use futures::StreamExt;
-
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use std::collections::{BTreeSet, HashMap};
-use std::time::Instant;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use tracing::info;
 
 use super::{
-    VerificationStatus, resolve_database_url, resolve_nats_url, runtime_database_expected,
+    PREFLIGHT_DB_MAX_CONNECTIONS, VerificationStatus, connect_preflight_database_pool,
+    resolve_database_url, resolve_nats_url, runtime_database_expected,
 };
 
 const SQLSTATE_UNDEFINED_FUNCTION: &str = "42883";
+const EVENTS_ACCESS_PROBE_SQL: &str = "SELECT id, source, event_type FROM core.events LIMIT 0";
+const PREFLIGHT_NATS_OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Verify end-to-end integration of the entire Sinex system
 pub async fn verify_end_to_end_integration() -> NodeResult<(VerificationStatus, Value, Vec<String>)>
@@ -171,8 +172,8 @@ async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> NodeR
         ));
     }
 
-    // Check that we can SELECT from core.events
-    let select_works = sqlx::query("SELECT id, source, event_type FROM core.events LIMIT 0")
+    // Check that we can SELECT from core.events without reading table data.
+    let select_works = sqlx::query(EVENTS_ACCESS_PROBE_SQL)
         .execute(pool)
         .await
         .is_ok();
@@ -182,12 +183,6 @@ async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> NodeR
                 .to_string(),
         ));
     }
-
-    // Check that we can run a COUNT query
-    let count_result = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
-        .fetch_one(pool)
-        .await
-        .map_err(SinexError::from)?;
 
     let source_material_registry_exists =
         relation_exists(pool, "raw", "source_material_registry").await?;
@@ -231,8 +226,8 @@ async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> NodeR
     Ok(json!({
         "events_table_exists": events_table_exists,
         "select_works": select_works,
-        "count_query_works": true,
-        "current_event_count": count_result,
+        "events_access_probe": "limit_0",
+        "unbounded_event_count_skipped": true,
         "source_material_registry_exists": source_material_registry_exists,
         "source_material_registry_select_works": source_material_registry_select_works,
         "blobs_exists": blobs_exists,
@@ -309,7 +304,7 @@ async fn test_transactions(pool: &PgPool, _messages: &mut [String]) -> NodeResul
 async fn test_concurrent_queries(pool: &PgPool, messages: &mut Vec<String>) -> NodeResult<Value> {
     use tokio::task::JoinSet;
 
-    let concurrent_count = 10;
+    let concurrent_count = PREFLIGHT_DB_MAX_CONNECTIONS;
     let mut join_set = JoinSet::new();
 
     for i in 0..concurrent_count {
@@ -477,39 +472,33 @@ async fn verify_service_integration(_messages: &mut [String]) -> NodeResult<Valu
         ))
     })?;
 
-    let required_streams = vec![
+    let required_streams = [
         env.nats_stream_name("SINEX_RAW_EVENTS"),
         env.nats_stream_name("SINEX_RAW_EVENTS_CONFIRMATIONS"),
         env.nats_stream_name(crate::SOURCE_MATERIAL_STREAM),
     ];
-    let mut available_streams = BTreeSet::new();
-    let mut streams = js.streams();
-    while let Some(stream) = streams.next().await {
-        let stream = stream.map_err(|error| {
-            SinexError::processing(format!(
-                "Failed to list JetStream streams during service verification: {error}"
-            ))
-        })?;
-        available_streams.insert(stream.config.name.clone());
+    let mut checked_streams = Vec::with_capacity(required_streams.len());
+    let mut missing_streams = Vec::new();
+
+    for stream in &required_streams {
+        match tokio::time::timeout(PREFLIGHT_NATS_OPERATION_TIMEOUT, js.get_stream(stream)).await {
+            Ok(Ok(_stream)) => checked_streams.push(stream.clone()),
+            Ok(Err(error)) => missing_streams.push(format!("{stream} ({error})")),
+            Err(_) => missing_streams.push(format!(
+                "{stream} (timed out after {:?})",
+                PREFLIGHT_NATS_OPERATION_TIMEOUT
+            )),
+        }
     }
 
-    let missing_streams: Vec<String> = required_streams
-        .iter()
-        .filter(|stream| !available_streams.contains(stream.as_str()))
-        .cloned()
-        .collect();
     if !missing_streams.is_empty() {
         return Err(SinexError::processing(format!(
-            "Missing required JetStream streams: {}; present: {}",
+            "Missing required JetStream streams: {}; checked: {}",
             missing_streams.join(", "),
-            if available_streams.is_empty() {
+            if checked_streams.is_empty() {
                 "<none>".to_string()
             } else {
-                available_streams
-                    .iter()
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                checked_streams.join(", ")
             }
         )));
     }
@@ -517,19 +506,15 @@ async fn verify_service_integration(_messages: &mut [String]) -> NodeResult<Valu
     Ok(json!({
         "checkpoint_kv": true,
         "checkpoint_bucket": bucket,
-        "required_streams": required_streams
+        "required_streams": required_streams,
+        "stream_probe": "direct_required_streams"
     }))
 }
 
 /// Get test database pool
 async fn get_test_pool() -> NodeResult<PgPool> {
     let database_url = resolve_database_url()?;
-
-    let pool = PgPool::connect(&database_url)
-        .await
-        .map_err(SinexError::from)?;
-
-    Ok(pool)
+    connect_preflight_database_pool(&database_url).await
 }
 
 /// Verify performance baseline using read-only queries
@@ -551,15 +536,16 @@ pub async fn verify_performance_baseline() -> NodeResult<(VerificationStatus, Va
     }
     let pool = get_test_pool().await?;
 
-    // Baseline query performance using COUNT query
+    // Baseline query performance using metadata-only table access. Startup
+    // preflight must not scan core.events or ask PostgreSQL for parallel workers.
     let iterations = 10;
     let mut query_times = Vec::new();
 
     for _ in 0..iterations {
         let query_start = Instant::now();
 
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
-            .fetch_one(&pool)
+        sqlx::query(EVENTS_ACCESS_PROBE_SQL)
+            .execute(&pool)
             .await
             .map_err(SinexError::from)?;
 
@@ -585,10 +571,13 @@ pub async fn verify_performance_baseline() -> NodeResult<(VerificationStatus, Va
 
     let result = json!({
         "query_performance": {
+            "probe": "events_limit_0",
             "iterations": iterations,
             "average_ms": avg_query_time,
             "min_ms": min_query_time,
             "max_ms": max_query_time,
+            "unbounded_scans": false,
+            "parallel_workers_disabled": true,
             "baseline_met": avg_query_time <= 100
         }
     });
@@ -598,9 +587,18 @@ pub async fn verify_performance_baseline() -> NodeResult<(VerificationStatus, Va
 
 #[cfg(test)]
 mod tests {
-    use super::test_schema_access;
+    use super::{EVENTS_ACCESS_PROBE_SQL, test_schema_access};
+    use crate::preflight::{
+        PREFLIGHT_MAX_PARALLEL_WORKERS_PER_GATHER, configure_preflight_database_session,
+    };
     use serde_json::Value;
     use xtask::sandbox::prelude::*;
+
+    #[test]
+    fn event_access_probe_is_metadata_only() {
+        assert!(EVENTS_ACCESS_PROBE_SQL.contains("LIMIT 0"));
+        assert!(!EVENTS_ACCESS_PROBE_SQL.contains("COUNT(*)"));
+    }
 
     #[sinex_test]
     async fn test_schema_access_uses_source_material_registry_contract(
@@ -617,10 +615,40 @@ mod tests {
             details.get("source_material_registry_select_works"),
             Some(&Value::Bool(true))
         );
+        assert_eq!(
+            details.get("unbounded_event_count_skipped"),
+            Some(&Value::Bool(true))
+        );
+        assert_eq!(details.get("current_event_count"), None);
         assert_eq!(details.get("source_materials_exists"), None);
         assert_eq!(details.get("blobs_exists"), Some(&Value::Bool(true)));
         assert_eq!(details.get("blobs_select_works"), Some(&Value::Bool(true)));
         assert_eq!(details.get("all_checks_passed"), Some(&Value::Bool(true)));
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn preflight_database_session_disables_parallel_workers(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let mut conn = ctx.pool().acquire().await?;
+        configure_preflight_database_session(&mut *conn).await?;
+
+        let parallel_workers =
+            sqlx::query_scalar::<_, String>("SHOW max_parallel_workers_per_gather")
+                .fetch_one(&mut *conn)
+                .await?;
+        let statement_timeout = sqlx::query_scalar::<_, String>("SHOW statement_timeout")
+            .fetch_one(&mut *conn)
+            .await?;
+        let lock_timeout = sqlx::query_scalar::<_, String>("SHOW lock_timeout")
+            .fetch_one(&mut *conn)
+            .await?;
+
+        assert_eq!(parallel_workers, PREFLIGHT_MAX_PARALLEL_WORKERS_PER_GATHER);
+        assert_eq!(statement_timeout, "5s");
+        assert_eq!(lock_timeout, "1s");
 
         Ok(())
     }
