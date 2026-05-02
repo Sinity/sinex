@@ -143,6 +143,8 @@ impl XtaskCommand for LintForbiddenCommand {
             is_tests_path,
         )?);
 
+        violations.extend(check_transport_publish_family_inventory()?);
+
         // anyhow:: in library code is disallowed; libraries use the project error stack.
         let anyhow_allow: [&str; 0] = [];
         violations.extend(check_anyhow_in_lib("anyhow::", r"anyhow::", &anyhow_allow)?);
@@ -230,6 +232,53 @@ impl XtaskCommand for LintForbiddenCommand {
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::check()
     }
+}
+
+fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
+    // Every production file with direct async-nats publish calls must be in
+    // this transport-family inventory. The per-file entry is not a blanket
+    // endorsement of every call inside it; it is the visible ownership list
+    // that prevents new raw publish sites from appearing silently.
+    let allow = [
+        // Test/sandbox producer used by xtask harnesses.
+        "xtask/src/sandbox/events.rs",
+        // Canonical event, telemetry, raw-ingest DLQ, and processing-failure publisher.
+        "crate/lib/sinex-node-sdk/src/nats_publisher.rs",
+        // Source-material lifecycle frame publisher.
+        "crate/lib/sinex-node-sdk/src/acquisition_manager.rs",
+        // Raw-ingest DLQ retry re-publishes into the original raw-event subject.
+        "crate/lib/sinex-node-sdk/src/dlq_retry.rs",
+        // Node coordination control messages.
+        "crate/lib/sinex-node-sdk/src/coordination.rs",
+        // Runtime scan/drain control messages.
+        "crate/lib/sinex-node-sdk/src/runtime/stream/runner/control_messages.rs",
+        // Ingestd confirmation and raw-ingest DLQ publishers.
+        "crate/core/sinex-ingestd/src/jetstream_consumer.rs",
+        // Source-material assembler DLQ routing.
+        "crate/core/sinex-ingestd/src/material_assembler/finalize.rs",
+        // Active-schema broadcast control notification.
+        "crate/core/sinex-ingestd/src/service.rs",
+        // Gateway node control command publishers.
+        "crate/core/sinex-gateway/src/handlers/nodes.rs",
+        // Replay control request/reply and invalidation publishers.
+        "crate/core/sinex-gateway/src/replay_control/server.rs",
+        "crate/core/sinex-gateway/src/replay_control/execution/collect.rs",
+        // This lint's regex fixtures and inventory strings.
+        "xtask/src/commands/lint_forbidden.rs",
+    ];
+
+    check_pattern(
+        "raw async-nats publish call without transport-family inventory entry",
+        r"\.publish(?:_with_headers)?\(",
+        &allow,
+        |path| {
+            is_tests_path(path)
+                || path == "crate/lib/sinex-primitives/src/testing.rs"
+                || path == "crate/lib/sinex-node-sdk/src/event_node.rs"
+                || path == "crate/lib/sinex-node-sdk/src/self_observation.rs"
+                || path.starts_with("crate/lib/sinex-test-utils/")
+        },
+    )
 }
 
 /// Check for a pattern allowing test directories
@@ -678,6 +727,17 @@ mod tests {
         let error = filter_allowlist(vec![":10:test".to_string()], &[], |_| false)
             .expect_err("empty file path should fail");
         assert!(format!("{error:#}").contains("empty file path"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_transport_publish_family_inventory_is_current() -> ::xtask::sandbox::TestResult<()>
+    {
+        let violations = check_transport_publish_family_inventory()?;
+        assert!(
+            violations.is_empty(),
+            "direct publish sites must be assigned to a transport family: {violations:#?}"
+        );
         Ok(())
     }
 
