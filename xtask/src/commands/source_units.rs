@@ -168,6 +168,8 @@ struct SourceUnitValidation {
     invalid_physical_impact: Vec<String>,
     invalid_output_event_pairs: Vec<String>,
     unbacked_output_event_pairs: Vec<String>,
+    missing_output_event_pair_backing: Vec<String>,
+    exempted_output_event_pair_backing: Vec<String>,
     runner_packs_with_multiple_units: Vec<String>,
     stale_manifest: bool,
 }
@@ -221,6 +223,7 @@ fn execute_check(output: Option<&Path>, ctx: &CommandContext) -> Result<CommandR
         || !validation.invalid_physical_impact.is_empty()
         || !validation.invalid_output_event_pairs.is_empty()
         || !validation.unbacked_output_event_pairs.is_empty()
+        || !validation.missing_output_event_pair_backing.is_empty()
         || validation.runner_packs_with_multiple_units.is_empty()
         || validation.stale_manifest;
 
@@ -544,26 +547,32 @@ fn validate_source_units(
             })
         })
         .collect::<Vec<_>>();
-    let unbacked_output_event_pairs = source_units
-        .iter()
-        .flat_map(|unit| {
-            static_emitter_event_pairs(&unit.id)
-                .into_iter()
-                .flat_map(move |backed_pairs| {
-                    unit.output_event_types
-                        .iter()
-                        .filter_map(move |event_pair| {
-                            let pair = (event_pair.source.as_str(), event_pair.event_type.as_str());
-                            (!backed_pairs.contains(&pair)).then(|| {
-                                format!(
-                                    "{}:{}/{}",
-                                    unit.subject, event_pair.source, event_pair.event_type
-                                )
-                            })
-                        })
-                })
-        })
-        .collect::<Vec<_>>();
+    let mut unbacked_output_event_pairs = Vec::new();
+    let mut missing_output_event_pair_backing = Vec::new();
+    let mut exempted_output_event_pair_backing = Vec::new();
+    for unit in source_units {
+        let backed_pairs = static_emitter_event_pairs(&unit.id);
+        let exemption = emitter_backing_exemption_reason(&unit.id);
+        for event_pair in &unit.output_event_types {
+            let formatted_pair = format!(
+                "{}:{}/{}",
+                unit.subject, event_pair.source, event_pair.event_type
+            );
+            let pair = (event_pair.source.as_str(), event_pair.event_type.as_str());
+            match (&backed_pairs, exemption) {
+                (Some(backed_pairs), _) if !backed_pairs.contains(&pair) => {
+                    unbacked_output_event_pairs.push(formatted_pair);
+                }
+                (Some(_), _) => {}
+                (None, Some(reason)) => {
+                    exempted_output_event_pair_backing.push(format!("{formatted_pair}: {reason}"));
+                }
+                (None, None) => {
+                    missing_output_event_pair_backing.push(formatted_pair);
+                }
+            }
+        }
+    }
     let runner_packs_with_multiple_units = runner_pack_manifests(source_units)
         .into_iter()
         .filter(|pack| pack.source_unit_count >= 2)
@@ -584,6 +593,8 @@ fn validate_source_units(
         invalid_physical_impact,
         invalid_output_event_pairs,
         unbacked_output_event_pairs,
+        missing_output_event_pair_backing,
+        exempted_output_event_pair_backing,
         runner_packs_with_multiple_units,
         stale_manifest,
     }
@@ -660,6 +671,36 @@ fn static_emitter_event_pairs(
     source_unit_id: &str,
 ) -> Option<BTreeSet<(&'static str, &'static str)>> {
     let pairs = match source_unit_id {
+        "system.monitor" => &[("system", "monitoring.started")][..],
+        "system.systemd" => &[
+            ("systemd", "unit.started"),
+            ("systemd", "unit.stopped"),
+            ("systemd", "unit.failed"),
+            ("systemd", "unit.reloaded"),
+            ("systemd", "timer.triggered"),
+        ][..],
+        "system.journald" => &[
+            ("journald", "entry.written"),
+            ("journald", "sync.completed"),
+        ][..],
+        "system.dbus" => &[
+            ("dbus", "signal.received"),
+            ("dbus", "method.called"),
+            ("dbus", "power.state_changed"),
+            ("dbus", "bluetooth.device_changed"),
+            ("dbus", "network.state_changed"),
+            ("dbus", "device.connected"),
+            ("dbus", "media.state_changed"),
+            ("dbus", "mount.event"),
+            ("dbus", "notification.sent"),
+        ][..],
+        "system.udev" => &[
+            ("udev", "device.connected"),
+            ("udev", "device.disconnected"),
+            ("udev", "device.changed"),
+            ("udev", "device.driver_changed"),
+            ("udev", "device.other"),
+        ][..],
         "terminal.monitor" => &[("terminal", "shell.terminal_monitoring_started")][..],
         "terminal.text-history"
         | "terminal.bash-history"
@@ -670,6 +711,31 @@ fn static_emitter_event_pairs(
         _ => return None,
     };
     Some(pairs.iter().copied().collect())
+}
+
+fn emitter_backing_exemption_reason(source_unit_id: &str) -> Option<&'static str> {
+    match source_unit_id {
+        "analytics"
+        | "daily-summarizer"
+        | "health"
+        | "hourly-summarizer"
+        | "session-detector" => Some(
+            "derived-node output is declared through node trait constants; static emitter catalog pending",
+        ),
+        "browser.history" => {
+            Some("browser history emitter path is parser/importer-driven; static catalog pending")
+        }
+        "desktop.activitywatch" | "desktop.clipboard" | "desktop.monitor" | "desktop.window-manager" => Some(
+            "desktop emitter path spans live bridge and historical import adapters; static catalog pending",
+        ),
+        "document.staging" => {
+            Some("document staging emitter path is scan/importer-driven; static catalog pending")
+        }
+        "fs" => {
+            Some("filesystem emitter path is watcher/importer-driven; static catalog pending")
+        }
+        _ => None,
+    }
 }
 
 fn source_unit_service_name(source_unit_id: &str) -> String {
@@ -804,10 +870,44 @@ mod tests {
         assert!(validation.invalid_physical_impact.is_empty());
         assert!(validation.invalid_output_event_pairs.is_empty());
         assert!(validation.unbacked_output_event_pairs.is_empty());
+        assert!(validation.missing_output_event_pair_backing.is_empty());
+        assert!(
+            !validation.exempted_output_event_pair_backing.is_empty(),
+            "source units without static emitter catalogs must be explicit exemptions"
+        );
         assert!(
             validation
                 .runner_packs_with_multiple_units
                 .contains(&"terminal".to_string())
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_unit_validation_requires_backing_or_exemption() -> TestResult<()> {
+        let manifest = build_source_unit_manifest();
+        let mut unit = manifest
+            .source_units
+            .iter()
+            .find(|unit| unit.id == "fs")
+            .expect("fs descriptor should be present")
+            .clone();
+        unit.id = "uncataloged".to_string();
+        unit.subject = "source_unit:uncataloged".to_string();
+
+        let validation = validate_source_units(&[unit], false);
+        assert_eq!(
+            validation.missing_output_event_pair_backing,
+            vec![
+                "source_unit:uncataloged:fs-watcher/file.created".to_string(),
+                "source_unit:uncataloged:fs-watcher/file.modified".to_string(),
+                "source_unit:uncataloged:fs-watcher/file.deleted".to_string(),
+                "source_unit:uncataloged:fs-watcher/file.moved".to_string(),
+                "source_unit:uncataloged:fs-watcher/file.discovered".to_string(),
+                "source_unit:uncataloged:fs-watcher/dir.created".to_string(),
+                "source_unit:uncataloged:fs-watcher/dir.deleted".to_string(),
+                "source_unit:uncataloged:fs-watcher/dir.discovered".to_string(),
+            ]
         );
         Ok(())
     }
@@ -859,6 +959,33 @@ mod tests {
             vec![
                 "source_unit:terminal.fish-history:shell.history.fish/command.executed".to_string()
             ]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_unit_validation_rejects_registered_but_unbacked_system_pairs()
+    -> TestResult<()> {
+        let manifest = build_source_unit_manifest();
+        let mut unit = manifest
+            .source_units
+            .iter()
+            .find(|unit| unit.id == "system.udev")
+            .expect("udev descriptor should be present")
+            .clone();
+        unit.output_event_types = vec![SourceUnitEventType {
+            source: "udev".to_string(),
+            event_type: "device.added".to_string(),
+        }];
+
+        let validation = validate_source_units(&[unit], false);
+        assert!(
+            validation.invalid_output_event_pairs.is_empty(),
+            "udev device.added is a registered payload pair, so this must be caught by emitter validation"
+        );
+        assert_eq!(
+            validation.unbacked_output_event_pairs,
+            vec!["source_unit:system.udev:udev/device.added".to_string()]
         );
         Ok(())
     }
