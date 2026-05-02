@@ -5,6 +5,7 @@ use sinex_gateway::handlers::{
     handle_coordination_list_instances,
 };
 use sinex_primitives::coordination::{CoordinationKvClient, InstanceMetadata};
+use sinex_primitives::error::ErrorClass;
 use sinex_primitives::temporal;
 use xtask::sandbox::prelude::*;
 
@@ -57,7 +58,9 @@ async fn coordination_instance_health_rejects_missing_instance(ctx: TestContext)
         handle_coordination_instance_health(&kv_client, json!({ "instance_id": "missing" }))
             .await
             .expect_err("missing coordination instances must fail loudly");
-    assert!(error.to_string().contains("Instance not found: missing"));
+    assert_eq!(error.error_class(), ErrorClass::DataError);
+    assert!(error.to_string().contains("Instance not found"));
+    assert!(error.to_string().contains("missing"));
 
     Ok(())
 }
@@ -181,7 +184,8 @@ async fn coordination_list_instances_rejects_invalid_hostname_metadata(
     let error = handle_coordination_list_instances(&kv_client, json!({}))
         .await
         .expect_err("invalid coordination metadata must fail honestly");
-    assert!(error.to_string().contains("Invalid coordination hostname"));
+    assert_eq!(error.error_class(), ErrorClass::DataError);
+    assert!(error.to_string().contains("bad host name"));
 
     Ok(())
 }
@@ -208,7 +212,8 @@ async fn coordination_instance_health_rejects_invalid_hostname_metadata(
     )
     .await
     .expect_err("invalid coordination metadata must fail honestly");
-    assert!(error.to_string().contains("Invalid coordination hostname"));
+    assert_eq!(error.error_class(), ErrorClass::DataError);
+    assert!(error.to_string().contains("bad host name"));
 
     Ok(())
 }
@@ -225,11 +230,9 @@ async fn coordination_get_leader_rejects_missing_leader_metadata(
     let error = handle_coordination_get_leader(&kv_client, json!({}))
         .await
         .expect_err("missing leader metadata must fail loudly");
-    assert!(
-        error
-            .to_string()
-            .contains("Leader metadata missing for instance: leader-a")
-    );
+    assert_eq!(error.error_class(), ErrorClass::DataError);
+    assert!(error.to_string().contains("Leader metadata missing"));
+    assert!(error.to_string().contains("leader-a"));
 
     Ok(())
 }
