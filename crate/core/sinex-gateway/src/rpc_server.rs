@@ -27,7 +27,9 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_node_sdk::systemd_notify;
+use sinex_primitives::Result as SinexResult;
 use sinex_primitives::Timestamp;
+use sinex_primitives::error::SinexError;
 use sinex_primitives::rpc::JsonRpcError;
 use sinex_primitives::{Bytes, Uuid};
 use std::borrow::Cow;
@@ -50,7 +52,6 @@ use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetReques
 use tower_http::trace::TraceLayer;
 
 // Standard library
-use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
 use std::time::Duration;
@@ -108,12 +109,6 @@ struct JsonRpcResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<JsonRpcError>,
     id: Option<Value>,
-}
-
-#[derive(Debug, Error)]
-#[error("Unknown method: {method}")]
-struct UnknownMethodError {
-    method: String,
 }
 
 /// Map `SinexError` variants to JSON-RPC error codes and client-safe messages.
@@ -750,7 +745,7 @@ pub async fn dispatch_rpc_method(
     method: &str,
     params: serde_json::Value,
     auth: &RpcAuthContext,
-) -> color_eyre::eyre::Result<serde_json::Value> {
+) -> SinexResult<serde_json::Value> {
     // Use lazy static registry for zero-cost dispatch
     use std::sync::OnceLock;
     static REGISTRY: OnceLock<crate::rpc_registry::RpcRegistry> = OnceLock::new();
@@ -922,7 +917,10 @@ async fn handle_rpc(
             state.metrics.record_request_success(latency_us);
             JsonRpcResponse::success(request.id, value)
         }
-        Err(err) if err.downcast_ref::<UnknownMethodError>().is_some() => {
+        Err(err)
+            if matches!(&err, SinexError::NotFound(_))
+                && err.to_string().starts_with("Unknown method:") =>
+        {
             state.metrics.record_request_rejected();
             JsonRpcResponse::error(request.id, -32601, err.to_string())
         }
@@ -936,33 +934,24 @@ async fn handle_rpc(
                 "RPC method failed"
             );
 
-            // Try to extract structured error info from SinexError
-            if let Some(sinex_err) = err.downcast_ref::<sinex_primitives::error::SinexError>() {
-                let (code, message) = sinex_error_to_rpc_code(sinex_err);
+            let (code, message) = sinex_error_to_rpc_code(&err);
 
-                // Feature-gated error detail serialization (OPP-002)
-                // In dev mode, include full error for debugging.
-                // In production, only return error_id for log correlation.
-                #[cfg(feature = "dev-errors")]
-                let data = serde_json::json!({
-                    "error_id": error_id.to_string(),
-                    "error": sinex_err,  // Full error details in dev mode
-                });
+            // Feature-gated error detail serialization (OPP-002)
+            // In dev mode, include full error for debugging.
+            // In production, only return error_id for log correlation.
+            #[cfg(feature = "dev-errors")]
+            let data = serde_json::json!({
+                "error_id": error_id.to_string(),
+                "error": err,  // Full error details in dev mode
+            });
 
-                #[cfg(not(feature = "dev-errors"))]
-                let data = serde_json::json!({
-                    "error_id": error_id.to_string(),
-                    // No internal error details - check server logs with error_id
-                });
+            #[cfg(not(feature = "dev-errors"))]
+            let data = serde_json::json!({
+                "error_id": error_id.to_string(),
+                // No internal error details - check server logs with error_id
+            });
 
-                JsonRpcResponse::error_with_data(request.id, code, message, data)
-            } else {
-                JsonRpcResponse::error(
-                    request.id,
-                    -32603,
-                    format!("Internal error (ref: {error_id})"),
-                )
-            }
+            JsonRpcResponse::error_with_data(request.id, code, message, data)
         }
     };
 
@@ -1086,6 +1075,8 @@ fn load_rustls_config(
     key_path: &str,
     client_ca_path: Option<&str>,
 ) -> color_eyre::eyre::Result<rustls::ServerConfig> {
+    ensure_rustls_crypto_provider()?;
+
     let cert_chain: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(cert_path)?
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|e| eyre!("Failed to read TLS certificate from {cert_path}: {e}"))?;
@@ -1116,6 +1107,20 @@ fn load_rustls_config(
             .with_no_client_auth()
             .with_single_cert(cert_chain, key)
             .map_err(|e| eyre!("Invalid TLS cert/key: {}", e))
+    }
+}
+
+fn ensure_rustls_crypto_provider() -> color_eyre::eyre::Result<()> {
+    if rustls::crypto::CryptoProvider::get_default().is_some() {
+        return Ok(());
+    }
+
+    match rustls::crypto::aws_lc_rs::default_provider().install_default() {
+        Ok(()) => Ok(()),
+        Err(_) if rustls::crypto::CryptoProvider::get_default().is_some() => Ok(()),
+        Err(_) => Err(eyre!(
+            "Failed to install Rustls crypto provider for gateway TLS configuration"
+        )),
     }
 }
 
