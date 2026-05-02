@@ -3,6 +3,7 @@ mod common;
 use common::{NatsHarness, admin_auth, ensure_events_stream};
 use serde_json::json;
 use sinex_gateway::handlers::{handle_shadow_create, handle_shadow_delete, handle_shadow_list};
+use sinex_primitives::error::ErrorClass;
 use sinex_primitives::rpc::shadow::{
     ShadowCreateResponse, ShadowDeleteResponse, ShadowListResponse,
 };
@@ -23,6 +24,7 @@ async fn shadow_create_requires_dev_prefix(ctx: TestContext) -> TestResult<()> {
     .expect_err("consumer names without dev- prefix must fail");
 
     assert!(err.to_string().contains("dev-"));
+    assert_eq!(err.error_class(), ErrorClass::DataError);
     Ok(())
 }
 
@@ -85,6 +87,7 @@ async fn shadow_create_requires_subject_filter(ctx: TestContext) -> TestResult<(
     .expect_err("missing subject_filter must fail");
 
     assert!(err.to_string().contains("subject_filter is required"));
+    assert_eq!(err.error_class(), ErrorClass::DataError);
     Ok(())
 }
 
@@ -103,5 +106,6 @@ async fn shadow_delete_requires_dev_prefix(ctx: TestContext) -> TestResult<()> {
     .expect_err("delete without dev- prefix must fail");
 
     assert!(err.to_string().contains("dev-"));
+    assert_eq!(err.error_class(), ErrorClass::DataError);
     Ok(())
 }

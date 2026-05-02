@@ -10,12 +10,13 @@ use sinex_primitives::{environment, environment::SinexEnvironment, temporal};
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::Duration;
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempDir};
 use tokio::sync::watch;
 use xtask::sandbox::{EnvGuard, prelude::*};
 
 pub struct NatsHarness {
     _ctx: TestContext,
+    _content_store_dir: TempDir,
     pub client: Client,
     pub env: SinexEnvironment,
     pub services: ServiceContainer,
@@ -30,9 +31,16 @@ impl NatsHarness {
         config.nats.url = ctx.nats_url().ok_or_else(|| {
             color_eyre::eyre::eyre!("dedicated NATS test context must expose a NATS URL")
         })?;
+        let content_store_dir = TempDir::new()?;
+        config.content_store_path = content_store_dir
+            .path()
+            .join("content-store")
+            .to_string_lossy()
+            .into_owned();
         let services = ServiceContainer::new(&config).await?;
         Ok(Self {
             _ctx: ctx,
+            _content_store_dir: content_store_dir,
             client,
             env: environment(),
             services,
