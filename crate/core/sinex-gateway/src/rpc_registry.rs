@@ -579,14 +579,20 @@ fn build_registry_impl() -> RpcRegistry {
         // ─────────────────────────────────────────────────────────────
         // PKM methods (Write)
         .register("pkm.create_note", Role::Write, |params, services, auth| {
-            Box::pin(async move { handle_create_note(services.pkm.as_ref(), params, auth).await })
+            Box::pin(async move {
+                handle_create_note(services.pkm.as_ref(), params, auth)
+                    .await
+                    .map_err(Into::into)
+            })
         })
         .register(
             "pkm.create_entities_from_list",
             Role::Write,
             |params, services, auth| {
                 Box::pin(async move {
-                    handle_create_entities(services.pkm.as_ref(), params, auth).await
+                    handle_create_entities(services.pkm.as_ref(), params, auth)
+                        .await
+                        .map_err(Into::into)
                 })
             },
         )
@@ -594,9 +600,11 @@ fn build_registry_impl() -> RpcRegistry {
             "pkm.link_entities",
             Role::Write,
             |params, services, auth| {
-                Box::pin(
-                    async move { handle_link_entities(services.pkm.as_ref(), params, auth).await },
-                )
+                Box::pin(async move {
+                    handle_link_entities(services.pkm.as_ref(), params, auth)
+                        .await
+                        .map_err(Into::into)
+                })
             },
         )
         // Content methods (Write)
