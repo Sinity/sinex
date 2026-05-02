@@ -89,6 +89,13 @@ pub struct HyprlandStateCapturedPayload {
     pub captured_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "wm.hyprland", event_type = "wm.unhandled")]
+pub struct HyprlandUnhandledPayload {
+    pub event_type: String,
+    pub event_data: String,
+}
+
 // Common types
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

@@ -29,35 +29,11 @@ use sinex_primitives::source_unit::{
 // operators should see the logical capture leaves it hosts.
 register_source_unit! {
     SourceUnitDescriptor {
-        id: "desktop.monitor",
-        namespace: "desktop",
-        runner_pack: "desktop",
-        checkpoint_family: SuCheckpointFamily::LiveObservation,
-        event_types: &[
-            ("desktop", "desktop.monitoring_started"),
-            ("desktop", "desktop.snapshot"),
-        ],
-        privacy_tier: SuPrivacyTier::Sensitive,
-        runtime_shape: SuRuntimeShape::Continuous,
-        horizons: &[SuHorizon::Continuous],
-        retention: SuRetentionPolicy::Forever,
-        proof_obligations: &[],
-        occurrence_identity: SuOccurrenceIdentity::Uuid5From("(source_unit, run_id)"),
-        access_policy: "runtime_self_observation",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:desktop",
-        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
-    }
-}
-
-register_source_unit! {
-    SourceUnitDescriptor {
         id: "desktop.clipboard",
         namespace: "desktop",
         runner_pack: "desktop",
         checkpoint_family: SuCheckpointFamily::LiveObservation,
         event_types: &[
-            ("desktop", "clipboard.historical"),
             ("clipboard", "clipboard.copied"),
             ("clipboard", "clipboard.selected"),
         ],
@@ -82,7 +58,6 @@ register_source_unit! {
         runner_pack: "desktop",
         checkpoint_family: SuCheckpointFamily::LiveObservation,
         event_types: &[
-            ("desktop", "window.wm_historical"),
             ("wm.hyprland", "window.opened"),
             ("wm.hyprland", "window.closed"),
             ("wm.hyprland", "window.focused"),
@@ -91,6 +66,7 @@ register_source_unit! {
             ("wm.hyprland", "workspace.switched"),
             ("wm.hyprland", "monitor.focused"),
             ("wm.hyprland", "state.captured"),
+            ("wm.hyprland", "wm.unhandled"),
         ],
         privacy_tier: SuPrivacyTier::Sensitive,
         runtime_shape: SuRuntimeShape::Continuous,
