@@ -23,7 +23,7 @@ use sinex_primitives::source_unit::{
 // occurrence anchor is the row's stable visit_id within the snapshot.
 register_source_unit! {
     SourceUnitDescriptor {
-        id: "browser",
+        id: "browser.history",
         namespace: "web",
         runner_pack: "browser",
         checkpoint_family: SuCheckpointFamily::MutableSnapshot {

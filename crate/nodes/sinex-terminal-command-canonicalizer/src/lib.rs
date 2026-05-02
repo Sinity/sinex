@@ -21,7 +21,7 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "terminal-canonicalizer",
         namespace: "derived",
-        runner_pack: "terminal",
+        runner_pack: "terminal-canonicalizer",
         checkpoint_family: SuCheckpointFamily::AppendStream,
         event_types: &[
             ("canonical.terminal", "command.canonical"),
@@ -36,7 +36,7 @@ register_source_unit! {
         ),
         access_policy: "event_stream_read",
         package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:terminal",
+        implementation_mode: "rust_in_pack:terminal-canonicalizer",
         build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
     }
 }
