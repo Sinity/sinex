@@ -7,7 +7,7 @@ use crate::{NodeResult, SinexError};
 use async_nats::jetstream;
 use futures::StreamExt;
 use serde_json::Value as JsonValue;
-use sinex_primitives::{environment::SinexEnvironment, temporal, units::Seconds};
+use sinex_primitives::{environment::SinexEnvironment, temporal, transport, units::Seconds};
 use std::time::Duration;
 use tracing::{error, info, warn};
 
@@ -358,6 +358,7 @@ impl DlqRetryHandler {
         if let Some(msg_id) = target.original_nats_msg_id.as_deref() {
             headers.insert("Nats-Msg-Id", msg_id);
         }
+        transport::insert_transport_class_headers(&mut headers, transport::Class::Critical);
 
         js.publish_with_headers(
             target.original_subject,
@@ -393,6 +394,7 @@ impl DlqRetryHandler {
         if let Some(msg_id) = target.original_nats_msg_id.as_deref() {
             headers.insert("Nats-Msg-Id", msg_id);
         }
+        transport::insert_transport_class_headers(&mut headers, transport::Class::Critical);
 
         js.publish_with_headers(
             target.original_subject,

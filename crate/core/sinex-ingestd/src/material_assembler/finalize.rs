@@ -7,6 +7,8 @@
 use serde::Serialize;
 use sinex_db::repositories::{DbPoolExt, TemporalLedgerEntry, material_status};
 use sinex_primitives::Timestamp;
+use sinex_primitives::nats::{NatsTrafficClass, insert_traffic_class_header};
+use sinex_primitives::transport;
 use sinex_primitives::{Id, JsonValue, Uuid};
 use sinex_schema::schema::records::SourceMaterialRecord;
 use tokio::sync::Mutex;
@@ -190,9 +192,16 @@ impl MaterialAssembler {
 
         match serde_json::to_vec(&payload) {
             Ok(bytes) => {
+                let mut headers = async_nats::HeaderMap::new();
+                insert_traffic_class_header(&mut headers, NatsTrafficClass::RawIngestDlq);
+                transport::insert_semantic_transport_class_header(
+                    &mut headers,
+                    transport::Class::SourceMaterial,
+                );
+
                 if let Err(e) = self
                     .nats_client
-                    .publish(self.dlq_subject.clone(), bytes.into())
+                    .publish_with_headers(self.dlq_subject.clone(), headers, bytes.into())
                     .await
                 {
                     error!(

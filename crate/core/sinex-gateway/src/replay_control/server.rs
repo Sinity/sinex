@@ -4,17 +4,17 @@ use futures::StreamExt;
 use parking_lot::Mutex;
 use sinex_db::replay::state_machine::ReplayStateMachine;
 use sinex_primitives::environment::SinexEnvironment;
-use sinex_primitives::nats::{NatsTrafficClass, insert_traffic_class_header};
+use sinex_primitives::transport;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
 
+use super::execution::{ReplayExecutionEngine, ReplayPreviewSummary};
 use super::protocol::{ReplayControlRequest, ReplayControlResponse};
 use super::validation::{
     ReplayAction, ensure_preview_allowed, run_safety_analysis, validate_actor_for_action,
 };
-use super::execution::{ReplayExecutionEngine, ReplayPreviewSummary};
 use super::{ReplayControlError, ReplayControlHealthState};
 
 pub(super) const REPLAY_CONTROL_SUBSCRIBE_ATTEMPTS: usize = 5;
@@ -210,7 +210,10 @@ impl ReplayControlServer {
             match serde_json::to_vec(&response) {
                 Ok(bytes) => {
                     let mut headers = async_nats::HeaderMap::new();
-                    insert_traffic_class_header(&mut headers, NatsTrafficClass::Control);
+                    transport::insert_transport_class_headers(
+                        &mut headers,
+                        transport::Class::Control,
+                    );
                     if let Err(err) = client
                         .publish_with_headers(reply_subject, headers, bytes.into())
                         .await
