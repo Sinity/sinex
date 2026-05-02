@@ -92,7 +92,9 @@ impl ReplayExecutionEngine {
             .collect())
     }
 
-    pub(crate) fn expected_replay_outputs(material_roots: &[StoredEvent]) -> Result<ExpectedReplayOutputs> {
+    pub(crate) fn expected_replay_outputs(
+        material_roots: &[StoredEvent],
+    ) -> Result<ExpectedReplayOutputs> {
         if material_roots.is_empty() {
             return Err(eyre!(
                 "Replay output expectations require at least one material root"
@@ -394,15 +396,28 @@ impl ReplayExecutionEngine {
         .await
         .map_err(|e| eyre!("Failed to collect cascade scope metadata: {e}"))?;
 
-        let mut grouped: HashMap<(String, String, bool), ScopeInvalidationBucket> = HashMap::new();
+        let mut grouped: HashMap<(EventSource, EventType, bool), ScopeInvalidationBucket> =
+            HashMap::new();
         for row in rows {
             if let Some(sk) = row.scope_key {
+                let event_source = EventSource::new(row.source.clone()).map_err(|error| {
+                    eyre!(
+                        "Invalid event source '{}' in replay cascade scope metadata: {error}",
+                        row.source
+                    )
+                })?;
+                let event_type = EventType::new(row.event_type.clone()).map_err(|error| {
+                    eyre!(
+                        "Invalid event type '{}' in replay cascade scope metadata: {error}",
+                        row.event_type
+                    )
+                })?;
                 let bucket = grouped
-                    .entry((row.source.clone(), row.event_type.clone(), row.has_lineage))
+                    .entry((event_source.clone(), event_type.clone(), row.has_lineage))
                     .or_insert_with(|| ScopeInvalidationBucket {
                         event_ids: Vec::new(),
-                        event_source: row.source.clone(),
-                        event_type: row.event_type.clone(),
+                        event_source,
+                        event_type,
                         has_lineage: row.has_lineage,
                         scope_keys: Vec::new(),
                     });
@@ -437,29 +452,10 @@ impl ReplayExecutionEngine {
         let invalidation_subject = self.env.nats_subject(INVALIDATION_SUBJECT);
 
         for bucket in scope_metadata {
-            let event_source = match EventSource::new(bucket.event_source.clone()) {
-                Ok(source) => source,
-                Err(error) => {
-                    return Err(eyre!(
-                        "Failed to build replay scope invalidation for archived event source '{}': {error}",
-                        bucket.event_source
-                    ));
-                }
-            };
-            let event_type = match EventType::new(bucket.event_type.clone()) {
-                Ok(event_type) => event_type,
-                Err(error) => {
-                    return Err(eyre!(
-                        "Failed to build replay scope invalidation for archived event type '{}' (scope_count={}): {error}",
-                        bucket.event_type,
-                        bucket.scope_keys.len()
-                    ));
-                }
-            };
             let invalidation = DerivedScopeInvalidation::archived(
                 bucket.event_ids.clone(),
-                event_source.clone(),
-                event_type.clone(),
+                bucket.event_source.clone(),
+                bucket.event_type.clone(),
             )
             .with_has_lineage(bucket.has_lineage)
             .with_operation(operation_id)
@@ -474,21 +470,18 @@ impl ReplayExecutionEngine {
                     // the plain js.publish path (no header map variant here).
                     if let Err(e) = self
                         .js
-                        .publish(
-                            invalidation_subject.clone(),
-                            payload.into(),
-                        )
+                        .publish(invalidation_subject.clone(), payload.into())
                         .await
                     {
                         return Err(eyre!(
                             "Failed to publish replay scope invalidation for event type '{}' (scope_count={}): {e}",
-                            event_type,
+                            bucket.event_type,
                             bucket.scope_keys.len()
                         ));
                     }
                     debug!(
                         operation_id = %operation_id,
-                        event_type = %event_type,
+                        event_type = %bucket.event_type,
                         scope_count = bucket.scope_keys.len(),
                         "Published scope invalidation"
                     );
@@ -496,7 +489,7 @@ impl ReplayExecutionEngine {
                 Err(e) => {
                     return Err(eyre!(
                         "Failed to serialize replay scope invalidation for event type '{}' (scope_count={}): {e}",
-                        event_type,
+                        bucket.event_type,
                         bucket.scope_keys.len()
                     ));
                 }
