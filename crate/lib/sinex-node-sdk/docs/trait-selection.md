@@ -49,7 +49,7 @@ desktop activity tracker, document parser.
 - Continuous mode receives a live-tail resume cursor, not permission to perform
   historical import; startup snapshot and gap-fill belong to the SDK runner
 - State is checkpointed to file + NATS KV automatically via `IngestorNodeAdapter`
-- Exploration hooks available (`get_source_state`, `get_coverage_analysis`)
+- Exploration hooks available (`get_source_state`, `get_ingestion_history`, `export_data`)
 
 ### TransducerNode — "I perform 1:1 event transformation"
 

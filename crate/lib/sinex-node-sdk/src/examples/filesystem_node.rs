@@ -489,9 +489,7 @@ impl Node for FilesystemNode {
     }
 }
 
-use crate::exploration::{
-    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
-};
+use crate::exploration::{ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState};
 
 impl ExplorationProvider for FilesystemNode {
     fn get_source_state(&self) -> NodeResult<SourceState> {
@@ -510,14 +508,6 @@ impl ExplorationProvider for FilesystemNode {
         Err(SinexError::invalid_state(
             "ingestion history is not implemented in the example filesystem node",
         ))
-    }
-    fn get_coverage_analysis(
-        &self,
-        _time_range: Option<(Timestamp, Timestamp)>,
-    ) -> NodeResult<CoverageAnalysis> {
-        crate::exploration::coverage_analysis_unavailable(
-            "coverage analysis is not implemented in the example filesystem node",
-        )
     }
     fn export_data(&self, _path: &SanitizedPath, _format: ExportFormat) -> NodeResult<()> {
         Err(SinexError::invalid_state(

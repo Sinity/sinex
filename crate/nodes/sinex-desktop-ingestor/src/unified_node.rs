@@ -4,9 +4,9 @@
 //! continuous scanning modes for desktop events.
 
 // Use unified SDK prelude for common types
+use serde::{Deserialize, Serialize};
 use sinex_node_sdk::error_helpers::{ConfigAccessor, parse_config_value, parse_typed_config};
 use sinex_node_sdk::prelude::*;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{error, info, instrument, warn};
 
@@ -1104,16 +1104,6 @@ impl IngestorNode for DesktopNode {
         Err(SinexError::invalid_state(
             "ingestion history is not implemented for desktop watcher sources",
         ))
-    }
-
-    fn get_coverage_analysis(
-        &self,
-        _state: &Self::State,
-        _time_range: Option<(sinex_primitives::Timestamp, sinex_primitives::Timestamp)>,
-    ) -> NodeResult<CoverageAnalysis> {
-        sinex_node_sdk::exploration::coverage_analysis_unavailable(
-            "coverage analysis is not implemented for desktop watcher sources",
-        )
     }
 }
 

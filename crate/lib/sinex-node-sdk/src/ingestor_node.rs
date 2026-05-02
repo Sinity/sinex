@@ -19,9 +19,7 @@ use crate::runtime::stream::{
 use crate::shutdown::ShutdownConfig;
 use crate::{
     NodeResult, SinexError,
-    exploration::{
-        CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
-    },
+    exploration::{ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState},
 };
 use sinex_primitives::SanitizedPath;
 use std::path::{Path, PathBuf};
@@ -140,17 +138,6 @@ pub trait IngestorNode: Send + Sync + 'static {
         _limit: u64,
     ) -> NodeResult<Vec<IngestionHistoryEntry>> {
         Err(SinexError::processing("Ingestion history not implemented"))
-    }
-
-    fn get_coverage_analysis(
-        &self,
-        _state: &Self::State,
-        _time_range: Option<(
-            sinex_primitives::temporal::Timestamp,
-            sinex_primitives::temporal::Timestamp,
-        )>,
-    ) -> NodeResult<CoverageAnalysis> {
-        Err(SinexError::processing("Coverage analysis not implemented"))
     }
 
     fn export_data(
@@ -491,17 +478,6 @@ impl<I: IngestorNode> ExplorationProvider for IngestorNodeAdapter<I> {
     fn get_ingestion_history(&self, limit: u64) -> NodeResult<Vec<IngestionHistoryEntry>> {
         self.ingestor
             .get_ingestion_history(&self.state.user_state, limit)
-    }
-
-    fn get_coverage_analysis(
-        &self,
-        time_range: Option<(
-            sinex_primitives::temporal::Timestamp,
-            sinex_primitives::temporal::Timestamp,
-        )>,
-    ) -> NodeResult<CoverageAnalysis> {
-        self.ingestor
-            .get_coverage_analysis(&self.state.user_state, time_range)
     }
 
     fn export_data(&self, path: &SanitizedPath, format: ExportFormat) -> NodeResult<()> {

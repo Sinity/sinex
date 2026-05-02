@@ -1,24 +1,8 @@
-use crate::{NodeResult, SinexError};
+use crate::NodeResult;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::SanitizedPath;
 use sinex_primitives::temporal::Timestamp;
 use std::collections::HashMap;
-
-/// Missing item information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MissingItem {
-    /// Item identifier in source system
-    pub source_id: String,
-
-    /// Item timestamp
-    pub timestamp: Timestamp,
-
-    /// Brief description
-    pub description: String,
-
-    /// Reason for being missing
-    pub missing_reason: Option<String>,
-}
 
 pub use crate::automaton_base::IngestionHistoryEntry;
 
@@ -52,38 +36,6 @@ pub struct SourceState {
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
-/// Coverage analysis results
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CoverageAnalysis {
-    /// Analysis time range
-    pub time_range: (Timestamp, Timestamp),
-
-    /// Total items in source
-    pub source_total: u64,
-
-    /// Total items in Sinex
-    pub sinex_total: u64,
-
-    /// Coverage percentage (0.0 - 100.0)
-    pub coverage_percentage: f64,
-
-    /// Number of missing items
-    pub missing_count: u64,
-
-    /// Number of duplicate items
-    pub duplicate_count: u64,
-
-    /// Sample of missing items
-    pub missing_samples: Vec<MissingItem>,
-
-    /// Recommendations for improvement
-    pub recommendations: Vec<String>,
-}
-
-pub fn coverage_analysis_unavailable(reason: impl Into<String>) -> NodeResult<CoverageAnalysis> {
-    Err(SinexError::invalid_state(reason.into()))
-}
-
 /// Export format options
 #[derive(Debug, Clone, Copy)]
 pub enum ExportFormat {
@@ -99,12 +51,6 @@ pub trait ExplorationProvider {
 
     /// Get ingestion history
     fn get_ingestion_history(&self, limit: u64) -> NodeResult<Vec<IngestionHistoryEntry>>;
-
-    /// Perform coverage analysis
-    fn get_coverage_analysis(
-        &self,
-        time_range: Option<(Timestamp, Timestamp)>,
-    ) -> NodeResult<CoverageAnalysis>;
 
     /// Export data for debugging
     fn export_data(&self, path: &SanitizedPath, format: ExportFormat) -> NodeResult<()>;

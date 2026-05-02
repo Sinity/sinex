@@ -134,9 +134,7 @@ pub use dlq_retry::{DlqRetryConfig, DlqRetryHandler, DlqRetryResult, DlqStats};
 #[cfg(feature = "messaging")]
 pub use event_node::{EventBatcher, EventBatcherConfig, EventTransport, spawn_event_batcher};
 #[cfg(feature = "messaging")]
-pub use exploration::{
-    CoverageAnalysis, ExplorationProvider, ExportFormat, MissingItem, SourceState,
-};
+pub use exploration::{ExplorationProvider, ExportFormat, SourceState};
 pub use file_tailer::{
     AppendOnlyFileChange, AppendOnlyFileLine, AppendOnlyFilePollResult, AppendOnlyFileState,
     TailError, poll_utf8_lines,
@@ -181,9 +179,9 @@ pub use runtime::stream::{
 pub use self_observation::{
     SelfObservationError, SelfObservationTask, SelfObserver, SelfObserverConfig,
 };
+pub use shutdown::wait_for_os_shutdown_signal;
 #[cfg(feature = "messaging")]
 pub use shutdown::wait_for_shutdown_signal;
-pub use shutdown::wait_for_os_shutdown_signal;
 pub use shutdown::wait_for_shutdown_signal_bool;
 pub use shutdown::{ShutdownConfig, default_checkpoint_path};
 #[cfg(feature = "messaging")]
