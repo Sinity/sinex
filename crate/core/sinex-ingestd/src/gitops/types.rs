@@ -1,14 +1,15 @@
 //! Types for the `GitOps` schema sync service.
 
 use serde::{Deserialize, Serialize};
+use sinex_db::repositories::gitops::GitOpsSchemaSource;
+use sinex_primitives::Id;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::temporal::Timestamp;
-use uuid::Uuid;
 
 /// A configured Git repository source for schema discovery.
 #[derive(Debug, Clone)]
 pub struct GitOpsSource {
-    pub id: Uuid,
+    pub id: Id<GitOpsSchemaSource>,
     pub repository_url: String,
     pub branch: String,
     pub path_pattern: String,
