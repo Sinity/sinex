@@ -139,6 +139,9 @@ pub fn workspace_state_root() -> PathBuf {
 /// Cargo target directory for this checkout.
 #[must_use]
 pub fn workspace_target_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
+        return PathBuf::from(dir);
+    }
     workspace_state_root().join("target")
 }
 
@@ -322,6 +325,17 @@ mod tests {
         let config = Config::from_env();
         let path = config.history_db_path();
         assert_eq!(path, override_path);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workspace_target_dir_respects_cargo_target_dir() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let target_dir = dir.path().join("target-cache");
+        let mut env = EnvGuard::with_keys(&["CARGO_TARGET_DIR"]);
+        env.set("CARGO_TARGET_DIR", &target_dir);
+
+        assert_eq!(workspace_target_dir(), target_dir);
         Ok(())
     }
 

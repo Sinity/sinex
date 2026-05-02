@@ -309,7 +309,8 @@
                   exit 1
                 fi
 
-                bin_path="$root_dir/.sinex/target/debug/xtask"
+                cargo_target_dir="''${CARGO_TARGET_DIR:-$root_dir/.sinex/target}"
+                bin_path="$cargo_target_dir/debug/xtask"
                 build_lock_dir="$root_dir/.sinex/state/xtask-build.lock"
                 build_failure_stamp="$root_dir/.sinex/state/xtask-build.failed"
                 build_failure_log="$root_dir/.sinex/state/xtask-build.failed.log"
@@ -355,7 +356,7 @@
 
                 _sinex_xtask_sources_newer_than() {
                   local ref_path="$1"
-                  local depfile_path="$root_dir/.sinex/target/debug/xtask.d"
+                  local depfile_path="$cargo_target_dir/debug/xtask.d"
                   local extra_dep dep_path
 
                   [ ! -e "$ref_path" ] && return 0
@@ -670,17 +671,26 @@
                     *) PATH="''${PATH:+$PATH:}$1" ;;
                   esac
                 }
-                _sinex_path_append_unique "$PWD/${stateDir}/target/debug"
+                export SINEX_DEV_ROOT="$PWD"
+                export SINEX_DEV_STATE_DIR="$PWD/${stateDir}"
+                export SINEX_DEV_TOOLCHAIN="${rustToolchain.name}"
+                _sinex_checkout_hash="$(printf '%s' "$PWD" | sha256sum | cut -c1-12)"
+                _sinex_cache_candidate="/cache/sinex/$_sinex_checkout_hash"
+                if mkdir -p "$_sinex_cache_candidate/target" "$_sinex_cache_candidate/cache" 2>/dev/null; then
+                  export SINEX_DEV_CACHE_ROOT="$_sinex_cache_candidate"
+                else
+                  export SINEX_DEV_CACHE_ROOT="$SINEX_DEV_STATE_DIR/cache"
+                  mkdir -p "$SINEX_DEV_CACHE_ROOT/target" "$SINEX_DEV_CACHE_ROOT/cache"
+                fi
+                export CARGO_TARGET_DIR="$SINEX_DEV_CACHE_ROOT/target"
+                _sinex_path_append_unique "$CARGO_TARGET_DIR/debug"
                 export PATH
                 export LD_LIBRARY_PATH="${
                   pkgs.lib.makeLibraryPath [ pkgs.dbus ]
                 }''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
                 export CLIPPY_CONF_DIR="$PWD/.config"
-                export SINEX_DEV_ROOT="$PWD"
-                export SINEX_DEV_STATE_DIR="$PWD/${stateDir}"
-                export SINEX_DEV_TOOLCHAIN="${rustToolchain.name}"
                 export SINEX_STATE_DIR="$SINEX_DEV_STATE_DIR/state"
-                export SINEX_CACHE_DIR="$SINEX_DEV_STATE_DIR/cache"
+                export SINEX_CACHE_DIR="$SINEX_DEV_CACHE_ROOT/cache"
                 export SINEX_TEST_RESULTS_DIR="$SINEX_CACHE_DIR/test-results"
                 export SINEX_NATS_DIR="$SINEX_STATE_DIR/nats"
                 export SINEX_DEV_PG_PORT="${toString pgPort}"
