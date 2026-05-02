@@ -1,4 +1,5 @@
-#[allow(unused_imports)] use super::*;
+#[allow(unused_imports)]
+use super::*;
 #[sinex_test]
 async fn replay_execute_rejects_zero_event_preview_before_execution(
     ctx: TestContext,
@@ -6,8 +7,7 @@ async fn replay_execute_rejects_zero_event_preview_before_execution(
     let ctx = ctx.with_nats().dedicated().await?;
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let client =
-        spawn_replay_control(replay.clone(), ctx.nats_client(), Duration::from_secs(30))
-            .await?;
+        spawn_replay_control(replay.clone(), ctx.nats_client(), Duration::from_secs(30)).await?;
 
     let operation = replay
         .create_operation(sample_scope(), "test:planner".to_string())
@@ -62,8 +62,7 @@ async fn replay_preview_rejects_refresh_after_approval(ctx: TestContext) -> Resu
     let ctx = ctx.with_nats().dedicated().await?;
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let client =
-        spawn_replay_control(replay.clone(), ctx.nats_client(), Duration::from_secs(30))
-            .await?;
+        spawn_replay_control(replay.clone(), ctx.nats_client(), Duration::from_secs(30)).await?;
 
     let planned = client.plan("test:planner".into(), sample_scope()).await?;
     let (previewed, _) = client.preview(planned.operation_id).await?;
@@ -86,14 +85,11 @@ async fn replay_preview_rejects_refresh_after_approval(ctx: TestContext) -> Resu
 }
 
 #[sinex_test]
-async fn replay_execute_dry_run_is_rejected_without_state_changes(
-    ctx: TestContext,
-) -> Result<()> {
+async fn replay_execute_dry_run_is_rejected_without_state_changes(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().dedicated().await?;
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let client =
-        spawn_replay_control(replay.clone(), ctx.nats_client(), Duration::from_secs(30))
-            .await?;
+        spawn_replay_control(replay.clone(), ctx.nats_client(), Duration::from_secs(30)).await?;
 
     let planned = client.plan("test:planner".into(), sample_scope()).await?;
     let (previewed, _) = client.preview(planned.operation_id).await?;
@@ -140,8 +136,7 @@ async fn replay_execute_fails_when_live_scope_disappears_after_approval(
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let client =
-        spawn_replay_control(replay.clone(), ctx.nats_client(), Duration::from_secs(30))
-            .await?;
+        spawn_replay_control(replay.clone(), ctx.nats_client(), Duration::from_secs(30)).await?;
 
     let mut scope = sample_scope();
     scope.time_window = Some((
@@ -234,8 +229,7 @@ async fn replay_execute_fails_when_live_scope_drifts_after_approval(
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let client =
-        spawn_replay_control(replay.clone(), ctx.nats_client(), Duration::from_secs(30))
-            .await?;
+        spawn_replay_control(replay.clone(), ctx.nats_client(), Duration::from_secs(30)).await?;
 
     let mut scope = sample_scope();
     scope.time_window = Some((
@@ -323,9 +317,9 @@ async fn replay_abort_before_scan_ack_restores_cascade_and_emits_compensating_in
         .collect_cascade_scope_metadata(&ctx.pool, &[event_id.to_uuid()])
         .await?;
     assert_eq!(scope_metadata.len(), 1);
-    assert_eq!(scope_metadata[0].event_source, "fs-test");
+    assert_eq!(scope_metadata[0].event_source.as_str(), "fs-test");
     assert_eq!(
-        scope_metadata[0].event_type,
+        scope_metadata[0].event_type.as_str(),
         FileCreatedPayload::EVENT_TYPE.as_static_str()
     );
     assert!(!scope_metadata[0].has_lineage);
@@ -341,8 +335,7 @@ async fn replay_abort_before_scan_ack_restores_cascade_and_emits_compensating_in
         )
         .await?;
 
-    let mut invalidation_rx =
-        spawn_invalidation_listener_for_test(&ctx.nats_client()).await?;
+    let mut invalidation_rx = spawn_invalidation_listener_for_test(&ctx.nats_client()).await?;
 
     let err = engine
         .abort_before_scan_ack(
@@ -399,8 +392,7 @@ async fn replay_abort_before_scan_ack_surfaces_compensating_invalidation_failure
     )
     .from_material(material_id)
     .build()?;
-    event.scope_key =
-        Some("scope://fs-test/replay-compensating-invalidation-failure".to_string());
+    event.scope_key = Some("scope://fs-test/replay-compensating-invalidation-failure".to_string());
     let inserted = ctx.pool.events().insert(event).await?;
     let event_id = inserted.id.expect("inserted replay target must have id");
     let operation_id = Uuid::now_v7();
@@ -608,4 +600,3 @@ async fn replay_execution_returns_cancelled_operation_when_cancelled_midflight(
 
     Ok(())
 }
-
