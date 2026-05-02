@@ -4,15 +4,19 @@
 //! Used by both the gateway (RPC handlers) and ingestd (sync service).
 
 use super::common::{DbResult, Repository, db_error};
+use sinex_primitives::Id;
 use sinex_primitives::error::SinexError;
 use sinex_primitives::temporal::Timestamp;
 use sqlx::PgPool;
-use uuid::Uuid;
+
+/// Phantom marker for `sinex_schemas.gitops_schema_sources.id`.
+#[derive(Debug, Clone, Copy)]
+pub struct GitOpsSchemaSource;
 
 /// A row from `sinex_schemas.gitops_schema_sources`.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct GitOpsSourceRecord {
-    pub id: Uuid,
+    pub id: Id<GitOpsSchemaSource>,
     pub repository_url: String,
     pub branch: String,
     pub path_pattern: String,
@@ -43,7 +47,7 @@ impl GitOpsRepository<'_> {
             GitOpsSourceRecord,
             r#"
             SELECT
-                id as "id!: Uuid",
+                id as "id!: Id<GitOpsSchemaSource>",
                 repository_url,
                 branch,
                 path_pattern,
@@ -64,14 +68,14 @@ impl GitOpsRepository<'_> {
 
     /// Create a new gitops source configuration.
     ///
-    /// Validates inputs before inserting. Returns the generated `UUIDv7`.
+    /// Validates inputs before inserting. Returns the generated typed `UUIDv7`.
     pub async fn create_source(
         &self,
         repository_url: &str,
         branch: &str,
         path_pattern: &str,
         sync_frequency_minutes: i32,
-    ) -> DbResult<Uuid> {
+    ) -> DbResult<Id<GitOpsSchemaSource>> {
         if repository_url.starts_with("file://") {
             return Err(SinexError::validation(
                 "file:// URLs are not allowed for gitops sources",
@@ -86,7 +90,7 @@ impl GitOpsRepository<'_> {
             ));
         }
 
-        let id = Uuid::now_v7();
+        let id = Id::<GitOpsSchemaSource>::new();
 
         sqlx::query!(
             r#"
@@ -97,7 +101,7 @@ impl GitOpsRepository<'_> {
                 $1::uuid, $2, $3, $4, true, $5
             )
             "#,
-            id,
+            id.as_uuid(),
             repository_url,
             branch,
             path_pattern,
@@ -111,13 +115,13 @@ impl GitOpsRepository<'_> {
     }
 
     /// Delete a gitops source. Returns true if a row was deleted.
-    pub async fn delete_source(&self, id: &Uuid) -> DbResult<bool> {
+    pub async fn delete_source(&self, id: &Id<GitOpsSchemaSource>) -> DbResult<bool> {
         let result = sqlx::query!(
             r#"
             DELETE FROM sinex_schemas.gitops_schema_sources
             WHERE id = $1::uuid
             "#,
-            id
+            id.as_uuid()
         )
         .execute(self.pool)
         .await
@@ -129,14 +133,14 @@ impl GitOpsRepository<'_> {
     /// Trigger an immediate sync by resetting `last_sync_at` to NULL.
     ///
     /// Only affects enabled sources. Returns true if a row was updated.
-    pub async fn trigger_sync(&self, id: &Uuid) -> DbResult<bool> {
+    pub async fn trigger_sync(&self, id: &Id<GitOpsSchemaSource>) -> DbResult<bool> {
         let result = sqlx::query!(
             r#"
             UPDATE sinex_schemas.gitops_schema_sources
             SET last_sync_at = NULL
             WHERE id = $1::uuid AND sync_enabled = true
             "#,
-            id
+            id.as_uuid()
         )
         .execute(self.pool)
         .await
@@ -146,7 +150,11 @@ impl GitOpsRepository<'_> {
     }
 
     /// Update a source's sync state after a successful sync.
-    pub async fn update_sync_state(&self, id: &Uuid, commit_sha: &str) -> DbResult<()> {
+    pub async fn update_sync_state(
+        &self,
+        id: &Id<GitOpsSchemaSource>,
+        commit_sha: &str,
+    ) -> DbResult<()> {
         sqlx::query!(
             r#"
             UPDATE sinex_schemas.gitops_schema_sources
@@ -155,7 +163,7 @@ impl GitOpsRepository<'_> {
             WHERE id = $2::uuid
             "#,
             commit_sha,
-            id
+            id.as_uuid()
         )
         .execute(self.pool)
         .await

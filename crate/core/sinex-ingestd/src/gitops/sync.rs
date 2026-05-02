@@ -6,7 +6,9 @@ use crate::gitops::git::GitOperations;
 use crate::gitops::types::{GitOpsSource, GitOpsSyncStats};
 use crate::{IngestdResult, SinexError};
 use sinex_db::DbPoolExt;
+use sinex_db::repositories::gitops::GitOpsSchemaSource;
 use sinex_db::repositories::schema_management::SchemaManagementRepository;
+use sinex_primitives::Id;
 use sinex_primitives::events::schema_registry::SchemaBundleEntry;
 use sqlx::PgPool;
 use std::path::PathBuf;
@@ -221,7 +223,7 @@ impl GitOpsSyncService {
     /// Update a source's sync state after a successful sync via repository.
     async fn update_source_sync_state(
         &self,
-        source_id: &uuid::Uuid,
+        source_id: &Id<GitOpsSchemaSource>,
         commit_sha: &str,
     ) -> IngestdResult<()> {
         self.pool
