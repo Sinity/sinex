@@ -13,18 +13,18 @@
 
 // Core node traits and types
 #[cfg(feature = "messaging")]
-pub use crate::{Checkpoint, CheckpointManager, CheckpointState};
+pub use crate::exploration::SourceState;
 #[cfg(feature = "messaging")]
-pub use crate::{Node, TimeHorizon};
+pub use crate::runtime::stream::{ContinuousStart, NodeRuntimeState};
 #[cfg(feature = "messaging")]
 pub use crate::{
     ActivityEntry, IngestionHistoryEntry, NodeCapabilities, NodeType, RunnerLifecycle, ScanArgs,
     ScanEstimate, ScanReport,
 };
 #[cfg(feature = "messaging")]
-pub use crate::exploration::{CoverageAnalysis, SourceState};
+pub use crate::{Checkpoint, CheckpointManager, CheckpointState};
 #[cfg(feature = "messaging")]
-pub use crate::runtime::stream::{ContinuousStart, NodeRuntimeState};
+pub use crate::{Node, TimeHorizon};
 
 // Configuration and coordination
 pub use crate::{AutomatonConfig, EventSourceConfig, NodeConfig};

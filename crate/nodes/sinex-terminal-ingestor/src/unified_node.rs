@@ -9,11 +9,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
 use sinex_node_sdk::{
     ActivityEntry, AppendOnlyFileChange, AppendOnlyFileState, BufferedRecordMaterializer,
-    BufferedRecordSourceHarness, CoverageAnalysis, ExplorationProvider, ExportFormat,
-    IngestionHistoryEntry, RecordProcessingOutcome, RecordReadHorizon, RecordSource,
-    RecordSourceObservation, RecordSources, RecordWarningDisposition, SourceState,
-    SqliteRowCheckpoint, SqliteSnapshotLinker, SqliteSnapshotPolicy, SqliteSnapshotState,
-    TailError,
+    BufferedRecordSourceHarness, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
+    RecordProcessingOutcome, RecordReadHorizon, RecordSource, RecordSourceObservation,
+    RecordSources, RecordWarningDisposition, SourceState, SqliteRowCheckpoint,
+    SqliteSnapshotLinker, SqliteSnapshotPolicy, SqliteSnapshotState, TailError,
 };
 use sinex_node_sdk::{
     NodeResult, SinexError, SourceRecordAnchor,
@@ -3540,15 +3539,6 @@ impl ExplorationProvider for TerminalNode {
         Err(SinexError::invalid_state(
             "ingestion history is not implemented for terminal history sources",
         ))
-    }
-
-    fn get_coverage_analysis(
-        &self,
-        _time_range: Option<(Timestamp, Timestamp)>,
-    ) -> NodeResult<CoverageAnalysis> {
-        sinex_node_sdk::exploration::coverage_analysis_unavailable(
-            "coverage analysis is not implemented for terminal history sources",
-        )
     }
 
     fn export_data(&self, _path: &SanitizedPath, _format: ExportFormat) -> NodeResult<()> {
@@ -7180,15 +7170,6 @@ mod tests {
                 .and_then(serde_json::Value::as_bool),
             Some(true)
         );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn terminal_node_reports_coverage_analysis_unavailable() -> TestResult<()> {
-        let node = TerminalNode::new();
-        let error = sinex_node_sdk::ExplorationProvider::get_coverage_analysis(&node, None)
-            .expect_err("terminal node should not fabricate coverage analysis");
-        assert!(error.to_string().contains("not implemented"));
         Ok(())
     }
 

@@ -27,9 +27,7 @@ use sinex_node_sdk::{
     stage_as_you_go::StageAsYouGoContext,
     wait_for_shutdown_signal,
 };
-use sinex_node_sdk::{
-    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
-};
+use sinex_node_sdk::{ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState};
 use sinex_primitives::{
     Seconds, Uuid,
     domain::{HostName, RecordedPath, SanitizedPath},
@@ -1033,15 +1031,6 @@ impl ExplorationProvider for FilesystemNode {
         Err(SinexError::invalid_state(
             "ingestion history is not implemented for filesystem watcher sources",
         ))
-    }
-
-    fn get_coverage_analysis(
-        &self,
-        _time_range: Option<(Timestamp, Timestamp)>,
-    ) -> NodeResult<CoverageAnalysis> {
-        sinex_node_sdk::exploration::coverage_analysis_unavailable(
-            "coverage analysis is not implemented for filesystem watcher sources",
-        )
     }
 
     fn export_data(&self, _path: &SanitizedPath, _format: ExportFormat) -> NodeResult<()> {
@@ -2591,15 +2580,6 @@ mod tests {
         };
 
         assert!(config.validate_config().is_err());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn filesystem_node_reports_coverage_analysis_unavailable() -> TestResult<()> {
-        let node = FilesystemNode::new();
-        let error = sinex_node_sdk::ExplorationProvider::get_coverage_analysis(&node, None)
-            .expect_err("filesystem node should not fabricate coverage analysis");
-        assert!(error.to_string().contains("not implemented"));
         Ok(())
     }
 

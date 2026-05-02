@@ -7,9 +7,7 @@
 
 use crate::error_helpers::env_bool_with_default;
 use crate::event_node::EventTransport;
-pub use crate::exploration::{
-    CoverageAnalysis, ExplorationProvider, ExportFormat, MissingItem, SourceState,
-};
+pub use crate::exploration::{ExplorationProvider, ExportFormat, SourceState};
 use crate::runtime::stream::{Checkpoint, NodeRunner, NodeType, TimeHorizon};
 use crate::{NodeResult, SinexError};
 use clap::{Parser, Subcommand};
@@ -225,10 +223,6 @@ pub enum NodeCommand {
         /// Show ingestion history
         #[arg(long)]
         ingestion_history: bool,
-
-        /// Show coverage analysis (diff between source and Sinex)
-        #[arg(long)]
-        coverage_analysis: bool,
 
         /// Number of recent entries to show
         #[arg(long, default_value = "10")]
@@ -552,14 +546,12 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
             NodeCommand::Explore {
                 source_state,
                 ingestion_history,
-                coverage_analysis,
                 limit,
                 ref export_to,
             } => self.handle_explore_command(
                 node,
                 source_state,
                 ingestion_history,
-                coverage_analysis,
                 limit,
                 export_to.as_ref(),
             ),
@@ -847,7 +839,6 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
         node: T,
         source_state: bool,
         ingestion_history: bool,
-        coverage_analysis: bool,
         limit: u64,
         export_to: Option<&SanitizedPath>,
     ) -> NodeResult<()> {
@@ -913,48 +904,6 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
                 Err(e) => {
                     print_unavailable_section("Ingestion History", &e);
                     warn!(error = %e, "Failed to get ingestion history");
-                }
-            }
-            println!();
-        }
-
-        if coverage_analysis {
-            match node.get_coverage_analysis(None) {
-                Ok(analysis) => {
-                    println!("Coverage Analysis:");
-                    println!(
-                        "  Time range: {} to {}",
-                        render_cli_timestamp(analysis.time_range.0),
-                        render_cli_timestamp(analysis.time_range.1)
-                    );
-                    println!("  Source total: {}", analysis.source_total);
-                    println!("  Sinex total: {}", analysis.sinex_total);
-                    println!("  Coverage: {:.1}%", analysis.coverage_percentage);
-                    println!("  Missing: {}", analysis.missing_count);
-                    println!("  Duplicates: {}", analysis.duplicate_count);
-
-                    if !analysis.missing_samples.is_empty() {
-                        println!("  Missing samples:");
-                        for sample in &analysis.missing_samples {
-                            println!(
-                                "    - {}: {} ({})",
-                                sample.source_id,
-                                sample.description,
-                                sample.missing_reason.as_deref().unwrap_or("Unknown")
-                            );
-                        }
-                    }
-
-                    if !analysis.recommendations.is_empty() {
-                        println!("  Recommendations:");
-                        for rec in &analysis.recommendations {
-                            println!("    - {rec}");
-                        }
-                    }
-                }
-                Err(e) => {
-                    print_unavailable_section("Coverage Analysis", &e);
-                    warn!(error = %e, "Failed to get coverage analysis");
                 }
             }
             println!();
@@ -1050,22 +999,13 @@ mod tests {
     use super::{
         NatsArgs, NodeCli, NodeCommand, default_service_name, edge_mode_enabled,
         handle_export_result, parse_checkpoint, render_cli_value, render_optional_cli_timestamp,
-        resolve_primary_database_url, unavailable_section, validate_identity_token,
+        resolve_primary_database_url, validate_identity_token,
     };
     use crate::SinexError;
     use crate::runtime::stream::Checkpoint;
     use sinex_primitives::SanitizedPath;
     use std::str::FromStr;
     use xtask::sandbox::sinex_serial_test;
-
-    // Inline test is appropriate because this exercises private CLI formatting only.
-    #[test]
-    fn unavailable_section_is_explicit() {
-        assert_eq!(
-            unavailable_section("Coverage Analysis", "coverage analysis is not implemented"),
-            "Coverage Analysis:\n  Unavailable: coverage analysis is not implemented"
-        );
-    }
 
     #[test]
     fn export_result_surfaces_failure_with_path_context() {
