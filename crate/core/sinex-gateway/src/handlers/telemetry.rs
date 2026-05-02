@@ -3,7 +3,7 @@
 //! Queries the `sinex_telemetry.*` read models and returns structured responses
 //! for the `telemetry.*` RPC method namespace.
 
-use color_eyre::eyre::{Result, WrapErr, eyre};
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sinex_primitives::rpc::telemetry::{
     AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
@@ -22,13 +22,17 @@ use sinex_primitives::rpc::telemetry::{
     TelemetrySystemStateResponse, TelemetryWindowFocusRequest, TelemetryWindowFocusResponse,
     WindowFocusBucket,
 };
+use sinex_primitives::{Result, SinexError};
 use sqlx::PgPool;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 fn parse_rfc3339(s: &str) -> Result<OffsetDateTime> {
-    OffsetDateTime::parse(s, &Rfc3339)
-        .wrap_err_with(|| format!("invalid RFC 3339 timestamp: {s:?}"))
+    OffsetDateTime::parse(s, &Rfc3339).map_err(|error| {
+        SinexError::validation("Invalid telemetry RFC 3339 timestamp")
+            .with_context("value", s)
+            .with_std_error(&error)
+    })
 }
 
 fn fmt_rfc3339(dt: OffsetDateTime) -> String {
@@ -51,8 +55,8 @@ fn resolve_time_range(
         None => resolved_to - time::Duration::hours(default_hours),
     };
     if resolved_from >= resolved_to {
-        return Err(eyre!(
-            "invalid telemetry time range: 'from' must be strictly earlier than 'to' (zero-width ranges are not allowed)"
+        return Err(SinexError::validation(
+            "Invalid telemetry time range: 'from' must be strictly earlier than 'to' (zero-width ranges are not allowed)",
         ));
     }
     Ok((resolved_from, resolved_to))
@@ -61,9 +65,35 @@ fn resolve_time_range(
 fn resolve_positive_limit(limit: Option<i64>) -> Result<i64> {
     let limit = limit.unwrap_or(50);
     if limit <= 0 {
-        return Err(eyre!("telemetry limit must be positive, got {limit}"));
+        return Err(SinexError::validation(format!(
+            "Telemetry limit must be positive, got {limit}"
+        )));
     }
     Ok(limit)
+}
+
+fn parse_telemetry_request<T>(method: &'static str, params: Value) -> Result<T>
+where
+    T: Default + DeserializeOwned,
+{
+    super::parse_default_on_null(params).map_err(|error| {
+        SinexError::serialization(format!("Invalid telemetry.{method} request"))
+            .with_std_error(&error)
+    })
+}
+
+fn telemetry_query_error(relation: &'static str, error: sqlx::Error) -> SinexError {
+    SinexError::database(format!("Failed to query {relation}")).with_std_error(&error)
+}
+
+fn serialize_telemetry_response<T>(method: &'static str, response: T) -> Result<Value>
+where
+    T: Serialize,
+{
+    serde_json::to_value(response).map_err(|error| {
+        SinexError::serialization(format!("Failed to serialize telemetry.{method} response"))
+            .with_std_error(&error)
+    })
 }
 
 #[derive(sqlx::FromRow)]
@@ -211,8 +241,7 @@ struct IngestdBatchStatsRow {
 }
 
 pub async fn handle_telemetry_current_health(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryCurrentHealthRequest = super::parse_default_on_null(params)
-        .wrap_err("failed to parse telemetry.current_health request")?;
+    let req: TelemetryCurrentHealthRequest = parse_telemetry_request("current_health", params)?;
     let limit = resolve_positive_limit(req.limit)?;
 
     let rows = sqlx::query_as::<_, CurrentHealthRow>(
@@ -232,7 +261,7 @@ pub async fn handle_telemetry_current_health(pool: &PgPool, params: Value) -> Re
     .bind(limit)
     .fetch_all(pool)
     .await
-    .wrap_err("failed to query sinex_telemetry.current_health")?;
+    .map_err(|error| telemetry_query_error("sinex_telemetry.current_health", error))?;
 
     let entries = rows
         .into_iter()
@@ -246,14 +275,12 @@ pub async fn handle_telemetry_current_health(pool: &PgPool, params: Value) -> Re
         })
         .collect();
 
-    Ok(serde_json::to_value(TelemetryCurrentHealthResponse {
-        entries,
-    })?)
+    serialize_telemetry_response("current_health", TelemetryCurrentHealthResponse { entries })
 }
 
 pub async fn handle_telemetry_current_device_state(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryCurrentDeviceStateRequest = super::parse_default_on_null(params)
-        .wrap_err("failed to parse telemetry.current_device_state request")?;
+    let req: TelemetryCurrentDeviceStateRequest =
+        parse_telemetry_request("current_device_state", params)?;
     let limit = resolve_positive_limit(req.limit)?;
 
     let rows = sqlx::query_as::<_, CurrentDeviceStateRow>(
@@ -272,7 +299,7 @@ pub async fn handle_telemetry_current_device_state(pool: &PgPool, params: Value)
     .bind(limit)
     .fetch_all(pool)
     .await
-    .wrap_err("failed to query sinex_telemetry.current_device_state")?;
+    .map_err(|error| telemetry_query_error("sinex_telemetry.current_device_state", error))?;
 
     let entries = rows
         .into_iter()
@@ -285,14 +312,14 @@ pub async fn handle_telemetry_current_device_state(pool: &PgPool, params: Value)
         })
         .collect();
 
-    Ok(serde_json::to_value(TelemetryCurrentDeviceStateResponse {
-        entries,
-    })?)
+    serialize_telemetry_response(
+        "current_device_state",
+        TelemetryCurrentDeviceStateResponse { entries },
+    )
 }
 
 pub async fn handle_telemetry_window_focus(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryWindowFocusRequest = super::parse_default_on_null(params)
-        .wrap_err("failed to parse telemetry.window_focus request")?;
+    let req: TelemetryWindowFocusRequest = parse_telemetry_request("window_focus", params)?;
 
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
@@ -323,7 +350,7 @@ pub async fn handle_telemetry_window_focus(pool: &PgPool, params: Value) -> Resu
     .bind(limit)
     .fetch_all(pool)
     .await
-    .wrap_err("failed to query sinex_telemetry.current_window_focus")?;
+    .map_err(|error| telemetry_query_error("sinex_telemetry.current_window_focus", error))?;
 
     let buckets = rows
         .into_iter()
@@ -338,14 +365,12 @@ pub async fn handle_telemetry_window_focus(pool: &PgPool, params: Value) -> Resu
         })
         .collect();
 
-    Ok(serde_json::to_value(TelemetryWindowFocusResponse {
-        buckets,
-    })?)
+    serialize_telemetry_response("window_focus", TelemetryWindowFocusResponse { buckets })
 }
 
 pub async fn handle_telemetry_command_frequency(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryCommandFrequencyRequest = super::parse_default_on_null(params)
-        .wrap_err("failed to parse telemetry.command_frequency request")?;
+    let req: TelemetryCommandFrequencyRequest =
+        parse_telemetry_request("command_frequency", params)?;
 
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
@@ -376,7 +401,7 @@ pub async fn handle_telemetry_command_frequency(pool: &PgPool, params: Value) ->
     .bind(limit)
     .fetch_all(pool)
     .await
-    .wrap_err("failed to query sinex_telemetry.command_frequency_hourly")?;
+    .map_err(|error| telemetry_query_error("sinex_telemetry.command_frequency_hourly", error))?;
 
     let entries = rows
         .into_iter()
@@ -390,14 +415,14 @@ pub async fn handle_telemetry_command_frequency(pool: &PgPool, params: Value) ->
         })
         .collect();
 
-    Ok(serde_json::to_value(TelemetryCommandFrequencyResponse {
-        entries,
-    })?)
+    serialize_telemetry_response(
+        "command_frequency",
+        TelemetryCommandFrequencyResponse { entries },
+    )
 }
 
 pub async fn handle_telemetry_file_activity(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryFileActivityRequest = super::parse_default_on_null(params)
-        .wrap_err("failed to parse telemetry.file_activity request")?;
+    let req: TelemetryFileActivityRequest = parse_telemetry_request("file_activity", params)?;
 
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
@@ -426,7 +451,7 @@ pub async fn handle_telemetry_file_activity(pool: &PgPool, params: Value) -> Res
     .bind(limit)
     .fetch_all(pool)
     .await
-    .wrap_err("failed to query sinex_telemetry.file_activity_summary")?;
+    .map_err(|error| telemetry_query_error("sinex_telemetry.file_activity_summary", error))?;
 
     let entries = rows
         .into_iter()
@@ -439,14 +464,11 @@ pub async fn handle_telemetry_file_activity(pool: &PgPool, params: Value) -> Res
         })
         .collect();
 
-    Ok(serde_json::to_value(TelemetryFileActivityResponse {
-        entries,
-    })?)
+    serialize_telemetry_response("file_activity", TelemetryFileActivityResponse { entries })
 }
 
 pub async fn handle_telemetry_recent_activity(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryRecentActivityRequest = super::parse_default_on_null(params)
-        .wrap_err("failed to parse telemetry.recent_activity request")?;
+    let req: TelemetryRecentActivityRequest = parse_telemetry_request("recent_activity", params)?;
     let limit = resolve_positive_limit(req.limit)?;
 
     let rows = sqlx::query_as::<_, RecentActivityRow>(
@@ -464,7 +486,7 @@ pub async fn handle_telemetry_recent_activity(pool: &PgPool, params: Value) -> R
     .bind(limit)
     .fetch_all(pool)
     .await
-    .wrap_err("failed to query sinex_telemetry.recent_activity_summary")?;
+    .map_err(|error| telemetry_query_error("sinex_telemetry.recent_activity_summary", error))?;
 
     let entries = rows
         .into_iter()
@@ -476,14 +498,14 @@ pub async fn handle_telemetry_recent_activity(pool: &PgPool, params: Value) -> R
         })
         .collect();
 
-    Ok(serde_json::to_value(TelemetryRecentActivityResponse {
-        entries,
-    })?)
+    serialize_telemetry_response(
+        "recent_activity",
+        TelemetryRecentActivityResponse { entries },
+    )
 }
 
 pub async fn handle_telemetry_system_state(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetrySystemStateRequest = super::parse_default_on_null(params)
-        .wrap_err("failed to parse telemetry.system_state request")?;
+    let req: TelemetrySystemStateRequest = parse_telemetry_request("system_state", params)?;
 
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
@@ -515,7 +537,7 @@ pub async fn handle_telemetry_system_state(pool: &PgPool, params: Value) -> Resu
     .bind(limit)
     .fetch_all(pool)
     .await
-    .wrap_err("failed to query sinex_telemetry.current_system_state")?;
+    .map_err(|error| telemetry_query_error("sinex_telemetry.current_system_state", error))?;
 
     let buckets = rows
         .into_iter()
@@ -531,14 +553,11 @@ pub async fn handle_telemetry_system_state(pool: &PgPool, params: Value) -> Resu
         })
         .collect();
 
-    Ok(serde_json::to_value(TelemetrySystemStateResponse {
-        buckets,
-    })?)
+    serialize_telemetry_response("system_state", TelemetrySystemStateResponse { buckets })
 }
 
 pub async fn handle_telemetry_gateway_stats(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryGatewayStatsRequest = super::parse_default_on_null(params)
-        .wrap_err("failed to parse telemetry.gateway_stats request")?;
+    let req: TelemetryGatewayStatsRequest = parse_telemetry_request("gateway_stats", params)?;
 
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
@@ -569,7 +588,7 @@ pub async fn handle_telemetry_gateway_stats(pool: &PgPool, params: Value) -> Res
     .bind(limit)
     .fetch_all(pool)
     .await
-    .wrap_err("failed to query sinex_telemetry.gateway_stats_1h")?;
+    .map_err(|error| telemetry_query_error("sinex_telemetry.gateway_stats_1h", error))?;
 
     let buckets = rows
         .into_iter()
@@ -584,14 +603,11 @@ pub async fn handle_telemetry_gateway_stats(pool: &PgPool, params: Value) -> Res
         })
         .collect();
 
-    Ok(serde_json::to_value(TelemetryGatewayStatsResponse {
-        buckets,
-    })?)
+    serialize_telemetry_response("gateway_stats", TelemetryGatewayStatsResponse { buckets })
 }
 
 pub async fn handle_telemetry_stream_stats(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryStreamStatsRequest = super::parse_default_on_null(params)
-        .wrap_err("failed to parse telemetry.stream_stats request")?;
+    let req: TelemetryStreamStatsRequest = parse_telemetry_request("stream_stats", params)?;
 
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
@@ -622,7 +638,7 @@ pub async fn handle_telemetry_stream_stats(pool: &PgPool, params: Value) -> Resu
     .bind(limit)
     .fetch_all(pool)
     .await
-    .wrap_err("failed to query sinex_telemetry.stream_stats_1h")?;
+    .map_err(|error| telemetry_query_error("sinex_telemetry.stream_stats_1h", error))?;
 
     let buckets = rows
         .into_iter()
@@ -637,14 +653,11 @@ pub async fn handle_telemetry_stream_stats(pool: &PgPool, params: Value) -> Resu
         })
         .collect();
 
-    Ok(serde_json::to_value(TelemetryStreamStatsResponse {
-        buckets,
-    })?)
+    serialize_telemetry_response("stream_stats", TelemetryStreamStatsResponse { buckets })
 }
 
 pub async fn handle_telemetry_assembly_stats(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryAssemblyStatsRequest = super::parse_default_on_null(params)
-        .wrap_err("failed to parse telemetry.assembly_stats request")?;
+    let req: TelemetryAssemblyStatsRequest = parse_telemetry_request("assembly_stats", params)?;
 
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
@@ -676,7 +689,7 @@ pub async fn handle_telemetry_assembly_stats(pool: &PgPool, params: Value) -> Re
     .bind(limit)
     .fetch_all(pool)
     .await
-    .wrap_err("failed to query sinex_telemetry.assembly_stats_1h")?;
+    .map_err(|error| telemetry_query_error("sinex_telemetry.assembly_stats_1h", error))?;
 
     let buckets = rows
         .into_iter()
@@ -692,14 +705,11 @@ pub async fn handle_telemetry_assembly_stats(pool: &PgPool, params: Value) -> Re
         })
         .collect();
 
-    Ok(serde_json::to_value(TelemetryAssemblyStatsResponse {
-        buckets,
-    })?)
+    serialize_telemetry_response("assembly_stats", TelemetryAssemblyStatsResponse { buckets })
 }
 
 pub async fn handle_telemetry_node_stats(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryNodeStatsRequest = super::parse_default_on_null(params)
-        .wrap_err("failed to parse telemetry.node_stats request")?;
+    let req: TelemetryNodeStatsRequest = parse_telemetry_request("node_stats", params)?;
 
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
@@ -731,7 +741,7 @@ pub async fn handle_telemetry_node_stats(pool: &PgPool, params: Value) -> Result
     .bind(limit)
     .fetch_all(pool)
     .await
-    .wrap_err("failed to query sinex_telemetry.node_stats_1h")?;
+    .map_err(|error| telemetry_query_error("sinex_telemetry.node_stats_1h", error))?;
 
     let buckets = rows
         .into_iter()
@@ -747,14 +757,11 @@ pub async fn handle_telemetry_node_stats(pool: &PgPool, params: Value) -> Result
         })
         .collect();
 
-    Ok(serde_json::to_value(TelemetryNodeStatsResponse {
-        buckets,
-    })?)
+    serialize_telemetry_response("node_stats", TelemetryNodeStatsResponse { buckets })
 }
 
 pub async fn handle_telemetry_metric_counters(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryMetricCountersRequest = super::parse_default_on_null(params)
-        .wrap_err("failed to parse telemetry.metric_counters request")?;
+    let req: TelemetryMetricCountersRequest = parse_telemetry_request("metric_counters", params)?;
 
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
@@ -784,7 +791,7 @@ pub async fn handle_telemetry_metric_counters(pool: &PgPool, params: Value) -> R
     .bind(limit)
     .fetch_all(pool)
     .await
-    .wrap_err("failed to query sinex_telemetry.metric_counters_1h")?;
+    .map_err(|error| telemetry_query_error("sinex_telemetry.metric_counters_1h", error))?;
 
     let buckets = rows
         .into_iter()
@@ -798,14 +805,15 @@ pub async fn handle_telemetry_metric_counters(pool: &PgPool, params: Value) -> R
         })
         .collect();
 
-    Ok(serde_json::to_value(TelemetryMetricCountersResponse {
-        buckets,
-    })?)
+    serialize_telemetry_response(
+        "metric_counters",
+        TelemetryMetricCountersResponse { buckets },
+    )
 }
 
 pub async fn handle_telemetry_ingestd_batch_stats(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryIngestdBatchStatsRequest = super::parse_default_on_null(params)
-        .wrap_err("failed to parse telemetry.ingestd_batch_stats request")?;
+    let req: TelemetryIngestdBatchStatsRequest =
+        parse_telemetry_request("ingestd_batch_stats", params)?;
 
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
@@ -844,7 +852,7 @@ pub async fn handle_telemetry_ingestd_batch_stats(pool: &PgPool, params: Value) 
     .bind(limit)
     .fetch_all(pool)
     .await
-    .wrap_err("failed to query sinex_telemetry.ingestd_batch_stats_1h")?;
+    .map_err(|error| telemetry_query_error("sinex_telemetry.ingestd_batch_stats_1h", error))?;
 
     let buckets = rows
         .into_iter()
@@ -867,14 +875,15 @@ pub async fn handle_telemetry_ingestd_batch_stats(pool: &PgPool, params: Value) 
         })
         .collect();
 
-    Ok(serde_json::to_value(TelemetryIngestdBatchStatsResponse {
-        buckets,
-    })?)
+    serialize_telemetry_response(
+        "ingestd_batch_stats",
+        TelemetryIngestdBatchStatsResponse { buckets },
+    )
 }
 
 pub async fn handle_telemetry_ingestd_validation(pool: &PgPool, params: Value) -> Result<Value> {
-    let _req: TelemetryIngestdValidationRequest = super::parse_default_on_null(params)
-        .wrap_err("failed to parse telemetry.ingestd_validation request")?;
+    let _req: TelemetryIngestdValidationRequest =
+        parse_telemetry_request("ingestd_validation", params)?;
 
     let row = sqlx::query!(
         r#"
@@ -902,7 +911,7 @@ pub async fn handle_telemetry_ingestd_validation(pool: &PgPool, params: Value) -
     )
     .fetch_optional(pool)
     .await
-    .wrap_err("failed to query latest ingestd validation stats")?;
+    .map_err(|error| telemetry_query_error("latest ingestd validation stats", error))?;
 
     let snapshot = row.map(|row| IngestdValidationSnapshot {
         observed_at: fmt_rfc3339(row.observed_at),
@@ -921,7 +930,8 @@ pub async fn handle_telemetry_ingestd_validation(pool: &PgPool, params: Value) -
         suspicious_future_ts_orig: row.suspicious_future_ts_orig,
     });
 
-    Ok(serde_json::to_value(TelemetryIngestdValidationResponse {
-        snapshot,
-    })?)
+    serialize_telemetry_response(
+        "ingestd_validation",
+        TelemetryIngestdValidationResponse { snapshot },
+    )
 }
