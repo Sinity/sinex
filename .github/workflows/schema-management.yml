@@ -5,22 +5,7 @@ permissions:
   pull-requests: write
 
 on:
-  push:
-    branches: [ master, 'claude/**' ]
-    paths:
-      - 'crate/lib/sinex-primitives/src/events/**'
-      - 'crate/lib/sinex-macros/**'
-      - 'schemas/**/*.json'
-      - 'xtask/src/**/*.rs'
-      - '.github/workflows/schema-management.yml'
-  pull_request:
-    branches: [ master ]
-    paths:
-      - 'crate/lib/sinex-primitives/src/events/**'
-      - 'crate/lib/sinex-macros/**'
-      - 'schemas/**/*.json'
-      - 'xtask/src/**/*.rs'
-      - '.github/workflows/schema-management.yml'
+  workflow_dispatch:
 
 jobs:
   validate-schemas:
@@ -121,7 +106,7 @@ jobs:
           fi
           
       - name: Open schema update PR
-        if: steps.check-changes.outputs.changed == 'true' && github.event_name == 'push'
+        if: steps.check-changes.outputs.changed == 'true' && github.event_name == 'workflow_dispatch'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -142,7 +127,7 @@ jobs:
     needs: [validate-schemas, sync-schema-bundle]
     env:
       PROD_DATABASE_URL: ${{ secrets.SINEX_PROD_DATABASE_URL }}
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master'
     concurrency:
       group: schema-management-deploy
       cancel-in-progress: true

@@ -1,12 +1,19 @@
 # GitHub Actions Workflows
 
-This directory documents the live workflows and how to rerun them locally. The
-default GitHub Actions gate today is the Postgres-backed workspace lane through
-`xtask ci`, plus a handful of separate scheduled/manual workflows.
+This directory documents the parked GitHub Actions workflows and how to rerun
+them locally. Hosted GitHub Actions are intentionally not an automatic gate for
+this repository: the account is on a no-spend posture, and automatic
+push/pull-request/scheduled workflows can burn paid minutes before useful
+feedback is produced.
+
+All workflows in this directory are manual `workflow_dispatch` jobs. PRs should
+record the local `xtask` verification that was run, and reviewers should treat
+that recorded local evidence as the closure signal unless a workflow is
+deliberately invoked by hand.
 
 ## Active Workflows
 
-- **`ci.yml`** — Main gate on pushes/PRs. Runs
+- **`ci.yml`** — Manual main gate. Runs
   `xtask ci postgres -- xtask ci workspace`.
 
   The workspace stage applies declarative schema, checks contract tables, runs
@@ -15,22 +22,22 @@ default GitHub Actions gate today is the Postgres-backed workspace lane through
   then runs the rest of the test suite with `sinex-e2e-tests` excluded. The
   closest public local equivalent is `xtask check --forbidden` or `xtask check --full`.
   It does **not** run the NixOS VM suite in `tests/e2e/nixos-vm/`.
-- **`db-checks.yml`** — Path-filtered database checks. When schemas change, runs a
-  schema-focused pipeline.
-- **`verify-perf.yml`** — Nightly / on-demand performance verification. Runs
+- **`db-checks.yml`** — Manual database checks. Runs a schema-focused pipeline.
+- **`verify-perf.yml`** — On-demand performance verification. Runs
   `xtask test bench --contracts` inside an ephemeral Postgres environment and
   uploads the perf-verification artifacts.
-- **`n1-compat.yml`** — Weekly / on-demand N-1 protocol compatibility check. Brings
+- **`n1-compat.yml`** — On-demand N-1 protocol compatibility check. Brings
   up current gateway plus the latest released terminal ingestor and verifies the
   rolling-update path still moves events.
-- **`fuzz.yml`** — Nightly / on-demand fuzzing for selected `sinex-primitives` and
+- **`fuzz.yml`** — On-demand fuzzing for selected `sinex-primitives` and
   `sinex-db` targets. Crash artifacts are uploaded and the summary job fails if any
   crashes are found.
-- **`schema-compatibility.yml`** — PR guard that runs contract compatibility checks
+- **`schema-compatibility.yml`** — Manual contract compatibility checks
   against the base branch.
 - **`schema-management.yml`** — Validates JSON schemas, regenerates the checked-in
-  schema bundle from the Rust registry, and on default-branch pushes deploys via
-  `xtask infra schema-apply` if the production DB secret is present.
+  schema bundle from the Rust registry, and can deploy via `xtask infra
+  schema-apply` from a manual default-branch run if the production DB secret is
+  present.
 
 ## Local Reproduction
 
