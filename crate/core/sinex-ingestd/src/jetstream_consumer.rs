@@ -774,6 +774,7 @@ impl JetStreamConsumer {
         consumer_spec.ack_wait = self.ack_wait;
         consumer_spec.max_ack_pending = self.max_ack_pending;
         consumer_spec.max_deliver = MAIN_CONSUMER_JETSTREAM_MAX_DELIVER;
+        consumer_spec.reject_initial_replay = true;
         let consumer = ensure_pull_consumer(&self.js, &consumer_spec)
             .await
             .map_err(|e| SinexError::network("Failed to create consumer").with_source(e))?;
