@@ -9,9 +9,6 @@ use mime_guess::MimeGuess;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_node_sdk::{
-    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
-};
-use sinex_node_sdk::{
     EventTransport, NodeResult, SinexError,
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     ingestor_node::IngestorNode,
@@ -22,6 +19,7 @@ use sinex_node_sdk::{
     stage_as_you_go::StageAsYouGoContext,
     stage_material_from_file,
 };
+use sinex_node_sdk::{ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::validation::validate_path_within_root;
 use sinex_primitives::{
@@ -833,15 +831,6 @@ impl ExplorationProvider for DocumentNode {
         Err(SinexError::invalid_state(
             "ingestion history is not implemented for document ingestor sources",
         ))
-    }
-
-    fn get_coverage_analysis(
-        &self,
-        _time_range: Option<(Timestamp, Timestamp)>,
-    ) -> NodeResult<CoverageAnalysis> {
-        sinex_node_sdk::exploration::coverage_analysis_unavailable(
-            "coverage analysis is not implemented for document ingestor sources",
-        )
     }
 
     fn export_data(&self, _path: &SanitizedPath, _format: ExportFormat) -> NodeResult<()> {

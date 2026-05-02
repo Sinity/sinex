@@ -1222,16 +1222,6 @@ impl IngestorNode for SystemNode {
             "ingestion history is not implemented for system watcher sources",
         ))
     }
-
-    fn get_coverage_analysis(
-        &self,
-        _state: &Self::State,
-        _time_range: Option<(sinex_primitives::Timestamp, sinex_primitives::Timestamp)>,
-    ) -> NodeResult<sinex_node_sdk::exploration::CoverageAnalysis> {
-        sinex_node_sdk::exploration::coverage_analysis_unavailable(
-            "coverage analysis is not implemented for system watcher sources",
-        )
-    }
 }
 
 /// Helper to forward events from a watcher channel to the emitter
@@ -1496,16 +1486,6 @@ mod tests {
                 "mock: udev watcher not supported in this test",
             ))
         }
-    }
-
-    #[sinex_test]
-    async fn system_node_reports_coverage_analysis_unavailable() -> TestResult<()> {
-        let node = SystemNode::new();
-        let error =
-            IngestorNode::get_coverage_analysis(&node, &SystemPersistentState::default(), None)
-                .expect_err("system node should not fabricate coverage analysis");
-        assert!(error.to_string().contains("not implemented"));
-        Ok(())
     }
 
     #[sinex_test]
