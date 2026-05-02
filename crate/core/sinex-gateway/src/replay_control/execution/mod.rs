@@ -61,8 +61,8 @@ struct OperationOutputEvent {
 #[derive(Debug)]
 pub(super) struct ScopeInvalidationBucket {
     pub(super) event_ids: Vec<Uuid>,
-    pub(super) event_source: String,
-    pub(super) event_type: String,
+    pub(super) event_source: EventSource,
+    pub(super) event_type: EventType,
     pub(super) has_lineage: bool,
     pub(super) scope_keys: Vec<String>,
 }
@@ -97,13 +97,19 @@ impl ReplayExecutionEngine {
     }
 
     #[cfg(test)]
-    pub(super) fn with_scan_completion_timeout(mut self, scan_completion_timeout: Duration) -> Self {
+    pub(super) fn with_scan_completion_timeout(
+        mut self,
+        scan_completion_timeout: Duration,
+    ) -> Self {
         self.scan_completion_timeout = scan_completion_timeout;
         self
     }
 
     #[cfg(test)]
-    pub(super) fn with_checkpoint_failures(mut self, checkpoint_failures_remaining: Arc<AtomicUsize>) -> Self {
+    pub(super) fn with_checkpoint_failures(
+        mut self,
+        checkpoint_failures_remaining: Arc<AtomicUsize>,
+    ) -> Self {
         self.checkpoint_failures_remaining = Some(checkpoint_failures_remaining);
         self
     }
@@ -656,7 +662,6 @@ impl ReplayExecutionEngine {
     }
 }
 
-
 #[derive(Debug, Deserialize)]
 pub(super) struct ReplayPreviewSummary {
     pub(super) total_events: u64,
@@ -671,7 +676,6 @@ pub(super) struct ReplayPreviewTimeWindow {
     pub(super) end: Timestamp,
 }
 
-
 #[derive(Debug, Clone)]
 pub(super) struct ExpectedReplayOutputs {
     pub(super) minimum_visible_count: u64,
@@ -679,7 +683,6 @@ pub(super) struct ExpectedReplayOutputs {
     pub(super) event_types: Vec<String>,
     pub(super) logical_source_identifiers: Vec<String>,
 }
-
 
 mod collect;
 mod replay_writer;
