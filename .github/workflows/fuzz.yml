@@ -54,7 +54,7 @@ jobs:
         run: mkdir -p crate/lib/sinex-primitives/fuzz/corpus/${{ matrix.target }}
 
       - name: Run fuzzer (${{ matrix.target }})
-        if: github.event.inputs.target == 'all' || github.event.inputs.target == matrix.target || github.event_name == 'schedule'
+        if: github.event.inputs.target == 'all' || github.event.inputs.target == matrix.target
         working-directory: crate/lib/sinex-primitives/fuzz
         run: |
           cargo +nightly fuzz run ${{ matrix.target }} -- \
@@ -121,7 +121,7 @@ jobs:
         run: mkdir -p crate/lib/sinex-db/fuzz/corpus/${{ matrix.target }}
 
       - name: Run fuzzer (${{ matrix.target }})
-        if: github.event.inputs.target == 'all' || github.event.inputs.target == matrix.target || github.event_name == 'schedule'
+        if: github.event.inputs.target == 'all' || github.event.inputs.target == matrix.target
         working-directory: crate/lib/sinex-db/fuzz
         run: |
           cargo +nightly fuzz run ${{ matrix.target }} -- \

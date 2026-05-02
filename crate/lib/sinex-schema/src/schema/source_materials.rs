@@ -192,6 +192,15 @@ impl SourceMaterialRegistry {
                 .col(SourceMaterialRegistry::SourceIdentifier)
                 .col((SourceMaterialRegistry::StagedAt, IndexOrder::Desc))
                 .to_owned(),
+            // Ingestd seeds recently staged materials on startup. Keep
+            // `staged_at` leading so restarts do not scan the registry as it
+            // grows.
+            Index::create()
+                .if_not_exists()
+                .name("ix_sm_registry_staged_at")
+                .table(Self::table_iden())
+                .col((SourceMaterialRegistry::StagedAt, IndexOrder::Desc))
+                .to_owned(),
             // Partial index to quickly find materials that have been finalized and have associated blob content.
             Index::create()
                 .if_not_exists()

@@ -12,7 +12,18 @@ pub use services::verify_service_dependencies;
 use sinex_primitives::DeploymentReadinessDescriptor;
 use sinex_primitives::constants::timeouts;
 use sinex_primitives::env as shared_env;
+use sqlx::PgPool;
+use sqlx::postgres::{PgConnection, PgPoolOptions};
 use std::process::Output;
+use std::time::Duration;
+use tracing::warn;
+
+pub(crate) const PREFLIGHT_DB_MAX_CONNECTIONS: u32 = 4;
+pub(crate) const PREFLIGHT_DB_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const PREFLIGHT_STATEMENT_TIMEOUT: &str = "5s";
+pub(crate) const PREFLIGHT_LOCK_TIMEOUT: &str = "1s";
+pub(crate) const PREFLIGHT_IDLE_IN_TRANSACTION_TIMEOUT: &str = "5s";
+pub(crate) const PREFLIGHT_MAX_PARALLEL_WORKERS_PER_GATHER: &str = "0";
 
 /// Run an external command with a timeout to prevent indefinite hangs during preflight.
 pub(crate) async fn run_command_with_timeout(program: &str, args: &[&str]) -> NodeResult<Output> {
@@ -29,6 +40,71 @@ pub(crate) async fn run_command_with_timeout(program: &str, args: &[&str]) -> No
             timeouts::PREFLIGHT_COMMAND_TIMEOUT.as_secs()
         ))),
     }
+}
+
+/// Connect to PostgreSQL for preflight checks with startup-safe session limits.
+///
+/// Preflight runs on runtime startup paths, so its database work must stay cheap
+/// and cancellable. All DB phases share this pool to keep connection count,
+/// statement runtime, lock waits, and PostgreSQL parallel workers bounded.
+pub(crate) async fn connect_preflight_database_pool(database_url: &str) -> NodeResult<PgPool> {
+    let connect = PgPoolOptions::new()
+        .max_connections(PREFLIGHT_DB_MAX_CONNECTIONS)
+        .acquire_timeout(PREFLIGHT_DB_ACQUIRE_TIMEOUT)
+        .after_connect(|conn, _meta| {
+            Box::pin(async move {
+                configure_preflight_database_session(conn).await?;
+                Ok(())
+            })
+        })
+        .before_acquire(|conn, _meta| {
+            Box::pin(async move {
+                if let Err(error) = configure_preflight_database_session(conn).await {
+                    warn!(
+                        error = %error,
+                        "Preflight database connection failed bounded session setup"
+                    );
+                    return Ok(false);
+                }
+
+                Ok(true)
+            })
+        })
+        .connect(database_url);
+
+    match tokio::time::timeout(timeouts::PREFLIGHT_DATABASE_TIMEOUT, connect).await {
+        Ok(Ok(pool)) => Ok(pool),
+        Ok(Err(error)) => Err(SinexError::from(error)),
+        Err(_) => Err(SinexError::processing(format!(
+            "Preflight database connection timed out after {}s",
+            timeouts::PREFLIGHT_DATABASE_TIMEOUT.as_secs()
+        ))),
+    }
+}
+
+pub(crate) async fn configure_preflight_database_session(
+    conn: &mut PgConnection,
+) -> sqlx::Result<()> {
+    for (name, value) in [
+        ("statement_timeout", PREFLIGHT_STATEMENT_TIMEOUT),
+        ("lock_timeout", PREFLIGHT_LOCK_TIMEOUT),
+        (
+            "idle_in_transaction_session_timeout",
+            PREFLIGHT_IDLE_IN_TRANSACTION_TIMEOUT,
+        ),
+        (
+            "max_parallel_workers_per_gather",
+            PREFLIGHT_MAX_PARALLEL_WORKERS_PER_GATHER,
+        ),
+    ] {
+        sqlx::query("SELECT pg_catalog.set_config($1, $2, false)")
+            .bind(name)
+            .bind(value)
+            .execute(&mut *conn)
+            .await?;
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -51,10 +127,8 @@ pub(crate) fn runtime_database_expected() -> NodeResult<bool> {
         return Ok(false);
     }
 
-    Ok(
-        deployment_descriptor_result()?
-            .is_none_or(|descriptor| descriptor.expectations.schema_apply),
-    )
+    Ok(deployment_descriptor_result()?
+        .is_none_or(|descriptor| descriptor.expectations.schema_apply))
 }
 
 pub fn resolve_database_url() -> NodeResult<String> {
