@@ -14,6 +14,7 @@ Closes: #326, #327, #338, #693.
 |---|---|---|---|---|---|
 | `Critical` | Provenance-bearing raw event payloads from ingestors | `{env}.sinex.events.raw.{src}.{type}` | JetStream, idempotency header, semaphore 100 | local recovery spool | wait for in-flight ACKs |
 | `Derived` | Synthesis events from automata | `{env}.sinex.events.raw.{src}.{type}` | JetStream, idempotency header, semaphore 100 | processing-failure stream | wait for ACKs + save checkpoint |
+| `SourceMaterial` | Ordered material begin/slice/end frames | `{env}.source_material.frames.*` | JetStream, ordered stream, ACK required | material acquisition fails before event publish | wait for ACKs before anchor use |
 | `Confirmation` | Persistence ACK signals from ingestd | `{env}.events.confirmations.{event_id}` | JetStream, best-effort | retry queue → durability-gap warn | best-effort flush |
 | `Invalidation` | Scope fan-out to derived nodes | `{env}.sinex.derived.invalidation` | JetStream, durable consumers | error propagated to caller | no special drain (JetStream holds) |
 | `Control` | Lifecycle and coordination traffic | `{env}.sinex.control.>` / request-reply | Core NATS, request-reply + timeout | error returned (`SinexError::network`) | drop pending |
@@ -23,13 +24,15 @@ Closes: #326, #327, #338, #693.
 
 ## Wire-class mapping
 
-The `Sinex-Traffic-Class` NATS header (`NatsTrafficClass`) is a five-value
-wire enum. `Class` adds semantic resolution for the six publish contexts above.
+The `Sinex-Traffic-Class` NATS header (`NatsTrafficClass`) is the wire enum.
+`Class` adds semantic resolution for the publish contexts above, and is emitted
+as `Sinex-Transport-Class`.
 
 | `Class` | `NatsTrafficClass` header value |
 |---|---|
 | `Critical` | `raw_event` |
 | `Derived` | `raw_event` |
+| `SourceMaterial` | `source_material` |
 | `Confirmation` | `control` |
 | `Invalidation` | `control` |
 | `Control` | `control` |
@@ -37,8 +40,8 @@ wire enum. `Class` adds semantic resolution for the six publish contexts above.
 
 `Critical` and `Derived` share the `raw_event` wire class because they share
 the same subject plane and storage path through ingestd. They are
-distinguishable at the application level by the `Sinex-Traffic-Class` header
-value and by the `source_event_ids` / `source_material_id` provenance XOR.
+distinguishable by the `Sinex-Transport-Class` header and by the
+`source_event_ids` / `source_material_id` provenance XOR.
 
 ---
 
@@ -54,10 +57,15 @@ call in the source.
 | `crate/lib/sinex-node-sdk/src/nats_publisher.rs` | `NatsPublisher::publish_telemetry` | `Telemetry` |
 | `crate/lib/sinex-node-sdk/src/nats_publisher.rs` | `NatsPublisher::publish_to_raw_ingest_dlq` | `Critical` (DLQ routing of raw events) |
 | `crate/lib/sinex-node-sdk/src/nats_publisher.rs` | `NatsPublisher::publish_processing_failure` | `Derived` (failure envelope) |
+| `crate/lib/sinex-node-sdk/src/acquisition_manager.rs` | material begin/slice/end publishers | `SourceMaterial` |
+| `crate/lib/sinex-node-sdk/src/dlq_retry.rs` | raw-ingest DLQ retry re-publish | `Critical` |
 | `crate/lib/sinex-node-sdk/src/coordination.rs` | `send_handoff_ready` / `send_handoff_request` / `publish_failure_signal` | `Control` |
 | `crate/lib/sinex-node-sdk/src/runtime/stream/mod.rs` | scan ack / scan progress / node status | `Control` |
 | `crate/core/sinex-ingestd/src/jetstream_consumer.rs` | `publish_confirmation` | `Confirmation` |
 | `crate/core/sinex-ingestd/src/jetstream_consumer.rs` | DLQ re-publish (`publish_dlq_entry`) | `Critical` |
+| `crate/core/sinex-ingestd/src/material_assembler/finalize.rs` | material DLQ routing | `SourceMaterial` |
+| `crate/core/sinex-ingestd/src/service.rs` | active schema broadcast | `Control` |
+| `crate/core/sinex-gateway/src/handlers/nodes.rs` | drain/resume/horizon command publish | `Control` |
 | `crate/core/sinex-gateway/src/replay_control.rs` | replay control response | `Control` |
 | `crate/core/sinex-gateway/src/replay_control.rs` | `publish_scope_invalidations` | `Invalidation` |
 

@@ -5,15 +5,15 @@
 //! and the drain-command handler. Also includes JSON canonicalization and
 //! effective-config hashing used by registration.
 
-use super::super::control_protocol::{ensure_control_payload_fits, encode_control_message};
 #[cfg(feature = "messaging")]
 use super::super::control_protocol::NodeDrainComplete;
+use super::super::control_protocol::{encode_control_message, ensure_control_payload_fits};
 use super::{Node, NodeRunner, NodeScanAck, NodeScanProgress, RuntimeDrainController, ServiceInfo};
 use crate::{NodeResult, SinexError};
 #[cfg(feature = "db")]
 use sinex_db::DbPool as PgPool;
 use sinex_primitives::domain::NodeState;
-use sinex_primitives::nats::{NatsTrafficClass, insert_traffic_class_header};
+use sinex_primitives::transport;
 use std::collections::{BTreeMap, HashMap};
 use tracing::{info, warn};
 
@@ -84,7 +84,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         };
 
         let mut headers = async_nats::HeaderMap::new();
-        insert_traffic_class_header(&mut headers, NatsTrafficClass::Control);
+        transport::insert_transport_class_headers(&mut headers, transport::Class::Control);
         ensure_control_payload_fits(
             "Failed to publish scan acknowledgement",
             reply.as_ref(),
@@ -129,7 +129,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         };
 
         let mut headers = async_nats::HeaderMap::new();
-        insert_traffic_class_header(&mut headers, NatsTrafficClass::Control);
+        transport::insert_transport_class_headers(&mut headers, transport::Class::Control);
         ensure_control_payload_fits(
             "Failed to publish scan progress update",
             &subject,
@@ -164,7 +164,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             ))
         })?;
         let mut headers = async_nats::HeaderMap::new();
-        insert_traffic_class_header(&mut headers, NatsTrafficClass::Control);
+        transport::insert_transport_class_headers(&mut headers, transport::Class::Control);
         ensure_control_payload_fits(
             "Failed to publish drain_complete signal",
             &subject,
@@ -230,5 +230,4 @@ impl<T: Node + 'static> NodeRunner<T> {
             Self::update_registered_run_status(&pool, service_info, NodeState::Draining).await;
         }
     }
-
 }

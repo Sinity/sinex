@@ -32,6 +32,7 @@ use sinex_primitives::constants::env_vars;
 use sinex_primitives::{
     JsonValue, Uuid,
     nats::{JetStreamTopology, NatsTrafficClass, insert_traffic_class_header},
+    transport,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -142,10 +143,9 @@ fn is_payload_schema_fk_violation(err: &SinexError) -> bool {
     if !is_foreign_key_violation(err) {
         return false;
     }
-    err.context_map()
-        .get("constraint")
-        .is_some_and(|c| c == EVENTS_PAYLOAD_SCHEMA_ID_FKEY || c.contains(EVENTS_PAYLOAD_SCHEMA_ID_FKEY))
-        || err.to_string().contains(EVENTS_PAYLOAD_SCHEMA_ID_FKEY)
+    err.context_map().get("constraint").is_some_and(|c| {
+        c == EVENTS_PAYLOAD_SCHEMA_ID_FKEY || c.contains(EVENTS_PAYLOAD_SCHEMA_ID_FKEY)
+    }) || err.to_string().contains(EVENTS_PAYLOAD_SCHEMA_ID_FKEY)
 }
 
 /// Hard guard for node-supplied event IDs.
@@ -493,7 +493,9 @@ impl JetStreamConsumer {
             db_failures_remaining: None,
             post_persist_fail_once: None,
             confirmation_failures_remaining: None,
-            confirmation_semaphore: Arc::new(tokio::sync::Semaphore::new(CONFIRM_PUBLISH_CONCURRENCY)),
+            confirmation_semaphore: Arc::new(tokio::sync::Semaphore::new(
+                CONFIRM_PUBLISH_CONCURRENCY,
+            )),
             processing_delay: None,
             delivery_observer: None,
             stats: ConsumerStats::default(),
@@ -720,8 +722,7 @@ impl JetStreamConsumer {
             })
             .await
             .map_err(|e| {
-                SinexError::network("Failed to create processing-failures stream")
-                    .with_source(e)
+                SinexError::network("Failed to create processing-failures stream").with_source(e)
             })?;
 
         // Derived invalidation stream — scope invalidation signals for derived nodes.
@@ -738,8 +739,7 @@ impl JetStreamConsumer {
             })
             .await
             .map_err(|e| {
-                SinexError::network("Failed to create derived invalidation stream")
-                    .with_source(e)
+                SinexError::network("Failed to create derived invalidation stream").with_source(e)
             })?;
 
         info!("JetStream streams bootstrapped successfully");
@@ -1242,10 +1242,8 @@ impl JetStreamConsumer {
                             let sem = Arc::clone(&self.confirmation_semaphore);
                             let event_id = prepared.parsed_id;
                             async move {
-                                let _permit = sem
-                                    .acquire()
-                                    .await
-                                    .expect("confirmation semaphore closed");
+                                let _permit =
+                                    sem.acquire().await.expect("confirmation semaphore closed");
                                 self.publish_confirmation_with_retry(&event_id).await
                             }
                         })
@@ -1723,8 +1721,7 @@ impl JetStreamConsumer {
             other => other,
         };
 
-        let result = insert_result
-        .map_err(|err| {
+        let result = insert_result.map_err(|err| {
             if is_source_material_fk_violation_for_stream_batch(&err, &rows) {
                 warn!(
                     batch_size = to_persist.len(),
@@ -1929,9 +1926,7 @@ impl JetStreamConsumer {
             .filter_tombstoned(&ids)
             .await
             .map_err(|e| {
-                error!(
-                    "Failed to query event_tombstones during batch persistence: {e}"
-                );
+                error!("Failed to query event_tombstones during batch persistence: {e}");
                 SinexError::database("tombstone query failed")
                     .with_context("batch_size", batch.len().to_string())
             })?;
@@ -1980,7 +1975,7 @@ impl JetStreamConsumer {
         // routes to the durable retry queue then durability-gap warn (not DLQ).
         let mut headers = async_nats::HeaderMap::new();
         headers.insert("Nats-Msg-Id", event_id_str.as_str());
-        insert_traffic_class_header(&mut headers, NatsTrafficClass::Control);
+        transport::insert_transport_class_headers(&mut headers, transport::Class::Confirmation);
 
         self.js
             .publish_with_headers(subject, headers, payload.into())
@@ -2034,6 +2029,7 @@ impl JetStreamConsumer {
         let mut headers = async_nats::HeaderMap::new();
         let retry_msg_id = format!("confirm-retry.{event_id_str}");
         headers.insert("Nats-Msg-Id", retry_msg_id.as_str());
+        transport::insert_transport_class_headers(&mut headers, transport::Class::Confirmation);
 
         self.js
             .publish_with_headers(subject, headers, payload.into())
@@ -2178,6 +2174,7 @@ impl JetStreamConsumer {
         headers.insert("Original-Subject", msg.subject.as_str());
         headers.insert("Retry-Count", "0");
         insert_traffic_class_header(&mut headers, NatsTrafficClass::RawIngestDlq);
+        transport::insert_semantic_transport_class_header(&mut headers, transport::Class::Critical);
         if let Some(event_id) = original_event_id.as_deref() {
             headers.insert("Event-Id", event_id);
         }

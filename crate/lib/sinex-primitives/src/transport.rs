@@ -10,12 +10,20 @@
 //! |---|---|---|---|
 //! | [`Class::Critical`] | `{env}.sinex.events.raw.>` | retry → raw-ingest DLQ | wait for in-flight ACKs |
 //! | [`Class::Derived`] | `{env}.sinex.events.raw.>` (same lane) | retry → processing-failure stream | wait for in-flight ACKs |
+//! | [`Class::SourceMaterial`] | `{env}.source_material.frames.>` | retry caller operation | wait for ACKs before event anchors publish |
 //! | [`Class::Confirmation`] | `{env}.events.confirmations.>` | retry with backoff → durability-gap warn | best-effort flush |
 //! | [`Class::Invalidation`] | `{env}.sinex.derived.invalidation` | JetStream-backed; best-effort warn | best-effort flush |
 //! | [`Class::Control`] | `{env}.sinex.control.>` / request-reply | timeout error | drop pending |
 //! | [`Class::Telemetry`] | `{env}.sinex.events.raw.>` (telemetry lane) | drop with warn | best-effort flush |
 
-use crate::nats::NatsTrafficClass;
+use crate::nats::{NATS_TRAFFIC_CLASS_HEADER, NatsTrafficClass, insert_traffic_class_header};
+
+/// Header used to carry the semantic [`Class`] beside the wire traffic class.
+///
+/// The wire-level traffic class intentionally has fewer variants than the
+/// semantic catalog. This header preserves publisher intent for observability,
+/// replay diagnostics, and future policy checks.
+pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 
 /// Canonical publish-class catalog.
 ///
@@ -56,6 +64,19 @@ use crate::nats::NatsTrafficClass;
 ///   DLQ is operator-reviewed.
 /// - **Drain on SIGTERM**: wait for in-flight ACKs; checkpoint saved before
 ///   exit.
+///
+/// ### [`Class::SourceMaterial`] — ordered material lifecycle frames
+///
+/// Begin/slice/end frames that make material provenance replayable. Event
+/// anchors depend on these frames reaching the material assembler.
+///
+/// - **Subject pattern**: `{env}.source_material.frames.*`
+/// - **QoS**: JetStream, ordered stream, slice idempotency headers.
+/// - **Retry budget**: caller operation propagates publish failure and retries
+///   according to the node's material acquisition policy.
+/// - **Failure routing**: no raw-event DLQ; material acquisition fails before
+///   dependent events can be truthfully published.
+/// - **Drain on SIGTERM**: wait for ACKs before considering anchors durable.
 ///
 /// ### [`Class::Confirmation`] — persistence acknowledgement signals
 ///
@@ -126,6 +147,10 @@ pub enum Class {
     /// Loss is recoverable via replay. Failure routes to processing-failure stream.
     Derived,
 
+    /// Source-material lifecycle frames.
+    /// Loss breaks material provenance and must fail the acquisition operation.
+    SourceMaterial,
+
     /// Persistence acknowledgement signals from ingestd to derived nodes.
     /// Loss causes duplicate processing; best-effort with retry queue.
     Confirmation,
@@ -146,15 +171,16 @@ pub enum Class {
 impl Class {
     /// Return the [`NatsTrafficClass`] header value for this publish class.
     ///
-    /// `NatsTrafficClass` is the wire-level enum (five variants, matching the
-    /// existing header taxonomy). `Class` is the semantic catalog (six
-    /// variants including `Confirmation` and `Invalidation` which share the
+    /// `NatsTrafficClass` is the wire-level enum, matching the existing
+    /// header taxonomy. `Class` is the semantic catalog (including
+    /// `Confirmation` and `Invalidation` which share the
     /// `Control` wire class). This mapping is the authoritative bridge.
     #[must_use]
     pub const fn traffic_class(self) -> NatsTrafficClass {
         match self {
             Self::Critical => NatsTrafficClass::RawEvent,
             Self::Derived => NatsTrafficClass::RawEvent,
+            Self::SourceMaterial => NatsTrafficClass::SourceMaterial,
             Self::Confirmation => NatsTrafficClass::Control,
             Self::Invalidation => NatsTrafficClass::Control,
             Self::Control => NatsTrafficClass::Control,
@@ -168,6 +194,7 @@ impl Class {
         match self {
             Self::Critical => "critical",
             Self::Derived => "derived",
+            Self::SourceMaterial => "source_material",
             Self::Confirmation => "confirmation",
             Self::Invalidation => "invalidation",
             Self::Control => "control",
@@ -184,7 +211,7 @@ impl Class {
     /// invalidation).
     #[must_use]
     pub const fn is_loss_critical(self) -> bool {
-        matches!(self, Self::Critical)
+        matches!(self, Self::Critical | Self::SourceMaterial)
     }
 
     /// Whether this class uses JetStream (as opposed to core NATS).
@@ -202,6 +229,7 @@ impl Class {
         match self {
             Self::Critical => "wait for all in-flight JetStream ACK futures before exit",
             Self::Derived => "wait for in-flight ACKs; save checkpoint before exit",
+            Self::SourceMaterial => "wait for ACKs before dependent event anchors publish",
             Self::Confirmation => {
                 "best-effort flush; log durability-gap warning on remaining failures"
             }
@@ -221,6 +249,7 @@ impl Class {
             Self::Derived => {
                 "processing-failure stream (events.processing_failures.{node}.{event_id})"
             }
+            Self::SourceMaterial => "material acquisition operation fails before event publish",
             Self::Confirmation => {
                 "durable retry queue (events.confirmation_retries.*) or durability-gap warn"
             }
@@ -230,5 +259,53 @@ impl Class {
             Self::Control => "error returned to caller (SinexError::network)",
             Self::Telemetry => "drop with warn log",
         }
+    }
+}
+
+/// Insert only the semantic transport class header.
+///
+/// Use this when a publish family has a wire-level traffic class that is more
+/// specific than the semantic class, such as derived processing failures.
+pub fn insert_semantic_transport_class_header(headers: &mut async_nats::HeaderMap, class: Class) {
+    headers.insert(SINEX_TRANSPORT_CLASS_HEADER, class.label());
+}
+
+/// Insert both the wire traffic class and semantic transport class headers.
+pub fn insert_transport_class_headers(headers: &mut async_nats::HeaderMap, class: Class) {
+    insert_traffic_class_header(headers, class.traffic_class());
+    insert_semantic_transport_class_header(headers, class);
+}
+
+/// Whether a header map carries both canonical transport policy headers.
+#[must_use]
+pub fn has_transport_class_headers(headers: &async_nats::HeaderMap) -> bool {
+    headers.get(NATS_TRAFFIC_CLASS_HEADER).is_some()
+        && headers.get(SINEX_TRANSPORT_CLASS_HEADER).is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transport_headers_include_wire_and_semantic_classes() {
+        let mut headers = async_nats::HeaderMap::new();
+        insert_transport_class_headers(&mut headers, Class::SourceMaterial);
+
+        assert!(has_transport_class_headers(&headers));
+        assert_eq!(
+            headers
+                .get(NATS_TRAFFIC_CLASS_HEADER)
+                .map(std::string::ToString::to_string)
+                .as_deref(),
+            Some("source_material")
+        );
+        assert_eq!(
+            headers
+                .get(SINEX_TRANSPORT_CLASS_HEADER)
+                .map(std::string::ToString::to_string)
+                .as_deref(),
+            Some("source_material")
+        );
     }
 }

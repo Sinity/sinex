@@ -14,6 +14,7 @@ pub const NATS_TRAFFIC_CLASS_HEADER: &str = "Sinex-Traffic-Class";
 /// These classes are intentionally narrow:
 /// - `RawEvent`: persisted raw/synthesized event traffic on `events.raw.*`
 /// - `Telemetry`: self-observation events that still use the normal raw-event plane
+/// - `SourceMaterial`: ordered source-material lifecycle frames
 /// - `RawIngestDlq`: operator-facing ingest/material DLQ traffic
 /// - `ProcessingFailure`: derived/runtime processing-failure envelopes
 /// - `Control`: non-event lifecycle/coordination traffic
@@ -22,6 +23,7 @@ pub const NATS_TRAFFIC_CLASS_HEADER: &str = "Sinex-Traffic-Class";
 pub enum NatsTrafficClass {
     RawEvent,
     Telemetry,
+    SourceMaterial,
     RawIngestDlq,
     ProcessingFailure,
     Control,
@@ -33,6 +35,7 @@ impl NatsTrafficClass {
         match self {
             Self::RawEvent => "raw_event",
             Self::Telemetry => "telemetry",
+            Self::SourceMaterial => "source_material",
             Self::RawIngestDlq => "raw_ingest_dlq",
             Self::ProcessingFailure => "processing_failure",
             Self::Control => "control",
@@ -463,10 +466,8 @@ impl JetStreamTopology {
         let invalidation_stream = format!("{base_stream}_DERIVED_INVALIDATIONS");
         let namespaced = |subject: &str| env.nats_subject_with_namespace(namespace, subject);
         let confirmations_prefix = format!("{}.", namespaced("events.confirmations"));
-        let confirmation_retry_prefix =
-            format!("{}.", namespaced("events.confirmation_retries"));
-        let processing_failures_prefix =
-            format!("{}.", namespaced("events.processing_failures"));
+        let confirmation_retry_prefix = format!("{}.", namespaced("events.confirmation_retries"));
+        let processing_failures_prefix = format!("{}.", namespaced("events.processing_failures"));
 
         Self {
             events_stream: base_stream,

@@ -14,7 +14,7 @@ use sinex_node_sdk::runtime::stream::{
 };
 use sinex_primitives::domain::{EventSource, EventType, NodeName};
 use sinex_primitives::events::{Event as StoredEvent, Provenance};
-use sinex_primitives::{Id, SinexError, Timestamp, Uuid};
+use sinex_primitives::{Id, SinexError, Timestamp, Uuid, transport};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
@@ -466,11 +466,15 @@ impl ReplayExecutionEngine {
                     self.maybe_fail_scope_invalidation_publish()?;
                     // transport::Class::Invalidation — JetStream-backed scope
                     // fan-out; failure propagated to caller (replay operation
-                    // decides abort/continue). No Sinex-Traffic-Class header on
-                    // the plain js.publish path (no header map variant here).
+                    // decides abort/continue).
+                    let mut headers = async_nats::HeaderMap::new();
+                    transport::insert_transport_class_headers(
+                        &mut headers,
+                        transport::Class::Invalidation,
+                    );
                     if let Err(e) = self
                         .js
-                        .publish(invalidation_subject.clone(), payload.into())
+                        .publish_with_headers(invalidation_subject.clone(), headers, payload.into())
                         .await
                     {
                         return Err(eyre!(

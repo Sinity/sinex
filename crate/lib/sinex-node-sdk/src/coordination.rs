@@ -62,7 +62,7 @@ use async_nats::Subscriber;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_primitives::coordination::{CoordinationKvClient, InstanceMetadata};
-use sinex_primitives::nats::{NatsTrafficClass, insert_traffic_class_header};
+use sinex_primitives::transport;
 use sinex_primitives::utils::CoordinationPrimitive;
 use sinex_primitives::{Result, Seconds, SinexError};
 use std::sync::Arc;
@@ -1364,7 +1364,7 @@ impl NodeCoordination {
         let payload = Self::serialize_handoff_request(&request)?;
 
         let mut headers = async_nats::HeaderMap::new();
-        insert_traffic_class_header(&mut headers, NatsTrafficClass::Control);
+        transport::insert_transport_class_headers(&mut headers, transport::Class::Control);
 
         self.nats_client
             .publish_with_headers(subject, headers, payload.into())
@@ -1426,7 +1426,7 @@ impl NodeCoordination {
         let payload = Self::serialize_handoff_request(&request)?;
 
         let mut headers = async_nats::HeaderMap::new();
-        insert_traffic_class_header(&mut headers, NatsTrafficClass::Control);
+        transport::insert_transport_class_headers(&mut headers, transport::Class::Control);
 
         self.nats_client
             .publish_with_headers(subject, headers, payload.into())
@@ -1683,7 +1683,7 @@ impl NodeCoordination {
         })?;
 
         let mut headers = async_nats::HeaderMap::new();
-        insert_traffic_class_header(&mut headers, NatsTrafficClass::Control);
+        transport::insert_transport_class_headers(&mut headers, transport::Class::Control);
 
         self.nats_client
             .publish_with_headers(subject, headers, bytes.into())

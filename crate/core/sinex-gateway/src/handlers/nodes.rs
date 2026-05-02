@@ -8,7 +8,9 @@
 
 use serde_json::{Value, json};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{SinexError, domain::OperationStatus, environment::SinexEnvironment};
+use sinex_primitives::{
+    SinexError, domain::OperationStatus, environment::SinexEnvironment, transport,
+};
 use std::error::Error as _;
 
 // Re-export shared types for use by other modules
@@ -18,6 +20,34 @@ pub use sinex_primitives::rpc::nodes::{
 };
 
 type Result<T> = std::result::Result<T, SinexError>;
+
+async fn publish_node_control(
+    nats_client: &async_nats::Client,
+    subject: String,
+    payload: Value,
+    operation: &'static str,
+) -> Result<()> {
+    let mut headers = async_nats::HeaderMap::new();
+    transport::insert_transport_class_headers(&mut headers, transport::Class::Control);
+
+    nats_client
+        .publish_with_headers(
+            subject.clone(),
+            headers,
+            serde_json::to_vec(&payload)
+                .map_err(|e| {
+                    SinexError::serialization(format!("failed to serialize {operation} payload"))
+                        .with_std_error(&e)
+                })?
+                .into(),
+        )
+        .await
+        .map_err(|e| {
+            SinexError::nats_publish(operation)
+                .with_context("subject", &subject)
+                .with_std_error(&e)
+        })
+}
 
 fn is_missing_node_state_bucket(error: &async_nats::jetstream::context::KeyValueError) -> bool {
     use async_nats::jetstream::ErrorCode;
@@ -151,22 +181,7 @@ pub async fn handle_nodes_drain(
         "timestamp": Timestamp::now(),
     });
 
-    nats_client
-        .publish(
-            subject.clone(),
-            serde_json::to_vec(&payload)
-                .map_err(|e| {
-                    SinexError::serialization("failed to serialize drain payload")
-                        .with_std_error(&e)
-                })?
-                .into(),
-        )
-        .await
-        .map_err(|e| {
-            SinexError::nats_publish("drain command")
-                .with_context("subject", &subject)
-                .with_std_error(&e)
-        })?;
+    publish_node_control(nats_client, subject, payload, "drain command").await?;
 
     serde_json::to_value(NodeDrainResponse {
         status: OperationStatus::Pending,
@@ -210,22 +225,7 @@ pub async fn handle_nodes_resume(
         "timestamp": Timestamp::now(),
     });
 
-    nats_client
-        .publish(
-            subject.clone(),
-            serde_json::to_vec(&payload)
-                .map_err(|e| {
-                    SinexError::serialization("failed to serialize resume payload")
-                        .with_std_error(&e)
-                })?
-                .into(),
-        )
-        .await
-        .map_err(|e| {
-            SinexError::nats_publish("resume command")
-                .with_context("subject", &subject)
-                .with_std_error(&e)
-        })?;
+    publish_node_control(nats_client, subject, payload, "resume command").await?;
 
     serde_json::to_value(NodeResumeResponse {
         status: OperationStatus::Pending,
@@ -273,22 +273,7 @@ pub async fn handle_nodes_set_horizon(
         "timestamp": Timestamp::now(),
     });
 
-    nats_client
-        .publish(
-            subject.clone(),
-            serde_json::to_vec(&payload)
-                .map_err(|e| {
-                    SinexError::serialization("failed to serialize set-horizon payload")
-                        .with_std_error(&e)
-                })?
-                .into(),
-        )
-        .await
-        .map_err(|e| {
-            SinexError::nats_publish("set-horizon command")
-                .with_context("subject", &subject)
-                .with_std_error(&e)
-        })?;
+    publish_node_control(nats_client, subject, payload, "set-horizon command").await?;
 
     serde_json::to_value(NodeSetHorizonResponse {
         status: OperationStatus::Pending,
