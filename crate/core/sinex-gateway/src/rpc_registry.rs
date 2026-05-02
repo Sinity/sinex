@@ -479,10 +479,10 @@ fn build_registry_impl() -> RpcRegistry {
         )
         // DLQ read methods (ReadOnly)
         .register("dlq.list", Role::ReadOnly, |params, services, _auth| {
-            Box::pin(async move { handle_dlq_list(services, params).await })
+            Box::pin(async move { handle_dlq_list(services, params).await.map_err(Into::into) })
         })
         .register("dlq.peek", Role::ReadOnly, |params, services, _auth| {
-            Box::pin(async move { handle_dlq_peek(services, params).await })
+            Box::pin(async move { handle_dlq_peek(services, params).await.map_err(Into::into) })
         })
         // Node listing (ReadOnly)
         .nats_rpc("nodes.list", Role::ReadOnly, boxed!(handle_nodes_list, 3))
@@ -689,10 +689,18 @@ fn build_registry_impl() -> RpcRegistry {
         )
         // DLQ mutation methods (Admin)
         .register("dlq.requeue", Role::Admin, |params, services, auth| {
-            Box::pin(async move { handle_dlq_requeue(services, params, auth).await })
+            Box::pin(async move {
+                handle_dlq_requeue(services, params, auth)
+                    .await
+                    .map_err(Into::into)
+            })
         })
         .register("dlq.purge", Role::Admin, |params, services, auth| {
-            Box::pin(async move { handle_dlq_purge(services, params, auth).await })
+            Box::pin(async move {
+                handle_dlq_purge(services, params, auth)
+                    .await
+                    .map_err(Into::into)
+            })
         })
         // Operations cancel (Admin)
         .pool_auth_rpc("ops.cancel", Role::Admin, boxed!(handle_ops_cancel, 3))

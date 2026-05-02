@@ -12,7 +12,7 @@ use futures::StreamExt;
 use serde_json::json;
 use sinex_gateway::handlers::dlq::{handle_dlq_list, handle_dlq_purge, handle_dlq_requeue};
 use sinex_primitives::Timestamp;
-use sinex_primitives::error::SinexError;
+use sinex_primitives::error::{ErrorClass, SinexError};
 use sinex_primitives::rpc::dlq::{DlqListResponse, DlqPurgeResponse, DlqRequeueResponse};
 use std::time::Duration;
 use xtask::sandbox::prelude::*;
@@ -176,6 +176,7 @@ async fn dlq_purge_requires_confirm_parameter(ctx: TestContext) -> TestResult<()
         .await
         .unwrap_err();
 
+    assert_eq!(err.error_class(), ErrorClass::DataError);
     assert!(err.to_string().contains("confirm: true"));
 
     Ok(())
@@ -266,6 +267,7 @@ async fn dlq_purge_requires_missing_confirm_field(ctx: TestContext) -> TestResul
         .await
         .unwrap_err();
 
+    assert_eq!(err.error_class(), ErrorClass::DataError);
     assert!(
         err.to_string().to_lowercase().contains("invalid") || err.to_string().contains("missing")
     );
@@ -330,6 +332,7 @@ async fn dlq_requeue_requires_selector_params(ctx: TestContext) -> TestResult<()
     let err = handle_dlq_requeue(&harness.services, json!({}), &admin_auth())
         .await
         .expect_err("requeue without selector should fail");
+    assert_eq!(err.error_class(), ErrorClass::DataError);
     assert!(err.to_string().contains("Must specify either"));
     Ok(())
 }
