@@ -5,6 +5,8 @@
 
 use serde_json::Value;
 use sinex_db::DbPoolExt;
+use sinex_db::repositories::gitops::GitOpsSchemaSource;
+use sinex_primitives::Id;
 use sinex_primitives::SinexError;
 use sinex_primitives::rpc::gitops::{
     GitOpsCreateSourceRequest, GitOpsCreateSourceResponse, GitOpsDeleteSourceRequest,
@@ -29,7 +31,7 @@ pub async fn handle_gitops_list_sources(pool: &PgPool, params: Value) -> Result<
     let sources: Vec<GitOpsSourceInfo> = records
         .into_iter()
         .map(|r| GitOpsSourceInfo {
-            id: r.id,
+            id: r.id.to_uuid(),
             repository_url: r.repository_url,
             branch: r.branch,
             path_pattern: r.path_pattern,
@@ -72,7 +74,7 @@ pub async fn handle_gitops_create_source(pool: &PgPool, params: Value) -> Result
     );
 
     let response = GitOpsCreateSourceResponse {
-        id,
+        id: id.to_uuid(),
         repository_url: request.repository_url,
         branch: request.branch,
         path_pattern: request.path_pattern,
@@ -89,7 +91,8 @@ pub async fn handle_gitops_delete_source(pool: &PgPool, params: Value) -> Result
         SinexError::serialization("Invalid gitops delete source request").with_std_error(&e)
     })?;
 
-    let deleted = pool.gitops().delete_source(&request.id).await?;
+    let source_id = Id::<GitOpsSchemaSource>::from_uuid(request.id);
+    let deleted = pool.gitops().delete_source(&source_id).await?;
 
     if deleted {
         info!(id = %request.id, "Deleted gitops schema source");
@@ -115,7 +118,8 @@ pub async fn handle_gitops_trigger_sync(pool: &PgPool, params: Value) -> Result<
         SinexError::serialization("Invalid gitops trigger sync request").with_std_error(&e)
     })?;
 
-    let triggered = pool.gitops().trigger_sync(&request.id).await?;
+    let source_id = Id::<GitOpsSchemaSource>::from_uuid(request.id);
+    let triggered = pool.gitops().trigger_sync(&source_id).await?;
 
     let message = if triggered {
         info!(id = %request.id, "Triggered immediate gitops sync");
