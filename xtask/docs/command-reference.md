@@ -37,6 +37,7 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `git-stack` | Plan and materialize PR-sized git branch stacks from the current commit graph |
 | `doctor` | Probe developer-environment health and deployment readiness |
 | `privacy` | Run privacy-engine catalog, test, key, and config utilities |
+| `schema` | Schema verification command group |
 | `docs` | Generate and verify repo documentation surfaces |
 | `source-units` | Source-unit manifest operations |
 | `exercise` | Full surface area validation for xtask commands |
@@ -1376,6 +1377,27 @@ Show or generate privacy configuration
 | `--init` | no | no | Generate an example TOML config file to stdout |
 
 
+## `xtask schema`
+
+Schema verification command group
+
+**Subcommands**
+
+| Command | Purpose |
+|---|---|
+| `strict-diff` | Detect strict schema drift that declarative apply does not reconcile |
+
+### `xtask schema strict-diff`
+
+Detect strict schema drift that declarative apply does not reconcile
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--database-url` | yes | no | Database URL to inspect. Defaults to DATABASE_URL |
+
+
 ## `xtask docs`
 
 Generate and verify repo documentation surfaces
@@ -1395,6 +1417,7 @@ Generate and verify repo documentation surfaces
 | `sync` | Refresh all generated repo surfaces tracked in the repo |
 | `check` | Verify that all generated repo surfaces are up to date |
 | `snapshot` | Generate a codebase snapshot for AI context (via repomix) |
+| `issue-drift` | Detect drift between GitHub issue bodies and the live workspace |
 
 ### `xtask docs build`
 
@@ -1527,6 +1550,20 @@ Generate a codebase snapshot for AI context (via repomix)
 | `--context` | no | no | U3: Inject structured xtask state (recent checks, diagnostics, jobs) into the snapshot |
 | `--project-memory` | no | no | U4: Include CLAUDE.md and .agent/includes/ (project memory) in the snapshot |
 | `--scope` | yes | no | U5: Scope to a crate or directory group (e.g., sinex-db, core, nodes, tests) |
+
+
+### `xtask docs issue-drift`
+
+Detect drift between GitHub issue bodies and the live workspace
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--limit` | yes | no | Maximum number of issues to fetch (default: 500) |
+| `--issue` | yes | no | Only report findings for the specified issue number |
+| `--duplicate-threshold` | yes | no | Minimum shingle-similarity ratio (0.0–1.0) for duplicate detection |
+| `--no-duplicates` | no | no | Skip duplicate detection (faster when corpus is large) |
 
 
 ## `xtask source-units`
