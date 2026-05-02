@@ -12,14 +12,14 @@ use sinex_primitives::privacy::{self, ProcessingContext};
 
 // Window manager specific imports
 use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
-use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
-    HyprlandMonitorFocusedPayload, HyprlandStateCapturedPayload, HyprlandWindowClosedPayload,
-    HyprlandWindowFocusedPayload, HyprlandWindowMovedPayload, HyprlandWindowOpenedPayload,
-    HyprlandWindowTitleChangedPayload, HyprlandWorkspaceSwitchedPayload, WindowGeometry,
+    HyprlandMonitorFocusedPayload, HyprlandStateCapturedPayload, HyprlandUnhandledPayload,
+    HyprlandWindowClosedPayload, HyprlandWindowFocusedPayload, HyprlandWindowMovedPayload,
+    HyprlandWindowOpenedPayload, HyprlandWindowTitleChangedPayload,
+    HyprlandWorkspaceSwitchedPayload, WindowGeometry,
 };
-use sinex_primitives::{DynamicPayload, Id, Provenance, SourceMaterial, Uuid};
+use sinex_primitives::Uuid;
 use std::{
     fmt,
     path::{Path, PathBuf},
@@ -806,26 +806,33 @@ impl WindowManagerWatcher {
                             "Failed to serialize window material payload: {e}"
                         ))
                     })?;
-                    let payload = serde_json::json!({
-                        "event_type": event_type,
-                        "event_data": event_data,
-                    });
-                    let provenance = Provenance::from_material(
-                        Id::<SourceMaterial>::from_uuid(material_id),
-                        0,
-                        Some(0),
-                        Some(payload_bytes.len() as i64),
-                    );
-                    let event = DynamicPayload::new(
-                        EventSource::from_static("wm.hyprland"),
-                        EventType::from_static("wm.unhandled"),
-                        payload,
-                    )
-                    .with_provenance(provenance)
+                    let event = HyprlandUnhandledPayload {
+                        event_type: event_type.to_string(),
+                        event_data: event_data.to_string(),
+                    }
+                    .from_material_at(material_id, 0)
+                    .with_offset_start(0)
+                    .map_err(|e| {
+                        sinex_node_sdk::SinexError::processing(format!(
+                            "Failed to set offset_start: {e}"
+                        ))
+                    })?
+                    .with_offset_end(payload_bytes.len() as i64)
+                    .map_err(|e| {
+                        sinex_node_sdk::SinexError::processing(format!(
+                            "Failed to set offset_end: {e}"
+                        ))
+                    })?
                     .build()
                     .map_err(|e| {
                         sinex_node_sdk::SinexError::processing(format!(
                             "Failed to build event: {e}"
+                        ))
+                    })?
+                    .to_json_event()
+                    .map_err(|e| {
+                        sinex_node_sdk::SinexError::processing(format!(
+                            "Failed to serialize event: {e}"
                         ))
                     })?;
                     self.emit_material_event(material_id, payload_bytes, event)

@@ -671,6 +671,39 @@ fn static_emitter_event_pairs(
     source_unit_id: &str,
 ) -> Option<BTreeSet<(&'static str, &'static str)>> {
     let pairs = match source_unit_id {
+        "analytics" => &[("derived.activity-window", "activity.window.summary")][..],
+        "browser.history" => &[("webhistory", "page.visited")][..],
+        "daily-summarizer" => &[("derived.daily-summarizer", "activity.summary.daily")][..],
+        "desktop.activitywatch" => &[
+            ("activitywatch", "window.active"),
+            ("activitywatch", "afk.changed"),
+            ("activitywatch", "browser.tab.active"),
+        ][..],
+        "desktop.clipboard" => &[
+            ("clipboard", "clipboard.copied"),
+            ("clipboard", "clipboard.selected"),
+        ][..],
+        "desktop.window-manager" => &[
+            ("wm.hyprland", "window.opened"),
+            ("wm.hyprland", "window.closed"),
+            ("wm.hyprland", "window.focused"),
+            ("wm.hyprland", "window.moved"),
+            ("wm.hyprland", "window.title_changed"),
+            ("wm.hyprland", "workspace.switched"),
+            ("wm.hyprland", "monitor.focused"),
+            ("wm.hyprland", "state.captured"),
+            ("wm.hyprland", "wm.unhandled"),
+        ][..],
+        "document.staging" => &[("document-ingestor", "document.ingested")][..],
+        "fs" => &[
+            ("fs-watcher", "file.created"),
+            ("fs-watcher", "file.modified"),
+            ("fs-watcher", "file.deleted"),
+            ("fs-watcher", "file.moved"),
+        ][..],
+        "health" => &[("health-aggregator", "health.aggregated_report")][..],
+        "hourly-summarizer" => &[("derived.hourly-summarizer", "activity.summary.hourly")][..],
+        "session-detector" => &[("derived.session-detector", "activity.session.boundary")][..],
         "system.monitor" => &[("system", "monitoring.started")][..],
         "system.systemd" => &[
             ("systemd", "unit.started"),
@@ -713,29 +746,8 @@ fn static_emitter_event_pairs(
     Some(pairs.iter().copied().collect())
 }
 
-fn emitter_backing_exemption_reason(source_unit_id: &str) -> Option<&'static str> {
-    match source_unit_id {
-        "analytics"
-        | "daily-summarizer"
-        | "health"
-        | "hourly-summarizer"
-        | "session-detector" => Some(
-            "derived-node output is declared through node trait constants; static emitter catalog pending",
-        ),
-        "browser.history" => {
-            Some("browser history emitter path is parser/importer-driven; static catalog pending")
-        }
-        "desktop.activitywatch" | "desktop.clipboard" | "desktop.monitor" | "desktop.window-manager" => Some(
-            "desktop emitter path spans live bridge and historical import adapters; static catalog pending",
-        ),
-        "document.staging" => {
-            Some("document staging emitter path is scan/importer-driven; static catalog pending")
-        }
-        "fs" => {
-            Some("filesystem emitter path is watcher/importer-driven; static catalog pending")
-        }
-        _ => None,
-    }
+fn emitter_backing_exemption_reason(_source_unit_id: &str) -> Option<&'static str> {
+    None
 }
 
 fn source_unit_service_name(source_unit_id: &str) -> String {
@@ -801,7 +813,6 @@ mod tests {
 
         for expected in [
             "fs",
-            "desktop.monitor",
             "desktop.clipboard",
             "desktop.window-manager",
             "desktop.activitywatch",
@@ -871,10 +882,7 @@ mod tests {
         assert!(validation.invalid_output_event_pairs.is_empty());
         assert!(validation.unbacked_output_event_pairs.is_empty());
         assert!(validation.missing_output_event_pair_backing.is_empty());
-        assert!(
-            !validation.exempted_output_event_pair_backing.is_empty(),
-            "source units without static emitter catalogs must be explicit exemptions"
-        );
+        assert!(validation.exempted_output_event_pair_backing.is_empty());
         assert!(
             validation
                 .runner_packs_with_multiple_units
@@ -903,10 +911,6 @@ mod tests {
                 "source_unit:uncataloged:fs-watcher/file.modified".to_string(),
                 "source_unit:uncataloged:fs-watcher/file.deleted".to_string(),
                 "source_unit:uncataloged:fs-watcher/file.moved".to_string(),
-                "source_unit:uncataloged:fs-watcher/file.discovered".to_string(),
-                "source_unit:uncataloged:fs-watcher/dir.created".to_string(),
-                "source_unit:uncataloged:fs-watcher/dir.deleted".to_string(),
-                "source_unit:uncataloged:fs-watcher/dir.discovered".to_string(),
             ]
         );
         Ok(())

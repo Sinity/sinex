@@ -15,9 +15,8 @@ use sinex_primitives::source_unit::{
 };
 
 // Source-unit descriptor (issue #690 / #734). The fs ingestor observes inotify
-// on watched roots and emits typed file/dir events. Continuous path is an
-// append-stream against the inotify cursor; historical scans walk the tree
-// once and emit a `*.discovered` event per existing entry.
+// on watched roots and emits typed file events. Continuous path is an
+// append-stream against the inotify cursor.
 register_source_unit! {
     SourceUnitDescriptor {
         id: "fs",
@@ -29,10 +28,6 @@ register_source_unit! {
             ("fs-watcher", "file.modified"),
             ("fs-watcher", "file.deleted"),
             ("fs-watcher", "file.moved"),
-            ("fs-watcher", "file.discovered"),
-            ("fs-watcher", "dir.created"),
-            ("fs-watcher", "dir.deleted"),
-            ("fs-watcher", "dir.discovered"),
         ],
         // Paths can leak home-directory layout and filenames may carry secrets;
         // path-bearing events are unredacted today (#555 tracks the engine-pass
