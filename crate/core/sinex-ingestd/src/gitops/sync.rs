@@ -167,8 +167,8 @@ impl GitOpsSyncService {
         let mut schema_bundle = Vec::with_capacity(discovered.len());
         for schema in discovered {
             schema_bundle.push(SchemaBundleEntry::new(
-                schema.source,
-                schema.event_type,
+                schema.source.into_string(),
+                schema.event_type.into_string(),
                 schema.version,
                 schema.schema_content,
             )?);
@@ -240,4 +240,3 @@ struct SourceSyncResult {
     updated: usize,
     unchanged: usize,
 }
-
