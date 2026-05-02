@@ -7,6 +7,7 @@ use sinex_gateway::{
     handlers::{handle_create_entities, handle_create_note, handle_link_entities},
     rpc_server::RpcAuthContext,
 };
+use sinex_primitives::error::ErrorClass;
 use sinex_primitives::rpc::pkm::{
     CreateEntitiesResponse, CreateNoteResponse, LinkEntitiesResponse,
 };
@@ -49,6 +50,7 @@ async fn pkm_create_note_rejects_malformed_optional_tags(ctx: TestContext) -> Te
     .expect_err("malformed tags must fail");
 
     assert!(error.to_string().contains("tags"));
+    assert_eq!(error.error_class(), ErrorClass::DataError);
     Ok(())
 }
 
@@ -69,6 +71,7 @@ async fn pkm_create_entities_rejects_malformed_entities_param(ctx: TestContext) 
     .expect_err("malformed entities must fail");
 
     assert!(error.to_string().contains("entities"));
+    assert_eq!(error.error_class(), ErrorClass::DataError);
     Ok(())
 }
 
@@ -91,6 +94,7 @@ async fn pkm_link_entities_rejects_malformed_properties(ctx: TestContext) -> Tes
     .expect_err("malformed relation properties must fail");
 
     assert!(error.to_string().contains("metadata"));
+    assert_eq!(error.error_class(), ErrorClass::DataError);
     Ok(())
 }
 
