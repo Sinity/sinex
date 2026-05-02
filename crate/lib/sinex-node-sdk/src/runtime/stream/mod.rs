@@ -18,8 +18,8 @@ pub use handles::{
     ServiceInfo,
 };
 pub use kernel::{
-    PullConsumerSpec, ShadowConsumerSpec, consume_pull_loop, create_shadow_consumer,
-    delete_consumer, ensure_pull_consumer, list_consumers, pull_batch,
+    PullConsumerSpec, PullConsumerStartupSnapshot, ShadowConsumerSpec, consume_pull_loop,
+    create_shadow_consumer, delete_consumer, ensure_pull_consumer, list_consumers, pull_batch,
     validate_pull_consumer_config,
 };
 pub use node_trait::Node;

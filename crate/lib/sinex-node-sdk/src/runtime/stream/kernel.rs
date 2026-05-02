@@ -2,9 +2,10 @@ use crate::{NodeResult, SinexError};
 use async_nats::jetstream;
 use async_nats::jetstream::consumer::Consumer;
 use async_nats::jetstream::consumer::pull::Config as PullConfig;
+use async_nats::jetstream::context::ConsumerInfoErrorKind;
 use futures::StreamExt;
 use std::time::Duration;
-use tracing::warn;
+use tracing::{info, warn};
 
 #[derive(Debug, Clone)]
 pub struct PullConsumerSpec {
@@ -15,6 +16,33 @@ pub struct PullConsumerSpec {
     pub ack_wait: Duration,
     pub max_ack_pending: i64,
     pub max_deliver: i64,
+    pub reject_initial_replay: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullConsumerStartupSnapshot {
+    pub stream_name: String,
+    pub durable_name: String,
+    pub consumer_existed: bool,
+    pub deliver_policy: jetstream::consumer::DeliverPolicy,
+    pub stream_messages: u64,
+    pub stream_bytes: u64,
+    pub stream_first_sequence: u64,
+    pub stream_last_sequence: u64,
+    pub consumer_pending: u64,
+    pub consumer_ack_pending: usize,
+    pub consumer_redelivered: usize,
+    pub consumer_max_ack_pending: i64,
+    pub consumer_max_deliver: i64,
+}
+
+impl PullConsumerStartupSnapshot {
+    #[must_use]
+    pub fn has_initial_replay_risk(&self) -> bool {
+        !self.consumer_existed
+            && matches!(self.deliver_policy, jetstream::consumer::DeliverPolicy::All)
+            && self.stream_messages > 0
+    }
 }
 
 pub type PullConsumerHandle = Consumer<PullConfig>;
@@ -30,6 +58,7 @@ impl PullConsumerSpec {
             ack_wait: Duration::from_secs(30),
             max_ack_pending: 1000,
             max_deliver: 10,
+            reject_initial_replay: false,
         }
     }
 }
@@ -38,9 +67,42 @@ pub async fn ensure_pull_consumer(
     js: &jetstream::Context,
     spec: &PullConsumerSpec,
 ) -> NodeResult<PullConsumerHandle> {
-    let stream = js.get_stream(&spec.stream_name).await.map_err(|e| {
+    let mut stream = js.get_stream(&spec.stream_name).await.map_err(|e| {
         SinexError::processing(format!("Failed to get stream {}: {e}", spec.stream_name))
     })?;
+    let stream_info = stream.info().await.cloned().map_err(|e| {
+        SinexError::processing(format!(
+            "Failed to read stream {} info: {e}",
+            spec.stream_name
+        ))
+    })?;
+
+    let consumer_existed = match stream.consumer_info(&spec.durable_name).await {
+        Ok(_) => true,
+        Err(err) if err.kind() == ConsumerInfoErrorKind::NotFound => false,
+        Err(err) => {
+            return Err(SinexError::processing(format!(
+                "Failed to check consumer {} on stream {}: {err}",
+                spec.durable_name, spec.stream_name
+            )));
+        }
+    };
+
+    if !consumer_existed
+        && spec.reject_initial_replay
+        && matches!(spec.deliver_policy, jetstream::consumer::DeliverPolicy::All)
+        && stream_info.state.messages > 0
+    {
+        return Err(SinexError::processing(format!(
+            "Refusing to create missing durable consumer {} on stream {} with DeliverPolicy::All while stream contains {} message(s), {} byte(s), seq {}..{}. Set an explicit replay policy before allowing this cold-start replay.",
+            spec.durable_name,
+            spec.stream_name,
+            stream_info.state.messages,
+            stream_info.state.bytes,
+            stream_info.state.first_sequence,
+            stream_info.state.last_sequence
+        )));
+    }
 
     let mut cfg = PullConfig {
         durable_name: Some(spec.durable_name.clone()),
@@ -63,9 +125,43 @@ pub async fn ensure_pull_consumer(
     let info = consumer
         .info()
         .await
+        .cloned()
         .map_err(|e| SinexError::processing(format!("Failed to read consumer info: {e}")))?;
 
     validate_pull_consumer_config(spec, &info.config)?;
+    let snapshot = PullConsumerStartupSnapshot {
+        stream_name: spec.stream_name.clone(),
+        durable_name: spec.durable_name.clone(),
+        consumer_existed,
+        deliver_policy: spec.deliver_policy,
+        stream_messages: stream_info.state.messages,
+        stream_bytes: stream_info.state.bytes,
+        stream_first_sequence: stream_info.state.first_sequence,
+        stream_last_sequence: stream_info.state.last_sequence,
+        consumer_pending: info.num_pending,
+        consumer_ack_pending: info.num_ack_pending,
+        consumer_redelivered: info.num_redelivered,
+        consumer_max_ack_pending: info.config.max_ack_pending,
+        consumer_max_deliver: info.config.max_deliver,
+    };
+    info!(
+        stream = %snapshot.stream_name,
+        durable = %snapshot.durable_name,
+        consumer_existed = snapshot.consumer_existed,
+        initial_replay_risk = snapshot.has_initial_replay_risk(),
+        deliver_policy = ?snapshot.deliver_policy,
+        filter_subject = spec.filter_subject.as_deref().unwrap_or(""),
+        stream_messages = snapshot.stream_messages,
+        stream_bytes = snapshot.stream_bytes,
+        stream_first_sequence = snapshot.stream_first_sequence,
+        stream_last_sequence = snapshot.stream_last_sequence,
+        consumer_pending = snapshot.consumer_pending,
+        consumer_ack_pending = snapshot.consumer_ack_pending,
+        consumer_redelivered = snapshot.consumer_redelivered,
+        consumer_max_ack_pending = snapshot.consumer_max_ack_pending,
+        consumer_max_deliver = snapshot.consumer_max_deliver,
+        "JetStream pull consumer bound"
+    );
     Ok(consumer)
 }
 
