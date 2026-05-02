@@ -22,7 +22,10 @@ What is explicitly not being solved here?
 
 ## Verification
 
-List the checks you ran and the exact commands when useful.
+List the checks you ran and the exact commands when useful. GitHub-hosted
+Actions are manual-only for this repository's no-spend posture, so local
+verification recorded here is the default review gate unless a workflow is
+explicitly invoked.
 
 ```bash
 # commands here

@@ -12,9 +12,6 @@ permissions:
   contents: read
 
 on:
-  schedule:
-    # Run weekly on Mondays at 02:00 UTC
-    - cron: '0 2 * * 1'
   workflow_dispatch:
     inputs:
       event_count:

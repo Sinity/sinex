@@ -1,13 +1,6 @@
 name: Database Checks
 
 on:
-  push:
-    branches: [ main, master ]
-    paths:
-      - '**'
-  pull_request:
-    paths:
-      - '**'
   workflow_dispatch:
 
 permissions:
@@ -38,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     needs: changes
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.schema == 'true'
+    if: github.event_name == 'workflow_dispatch'
     concurrency:
       group: db-checks-schema-${{ github.head_ref || github.ref_name }}
       cancel-in-progress: true
