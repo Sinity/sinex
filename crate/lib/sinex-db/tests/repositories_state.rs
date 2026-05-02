@@ -574,7 +574,7 @@ async fn node_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Test
         FROM core.node_runs
         WHERE id = $1::uuid
         "#,
-        run.id
+        run.id.as_uuid()
     )
     .fetch_one(ctx.pool())
     .await?;
@@ -632,7 +632,7 @@ async fn node_run_heartbeat_does_not_revive_terminal_runs(ctx: TestContext) -> T
         FROM core.node_runs
         WHERE id = $1::uuid
         "#,
-        run.id
+        run.id.as_uuid()
     )
     .fetch_one(ctx.pool())
     .await?;

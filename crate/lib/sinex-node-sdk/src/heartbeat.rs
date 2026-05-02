@@ -14,10 +14,10 @@ use sinex_primitives::events::payloads::process::{
     ProcessDegradedPayload, ProcessFailedPayload, ProcessStatus,
 };
 use sinex_primitives::utils::CoordinationPrimitive;
-use sinex_primitives::{Seconds, Uuid};
+use sinex_primitives::{Id, Seconds, Uuid};
 use std::mem::MaybeUninit;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 use tokio::time::interval;
 use tracing::{info, warn};
@@ -410,9 +410,7 @@ impl HeartbeatEmitter {
         // Persist heartbeat to database if pool is configured
         #[cfg(feature = "db")]
         if let Some(ref pool) = self.db_pool {
-            let warn_skipped = self
-                .persistence_warn_count
-                .fetch_add(1, Ordering::Relaxed);
+            let warn_skipped = self.persistence_warn_count.fetch_add(1, Ordering::Relaxed);
             let log_persistence_warn = warn_skipped % 100 == 0;
 
             use sinex_db::DbPoolExt;
@@ -464,7 +462,13 @@ impl HeartbeatEmitter {
             }
 
             if let Some(node_run_id) = self.node_run_id {
-                match pool.state().update_node_run_heartbeat(node_run_id).await {
+                let typed_node_run_id =
+                    Id::<sinex_db::repositories::state::NodeRun>::from_uuid(node_run_id);
+                match pool
+                    .state()
+                    .update_node_run_heartbeat(typed_node_run_id)
+                    .await
+                {
                     Ok(true) => {}
                     Ok(false) => {
                         self.record_error(&format!(
