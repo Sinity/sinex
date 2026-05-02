@@ -624,14 +624,22 @@ fn build_registry_impl() -> RpcRegistry {
             "content.store_blob",
             Role::Write,
             |params, services, auth| {
-                Box::pin(async move { handle_store_blob(services, params, auth).await })
+                Box::pin(async move {
+                    handle_store_blob(services, params, auth)
+                        .await
+                        .map_err(Into::into)
+                })
             },
         )
         .register(
             "content.retrieve_blob",
             Role::ReadOnly,
             |params, services, _auth| {
-                Box::pin(async move { handle_retrieve_blob(services, params).await })
+                Box::pin(async move {
+                    handle_retrieve_blob(services, params)
+                        .await
+                        .map_err(Into::into)
+                })
             },
         )
         // Node operations (Write - affects system but not destructive)

@@ -12,23 +12,16 @@ use sinex_primitives::rpc::pkm::{
 };
 use sinex_primitives::{Event, Id, JsonValue, Result, SinexError, domain::EntityRelation};
 
-fn pkm_validation_error(message: &'static str, error: color_eyre::eyre::Report) -> SinexError {
-    SinexError::validation(message).with_source(error.to_string())
-}
-
 pub async fn handle_create_note(
     service: &PkmService,
     params: Value,
     auth: &RpcAuthContext,
 ) -> Result<Value> {
-    RpcParams::new(&params)
-        .optional_array("tags")
-        .map_err(|error| pkm_validation_error("invalid `tags` parameter", error))?;
+    RpcParams::new(&params).optional_array("tags")?;
     let request: CreateNoteRequest = serde_json::from_value(params).map_err(|error| {
         SinexError::serialization("invalid `pkm.create_note` request").with_std_error(&error)
     })?;
-    let content = decode_note_content(&request.content)
-        .map_err(|error| pkm_validation_error("invalid note content", error))?;
+    let content = decode_note_content(&request.content)?;
 
     let annotation_id = service
         .create_note(
@@ -53,9 +46,7 @@ pub async fn handle_create_entities(
     params: Value,
     auth: &RpcAuthContext,
 ) -> Result<Value> {
-    RpcParams::new(&params)
-        .optional_array("entities")
-        .map_err(|error| pkm_validation_error("invalid `entities` parameter", error))?;
+    RpcParams::new(&params).optional_array("entities")?;
     let request: CreateEntitiesRequest = serde_json::from_value(params).map_err(|error| {
         SinexError::serialization("invalid `pkm.create_entities` request").with_std_error(&error)
     })?;
@@ -63,8 +54,7 @@ pub async fn handle_create_entities(
         .entities
         .iter()
         .map(|entity| {
-            validate_entity_name(&entity.name)
-                .map_err(|error| pkm_validation_error("invalid entity name", error))?;
+            validate_entity_name(&entity.name)?;
             Ok((entity.name.clone(), entity.entity_type.to_string()))
         })
         .collect::<Result<Vec<_>>>()?;
@@ -90,14 +80,11 @@ pub async fn handle_link_entities(
     params: Value,
     auth: &RpcAuthContext,
 ) -> Result<Value> {
-    RpcParams::new(&params)
-        .optional_object("metadata")
-        .map_err(|error| pkm_validation_error("invalid `metadata` parameter", error))?;
+    RpcParams::new(&params).optional_object("metadata")?;
     let request: LinkEntitiesRequest = serde_json::from_value(params).map_err(|error| {
         SinexError::serialization("invalid `pkm.link_entities` request").with_std_error(&error)
     })?;
-    validate_entity_link_ids(&request.from_entity_id, &request.to_entity_id)
-        .map_err(|error| pkm_validation_error("invalid entity link", error))?;
+    validate_entity_link_ids(&request.from_entity_id, &request.to_entity_id)?;
     let metadata = request.metadata.unwrap_or_else(|| json!({}));
     let properties = metadata
         .as_object()

@@ -14,11 +14,11 @@ use crate::handlers::{
     validate_entity_name as validate_entity_name_inner,
 };
 pub fn decode_note_content(base64_content: &str) -> Result<String> {
-    decode_note_content_inner(base64_content)
+    decode_note_content_inner(base64_content).map_err(Into::into)
 }
 
 pub fn validate_entity_name(name: &str) -> Result<()> {
-    validate_entity_name_inner(name)
+    validate_entity_name_inner(name).map_err(Into::into)
 }
 
 pub fn validate_entity_link(from_id: &str, to_id: &str) -> Result<()> {
@@ -30,13 +30,13 @@ pub fn validate_entity_link(from_id: &str, to_id: &str) -> Result<()> {
         .parse::<Uuid>()
         .map(Id::<Entity>::from_uuid)
         .wrap_err("Invalid or missing to_entity_id")?;
-    validate_entity_link_ids_inner(&from, &to)
+    validate_entity_link_ids_inner(&from, &to).map_err(Into::into)
 }
 
 pub fn decode_blob_content(content_b64: &str, limit: usize) -> Result<Vec<u8>> {
-    decode_blob_content_inner(content_b64, limit)
+    decode_blob_content_inner(content_b64, limit).map_err(Into::into)
 }
 
 pub fn parse_replay_state(value: &str) -> Result<ReplayState> {
-    parse_replay_state_inner(value)
+    parse_replay_state_inner(value).map_err(Into::into)
 }
