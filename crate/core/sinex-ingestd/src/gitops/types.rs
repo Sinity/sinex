@@ -1,6 +1,7 @@
 //! Types for the `GitOps` schema sync service.
 
 use serde::{Deserialize, Serialize};
+use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::temporal::Timestamp;
 use uuid::Uuid;
 
@@ -34,8 +35,8 @@ impl GitOpsSource {
 /// A schema file discovered inside a cloned repository.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveredSchema {
-    pub source: String,
-    pub event_type: String,
+    pub source: EventSource,
+    pub event_type: EventType,
     pub version: String,
     pub schema_content: serde_json::Value,
     pub file_path: String,
