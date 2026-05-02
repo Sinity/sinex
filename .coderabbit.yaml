@@ -129,16 +129,6 @@ reviews:
     yamllint:
       enabled: true
 
-# Finishing touches — disable the extra post-passes; each one costs tokens and
-# does not add much value for this repo.
-finishing_touches:
-  docstrings:
-    enabled: false
-  unit_tests:
-    enabled: false
-  simplify:
-    enabled: false
-
 # Knowledge base — opt out globally. This is a private repo; we do not want the
 # PRs contributing to a shared knowledge index, and we do not need web_search
 # firing on every review.
