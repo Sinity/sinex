@@ -8,9 +8,9 @@
 //! - Purge raw DLQ messages
 
 use crate::service_container::ServiceContainer;
-use color_eyre::eyre::{Context, Result, eyre};
 use serde_json::Value;
 use sinex_node_sdk::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
+use sinex_primitives::{Result, SinexError};
 use tracing::warn;
 
 // Re-export RPC types for consistency
@@ -24,14 +24,17 @@ fn parse_retry_count_header(headers: Option<&async_nats::HeaderMap>) -> Result<u
         return Ok(0);
     };
 
-    value
-        .as_str()
-        .parse::<u32>()
-        .map_err(|error| eyre!("Retry-Count header is invalid: {} ({error})", value))
+    value.as_str().parse::<u32>().map_err(|error| {
+        SinexError::validation("Retry-Count header is invalid")
+            .with_context("value", value)
+            .with_std_error(&error)
+    })
 }
 
 fn require_stream_sequence(sequence: std::result::Result<u64, String>) -> Result<u64> {
-    sequence.map_err(|error| eyre!("Failed to inspect DLQ message sequence: {error}"))
+    sequence.map_err(|error| {
+        SinexError::service("Failed to inspect DLQ message sequence").with_source(error)
+    })
 }
 
 fn payload_preview(payload: &str, max_chars: usize) -> String {
@@ -47,7 +50,7 @@ fn payload_preview(payload: &str, max_chars: usize) -> String {
 pub async fn handle_dlq_list(services: &ServiceContainer, _params: Value) -> Result<Value> {
     let nats_client = services
         .nats_client()
-        .ok_or_else(|| eyre!("NATS client is not available"))?;
+        .ok_or_else(|| SinexError::configuration("NATS client is not available"))?;
     let env = services.environment();
     let config = DlqRetryConfig::default();
     let handler = DlqRetryHandler::new(nats_client.clone(), env.clone(), config);
@@ -55,7 +58,7 @@ pub async fn handle_dlq_list(services: &ServiceContainer, _params: Value) -> Res
     let stats = handler
         .get_stats()
         .await
-        .map_err(|e| eyre!("Failed to get DLQ statistics: {}", e))?;
+        .map_err(|error| SinexError::service("Failed to get DLQ statistics").with_source(error))?;
 
     let response = DlqListResponse {
         total_messages: stats.total_messages,
@@ -64,7 +67,7 @@ pub async fn handle_dlq_list(services: &ServiceContainer, _params: Value) -> Res
         last_seq: stats.last_seq,
     };
 
-    Ok(serde_json::to_value(response)?)
+    serialize_dlq_response("dlq.list", response)
 }
 
 /// Handle raw-DLQ peek request - preview messages without removing them.
@@ -73,19 +76,21 @@ pub async fn handle_dlq_peek(services: &ServiceContainer, params: Value) -> Resu
     use futures::StreamExt;
     let nats_client = services
         .nats_client()
-        .ok_or_else(|| eyre!("NATS client is not available"))?;
+        .ok_or_else(|| SinexError::configuration("NATS client is not available"))?;
     let env = services.environment();
 
-    let peek_params: DlqPeekRequest =
-        serde_json::from_value(params).wrap_err("Invalid DLQ peek parameters")?;
+    let peek_params: DlqPeekRequest = serde_json::from_value(params).map_err(|error| {
+        SinexError::serialization("Invalid DLQ peek parameters").with_std_error(&error)
+    })?;
 
     let js = jetstream::new(nats_client.clone());
     let dlq_stream_name = env.nats_stream_name("SINEX_RAW_EVENTS_DLQ");
 
-    let stream = js
-        .get_stream(&dlq_stream_name)
-        .await
-        .map_err(|e| eyre!("Failed to get DLQ stream: {}", e))?;
+    let stream = js.get_stream(&dlq_stream_name).await.map_err(|error| {
+        SinexError::service("Failed to get DLQ stream")
+            .with_context("stream", &dlq_stream_name)
+            .with_source(error)
+    })?;
 
     // Create ephemeral consumer for peeking
     // Issue 126: Add timeout to NATS consumer creation
@@ -102,13 +107,17 @@ pub async fn handle_dlq_peek(services: &ServiceContainer, params: Value) -> Resu
         }),
     )
     .await
-    .map_err(|_| eyre!("Consumer creation timed out after {:?}", timeout))?
-    .map_err(|e| eyre!("Failed to create peek consumer: {}", e))?;
+    .map_err(|error| {
+        SinexError::timeout("Consumer creation timed out")
+            .with_context("timeout_ms", timeout.as_millis())
+            .with_std_error(&error)
+    })?
+    .map_err(|error| SinexError::service("Failed to create peek consumer").with_source(error))?;
 
     let mut messages = consumer
         .messages()
         .await
-        .map_err(|e| eyre!("Failed to get messages: {}", e))?;
+        .map_err(|error| SinexError::service("Failed to get messages").with_source(error))?;
 
     let mut previews = Vec::new();
     let mut count = 0;
@@ -144,14 +153,14 @@ pub async fn handle_dlq_peek(services: &ServiceContainer, params: Value) -> Resu
                 count += 1;
             }
             Some(Err(e)) => {
-                return Err(eyre!("Error reading DLQ message: {}", e));
+                return Err(SinexError::service("Error reading DLQ message").with_source(e));
             }
             None => break, // No more messages
         }
     }
 
     let response = DlqPeekResponse { messages: previews };
-    Ok(serde_json::to_value(response)?)
+    serialize_dlq_response("dlq.peek", response)
 }
 
 /// Handle raw-DLQ requeue request - move raw-ingest failures back to the main stream.
@@ -168,11 +177,12 @@ pub async fn handle_dlq_requeue(
     use tracing::info;
     let nats_client = services
         .nats_client()
-        .ok_or_else(|| eyre!("NATS client is not available"))?;
+        .ok_or_else(|| SinexError::configuration("NATS client is not available"))?;
     let env = services.environment();
 
-    let requeue_params: DlqRequeueRequest =
-        serde_json::from_value(params).wrap_err("Invalid DLQ requeue parameters")?;
+    let requeue_params: DlqRequeueRequest = serde_json::from_value(params).map_err(|error| {
+        SinexError::serialization("Invalid DLQ requeue parameters").with_std_error(&error)
+    })?;
 
     let config = DlqRetryConfig::default();
     let handler = DlqRetryHandler::new(nats_client.clone(), env.clone(), config);
@@ -184,10 +194,11 @@ pub async fn handle_dlq_requeue(
             event_id = %event_id,
             "DLQ requeue operation initiated"
         );
-        handler
-            .retry_by_id(event_id)
-            .await
-            .map_err(|e| eyre!("Failed to requeue event {}: {}", event_id, e))?;
+        handler.retry_by_id(event_id).await.map_err(|error| {
+            SinexError::service("Failed to requeue event")
+                .with_context("event_id", event_id)
+                .with_source(error)
+        })?;
         1usize
     } else if requeue_params.all {
         // Requeue all events
@@ -195,10 +206,9 @@ pub async fn handle_dlq_requeue(
             actor = %auth.actor_id(),
             "DLQ requeue all operation initiated"
         );
-        let result = handler
-            .retry_all()
-            .await
-            .map_err(|e| eyre!("Failed to requeue all DLQ messages: {}", e))?;
+        let result = handler.retry_all().await.map_err(|error| {
+            SinexError::service("Failed to requeue all DLQ messages").with_source(error)
+        })?;
         if result.permanently_failed > 0 {
             warn!(
                 permanently_failed = result.permanently_failed,
@@ -207,14 +217,16 @@ pub async fn handle_dlq_requeue(
         }
         result.retried
     } else {
-        return Err(eyre!("Must specify either 'event_id' or 'all: true'"));
+        return Err(SinexError::validation(
+            "Must specify either 'event_id' or 'all: true'",
+        ));
     };
 
     let response = DlqRequeueResponse {
         status: "success".to_string(),
         requeued_count: requeued_count as u64,
     };
-    Ok(serde_json::to_value(response)?)
+    serialize_dlq_response("dlq.requeue", response)
 }
 
 /// Handle raw-DLQ purge request - permanently delete raw-ingest DLQ messages.
@@ -232,29 +244,33 @@ pub async fn handle_dlq_purge(
     use tracing::info;
     let nats_client = services
         .nats_client()
-        .ok_or_else(|| eyre!("NATS client is not available"))?;
+        .ok_or_else(|| SinexError::configuration("NATS client is not available"))?;
     let env = services.environment();
 
-    let purge_params: DlqPurgeRequest =
-        serde_json::from_value(params).wrap_err("Invalid DLQ purge parameters")?;
+    let purge_params: DlqPurgeRequest = serde_json::from_value(params).map_err(|error| {
+        SinexError::serialization("Invalid DLQ purge parameters").with_std_error(&error)
+    })?;
 
     if !purge_params.confirm {
-        return Err(eyre!("Purge operation requires 'confirm: true' parameter"));
+        return Err(SinexError::validation(
+            "Purge operation requires 'confirm: true' parameter",
+        ));
     }
 
     let js = jetstream::new(nats_client.clone());
     let dlq_stream_name = env.nats_stream_name("SINEX_RAW_EVENTS_DLQ");
 
-    let mut stream = js
-        .get_stream(&dlq_stream_name)
-        .await
-        .map_err(|e| eyre!("Failed to get DLQ stream: {}", e))?;
+    let mut stream = js.get_stream(&dlq_stream_name).await.map_err(|error| {
+        SinexError::service("Failed to get DLQ stream")
+            .with_context("stream", &dlq_stream_name)
+            .with_source(error)
+    })?;
 
     // Get current stats before purge
     let info = stream
         .info()
         .await
-        .map_err(|e| eyre!("Failed to get stream info: {}", e))?;
+        .map_err(|error| SinexError::service("Failed to get stream info").with_source(error))?;
     let messages_before = info.state.messages;
 
     info!(
@@ -267,18 +283,26 @@ pub async fn handle_dlq_purge(
     stream
         .purge()
         .await
-        .map_err(|e| eyre!("Failed to purge DLQ stream: {}", e))?;
+        .map_err(|error| SinexError::service("Failed to purge DLQ stream").with_source(error))?;
 
     let response = DlqPurgeResponse {
         status: "success".to_string(),
         purged_count: messages_before,
     };
-    Ok(serde_json::to_value(response)?)
+    serialize_dlq_response("dlq.purge", response)
+}
+
+fn serialize_dlq_response<T: serde::Serialize>(method: &'static str, response: T) -> Result<Value> {
+    serde_json::to_value(response).map_err(|error| {
+        SinexError::serialization(format!("failed to serialize {method} response"))
+            .with_std_error(&error)
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{parse_retry_count_header, payload_preview, require_stream_sequence};
+    use sinex_primitives::error::ErrorClass;
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -295,6 +319,7 @@ mod tests {
         let error = parse_retry_count_header(Some(&headers))
             .expect_err("invalid Retry-Count header should fail honestly");
 
+        assert_eq!(error.error_class(), ErrorClass::DataError);
         assert!(error.to_string().contains("Retry-Count header is invalid"));
         assert!(error.to_string().contains("not-a-number"));
         Ok(())
@@ -304,6 +329,7 @@ mod tests {
     async fn require_stream_sequence_rejects_missing_metadata() -> TestResult<()> {
         let error = require_stream_sequence(Err("missing reply metadata".to_string()))
             .expect_err("missing message metadata must fail honestly");
+        assert_eq!(error.error_class(), ErrorClass::TransientInfra);
         assert!(
             error
                 .to_string()
