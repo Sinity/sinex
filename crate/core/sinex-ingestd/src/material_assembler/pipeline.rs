@@ -13,6 +13,7 @@ use serde_json::json;
 use sinex_node_sdk::{
     SOURCE_MATERIAL_BEGIN_SUBJECT, SOURCE_MATERIAL_END_SUBJECT, SOURCE_MATERIAL_FRAMES_SUBJECT,
     SOURCE_MATERIAL_SLICE_SUBJECT_PREFIX, SOURCE_MATERIAL_STREAM,
+    runtime::stream::{PullConsumerSpec, ensure_pull_consumer},
 };
 use sinex_primitives::constants::env_vars;
 use std::str::FromStr;
@@ -227,23 +228,11 @@ pub(super) async fn spawn_material_consumer(
     let assembler = assembler.clone_for_task();
 
     let stream_name = namespaced_stream(&assembler, SOURCE_MATERIAL_STREAM);
-    let stream = js
-        .get_stream(&stream_name)
-        .await
-        .map_err(|e| SinexError::network("Failed to get material stream").with_source(e))?;
-
     let consumer_name = namespaced_consumer(&assembler, "ingestd_material_frames");
-    let consumer = stream
-        .get_or_create_consumer(
-            consumer_name.as_str(),
-            jetstream::consumer::pull::Config {
-                durable_name: Some(consumer_name.clone()),
-                ack_policy: jetstream::consumer::AckPolicy::Explicit,
-                deliver_policy: jetstream::consumer::DeliverPolicy::All,
-                max_ack_pending: assembler.slices_max_ack_pending,
-                ..Default::default()
-            },
-        )
+    let mut consumer_spec = PullConsumerSpec::new(stream_name, consumer_name);
+    consumer_spec.deliver_policy = jetstream::consumer::DeliverPolicy::All;
+    consumer_spec.max_ack_pending = assembler.slices_max_ack_pending;
+    let consumer = ensure_pull_consumer(&js, &consumer_spec)
         .await
         .map_err(|e| SinexError::network("Failed to create material consumer").with_source(e))?;
 
@@ -315,17 +304,17 @@ pub(super) async fn spawn_material_consumer(
             let frame_offset = frame.offset();
 
             let result = match frame {
-                    MaterialFrame::Begin {
-                        material_id,
-                        message,
-                    } => assembler.handle_begin(material_id, message).await,
-                    MaterialFrame::Slice {
-                        material_id,
-                        offset,
-                        payload,
-                    } => assembler.handle_slice(material_id, offset, payload).await,
-                    MaterialFrame::End { message, .. } => assembler.handle_end(message).await,
-                };
+                MaterialFrame::Begin {
+                    material_id,
+                    message,
+                } => assembler.handle_begin(material_id, message).await,
+                MaterialFrame::Slice {
+                    material_id,
+                    offset,
+                    payload,
+                } => assembler.handle_slice(material_id, offset, payload).await,
+                MaterialFrame::End { message, .. } => assembler.handle_end(message).await,
+            };
 
             match result {
                 Ok(()) => {}
