@@ -166,10 +166,6 @@
       "occurrence_policy": "material_anchor",
       "output_event_types": [
         {
-          "source": "desktop",
-          "event_type": "clipboard.historical"
-        },
-        {
           "source": "clipboard",
           "event_type": "clipboard.copied"
         },
@@ -182,44 +178,6 @@
       "retention_policy": "forever",
       "resource_profile": "continuous",
       "access_policy": "target_runtime_bridge:clipboard",
-      "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "desktop",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:desktop",
-      "proof_obligations": [],
-      "crate_impact": "0",
-      "binary_impact": "0",
-      "nix_output_impact": "0",
-      "derivation_impact": "0",
-      "sqlx_validation_impact": "0",
-      "dedicated_build_rationale": null
-    },
-    {
-      "subject": "source_unit:desktop.monitor",
-      "id": "desktop.monitor",
-      "domain": "desktop",
-      "role": "source_adapter",
-      "modes": [
-        "continuous"
-      ],
-      "acquisition_shape": "live_observation",
-      "material_policy": "source_material_provenance",
-      "checkpoint_policy": "live_observation_state",
-      "occurrence_policy": "uuid5:(source_unit, run_id)",
-      "output_event_types": [
-        {
-          "source": "desktop",
-          "event_type": "desktop.monitoring_started"
-        },
-        {
-          "source": "desktop",
-          "event_type": "desktop.snapshot"
-        }
-      ],
-      "privacy_context": "sensitive",
-      "retention_policy": "forever",
-      "resource_profile": "continuous",
-      "access_policy": "runtime_self_observation",
       "service_policy": "dedicated_instance:on-failure",
       "runner_pack": "desktop",
       "package_impact": "no_new_output",
@@ -246,10 +204,6 @@
       "checkpoint_policy": "live_observation_state",
       "occurrence_policy": "material_anchor",
       "output_event_types": [
-        {
-          "source": "desktop",
-          "event_type": "window.wm_historical"
-        },
         {
           "source": "wm.hyprland",
           "event_type": "window.opened"
@@ -281,6 +235,10 @@
         {
           "source": "wm.hyprland",
           "event_type": "state.captured"
+        },
+        {
+          "source": "wm.hyprland",
+          "event_type": "wm.unhandled"
         }
       ],
       "privacy_context": "sensitive",
@@ -363,22 +321,6 @@
         {
           "source": "fs-watcher",
           "event_type": "file.moved"
-        },
-        {
-          "source": "fs-watcher",
-          "event_type": "file.discovered"
-        },
-        {
-          "source": "fs-watcher",
-          "event_type": "dir.created"
-        },
-        {
-          "source": "fs-watcher",
-          "event_type": "dir.deleted"
-        },
-        {
-          "source": "fs-watcher",
-          "event_type": "dir.discovered"
         }
       ],
       "privacy_context": "secret",
@@ -1028,11 +970,10 @@
       "source_unit_ids": [
         "desktop.activitywatch",
         "desktop.clipboard",
-        "desktop.monitor",
         "desktop.window-manager"
       ],
       "shared_binary": "sinex-desktop-ingestor",
-      "source_unit_count": 4
+      "source_unit_count": 3
     },
     {
       "id": "document",
@@ -1152,15 +1093,6 @@
       "binary": "sinex-desktop-ingestor",
       "checkpoint_identity": "desktop.clipboard",
       "control_identity": "desktop.clipboard",
-      "host_identity": "runtime_hostname"
-    },
-    {
-      "source_unit_id": "desktop.monitor",
-      "service_name": "sinex-source@desktop.monitor",
-      "runner_pack": "desktop",
-      "binary": "sinex-desktop-ingestor",
-      "checkpoint_identity": "desktop.monitor",
-      "control_identity": "desktop.monitor",
       "host_identity": "runtime_hostname"
     },
     {
@@ -1327,12 +1259,12 @@
     }
   ],
   "package_impact": {
-    "total_source_units": 24,
-    "zero_crate_impact": 24,
-    "zero_binary_impact": 24,
-    "zero_nix_output_impact": 24,
-    "zero_derivation_impact": 24,
-    "zero_sqlx_validation_impact": 24,
+    "total_source_units": 23,
+    "zero_crate_impact": 23,
+    "zero_binary_impact": 23,
+    "zero_nix_output_impact": 23,
+    "zero_derivation_impact": 23,
+    "zero_sqlx_validation_impact": 23,
     "dedicated_build_rationales": []
   },
   "proof_obligations": [
