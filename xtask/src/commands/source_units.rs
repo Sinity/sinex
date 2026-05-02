@@ -619,6 +619,7 @@ fn runner_pack_binary(runner_pack: &str) -> &str {
         "session" => "sinex-session-detector",
         "system" => "sinex-system-ingestor",
         "terminal" => "sinex-terminal-ingestor",
+        "terminal-canonicalizer" => "sinex-terminal-command-canonicalizer",
         other => other,
     }
 }
@@ -690,7 +691,7 @@ mod tests {
             "desktop.clipboard",
             "desktop.window-manager",
             "desktop.activitywatch",
-            "browser",
+            "browser.history",
             "system.monitor",
             "system.systemd",
             "system.journald",
@@ -735,10 +736,13 @@ mod tests {
             .iter()
             .find(|unit| unit.id == "terminal-canonicalizer")
             .expect("terminal canonicalizer descriptor should be present");
-        assert_eq!(terminal_canonicalizer.runner_pack, "terminal");
+        assert_eq!(
+            terminal_canonicalizer.runner_pack,
+            "terminal-canonicalizer"
+        );
         assert_eq!(
             terminal_canonicalizer.implementation_mode,
-            "rust_in_pack:terminal"
+            "rust_in_pack:terminal-canonicalizer"
         );
         Ok(())
     }
