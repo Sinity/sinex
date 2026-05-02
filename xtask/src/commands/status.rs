@@ -8,34 +8,44 @@
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
 use crate::history::{
-    DiagnosticCounts, HistoryAnalysis, HistoryDb, Invocation, InvocationStatus, Recommendation,
-    VelocityTrend, WorkspaceHealthReport,
+    DiagnosticCounts, HistoryAnalysis, HistoryDb, InvocationStatus, VelocityTrend,
 };
 use crate::infra::probe::{NatsProbe, PostgresProbe, probe_nats, probe_postgres};
 #[cfg(test)]
 use crate::infra::stack::StackConfig;
-use crate::runtime_metrics::{IngestdStatus, RuntimeAssessment, RuntimeMetrics};
+#[cfg(test)]
+use crate::runtime_metrics::RuntimeAssessment;
+use crate::runtime_metrics::{IngestdStatus, RuntimeMetrics};
 use crate::runtime_target::{RuntimeTargetSummary, checkout_runtime_target};
 #[cfg(test)]
 use crate::runtime_target::{checkout_status_snapshot, signal};
 use crate::session::{WatchAction, WatchLoop};
 use color_eyre::eyre::Result;
 use console::style;
-use serde::Serialize;
 #[cfg(test)]
 use sinex_primitives::RuntimeStatusSignalStatus;
+#[cfg(test)]
+use sinex_primitives::RuntimeStatusSnapshot;
 use sinex_primitives::{
-    RuntimeStatusSnapshot, RuntimeTargetDescriptor, RuntimeTargetKind,
-    utils::redact_url_credentials_for_display,
+    RuntimeTargetDescriptor, RuntimeTargetKind, utils::redact_url_credentials_for_display,
 };
 #[cfg(test)]
 use std::any::Any;
 use std::time::{Duration, Instant};
 
 mod git;
+mod output;
 mod services;
 
 use git::{GitState, probe_git_state};
+#[cfg(test)]
+use output::HistoryStatusOutput;
+use output::{
+    ActiveJobDetail, ActivityEntry, CommitInfo, ComponentStatus, HistorySnapshot,
+    InfrastructureStatus, JobsSnapshot, JobsStatus, RecommendationOutput, ServiceRunStatus,
+    ServiceStatus, StatusOutput, SummaryCommandInfo, SummaryData, SummaryDiagnostics,
+    SummaryGitState, SummaryInfraHealth, SummaryLastCommands, SummaryOutput, VelocityTrendOutput,
+};
 #[cfg(test)]
 use services::{
     active_job_for_service, gateway_service_status_from_readiness,
@@ -63,60 +73,6 @@ pub struct StatusCommand {
     pub schemas: bool,
 }
 
-/// Structured status output for JSON mode
-#[derive(Debug, Serialize)]
-struct StatusOutput {
-    runtime_target: RuntimeTargetSummary,
-    runtime_snapshot: RuntimeStatusSnapshot,
-    infrastructure: InfrastructureStatus,
-    services: Vec<ServiceStatus>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    runtime: Option<RuntimeMetrics>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    runtime_assessment: Option<RuntimeAssessment>,
-    history: HistoryStatusOutput,
-    jobs: JobsStatus,
-    recent_activity: Vec<ActivityEntry>,
-    warnings: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct InfrastructureStatus {
-    postgres: ComponentStatus,
-    nats: ComponentStatus,
-}
-
-#[derive(Debug, Serialize)]
-struct ComponentStatus {
-    status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    latency_ms: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    port: Option<u16>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct ServiceStatus {
-    name: String,
-    status: ServiceRunStatus,
-    probe: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pid: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-enum ServiceRunStatus {
-    Running,
-    Stopped,
-    Skipped,
-    Unknown,
-}
-
 fn status_profile_enabled() -> bool {
     std::env::var("SINEX_STATUS_PROFILE").is_ok_and(|value| {
         matches!(
@@ -139,72 +95,6 @@ fn emit_status_profile_duration(label: &str, duration: Duration) {
     if status_profile_enabled() {
         eprintln!("[status-profile] {label}: {:.3}s", duration.as_secs_f64());
     }
-}
-
-#[derive(Debug, Serialize)]
-struct JobsStatus {
-    active: usize,
-    recent_failures: usize,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct HistoryStatusOutput {
-    status: String,
-    synthetic: bool,
-    recent_invocations: usize,
-    diagnostic_errors: usize,
-    diagnostic_warnings: usize,
-    fixable_diagnostics: usize,
-    flaky_tests: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct ActivityEntry {
-    command: String,
-    status: String,
-    duration_secs: Option<f64>,
-    timestamp: String,
-}
-
-/// Summary (MOTD) output structure
-#[derive(Debug, Serialize)]
-struct SummaryOutput {
-    runtime_target: RuntimeTargetSummary,
-    runtime_snapshot: RuntimeStatusSnapshot,
-    health: String,
-    /// Condensed single-field grade: "ok" | "warn" | "error" | "infra"
-    health_indicator: String,
-    summary: String,
-    infrastructure: SummaryInfraHealth,
-    last_commands: SummaryLastCommands,
-    diagnostics: SummaryDiagnostics,
-    active_jobs: usize,
-    git: SummaryGitState,
-    warnings: Vec<String>,
-    history: HistoryStatusOutput,
-    // --- Rich fields ---
-    #[serde(skip_serializing_if = "Option::is_none")]
-    health_score: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    velocity: Option<Vec<VelocityTrendOutput>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    baseline_velocity: Option<Vec<VelocityTrendOutput>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    recommendations: Option<Vec<RecommendationOutput>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    runtime: Option<RuntimeMetrics>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    services: Option<Vec<ServiceStatus>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    last_commit: Option<CommitInfo>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stash_count: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    files_changed: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    uncommitted_count: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -287,95 +177,6 @@ fn fallback_checkout_runtime_target(error: impl std::fmt::Display) -> RuntimeTar
     }
 }
 
-#[derive(Debug, Serialize)]
-struct VelocityTrendOutput {
-    command: String,
-    scope_label: Option<String>,
-    recent_avg_secs: Option<f64>,
-    delta_pct: Option<f64>,
-    trend: String,
-    sample_count: usize,
-}
-
-impl From<&VelocityTrend> for VelocityTrendOutput {
-    fn from(v: &VelocityTrend) -> Self {
-        Self {
-            command: v.command.clone(),
-            scope_label: v.scope_label.clone(),
-            recent_avg_secs: v.recent_avg_secs,
-            delta_pct: v.delta_pct,
-            trend: v.trend.clone(),
-            sample_count: v.sample_count,
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct RecommendationOutput {
-    severity: String,
-    category: String,
-    description: String,
-    action: String,
-}
-
-impl From<&Recommendation> for RecommendationOutput {
-    fn from(r: &Recommendation) -> Self {
-        Self {
-            severity: r.severity.clone(),
-            category: r.category.clone(),
-            description: r.description.clone(),
-            action: r.action.clone(),
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct CommitInfo {
-    hash: String,
-    message: String,
-    age_mins: Option<i64>,
-}
-
-#[derive(Debug, Serialize)]
-struct SummaryDiagnostics {
-    errors: usize,
-    warnings: usize,
-    /// Auto-fixable warnings (MachineApplicable)
-    fixable: usize,
-    /// Tests that passed on retry (flaky)
-    flaky_tests: usize,
-}
-
-#[derive(Debug, Serialize)]
-struct SummaryInfraHealth {
-    postgres: bool,
-    nats: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct SummaryLastCommands {
-    check: Option<SummaryCommandInfo>,
-    test: Option<SummaryCommandInfo>,
-    build: Option<SummaryCommandInfo>,
-}
-
-#[derive(Debug, Serialize)]
-struct SummaryCommandInfo {
-    status: InvocationStatus,
-    duration_secs: Option<f64>,
-    age_mins: i64,
-}
-
-#[derive(Debug, Serialize)]
-struct SummaryGitState {
-    branch: Option<String>,
-    dirty: bool,
-    ahead: u32,
-    behind: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<String>,
-}
-
 impl XtaskCommand for StatusCommand {
     fn name(&self) -> &'static str {
         "status"
@@ -421,87 +222,6 @@ fn execute_schemas(ctx: &CommandContext) -> CommandResult {
 }
 
 // ─── Data Collection ────────────────────────────────────────────────────────
-
-/// Active job detail for rich MOTD
-struct ActiveJobDetail {
-    command: String,
-    elapsed_secs: f64,
-}
-
-#[derive(Default)]
-struct JobsSnapshot {
-    active: Vec<crate::jobs::Job>,
-    recent: Vec<crate::jobs::Job>,
-    issues: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default)]
-struct HistorySnapshot {
-    available: bool,
-    recent: Vec<Invocation>,
-    diag_counts: DiagnosticCounts,
-    error_packages: Vec<String>,
-    flaky_count: usize,
-    is_synthetic: bool,
-    health_report: Option<WorkspaceHealthReport>,
-    velocity: Vec<VelocityTrend>,
-    baseline_velocity: Vec<VelocityTrend>,
-    recommendations: Vec<Recommendation>,
-    issues: Vec<String>,
-}
-
-impl HistorySnapshot {
-    fn unavailable(message: String) -> Self {
-        Self {
-            available: false,
-            issues: vec![message],
-            ..Self::default()
-        }
-    }
-
-    fn status(&self) -> &'static str {
-        if !self.available {
-            "unavailable"
-        } else if self.is_synthetic {
-            "synthetic"
-        } else if self.issues.is_empty() {
-            "available"
-        } else {
-            "degraded"
-        }
-    }
-
-    fn message(&self) -> Option<String> {
-        (!self.issues.is_empty()).then(|| self.issues.join("; "))
-    }
-
-    fn output(&self) -> HistoryStatusOutput {
-        HistoryStatusOutput {
-            status: self.status().to_string(),
-            synthetic: self.is_synthetic,
-            recent_invocations: self.recent.len(),
-            diagnostic_errors: self.diag_counts.errors,
-            diagnostic_warnings: self.diag_counts.warnings,
-            fixable_diagnostics: self.diag_counts.fixable,
-            flaky_tests: self.flaky_count,
-            message: self.message(),
-        }
-    }
-}
-
-/// All collected summary data
-struct SummaryData {
-    runtime_target: RuntimeTargetDescriptor,
-    pg_probe: PostgresProbe,
-    nats_probe: NatsProbe,
-    services: Vec<ServiceStatus>,
-    git: GitState,
-    active_job_details: Vec<ActiveJobDetail>,
-    active_job_count: usize,
-    history: HistorySnapshot,
-    job_issues: Vec<String>,
-    runtime_metrics: Option<RuntimeMetrics>,
-}
 
 fn explain_history_db_open_failure(ctx: &CommandContext) -> String {
     match HistoryDb::open(ctx.history_db_path()) {
