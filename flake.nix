@@ -674,15 +674,13 @@
                 export SINEX_DEV_ROOT="$PWD"
                 export SINEX_DEV_STATE_DIR="$PWD/${stateDir}"
                 export SINEX_DEV_TOOLCHAIN="${rustToolchain.name}"
-                _sinex_checkout_hash="$(printf '%s' "$PWD" | sha256sum | cut -c1-12)"
-                _sinex_cache_candidate="/cache/sinex/$_sinex_checkout_hash"
-                if mkdir -p "$_sinex_cache_candidate/target" "$_sinex_cache_candidate/cache" 2>/dev/null; then
-                  export SINEX_DEV_CACHE_ROOT="$_sinex_cache_candidate"
-                else
+                if [ -z "''${SINEX_DEV_CACHE_ROOT:-}" ]; then
                   export SINEX_DEV_CACHE_ROOT="$SINEX_DEV_STATE_DIR/cache"
-                  mkdir -p "$SINEX_DEV_CACHE_ROOT/target" "$SINEX_DEV_CACHE_ROOT/cache"
                 fi
-                export CARGO_TARGET_DIR="$SINEX_DEV_CACHE_ROOT/target"
+                mkdir -p "$SINEX_DEV_CACHE_ROOT/target" "$SINEX_DEV_CACHE_ROOT/cache"
+                if [ -z "''${CARGO_TARGET_DIR:-}" ]; then
+                  export CARGO_TARGET_DIR="$SINEX_DEV_CACHE_ROOT/target"
+                fi
                 _sinex_path_append_unique "$CARGO_TARGET_DIR/debug"
                 export PATH
                 export LD_LIBRARY_PATH="${
