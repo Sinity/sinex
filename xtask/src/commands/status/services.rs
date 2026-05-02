@@ -1,4 +1,4 @@
-use super::{ServiceRunStatus, ServiceStatus};
+use super::output::{ServiceRunStatus, ServiceStatus};
 use crate::infra::probe::{NatsProbe, PostgresProbe};
 use crate::infra::stack::StackConfig;
 use crate::runtime_metrics::{IngestdStatus, RuntimeMetrics};
