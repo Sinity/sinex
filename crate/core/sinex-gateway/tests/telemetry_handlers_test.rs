@@ -11,6 +11,7 @@ use sinex_gateway::handlers::{
     handle_telemetry_recent_activity, handle_telemetry_stream_stats, handle_telemetry_system_state,
     handle_telemetry_window_focus,
 };
+use sinex_primitives::error::ErrorClass;
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::rpc::telemetry::{
     TelemetryAssemblyStatsResponse, TelemetryCommandFrequencyResponse,
@@ -535,8 +536,9 @@ async fn telemetry_handlers_reject_non_positive_limits(ctx: TestContext) -> Test
     assert!(
         error
             .to_string()
-            .contains("telemetry limit must be positive")
+            .contains("Telemetry limit must be positive")
     );
+    assert_eq!(error.error_class(), ErrorClass::DataError);
     Ok(())
 }
 
@@ -552,6 +554,24 @@ async fn telemetry_handlers_reject_inverted_time_ranges(ctx: TestContext) -> Tes
     .await
     .expect_err("inverted telemetry time ranges must be rejected");
     assert!(error.to_string().contains("from' must be strictly earlier"));
+    assert_eq!(error.error_class(), ErrorClass::DataError);
+    Ok(())
+}
+
+#[sinex_test]
+async fn telemetry_handlers_reject_invalid_timestamps(ctx: TestContext) -> TestResult<()> {
+    let error = handle_telemetry_window_focus(
+        ctx.pool(),
+        json!({
+            "from": "not-a-timestamp",
+            "to": "2026-01-01T00:00:00Z"
+        }),
+    )
+    .await
+    .expect_err("invalid telemetry timestamps must be rejected");
+
+    assert_eq!(error.error_class(), ErrorClass::DataError);
+    assert!(error.to_string().contains("Invalid telemetry RFC 3339"));
     Ok(())
 }
 
