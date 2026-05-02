@@ -14,6 +14,7 @@ use sinex_primitives::{
     Uuid,
     environment::{SinexEnvironment, environment},
     temporal::Timestamp,
+    transport,
     units::{Bytes, Seconds},
 };
 use std::{
@@ -410,9 +411,11 @@ impl AcquisitionManager {
             .env
             .nats_subject_with_namespace(self.namespace.as_deref(), SOURCE_MATERIAL_BEGIN_SUBJECT);
         let payload = serde_json::to_vec(&msg)?;
+        let mut headers = async_nats::HeaderMap::new();
+        transport::insert_transport_class_headers(&mut headers, transport::Class::SourceMaterial);
 
         let js = &self.js;
-        js.publish(subject, payload.into())
+        js.publish_with_headers(subject, headers, payload.into())
             .await
             .map_err(|e| SinexError::messaging(format!("Failed to publish material begin: {e}")))?
             .await
@@ -642,6 +645,7 @@ impl AcquisitionManager {
         headers.insert("Slice-Index", slice_index_str.as_str());
         headers.insert("Offset", offset_str.as_str());
         headers.insert("Chunk-Hash", chunk_hash.as_str());
+        transport::insert_transport_class_headers(&mut headers, transport::Class::SourceMaterial);
 
         let js = &self.js;
         js.publish_with_headers(subject, headers, data.to_vec().into())
@@ -752,9 +756,11 @@ impl AcquisitionManager {
             .env
             .nats_subject_with_namespace(self.namespace.as_deref(), SOURCE_MATERIAL_END_SUBJECT);
         let payload = serde_json::to_vec(&msg)?;
+        let mut headers = async_nats::HeaderMap::new();
+        transport::insert_transport_class_headers(&mut headers, transport::Class::SourceMaterial);
 
         let js = &self.js;
-        js.publish(subject, payload.into())
+        js.publish_with_headers(subject, headers, payload.into())
             .await
             .map_err(|e| SinexError::messaging(format!("Failed to publish material end: {e}")))?
             .await

@@ -21,6 +21,7 @@ use sinex_primitives::Id;
 use sinex_primitives::domain::{NodeName, NodeType};
 use sinex_primitives::environment as sinex_environment;
 use sinex_primitives::nats::create_or_open_kv_store;
+use sinex_primitives::transport;
 use sinex_primitives::utils::ResourceGuard;
 use sqlx::PgPool;
 
@@ -563,8 +564,18 @@ impl IngestService {
         // merely drop (detach) the inner `JoinHandle`s without stopping the tasks.
         let mut critical_tasks = JoinSet::new();
         let mut abort_handles: Vec<(&'static str, tokio::task::AbortHandle)> = Vec::new();
-        Self::track_critical_task(&mut critical_tasks, &mut abort_handles, "JetStream consumer", js_handle);
-        Self::track_critical_task(&mut critical_tasks, &mut abort_handles, "MaterialAssembler", ma_handle);
+        Self::track_critical_task(
+            &mut critical_tasks,
+            &mut abort_handles,
+            "JetStream consumer",
+            js_handle,
+        );
+        Self::track_critical_task(
+            &mut critical_tasks,
+            &mut abort_handles,
+            "MaterialAssembler",
+            ma_handle,
+        );
 
         let result = tokio::select! {
             maybe_task = critical_tasks.join_next(), if !critical_tasks.is_empty() => {
@@ -587,8 +598,12 @@ impl IngestService {
             }
         };
 
-        let cleanup_error =
-            Self::wait_for_critical_tasks(&mut critical_tasks, &mut abort_handles, Duration::from_secs(5)).await;
+        let cleanup_error = Self::wait_for_critical_tasks(
+            &mut critical_tasks,
+            &mut abort_handles,
+            Duration::from_secs(5),
+        )
+        .await;
         match (result, cleanup_error) {
             (Ok(()), Some(error)) => Err(error),
             (Err(error), _) => Err(error),
@@ -997,7 +1012,12 @@ impl IngestService {
         let work_dir = self.config.gitops_work_dir.clone().into_std_path_buf();
 
         tokio::spawn(async move {
-            let service = crate::gitops::GitOpsSyncService::new(pool, work_dir, shutdown_flag, shutdown_notify);
+            let service = crate::gitops::GitOpsSyncService::new(
+                pool,
+                work_dir,
+                shutdown_flag,
+                shutdown_notify,
+            );
             service.run().await;
         })
     }
@@ -1292,8 +1312,14 @@ impl IngestService {
 
         // Broadcast metadata for cache invalidation signal using core NATS pub/sub.
         // This is fire-and-forget since it's just a notification - no durability needed.
+        let mut headers = async_nats::HeaderMap::new();
+        transport::insert_transport_class_headers(&mut headers, transport::Class::Control);
         nats_client
-            .publish(subject.clone(), serde_json::to_vec(&entries)?.into())
+            .publish_with_headers(
+                subject.clone(),
+                headers,
+                serde_json::to_vec(&entries)?.into(),
+            )
             .await
             .map_err(|e| {
                 SinexError::network("Failed to publish schema broadcast").with_source(e)
@@ -1530,7 +1556,10 @@ mod tests {
 
         tokio::time::timeout(
             Duration::from_millis(10),
-            sinex_node_sdk::wait_for_shutdown_signal_bool(&service.shutdown_flag, &service.shutdown_notify),
+            sinex_node_sdk::wait_for_shutdown_signal_bool(
+                &service.shutdown_flag,
+                &service.shutdown_notify,
+            ),
         )
         .await
         .expect("shutdown waiters should wake immediately");
@@ -1553,7 +1582,10 @@ mod tests {
 
         tokio::time::timeout(
             Duration::from_millis(10),
-            sinex_node_sdk::wait_for_shutdown_signal_bool(&service.shutdown_flag, &service.shutdown_notify),
+            sinex_node_sdk::wait_for_shutdown_signal_bool(
+                &service.shutdown_flag,
+                &service.shutdown_notify,
+            ),
         )
         .await
         .expect("shutdown waiters should wake immediately");
@@ -1570,7 +1602,10 @@ mod tests {
 
         tokio::time::timeout(
             Duration::from_millis(10),
-            sinex_node_sdk::wait_for_shutdown_signal_bool(&service.shutdown_flag, &service.shutdown_notify),
+            sinex_node_sdk::wait_for_shutdown_signal_bool(
+                &service.shutdown_flag,
+                &service.shutdown_notify,
+            ),
         )
         .await
         .expect("late shutdown waiters should observe an already-triggered shutdown");
