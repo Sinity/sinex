@@ -49,7 +49,7 @@ let
     fi
     mkdir -p "${tlsDir}"
     chmod 750 "${tlsDir}"
-    "${sinexPackage}/bin/xtask" --format human infra tls-init-gateway \
+    "${adminPackage}/bin/xtask" --format human infra tls-init-gateway \
       --output-dir "${tlsDir}" \
       --san localhost \
       --san 127.0.0.1 \
@@ -71,6 +71,7 @@ let
   '';
 
   sinexPackage = cfg.package;
+  adminPackage = cfg.adminPackage;
   serviceUser = cfg.users.nodes;
 
   databaseUrl = renderDatabaseUrl cfg.database;
@@ -263,14 +264,14 @@ let
     // extra;
 
   mkAccessSetupUnit =
-    {
-      name,
-      description,
-      script,
-      writePaths ? [ ],
-      afterUnits ? [ ],
-      wantsUnits ? [ ],
-      beforeUnits ? [ ],
+    { name
+    , description
+    , script
+    , writePaths ? [ ]
+    , afterUnits ? [ ]
+    , wantsUnits ? [ ]
+    , beforeUnits ? [ ]
+    ,
     }:
     if script == null then { } else {
       "${name}" = {
@@ -486,9 +487,10 @@ let
               "SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS=${toString coreCfg.ingestd.schemaReloadIntervalSecs}"
               "SINEX_INGESTD_STATS_LOG_INTERVAL_SECS=${toString coreCfg.ingestd.statsLogIntervalSecs}"
             ]
-            ++ lib.optional (
-              coreCfg.ingestd.blobGcIntervalSecs != null
-            ) "SINEX_INGESTD_BLOB_GC_INTERVAL_SECS=${toString coreCfg.ingestd.blobGcIntervalSecs}"
+            ++ lib.optional
+              (
+                coreCfg.ingestd.blobGcIntervalSecs != null
+              ) "SINEX_INGESTD_BLOB_GC_INTERVAL_SECS=${toString coreCfg.ingestd.blobGcIntervalSecs}"
           )
           {
             ExecStart = mkDatabasePasswordExec {

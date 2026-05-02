@@ -26,6 +26,9 @@ let
   defaultCliPackage =
     if pkgs ? sinexctl then pkgs.sinexctl else null;
 
+  defaultAdminPackage =
+    if pkgs ? xtask then pkgs.xtask else defaultSinexPackage;
+
   defaultKittySnippet = ''
     # Enable shell integration boundaries for session capture
     shell_integration enabled
@@ -167,14 +170,21 @@ in
       type = package;
       default = defaultSinexPackage;
       defaultText = literalExpression "pkgs.sinex";
-      description = "Sinex package that provides all binaries.";
+      description = "Sinex runtime package that provides service binaries.";
+    };
+
+    adminPackage = mkOption {
+      type = package;
+      default = defaultAdminPackage;
+      defaultText = literalExpression "pkgs.xtask or config.services.sinex.package";
+      description = "Package that provides managed deployment/admin helpers such as xtask.";
     };
 
     cliPackage = mkOption {
       type = nullOr package;
       default = defaultCliPackage;
       defaultText = literalExpression "pkgs.sinexctl or null";
-      description = "Optional CLI package that will be placed on PATH when present.";
+      description = "Optional human/operator CLI package placed on PATH when present.";
     };
 
     stateRoot = mkOption {
@@ -358,16 +368,16 @@ in
           blob = mkOption {
             type = submodule {
               options = {
-	                enable = mkOption {
-	                  type = bool;
-	                  default = true;
-	                  description = "Enable content-store backed blob storage.";
-	                };
+                enable = mkOption {
+                  type = bool;
+                  default = true;
+                  description = "Enable content-store backed blob storage.";
+                };
                 repositoryPath = mkOption {
                   type = path;
                   default = cfg.stateRoot + "/blob-repository";
                   defaultText = literalExpression "config.services.sinex.stateRoot + \"/blob-repository\"";
-	                  description = "Path to the content-store root.";
+                  description = "Path to the content-store root.";
                 };
                 autoInit = mkOption {
                   type = bool;
