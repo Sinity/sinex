@@ -11,11 +11,11 @@
 
 use crate::service_container::ServiceContainer;
 use async_nats::jetstream;
-use color_eyre::eyre::{Context, Result, eyre};
 use serde_json::Value;
 use sinex_node_sdk::runtime::stream::{
     ShadowConsumerSpec, create_shadow_consumer, delete_consumer, list_consumers,
 };
+use sinex_primitives::{Result, SinexError};
 use tracing::{info, warn};
 
 // Re-export shared types
@@ -31,15 +31,16 @@ pub use sinex_primitives::rpc::shadow::{
 pub async fn handle_shadow_create(services: &ServiceContainer, params: Value) -> Result<Value> {
     let nats_client = services
         .nats_client()
-        .ok_or_else(|| eyre!("NATS client is not available"))?;
+        .ok_or_else(|| SinexError::configuration("NATS client is not available"))?;
     let env = services.environment();
-    let request: ShadowCreateRequest =
-        serde_json::from_value(params).wrap_err("Invalid shadow.create parameters")?;
+    let request: ShadowCreateRequest = serde_json::from_value(params).map_err(|error| {
+        SinexError::serialization("Invalid shadow.create parameters").with_std_error(&error)
+    })?;
 
     // Validate consumer name format (must start with "dev-" for safety)
     if !request.consumer_name.starts_with("dev-") {
-        return Err(eyre!(
-            "Shadow consumer names must start with 'dev-' prefix for safety"
+        return Err(SinexError::validation(
+            "Shadow consumer names must start with 'dev-' prefix for safety",
         ));
     }
 
@@ -48,8 +49,8 @@ pub async fn handle_shadow_create(services: &ServiceContainer, params: Value) ->
 
     // Require explicit subject filter - no default to prevent unintended access
     let Some(subject_filter) = request.subject_filter else {
-        return Err(eyre!(
-            "subject_filter is required for shadow consumers (use 'events.>' explicitly if needed)"
+        return Err(SinexError::validation(
+            "subject_filter is required for shadow consumers (use 'events.>' explicitly if needed)",
         ));
     };
 
@@ -72,11 +73,9 @@ pub async fn handle_shadow_create(services: &ServiceContainer, params: Value) ->
     spec.from_beginning = request.from_beginning;
     spec.create_timeout = services.config().nats_consumer_create_timeout();
     let info = create_shadow_consumer(&js, &spec).await.map_err(|e| {
-        eyre!(
-            "Failed to create shadow consumer '{}': {}",
-            request.consumer_name,
-            e
-        )
+        SinexError::nats("Failed to create shadow consumer")
+            .with_context("consumer_name", &request.consumer_name)
+            .with_std_error(&e)
     })?;
 
     info!(
@@ -97,26 +96,29 @@ pub async fn handle_shadow_create(services: &ServiceContainer, params: Value) ->
         },
     };
 
-    Ok(serde_json::to_value(response)?)
+    serde_json::to_value(response).map_err(|error| {
+        SinexError::serialization("failed to serialize shadow.create response")
+            .with_std_error(&error)
+    })
 }
 
 /// List active shadow consumers
 pub async fn handle_shadow_list(services: &ServiceContainer, params: Value) -> Result<Value> {
     let nats_client = services
         .nats_client()
-        .ok_or_else(|| eyre!("NATS client is not available"))?;
+        .ok_or_else(|| SinexError::configuration("NATS client is not available"))?;
     let env = services.environment();
-    let request: ShadowListRequest = super::parse_default_on_null(params)?;
+    let request: ShadowListRequest = super::parse_default_on_null(params).map_err(|error| {
+        SinexError::serialization("Invalid shadow.list parameters").with_std_error(&error)
+    })?;
 
     let js = jetstream::new(nats_client.clone());
     let stream_name = env.nats_stream_name("EVENTS");
 
     let consumers = list_consumers(&js, &stream_name).await.map_err(|e| {
-        eyre!(
-            "Failed to list consumers for stream '{}': {}",
-            stream_name,
-            e
-        )
+        SinexError::nats("Failed to list shadow consumers")
+            .with_context("stream_name", &stream_name)
+            .with_std_error(&e)
     })?;
     let mut shadow_consumers = Vec::new();
 
@@ -147,7 +149,9 @@ pub async fn handle_shadow_list(services: &ServiceContainer, params: Value) -> R
         consumers: shadow_consumers,
     };
 
-    Ok(serde_json::to_value(response)?)
+    serde_json::to_value(response).map_err(|error| {
+        SinexError::serialization("failed to serialize shadow.list response").with_std_error(&error)
+    })
 }
 
 /// Delete a shadow consumer
@@ -163,14 +167,17 @@ pub async fn handle_shadow_delete(
 ) -> Result<Value> {
     let nats_client = services
         .nats_client()
-        .ok_or_else(|| eyre!("NATS client is not available"))?;
+        .ok_or_else(|| SinexError::configuration("NATS client is not available"))?;
     let env = services.environment();
-    let request: ShadowDeleteRequest =
-        serde_json::from_value(params).wrap_err("Invalid shadow.delete parameters")?;
+    let request: ShadowDeleteRequest = serde_json::from_value(params).map_err(|error| {
+        SinexError::serialization("Invalid shadow.delete parameters").with_std_error(&error)
+    })?;
 
     // Safety check: only allow deleting dev- prefixed consumers
     if !request.consumer_name.starts_with("dev-") {
-        return Err(eyre!("Can only delete shadow consumers with 'dev-' prefix"));
+        return Err(SinexError::validation(
+            "Can only delete shadow consumers with 'dev-' prefix",
+        ));
     }
 
     let js = jetstream::new(nats_client.clone());
@@ -178,11 +185,10 @@ pub async fn handle_shadow_delete(
     delete_consumer(&js, &stream_name, &request.consumer_name)
         .await
         .map_err(|e| {
-            eyre!(
-                "Failed to delete consumer '{}': {}",
-                request.consumer_name,
-                e
-            )
+            SinexError::nats("Failed to delete shadow consumer")
+                .with_context("stream_name", &stream_name)
+                .with_context("consumer_name", &request.consumer_name)
+                .with_std_error(&e)
         })?;
 
     info!(
@@ -196,5 +202,8 @@ pub async fn handle_shadow_delete(
         consumer_name: request.consumer_name,
     };
 
-    Ok(serde_json::to_value(response)?)
+    serde_json::to_value(response).map_err(|error| {
+        SinexError::serialization("failed to serialize shadow.delete response")
+            .with_std_error(&error)
+    })
 }
