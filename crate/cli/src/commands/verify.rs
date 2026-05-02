@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::Duration};
+use std::{collections::BTreeSet, path::PathBuf, time::Duration};
 
 use clap::Args;
 use color_eyre::{Result, eyre::eyre};
@@ -7,10 +7,7 @@ use serde::Serialize;
 use serde_json::json;
 use sinex_primitives::DeploymentReadinessDescriptor;
 use sinex_primitives::domain::{EventSource, EventType};
-use sinex_primitives::query::{
-    AggregationMode, EventQuery, EventQueryResult, GroupByField, PayloadFilter, SortDirection,
-    TimeRange,
-};
+use sinex_primitives::query::{EventQuery, EventQueryResult, PayloadFilter, TimeRange};
 use sinex_primitives::temporal::Timestamp;
 use tokio::process::Command;
 
@@ -36,6 +33,7 @@ pub struct VerifyCommand {
 const DOCUMENT_INGESTOR_SOURCE: &str = "document-ingestor";
 const DOCUMENT_INGESTED_EVENT_TYPE: &str = "document.ingested";
 const SOURCE_PROOF_RECENT_WINDOW: Duration = Duration::from_hours(1);
+const VERIFY_EVENT_SAMPLE_LIMIT: i64 = 25;
 
 const TERMINAL_COMMAND_SOURCES: &[&str] = &[
     "shell.kitty",
@@ -220,18 +218,22 @@ async fn report_store_and_source_counts(
     summary: &mut VerificationSummary,
     client: &GatewayClient,
 ) -> Result<()> {
-    let total_events = count_events(client).await?;
-    if total_events > 0 {
-        summary.pass(format!("Event store has {total_events} events"));
+    let sampled_events = sample_events(client).await?;
+    if sampled_events > 0 {
+        summary.pass(format!(
+            "Event store query returned {sampled_events} latest events in a bounded sample"
+        ));
     } else {
         summary.warn("Event store is empty");
     }
 
-    let sources = count_sources(client).await?;
+    let sources = sample_sources(client).await?;
     if sources >= 2 {
-        summary.pass(format!("{sources} distinct sources active"));
+        summary.pass(format!(
+            "Latest event sample includes {sources} distinct sources"
+        ));
     } else if sources == 1 {
-        summary.warn("Only 1 source active");
+        summary.warn("Latest event sample includes only 1 source");
     } else {
         summary.fail("No sources producing events");
     }
@@ -288,7 +290,7 @@ async fn report_recent_pipeline_activity(
     let recent = count_recent_events(client).await?;
     if recent > 0 {
         summary.pass(format!(
-            "{recent} events in the last hour (pipeline flowing)"
+            "Observed {recent} events in a bounded last-hour sample (pipeline flowing)"
         ));
     } else {
         summary.warn("No events in the last hour — pipeline may be stalled");
@@ -591,10 +593,10 @@ async fn run_historical_proof(
             continue;
         }
 
-        let count = count_events_matching(client, check.sources, check.event_type).await?;
+        let count = sample_events_matching(client, check.sources, check.event_type).await?;
         if count > 0 {
             summary.pass(format!(
-                "{} emitted {} {} events",
+                "{} emitted at least {} {} events",
                 check.label, count, check.event_type
             ));
         } else {
@@ -633,7 +635,7 @@ async fn report_document_surface_check(
         return Ok(());
     }
 
-    let count = count_events_matching(
+    let count = sample_events_matching(
         client,
         &[DOCUMENT_INGESTOR_SOURCE],
         DOCUMENT_INGESTED_EVENT_TYPE,
@@ -641,7 +643,7 @@ async fn report_document_surface_check(
     .await?;
     if count > 0 {
         summary.pass(format!(
-            "Managed document surface emitted {count} {DOCUMENT_INGESTED_EVENT_TYPE} events"
+            "Managed document surface emitted at least {count} {DOCUMENT_INGESTED_EVENT_TYPE} events"
         ));
     } else {
         summary
@@ -722,15 +724,15 @@ async fn report_source_surface_proof(
         wait_for_source_surface_evidence(client, sources, Duration::from_secs(10)).await?;
     let recent_window_minutes = SOURCE_PROOF_RECENT_WINDOW.as_secs() / 60;
 
-    if evidence.recent_count > 0 {
+    if evidence.recent_sample_count > 0 {
         summary.pass(format!(
-            "{label} emitted {} events in the last {} minutes",
-            evidence.recent_count, recent_window_minutes
+            "{label} emitted at least {} events in the last {} minutes",
+            evidence.recent_sample_count, recent_window_minutes
         ));
-    } else if evidence.total_count > 0 {
+    } else if evidence.persisted_sample_count > 0 {
         summary.warn(format!(
-            "{label} has {} persisted events, but none in the last {} minutes",
-            evidence.total_count, recent_window_minutes
+            "{label} has at least {} persisted events, but none in the last {} minutes",
+            evidence.persisted_sample_count, recent_window_minutes
         ));
     } else {
         summary.fail(format!(
@@ -752,17 +754,17 @@ async fn report_passive_signal_check(
     }
 
     let input_count =
-        count_events_matching(client, check.input_sources, check.input_event_type).await?;
+        sample_events_matching(client, check.input_sources, check.input_event_type).await?;
     if input_count == 0 {
         summary.skip(check.idle_message);
         return Ok(());
     }
 
     let output_count =
-        count_events_matching(client, check.output_sources, check.output_event_type).await?;
+        sample_events_matching(client, check.output_sources, check.output_event_type).await?;
     if output_count > 0 {
         summary.pass(format!(
-            "{} emitted {} {} events",
+            "{} emitted at least {} {} events",
             check.label, output_count, check.output_event_type
         ));
     } else {
@@ -782,36 +784,31 @@ fn passive_signal_enabled(check: &PassiveSignalCheck, enabled_automata: EnabledA
     }
 }
 
-async fn count_events(client: &GatewayClient) -> Result<i64> {
-    count_query(
-        client,
-        EventQuery {
-            aggregation: Some(AggregationMode::Count),
-            ..Default::default()
-        },
-    )
-    .await
+async fn sample_events(client: &GatewayClient) -> Result<i64> {
+    sample_query_event_count(client, EventQuery::default()).await
 }
 
-async fn count_sources(client: &GatewayClient) -> Result<i64> {
+async fn sample_sources(client: &GatewayClient) -> Result<i64> {
     let query = EventQuery {
-        aggregation: Some(AggregationMode::CountBy {
-            field: GroupByField::Source,
-            limit: 100,
-        }),
-        direction: SortDirection::Desc,
+        limit: VERIFY_EVENT_SAMPLE_LIMIT,
         ..Default::default()
     };
     match client.query_events(query).await? {
-        EventQueryResult::GroupedCounts { groups } => Ok(groups.len() as i64),
+        EventQueryResult::Events { events, .. } => {
+            let sources = events
+                .iter()
+                .map(|event| event.event.source.as_str().to_string())
+                .collect::<BTreeSet<_>>();
+            Ok(sources.len() as i64)
+        }
         other => Err(eyre!(
-            "unexpected query result when counting sources: {}",
+            "unexpected query result when sampling sources: {}",
             result_kind(&other)
         )),
     }
 }
 
-async fn count_events_matching(
+async fn sample_events_matching(
     client: &GatewayClient,
     sources: &[&str],
     event_type: &str,
@@ -824,13 +821,13 @@ async fn count_events_matching(
     let query = EventQuery {
         sources: source_filters,
         event_types: vec![EventType::new(event_type)?],
-        aggregation: Some(AggregationMode::Count),
+        limit: VERIFY_EVENT_SAMPLE_LIMIT,
         ..Default::default()
     };
-    count_query(client, query).await
+    sample_query_event_count(client, query).await
 }
 
-async fn count_events_for_sources(client: &GatewayClient, sources: &[&str]) -> Result<i64> {
+async fn sample_events_for_sources(client: &GatewayClient, sources: &[&str]) -> Result<i64> {
     let source_filters = sources
         .iter()
         .copied()
@@ -838,13 +835,13 @@ async fn count_events_for_sources(client: &GatewayClient, sources: &[&str]) -> R
         .collect::<Result<Vec<_>, _>>()?;
     let query = EventQuery {
         sources: source_filters,
-        aggregation: Some(AggregationMode::Count),
+        limit: VERIFY_EVENT_SAMPLE_LIMIT,
         ..Default::default()
     };
-    count_query(client, query).await
+    sample_query_event_count(client, query).await
 }
 
-async fn count_recent_events_for_sources(client: &GatewayClient, sources: &[&str]) -> Result<i64> {
+async fn sample_recent_events_for_sources(client: &GatewayClient, sources: &[&str]) -> Result<i64> {
     let source_filters = sources
         .iter()
         .copied()
@@ -855,10 +852,10 @@ async fn count_recent_events_for_sources(client: &GatewayClient, sources: &[&str
     let query = EventQuery {
         sources: source_filters,
         time_range: Some(TimeRange::new(Some(start), Some(now))?),
-        aggregation: Some(AggregationMode::Count),
+        limit: VERIFY_EVENT_SAMPLE_LIMIT,
         ..Default::default()
     };
-    count_query(client, query).await
+    sample_query_event_count(client, query).await
 }
 
 async fn count_recent_events(client: &GatewayClient) -> Result<i64> {
@@ -866,22 +863,22 @@ async fn count_recent_events(client: &GatewayClient) -> Result<i64> {
     let one_hour_ago = Timestamp::new(now.inner() - time::Duration::hours(1));
     let time_range = TimeRange::new(Some(one_hour_ago), Some(now))?;
 
-    count_query(
+    sample_query_event_count(
         client,
         EventQuery {
             time_range: Some(time_range),
-            aggregation: Some(AggregationMode::Count),
+            limit: VERIFY_EVENT_SAMPLE_LIMIT,
             ..Default::default()
         },
     )
     .await
 }
 
-async fn count_query(client: &GatewayClient, query: EventQuery) -> Result<i64> {
+async fn sample_query_event_count(client: &GatewayClient, query: EventQuery) -> Result<i64> {
     match client.query_events(query).await? {
-        EventQueryResult::Count { count } => Ok(count),
+        EventQueryResult::Events { events, .. } => Ok(events.len() as i64),
         other => Err(eyre!(
-            "unexpected query result for count query: {}",
+            "unexpected query result for bounded event sample: {}",
             result_kind(&other)
         )),
     }
@@ -1045,8 +1042,8 @@ async fn wait_for_query_count_increase(
 
 #[derive(Debug, Clone, Copy, Default)]
 struct SourceSurfaceEvidence {
-    recent_count: i64,
-    total_count: i64,
+    recent_sample_count: i64,
+    persisted_sample_count: i64,
 }
 
 async fn wait_for_source_surface_evidence(
@@ -1057,9 +1054,9 @@ async fn wait_for_source_surface_evidence(
     let deadline = tokio::time::Instant::now() + timeout;
     let mut evidence = SourceSurfaceEvidence::default();
     loop {
-        evidence.recent_count = count_recent_events_for_sources(client, sources).await?;
-        evidence.total_count = count_events_for_sources(client, sources).await?;
-        if evidence.recent_count > 0 {
+        evidence.recent_sample_count = sample_recent_events_for_sources(client, sources).await?;
+        evidence.persisted_sample_count = sample_events_for_sources(client, sources).await?;
+        if evidence.recent_sample_count > 0 {
             return Ok(evidence);
         }
         if tokio::time::Instant::now() >= deadline {

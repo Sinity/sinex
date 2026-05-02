@@ -25,7 +25,6 @@ let
   updatesEnabled = sinexEnabled && updates.enable;
 
   generatedUnits = config.sinex._generatedUnits;
-  preflightSupportUnits = config.sinex._preflightSupportUnits;
   localPostgresEnabled = cfg.database.enable && (cfg.database.autoSetup || config.services.postgresql.enable);
   localPostgresUnits = optionals localPostgresEnabled [ "postgresql.service" "postgresql-setup.service" ];
   schemaApplyUnits = optionals schemaApplyEnabled [ "sinex-schema-apply.service" ];
@@ -45,7 +44,7 @@ let
 
   databaseUrl = renderDatabaseUrl cfg.database;
   natsUrl = concatStringsSep "," nodesCfg.nats.servers;
-  secretPaths = config.sinex.secrets.paths or {};
+  secretPaths = config.sinex.secrets.paths or { };
   resolveSecretPath = resolveNamedSecretPath secretPaths;
   effectiveDatabasePasswordFile = resolveSecretPath cfg.database.passwordFile [
     "sinex-local-db"
@@ -108,15 +107,13 @@ let
     // optionalAttrs (effectiveNatsNkeySeedFile != null) {
       SINEX_NATS_NKEY_SEED_FILE = toString effectiveNatsNkeySeedFile;
     };
-  sanitizeName = lib.strings.sanitizeDerivationName;
-
   skipArgs = concatMapStringsSep " " (phase: "--skip ${phase}") preflight.skip;
   preflightCommand = concatStringsSep " " (filter (arg: arg != "") [
     "${cfg.package}/bin/sinex-preflight"
     "verify"
     "--timeout"
     "${toString preflight.timeoutSec}"
-    (if preflight.skip == [] then "" else skipArgs)
+    (if preflight.skip == [ ] then "" else skipArgs)
   ]);
 
   runPreflightScript = pkgs.writeShellScript "sinex-preflight-run" ''
@@ -160,7 +157,7 @@ let
       export SINEX_DB_MAX_CONNECTIONS=${toString cfg.database.connectionPool.maxConnections}
       export SINEX_DB_MIN_CONNECTIONS=${toString cfg.database.connectionPool.minConnections}
       export SINEX_DB_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}
-      ${cfg.package}/bin/xtask infra schema-apply \
+      ${cfg.adminPackage}/bin/xtask infra schema-apply \
         --database-url "postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/$db_name"
     done
   '';
@@ -236,26 +233,13 @@ let
     echo "$(date): coordinated update completed successfully"
   '';
 
-  guardUnit = unit: {
+  guardUnit = _unit: {
     after = mkAfter [ "sinex-preflight.service" ];
     requires = mkAfter [ "sinex-preflight.service" ];
-    # Systemd's TimeoutStartSec covers ALL of ExecStartPre + ExecStart. The
-    # default 90s is shorter than the guard's own preflight timeout
-    # (`preflight.timeoutSec`, default 120s), so a slow preflight — typical
-    # during nixos-rebuild reactivation while NATS is itself restarting —
-    # gets SIGTERM'd before the inner verify can complete. Give the unit
-    # 60s of headroom on top of the inner timeout. The unit is free to
-    # override this; mkDefault keeps that ergonomic.
+    # The guard is the shared sinex-preflight.service dependency above. Do not
+    # also add ExecStartPre here: that multiplies the full preflight once per
+    # guarded service and can turn a runtime start into many DB/NATS probes.
     serviceConfig.TimeoutStartSec = lib.mkDefault (preflight.timeoutSec + 60);
-    serviceConfig.ExecStartPre = mkAfter [ (pkgs.writeShellScript "sinex-preflight-guard-${sanitizeName unit}" ''
-      set -euo pipefail
-      UNIT="${unit}.service"
-      export PATH=${lib.makeBinPath [ pkgs.postgresql pkgs.systemd ]}:"$PATH"
-      if ! ${preflightExec}; then
-        echo "ERROR: sinex-preflight verification failed; refusing to start $UNIT" >&2
-        exit 1
-      fi
-    '') ];
   };
 
 in
@@ -293,18 +277,18 @@ in
           sinex-preflight = {
             description = "Sinex pre-flight verification";
             wantedBy = [ "multi-user.target" ];
-            wants = [ "network-online.target" ] ++ preflightSupportUnits;
+            wants = [ "network-online.target" ];
             after = [ "network-online.target" ]
-              ++ schemaApplyUnits
-              ++ localPostgresUnits
-              ++ optionals natsEnabled [ "nats.service" ];
+            ++ schemaApplyUnits
+            ++ localPostgresUnits
+            ++ optionals natsEnabled [ "nats.service" ];
             # Require only the infrastructure that preflight actively checks.
             # Target-user bridge helpers are best-effort: if a desktop/browser
             # runtime is not visible yet, preflight should still run and the
             # affected node can recover via its own access bootstrap.
             requires = schemaApplyUnits
-              ++ localPostgresUnits
-              ++ optionals natsEnabled [ "nats.service" ];
+            ++ localPostgresUnits
+            ++ optionals natsEnabled [ "nats.service" ];
             path = [ pkgs.postgresql ];
             environment = preflightEnvironment;
             serviceConfig = {
@@ -331,7 +315,7 @@ in
 
       assertions = [
         {
-          assertion = unitsToGuard != [];
+          assertion = unitsToGuard != [ ];
           message = "No services found to guard with pre-flight verification";
         }
       ];

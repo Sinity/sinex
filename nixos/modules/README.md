@@ -31,6 +31,8 @@ values derived from `stateRoot` and the global `logLevel`.
   services.sinex = {
     enable = true;
     package = pkgs.sinex;
+    adminPackage = pkgs.xtask;
+    cliPackage = pkgs.sinexctl;
     users.target = "alice";
 
     stateRoot = "/var/lib/sinex";
@@ -189,6 +191,12 @@ disabled (e.g. staging migrations).
 - `observability.alerts.enable` adds the provided rule files to Prometheus.
 
 ### Lifecycle
+- The module separates runtime, admin, and operator package surfaces:
+  `services.sinex.package` supplies service binaries, `adminPackage` supplies
+  managed deployment helpers such as `xtask`, and `cliPackage` is the human
+  operator CLI placed on PATH. Do not use the aggregate runtime package as a
+  global CLI surface unless you intentionally want every packaged binary on
+  interactive PATH.
 - The module now wires a first-boot `sinex-schema-apply` oneshot before guarded
   services and before `sinex-preflight`, so schema creation is part of the real
   deployment path instead of a VM-only convention.

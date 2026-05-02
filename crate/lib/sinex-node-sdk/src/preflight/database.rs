@@ -10,15 +10,12 @@
 
 use crate::{NodeResult, SinexError};
 use serde_json::{Value, json};
-use sinex_primitives::{
-    constants::timeouts,
-    utils::{InvalidUrlPolicy, redact_url_password_for_diagnostics},
-};
+use sinex_primitives::utils::{InvalidUrlPolicy, redact_url_password_for_diagnostics};
 use sqlx::PgPool;
 use std::collections::HashMap;
 use tracing::{debug, error, info};
 
-use super::{VerificationStatus, resolve_database_url};
+use super::{VerificationStatus, connect_preflight_database_pool, resolve_database_url};
 
 /// Check if a table exists in the specified schema
 async fn table_exists(pool: &PgPool, schema: &str, table: &str) -> NodeResult<bool> {
@@ -53,28 +50,16 @@ pub async fn verify_database_connectivity() -> NodeResult<(VerificationStatus, V
     );
     details.insert("database_url", json!(redact_password(&database_url)));
 
-    // Test connection with timeout
-    let pool = match tokio::time::timeout(
-        timeouts::PREFLIGHT_DATABASE_TIMEOUT,
-        PgPool::connect(&database_url),
-    )
-    .await
-    {
-        Ok(Ok(pool)) => {
+    // Test connection with preflight-scoped session limits.
+    let pool = match connect_preflight_database_pool(&database_url).await {
+        Ok(pool) => {
             messages.push("✓ Database connection established".to_string());
             pool
         }
-        Ok(Err(e)) => {
+        Err(e) => {
             let error_msg =
                 format!("Database connection failed against effective runtime database: {e}");
             messages.push(format!("✗ {error_msg}"));
-            return Ok((VerificationStatus::Fail, json!(details), messages));
-        }
-        Err(_) => {
-            messages.push(format!(
-                "✗ Database connection timeout against effective runtime database ({}s)",
-                timeouts::PREFLIGHT_DATABASE_TIMEOUT.as_secs()
-            ));
             return Ok((VerificationStatus::Fail, json!(details), messages));
         }
     };
@@ -104,9 +89,7 @@ pub async fn verify_postgresql_extensions() -> NodeResult<(VerificationStatus, V
 
     let database_url = resolve_database_url()?;
 
-    let pool = PgPool::connect(&database_url)
-        .await
-        .map_err(SinexError::from)?;
+    let pool = connect_preflight_database_pool(&database_url).await?;
 
     // Required extensions for Sinex
     let required_extensions = vec![
@@ -183,9 +166,7 @@ pub async fn verify_schema_readiness() -> NodeResult<(VerificationStatus, Value,
 
     let database_url = resolve_database_url()?;
 
-    let pool = PgPool::connect(&database_url)
-        .await
-        .map_err(SinexError::from)?;
+    let pool = connect_preflight_database_pool(&database_url).await?;
 
     // Check current declarative schema status
     let schema_info = check_schema_status(&pool, &mut messages).await?;
