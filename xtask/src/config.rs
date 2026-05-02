@@ -228,16 +228,41 @@ pub fn is_nextest_run() -> bool {
 
 /// Determine the workspace root directory.
 ///
-/// Resolved at compile time from `xtask`'s own `CARGO_MANIFEST_DIR` via the
-/// `env!` macro, so the result is stable regardless of which downstream crate
-/// links this function. A runtime `env::var("CARGO_MANIFEST_DIR")` lookup
-/// would instead return the *test crate's* manifest dir under nextest, which
-/// previously scattered `.sinex/` state into crate subdirectories.
+/// Prefer the Sinex checkout containing the current working directory. This
+/// keeps a globally installed or previously built `xtask` binary bound to the
+/// active worktree instead of the checkout where the binary was compiled.
+///
+/// If the current directory is outside a Sinex checkout, fall back to
+/// `xtask`'s compile-time `CARGO_MANIFEST_DIR`. Avoid runtime
+/// `CARGO_MANIFEST_DIR`: under nextest it points at the test crate's manifest
+/// and can scatter `.sinex/` state into crate subdirectories.
 pub fn workspace_root() -> PathBuf {
+    if let Ok(cwd) = env::current_dir()
+        && let Some(root) = workspace_root_from_current_dir(&cwd)
+    {
+        return root;
+    }
+
+    compiled_workspace_root()
+}
+
+fn compiled_workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(Path::to_path_buf)
         .expect("xtask crate must have a parent directory (the workspace root)")
+}
+
+fn workspace_root_from_current_dir(start: &Path) -> Option<PathBuf> {
+    start.ancestors().find_map(|dir| {
+        let manifest = dir.join("Cargo.toml");
+        let xtask_manifest = dir.join("xtask/Cargo.toml");
+        if manifest.is_file() && xtask_manifest.is_file() {
+            Some(dir.to_path_buf())
+        } else {
+            None
+        }
+    })
 }
 
 /// Path to the repo-local ast-grep config root.
@@ -297,6 +322,36 @@ mod tests {
         let config = Config::from_env();
         let path = config.history_db_path();
         assert_eq!(path, override_path);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workspace_root_discovery_prefers_enclosing_checkout() -> TestResult<()> {
+        let checkout = tempfile::tempdir()?;
+        std::fs::write(checkout.path().join("Cargo.toml"), "[workspace]\n")?;
+        std::fs::create_dir_all(checkout.path().join("xtask/src"))?;
+        std::fs::write(
+            checkout.path().join("xtask/Cargo.toml"),
+            "[package]\nname = \"xtask\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )?;
+        std::fs::create_dir_all(checkout.path().join("crate/lib/sinex-primitives"))?;
+
+        let nested = checkout.path().join("crate/lib/sinex-primitives");
+        let root = workspace_root_from_current_dir(&nested)
+            .expect("nested checkout path should resolve to workspace root");
+        assert_eq!(root, checkout.path());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workspace_root_discovery_rejects_non_xtask_workspace() -> TestResult<()> {
+        let other = tempfile::tempdir_in("/tmp")?;
+        std::fs::write(other.path().join("Cargo.toml"), "[workspace]\n")?;
+
+        assert!(
+            workspace_root_from_current_dir(other.path()).is_none(),
+            "a generic Cargo workspace without xtask/Cargo.toml is not the Sinex root"
+        );
         Ok(())
     }
 
