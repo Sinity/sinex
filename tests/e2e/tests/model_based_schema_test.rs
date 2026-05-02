@@ -357,7 +357,7 @@ async fn prop_schema_repo_model_matches_reference(
                 let source = prefixed_source(&run_id, source_idx);
                 let event_type = prefixed_event_type(&run_id, event_type_idx);
                 if let Ok(active) = repo.get_active_schema(&source, &event_type).await {
-                    repo.deprecate_schema(active.id.as_uuid()).await?;
+                    repo.deprecate_schema(&active.id).await?;
                 }
                 model.deprecate_active(&(source, event_type));
             }
