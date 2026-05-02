@@ -7,6 +7,7 @@
 use crate::gitops::types::DiscoveredSchema;
 use crate::{IngestdResult, SinexError};
 use globset::{Glob, GlobMatcher};
+use sinex_primitives::domain::{EventSource, EventType};
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
@@ -98,12 +99,12 @@ fn parse_schema_file(path: &Path, relative_path: &str) -> IngestdResult<Discover
     })?;
 
     // Try x-sinex metadata fields first
-    if let Some(schema) = try_extract_from_metadata(&json, relative_path) {
+    if let Some(schema) = try_extract_from_metadata(&json, relative_path)? {
         return Ok(schema);
     }
 
     // Fall back to path-based extraction
-    if let Some(schema) = try_extract_from_path(&json, relative_path) {
+    if let Some(schema) = try_extract_from_path(&json, relative_path)? {
         return Ok(schema);
     }
 
@@ -119,18 +120,29 @@ fn parse_schema_file(path: &Path, relative_path: &str) -> IngestdResult<Discover
 fn try_extract_from_metadata(
     json: &serde_json::Value,
     relative_path: &str,
-) -> Option<DiscoveredSchema> {
-    let source = json.get("x-sinex-source")?.as_str()?;
-    let event_type = json.get("x-sinex-event-type")?.as_str()?;
-    let version = json.get("x-sinex-version")?.as_str()?;
+) -> IngestdResult<Option<DiscoveredSchema>> {
+    let Some(source) = json.get("x-sinex-source").and_then(|value| value.as_str()) else {
+        return Ok(None);
+    };
+    let Some(event_type) = json
+        .get("x-sinex-event-type")
+        .and_then(|value| value.as_str())
+    else {
+        return Ok(None);
+    };
+    let Some(version) = json.get("x-sinex-version").and_then(|value| value.as_str()) else {
+        return Ok(None);
+    };
+    let source = parse_event_source(source, relative_path)?;
+    let event_type = parse_event_type(event_type, relative_path)?;
 
-    Some(DiscoveredSchema {
-        source: source.to_string(),
-        event_type: event_type.to_string(),
+    Ok(Some(DiscoveredSchema {
+        source,
+        event_type,
         version: version.to_string(),
         schema_content: json.clone(),
         file_path: relative_path.to_string(),
-    })
+    }))
 }
 
 /// Extract metadata from the file path.
@@ -141,7 +153,7 @@ fn try_extract_from_metadata(
 fn try_extract_from_path(
     json: &serde_json::Value,
     relative_path: &str,
-) -> Option<DiscoveredSchema> {
+) -> IngestdResult<Option<DiscoveredSchema>> {
     let path = PathBuf::from(relative_path);
     let components: Vec<&str> = path
         .components()
@@ -150,13 +162,17 @@ fn try_extract_from_path(
 
     // Need at least: <prefix>/<source>/<event_type>/<version>.json
     if components.len() < 3 {
-        return None;
+        return Ok(None);
     }
 
-    let file_stem = path.file_stem()?.to_str()?;
-    let ext = path.extension()?.to_str()?;
+    let Some(file_stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+        return Ok(None);
+    };
+    let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
+        return Ok(None);
+    };
     if ext != "json" {
-        return None;
+        return Ok(None);
     }
 
     // Take the last 3 meaningful components: source / event_type / version.json
@@ -164,13 +180,33 @@ fn try_extract_from_path(
     let source = components[len - 3];
     let event_type = components[len - 2];
     let version = file_stem;
+    let source = parse_event_source(source, relative_path)?;
+    let event_type = parse_event_type(event_type, relative_path)?;
 
-    Some(DiscoveredSchema {
-        source: source.to_string(),
-        event_type: event_type.to_string(),
+    Ok(Some(DiscoveredSchema {
+        source,
+        event_type,
         version: version.to_string(),
         schema_content: json.clone(),
         file_path: relative_path.to_string(),
+    }))
+}
+
+fn parse_event_source(source: &str, relative_path: &str) -> IngestdResult<EventSource> {
+    EventSource::new(source).map_err(|error| {
+        SinexError::validation(format!(
+            "Invalid x-sinex source '{source}' in discovered schema {relative_path}: {error}"
+        ))
+        .with_operation("gitops.parse_schema_file")
+    })
+}
+
+fn parse_event_type(event_type: &str, relative_path: &str) -> IngestdResult<EventType> {
+    EventType::new(event_type).map_err(|error| {
+        SinexError::validation(format!(
+            "Invalid x-sinex event type '{event_type}' in discovered schema {relative_path}: {error}"
+        ))
+        .with_operation("gitops.parse_schema_file")
     })
 }
 
@@ -192,11 +228,11 @@ mod tests {
             "properties": {}
         });
 
-        let schema = try_extract_from_metadata(&json, "schemas/test.json");
+        let schema = try_extract_from_metadata(&json, "schemas/test.json")?;
         assert!(schema.is_some());
         let schema = schema.expect("should extract");
-        assert_eq!(schema.source, FileCreatedPayload::SOURCE.as_str());
-        assert_eq!(schema.event_type, FileCreatedPayload::EVENT_TYPE.as_str());
+        assert_eq!(schema.source, FileCreatedPayload::SOURCE);
+        assert_eq!(schema.event_type, FileCreatedPayload::EVENT_TYPE);
         assert_eq!(schema.version, "1.0.0");
         Ok(())
     }
@@ -210,11 +246,11 @@ mod tests {
             FileCreatedPayload::SOURCE.as_str(),
             FileCreatedPayload::EVENT_TYPE.as_str()
         );
-        let schema = try_extract_from_path(&json, &path);
+        let schema = try_extract_from_path(&json, &path)?;
         assert!(schema.is_some());
         let schema = schema.expect("should extract");
-        assert_eq!(schema.source, FileCreatedPayload::SOURCE.as_str());
-        assert_eq!(schema.event_type, FileCreatedPayload::EVENT_TYPE.as_str());
+        assert_eq!(schema.source, FileCreatedPayload::SOURCE);
+        assert_eq!(schema.event_type, FileCreatedPayload::EVENT_TYPE);
         assert_eq!(schema.version, "1.0.0");
         Ok(())
     }
@@ -222,7 +258,7 @@ mod tests {
     #[sinex_test]
     async fn extract_from_path_too_short_fails() -> TestResult<()> {
         let json = json!({"type": "object"});
-        let schema = try_extract_from_path(&json, "1.0.0.json");
+        let schema = try_extract_from_path(&json, "1.0.0.json")?;
         assert!(schema.is_none());
         Ok(())
     }
@@ -237,12 +273,63 @@ mod tests {
         });
 
         // parse_schema_file reads from disk, so this test validates the helpers directly
-        let schema = try_extract_from_metadata(&json, "any/path.json");
+        let schema = try_extract_from_metadata(&json, "any/path.json")?;
         assert!(schema.is_some());
         let schema = schema.expect("should extract metadata");
-        assert_eq!(schema.source, "metadata-source");
-        assert_eq!(schema.event_type, "metadata.type");
+        assert_eq!(schema.source.as_str(), "metadata-source");
+        assert_eq!(schema.event_type.as_str(), "metadata.type");
         assert_eq!(schema.version, "2.0.0");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn metadata_rejects_invalid_source_or_event_type() -> TestResult<()> {
+        let invalid_source = json!({
+            "type": "object",
+            "x-sinex-source": "Invalid Source",
+            "x-sinex-event-type": "metadata.type",
+            "x-sinex-version": "1.0.0",
+        });
+        let source_error = try_extract_from_metadata(&invalid_source, "schemas/bad-source.json")
+            .expect_err("invalid source metadata must fail");
+        assert!(source_error.to_string().contains("Invalid x-sinex source"));
+
+        let invalid_event_type = json!({
+            "type": "object",
+            "x-sinex-source": "metadata-source",
+            "x-sinex-event-type": "metadata..type",
+            "x-sinex-version": "1.0.0",
+        });
+        let event_type_error =
+            try_extract_from_metadata(&invalid_event_type, "schemas/bad-event-type.json")
+                .expect_err("invalid event type metadata must fail");
+        assert!(
+            event_type_error
+                .to_string()
+                .contains("Invalid x-sinex event type")
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn path_convention_rejects_invalid_source_or_event_type() -> TestResult<()> {
+        let json = json!({"type": "object"});
+
+        let source_error =
+            try_extract_from_path(&json, "schemas/Invalid Source/file.created/1.0.0.json")
+                .expect_err("invalid path source must fail");
+        assert!(source_error.to_string().contains("Invalid x-sinex source"));
+
+        let event_type_error =
+            try_extract_from_path(&json, "schemas/file-watcher/file..created/1.0.0.json")
+                .expect_err("invalid path event type must fail");
+        assert!(
+            event_type_error
+                .to_string()
+                .contains("Invalid x-sinex event type")
+        );
+
         Ok(())
     }
 
@@ -265,8 +352,8 @@ mod tests {
 
         let schemas = SchemaDiscovery::discover_schemas(repo, "**/*.json")?;
         assert_eq!(schemas.len(), 1);
-        assert_eq!(schemas[0].source, "metadata-source");
-        assert_eq!(schemas[0].event_type, "metadata.event");
+        assert_eq!(schemas[0].source.as_str(), "metadata-source");
+        assert_eq!(schemas[0].event_type.as_str(), "metadata.event");
         assert_eq!(schemas[0].version, "3.0.0");
         Ok(())
     }
