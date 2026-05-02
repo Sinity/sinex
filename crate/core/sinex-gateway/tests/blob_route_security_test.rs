@@ -10,6 +10,7 @@ use sinex_gateway::{
     service_container::ServiceContainer,
 };
 use sinex_node_sdk::content_store::MaterialContentStore;
+use sinex_primitives::error::ErrorClass;
 use sinex_primitives::rpc::content::{RetrieveBlobResponse, StoreBlobResponse};
 use sinex_primitives::temporal;
 use tempfile::TempDir;
@@ -75,6 +76,7 @@ async fn blob_routes_should_enforce_auth_and_quota(ctx: TestContext) -> TestResu
         .await
         .unwrap_err();
 
+    assert_eq!(err.error_class(), ErrorClass::DataError);
     assert!(
         err.to_string()
             .contains("Blob content exceeds maximum allowed size"),
@@ -131,6 +133,7 @@ async fn content_store_blob_rejects_malformed_optional_fields(ctx: TestContext) 
     let error = handle_store_blob(&services, params, &auth)
         .await
         .expect_err("malformed optional blob params must fail");
+    assert_eq!(error.error_class(), ErrorClass::DataError);
     assert!(error.to_string().contains("filename"));
 
     Ok(())
