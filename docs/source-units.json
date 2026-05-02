@@ -18,7 +18,6 @@
       "material_policy": "synthesis_provenance",
       "checkpoint_policy": "append_stream_cursor",
       "occurrence_policy": "uuid5:(source_unit, parent_event_ids)",
-      "output_event_type": "derived.activity-window/activity.window.summary",
       "output_event_types": [
         {
           "source": "derived.activity-window",
@@ -54,7 +53,6 @@
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "mutable_snapshot:sqlite:visit_id",
       "occurrence_policy": "uuid5:(source_unit, browser_profile, visit_id)",
-      "output_event_type": "webhistory/page.visited",
       "output_event_types": [
         {
           "source": "webhistory",
@@ -89,7 +87,6 @@
       "material_policy": "synthesis_provenance",
       "checkpoint_policy": "append_stream_cursor",
       "occurrence_policy": "uuid5:(source_unit, day_bucket, parent_event_ids)",
-      "output_event_type": "derived.daily-summarizer/activity.summary.daily",
       "output_event_types": [
         {
           "source": "derived.daily-summarizer",
@@ -124,7 +121,6 @@
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "mutable_snapshot:sqlite:bucket_event_timestamp",
       "occurrence_policy": "uuid5:(source_unit, bucket_id, event_timestamp)",
-      "output_event_type": "activitywatch/window.active,activitywatch/afk.changed,activitywatch/browser.tab.active",
       "output_event_types": [
         {
           "source": "activitywatch",
@@ -168,7 +164,6 @@
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "live_observation_state",
       "occurrence_policy": "material_anchor",
-      "output_event_type": "desktop/clipboard.historical,clipboard/clipboard.copied,clipboard/clipboard.selected",
       "output_event_types": [
         {
           "source": "desktop",
@@ -211,7 +206,6 @@
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "live_observation_state",
       "occurrence_policy": "uuid5:(source_unit, run_id)",
-      "output_event_type": "desktop/desktop.monitoring_started,desktop/desktop.snapshot",
       "output_event_types": [
         {
           "source": "desktop",
@@ -251,7 +245,6 @@
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "live_observation_state",
       "occurrence_policy": "material_anchor",
-      "output_event_type": "desktop/window.wm_historical,wm.hyprland/window.opened,wm.hyprland/window.closed,wm.hyprland/window.focused,wm.hyprland/window.moved,wm.hyprland/window.title_changed,wm.hyprland/workspace.switched,wm.hyprland/monitor.focused,wm.hyprland/state.captured",
       "output_event_types": [
         {
           "source": "desktop",
@@ -319,7 +312,6 @@
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "append_stream_cursor",
       "occurrence_policy": "material_anchor",
-      "output_event_type": "document-ingestor/document.ingested",
       "output_event_types": [
         {
           "source": "document-ingestor",
@@ -355,7 +347,6 @@
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "append_stream_cursor",
       "occurrence_policy": "material_anchor",
-      "output_event_type": "fs-watcher/file.created,fs-watcher/file.modified,fs-watcher/file.deleted,fs-watcher/file.moved,fs-watcher/file.discovered,fs-watcher/dir.created,fs-watcher/dir.deleted,fs-watcher/dir.discovered",
       "output_event_types": [
         {
           "source": "fs-watcher",
@@ -418,7 +409,6 @@
       "material_policy": "synthesis_provenance",
       "checkpoint_policy": "append_stream_cursor",
       "occurrence_policy": "uuid5:(source_unit, component_scope, parent_event_ids)",
-      "output_event_type": "health-aggregator/health.aggregated_report",
       "output_event_types": [
         {
           "source": "health-aggregator",
@@ -453,7 +443,6 @@
       "material_policy": "synthesis_provenance",
       "checkpoint_policy": "append_stream_cursor",
       "occurrence_policy": "uuid5:(source_unit, hour_bucket, parent_event_ids)",
-      "output_event_type": "derived.hourly-summarizer/activity.summary.hourly",
       "output_event_types": [
         {
           "source": "derived.hourly-summarizer",
@@ -488,7 +477,6 @@
       "material_policy": "synthesis_provenance",
       "checkpoint_policy": "append_stream_cursor",
       "occurrence_policy": "uuid5:(source_unit, parent_event_ids)",
-      "output_event_type": "derived.session-detector/activity.session.boundary",
       "output_event_types": [
         {
           "source": "derived.session-detector",
@@ -523,7 +511,6 @@
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "live_observation_state",
       "occurrence_policy": "material_anchor",
-      "output_event_type": "dbus/signal.received,dbus/method.called,dbus/power.state_changed,dbus/bluetooth.device_changed,dbus/network.state_changed,dbus/device.connected,dbus/media.state_changed,dbus/mount.event,dbus/notification.sent",
       "output_event_types": [
         {
           "source": "dbus",
@@ -591,7 +578,6 @@
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "journal_cursor",
       "occurrence_policy": "uuid5:(source_unit, journal_cursor)",
-      "output_event_type": "journald/entry.written,journald/sync.completed",
       "output_event_types": [
         {
           "source": "journald",
@@ -630,7 +616,6 @@
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "live_observation_state",
       "occurrence_policy": "uuid5:(source_unit, run_id)",
-      "output_event_type": "system/monitoring.started",
       "output_event_types": [
         {
           "source": "system",
@@ -666,7 +651,6 @@
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "journal_cursor",
       "occurrence_policy": "uuid5:(source_unit, journal_cursor)",
-      "output_event_type": "systemd/unit.started,systemd/unit.stopped,systemd/unit.failed,systemd/unit.reloaded,systemd/timer.triggered",
       "output_event_types": [
         {
           "source": "systemd",
@@ -717,7 +701,6 @@
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "live_observation_state",
       "occurrence_policy": "material_anchor",
-      "output_event_type": "udev/device.connected,udev/device.disconnected,udev/device.changed,udev/device.driver_changed,udev/device.other",
       "output_event_types": [
         {
           "source": "udev",
@@ -768,7 +751,6 @@
       "material_policy": "synthesis_provenance",
       "checkpoint_policy": "append_stream_cursor",
       "occurrence_policy": "uuid5:(source_unit, parent_event_id)",
-      "output_event_type": "canonical.terminal/command.canonical",
       "output_event_types": [
         {
           "source": "canonical.terminal",
@@ -804,7 +786,6 @@
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "mutable_snapshot:sqlite:atuin_history_id",
       "occurrence_policy": "natural_key",
-      "output_event_type": "shell.atuin/command.executed",
       "output_event_types": [
         {
           "source": "shell.atuin",
@@ -843,7 +824,6 @@
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "append_stream_cursor",
       "occurrence_policy": "material_anchor",
-      "output_event_type": "shell.history/command.imported",
       "output_event_types": [
         {
           "source": "shell.history",
@@ -882,7 +862,6 @@
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "mutable_snapshot:sqlite:fish_history_row_id",
       "occurrence_policy": "natural_key",
-      "output_event_type": "shell.history.fish/command.executed",
       "output_event_types": [
         {
           "source": "shell.history.fish",
@@ -920,7 +899,6 @@
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "live_observation_state",
       "occurrence_policy": "uuid5:(source_unit, run_id)",
-      "output_event_type": "terminal/shell.terminal_monitoring_started",
       "output_event_types": [
         {
           "source": "terminal",
@@ -956,7 +934,6 @@
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "append_stream_cursor",
       "occurrence_policy": "material_anchor",
-      "output_event_type": "shell.history/command.imported",
       "output_event_types": [
         {
           "source": "shell.history",
@@ -995,7 +972,6 @@
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "append_stream_cursor",
       "occurrence_policy": "material_anchor",
-      "output_event_type": "shell.history/command.imported",
       "output_event_types": [
         {
           "source": "shell.history",
