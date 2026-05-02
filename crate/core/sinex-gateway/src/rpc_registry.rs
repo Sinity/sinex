@@ -736,12 +736,24 @@ fn build_registry_impl() -> RpcRegistry {
         )
         // Shadow consumer mutations (Admin)
         .register("shadow.create", Role::Admin, |params, services, _auth| {
-            Box::pin(async move { handle_shadow_create(services, params).await })
+            Box::pin(async move {
+                handle_shadow_create(services, params)
+                    .await
+                    .map_err(Into::into)
+            })
         })
         .register("shadow.list", Role::ReadOnly, |params, services, _auth| {
-            Box::pin(async move { handle_shadow_list(services, params).await })
+            Box::pin(async move {
+                handle_shadow_list(services, params)
+                    .await
+                    .map_err(Into::into)
+            })
         })
         .register("shadow.delete", Role::Admin, |params, services, auth| {
-            Box::pin(async move { handle_shadow_delete(services, params, auth).await })
+            Box::pin(async move {
+                handle_shadow_delete(services, params, auth)
+                    .await
+                    .map_err(Into::into)
+            })
         })
 }
