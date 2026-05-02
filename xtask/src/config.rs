@@ -13,9 +13,6 @@
 //!
 //! ```toml
 //! notify_on_completion = true
-//!
-//! [coordinator]
-//! auto_sequence = ["check -> test"]
 //! ```
 //!
 //! ## NixOS home-manager integration (W2)
@@ -23,9 +20,6 @@
 //! ```nix
 //! xdg.configFile."xtask/preferences.toml".text = ''
 //!   notify_on_completion = true
-//!
-//!   [coordinator]
-//!   auto_sequence = ["check -> test"]
 //! '';
 //! ```
 
@@ -35,35 +29,12 @@ use std::{
 };
 
 /// User-managed preferences loaded from `~/.config/xtask/preferences.toml`.
-///
-/// Fields prefixed with `coordinator` are schema-only: deserialized from TOML
-/// today so users can configure them, wired into runtime once the coordinator ships.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UserPreferences {
     /// Send a desktop notification via `notify-send` when a background job completes (W3).
     #[serde(default)]
     pub notify_on_completion: bool,
-    /// Coordinator-specific preferences.
-    #[serde(default)]
-    pub coordinator: CoordinatorPrefs,
-}
-
-/// Coordinator preferences.
-///
-/// Fields here are intentionally schema-only: deserialized from the preferences
-/// TOML file so users can configure them today, wired into runtime logic once
-/// the coordinator feature ships.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Default, serde::Deserialize)]
-pub struct CoordinatorPrefs {
-    /// Auto-sequence pairs, e.g. `["check -> test"]`.
-    ///
-    /// When the first command of a pair completes successfully, the second is
-    /// automatically queued as a background job.  Currently informational only;
-    /// the coordinator uses this for display purposes.
-    #[serde(default)]
-    pub auto_sequence: Vec<String>,
 }
 
 /// Configuration derived from environment variables.
@@ -368,6 +339,25 @@ mod tests {
 
         let error = load_user_preferences_from(dir.path())
             .expect_err("malformed TOML should surface a parse error");
+        assert!(
+            error.to_string().contains("failed to parse"),
+            "expected parse context, got: {error}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_load_preferences_rejects_unknown_coordinator_section() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let prefs_dir = dir.path().join("xtask");
+        std::fs::create_dir_all(&prefs_dir)?;
+        std::fs::write(
+            prefs_dir.join("preferences.toml"),
+            "notify_on_completion = true\n\n[coordinator]\nauto_sequence = [\"check -> test\"]\n",
+        )?;
+
+        let error = load_user_preferences_from(dir.path())
+            .expect_err("schema-only coordinator preferences should not be accepted");
         assert!(
             error.to_string().contains("failed to parse"),
             "expected parse context, got: {error}"
