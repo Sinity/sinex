@@ -40,8 +40,10 @@
 //! ```
 
 use crate::apply::ApplyError;
+use crate::converge::{convergible_tables, declared_columns_for};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use std::collections::HashSet;
 use std::fmt;
 
 /// Categories of drift that the strict diff checks for.
@@ -71,6 +73,12 @@ pub enum DriftCategory {
     HypertableSetting,
     /// Reserved for follow-up: comments / table descriptions.
     Comment,
+    /// A column exists in the live database but is not declared in the source
+    /// schema. This indicates a rename was performed without a corresponding
+    /// `columns_to_drop` entry, or a manual `ALTER TABLE ADD COLUMN` was run
+    /// without updating the source. Columns listed in the table's `pending_drop`
+    /// allow-list are excluded from this check.
+    OrphanColumn,
 }
 
 impl fmt::Display for DriftCategory {
@@ -82,6 +90,7 @@ impl fmt::Display for DriftCategory {
             Self::ForeignKeyAction => write!(f, "foreign_key_action"),
             Self::HypertableSetting => write!(f, "hypertable_setting"),
             Self::Comment => write!(f, "comment"),
+            Self::OrphanColumn => write!(f, "orphan_column"),
         }
     }
 }
@@ -123,6 +132,7 @@ pub async fn check_strict(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyError>
     drifts.extend(check_inline_check_exprs(pool).await?);
     drifts.extend(check_foreign_key_actions(pool).await?);
     drifts.extend(check_hypertable_settings(pool).await?);
+    drifts.extend(check_orphan_columns(pool).await?);
     Ok(drifts)
 }
 
@@ -638,6 +648,71 @@ async fn check_hypertable_settings(pool: &PgPool) -> Result<Vec<StrictDrift>, Ap
     Ok(drifts)
 }
 
+// ─── Orphan column detection ─────────────────────────────────────────────────
+
+/// Detects columns that exist in the live database but are absent from the
+/// source declaration.
+///
+/// A column is "orphan" if:
+/// 1. It appears in `information_schema.columns` for a convergible table, AND
+/// 2. It is NOT in the source declaration (`statement_fn` column names), AND
+/// 3. It is NOT in `columns_to_drop` (those are known pending removals), AND
+/// 4. It is NOT in `pending_drop` (explicitly allow-listed transitional columns).
+///
+/// This catches rename-without-drop, manual `ALTER TABLE ADD COLUMN` without
+/// source update, and other unintentional schema drift.
+async fn check_orphan_columns(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyError> {
+    let tables = convergible_tables()?;
+    let mut drifts = Vec::new();
+
+    for ct in &tables {
+        let qname = ct.meta.qualified_name;
+
+        if !crate::apply::relation_exists(pool, qname).await? {
+            continue;
+        }
+
+        // Collect all column names from live DB.
+        let live_cols: Vec<String> = sqlx::query_scalar(
+            "SELECT column_name
+             FROM information_schema.columns
+             WHERE table_schema = $1 AND table_name = $2",
+        )
+        .bind(ct.meta.schema)
+        .bind(ct.meta.name)
+        .fetch_all(pool)
+        .await?;
+
+        // Build the declared-column set plus all allow-listed columns.
+        let (declared_names, pending_drop) = declared_columns_for(ct);
+        let mut allowed: HashSet<&str> = declared_names.iter().map(String::as_str).collect();
+        // columns_to_drop are known-pending removals — not orphans.
+        for col in ct.columns_to_drop {
+            allowed.insert(col);
+        }
+        // pending_drop is the explicit allow-list for in-flight renames.
+        for col in pending_drop {
+            allowed.insert(col);
+        }
+
+        for live_col in &live_cols {
+            if !allowed.contains(live_col.as_str()) {
+                drifts.push(StrictDrift {
+                    category: DriftCategory::OrphanColumn,
+                    location: format!("{qname}.{live_col}"),
+                    declared_summary: "column not in source declaration".to_string(),
+                    observed_summary: format!(
+                        "column `{live_col}` exists in live {qname} but is not declared in source \
+                         (not in columns_to_drop or pending_drop allow-list)"
+                    ),
+                });
+            }
+        }
+    }
+
+    Ok(drifts)
+}
+
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -654,6 +729,10 @@ mod tests {
         assert_eq!(
             format!("{}", DriftCategory::ForeignKeyAction),
             "foreign_key_action"
+        );
+        assert_eq!(
+            format!("{}", DriftCategory::OrphanColumn),
+            "orphan_column"
         );
     }
 
