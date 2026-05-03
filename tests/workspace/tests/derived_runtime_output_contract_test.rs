@@ -7,8 +7,8 @@
 use std::collections::HashMap;
 
 use camino::Utf8PathBuf;
-use sinex_analytics_automaton::AnalyticsAutomaton;
-use sinex_health_automaton::HealthAggregator;
+use sinex_process::automata::analytics::AnalyticsAutomaton;
+use sinex_process::automata::health::HealthAggregator;
 use sinex_node_sdk::derived_node::{ScopeReconcilerWrapper, TransducerWrapper, WindowedWrapper};
 use sinex_node_sdk::runtime::stream::{Node, NodeInitContext};
 use sinex_node_sdk::{DerivedNodeConfig, ShutdownConfig, derived_node::DerivedNodeImpl};
@@ -20,8 +20,8 @@ use sinex_primitives::events::payloads::{
 };
 use sinex_primitives::temporal::Duration as TemporalDuration;
 use sinex_primitives::units::ExitCode;
-use sinex_session_detector::SessionDetector;
-use sinex_terminal_command_canonicalizer::TerminalCommandCanonicalizer;
+use sinex_process::automata::canonicalizer::TerminalCommandCanonicalizer;
+use sinex_process::automata::session::SessionDetector;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::{TestRuntime, TestRuntimeBuilder};
 
