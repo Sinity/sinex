@@ -24,6 +24,7 @@ use sinex_node_sdk::{
     EventTransport,
     ingestor_node::IngestorNode,
     nats_publisher::NatsPublisher,
+    supervised_watcher::spawn_watcher_with_panic_catch,
     watcher_handle::{WatcherHandle, WatcherHealth},
 };
 use std::collections::HashMap;
@@ -723,11 +724,8 @@ impl SystemNode {
         let dbus_config = self.effective_dbus_config();
         let mut watcher = self.factory.create_dbus_watcher(dbus_config).await?;
         let watcher_material = material.clone();
-        let task = tokio::spawn(async move {
-            if let Err(err) = watcher.start_streaming(tx, watcher_material).await {
-                health.write().last_error = Some(err.to_string());
-                warn!(error = %err, "D-Bus watcher terminated");
-            }
+        let task = spawn_watcher_with_panic_catch("dbus", Some(Arc::clone(&health)), async move {
+            watcher.start_streaming(tx, watcher_material).await
         });
         let mut handle = handle;
         handle.start(task, Some(forwarder))?;
@@ -792,15 +790,15 @@ impl SystemNode {
             None
         };
 
-        let task = tokio::spawn(async move {
-            if let Err(err) = watcher
-                .start_streaming_with_systemd(journal_tx, systemd_tx_opt, watcher_material)
-                .await
-            {
-                health.write().last_error = Some(err.to_string());
-                warn!(error = %err, "Unified journal watcher terminated");
-            }
-        });
+        let task = spawn_watcher_with_panic_catch(
+            "unified_journal",
+            Some(Arc::clone(&health)),
+            async move {
+                watcher
+                    .start_streaming_with_systemd(journal_tx, systemd_tx_opt, watcher_material)
+                    .await
+            },
+        );
 
         // Spawn a task to join both forwarders
         let combined_forwarder = tokio::spawn(async move {
@@ -833,12 +831,10 @@ impl SystemNode {
             spawn_forwarder("system.udev.device", rx, emitter, Some(Arc::clone(&health)));
         let mut watcher = self.factory.create_udev_watcher(true).await?;
         let watcher_material = material.clone();
-        let task = tokio::spawn(async move {
-            if let Err(err) = watcher.start_streaming(tx, watcher_material).await {
-                health.write().last_error = Some(err.to_string());
-                warn!(error = %err, "udev watcher terminated");
-            }
-        });
+        let task =
+            spawn_watcher_with_panic_catch("udev", Some(Arc::clone(&health)), async move {
+                watcher.start_streaming(tx, watcher_material).await
+            });
         let mut handle = handle;
         handle.start(task, Some(forwarder))?;
         Ok(handle)
