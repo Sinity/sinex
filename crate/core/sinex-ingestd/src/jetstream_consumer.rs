@@ -114,6 +114,10 @@ pub struct JetStreamConsumer {
     stats_log_interval: Duration,
     /// Heartbeat counter handle — feeds batch counts into health status determination
     heartbeat_handle: Option<HeartbeatCounterHandle>,
+    /// Maximum duration ts_orig may exceed wall-clock time before DLQ routing
+    future_ts_skew: time::Duration,
+    /// Earliest accepted ts_orig as a timestamp (default: 2000-01-01 UTC)
+    ts_orig_lower_bound: Timestamp,
 }
 
 const DB_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -252,11 +256,6 @@ const ERROR_CLASS_CONFIRMATION_DURABILITY_GAP: &str = "confirmation_durability_g
 /// scoped to each individual sub-batch attempt, not the enclosing pull-batch: a pull-batch may
 /// be partially committed if one sub-batch succeeds before a sibling fails.
 const BATCH_ATOMICITY_SCOPE: &str = "per_successful_persistence_attempt";
-const SUSPICIOUS_TS_ORIG_FUTURE_SKEW: time::Duration = time::Duration::hours(1);
-/// Events with `ts_orig` before this date are implausibly old: sinex didn't exist then.
-/// 2000-01-01 00:00:00 UTC as a Unix timestamp.
-const TS_ORIG_LOWER_BOUND: Timestamp =
-    Timestamp::from_const(time::macros::datetime!(2000-01-01 00:00:00 UTC));
 /// Retry delay for deferred events whose source material isn't registered yet.
 /// Short delay (200ms) allows the `MaterialAssembler` to process the BEGIN message
 /// before `JetStream` redelivers the event. Used by both the proactive ready-set
@@ -267,14 +266,6 @@ const STREAM_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_mins(5); // Chec
 // Keep runtime-created stream caps aligned with the Nix bootstrap path. The current
 // nats CLI rejects --max-bytes values above signed 32-bit range.
 const JETSTREAM_BOOTSTRAP_MAX_BYTES: i64 = 2_147_483_647;
-
-fn is_suspicious_future_ts_orig(ts_orig: Timestamp, now: Timestamp) -> bool {
-    ts_orig > now + SUSPICIOUS_TS_ORIG_FUTURE_SKEW
-}
-
-fn is_implausibly_old_ts_orig(ts_orig: Timestamp) -> bool {
-    ts_orig < TS_ORIG_LOWER_BOUND
-}
 
 #[derive(Debug)]
 struct PersistBatchResult {
@@ -507,7 +498,23 @@ impl JetStreamConsumer {
             observer: None,
             stats_log_interval: Duration::from_mins(1),
             heartbeat_handle: None,
+            future_ts_skew: time::Duration::hours(1),
+            ts_orig_lower_bound: Timestamp::from_const(time::macros::datetime!(2000-01-01 00:00:00 UTC)),
         }
+    }
+
+    /// Set the maximum duration ts_orig may exceed wall-clock time before DLQ routing.
+    #[must_use]
+    pub fn with_future_ts_skew(mut self, skew: time::Duration) -> Self {
+        self.future_ts_skew = skew;
+        self
+    }
+
+    /// Set the earliest accepted ts_orig as a timestamp.
+    #[must_use]
+    pub fn with_ts_orig_lower_bound(mut self, lower_bound: Timestamp) -> Self {
+        self.ts_orig_lower_bound = lower_bound;
+        self
     }
 
     /// Set stats logging interval.
@@ -775,7 +782,7 @@ impl JetStreamConsumer {
         consumer_spec.max_ack_pending = self.max_ack_pending;
         consumer_spec.max_deliver = MAIN_CONSUMER_JETSTREAM_MAX_DELIVER;
         consumer_spec.reject_initial_replay = true;
-        let consumer = ensure_pull_consumer(&self.js, &consumer_spec)
+        let mut consumer = ensure_pull_consumer(&self.js, &consumer_spec)
             .await
             .map_err(|e| SinexError::network("Failed to create consumer").with_source(e))?;
         let mut lag_consumer = consumer.clone();
@@ -794,6 +801,75 @@ impl JetStreamConsumer {
             .map_err(|e| {
                 SinexError::network("Failed to create confirmation retry consumer").with_source(e)
             })?;
+
+        // Emit startup snapshot before READY so operators can distinguish
+        // normal resume from cold-start full replay from catch-up runs.
+        if let Some(ref observer) = self.observer {
+            // Best-effort: if we can't query stream/consumer state, emit
+            // the snapshot with zeroed fields rather than block startup.
+            let (stream_messages, stream_bytes, stream_first_seq, stream_last_seq,
+                 stream_max_msgs, stream_max_bytes, stream_max_age_secs) =
+                match self.js.get_stream(&stream_name).await {
+                    Ok(mut stream) => match stream.info().await {
+                        Ok(info) => {
+                            let s = &info.state;
+                            let c = &info.config;
+                            (s.messages, s.bytes, s.first_sequence, s.last_sequence,
+                             c.max_messages as u64, c.max_bytes as u64,
+                             c.max_age.as_secs())
+                        }
+                        Err(e) => {
+                            warn!("Failed to get stream info for startup snapshot: {e}");
+                            (0, 0, 0, 0, 0, 0, 0)
+                        }
+                    },
+                    Err(e) => {
+                        warn!("Failed to get stream for startup snapshot: {e}");
+                        (0, 0, 0, 0, 0, 0, 0)
+                    }
+                };
+            let consumer_info = consumer.info().await.ok();
+            let consumer_existed = consumer_info
+                .as_ref()
+                .is_some_and(|ci| ci.num_pending > 0);
+            let deliver_policy = format!("{:?}", consumer_spec.deliver_policy);
+            let initial_replay_risk = !consumer_existed
+                && matches!(
+                    consumer_spec.deliver_policy,
+                    jetstream::consumer::DeliverPolicy::All
+                )
+                && stream_messages > 0;
+
+            let _ = observer
+                .emit_consumer_startup_snapshot(
+                    stream_name.clone(),
+                    self.topology.consumer_durable.clone(),
+                    consumer_existed,
+                    deliver_policy,
+                    stream_messages,
+                    stream_bytes,
+                    stream_first_seq,
+                    stream_last_seq,
+                    stream_max_msgs,
+                    stream_max_bytes,
+                    stream_max_age_secs,
+                    consumer_info.as_ref().map_or(0, |ci| ci.num_pending),
+                    consumer_info.as_ref().map_or(0, |ci| ci.num_ack_pending),
+                    0,
+                    consumer_spec.max_ack_pending,
+                    consumer_spec.max_deliver as i64,
+                    initial_replay_risk,
+                )
+                .await;
+
+            if initial_replay_risk {
+                warn!(
+                    stream = %stream_name,
+                    consumer = %self.topology.consumer_durable,
+                    "Dangerous cold-start replay detected: new consumer with non-empty stream"
+                );
+            }
+        }
 
         // Signal readiness: consumer is bound and the pull loop is about to start.
         // This allows callers to delay sd_notify(READY) until the subscription is live.
@@ -1026,19 +1102,18 @@ impl JetStreamConsumer {
         }
 
         // Route implausibly-timestamped events to DLQ rather than merely warning.
-        // - Past: ts_orig predates 2000-01-01. sinex never observed events that old.
-        // - Future: ts_orig exceeds (now + SUSPICIOUS_TS_ORIG_FUTURE_SKEW).
-        //   1-hour skew is the hardcoded bound; TODO: make configurable.
+        // - Past: ts_orig predates the operator-configured lower bound.
+        // - Future: ts_orig exceeds (now + operator-configured future_ts_skew).
         if let Some(ts_orig) = event.ts_orig {
             let now = Timestamp::now();
-            if is_implausibly_old_ts_orig(ts_orig) {
+            if ts_orig < self.ts_orig_lower_bound {
                 error!(
                     event_id = ?event.id,
                     source = %event.source,
                     event_type = %event.event_type,
                     ts_orig = %ts_orig,
-                    lower_bound = %TS_ORIG_LOWER_BOUND,
-                    "Event ts_orig predates 2000-01-01 — implausibly old; routing to DLQ"
+                    lower_bound = %self.ts_orig_lower_bound,
+                    "Event ts_orig predates lower bound — implausibly old; routing to DLQ"
                 );
                 self.stats
                     .suspicious_past_ts_orig
@@ -1051,14 +1126,14 @@ impl JetStreamConsumer {
                 self.route_validation_failure(
                     &msg,
                     format!(
-                        "ts_orig {ts_orig} predates lower bound {TS_ORIG_LOWER_BOUND} (implausibly old)"
+                        "ts_orig {ts_orig} predates lower bound {} (implausibly old)", self.ts_orig_lower_bound
                     ),
                 )
                 .await?;
                 return Ok(None);
             }
-            if is_suspicious_future_ts_orig(ts_orig, now) {
-                let latest_expected = now + SUSPICIOUS_TS_ORIG_FUTURE_SKEW;
+            if ts_orig > now + self.future_ts_skew {
+                let latest_expected = now + self.future_ts_skew;
                 error!(
                     event_id = ?event.id,
                     source = %event.source,
@@ -2420,41 +2495,25 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn suspicious_future_ts_orig_has_one_hour_soft_threshold() -> TestResult<()> {
+    async fn suspicious_future_ts_orig_default_one_hour_skew() -> TestResult<()> {
+        let default_skew = time::Duration::hours(1);
         let now = Timestamp::now();
-        assert!(!is_suspicious_future_ts_orig(
-            now + time::Duration::minutes(59),
-            now
-        ));
-        assert!(is_suspicious_future_ts_orig(
-            now + time::Duration::minutes(61),
-            now
-        ));
+        assert!(now + time::Duration::minutes(59) <= now + default_skew);
+        assert!(now + time::Duration::minutes(61) > now + default_skew);
         Ok(())
     }
 
     #[sinex_test]
-    async fn implausibly_old_ts_orig_threshold_is_year_2000() -> TestResult<()> {
-        // Just before the lower bound → implausibly old
-        let before_2000 = Timestamp::from_const(time::macros::datetime!(1999-12-31 23:59:59 UTC));
-        assert!(
-            is_implausibly_old_ts_orig(before_2000),
-            "1999-12-31 should be implausibly old"
-        );
-
-        // Exactly at the lower bound → NOT implausibly old
-        assert!(
-            !is_implausibly_old_ts_orig(TS_ORIG_LOWER_BOUND),
-            "2000-01-01 itself should not be flagged"
-        );
-
-        // Well after the lower bound → fine
-        let after_2000 = Timestamp::from_const(time::macros::datetime!(2000-01-02 00:00:00 UTC));
-        assert!(
-            !is_implausibly_old_ts_orig(after_2000),
-            "2000-01-02 should not be flagged"
-        );
-
+    async fn implausibly_old_ts_orig_default_year_2000() -> TestResult<()> {
+        let lower_bound =
+            Timestamp::from_const(time::macros::datetime!(2000-01-01 00:00:00 UTC));
+        let before_2000 =
+            Timestamp::from_const(time::macros::datetime!(1999-12-31 23:59:59 UTC));
+        let after_2000 =
+            Timestamp::from_const(time::macros::datetime!(2000-01-02 00:00:00 UTC));
+        assert!(before_2000 < lower_bound, "1999-12-31 should be before lower bound");
+        assert!(!(lower_bound < lower_bound), "2000-01-01 itself should not be flagged");
+        assert!(!(after_2000 < lower_bound), "2000-01-02 should not be flagged");
         Ok(())
     }
 

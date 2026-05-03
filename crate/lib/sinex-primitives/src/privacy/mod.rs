@@ -273,6 +273,150 @@ impl<'a> Processed<'a> {
     }
 }
 
+// ─── Material path classification ────────────────────────────
+
+/// Contract class for a path-bearing metadata field.
+///
+/// Classifying a path before it enters durable material metadata makes the
+/// intended privacy treatment explicit and prevents accidental raw-home-path
+/// leakage into public/export artifacts.
+///
+/// # Policy table
+///
+/// | Class | Example | Durable storage | Display / export |
+/// |---|---|---|---|
+/// `DurableIdentifier` | `/home/sinity/projects/sinex/Cargo.toml` | Raw (local truth) | Tilde-collapsed (`~/projects/sinex/Cargo.toml`) |
+/// `SystemPath` | `/etc/nixos/configuration.nix`, `/run/user/1000/hypr/` | Raw | Raw |
+/// `ApplicationData` | `~/.local/share/atuin/history.db` | Raw (local truth) | Tilde-collapsed |
+/// `Temporary` | `/tmp/sinex-clipboard-abc123` | Suppress / omit | Omit |
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MaterialPathClass {
+    /// A path under the user's home directory that identifies a durable file
+    /// (project source, document, config). Raw in local storage; tilde-collapsed
+    /// for display and export.
+    DurableIdentifier,
+    /// A system-wide path with no personal-data sensitivity (`/etc/`, `/run/`,
+    /// `/nix/`, `/proc/`, `/sys/`, `/usr/`, `/lib/`, `/bin/`, `/sbin/`,
+    /// `/var/`, `/boot/`). Kept raw in all contexts.
+    SystemPath,
+    /// A path under the user's home directory that identifies application state
+    /// (`~/.local/`, `~/.config/`, `~/.cache/`). Raw in local storage;
+    /// tilde-collapsed for display and export.
+    ApplicationData,
+    /// An ephemeral path (`/tmp/`, `/var/tmp/`, `/dev/shm/`, `%TEMP%`).
+    /// Suppressed from display and export; may be omitted from material metadata.
+    Temporary,
+}
+
+/// Classify a raw path string and return the class plus a display-safe projection.
+///
+/// The raw value is never modified — callers store the raw path as local
+/// truth and use the returned projection only for display or export surfaces.
+///
+/// ```
+/// use sinex_primitives::privacy::{MaterialPathClass, classify_material_path};
+///
+/// let (class, display) = classify_material_path("/home/alice/projects/sinex/Cargo.toml");
+/// assert_eq!(class, MaterialPathClass::DurableIdentifier);
+/// assert!(display.starts_with("~/"));
+///
+/// let (class, _display) = classify_material_path("/etc/nixos/configuration.nix");
+/// assert_eq!(class, MaterialPathClass::SystemPath);
+///
+/// let (class, _display) = classify_material_path("/tmp/sinex-clipboard-abc123");
+/// assert_eq!(class, MaterialPathClass::Temporary);
+/// ```
+pub fn classify_material_path(path: &str) -> (MaterialPathClass, String) {
+    // Temporary paths: suppress from export.
+    if is_temporary_path(path) {
+        return (MaterialPathClass::Temporary, String::new());
+    }
+
+    // System paths: no personal data, keep raw.
+    if is_system_path(path) {
+        return (MaterialPathClass::SystemPath, path.to_string());
+    }
+
+    // Home-relative paths: tilde-collapse for display/export.
+    if let Some(home_suffix) = home_suffix(path) {
+        // Distinguish application data (dot-prefixed components under home)
+        // from user project/document paths.
+        let class = if is_application_data_suffix(home_suffix) {
+            MaterialPathClass::ApplicationData
+        } else {
+            MaterialPathClass::DurableIdentifier
+        };
+        let display = format!("~/{home_suffix}");
+        return (class, display);
+    }
+
+    // Fallback: treat unknown paths as durable identifiers; keep raw.
+    (MaterialPathClass::DurableIdentifier, path.to_string())
+}
+
+fn is_temporary_path(path: &str) -> bool {
+    path.starts_with("/tmp/")
+        || path.starts_with("/var/tmp/")
+        || path.starts_with("/dev/shm/")
+        || path == "/tmp"
+        || path == "/var/tmp"
+        || path == "/dev/shm"
+}
+
+fn is_system_path(path: &str) -> bool {
+    const SYSTEM_PREFIXES: &[&str] = &[
+        "/etc/", "/run/", "/nix/", "/proc/", "/sys/", "/usr/", "/lib/",
+        "/lib64/", "/bin/", "/sbin/", "/var/", "/boot/", "/opt/", "/srv/",
+    ];
+    SYSTEM_PREFIXES.iter().any(|p| path.starts_with(p))
+        || matches!(
+            path,
+            "/etc" | "/run" | "/nix" | "/proc" | "/sys" | "/usr" | "/lib"
+                | "/lib64" | "/bin" | "/sbin" | "/var" | "/boot" | "/opt"
+                | "/srv"
+        )
+}
+
+/// Returns the suffix after `/home/<user>/` (or `/Users/<user>/` on macOS) if
+/// the path is rooted under a home directory, or `None` otherwise.
+fn home_suffix(path: &str) -> Option<&str> {
+    // Check live HOME env var first for accuracy.
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.is_empty() {
+            let home_slash = if home.ends_with('/') {
+                home.clone()
+            } else {
+                format!("{home}/")
+            };
+            if let Some(suffix) = path.strip_prefix(home_slash.as_str()) {
+                return Some(suffix);
+            }
+            // Exact home dir itself
+            if path == home {
+                return Some("");
+            }
+        }
+    }
+
+    // Heuristic fallback: /home/<user>/ or /Users/<user>/
+    for prefix in ["/home/", "/Users/"] {
+        if let Some(rest) = path.strip_prefix(prefix) {
+            if let Some(slash) = rest.find('/') {
+                return Some(&rest[slash + 1..]);
+            }
+        }
+    }
+
+    None
+}
+
+/// Returns true if the home-relative suffix looks like application state
+/// (starts with a hidden directory, i.e. `.local/`, `.config/`, `.cache/`, etc.).
+fn is_application_data_suffix(suffix: &str) -> bool {
+    suffix.starts_with('.') || suffix.is_empty()
+}
+
 // ─── Error ───────────────────────────────────────────────────
 
 /// Errors from the privacy engine.

@@ -311,6 +311,78 @@ pub struct IngestdBatchStatsPayload {
     pub suspicious_future_ts_orig: u64,
 }
 
+/// Startup snapshot for a JetStream pull consumer.
+///
+/// Emitted once per consumer before the ingestd pull loop begins (before READY/`sd_notify`).
+/// Captures stream state and consumer configuration so operators can determine at a glance
+/// whether this startup is a normal resume, a cold-start full replay, or a catch-up run.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "sinex.ingestd", event_type = "consumer.startup_snapshot")]
+pub struct ConsumerStartupSnapshotPayload {
+    /// Name of the JetStream stream being consumed.
+    pub stream_name: String,
+    /// Durable consumer name.
+    pub durable_name: String,
+    /// Whether the durable consumer already existed in JetStream before this startup.
+    pub consumer_existed: bool,
+    /// Deliver policy as a string (e.g. `"All"`, `"New"`, `"ByStartSequence"`).
+    pub deliver_policy: String,
+    /// Number of messages currently retained in the stream.
+    pub stream_messages: u64,
+    /// Number of bytes currently retained in the stream.
+    pub stream_bytes: u64,
+    /// First sequence number retained in the stream.
+    pub stream_first_sequence: u64,
+    /// Last sequence number retained in the stream.
+    pub stream_last_sequence: u64,
+    /// Stream retention limit: maximum message count (0 = unlimited).
+    pub stream_max_messages: u64,
+    /// Stream retention limit: maximum bytes (0 = unlimited).
+    pub stream_max_bytes: u64,
+    /// Stream retention limit: maximum age in seconds (0 = unlimited).
+    pub stream_max_age_secs: u64,
+    /// Messages pending delivery to this consumer at startup.
+    pub consumer_pending: u64,
+    /// Messages acknowledged but not yet confirmed by the server.
+    pub consumer_ack_pending: usize,
+    /// Messages redelivered (NAK'd or timed out) at startup.
+    pub consumer_redelivered: usize,
+    /// Configured `max_ack_pending` for this consumer.
+    pub consumer_max_ack_pending: i64,
+    /// Configured `max_deliver` (redelivery budget) for this consumer.
+    pub consumer_max_deliver: i64,
+    /// True when this looks like a dangerous cold-start full replay
+    /// (new consumer, DeliverPolicy::All, non-empty stream).
+    pub initial_replay_risk: bool,
+}
+
+/// High-priority warning emitted when a dangerous replay is detected at ingestd startup.
+///
+/// A dangerous replay occurs when a durable consumer is missing (e.g. renamed, environment
+/// drift, or first start after schema change) and the stream contains retained messages.
+/// Without intervention, the consumer would replay the entire backlog from the beginning,
+/// which can saturate I/O and destabilise the host.
+///
+/// The `reject_initial_replay` guard in `ensure_pull_consumer` already blocks this from
+/// happening in production; this event is the pre-guard observability counterpart, emitted
+/// even when the guard would have prevented the consumer from starting.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "sinex.ingestd", event_type = "consumer.startup_replay_risk")]
+pub struct DangerousReplayWarningPayload {
+    /// Name of the JetStream stream.
+    pub stream_name: String,
+    /// Durable consumer name that was missing.
+    pub durable_name: String,
+    /// Number of messages that would be replayed from the beginning.
+    pub stream_messages: u64,
+    /// Byte volume that would be replayed.
+    pub stream_bytes: u64,
+    /// First sequence that would be delivered.
+    pub stream_first_sequence: u64,
+    /// Human-readable explanation of why this is dangerous.
+    pub reason: String,
+}
+
 // Test helpers for external tests
 #[cfg(any(test, feature = "testing"))]
 impl MetricCounterPayload {

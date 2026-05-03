@@ -37,10 +37,10 @@ use crate::error_helpers::{
 use crate::{BufferedRecordMaterializer, NatsPublisher, deterministic_material_event_id};
 use async_nats::Client as NatsClient;
 use sinex_primitives::events::payloads::{
-    AssemblyStatsPayload, GatewayRequestStatsPayload, HealthStatusPayload,
-    IngestdBatchStatsPayload, MetricCounterPayload, MetricGaugePayload, MetricHistogramPayload,
-    NodeProcessingStatsPayload, PoolStatsPayload, RateLimitExceededPayload, ReplayStatsPayload,
-    StreamStatsPayload,
+    AssemblyStatsPayload, ConsumerStartupSnapshotPayload, GatewayRequestStatsPayload,
+    HealthStatusPayload, IngestdBatchStatsPayload, MetricCounterPayload, MetricGaugePayload,
+    MetricHistogramPayload, NodeProcessingStatsPayload, PoolStatsPayload,
+    RateLimitExceededPayload, ReplayStatsPayload, StreamStatsPayload,
 };
 use sinex_primitives::events::{Event, Provenance, SourceMaterial};
 use sinex_primitives::{Id, JsonValue, SinexError, Timestamp};
@@ -674,6 +674,49 @@ impl SelfObserver {
             validation_invalid,
             validation_coverage_pct,
             suspicious_future_ts_orig,
+        })
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn emit_consumer_startup_snapshot(
+        &self,
+        stream_name: String,
+        durable_name: String,
+        consumer_existed: bool,
+        deliver_policy: String,
+        stream_messages: u64,
+        stream_bytes: u64,
+        stream_first_sequence: u64,
+        stream_last_sequence: u64,
+        stream_max_messages: u64,
+        stream_max_bytes: u64,
+        stream_max_age_secs: u64,
+        consumer_pending: u64,
+        consumer_ack_pending: usize,
+        consumer_redelivered: usize,
+        consumer_max_ack_pending: i64,
+        consumer_max_deliver: i64,
+        initial_replay_risk: bool,
+    ) -> Result<(), SelfObservationError> {
+        self.publish(ConsumerStartupSnapshotPayload {
+            stream_name,
+            durable_name,
+            consumer_existed,
+            deliver_policy,
+            stream_messages,
+            stream_bytes,
+            stream_first_sequence,
+            stream_last_sequence,
+            stream_max_messages,
+            stream_max_bytes,
+            stream_max_age_secs,
+            consumer_pending,
+            consumer_ack_pending,
+            consumer_redelivered,
+            consumer_max_ack_pending,
+            consumer_max_deliver,
+            initial_replay_risk,
         })
         .await
     }
