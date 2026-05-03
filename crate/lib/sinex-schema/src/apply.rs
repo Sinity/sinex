@@ -521,6 +521,10 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     )
     .await?;
 
+    // Enable native compression and automatic 7-day compression policy.
+    execute_sql(pool, Events::enable_compression_sql()).await?;
+    execute_sql(pool, Events::add_compression_policy_sql()).await?;
+
     execute_sql(
         pool,
         "CREATE INDEX IF NOT EXISTS ix_events_sinex_telemetry ON core.events (source, event_type, id DESC) WHERE source LIKE 'sinex.%'",
