@@ -1,6 +1,8 @@
 //! Built-in privacy rule catalog.
 
-use super::{Matcher, PatternRule, ProcessingContext, RuleCategory, Strategy, StructuralDetector};
+use super::{
+    Matcher, PatternRule, ProcessingContext, RuleCategory, Strategy, StructuralDetector,
+};
 
 /// All built-in privacy rules.
 pub fn builtin_rules() -> Vec<PatternRule> {
@@ -236,6 +238,47 @@ fn secret_rules() -> Vec<PatternRule> {
             contexts: vec![],
             enabled: true,
         },
+        PatternRule {
+            name: "anthropic_api_key".into(),
+            description: "Anthropic API keys (sk-ant-api03- prefix)".into(),
+            category: RuleCategory::Secret,
+            matcher: Matcher::Regex {
+                // Length 93–108 chars after prefix; allow tolerance for future extension.
+                pattern: r"sk-ant-api\d{2}-[A-Za-z0-9_\-]{80,120}".into(),
+            },
+            strategy: Strategy::Suppress,
+            contexts: vec![],
+            enabled: true,
+        },
+        PatternRule {
+            name: "openai_api_key".into(),
+            description: "OpenAI API keys (sk- prefix, legacy 48-char and project sk-proj-)".into(),
+            category: RuleCategory::Secret,
+            matcher: Matcher::Regex {
+                // Legacy format: sk- followed by exactly 48 alphanum chars (word boundary).
+                // Project keys: sk-proj- followed by 20+ URL-safe base64 chars.
+                // Note: sk-ant- (Anthropic) handled separately; exclude via negative lookahead
+                // is unavailable in the `regex` crate so we rely on rule ordering (anthropic
+                // rule fires first) and non-overlapping patterns.
+                pattern: r"sk-proj-[A-Za-z0-9_\-]{20,}|(?:sk-)(?!ant-)[A-Za-z0-9]{48}\b".into(),
+            },
+            strategy: Strategy::Suppress,
+            contexts: vec![],
+            enabled: true,
+        },
+        PatternRule {
+            name: "huggingface_token".into(),
+            description: "HuggingFace API tokens (hf_ prefix)".into(),
+            category: RuleCategory::Secret,
+            matcher: Matcher::Regex {
+                pattern: r"hf_[A-Za-z0-9]{34,}".into(),
+            },
+            strategy: Strategy::Redact {
+                label: Some("<HUGGINGFACE_TOKEN>".into()),
+            },
+            contexts: vec![],
+            enabled: true,
+        },
     ]
 }
 
@@ -312,6 +355,55 @@ fn pii_rules() -> Vec<PatternRule> {
                 label: Some("<IBAN>".into()),
             },
             contexts: vec![],
+            enabled: true,
+        },
+        PatternRule {
+            name: "pesel".into(),
+            description: "Polish national identification number — PESEL (checksum-validated)".into(),
+            category: RuleCategory::Pii,
+            matcher: Matcher::Structural {
+                detector: StructuralDetector::Pesel,
+            },
+            // Hash preserves identity for analytics without exposing the literal value.
+            strategy: Strategy::Hash,
+            contexts: vec![
+                ProcessingContext::Command,
+                ProcessingContext::Clipboard,
+                ProcessingContext::Document,
+                ProcessingContext::Notification,
+            ],
+            enabled: true,
+        },
+        PatternRule {
+            name: "nip".into(),
+            description: "Polish tax identification number — NIP (checksum-validated)".into(),
+            category: RuleCategory::Pii,
+            matcher: Matcher::Structural {
+                detector: StructuralDetector::Nip,
+            },
+            strategy: Strategy::Hash,
+            contexts: vec![
+                ProcessingContext::Command,
+                ProcessingContext::Clipboard,
+                ProcessingContext::Document,
+                ProcessingContext::Notification,
+            ],
+            enabled: true,
+        },
+        PatternRule {
+            name: "regon".into(),
+            description: "Polish business registry number — REGON (checksum-validated)".into(),
+            category: RuleCategory::Pii,
+            matcher: Matcher::Structural {
+                detector: StructuralDetector::Regon,
+            },
+            strategy: Strategy::Hash,
+            contexts: vec![
+                ProcessingContext::Command,
+                ProcessingContext::Clipboard,
+                ProcessingContext::Document,
+                ProcessingContext::Notification,
+            ],
             enabled: true,
         },
     ]
@@ -484,10 +576,12 @@ mod tests {
     #[sinex_test]
     async fn catalog_has_expected_count() -> ::xtask::sandbox::TestResult<()> {
         let rules = builtin_rules();
-        // 17 secrets + 5 PII + 5 infrastructure + 4 privacy = 31
+        // 20 secrets + 8 PII + 5 infrastructure + 4 privacy = 37
+        // (added: anthropic_api_key, openai_api_key, huggingface_token,
+        //         pesel, nip, regon)
         assert!(
-            rules.len() >= 31,
-            "expected at least 31 rules, got {}",
+            rules.len() >= 37,
+            "expected at least 37 rules, got {}",
             rules.len()
         );
         Ok(())
@@ -585,6 +679,116 @@ mod tests {
             !result.text.contains("<HOME>"),
             "aggressive variant must not emit the soft <HOME>/... label, got {:?}",
             result.text
+        );
+        Ok(())
+    }
+
+    // ── New API keys ──────────────────────────────────────────
+
+    fn rule_exists(name: &str) -> bool {
+        builtin_rules().iter().any(|r| r.name == name)
+    }
+
+    #[sinex_test]
+    async fn anthropic_api_key_rule_exists() -> ::xtask::sandbox::TestResult<()> {
+        assert!(rule_exists("anthropic_api_key"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn openai_api_key_rule_exists() -> ::xtask::sandbox::TestResult<()> {
+        assert!(rule_exists("openai_api_key"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn huggingface_token_rule_exists() -> ::xtask::sandbox::TestResult<()> {
+        assert!(rule_exists("huggingface_token"));
+        Ok(())
+    }
+
+    // ── New Polish PII rules ──────────────────────────────────
+
+    #[sinex_test]
+    async fn pesel_rule_exists() -> ::xtask::sandbox::TestResult<()> {
+        assert!(rule_exists("pesel"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn nip_rule_exists() -> ::xtask::sandbox::TestResult<()> {
+        assert!(rule_exists("nip"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn regon_rule_exists() -> ::xtask::sandbox::TestResult<()> {
+        assert!(rule_exists("regon"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn pesel_rule_uses_hash_strategy() -> ::xtask::sandbox::TestResult<()> {
+        let rules = builtin_rules();
+        let rule = rules.iter().find(|r| r.name == "pesel").expect("pesel rule");
+        assert!(
+            matches!(rule.strategy, Strategy::Hash),
+            "PESEL should use Hash strategy, got {:?}",
+            rule.strategy
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn nip_rule_uses_hash_strategy() -> ::xtask::sandbox::TestResult<()> {
+        let rules = builtin_rules();
+        let rule = rules.iter().find(|r| r.name == "nip").expect("nip rule");
+        assert!(
+            matches!(rule.strategy, Strategy::Hash),
+            "NIP should use Hash strategy, got {:?}",
+            rule.strategy
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn regon_rule_uses_hash_strategy() -> ::xtask::sandbox::TestResult<()> {
+        let rules = builtin_rules();
+        let rule = rules.iter().find(|r| r.name == "regon").expect("regon rule");
+        assert!(
+            matches!(rule.strategy, Strategy::Hash),
+            "REGON should use Hash strategy, got {:?}",
+            rule.strategy
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn anthropic_key_uses_suppress_strategy() -> ::xtask::sandbox::TestResult<()> {
+        let rules = builtin_rules();
+        let rule = rules
+            .iter()
+            .find(|r| r.name == "anthropic_api_key")
+            .expect("anthropic_api_key rule");
+        assert!(
+            matches!(rule.strategy, Strategy::Suppress),
+            "Anthropic API key should be suppressed, got {:?}",
+            rule.strategy
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn openai_key_uses_suppress_strategy() -> ::xtask::sandbox::TestResult<()> {
+        let rules = builtin_rules();
+        let rule = rules
+            .iter()
+            .find(|r| r.name == "openai_api_key")
+            .expect("openai_api_key rule");
+        assert!(
+            matches!(rule.strategy, Strategy::Suppress),
+            "OpenAI API key should be suppressed, got {:?}",
+            rule.strategy
         );
         Ok(())
     }
