@@ -330,12 +330,5 @@ fn find_workspace_root() -> color_eyre::eyre::Result<std::path::PathBuf> {
 }
 
 fn get_target_dir_test(workspace_root: &std::path::Path) -> std::path::PathBuf {
-    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
-        return std::path::PathBuf::from(dir);
-    }
-    let custom_target = workspace_root.join(".sinex/target");
-    if custom_target.exists() {
-        return custom_target;
-    }
-    workspace_root.join("target")
+    xtask::workspace_target_dir_for(workspace_root)
 }

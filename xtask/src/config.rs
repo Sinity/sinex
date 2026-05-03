@@ -65,12 +65,13 @@ pub struct Config {
 impl Config {
     /// Load configuration from environment variables.
     pub(crate) fn from_env() -> Self {
-        let repo_state_root = workspace_root().join(".sinex");
+        let workspace_root = workspace_root();
+        let repo_state_root = workspace_root.join(".sinex");
         let state_dir = env::var("SINEX_STATE_DIR")
             .map_or_else(|_| repo_state_root.join("state"), PathBuf::from);
 
         let cache_dir = env::var("SINEX_CACHE_DIR")
-            .map_or_else(|_| repo_state_root.join("cache"), PathBuf::from);
+            .map_or_else(|_| workspace_cache_root_for(&workspace_root), PathBuf::from);
 
         let hostname = gethostname::gethostname().to_string_lossy().into_owned();
 
@@ -99,8 +100,9 @@ impl Config {
 
     /// Path to the history database.
     ///
-    /// `XTASK_HISTORY_DB` overrides the default path, enabling per-session
-    /// alternate databases (e.g. synthetic history for exercises).
+    /// `XTASK_HISTORY_DB` is a test/exercise escape hatch for synthetic
+    /// ledgers. Normal developer and observability flows should use the
+    /// checkout-scoped canonical DB at `SINEX_STATE_DIR/xtask-history.db`.
     pub(crate) fn history_db_path(&self) -> PathBuf {
         if let Ok(path) = env::var("XTASK_HISTORY_DB") {
             return PathBuf::from(path);
@@ -111,6 +113,11 @@ impl Config {
     /// Directory for job output files.
     pub(crate) fn jobs_dir(&self) -> PathBuf {
         self.state_dir.join("jobs")
+    }
+
+    /// Directory for preflight cache, hash, and lock state.
+    pub(crate) fn preflight_state_dir(&self) -> PathBuf {
+        self.state_dir.join("preflight")
     }
 
     /// Ensure the state directory exists.
@@ -139,10 +146,25 @@ pub fn workspace_state_root() -> PathBuf {
 /// Cargo target directory for this checkout.
 #[must_use]
 pub fn workspace_target_dir() -> PathBuf {
+    workspace_target_dir_for(&workspace_root())
+}
+
+/// Cargo target directory for a specific checkout root.
+#[must_use]
+pub fn workspace_target_dir_for(workspace_root: &Path) -> PathBuf {
     if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
         return PathBuf::from(dir);
     }
-    workspace_state_root().join("target")
+
+    workspace_cache_root_for(workspace_root).join("target")
+}
+
+/// Cache root for checkout-local build/runtime artifacts.
+#[must_use]
+pub fn workspace_cache_root_for(workspace_root: &Path) -> PathBuf {
+    env::var("SINEX_DEV_CACHE_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| workspace_root.join(".sinex/cache"))
 }
 
 /// Global configuration singleton.
@@ -329,6 +351,32 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_config_cache_dir_respects_sinex_cache_dir() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let cache_dir = dir.path().join("explicit-cache");
+        let mut env = EnvGuard::with_keys(&["SINEX_CACHE_DIR", "SINEX_DEV_CACHE_ROOT"]);
+        env.set("SINEX_CACHE_DIR", &cache_dir);
+        env.clear("SINEX_DEV_CACHE_ROOT");
+
+        let config = Config::from_env();
+        assert_eq!(config.cache_dir, cache_dir);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_config_cache_dir_uses_dev_cache_root_without_cache_dir() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let cache_root = dir.path().join("dev-cache");
+        let mut env = EnvGuard::with_keys(&["SINEX_CACHE_DIR", "SINEX_DEV_CACHE_ROOT"]);
+        env.clear("SINEX_CACHE_DIR");
+        env.set("SINEX_DEV_CACHE_ROOT", &cache_root);
+
+        let config = Config::from_env();
+        assert_eq!(config.cache_dir, cache_root);
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_workspace_target_dir_respects_cargo_target_dir() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
         let target_dir = dir.path().join("target-cache");
@@ -336,6 +384,46 @@ mod tests {
         env.set("CARGO_TARGET_DIR", &target_dir);
 
         assert_eq!(workspace_target_dir(), target_dir);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workspace_cache_root_respects_sinex_dev_cache_root() -> TestResult<()> {
+        let workspace = tempfile::tempdir()?;
+        let cache_root = workspace.path().join("configured-cache");
+        let mut env = EnvGuard::with_keys(&["SINEX_DEV_CACHE_ROOT", "CARGO_TARGET_DIR"]);
+        env.set("SINEX_DEV_CACHE_ROOT", &cache_root);
+        env.clear("CARGO_TARGET_DIR");
+
+        assert_eq!(workspace_cache_root_for(workspace.path()), cache_root);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workspace_cache_root_falls_back_to_checkout_cache() -> TestResult<()> {
+        let workspace = tempfile::tempdir()?;
+        let mut env = EnvGuard::with_keys(&["SINEX_DEV_CACHE_ROOT"]);
+        env.clear("SINEX_DEV_CACHE_ROOT");
+
+        assert_eq!(
+            workspace_cache_root_for(workspace.path()),
+            workspace.path().join(".sinex/cache")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workspace_target_dir_respects_sinex_dev_cache_root() -> TestResult<()> {
+        let workspace = tempfile::tempdir()?;
+        let cache_root = workspace.path().join("configured-cache");
+        let mut env = EnvGuard::with_keys(&["SINEX_DEV_CACHE_ROOT", "CARGO_TARGET_DIR"]);
+        env.set("SINEX_DEV_CACHE_ROOT", &cache_root);
+        env.clear("CARGO_TARGET_DIR");
+
+        assert_eq!(
+            workspace_target_dir_for(workspace.path()),
+            cache_root.join("target")
+        );
         Ok(())
     }
 

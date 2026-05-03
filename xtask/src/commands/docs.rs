@@ -933,7 +933,7 @@ fn load_ast_grep_rules(rules_dir: &std::path::Path) -> Result<Vec<AstGrepRuleCat
     for path in paths {
         let content = std::fs::read_to_string(&path)
             .wrap_err_with(|| format!("Failed to read {}", path.display()))?;
-        let mut rule: AstGrepRuleCatalogEntry = serde_yaml::from_str(&content)
+        let mut rule: AstGrepRuleCatalogEntry = serde_yml::from_str(&content)
             .wrap_err_with(|| format!("Failed to parse {}", path.display()))?;
         rule.ignores.get_or_insert_with(Vec::new).sort();
         rules.push(rule);

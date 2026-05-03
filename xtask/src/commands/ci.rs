@@ -57,13 +57,13 @@ pub enum CiSubcommand {
     },
     /// Full workspace validation (schema setup + lint + tests)
     Workspace {
-        #[arg(long, default_value = ".sinex/target/ci")]
-        target_dir: String,
+        #[arg(long)]
+        target_dir: Option<PathBuf>,
     },
     /// Schema-only pipeline (apply, check-ready)
     SchemaOnly {
-        #[arg(long, default_value = ".sinex/target/ci-schema")]
-        target_dir: String,
+        #[arg(long)]
+        target_dir: Option<PathBuf>,
     },
     /// Verify required tables exist in database
     CheckReady {
@@ -116,8 +116,12 @@ impl XtaskCommand for CiCommand {
                 };
                 execute_postgres(&args, ctx)
             }
-            CiSubcommand::Workspace { target_dir } => execute_workspace(target_dir, ctx).await,
-            CiSubcommand::SchemaOnly { target_dir } => execute_schema_only(target_dir, ctx).await,
+            CiSubcommand::Workspace { target_dir } => {
+                execute_workspace(target_dir.as_deref(), ctx).await
+            }
+            CiSubcommand::SchemaOnly { target_dir } => {
+                execute_schema_only(target_dir.as_deref(), ctx).await
+            }
             CiSubcommand::CheckReady {
                 database,
                 superuser,
@@ -217,12 +221,15 @@ fn check_command_for_ci() -> crate::commands::check::CheckCommand {
     }
 }
 
-async fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<CommandResult> {
+async fn execute_workspace(
+    target_dir: Option<&std::path::Path>,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
     ctx.heading("ci workspace");
 
     // Run schema setup first
     let stage = ctx.start_stage("schema_setup");
-    run_schema_setup(target_dir, ctx).await?;
+    run_schema_setup(target_dir, "ci", ctx).await?;
     ctx.finish_stage(stage, true);
 
     // 3.2: Dependency audit — run before expensive test stages
@@ -310,8 +317,15 @@ async fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<Com
 
 /// Shared schema setup: declarative apply + check-ready + strict drift check.
 /// Called from both workspace and schema-only pipelines.
-async fn run_schema_setup(target_dir: &str, ctx: &CommandContext) -> Result<()> {
-    unsafe { env::set_var("CARGO_TARGET_DIR", target_dir) };
+async fn run_schema_setup(
+    target_dir: Option<&std::path::Path>,
+    default_suffix: &str,
+    ctx: &CommandContext,
+) -> Result<()> {
+    let resolved_target_dir = target_dir
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| crate::config::workspace_target_dir().join(default_suffix));
+    unsafe { env::set_var("CARGO_TARGET_DIR", &resolved_target_dir) };
     let super_url = env::var("DATABASE_URL_SUPERUSER")
         .or_else(|_| env::var("DATABASE_URL"))
         .unwrap_or_else(|_| default_checkout_database_url());
@@ -385,10 +399,13 @@ fn guard_local_database(url: &str) -> Result<()> {
     Ok(())
 }
 
-async fn execute_schema_only(target_dir: &str, ctx: &CommandContext) -> Result<CommandResult> {
+async fn execute_schema_only(
+    target_dir: Option<&std::path::Path>,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
     ctx.heading("ci schema-only");
 
-    run_schema_setup(target_dir, ctx).await?;
+    run_schema_setup(target_dir, "ci-schema", ctx).await?;
 
     Ok(CommandResult::success()
         .with_message("Schema validation passed")
@@ -661,10 +678,7 @@ fn check_schema_contract_guard(old_json_str: &str, new_json_str: &str) -> Result
         // 2. Type change.
         let old_type = old_prop.get("type");
         let new_type = new_prop.get("type");
-        if old_type != new_type
-            && old_type.is_some()
-            && new_type.is_some()
-        {
+        if old_type != new_type && old_type.is_some() && new_type.is_some() {
             eprintln!(
                 "  Breaking: field '{field}' type changed from {} to {}",
                 old_type.unwrap(),
@@ -680,9 +694,7 @@ fn check_schema_contract_guard(old_json_str: &str, new_json_str: &str) -> Result
         ) {
             for old_val in old_enum {
                 if !new_enum.contains(old_val) {
-                    eprintln!(
-                        "  Breaking: enum value {old_val} removed from field '{field}'"
-                    );
+                    eprintln!("  Breaking: enum value {old_val} removed from field '{field}'");
                     ok = false;
                 }
             }

@@ -77,11 +77,6 @@ pub enum HistorySubcommand {
         #[arg(long, conflicts_with = "all_packages")]
         all_commands: bool,
     },
-    /// Prune old history entries
-    Prune {
-        #[arg(long, default_value = "90")]
-        older_than: u32,
-    },
     /// Query test result history
     Tests {
         #[command(subcommand)]
@@ -358,7 +353,6 @@ impl XtaskCommand for HistoryCommand {
                         )
                     }
                 }
-                HistorySubcommand::Prune { older_than } => execute_prune(db, *older_than, ctx),
                 HistorySubcommand::Tests { tests_cmd } => execute_tests(tests_cmd, db, ctx),
                 HistorySubcommand::Diagnostics {
                     level,
@@ -889,20 +883,6 @@ fn execute_stats_all_commands(
 
     Ok(CommandResult::success()
         .with_message(format!("Stats for {} commands", all_stats.len()))
-        .with_duration(ctx.elapsed()))
-}
-
-fn execute_prune(db: &HistoryDb, older_than: u32, ctx: &CommandContext) -> Result<CommandResult> {
-    let count = db.prune(older_than)?;
-
-    if ctx.is_human() {
-        println!("Pruned {count} entries older than {older_than} days");
-    } else {
-        println!(r#"{{"pruned": {count}, "older_than_days": {older_than}}}"#);
-    }
-
-    Ok(CommandResult::success()
-        .with_message(format!("Pruned {count} old entries"))
         .with_duration(ctx.elapsed()))
 }
 

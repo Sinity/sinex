@@ -57,6 +57,7 @@ use commands::{
     WorkCommand, ci::CiCommand, completions::CompletionsCommand, source_units::SourceUnitsCommand,
 };
 use config::config;
+pub use config::workspace_target_dir_for;
 use history::HistoryDb;
 use output::{OutputFormat, OutputWriter};
 

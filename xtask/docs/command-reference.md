@@ -735,7 +735,6 @@ Query build, test, and runtime history recorded by xtask
 |---|---|
 | `list` | List recent invocations |
 | `stats` | Show statistics for a command (or all commands / all packages) |
-| `prune` | Prune old history entries |
 | `tests` | Query test result history |
 | `diagnostics` | Query build diagnostics (warnings/errors) |
 | `stages` | Query pipeline stage timing data (G2) |
@@ -788,17 +787,6 @@ Show statistics for a command (or all commands / all packages)
 | `--package` | yes | no | Narrow to a specific package (uses invocation_packages join) |
 | `--all-packages` | no | no | Show stats for all packages that have appeared in diagnostics (G4) |
 | `--all-commands` | no | no | Show stats for every command in the history (G4) |
-
-
-### `xtask history prune`
-
-Prune old history entries
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--older-than` | yes | no |  |
 
 
 ### `xtask history tests`
@@ -1646,4 +1634,3 @@ Reset developer state for a fresh start
 | `--jobs` | no | no | Delete background job records and output files |
 | `--target` | no | no | Wipe the cargo target/ directory (forces clean recompilation) |
 | `--tls` | no | no | Regenerate TLS certificates |
-

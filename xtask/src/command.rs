@@ -481,9 +481,8 @@ impl CommandContext {
 
     /// Create a `CommandContext` with an explicit history DB path override.
     ///
-    /// Used in tests to inject an ephemeral SQLite database rather than touching
-    /// the real history DB. Set `XTASK_HISTORY_DB` env var before constructing,
-    /// or pass the path directly here.
+    /// Used in tests/exercises to inject an ephemeral SQLite database rather
+    /// than touching the canonical checkout history DB.
     #[must_use]
     pub fn new_with_db_override(
         writer: crate::output::OutputWriter,

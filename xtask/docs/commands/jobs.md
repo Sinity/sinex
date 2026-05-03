@@ -99,7 +99,7 @@ Delete old terminal job handles and archived logs.
 xtask jobs prune --older-than 7
 ```
 
-This cleans up the operational job layer. Use `xtask history prune` for durable invocation history.
+This cleans up the operational job layer only. Durable invocation history is not pruned.
 
 ## Jobs and History Together
 
