@@ -31,7 +31,6 @@ enum CompiledMatcher {
 
 struct CompiledRule {
     name: String,
-    #[allow(dead_code)]
     category: RuleCategory,
     matcher: CompiledMatcher,
     strategy: Strategy,
