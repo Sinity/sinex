@@ -151,6 +151,26 @@ pub struct IngestdConfig {
     #[builder(default = false)]
     pub strict_validation: bool,
 
+    /// Maximum number of seconds `ts_orig` may exceed wall-clock time before the event
+    /// is considered implausibly future-dated and routed to the DLQ.
+    ///
+    /// Set via: `SINEX_INGESTD_TS_ORIG_FUTURE_SKEW_SECS=3600`
+    #[serde(default = "default_ts_orig_future_skew_secs")]
+    #[builder(default = default_ts_orig_future_skew_secs())]
+    #[validate(range(min = 1, max = 86400))]
+    pub ts_orig_future_skew_secs: u64,
+
+    /// Earliest accepted `ts_orig` expressed as a Unix timestamp (seconds since epoch).
+    /// Events with `ts_orig` before this date are considered implausibly old and routed to the DLQ.
+    ///
+    /// Default: `946684800` (2000-01-01 00:00:00 UTC).
+    ///
+    /// Set via: `SINEX_INGESTD_TS_ORIG_LOWER_BOUND_UNIX=946684800`
+    #[serde(default = "default_ts_orig_lower_bound_unix")]
+    #[builder(default = default_ts_orig_lower_bound_unix())]
+    #[validate(range(min = 0))]
+    pub ts_orig_lower_bound_unix: i64,
+
     /// Maximum buffered out-of-order slices per material assembly
     ///
     /// Set via: `SINEX_INGESTD_MAX_BUFFERED_SLICES=100`
@@ -329,6 +349,12 @@ impl IngestdConfig {
             .unwrap_or_else(default_pool_acquire_timeout_secs);
         let pool_idle_timeout_secs: u64 = env_parsed("SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS")?
             .unwrap_or_else(default_pool_idle_timeout_secs);
+        let ts_orig_future_skew_secs: u64 =
+            env_parsed("SINEX_INGESTD_TS_ORIG_FUTURE_SKEW_SECS")?
+                .unwrap_or_else(default_ts_orig_future_skew_secs);
+        let ts_orig_lower_bound_unix: i64 =
+            env_parsed("SINEX_INGESTD_TS_ORIG_LOWER_BOUND_UNIX")?
+                .unwrap_or_else(default_ts_orig_lower_bound_unix);
 
         // Construct NatsConnectionConfig from args/environment.
         // Full auth/TLS detail is still supplied via the shared env-first NATS config.
@@ -354,6 +380,8 @@ impl IngestdConfig {
         config.schema_reload_interval_secs = schema_reload_interval_secs;
         config.stats_log_interval_secs = stats_log_interval_secs;
         config.blob_gc_interval_secs = blob_gc_interval_secs;
+        config.ts_orig_future_skew_secs = ts_orig_future_skew_secs;
+        config.ts_orig_lower_bound_unix = ts_orig_lower_bound_unix;
         config.nats = nats_config_clone;
         config.nats_namespace = namespace;
         if let Some(path) = work_dir_override {
@@ -682,6 +710,8 @@ impl Default for IngestdConfig {
             content_store_path: default_content_store_path(),
             assembler_state_dir: default_assembler_state_dir(),
             strict_validation: false,
+            ts_orig_future_skew_secs: default_ts_orig_future_skew_secs(),
+            ts_orig_lower_bound_unix: default_ts_orig_lower_bound_unix(),
             max_buffered_slices: default_max_buffered_slices(),
             slice_timeout_secs: default_slice_timeout_secs(),
             orphan_threshold_secs: default_orphan_threshold_secs(),
@@ -1132,6 +1162,14 @@ fn validate_blob_gc_interval(value: u64) -> Result<(), ValidationError> {
         return Err(ValidationError::new("blob_gc_interval_too_small"));
     }
     Ok(())
+}
+
+fn default_ts_orig_future_skew_secs() -> u64 {
+    3600 // 1 hour
+}
+
+fn default_ts_orig_lower_bound_unix() -> i64 {
+    946_684_800 // 2000-01-01 00:00:00 UTC
 }
 
 #[cfg(test)]
