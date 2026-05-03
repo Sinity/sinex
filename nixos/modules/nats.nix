@@ -107,6 +107,48 @@ let
   ++ optional (effectiveSharedClientCaFile != null) "NATS_CA=${toString effectiveSharedClientCaFile}"
   ++ optional (effectiveSharedClientCertFile != null) "NATS_CERT=${toString effectiveSharedClientCertFile}"
   ++ optional (effectiveSharedClientKeyFile != null) "NATS_KEY=${toString effectiveSharedClientKeyFile}";
+  bootstrapAuthSetup = ''
+    auth_args=()
+    tls_args=()
+    if [[ -n "''${NATS_TOKEN_FILE:-}" ]]; then
+      auth_args+=(--token "$(<"$NATS_TOKEN_FILE")")
+    elif [[ -n "''${NATS_CREDS:-}" ]]; then
+      auth_args+=(--creds "$NATS_CREDS")
+    elif [[ -n "''${NATS_NKEY:-}" ]]; then
+      auth_args+=(--nkey "$NATS_NKEY")
+    fi
+    if [[ -n "''${NATS_CA:-}" ]]; then
+      tls_args+=(--tlsca "$NATS_CA")
+    fi
+    if [[ -n "''${NATS_CERT:-}" ]]; then
+      tls_args+=(--tlscert "$NATS_CERT")
+    fi
+    if [[ -n "''${NATS_KEY:-}" ]]; then
+      tls_args+=(--tlskey "$NATS_KEY")
+    fi
+  '';
+  bootstrapReadyCheck = pkgs.writeShellScript "sinex-nats-bootstrap-wait" ''
+    set -euo pipefail
+    ${bootstrapAuthSetup}
+
+    timeout_secs=300
+    waited=0
+    until ${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" stream ls --all >/dev/null 2>&1; do
+      if (( waited == 0 )); then
+        echo "Waiting for NATS JetStream at $NATS_URL before stream bootstrap" >&2
+      fi
+      if (( waited >= timeout_secs )); then
+        echo "Timed out after ''${timeout_secs}s waiting for NATS JetStream at $NATS_URL" >&2
+        ${natsCli}/bin/nats --server "$NATS_URL" "''${auth_args[@]}" "''${tls_args[@]}" server check connection >&2 || true
+        exit 1
+      fi
+      sleep 1
+      waited=$((waited + 1))
+    done
+    if (( waited > 0 )); then
+      echo "NATS JetStream ready after ''${waited}s; continuing stream bootstrap" >&2
+    fi
+  '';
   namespacedStreams = map
     (stream: stream // {
       name = prefixStreamName stream.name;
@@ -546,6 +588,7 @@ in
       wantedBy = [ "multi-user.target" ];
       serviceConfig = {
         Environment = bootstrapEnv;
+        ExecStartPre = [ bootstrapReadyCheck ];
         ExecStart =
           let
             mkStreamCommand = stream:
@@ -593,24 +636,7 @@ in
           in
           pkgs.writeShellScript "sinex-nats-bootstrap" ''
             set -euo pipefail
-            auth_args=()
-            tls_args=()
-            if [[ -n "''${NATS_TOKEN_FILE:-}" ]]; then
-              auth_args+=(--token "$(<"$NATS_TOKEN_FILE")")
-            elif [[ -n "''${NATS_CREDS:-}" ]]; then
-              auth_args+=(--creds "$NATS_CREDS")
-            elif [[ -n "''${NATS_NKEY:-}" ]]; then
-              auth_args+=(--nkey "$NATS_NKEY")
-            fi
-            if [[ -n "''${NATS_CA:-}" ]]; then
-              tls_args+=(--tlsca "$NATS_CA")
-            fi
-            if [[ -n "''${NATS_CERT:-}" ]]; then
-              tls_args+=(--tlscert "$NATS_CERT")
-            fi
-            if [[ -n "''${NATS_KEY:-}" ]]; then
-              tls_args+=(--tlskey "$NATS_KEY")
-            fi
+            ${bootstrapAuthSetup}
             ${script}
           '';
       } // mkHelperServiceConfig {
@@ -619,7 +645,7 @@ in
         extra = {
           Restart = "on-failure";
           RestartSec = 5;
-          TimeoutStartSec = 60;
+          TimeoutStartSec = 330;
         };
       };
     };
