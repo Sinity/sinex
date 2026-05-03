@@ -6,14 +6,15 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::warn;
 
-// Local constants replacing sinex-primitives types dependencies
-pub const MAX_RETRY_ATTEMPTS: u32 = 3;
-pub const DEFAULT_INITIAL_DELAY: Duration = Duration::from_millis(100);
-pub const MAX_DELAY: Duration = Duration::from_secs(5);
-pub const EXPONENTIAL_BASE: f64 = 2.0;
-
 // Re-export db_error for consumers expecting it in query_helpers
 pub use crate::db_error;
+
+/// Re-export the canonical retry configuration from sinex-primitives.
+///
+/// The former hand-rolled DB copy (`exponential_base: f64`) was a duplicate of the
+/// richer primitives type (`multiplier: f64`). Callers that previously used struct
+/// literal syntax with `exponential_base` must use `multiplier` — see issue #746 (A8).
+pub use sinex_primitives::utils::wait_helpers::RetryConfig;
 
 fn rollback_failure(
     original_error: &SinexError,
@@ -24,26 +25,6 @@ fn rollback_failure(
         .with_source(rollback_error.to_string())
         .with_context("original_error", original_error.to_string())
         .with_operation(operation)
-}
-
-/// Configuration for transaction retry behavior
-#[derive(Debug, Clone, Copy)]
-pub struct RetryConfig {
-    pub max_attempts: u32,
-    pub initial_delay: Duration,
-    pub max_delay: Duration,
-    pub exponential_base: f64,
-}
-
-impl Default for RetryConfig {
-    fn default() -> Self {
-        Self {
-            max_attempts: MAX_RETRY_ATTEMPTS,
-            initial_delay: DEFAULT_INITIAL_DELAY,
-            max_delay: MAX_DELAY,
-            exponential_base: EXPONENTIAL_BASE,
-        }
-    }
 }
 
 /// Marker indicating a retryable transaction is idempotent.
@@ -115,7 +96,7 @@ where
                     attempts, config.max_attempts, e
                 );
                 sleep(delay).await;
-                delay = std::cmp::min(delay.mul_f64(config.exponential_base), config.max_delay);
+                delay = std::cmp::min(delay.mul_f64(config.multiplier), config.max_delay);
             }
             Err(e) => {
                 return Err(match tx.rollback().await {

@@ -262,10 +262,16 @@ pub struct HasPrivacy;
 pub struct MissingMaterial;
 #[derive(Debug, Clone, Copy)]
 pub struct HasMaterial;
+/// Typestate marker: checkpoint policy not yet supplied to [`RuntimeUnitDescriptorBuilder`].
 #[derive(Debug, Clone, Copy)]
 pub struct MissingCheckpoint;
+/// Typestate marker: checkpoint policy supplied to [`RuntimeUnitDescriptorBuilder`].
+///
+/// Named `CheckpointPresent` (not `HasCheckpoint`) to distinguish this family from the
+/// `HasProvenance`/`NoProvenance` markers in `events::builder`, which guard a different
+/// state machine — see issue #746 (A9).
 #[derive(Debug, Clone, Copy)]
-pub struct HasCheckpoint;
+pub struct CheckpointPresent;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RuntimeUnitDescriptorBuilder<Output, Privacy, Material, Checkpoint> {
@@ -377,7 +383,7 @@ impl<O, P, M> RuntimeUnitDescriptorBuilder<O, P, M, MissingCheckpoint> {
     pub const fn checkpoint_policy(
         mut self,
         checkpoint_policy: &'static str,
-    ) -> RuntimeUnitDescriptorBuilder<O, P, M, HasCheckpoint> {
+    ) -> RuntimeUnitDescriptorBuilder<O, P, M, CheckpointPresent> {
         self.descriptor.checkpoint_policy = checkpoint_policy;
         RuntimeUnitDescriptorBuilder {
             descriptor: self.descriptor,
@@ -386,7 +392,7 @@ impl<O, P, M> RuntimeUnitDescriptorBuilder<O, P, M, MissingCheckpoint> {
     }
 }
 
-impl RuntimeUnitDescriptorBuilder<HasOutput, HasPrivacy, HasMaterial, HasCheckpoint> {
+impl RuntimeUnitDescriptorBuilder<HasOutput, HasPrivacy, HasMaterial, CheckpointPresent> {
     #[must_use]
     pub const fn build(self) -> RuntimeUnitDescriptor {
         self.descriptor

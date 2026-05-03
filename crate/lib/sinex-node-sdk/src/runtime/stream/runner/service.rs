@@ -126,16 +126,16 @@ impl<T: Node + 'static> NodeRunner<T> {
                 // Ingestor startup sequence: Snapshot -> Gap-fill -> Continuous
                 self.run_ingestor_startup_sequence().await
             }
-            NodeType::Automaton => {
+            NodeType::Automaton | NodeType::Service => {
                 #[cfg(feature = "messaging")]
                 {
-                    // Automaton startup: consume events from NATS streams
+                    // Automaton/Service startup: consume events from NATS streams
                     self.run_automaton_continuous_mode().await
                 }
                 #[cfg(not(feature = "messaging"))]
                 {
                     Err(SinexError::configuration(
-                        "Messaging feature required for Automaton mode".to_string(),
+                        "Messaging feature required for Automaton/Service mode".to_string(),
                     ))
                 }
             }

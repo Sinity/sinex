@@ -23,7 +23,7 @@ pub use service::IngestService;
 pub use sinex_db::repositories::schema_management::SchemaSyncResult;
 pub use sinex_db::validation::SchemaInfo;
 pub use sinex_primitives::nats::JetStreamTopology;
-pub use validator::{EventValidator, ValidationResult};
+pub use validator::{IngestEventValidator, ValidationResult};
 
 // Re-export SinexError for unified error handling
 pub use sinex_primitives::error::{Result, Result as IngestdResult, SinexError};

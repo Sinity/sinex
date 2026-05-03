@@ -11,9 +11,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SystemHealthRequest {}
 
-/// Component health status
+/// RPC wire projection of a single component's health status.
+///
+/// Renamed from `ComponentHealth` to `ComponentHealthReport` to distinguish it from
+/// the automaton's in-memory `ComponentHealth` state (sinex-process) and the event
+/// payload shape — see issue #746 (A4).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ComponentHealth {
+pub struct ComponentHealthReport {
     pub status: HealthStatus,
     pub connected: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -35,8 +39,8 @@ pub struct ReplayControlHealth {
 /// All component health statuses
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentsHealth {
-    pub database: ComponentHealth,
-    pub nats: ComponentHealth,
+    pub database: ComponentHealthReport,
+    pub nats: ComponentHealthReport,
     pub replay_control: ReplayControlHealth,
 }
 

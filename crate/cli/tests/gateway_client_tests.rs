@@ -17,7 +17,7 @@ use common::{MockGatewayClient, MockResponse, TestDir, TokenFixture};
 use sinex_primitives::domain::HealthStatus;
 use sinex_primitives::rpc::dlq::DlqListResponse;
 use sinex_primitives::rpc::system::{
-    ComponentHealth, ComponentsHealth, ReplayControlHealth, SystemHealthResponse,
+    ComponentHealthReport, ComponentsHealth, ReplayControlHealth, SystemHealthResponse,
 };
 use sinexctl::client::{ClientConfig, GatewayClient, RetryConfig};
 
@@ -53,13 +53,13 @@ async fn test_mock_client_custom_health_response() -> TestResult<()> {
         serving: false,
         degradation_reasons: vec!["nats offline".to_string()],
         components: ComponentsHealth {
-            database: ComponentHealth {
+            database: ComponentHealthReport {
                 status: HealthStatus::Healthy,
                 connected: true,
                 latency_ms: None,
                 detail: None,
             },
-            nats: ComponentHealth {
+            nats: ComponentHealthReport {
                 status: HealthStatus::Unhealthy,
                 connected: false,
                 latency_ms: Some(125.0),

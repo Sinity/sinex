@@ -1,4 +1,4 @@
-error[E0599]: no method named `build` found for struct `RuntimeUnitDescriptorBuilder<HasOutput, HasPrivacy, MissingMaterial, HasCheckpoint>` in the current scope
+error[E0599]: no method named `build` found for struct `RuntimeUnitDescriptorBuilder<HasOutput, HasPrivacy, MissingMaterial, CheckpointPresent>` in the current scope
   --> tests/proof_compile_fail/missing_material.rs:13:6
    |
  4 |       let _ = RuntimeUnitDescriptor::builder(
@@ -9,9 +9,9 @@ error[E0599]: no method named `build` found for struct `RuntimeUnitDescriptorBui
 ...  |
 12 | |     .checkpoint_policy("row_id")
 13 | |     .build();
-   | |     -^^^^^ method not found in `RuntimeUnitDescriptorBuilder<HasOutput, HasPrivacy, MissingMaterial, HasCheckpoint>`
+   | |     -^^^^^ method not found in `RuntimeUnitDescriptorBuilder<HasOutput, HasPrivacy, MissingMaterial, CheckpointPresent>`
    | |_____|
    |
    |
    = note: the method was found for
-           - `RuntimeUnitDescriptorBuilder<HasOutput, HasPrivacy, HasMaterial, HasCheckpoint>`
+           - `RuntimeUnitDescriptorBuilder<HasOutput, HasPrivacy, HasMaterial, CheckpointPresent>`

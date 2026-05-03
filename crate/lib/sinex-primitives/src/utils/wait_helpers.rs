@@ -33,6 +33,12 @@ pub struct RetryConfig {
     pub jitter: bool,
 }
 
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self::builder().build()
+    }
+}
+
 impl RetryConfig {
     /// Calculate backoff duration for a given attempt number (0-indexed).
     ///

@@ -7,7 +7,7 @@ use async_nats::jetstream;
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_ingestd::material_ready_set::MaterialReadySet;
-use sinex_ingestd::validator::EventValidator;
+use sinex_ingestd::validator::IngestIngestEventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_primitives::{Uuid, error::SinexError, temporal};
 use sqlx::Row;
@@ -101,7 +101,7 @@ async fn start_isolated_consumer(ctx: &TestContext, suffix: &str) -> TestResult<
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
     ensure_fixture_source_material(&pool).await?;
-    let validator = EventValidator::new(false);
+    let validator = IngestEventValidator::new(false);
 
     let js = nats.jetstream_with_client(nats_client.clone());
     let env = ctx.env().clone();
@@ -142,7 +142,7 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
     ensure_fixture_source_material(&pool).await?;
-    let validator = EventValidator::new(false);
+    let validator = IngestEventValidator::new(false);
 
     let js = nats.jetstream_with_client(nats_client.clone());
     let env = ctx.env();
@@ -203,7 +203,7 @@ async fn consumer_accepts_db_registered_material_outside_ready_set(
 
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
-    let validator = EventValidator::new(false);
+    let validator = IngestEventValidator::new(false);
 
     let js = ctx.jetstream().await?;
     let env = ctx.env();
@@ -263,7 +263,7 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
     ensure_fixture_source_material(&pool).await?;
-    let validator = EventValidator::new(false);
+    let validator = IngestEventValidator::new(false);
 
     let js = nats.jetstream_with_client(nats_client.clone());
     let env = ctx.env();
@@ -324,7 +324,7 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
     let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
-    let validator = EventValidator::new(false);
+    let validator = IngestEventValidator::new(false);
 
     let js = ctx.jetstream().await?;
     let nats = ctx.nats_handle()?;
@@ -421,7 +421,7 @@ async fn consumer_loads_externally_registered_materials_via_db_fallback(
     let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
-    let validator = EventValidator::new(false);
+    let validator = IngestEventValidator::new(false);
 
     let js = ctx.jetstream().await?;
     let env = ctx.env();
@@ -478,7 +478,7 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
 
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
-    let validator = EventValidator::new(false);
+    let validator = IngestEventValidator::new(false);
 
     let js = ctx.jetstream().await?;
     let env = ctx.env();

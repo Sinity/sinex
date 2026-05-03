@@ -1,7 +1,7 @@
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::schema_management::NewEventSchema;
-use sinex_ingestd::validator::{EventValidator, ValidationResult};
+use sinex_ingestd::validator::{IngestIngestEventValidator, ValidationResult};
 use sinex_primitives::domain::{EventSource, EventType};
 use xtask::sandbox::sinex_test;
 
@@ -37,7 +37,7 @@ async fn validator_prefers_latest_semver(ctx: TestContext) -> color_eyre::Result
     })
     .await?;
 
-    let validator = EventValidator::load_schemas_from_db(&ctx.pool, true).await?;
+    let validator = IngestEventValidator::load_schemas_from_db(&ctx.pool, true).await?;
     let result = validator.validate_payload_for(
         "semver-source",
         "semver.event",
@@ -101,7 +101,7 @@ async fn validator_handles_double_digit_versions(ctx: TestContext) -> color_eyre
     })
     .await?;
 
-    let validator = EventValidator::load_schemas_from_db(&ctx.pool, true).await?;
+    let validator = IngestEventValidator::load_schemas_from_db(&ctx.pool, true).await?;
     let result = validator.validate_payload_for(
         "digit-source",
         "digit.event",

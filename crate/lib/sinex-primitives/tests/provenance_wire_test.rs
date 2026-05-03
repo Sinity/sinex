@@ -1,7 +1,7 @@
 use serde_json::json;
 use sinex_primitives::Id;
 use sinex_primitives::events::Provenance;
-use sinex_primitives::events::builder::{EventId, Operation};
+use sinex_primitives::events::builder::{EventId, OperationMarker};
 use sinex_primitives::non_empty::NonEmptyVec;
 use xtask::sandbox::prelude::*;
 
@@ -48,7 +48,7 @@ async fn material_provenance_offsets_require_offset_kind_in_wire_format() -> Tes
 #[sinex_test]
 async fn synthesis_provenance_round_trips_with_operation_id() -> TestResult<()> {
     let parent_id: EventId = Id::new();
-    let op_id: Id<Operation> = Id::new();
+    let op_id: Id<OperationMarker> = Id::new();
 
     let provenance = Provenance::Synthesis {
         source_event_ids: NonEmptyVec::single(parent_id),
@@ -179,7 +179,7 @@ async fn direct_dynamic_event_construction_canonicalizes_and_syncs_operation() -
     let second: EventId = Id::from_uuid(uuid::Uuid::parse_str(
         "018f0000-0000-7000-8000-000000000001",
     )?);
-    let op_id: Id<Operation> = Id::new();
+    let op_id: Id<OperationMarker> = Id::new();
 
     let provenance = Provenance::Synthesis {
         source_event_ids: NonEmptyVec::from_head_tail(first, vec![second, first]),
@@ -222,7 +222,7 @@ async fn material_provenance_never_carries_operation_id() -> TestResult<()> {
 #[sinex_test]
 async fn provenance_with_operation_helper_sets_operation_id() -> TestResult<()> {
     let parent_id: EventId = Id::new();
-    let op_id: Id<Operation> = Id::new();
+    let op_id: Id<OperationMarker> = Id::new();
 
     let provenance = Provenance::Synthesis {
         source_event_ids: NonEmptyVec::single(parent_id),
@@ -257,7 +257,7 @@ async fn builder_auto_syncs_operation_id_to_event_field() -> TestResult<()> {
     use sinex_primitives::events::DynamicPayload;
 
     let parent_id: EventId = Id::new();
-    let op_id: Id<Operation> = Id::new();
+    let op_id: Id<OperationMarker> = Id::new();
 
     let event = DynamicPayload::new("test-source", "test.event", json!({"key": "val"}))
         .from_parents([parent_id])?

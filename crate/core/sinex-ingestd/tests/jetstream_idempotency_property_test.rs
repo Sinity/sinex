@@ -3,7 +3,7 @@
 use async_nats::jetstream;
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_ingestd::{JetStreamConsumer, JetStreamTopology, validator::EventValidator};
+use sinex_ingestd::{JetStreamConsumer, JetStreamTopology, validator::IngestIngestEventValidator};
 use sinex_primitives::temporal;
 use std::sync::Arc;
 use std::time::Duration;
@@ -64,7 +64,7 @@ async fn start_consumer(
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
-    let validator = EventValidator::new(strict_validation);
+    let validator = IngestEventValidator::new(strict_validation);
     let env = ctx.env();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
 

@@ -1,7 +1,7 @@
 use async_nats::jetstream;
 use serde_json::json;
 use sinex_db::repositories::schema_management::{NewEventSchema, SchemaManagementRepository};
-use sinex_ingestd::validator::EventValidator;
+use sinex_ingestd::validator::IngestIngestEventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_primitives::{
     Uuid,
@@ -68,7 +68,7 @@ async fn test_schema_violation_routes_to_dlq() -> TestResult<()> {
     .await?;
 
     // 2. Setup Consumer (Ingestd) with Strict Validator
-    let mut validator = EventValidator::new_strict(true);
+    let mut validator = IngestEventValidator::new_strict(true);
     let loaded = validator.reload_schemas(&pool).await?;
     println!("Loaded schemas: {loaded}");
 

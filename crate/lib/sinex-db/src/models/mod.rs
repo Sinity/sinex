@@ -7,5 +7,5 @@ pub use sinex_primitives::domain::{Entity, EntityRelation};
 pub use sinex_primitives::events::payload::DynamicPayload;
 pub use sinex_primitives::events::{Event, EventId, SourceMaterial};
 pub use sinex_primitives::events::{
-    EventBuilder, HasProvenance, NoProvenance, OffsetKind, Operation, Provenance,
+    EventBuilder, HasProvenance, NoProvenance, OffsetKind, OperationMarker, Provenance,
 };

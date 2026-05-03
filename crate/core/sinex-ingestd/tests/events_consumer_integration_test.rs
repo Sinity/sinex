@@ -7,7 +7,7 @@ use async_nats::{Client, jetstream};
 use color_eyre::eyre::eyre;
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_ingestd::{JetStreamConsumer, JetStreamTopology, validator::EventValidator};
+use sinex_ingestd::{JetStreamConsumer, JetStreamTopology, validator::IngestIngestEventValidator};
 use sinex_primitives::{Uuid, environment, temporal};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -198,7 +198,7 @@ async fn start_consumer_with_hooks(
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
     ensure_fixture_source_material(&pool).await?;
-    let validator = EventValidator::new(hooks.validate);
+    let validator = IngestEventValidator::new(hooks.validate);
 
     let js = nats.jetstream_with_client(nats_client.clone());
     let env = ctx.env();
