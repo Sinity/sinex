@@ -18,13 +18,13 @@
   };
 
   outputs =
-    inputs@{
-      self,
-      nixpkgs,
-      fenix,
-      crane,
-      agenix,
-      flake-utils,
+    inputs@{ self
+    , nixpkgs
+    , fenix
+    , crane
+    , agenix
+    , flake-utils
+    ,
     }:
     let
       # pg_jsonschema - PostgreSQL JSON Schema validation extension
@@ -671,40 +671,16 @@
                     *) PATH="''${PATH:+$PATH:}$1" ;;
                   esac
                 }
-                _sinex_default_cache_root() {
-                  local root="$1"
-                  local root_name
-                  local root_hash
-                  local candidate
-                  local probe
-                  root_name="$(basename "$root" | tr -c 'A-Za-z0-9._-' '-')"
-                  root_name="''${root_name%-}"
-                  if [ -z "$root_name" ]; then
-                    root_name="workspace"
-                  fi
-                  root_hash="$(printf '%s' "$root" | sha256sum | cut -c1-12)"
-                  if [ -d /cache ]; then
-                    candidate="/cache/sinex/$root_name-$root_hash"
-                    probe="$candidate/.write-probe-$$"
-                    if mkdir -p "$candidate" 2>/dev/null && : > "$probe" 2>/dev/null; then
-                      rm -f "$probe"
-                      printf '%s\n' "$candidate"
-                      return
-                    fi
-                    rm -f "$probe" 2>/dev/null || true
-                  fi
-                  printf '%s/.sinex/cache\n' "$root"
-                }
                 export SINEX_DEV_ROOT="$PWD"
                 export SINEX_DEV_STATE_DIR="$PWD/${stateDir}"
                 export SINEX_DEV_TOOLCHAIN="${rustToolchain.name}"
                 if [ -z "''${SINEX_DEV_CACHE_ROOT:-}" ]; then
-                  export SINEX_DEV_CACHE_ROOT="$(_sinex_default_cache_root "$SINEX_DEV_ROOT")"
+                  export SINEX_DEV_CACHE_ROOT="$SINEX_DEV_ROOT/.sinex/cache"
                 fi
-                mkdir -p "$SINEX_DEV_CACHE_ROOT/target" "$SINEX_DEV_CACHE_ROOT/cache"
                 if [ -z "''${CARGO_TARGET_DIR:-}" ]; then
                   export CARGO_TARGET_DIR="$SINEX_DEV_CACHE_ROOT/target"
                 fi
+                mkdir -p "$SINEX_DEV_CACHE_ROOT" "$CARGO_TARGET_DIR"
                 _sinex_path_append_unique "$CARGO_TARGET_DIR/debug"
                 export PATH
                 export LD_LIBRARY_PATH="${
@@ -712,7 +688,7 @@
                 }''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
                 export CLIPPY_CONF_DIR="$PWD/.config"
                 export SINEX_STATE_DIR="$SINEX_DEV_STATE_DIR/state"
-                export SINEX_CACHE_DIR="$SINEX_DEV_CACHE_ROOT/cache"
+                export SINEX_CACHE_DIR="$SINEX_DEV_CACHE_ROOT"
                 export SINEX_TEST_RESULTS_DIR="$SINEX_CACHE_DIR/test-results"
                 export SINEX_NATS_DIR="$SINEX_STATE_DIR/nats"
                 export SINEX_DEV_PG_PORT="${toString pgPort}"

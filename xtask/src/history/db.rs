@@ -4139,7 +4139,7 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
-    use xtask::sandbox::sinex_test;
+    use xtask::sandbox::{TestResult, sinex_test};
 
     fn preserved_history_backup_dirs(
         dir: &Path,

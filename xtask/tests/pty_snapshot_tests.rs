@@ -32,7 +32,7 @@ fn xtask_bin() -> Result<PathBuf> {
         .parent()
         .ok_or_else(|| eyre!("failed to resolve workspace root"))?;
     let exe_name = if cfg!(windows) { "xtask.exe" } else { "xtask" };
-    let fallback = xtask::config::workspace_target_dir_for(workspace_root)
+    let fallback = xtask::workspace_target_dir_for(workspace_root)
         .join("debug")
         .join(exe_name);
     if fallback.is_file() {

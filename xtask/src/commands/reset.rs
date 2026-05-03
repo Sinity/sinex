@@ -1,7 +1,8 @@
 //! Reset command — wipe developer state for a fresh start.
 //!
 //! Each flag targets a specific category of state. With no category flags,
-//! `--yes` alone resets everything: db + nats + preflight + jobs + target.
+//! `--yes` alone resets operational developer state: db + nats + preflight + jobs + target.
+//! The xtask history database is preserved unless `--history` is passed explicitly.
 //!
 //! `--contracts` and `--schema` are surgical — they delete only the hash
 //! files that gate preflight re-deployment. This forces re-run without
@@ -36,7 +37,7 @@ pub struct ResetCommand {
     #[arg(long)]
     blobs: bool,
 
-    /// Wipe the entire .sinex/preflight/ directory (forces full preflight on next run).
+    /// Wipe the configured preflight state directory (forces full preflight on next run).
     #[arg(long)]
     preflight: bool,
 
@@ -48,7 +49,7 @@ pub struct ResetCommand {
     #[arg(long)]
     schema: bool,
 
-    /// Delete the xtask history database.
+    /// Reset the xtask history database, preserving the old DB as a timestamped backup.
     #[arg(long)]
     history: bool,
 
@@ -75,7 +76,7 @@ impl XtaskCommand for ResetCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        // Determine whether this is "reset everything" mode
+        // Determine whether this is "reset operational developer state" mode.
         let any_specific = self.db
             || self.nats
             || self.blobs
@@ -110,7 +111,7 @@ impl XtaskCommand for ResetCommand {
         // ── Preflight cache ───────────────────────────────────────────────────
         if all || self.preflight {
             reset_preflight_dir(verbose)?;
-            actions.push(".sinex/preflight/ removed");
+            actions.push("preflight state removed");
         }
 
         // ── Blobs ────────────────────────────────────────────────────────────
@@ -132,12 +133,12 @@ impl XtaskCommand for ResetCommand {
         }
 
         // ── History DB ───────────────────────────────────────────────────────
-        if all || self.history {
+        if self.history {
             let path = cfg.history_db_path();
             // History is the user's accumulated dev-loop record across weeks
             // or months — never silently delete on reset.  Rename to a
             // timestamped backup alongside the live file so the data
-            // survives every `xtask reset --history` / `--all` invocation
+            // survives every `xtask reset --history` invocation
             // and can be inspected/recovered if the wipe was unintended.
             // Also rename the WAL/SHM/integrity-stamp/cleanup-lock siblings
             // so the next open starts on a clean slate without inheriting
@@ -148,8 +149,7 @@ impl XtaskCommand for ResetCommand {
                     .unwrap_or_else(|_| "unknown".to_string())
                     .replace(':', "")
                     .replace('-', "");
-                let backup_path = path
-                    .with_extension(format!("db.reset.bak.{stamp}"));
+                let backup_path = path.with_extension(format!("db.reset.bak.{stamp}"));
                 std::fs::rename(&path, &backup_path).with_context(|| {
                     format!(
                         "rename {} -> {} (preserve history before reset)",
@@ -211,8 +211,14 @@ impl XtaskCommand for ResetCommand {
 
         // ── Target dir ────────────────────────────────────────────────────────
         if all || self.target {
-            reset_target(verbose)?;
-            actions.push("cargo target/ removed");
+            let removed = reset_target(verbose)?;
+            if removed.is_empty() {
+                actions.push("cargo target dirs already absent");
+            } else if removed.len() == 1 {
+                actions.push("cargo target dir removed");
+            } else {
+                actions.push("cargo target dirs removed");
+            }
         }
 
         // ── TLS certificates ─────────────────────────────────────────────────
@@ -223,7 +229,7 @@ impl XtaskCommand for ResetCommand {
 
         if actions.is_empty() {
             return Err(eyre!(
-                "No reset actions performed. Pass --yes with specific flags or bare --yes to reset everything."
+                "No reset actions performed. Pass --yes with specific flags or bare --yes to reset operational developer state."
             ));
         }
 
@@ -356,9 +362,16 @@ fn reset_schema_hash(verbose: bool) -> Result<()> {
     Ok(())
 }
 
-fn reset_target(verbose: bool) -> Result<()> {
-    let target_dir = crate::config::workspace_target_dir();
-    if target_dir.exists() {
+fn reset_target(verbose: bool) -> Result<Vec<std::path::PathBuf>> {
+    let target_dirs = target_dirs_for_reset(
+        &crate::config::workspace_target_dir(),
+        &crate::config::workspace_root(),
+    );
+    let mut removed = Vec::new();
+    for target_dir in target_dirs {
+        if !target_dir.exists() {
+            continue;
+        }
         if verbose {
             println!(
                 "Removing {} (this may take a moment)...",
@@ -370,8 +383,21 @@ fn reset_target(verbose: bool) -> Result<()> {
         if verbose {
             println!("  removed {}", target_dir.display());
         }
+        removed.push(target_dir);
     }
-    Ok(())
+    Ok(removed)
+}
+
+fn target_dirs_for_reset(
+    configured_target_dir: &Path,
+    workspace_root: &Path,
+) -> Vec<std::path::PathBuf> {
+    let historical_target_dir = workspace_root.join(".sinex/target");
+    let mut dirs = vec![configured_target_dir.to_path_buf()];
+    if historical_target_dir != configured_target_dir {
+        dirs.push(historical_target_dir);
+    }
+    dirs
 }
 
 fn reset_tls(verbose: bool) -> Result<()> {
@@ -396,10 +422,9 @@ fn reset_tls(verbose: bool) -> Result<()> {
     Ok(())
 }
 
-/// Path to the `.sinex/preflight/` directory (relative to workspace root).
+/// Path to the configured preflight state directory.
 fn preflight_state_dir() -> std::path::PathBuf {
-    let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    crate_dir.join("../.sinex/preflight")
+    crate::config::config().preflight_state_dir()
 }
 
 fn remove_file_if_present(path: &Path, verbose: bool) -> Result<bool> {
@@ -417,7 +442,7 @@ fn remove_file_if_present(path: &Path, verbose: bool) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sandbox::sinex_test;
+    use crate::sandbox::{sinex_serial_test, sinex_test};
 
     #[sinex_test]
     async fn test_remove_file_if_present_reports_remove_failures() -> TestResult<()> {
@@ -432,6 +457,60 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let removed = remove_file_if_present(&temp.path().join("missing.txt"), false)?;
         assert!(!removed);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_target_dirs_for_reset_includes_historical_sinex_target() -> TestResult<()> {
+        let workspace = tempfile::tempdir()?;
+        let configured = workspace.path().join(".sinex/cache/target");
+
+        let dirs = target_dirs_for_reset(&configured, workspace.path());
+
+        assert_eq!(
+            dirs,
+            vec![configured, workspace.path().join(".sinex/target")]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_target_dirs_for_reset_deduplicates_historical_target() -> TestResult<()> {
+        let workspace = tempfile::tempdir()?;
+        let configured = workspace.path().join(".sinex/target");
+
+        let dirs = target_dirs_for_reset(&configured, workspace.path());
+
+        assert_eq!(dirs, vec![configured]);
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn test_reset_target_removes_configured_and_historical_dirs() -> TestResult<()> {
+        let workspace = tempfile::tempdir()?;
+        std::fs::write(workspace.path().join("Cargo.toml"), "[workspace]\n")?;
+        std::fs::create_dir_all(workspace.path().join("xtask"))?;
+        std::fs::write(
+            workspace.path().join("xtask/Cargo.toml"),
+            "[package]\nname = \"xtask\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )?;
+        let configured = workspace.path().join(".sinex/cache/target");
+        let historical = workspace.path().join(".sinex/target");
+        std::fs::create_dir_all(&configured)?;
+        std::fs::create_dir_all(&historical)?;
+
+        let mut env = crate::sandbox::EnvGuard::with_keys(&["CARGO_TARGET_DIR"]);
+        env.set("CARGO_TARGET_DIR", &configured);
+        let cwd = std::env::current_dir()?;
+        std::env::set_current_dir(workspace.path())?;
+
+        let result = reset_target(false);
+        std::env::set_current_dir(cwd)?;
+        let removed = result?;
+
+        assert_eq!(removed, vec![configured.clone(), historical.clone()]);
+        assert!(!configured.exists());
+        assert!(!historical.exists());
         Ok(())
     }
 }

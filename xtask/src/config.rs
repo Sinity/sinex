@@ -23,13 +23,10 @@
 //! '';
 //! ```
 
-use sha2::{Digest, Sha256};
 use std::{
     env,
     path::{Path, PathBuf},
 };
-
-const SYSTEM_CACHE_ROOT: &str = "/cache";
 
 /// User-managed preferences loaded from `~/.config/xtask/preferences.toml`.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
@@ -73,10 +70,8 @@ impl Config {
         let state_dir = env::var("SINEX_STATE_DIR")
             .map_or_else(|_| repo_state_root.join("state"), PathBuf::from);
 
-        let cache_dir = env::var("SINEX_CACHE_DIR").map_or_else(
-            |_| default_workspace_cache_root(&workspace_root).join("cache"),
-            PathBuf::from,
-        );
+        let cache_dir = env::var("SINEX_CACHE_DIR")
+            .map_or_else(|_| workspace_cache_root_for(&workspace_root), PathBuf::from);
 
         let hostname = gethostname::gethostname().to_string_lossy().into_owned();
 
@@ -120,6 +115,11 @@ impl Config {
         self.state_dir.join("jobs")
     }
 
+    /// Directory for preflight cache, hash, and lock state.
+    pub(crate) fn preflight_state_dir(&self) -> PathBuf {
+        self.state_dir.join("preflight")
+    }
+
     /// Ensure the state directory exists.
     pub(crate) fn ensure_state_dir(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.state_dir)
@@ -155,78 +155,16 @@ pub fn workspace_target_dir_for(workspace_root: &Path) -> PathBuf {
     if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
         return PathBuf::from(dir);
     }
-    default_workspace_cache_root(workspace_root).join("target")
+
+    workspace_cache_root_for(workspace_root).join("target")
 }
 
-fn default_workspace_cache_root(workspace_root: &Path) -> PathBuf {
-    default_workspace_cache_root_with_system_cache(workspace_root, Path::new(SYSTEM_CACHE_ROOT))
-}
-
-fn default_workspace_cache_root_with_system_cache(
-    workspace_root: &Path,
-    system_cache_root: &Path,
-) -> PathBuf {
-    if let Some(cache_root) = writable_system_cache_root(workspace_root, system_cache_root) {
-        return cache_root;
-    }
-    workspace_root.join(".sinex/cache")
-}
-
-fn writable_system_cache_root(workspace_root: &Path, system_cache_root: &Path) -> Option<PathBuf> {
-    if !system_cache_root.is_dir() {
-        return None;
-    }
-
-    let cache_root = system_cache_root
-        .join("sinex")
-        .join(workspace_cache_key(workspace_root));
-    if std::fs::create_dir_all(&cache_root).is_err() {
-        return None;
-    }
-
-    let probe_path = cache_root.join(format!(".write-probe-{}", std::process::id()));
-    match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&probe_path)
-    {
-        Ok(_) => {
-            let _ = std::fs::remove_file(probe_path);
-            Some(cache_root)
-        }
-        Err(_) => None,
-    }
-}
-
-fn workspace_cache_key(workspace_root: &Path) -> String {
-    let name = workspace_root
-        .file_name()
-        .and_then(std::ffi::OsStr::to_str)
-        .map(sanitize_cache_path_component)
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "workspace".to_string());
-    let mut hasher = Sha256::new();
-    hasher.update(workspace_root.as_os_str().as_encoded_bytes());
-    let digest = hasher.finalize();
-    let fingerprint = digest
-        .iter()
-        .take(6)
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    format!("{name}-{fingerprint}")
-}
-
-fn sanitize_cache_path_component(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
-                ch
-            } else {
-                '-'
-            }
-        })
-        .collect()
+/// Cache root for checkout-local build/runtime artifacts.
+#[must_use]
+pub fn workspace_cache_root_for(workspace_root: &Path) -> PathBuf {
+    env::var("SINEX_DEV_CACHE_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| workspace_root.join(".sinex/cache"))
 }
 
 /// Global configuration singleton.
@@ -413,6 +351,32 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_config_cache_dir_respects_sinex_cache_dir() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let cache_dir = dir.path().join("explicit-cache");
+        let mut env = EnvGuard::with_keys(&["SINEX_CACHE_DIR", "SINEX_DEV_CACHE_ROOT"]);
+        env.set("SINEX_CACHE_DIR", &cache_dir);
+        env.clear("SINEX_DEV_CACHE_ROOT");
+
+        let config = Config::from_env();
+        assert_eq!(config.cache_dir, cache_dir);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_config_cache_dir_uses_dev_cache_root_without_cache_dir() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let cache_root = dir.path().join("dev-cache");
+        let mut env = EnvGuard::with_keys(&["SINEX_CACHE_DIR", "SINEX_DEV_CACHE_ROOT"]);
+        env.clear("SINEX_CACHE_DIR");
+        env.set("SINEX_DEV_CACHE_ROOT", &cache_root);
+
+        let config = Config::from_env();
+        assert_eq!(config.cache_dir, cache_root);
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_workspace_target_dir_respects_cargo_target_dir() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
         let target_dir = dir.path().join("target-cache");
@@ -424,37 +388,42 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_default_workspace_cache_root_prefers_writable_system_cache() -> TestResult<()> {
+    async fn test_workspace_cache_root_respects_sinex_dev_cache_root() -> TestResult<()> {
         let workspace = tempfile::tempdir()?;
-        let system_cache = tempfile::tempdir()?;
+        let cache_root = workspace.path().join("configured-cache");
+        let mut env = EnvGuard::with_keys(&["SINEX_DEV_CACHE_ROOT", "CARGO_TARGET_DIR"]);
+        env.set("SINEX_DEV_CACHE_ROOT", &cache_root);
+        env.clear("CARGO_TARGET_DIR");
 
-        let cache_root =
-            default_workspace_cache_root_with_system_cache(workspace.path(), system_cache.path());
+        assert_eq!(workspace_cache_root_for(workspace.path()), cache_root);
+        Ok(())
+    }
 
-        assert!(
-            cache_root.starts_with(system_cache.path().join("sinex")),
-            "writable system cache should be preferred, got {}",
-            cache_root.display()
-        );
-        let expected_key = workspace_cache_key(workspace.path());
+    #[sinex_test]
+    async fn test_workspace_cache_root_falls_back_to_checkout_cache() -> TestResult<()> {
+        let workspace = tempfile::tempdir()?;
+        let mut env = EnvGuard::with_keys(&["SINEX_DEV_CACHE_ROOT"]);
+        env.clear("SINEX_DEV_CACHE_ROOT");
+
         assert_eq!(
-            cache_root.file_name().and_then(std::ffi::OsStr::to_str),
-            Some(expected_key.as_str())
+            workspace_cache_root_for(workspace.path()),
+            workspace.path().join(".sinex/cache")
         );
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_default_workspace_cache_root_falls_back_without_system_cache() -> TestResult<()> {
+    async fn test_workspace_target_dir_respects_sinex_dev_cache_root() -> TestResult<()> {
         let workspace = tempfile::tempdir()?;
-        let unavailable_system_cache = workspace.path().join("missing-system-cache");
+        let cache_root = workspace.path().join("configured-cache");
+        let mut env = EnvGuard::with_keys(&["SINEX_DEV_CACHE_ROOT", "CARGO_TARGET_DIR"]);
+        env.set("SINEX_DEV_CACHE_ROOT", &cache_root);
+        env.clear("CARGO_TARGET_DIR");
 
-        let cache_root = default_workspace_cache_root_with_system_cache(
-            workspace.path(),
-            &unavailable_system_cache,
+        assert_eq!(
+            workspace_target_dir_for(workspace.path()),
+            cache_root.join("target")
         );
-
-        assert_eq!(cache_root, workspace.path().join(".sinex/cache"));
         Ok(())
     }
 

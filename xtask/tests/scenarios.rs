@@ -330,5 +330,5 @@ fn find_workspace_root() -> color_eyre::eyre::Result<std::path::PathBuf> {
 }
 
 fn get_target_dir_test(workspace_root: &std::path::Path) -> std::path::PathBuf {
-    xtask::config::workspace_target_dir_for(workspace_root)
+    xtask::workspace_target_dir_for(workspace_root)
 }
