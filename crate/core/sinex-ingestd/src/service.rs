@@ -18,6 +18,7 @@ use sinex_node_sdk::heartbeat::HeartbeatEmitter;
 use sinex_node_sdk::systemd_notify;
 use sinex_node_sdk::{SelfObserver, SelfObserverConfig};
 use sinex_primitives::Id;
+use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{NodeName, NodeType};
 use sinex_primitives::environment as sinex_environment;
 use sinex_primitives::nats::create_or_open_kv_store;
@@ -803,6 +804,12 @@ impl IngestService {
         let fetch_max = self.config.consumer_fetch_max_messages.max(1);
         let max_ack_pending = self.config.consumer_max_ack_pending;
         let stats_log_interval = Duration::from_secs(self.config.stats_log_interval_secs);
+        let future_ts_skew =
+            time::Duration::seconds(self.config.ts_orig_future_skew_secs as i64);
+        let ts_orig_lower_bound = Timestamp::from_unix_timestamp(
+            self.config.ts_orig_lower_bound_unix,
+        )
+        .expect("default ts_orig_lower_bound_unix must produce valid timestamp");
 
         let heartbeat_handle = self.heartbeat_counter_handle.clone();
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
@@ -816,6 +823,8 @@ impl IngestService {
             .with_batch_fetch_config(fetch_max, fetch_timeout)
             .with_max_ack_pending(max_ack_pending)
             .with_stats_log_interval(stats_log_interval)
+            .with_future_ts_skew(future_ts_skew)
+            .with_ts_orig_lower_bound(ts_orig_lower_bound)
             .with_observer(observer);
 
             if let Some(hb) = heartbeat_handle {
