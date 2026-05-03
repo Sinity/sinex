@@ -143,8 +143,8 @@ async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> T
     .fetch_one(pool)
     .await?;
     assert_eq!(
-        relation_state.0, "v",
-        "command_frequency_hourly must be restored as the live event-time view surface, got relkind={} definition={}",
+        relation_state.0, "m",
+        "command_frequency_hourly must be restored as a continuous aggregate (materialized view), got relkind={} definition={}",
         relation_state.0, relation_state.1
     );
 
@@ -182,8 +182,8 @@ async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> T
     .fetch_one(pool)
     .await?;
     assert!(
-        !ca_exists,
-        "command_frequency_hourly must no longer be registered as a Timescale continuous aggregate"
+        ca_exists,
+        "command_frequency_hourly must be registered as a Timescale continuous aggregate"
     );
 
     let summary_exists = sqlx::query_scalar::<_, bool>(
@@ -230,9 +230,9 @@ async fn declarative_diff_detects_polluted_telemetry_view_kind(ctx: TestContext)
     let drift = sinex_schema::apply::diff(&ctx.pool).await?;
     assert!(
         drift.iter().any(|entry| {
-            entry.contains("command_frequency_hourly") && entry.contains("expected a view")
+            entry.contains("command_frequency_hourly") && entry.contains("continuous aggregate registration")
         }),
-        "diff must report command_frequency_hourly kind drift, got: {drift:?}"
+        "diff must report command_frequency_hourly CAGG registration drift, got: {drift:?}"
     );
 
     Ok(())
@@ -646,11 +646,24 @@ async fn operator_telemetry_does_not_register_continuous_aggregates(
     .into_iter()
     .collect::<BTreeSet<_>>();
 
-    let expected = BTreeSet::new();
+    let expected = [
+        "assembly_stats_1h",
+        "command_frequency_hourly",
+        "current_window_focus",
+        "file_activity_summary",
+        "gateway_stats_1h",
+        "ingestd_batch_stats_1h",
+        "metric_counters_1h",
+        "node_stats_1h",
+        "stream_stats_1h",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect::<BTreeSet<_>>();
 
     assert_eq!(
         actual, expected,
-        "operator telemetry should no longer rely on Timescale continuous aggregates"
+        "operator telemetry should register all eligible views as Timescale continuous aggregates"
     );
 
     Ok(())
@@ -697,6 +710,13 @@ async fn operator_telemetry_views_include_live_rows(ctx: TestContext) -> TestRes
         *sinex_primitives::temporal::now(),
         material_id.to_uuid(),
         0_i64,
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    // CAGGs are populated by the refresh policy; manually refresh before querying.
+    sqlx::query(
+        r"CALL refresh_continuous_aggregate('sinex_telemetry.ingestd_batch_stats_1h', NULL, NULL)",
     )
     .execute(&ctx.pool)
     .await?;
