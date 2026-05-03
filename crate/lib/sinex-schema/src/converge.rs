@@ -75,6 +75,7 @@ use sea_query::{
     Alias, ColumnDef, ColumnSpec, ForeignKeyCreateStatement, PostgresQueryBuilder, Table,
     TableCreateStatement,
 };
+use sinex_primitives::validation::validate_pg_identifier;
 use sqlx::{Executor, PgPool};
 
 // ─── Public types ────────────────────────────────────────────────────────────
@@ -345,6 +346,14 @@ async fn drop_legacy_columns(
     if columns.is_empty() {
         return Ok(());
     }
+    validate_pg_identifier(schema, "schema")
+        .map_err(|e| ApplyError::Internal(format!("invalid schema identifier: {e}")))?;
+    validate_pg_identifier(table, "table")
+        .map_err(|e| ApplyError::Internal(format!("invalid table identifier: {e}")))?;
+    for col in columns {
+        validate_pg_identifier(col, "column")
+            .map_err(|e| ApplyError::Internal(format!("invalid column identifier: {e}")))?;
+    }
     let clauses: Vec<String> = columns
         .iter()
         .map(|col| format!("DROP COLUMN IF EXISTS {col}"))
@@ -470,6 +479,10 @@ async fn converge_named_constraints(
     if constraints.is_empty() {
         return Ok(());
     }
+    validate_pg_identifier(schema, "schema")
+        .map_err(|e| ApplyError::Internal(format!("invalid schema identifier: {e}")))?;
+    validate_pg_identifier(table, "table")
+        .map_err(|e| ApplyError::Internal(format!("invalid table identifier: {e}")))?;
 
     let existing: HashSet<String> = actual_named_constraints(pool, schema, table)
         .await?

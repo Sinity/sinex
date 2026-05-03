@@ -10,6 +10,7 @@
 use crate::service_container::ServiceContainer;
 use serde_json::Value;
 use sinex_node_sdk::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
+use sinex_primitives::validation::normalize_unicode;
 use sinex_primitives::{Result, SinexError};
 use tracing::warn;
 
@@ -133,9 +134,23 @@ pub async fn handle_dlq_peek(services: &ServiceContainer, params: Value) -> Resu
                     .and_then(|h| h.get("Original-Subject"))
                     .map(std::string::ToString::to_string);
 
-                // Create safe preview of payload (limit size)
+                // Create safe preview of payload (limit size).
+                // Normalize unicode to NFC and reject confusable/direction-override chars;
+                // if normalization fails (e.g. RTL override in payload), fall back to a
+                // safe placeholder so operator UIs are not misled.
                 let payload_str = String::from_utf8_lossy(&msg.payload);
-                let payload_preview = payload_preview(payload_str.as_ref(), 200);
+                let normalized_payload = match normalize_unicode(payload_str.as_ref()) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            payload_len = msg.payload.len(),
+                            "DLQ payload contains dangerous Unicode; replacing preview with sanitized placeholder"
+                        );
+                        "[payload contains dangerous Unicode characters]".to_string()
+                    }
+                };
+                let payload_preview = payload_preview(&normalized_payload, 200);
                 let sequence = require_stream_sequence(
                     msg.info()
                         .map(|info| info.stream_sequence)

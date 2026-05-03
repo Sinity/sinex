@@ -75,13 +75,17 @@ if result.suppressed { /* drop the field */ }
 // Strategies: Redact, Encrypt (XChaCha20-Poly1305), Hash (BLAKE3 MAC), Suppress
 ```
 
-**Coverage gap:** Some ingestors call `privacy::engine()` on their sensitive
-fields (terminal command text, desktop clipboard/window-title, browser
-title/url, system journal/dbus/notification, document text), but
-`sinex-fs-ingestor` and `sinex-document-ingestor` currently emit path-bearing
-fields without a privacy pass — see issue #555. Automata don't re-invoke the
-engine; they rely on upstream redaction. Anything that leaks at the ingestor
-boundary persists into derived events.
+**Coverage:** All ingestors call `privacy::engine()` on their sensitive fields.
+`sinex-fs-ingestor` and `sinex-document-ingestor` call `redact_metadata()` with
+`ProcessingContext::Metadata` on path-bearing fields (verified: `fs-ingestor/unified_node.rs`,
+`document-ingestor/lib.rs`). The previous note about a coverage gap (#555) was stale.
+
+**Open privacy question:** The `Metadata` context only fires the home-prefix collapse rule.
+Secret-bearing filenames (e.g. `id_rsa`, `~/.aws/credentials`) receive path-redaction but not
+catalog-pattern redaction. Whether that is correct is a privacy-policy question tracked separately.
+
+Automata don't re-invoke the engine; they rely on upstream redaction. Anything that leaks at the
+ingestor boundary persists into derived events.
 
 ---
 
