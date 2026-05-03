@@ -5,7 +5,7 @@
 // Local crate imports
 use crate::{
     IngestdResult, JetStreamTopology, SinexError, config::IngestdConfig,
-    material_ready_set::MaterialReadySet, validator::EventValidator,
+    material_ready_set::MaterialReadySet, validator::IngestEventValidator,
 };
 // External crates
 use async_nats::{Client as NatsClient, jetstream};
@@ -135,7 +135,7 @@ pub struct IngestService {
     db_pool: Option<PgPool>,
     nats_client: Option<NatsClient>,
     jetstream: Option<jetstream::Context>,
-    validator: Arc<RwLock<EventValidator>>,
+    validator: Arc<RwLock<IngestEventValidator>>,
     observer: Arc<SelfObserver>,
     shutdown_flag: Arc<AtomicBool>,
     shutdown_notify: Arc<tokio::sync::Notify>,
@@ -276,7 +276,7 @@ impl IngestService {
     async fn init_validator(
         config: &IngestdConfig,
         pool: Option<&PgPool>,
-    ) -> IngestdResult<EventValidator> {
+    ) -> IngestdResult<IngestEventValidator> {
         if let Some(pool) = pool {
             let _lock = try_acquire_migration_lock(pool).await?;
 
@@ -285,14 +285,14 @@ impl IngestService {
             }
 
             if config.strict_validation {
-                EventValidator::load_schemas_from_db_strict(pool, config.validate_schemas).await
+                IngestEventValidator::load_schemas_from_db_strict(pool, config.validate_schemas).await
             } else {
-                EventValidator::load_schemas_from_db(pool, config.validate_schemas).await
+                IngestEventValidator::load_schemas_from_db(pool, config.validate_schemas).await
             }
         } else if config.strict_validation {
-            Ok(EventValidator::new_strict(false))
+            Ok(IngestEventValidator::new_strict(false))
         } else {
-            Ok(EventValidator::new(false))
+            Ok(IngestEventValidator::new(false))
         }
     }
 
@@ -958,7 +958,7 @@ impl IngestService {
                         let validation_enabled = validator.read().await.validation_enabled();
 
                         // Load fresh schemas without holding any lock (does DB I/O).
-                        let new_inner = EventValidator::load_fresh_schemas_with_options(
+                        let new_inner = IngestEventValidator::load_fresh_schemas_with_options(
                             &pool,
                             validation_enabled,
                         )
@@ -1289,7 +1289,7 @@ impl IngestService {
     }
 
     async fn broadcast_active_schemas(
-        validator: &EventValidator,
+        validator: &IngestEventValidator,
         nats_client: &NatsClient,
         pool: &PgPool,
     ) -> IngestdResult<()> {
@@ -1420,7 +1420,7 @@ mod tests {
             db_pool: None,
             nats_client: None,
             jetstream: None,
-            validator: Arc::new(RwLock::new(EventValidator::new(false))),
+            validator: Arc::new(RwLock::new(IngestEventValidator::new(false))),
             observer: Arc::new(SelfObserver::disabled()),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             shutdown_notify: Arc::new(tokio::sync::Notify::new()),

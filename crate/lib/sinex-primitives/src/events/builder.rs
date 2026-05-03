@@ -166,7 +166,7 @@ impl<T> EventBuilder<T, HasProvenance> {
 
     /// Set operation ID on both the provenance (if Synthesis) and the event-level
     /// `created_by_operation_id` field.
-    pub fn with_operation(mut self, operation_id: Id<Operation>) -> Self {
+    pub fn with_operation(mut self, operation_id: Id<OperationMarker>) -> Self {
         if let Some(Provenance::Synthesis {
             operation_id: ref mut op_id,
             ..
@@ -264,7 +264,7 @@ pub enum Provenance {
     /// Event derived from other events (synthesized event)
     Synthesis {
         source_event_ids: NonEmptyVec<EventId>,
-        operation_id: Option<Id<Operation>>,
+        operation_id: Option<Id<OperationMarker>>,
     },
 }
 
@@ -338,7 +338,7 @@ struct ProvenanceWire {
     #[serde(skip_serializing_if = "Option::is_none")]
     source_event_ids: Option<Vec<EventId>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    operation_id: Option<Id<Operation>>,
+    operation_id: Option<Id<OperationMarker>>,
 }
 
 impl Serialize for Provenance {
@@ -450,9 +450,12 @@ impl<'de> Deserialize<'de> for Provenance {
     }
 }
 
-/// Marker type for operation IDs  
+/// Marker type for operation IDs used in `Id<OperationMarker>`.
+///
+/// Renamed from `Operation` to avoid collision with the RPC wire struct
+/// `sinex_primitives::rpc::ops::Operation` — see issue #746 (A2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Operation;
+pub struct OperationMarker;
 
 impl Provenance {
     pub fn from_material(
@@ -494,7 +497,7 @@ impl Provenance {
     /// Set the operation ID on Synthesis provenance.
     /// No-op on Material provenance.
     #[must_use]
-    pub fn with_operation(mut self, op_id: Id<Operation>) -> Self {
+    pub fn with_operation(mut self, op_id: Id<OperationMarker>) -> Self {
         if let Provenance::Synthesis {
             ref mut operation_id,
             ..
@@ -507,7 +510,7 @@ impl Provenance {
 
     /// Get the operation ID if this is Synthesis provenance.
     #[must_use]
-    pub fn operation_id(&self) -> Option<Id<Operation>> {
+    pub fn operation_id(&self) -> Option<Id<OperationMarker>> {
         match self {
             Provenance::Synthesis { operation_id, .. } => *operation_id,
             Provenance::Material { .. } => None,

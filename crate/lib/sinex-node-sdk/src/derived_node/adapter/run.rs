@@ -13,7 +13,7 @@ use crate::runtime::stream::{Checkpoint, NodeRuntimeState, ScanArgs, ScanReport}
 use crate::{NodeResult, SinexError};
 
 use sinex_primitives::Id;
-use sinex_primitives::events::builder::Operation;
+use sinex_primitives::events::builder::OperationMarker;
 use sinex_primitives::temporal::Timestamp;
 
 use std::collections::HashMap;
@@ -308,7 +308,7 @@ where
         let batch_size: i64 = 500;
 
         // Extract operation ID from replay args if present
-        let operation_id: Option<Id<Operation>> =
+        let operation_id: Option<Id<OperationMarker>> =
             args.replay.as_ref().map(|r| Id::from_uuid(r.operation_id));
 
         loop {

@@ -33,10 +33,8 @@ impl<T: Node + 'static> NodeRunner<T> {
         raw_config: &HashMap<String, serde_json::Value>,
     ) -> NodeResult<Option<Uuid>> {
         let node_name = NodeName::new(self.node.node_name());
-        let node_type = match self.node.node_type() {
-            NodeType::Ingestor => sinex_primitives::domain::NodeType::Ingestor,
-            NodeType::Automaton => sinex_primitives::domain::NodeType::Automaton,
-        };
+        // NodeType is now re-exported from sinex_primitives::domain — no conversion needed.
+        let node_type = self.node.node_type();
         let manifest = pool
             .state()
             .register_node(&node_name, node_type, version, None)

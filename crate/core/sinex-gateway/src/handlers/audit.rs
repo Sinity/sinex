@@ -10,7 +10,7 @@ use sinex_db::repositories::state::Operation as DbOperation;
 use sinex_primitives::domain::DataTier;
 use sinex_primitives::events::Event;
 use sinex_primitives::rpc::lifecycle::LifecycleOperationSummary;
-use sinex_primitives::rpc::ops::Operation;
+use sinex_primitives::events::builder::OperationMarker;
 use sinex_primitives::{Id, SinexError, Timestamp};
 use sqlx::PgPool;
 use std::str::FromStr;
@@ -73,7 +73,7 @@ fn explicit_lifecycle_summary(
     Ok(Some(summary))
 }
 
-fn parse_affected_event_tier(operation_id: &Id<Operation>, tier: &str) -> Result<Option<DataTier>> {
+fn parse_affected_event_tier(operation_id: &Id<OperationMarker>, tier: &str) -> Result<Option<DataTier>> {
     DataTier::from_str(tier).map(Some).map_err(|error| {
         SinexError::invalid_state(format!(
             "operation {operation_id} returned invalid affected-event tier '{tier}'"
@@ -84,7 +84,7 @@ fn parse_affected_event_tier(operation_id: &Id<Operation>, tier: &str) -> Result
 
 async fn query_affected_events_by_operation_links(
     pool: &PgPool,
-    operation_id: &Id<Operation>,
+    operation_id: &Id<OperationMarker>,
     limit: i64,
     after_id: Option<&Id<Event>>,
 ) -> Result<(Vec<EventSummary>, bool)> {
@@ -165,7 +165,7 @@ async fn query_affected_events_by_operation_links(
 
 async fn query_affected_events_by_ids(
     pool: &PgPool,
-    operation_id: &Id<Operation>,
+    operation_id: &Id<OperationMarker>,
     affected_event_ids: &[uuid::Uuid],
     limit: i64,
     after_id: Option<&Id<Event>>,
@@ -267,7 +267,7 @@ async fn query_affected_events_by_ids(
 async fn query_affected_events(
     pool: &PgPool,
     operation_type: &str,
-    operation_id: &Id<Operation>,
+    operation_id: &Id<OperationMarker>,
     duration_ms: Option<i32>,
     limit: i64,
     after_id: Option<&Id<Event>>,

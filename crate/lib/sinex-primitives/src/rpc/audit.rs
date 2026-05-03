@@ -2,8 +2,8 @@
 
 use crate::domain::{DataTier, EventSource, EventType, OperationStatus};
 use crate::events::Event;
+use crate::events::builder::OperationMarker;
 use crate::ids::Id;
-use crate::rpc::ops::Operation;
 use crate::temporal::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -15,7 +15,7 @@ fn default_audit_limit() -> usize {
 /// Operation record from the operations log
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationRecord {
-    pub id: Id<Operation>,
+    pub id: Id<OperationMarker>,
     pub operation_type: String,
     pub operator: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -41,7 +41,7 @@ pub struct EventSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tier: Option<DataTier>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provenance_operation_id: Option<Id<Operation>>,
+    pub provenance_operation_id: Option<Id<OperationMarker>>,
 }
 
 /// Audit trail combining operation and affected events
@@ -59,7 +59,7 @@ pub struct AuditTrail {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditGetRequest {
     /// Operation ID to get audit trail for
-    pub operation_id: Id<Operation>,
+    pub operation_id: Id<OperationMarker>,
     /// Maximum number of affected events to return per page (default 100, max 1000)
     #[serde(default = "default_audit_limit")]
     pub limit: usize,

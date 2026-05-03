@@ -246,23 +246,10 @@ pub struct ScanReport {
     pub warnings: Vec<String>,
 }
 
-/// Type of stream node
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum NodeType {
-    /// Ingestor: External World -> Event Stream
-    Ingestor,
-    /// Automaton: Event Stream -> `DerivedEvent` Stream
-    Automaton,
-}
-
-impl std::fmt::Display for NodeType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Ingestor => write!(f, "ingestor"),
-            Self::Automaton => write!(f, "automaton"),
-        }
-    }
-}
+/// Re-export from sinex-primitives so SDK consumers see the canonical three-variant enum
+/// (`Ingestor | Automaton | Service`). The former two-variant local copy dropped `Service`
+/// silently during RPC round-trips — see issue #746 (A5).
+pub use sinex_primitives::domain::NodeType;
 
 /// Node capabilities
 #[derive(Debug, Clone, Serialize, Deserialize)]
