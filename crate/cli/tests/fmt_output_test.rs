@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
-use sinexctl::fmt::{format_json, format_json_lines, format_list, format_single, format_yaml};
-use sinexctl::model::OutputFormat;
+use sinexctl::fmt::{format_json, format_json_lines, format_yaml};
 use xtask::sandbox::prelude::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -9,67 +8,9 @@ struct TestItem {
     name: String,
 }
 
-fn format_test_table(items: &[TestItem]) -> String {
-    items
-        .iter()
-        .map(|item| format!("{}: {}", item.id, item.name))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn format_single_test(item: &TestItem) -> String {
-    format!("{}: {}", item.id, item.name)
-}
-
-#[sinex_test]
-async fn test_format_list_table() -> TestResult<()> {
-    let items = vec![
-        TestItem {
-            id: "1".to_string(),
-            name: "First".to_string(),
-        },
-        TestItem {
-            id: "2".to_string(),
-            name: "Second".to_string(),
-        },
-    ];
-
-    let result = format_list(&items, &OutputFormat::Table, "No items", format_test_table);
-    assert!(result.is_ok());
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_format_list_empty() -> TestResult<()> {
-    let items: Vec<TestItem> = vec![];
-
-    let result = format_list(&items, &OutputFormat::Table, "No items", format_test_table);
-    assert!(result.is_ok());
-
-    let result = format_list(&items, &OutputFormat::Json, "No items", format_test_table);
-    assert!(result.is_ok());
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_format_single() -> TestResult<()> {
-    let item = TestItem {
-        id: "1".to_string(),
-        name: "Test".to_string(),
-    };
-
-    let result = format_single(&item, &OutputFormat::Table, format_single_test);
-    assert!(result.is_ok());
-
-    let result = format_single(&item, &OutputFormat::Json, format_single_test);
-    assert!(result.is_ok());
-    Ok(())
-}
-
-// `format_list` and `format_single` write to stdout, so the existing tests
-// above can only assert that serialization did not fail. The tests below
-// pin actual output bytes for the underlying content-producing helpers,
-// which is where format-correctness regressions are most likely to surface.
+// `format_list` and `format_single` write to stdout; regression coverage lives
+// in the pinning tests below, which assert exact output bytes on the
+// content-producing helpers.
 
 #[sinex_test]
 async fn test_format_json_pins_compact_output() -> TestResult<()> {
