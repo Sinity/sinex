@@ -445,6 +445,174 @@ pub fn find_ssns(input: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
+// ─── PESEL ───────────────────────────────────────────────────
+
+/// Pre-filter regex for Polish PESEL numbers: exactly 11 consecutive digits,
+/// not preceded or followed by a digit (word-boundary is unreliable for
+/// pure-digit patterns, so we check adjacent bytes manually after matching).
+#[allow(clippy::expect_used)] // Compile-time constant regex
+static PESEL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\d{11}").expect("pesel regex"));
+
+/// PESEL checksum validation.
+///
+/// Weights `[1, 3, 7, 9, 1, 3, 7, 9, 1, 3]` are applied to the first 10
+/// digits. The weighted sum mod 10 is subtracted from 10 (with 10 → 0) and
+/// must equal the 11th digit.
+fn is_valid_pesel(digits: &str) -> bool {
+    let bytes: Vec<u8> = digits
+        .chars()
+        .filter(char::is_ascii_digit)
+        .map(|c| c as u8 - b'0')
+        .collect();
+    if bytes.len() != 11 {
+        return false;
+    }
+    const WEIGHTS: [u32; 10] = [1, 3, 7, 9, 1, 3, 7, 9, 1, 3];
+    let sum: u32 = bytes[..10]
+        .iter()
+        .zip(WEIGHTS.iter())
+        .map(|(&d, &w)| u32::from(d) * w)
+        .sum();
+    let check = (10 - (sum % 10)) % 10;
+    check == u32::from(bytes[10])
+}
+
+/// Find PESEL numbers in input that pass checksum validation.
+pub fn find_pesels(input: &str) -> Vec<(usize, usize)> {
+    PESEL_RE
+        .find_iter(input)
+        .filter(|m| {
+            // Reject if adjacent character is also a digit (embedded in longer number).
+            let before_ok = m.start() == 0
+                || !input.as_bytes().get(m.start() - 1).is_some_and(u8::is_ascii_digit);
+            let after_ok = !input.as_bytes().get(m.end()).is_some_and(u8::is_ascii_digit);
+            before_ok && after_ok && is_valid_pesel(m.as_str())
+        })
+        .map(|m| (m.start(), m.end()))
+        .collect()
+}
+
+// ─── NIP ─────────────────────────────────────────────────────
+
+/// Pre-filter regex for Polish NIP tax numbers.
+/// Accepts bare 10 digits or dashed formats: `XXX-XXX-XX-XX` or `XXX-XX-XX-XXX`.
+#[allow(clippy::expect_used)] // Compile-time constant regex
+static NIP_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?x)
+        \b
+        (?:
+            \d{3}-\d{3}-\d{2}-\d{2}    # XXX-XXX-XX-XX
+            |
+            \d{3}-\d{2}-\d{2}-\d{3}    # XXX-XX-XX-XXX
+            |
+            \d{10}                      # bare 10-digit
+        )
+        \b
+        ",
+    )
+    .expect("nip regex")
+});
+
+/// NIP checksum validation.
+///
+/// Weights `[6, 5, 7, 2, 3, 4, 5, 6, 7]` applied to the first 9 digits.
+/// Sum mod 11 must equal the 10th digit. If the mod gives 10 the number is
+/// invalid (no valid NIP has check digit 10).
+fn is_valid_nip(candidate: &str) -> bool {
+    let digits: Vec<u8> = candidate
+        .chars()
+        .filter(char::is_ascii_digit)
+        .map(|c| c as u8 - b'0')
+        .collect();
+    if digits.len() != 10 {
+        return false;
+    }
+    const WEIGHTS: [u32; 9] = [6, 5, 7, 2, 3, 4, 5, 6, 7];
+    let sum: u32 = digits[..9]
+        .iter()
+        .zip(WEIGHTS.iter())
+        .map(|(&d, &w)| u32::from(d) * w)
+        .sum();
+    let modulo = sum % 11;
+    if modulo == 10 {
+        return false; // invalid — no check digit of 10
+    }
+    modulo == u32::from(digits[9])
+}
+
+/// Find NIP numbers in input that pass checksum validation.
+pub fn find_nips(input: &str) -> Vec<(usize, usize)> {
+    NIP_RE
+        .find_iter(input)
+        .filter(|m| is_valid_nip(m.as_str()))
+        .map(|m| (m.start(), m.end()))
+        .collect()
+}
+
+// ─── REGON ───────────────────────────────────────────────────
+
+/// Pre-filter regex for Polish REGON business registry numbers.
+/// 9-digit (sole trader / small business) or 14-digit (branch) forms.
+#[allow(clippy::expect_used)] // Compile-time constant regex
+static REGON_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b\d{14}\b|\b\d{9}\b").expect("regon regex")
+});
+
+/// REGON-9 checksum: weights `[8,9,2,3,4,5,6,7]` on first 8 digits,
+/// sum mod 11 (10 → 0) == 9th digit.
+fn is_valid_regon9(digits: &[u8]) -> bool {
+    debug_assert_eq!(digits.len(), 9);
+    const W: [u32; 8] = [8, 9, 2, 3, 4, 5, 6, 7];
+    let sum: u32 = digits[..8]
+        .iter()
+        .zip(W.iter())
+        .map(|(&d, &w)| u32::from(d) * w)
+        .sum();
+    let check = sum % 11 % 10;
+    check == u32::from(digits[8])
+}
+
+/// REGON-14 checksum: weights `[2,4,8,5,0,9,7,3,6,1,2,4,8]` on first 13 digits,
+/// sum mod 11 (10 → 0) == 14th digit. First 9 digits must also pass REGON-9.
+fn is_valid_regon14(digits: &[u8]) -> bool {
+    debug_assert_eq!(digits.len(), 14);
+    if !is_valid_regon9(&digits[..9]) {
+        return false;
+    }
+    const W: [u32; 13] = [2, 4, 8, 5, 0, 9, 7, 3, 6, 1, 2, 4, 8];
+    let sum: u32 = digits[..13]
+        .iter()
+        .zip(W.iter())
+        .map(|(&d, &w)| u32::from(d) * w)
+        .sum();
+    let check = sum % 11 % 10;
+    check == u32::from(digits[13])
+}
+
+fn is_valid_regon(candidate: &str) -> bool {
+    let digits: Vec<u8> = candidate
+        .chars()
+        .filter(char::is_ascii_digit)
+        .map(|c| c as u8 - b'0')
+        .collect();
+    match digits.len() {
+        9 => is_valid_regon9(&digits),
+        14 => is_valid_regon14(&digits),
+        _ => false,
+    }
+}
+
+/// Find REGON numbers in input that pass checksum validation.
+pub fn find_regons(input: &str) -> Vec<(usize, usize)> {
+    REGON_RE
+        .find_iter(input)
+        .filter(|m| is_valid_regon(m.as_str()))
+        .map(|m| (m.start(), m.end()))
+        .collect()
+}
+
 // ─── Dispatcher ──────────────────────────────────────────────
 
 use super::StructuralDetector;
@@ -462,6 +630,9 @@ pub fn find_matches(detector: StructuralDetector, input: &str) -> Vec<(usize, us
         StructuralDetector::UserHomePath => find_home_paths(input),
         StructuralDetector::LocalHostname => find_hostnames(input),
         StructuralDetector::Ssn => find_ssns(input),
+        StructuralDetector::Pesel => find_pesels(input),
+        StructuralDetector::Nip => find_nips(input),
+        StructuralDetector::Regon => find_regons(input),
     }
 }
 
@@ -702,6 +873,130 @@ mod tests {
     #[sinex_test]
     async fn ssn_rejects_invalid_in_text() -> ::xtask::sandbox::TestResult<()> {
         let matches = find_ssns("invalid 000-45-6789");
+        assert!(matches.is_empty());
+        Ok(())
+    }
+
+    // ── PESEL ──
+
+    #[sinex_test]
+    async fn pesel_checksum_valid() -> ::xtask::sandbox::TestResult<()> {
+        // Known-good PESEL: 44051401458
+        // Weights [1,3,7,9,1,3,7,9,1,3] × digits [4,4,0,5,1,4,0,1,4,5]
+        // = 4+12+0+45+1+12+0+9+4+15 = 102 → 102 % 10 = 2 → (10-2)%10 = 8 ≠ last digit 8 ✓
+        assert!(is_valid_pesel("44051401458"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn pesel_checksum_invalid() -> ::xtask::sandbox::TestResult<()> {
+        // Change last digit → checksum fails
+        assert!(!is_valid_pesel("44051401459"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn pesel_finds_in_text() -> ::xtask::sandbox::TestResult<()> {
+        let matches = find_pesels("PESEL: 44051401458 ok");
+        assert_eq!(matches.len(), 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn pesel_rejects_embedded_in_longer_number() -> ::xtask::sandbox::TestResult<()> {
+        // Embedded in a 12-digit string — not a standalone PESEL
+        let matches = find_pesels("440514014580");
+        assert!(matches.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn pesel_rejects_random_11_digits() -> ::xtask::sandbox::TestResult<()> {
+        // 11 digits but bad checksum
+        let matches = find_pesels("12345678901");
+        assert!(matches.is_empty());
+        Ok(())
+    }
+
+    // ── NIP ──
+
+    #[sinex_test]
+    async fn nip_checksum_valid() -> ::xtask::sandbox::TestResult<()> {
+        // NIP 5261040828: weights [6,5,7,2,3,4,5,6,7] × [5,2,6,1,0,4,0,8,2]
+        // = 30+10+42+2+0+16+0+48+14 = 162 → 162 % 11 = 8 → check digit = 8 ✓
+        assert!(is_valid_nip("5261040828"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn nip_checksum_invalid() -> ::xtask::sandbox::TestResult<()> {
+        assert!(!is_valid_nip("5261040829"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn nip_dashed_format_xxx_xxx_xx_xx() -> ::xtask::sandbox::TestResult<()> {
+        let matches = find_nips("NIP: 526-104-08-28");
+        assert_eq!(matches.len(), 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn nip_dashed_format_xxx_xx_xx_xxx() -> ::xtask::sandbox::TestResult<()> {
+        let matches = find_nips("NIP: 526-10-40-828");
+        assert_eq!(matches.len(), 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn nip_bare_10_digits() -> ::xtask::sandbox::TestResult<()> {
+        let matches = find_nips("nip=5261040828");
+        assert_eq!(matches.len(), 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn nip_rejects_invalid_checksum() -> ::xtask::sandbox::TestResult<()> {
+        let matches = find_nips("5261040829");
+        assert!(matches.is_empty());
+        Ok(())
+    }
+
+    // ── REGON ──
+
+    #[sinex_test]
+    async fn regon9_checksum_valid() -> ::xtask::sandbox::TestResult<()> {
+        // REGON 060026144: weights [8,9,2,3,4,5,6,7] × [0,6,0,0,2,6,1,4]
+        // = 0+54+0+0+8+30+6+28 = 126 → 126 % 11 = 5 → 5 % 10 = 5 ≠ last digit 4
+        // Use a known-good REGON instead: 591457824
+        // weights × [5,9,1,4,5,7,8,2] = 40+81+2+12+20+35+48+14 = 252
+        // 252 % 11 = 10 → 10 % 10 = 0 ≠ 4... let me use the example 060026144 differently.
+        // Actually verify: digits [0,6,0,0,2,6,1,4,4]
+        // W=[8,9,2,3,4,5,6,7]: 0*8=0 6*9=54 0*2=0 0*3=0 2*4=8 6*5=30 1*6=6 4*7=28
+        // sum=126 → 126%11=5 → 5%10=5. Check digit=4. 5≠4 → invalid.
+        // Use 123456785: [1,2,3,4,5,6,7,8,5]
+        // 8+18+6+12+20+30+42+56=192 → 192%11=5 → 5%10=5 ≠ 5 ✓
+        assert!(is_valid_regon9(&[1, 2, 3, 4, 5, 6, 7, 8, 5]));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn regon9_checksum_invalid() -> ::xtask::sandbox::TestResult<()> {
+        assert!(!is_valid_regon9(&[1, 2, 3, 4, 5, 6, 7, 8, 6]));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn regon9_finds_in_text() -> ::xtask::sandbox::TestResult<()> {
+        let matches = find_regons("REGON: 123456785 koniec");
+        assert_eq!(matches.len(), 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn regon9_rejects_bad_checksum() -> ::xtask::sandbox::TestResult<()> {
+        // 123456786 has wrong check digit
+        let matches = find_regons("REGON 123456786");
         assert!(matches.is_empty());
         Ok(())
     }
