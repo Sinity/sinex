@@ -75,7 +75,7 @@ async fn test_cleanup_removes_stale_entries() -> TestResult<()> {
     limiter.check("token2").ok();
     assert_eq!(limiter.token_count(), 2);
 
-    std::thread::sleep(Duration::from_millis(10));
+    tokio::time::sleep(Duration::from_millis(10)).await;
 
     limiter.cleanup_stale();
     assert_eq!(limiter.token_count(), 0);
