@@ -24,8 +24,6 @@ pub struct NodeVersion {
     pub full_version: String,
     /// Git commit hash (8 characters)
     pub commit_hash: String,
-    /// Git commit count (used for ordering when versions match)
-    pub commit_count: u32,
     /// Git branch name
     pub branch: String,
     /// Build timestamp (RFC3339)
@@ -44,7 +42,6 @@ impl NodeVersion {
             version: node_version()?,
             full_version: node_full_version(),
             commit_hash: node_commit_hash(),
-            commit_count: node_commit_count(),
             branch: node_branch(),
             build_timestamp: node_build_timestamp(),
             is_dirty: node_is_dirty(),
@@ -107,15 +104,9 @@ impl Ord for NodeVersion {
                     (false, true) => Ordering::Greater,
                     (true, false) => Ordering::Less,
                     _ => {
-                        // Both dirty or both clean - compare commit count (more commits = newer)
-                        match self.commit_count.cmp(&other.commit_count) {
-                            Ordering::Equal => {
-                                // Same commit count - use build timestamp (development rebuilds)
-                                // This enables hot reload with same semver to prefer newer builds
-                                self.build_timestamp.cmp(&other.build_timestamp)
-                            }
-                            other => other,
-                        }
+                        // Both dirty or both clean - use build timestamp (development rebuilds)
+                        // This enables hot reload with same semver to prefer newer builds
+                        self.build_timestamp.cmp(&other.build_timestamp)
                     }
                 }
             }
@@ -143,7 +134,6 @@ impl FromStr for NodeVersion {
             version,
             full_version: s.to_string(),
             commit_hash: "unknown".to_string(),
-            commit_count: 0,
             branch: "unknown".to_string(),
             build_timestamp: sinex_primitives::temporal::now().format_rfc3339(),
             is_dirty: false,
@@ -257,18 +247,6 @@ pub fn node_commit_hash() -> String {
     }
 }
 
-/// Get git commit count
-///
-/// Note: shadow-rs doesn't provide commit count directly.
-/// We use a placeholder of 0 since the ordering logic primarily uses
-/// semver and build timestamp for tiebreaking anyway.
-#[must_use]
-pub fn node_commit_count() -> u32 {
-    // shadow-rs doesn't provide total commit count
-    // The ordering logic uses build timestamp as final tiebreaker,
-    // so this is only used for initial ordering of same-semver builds
-    0
-}
 
 /// Get git branch name
 #[must_use]

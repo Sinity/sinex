@@ -29,9 +29,9 @@ register_source_unit! {
             ("fs-watcher", "file.deleted"),
             ("fs-watcher", "file.moved"),
         ],
-        // Paths can leak home-directory layout and filenames may carry secrets;
-        // path-bearing events are unredacted today (#555 tracks the engine-pass
-        // gap). Treat as Secret until that lands.
+        // Paths can leak home-directory layout and filenames may carry secrets.
+        // Path redaction is applied in unified_node.rs via redact_metadata().
+        // Treat as Secret during ingestion.
         privacy_tier: PrivacyTier::Secret,
         runtime_shape: RuntimeShape::Continuous,
         horizons: &[Horizon::Continuous, Horizon::Historical],
