@@ -175,6 +175,12 @@ pub enum StructuralDetector {
     LocalHostname,
     /// US Social Security Numbers (format-validated, excludes invalid area/group/serial).
     Ssn,
+    /// Polish national identification number (PESEL) — 11 digits with checksum validation.
+    Pesel,
+    /// Polish tax identification number (NIP) — 10 digits with checksum validation.
+    Nip,
+    /// Polish business registry number (REGON) — 9 or 14 digits.
+    Regon,
 }
 
 // ─── Rule ────────────────────────────────────────────────────
