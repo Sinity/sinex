@@ -4,7 +4,7 @@ use crate::Timestamp;
 use crate::events::enums::{
     BluetoothEventType, DBusBus, DeviceType, JournalSyncType, LoopStatus, MountEventType,
     NetworkConnectionType, NetworkEventType, NetworkState, PlaybackStatus, PowerEventType,
-    ScanType, SystemdActiveState, SystemdUnitType, UdevAction,
+    SystemdActiveState, SystemdUnitType, UdevAction,
 };
 use crate::units::{ExitCode, Microseconds, ProcessId, SyslogPriority, UnixGid, UnixUid};
 use schemars::JsonSchema;
