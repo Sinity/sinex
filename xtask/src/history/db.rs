@@ -5997,7 +5997,7 @@ mod tests {
         db.record_test_result(
             id,
             "health_aggregator_tracks_component_status",
-            "sinex-health-automaton",
+            "sinex-process",
             "pass",
             1.0,
             None,
@@ -6009,7 +6009,7 @@ mod tests {
             "health_aggregator_tracks_component_status".to_string(),
             crate::nextest::junit::JunitTestMeta {
                 output: None,
-                classname: Some("sinex-health-automaton::aggregation_test".to_string()),
+                classname: Some("sinex-process::aggregation_test".to_string()),
                 failure_message: None,
                 failure_type: None,
             },
@@ -6023,7 +6023,7 @@ mod tests {
             params![id],
             |row| row.get(0),
         )?;
-        assert_eq!(pkg, "sinex-health-automaton");
+        assert_eq!(pkg, "sinex-process");
 
         Ok(())
     }

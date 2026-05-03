@@ -1,0 +1,84 @@
+[[bin]]
+name = "sinex-process"
+path = "src/main.rs"
+
+[package]
+name = "sinex-process"
+
+[lib]
+doctest = false
+
+[package.version]
+workspace = true
+
+[package.edition]
+workspace = true
+
+[package.authors]
+workspace = true
+
+[package.repository]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dependencies]
+human-panic = "2.0"
+gethostname = "0.4"
+tracing = "0.1"
+
+[dependencies.mimalloc]
+workspace = true
+
+[dependencies.camino]
+workspace = true
+
+[dependencies.color-eyre]
+workspace = true
+
+[dependencies.async-trait]
+workspace = true
+
+[dependencies.tokio]
+workspace = true
+features = [
+    "full",
+]
+
+[dependencies.time]
+workspace = true
+
+[dependencies.tracing-subscriber]
+workspace = true
+
+[dependencies.clap]
+workspace = true
+features = [
+    "derive",
+    "env",
+]
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.sinex-node-sdk]
+path = "../../lib/sinex-node-sdk"
+
+[dependencies.sinex-primitives]
+path = "../../lib/sinex-primitives"
+
+[dev-dependencies.xtask]
+path = "../../../xtask"
+
+[dev-dependencies.sinex-primitives]
+path = "../../lib/sinex-primitives"
+features = [
+    "testing",
+]
+
+[lints]
+workspace = true

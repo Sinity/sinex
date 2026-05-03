@@ -651,18 +651,16 @@ fn required_empty_fields(unit: &SourceUnitDescriptor) -> Vec<String> {
 
 fn runner_pack_binary(runner_pack: &str) -> Option<&'static str> {
     match runner_pack {
-        "analytics" => Some("sinex-analytics-automaton"),
+        // Automata are consolidated into sinex-process
+        "analytics" | "daily" | "health" | "hourly" | "session" | "process" => {
+            Some("sinex-process")
+        }
         "browser" => Some("sinex-browser-ingestor"),
-        "daily" => Some("sinex-daily-summarizer"),
         "desktop" => Some("sinex-desktop-ingestor"),
         "document" => Some("sinex-document-ingestor"),
         "fs" => Some("sinex-fs-ingestor"),
-        "health" => Some("sinex-health-automaton"),
-        "hourly" => Some("sinex-hourly-summarizer"),
-        "session" => Some("sinex-session-detector"),
         "system" => Some("sinex-system-ingestor"),
         "terminal" => Some("sinex-terminal-ingestor"),
-        "terminal-canonicalizer" => Some("sinex-terminal-command-canonicalizer"),
         _ => None,
     }
 }
