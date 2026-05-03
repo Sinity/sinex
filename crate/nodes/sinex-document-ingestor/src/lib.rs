@@ -590,9 +590,7 @@ impl DocumentNode {
 
         // Run the file path through the privacy engine so user-home prefixes
         // are collapsed to `<HOME>/...` before the event leaves the ingestor.
-        // The catalog rule `user_home_path` already substitutes the home
-        // prefix; until the engine is invoked it does nothing. See issue
-        // #555.
+        // Apply privacy redaction to file paths (redact_metadata invokes the engine).
         let redacted_file_path = redact_metadata(document.sanitized_path.as_str())?;
         let payload = DocumentIngestedPayload {
             file_path: redacted_file_path,
@@ -659,7 +657,7 @@ impl DocumentNode {
 /// rather than swallowed — the ingestor cannot honestly emit if redaction
 /// is broken.
 ///
-/// See issue #555.
+/// Apply privacy redaction to file metadata (e.g., file paths).
 fn redact_metadata(value: &str) -> NodeResult<String> {
     Ok(privacy::process(value, ProcessingContext::Metadata)
         .map_err(|error| {

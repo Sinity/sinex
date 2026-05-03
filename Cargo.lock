@@ -5529,27 +5529,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
-name = "sinex-analytics-automaton"
-version = "0.4.2"
-dependencies = [
- "async-trait",
- "clap",
- "color-eyre",
- "human-panic",
- "mimalloc",
- "serde",
- "serde_json",
- "sinex-node-sdk",
- "sinex-primitives",
- "sqlx",
- "time",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "xtask",
-]
-
-[[package]]
 name = "sinex-browser-ingestor"
 version = "0.4.2"
 dependencies = [
@@ -5576,23 +5555,6 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "validator",
- "xtask",
-]
-
-[[package]]
-name = "sinex-daily-summarizer"
-version = "0.4.2"
-dependencies = [
- "clap",
- "color-eyre",
- "human-panic",
- "mimalloc",
- "serde",
- "sinex-node-sdk",
- "sinex-primitives",
- "tokio",
- "tracing",
- "tracing-subscriber",
  "xtask",
 ]
 
@@ -5802,45 +5764,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-health-automaton"
-version = "0.4.2"
-dependencies = [
- "async-trait",
- "camino",
- "clap",
- "color-eyre",
- "gethostname 0.4.3",
- "human-panic",
- "mimalloc",
- "serde",
- "serde_json",
- "sinex-node-sdk",
- "sinex-primitives",
- "time",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "xtask",
-]
-
-[[package]]
-name = "sinex-hourly-summarizer"
-version = "0.4.2"
-dependencies = [
- "clap",
- "color-eyre",
- "human-panic",
- "mimalloc",
- "serde",
- "sinex-node-sdk",
- "sinex-primitives",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "xtask",
-]
-
-[[package]]
 name = "sinex-ingestd"
 version = "0.4.2"
 dependencies = [
@@ -6003,6 +5926,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-process"
+version = "0.4.2"
+dependencies = [
+ "async-trait",
+ "camino",
+ "clap",
+ "color-eyre",
+ "gethostname 0.4.3",
+ "human-panic",
+ "mimalloc",
+ "serde",
+ "serde_json",
+ "sinex-node-sdk",
+ "sinex-primitives",
+ "time",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "xtask",
+]
+
+[[package]]
 name = "sinex-schema"
 version = "0.4.2"
 dependencies = [
@@ -6022,24 +5967,6 @@ dependencies = [
  "tokio-test",
  "tracing",
  "uuid",
- "xtask",
-]
-
-[[package]]
-name = "sinex-session-detector"
-version = "0.4.2"
-dependencies = [
- "clap",
- "color-eyre",
- "human-panic",
- "mimalloc",
- "serde",
- "serde_json",
- "sinex-node-sdk",
- "sinex-primitives",
- "tokio",
- "tracing",
- "tracing-subscriber",
  "xtask",
 ]
 
@@ -6077,27 +6004,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "xtask",
-]
-
-[[package]]
-name = "sinex-terminal-command-canonicalizer"
-version = "0.4.2"
-dependencies = [
- "async-trait",
- "camino",
- "clap",
- "color-eyre",
- "human-panic",
- "mimalloc",
- "serde",
- "serde_json",
- "sinex-node-sdk",
- "sinex-primitives",
- "time",
- "tokio",
- "tracing",
- "tracing-subscriber",
  "xtask",
 ]
 
@@ -6168,15 +6074,12 @@ dependencies = [
  "rcgen",
  "reqwest 0.12.24",
  "serde_json",
- "sinex-analytics-automaton",
  "sinex-db",
  "sinex-gateway",
- "sinex-health-automaton",
  "sinex-node-sdk",
  "sinex-primitives",
+ "sinex-process",
  "sinex-schema",
- "sinex-session-detector",
- "sinex-terminal-command-canonicalizer",
  "sqlx",
  "tempfile",
  "time",
@@ -8908,21 +8811,16 @@ dependencies = [
  "serde_yml",
  "sha2",
  "shadow-rs",
- "sinex-analytics-automaton",
  "sinex-browser-ingestor",
- "sinex-daily-summarizer",
  "sinex-db",
  "sinex-desktop-ingestor",
  "sinex-document-ingestor",
  "sinex-fs-ingestor",
- "sinex-health-automaton",
- "sinex-hourly-summarizer",
  "sinex-node-sdk",
  "sinex-primitives",
+ "sinex-process",
  "sinex-schema",
- "sinex-session-detector",
  "sinex-system-ingestor",
- "sinex-terminal-command-canonicalizer",
  "sinex-terminal-ingestor",
  "sqlx",
  "sysinfo 0.38.0",

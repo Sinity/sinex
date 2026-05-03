@@ -24,9 +24,9 @@ use super::state::AssemblyPhase;
 use super::{MaterialAssembler, MaterialEndMessage};
 use std::{str::FromStr, sync::Arc};
 
-#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy)]
 pub(super) enum PendingEndBehavior {
+    #[cfg(test)]
     Error,
     Ignore,
 }

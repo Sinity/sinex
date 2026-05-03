@@ -19,9 +19,6 @@ mod state;
 #[cfg(test)]
 mod test_support;
 
-// Reserved for future periodic disk space monitoring task
-const _DISK_SPACE_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(5);
-
 use async_nats::{Client as NatsClient, jetstream};
 use blake3::Hasher;
 use dashmap::DashMap;
