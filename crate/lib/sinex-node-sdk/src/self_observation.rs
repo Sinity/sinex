@@ -519,6 +519,7 @@ impl SelfObserver {
     }
 
     /// Emit gateway request statistics.
+    #[allow(clippy::too_many_arguments)]
     pub async fn emit_gateway_stats(
         &self,
         total: u64,
@@ -527,6 +528,8 @@ impl SelfObserver {
         rate_limited: u64,
         avg_latency_ms: Option<f64>,
         p99_latency_ms: Option<f64>,
+        min_latency_ms: Option<f64>,
+        max_latency_ms: Option<f64>,
         active_connections: u32,
     ) -> Result<(), SelfObservationError> {
         self.publish(GatewayRequestStatsPayload {
@@ -536,6 +539,8 @@ impl SelfObserver {
             rate_limited_requests: rate_limited,
             avg_latency_ms,
             p99_latency_ms,
+            min_latency_ms,
+            max_latency_ms,
             active_connections,
         })
         .await

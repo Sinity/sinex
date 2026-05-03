@@ -251,6 +251,15 @@ impl GatewayMetrics {
             None
         };
 
+        let (min_latency_ms, max_latency_ms) = if snapshot.latency_count > 0 {
+            (
+                Some(snapshot.latency_min_us as f64 / 1000.0),
+                Some(snapshot.latency_max_us as f64 / 1000.0),
+            )
+        } else {
+            (None, None)
+        };
+
         // We don't have p99 without a histogram, so skip it
         if let Err(error) = self
             .observer
@@ -261,6 +270,8 @@ impl GatewayMetrics {
                 snapshot.rate_limited_requests,
                 avg_latency_ms,
                 None, // p99 requires histogram
+                min_latency_ms,
+                max_latency_ms,
                 snapshot.active_connections,
             )
             .await

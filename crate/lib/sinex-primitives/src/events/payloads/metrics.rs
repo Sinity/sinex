@@ -167,6 +167,12 @@ pub struct GatewayRequestStatsPayload {
     /// P99 latency in milliseconds
     #[serde(skip_serializing_if = "Option::is_none")]
     pub p99_latency_ms: Option<f64>,
+    /// Minimum latency in milliseconds (over the snapshot window)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_latency_ms: Option<f64>,
+    /// Maximum latency in milliseconds (over the snapshot window)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_latency_ms: Option<f64>,
     /// Active connections
     pub active_connections: u32,
 }
