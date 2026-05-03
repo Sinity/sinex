@@ -263,6 +263,40 @@ impl Events {
         "SELECT create_hypertable('core.events', by_range('id'), if_not_exists => TRUE);"
     }
 
+    /// Enables native TimescaleDB compression on `core.events`.
+    ///
+    /// Uses `source_material_id` as the segmentby column (groups related events by
+    /// provenance material) and `id DESC` as the orderby (aligns with the UUIDv7
+    /// partition key for efficient time-range pruning within compressed segments).
+    #[must_use]
+    pub fn enable_compression_sql() -> &'static str {
+        r#"
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM timescaledb_information.compression_settings
+                WHERE hypertable_name = 'events'
+                  AND hypertable_schema = 'core'
+            ) THEN
+                ALTER TABLE core.events SET (
+                    timescaledb.compress,
+                    timescaledb.compress_segmentby = 'source_material_id',
+                    timescaledb.compress_orderby = 'id DESC'
+                );
+            END IF;
+        END
+        $$;
+        "#
+    }
+
+    /// Adds an automatic compression policy: chunks older than 7 days are compressed
+    /// by the TimescaleDB background worker.
+    #[must_use]
+    pub fn add_compression_policy_sql() -> &'static str {
+        "SELECT add_compression_policy('core.events', INTERVAL '7 days', if_not_exists => true);"
+    }
+
     /// Generates all necessary indexes for `core.events`.
     ///
     /// ## Index Strategy
