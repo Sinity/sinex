@@ -17,6 +17,8 @@ use std::time::Duration;
 use sha2::{Digest, Sha256};
 use tracing::warn;
 
+use sinex_primitives::validation::validate_pg_identifier;
+
 use super::config::replace_db_name;
 use super::meta::{TemplateInfo, TemplateMeta};
 use super::metrics::POOL_METRICS;
@@ -701,6 +703,8 @@ pub(super) async fn harden_template_database(
     admin_conn: &mut PgConnection,
     template_name: &str,
 ) -> TestResult<()> {
+    validate_pg_identifier(template_name, "database")
+        .map_err(|e| eyre!("cannot harden template database: {e}"))?;
     let quoted = quote_ident(template_name);
     let clone_lock_id = advisory_lock_key(&format!("{template_name}::clone"));
     sqlx::query("SELECT pg_advisory_lock($1)")
@@ -1055,6 +1059,8 @@ async fn probe_template_schema_drift(
     admin_url: &str,
     template_name: &str,
 ) -> TestResult<Option<String>> {
+    validate_pg_identifier(template_name, "database")
+        .map_err(|e| eyre!("cannot probe template schema drift: {e}"))?;
     let quoted = quote_ident(template_name);
     // Serialize probe/cloning against the template. The shared fast path can be entered by
     // multiple nextest processes at once, and toggling `ALLOW_CONNECTIONS` concurrently on the
@@ -1110,6 +1116,8 @@ async fn rebuild_template(
     slot_max_connections: u32,
     template_start: std::time::Instant,
 ) -> TestResult<HashMap<String, String>> {
+    validate_pg_identifier(template_name, "database")
+        .map_err(|e| eyre!("cannot rebuild template database: {e}"))?;
     POOL_METRICS.record_template_recreation();
     eprintln!(
         "♻️  Template database '{template_name}' requires recreation; rebuilding from scratch"
@@ -1175,6 +1183,8 @@ async fn rebuild_template(
 
 /// Create a template database, tolerating "already exists" races.
 async fn create_template_db(admin_conn: &mut PgConnection, template_name: &str) -> TestResult<()> {
+    validate_pg_identifier(template_name, "database")
+        .map_err(|e| eyre!("cannot create template database: {e}"))?;
     let quoted_template = quote_ident(template_name);
     let create_query = format!("CREATE DATABASE {quoted_template}");
     match tokio::time::timeout(

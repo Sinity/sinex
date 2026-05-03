@@ -114,7 +114,11 @@ pub fn setup_ephemeral(config: &PostgresConfig) -> Result<(PgInstance, PgEnv)> {
         mgr.ensure_role(role, false, false, &config.superuser)?;
     }
 
-    // Set operation ID default for the role
+    // Validate all identifier fields that are interpolated into DDL before any use.
+    // app_user was checked immediately before the ALTER ROLE; validate superuser and
+    // database here so every field that reaches a format!() SQL builder is covered.
+    validate_pg_identifier(&config.superuser, "role")?;
+    validate_pg_identifier(&config.database, "database")?;
     validate_pg_identifier(&config.app_user, "role")?;
     let stmt = format!(
         "ALTER ROLE {} SET sinex.operation_id = '{}';",

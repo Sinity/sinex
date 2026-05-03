@@ -3,6 +3,7 @@
 use crate::sandbox::prelude::*;
 use serde::de::DeserializeOwned;
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::validation::validate_pg_identifier;
 use sqlx::Row;
 use sqlx::pool::PoolConnection;
 use sqlx::postgres::PgConnection;
@@ -217,6 +218,8 @@ pub(super) async fn drop_database_if_exists(
     conn: &mut PoolConnection<Postgres>,
     name: &str,
 ) -> TestResult<()> {
+    validate_pg_identifier(name, "database")
+        .map_err(|e| eyre!("cannot DROP DATABASE: {e}"))?;
     let quoted = quote_ident(name);
     sqlx::query(&format!("DROP DATABASE IF EXISTS {quoted} WITH (FORCE)"))
         .execute(conn.as_mut())
@@ -230,6 +233,8 @@ pub(super) async fn drop_database_if_exists_admin(
     conn: &mut PgConnection,
     name: &str,
 ) -> TestResult<()> {
+    validate_pg_identifier(name, "database")
+        .map_err(|e| eyre!("cannot DROP DATABASE: {e}"))?;
     let quoted = quote_ident(name);
     sqlx::query(&format!("DROP DATABASE IF EXISTS {quoted} WITH (FORCE)"))
         .execute(&mut *conn)
@@ -380,6 +385,10 @@ pub(super) async fn create_database_from_template(
     name: &str,
     template_name: &str,
 ) -> TestResult<CreateDatabaseOutcome> {
+    validate_pg_identifier(name, "database")
+        .map_err(|e| eyre!("cannot CREATE DATABASE: {e}"))?;
+    validate_pg_identifier(template_name, "database")
+        .map_err(|e| eyre!("cannot CREATE DATABASE TEMPLATE: {e}"))?;
     // Prevent concurrent template recreation while cloning.
     let template_lock_id = advisory_lock_key(template_name);
     sqlx::query("SELECT pg_advisory_lock_shared($1)")
@@ -436,6 +445,10 @@ pub(super) async fn create_database_from_template_admin(
     name: &str,
     template_name: &str,
 ) -> TestResult<CreateDatabaseOutcome> {
+    validate_pg_identifier(name, "database")
+        .map_err(|e| eyre!("cannot CREATE DATABASE: {e}"))?;
+    validate_pg_identifier(template_name, "database")
+        .map_err(|e| eyre!("cannot CREATE DATABASE TEMPLATE: {e}"))?;
     // Serialize CREATE DATABASE ... TEMPLATE ... calls; Postgres can error when the template is
     // concurrently used as a copy source.
     let clone_lock_id = advisory_lock_key(&format!("{template_name}::clone"));

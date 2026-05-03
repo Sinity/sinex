@@ -6,6 +6,7 @@
 pub mod config_validation;
 mod core;
 pub mod file_watching_security;
+pub mod pg_identifier;
 pub mod query_validation;
 pub mod validation_chains;
 
@@ -17,6 +18,9 @@ pub use core::{
     normalize_unicode, sanitize_filename_component, validate_json, validate_json_value,
     validate_path, validate_path_within_root,
 };
+
+// Re-export PostgreSQL identifier validation
+pub use pg_identifier::validate_pg_identifier;
 
 // Re-export error types
 pub use crate::error::Result;

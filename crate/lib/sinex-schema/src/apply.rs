@@ -8,6 +8,7 @@ use crate::schema::{
 };
 use crate::schema_registry;
 use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement};
+use sinex_primitives::validation::validate_pg_identifier;
 use sqlx::{Executor, PgPool};
 
 const REQUIRED_EXTENSIONS: &[&str] = &["pg_jsonschema", "vector", "timescaledb", "pg_trgm"];
@@ -238,6 +239,8 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
 
 async fn ensure_schemas(pool: &PgPool) -> Result<(), ApplyError> {
     for schema in schema_registry::schema_names() {
+        validate_pg_identifier(schema, "schema")
+            .map_err(|e| ApplyError::Internal(format!("invalid schema identifier: {e}")))?;
         let sql = format!("CREATE SCHEMA IF NOT EXISTS {schema}");
         execute_sql(pool, &sql).await?;
     }

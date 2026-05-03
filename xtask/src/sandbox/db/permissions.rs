@@ -1,5 +1,6 @@
 use crate::sandbox::db::pool::replace_db_name;
 use crate::sandbox::prelude::*;
+use sinex_primitives::validation::validate_pg_identifier;
 use sinex_schema::schema_registry;
 
 pub struct PermissionGranter {
@@ -16,6 +17,10 @@ impl PermissionGranter {
     }
 
     pub async fn grant_schema_access(&self, pool: &DbPool, schema: &str) -> Result<()> {
+        // Validate before interpolating into DDL GRANT statements.
+        validate_pg_identifier(schema, "schema")
+            .map_err(|e| eyre!("cannot GRANT on schema: {e}"))?;
+
         // We use the provided pool (which should have enough permissions, or we'd use a superuser pool)
         // In some environments, the template pool is already superuser-connected.
 
