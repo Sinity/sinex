@@ -29,7 +29,6 @@ pub use path_validator::{VerifiedPath, create_secure_temp_path, validate_and_con
 
 pub const LOCAL_BLAKE3_CAS_BACKEND: &str = "SINEXBLAKE3";
 const LOCAL_BLAKE3_CAS_DIR: &str = "sinex-cas";
-const LOCAL_BLAKE3_CAS_MAX_BYTES: u64 = 16 * 1024 * 1024;
 const CONTENT_STORE_PROCESS_COUNTERS_PATH_ENV: &str = "SINEX_CONTENT_STORE_PROCESS_COUNTERS_PATH";
 
 static CONTENT_STORE_PROCESS_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
@@ -471,41 +470,7 @@ impl MaterialContentStore {
             .await
             .map_err(SinexError::io)?
             .len();
-        if file_size <= LOCAL_BLAKE3_CAS_MAX_BYTES {
-            return self.store_file_local_cas(&resolved_path, file_size).await;
-        }
-
-        let (ingest_path, needs_cleanup) = if resolved_path.starts_with(&self.config.root_path) {
-            (resolved_path.clone(), false)
-        } else {
-            let temp_name = format!("ingest-{}.tmp", Uuid::now_v7());
-            let target = self.config.root_path.join(temp_name);
-            tokio::fs::copy(&resolved_path, &target)
-                .await
-                .map_err(SinexError::io)?;
-            (target, true)
-        };
-
-        let relative_path = ingest_path
-            .strip_prefix(&self.config.root_path)
-            .unwrap_or(&ingest_path)
-            .to_owned();
-
-        // Keep git-annex bounded to the finalization operation. A resident
-        // add --batch process retains Haskell runtime memory inside service
-        // cgroups; source streams must reduce material cardinality before
-        // this storage boundary instead.
-        let key = self.add_file_direct(&relative_path, &resolved_path).await?;
-
-        if needs_cleanup && let Err(e) = tokio::fs::remove_file(&ingest_path).await {
-            warn!(
-                error = %e,
-                path = %ingest_path,
-                "Failed to clean up staged ingest file inside content-store root"
-            );
-        }
-
-        Ok(key)
+        self.store_file_local_cas(&resolved_path, file_size).await
     }
 
     async fn store_file_local_cas(
