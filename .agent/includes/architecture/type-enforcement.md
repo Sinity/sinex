@@ -47,13 +47,13 @@ Application code checks at boundaries, but violations can reach the check.
 | Path traversal protection | `validate_path()` at API boundary | Only called where explicitly used |
 | JSON depth/size limits | `validate_json()` at API boundary | Only called where explicitly used |
 
-### Level 5: Convention + Startup Check
+### Level 5: Convention + Lazy Check
 
-Correctness depends on matching two manual lists, but startup panics if they diverge.
+Correctness depends on matching two manual lists, verified lazily on first use.
 
 | Convention | Verification |
 |------------|-------------|
-| COPY column list matches schema | `verify_event_copy_contract()` at startup — panics on mismatch |
+| COPY column list matches schema | `verify_event_copy_contract()` lazy via OnceLock on first COPY batch — panics on mismatch |
 | EventPayload constants match NATS subjects | Inventory collection at startup |
 
 ### Level 6: Convention Only (Weakest)
