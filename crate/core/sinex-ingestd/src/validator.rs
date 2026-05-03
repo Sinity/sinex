@@ -319,7 +319,7 @@ impl EventValidator {
         &self,
         source: &EventSource,
         event_type: &EventType,
-    ) -> Option<Arc<String>> {
+    ) -> Option<Arc<str>> {
         self.inner.get_schema_version(source, event_type)
     }
 
