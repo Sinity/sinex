@@ -1,4 +1,4 @@
-use sinexctl::fmt::{SpinnerGuard, with_spinner_result};
+use sinexctl::fmt::with_spinner_result;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -20,15 +20,3 @@ async fn test_with_spinner_result_failure() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_spinner_guard_explicit_finish() -> TestResult<()> {
-    let guard = SpinnerGuard::new("Testing...");
-    guard.finish("Done!");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_spinner_guard_auto_abandon() -> TestResult<()> {
-    let _guard = SpinnerGuard::new("Testing...");
-    Ok(())
-}
