@@ -8,6 +8,7 @@ name = "sinex-ingestd"
 [dependencies]
 libc = "0.2"
 human-panic = "2.0"
+shadow-rs = "0.35"
 
 [package.version]
 workspace = true
