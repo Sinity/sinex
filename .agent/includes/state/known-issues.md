@@ -53,4 +53,3 @@ This include keeps only the compressed memory surface for AGENTS consumers.
 
 - No known scratch-backed backlog remains outside GitHub issues or tracked docs.
 - Generated AGENTS surface is derived from tracked includes, not from ignored scratch state.
-- `master` currently contains the April 22 proof-carrying SDK merge through `d6724ef2e`.
