@@ -56,6 +56,27 @@ pub enum ConfigError {
     MissingField(String),
 }
 
+impl From<ConfigError> for sinex_primitives::error::SinexError {
+    fn from(err: ConfigError) -> Self {
+        match err {
+            ConfigError::Io(ref source) => {
+                sinex_primitives::error::SinexError::configuration("node config IO error")
+                    .with_source(source)
+            }
+            ConfigError::Validation(ref msg) => {
+                sinex_primitives::error::SinexError::configuration("node config validation failed")
+                    .with_context("detail", msg)
+            }
+            ConfigError::MissingField(ref field) => {
+                sinex_primitives::error::SinexError::configuration(
+                    "missing required node config field",
+                )
+                .with_context("field", field)
+            }
+        }
+    }
+}
+
 /// Base configuration for all node services.
 ///
 /// This structure contains common configuration fields shared by all
