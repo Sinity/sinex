@@ -13,27 +13,6 @@ use sinex_macros::EventPayload;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "system", event_type = "scan.started")]
-/// Emitted when a system scan kicks off.
-pub struct ScanStartedPayload {
-    pub scan_type: ScanType,
-    pub target: String,
-    pub options: HashMap<String, serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "system", event_type = "scan.completed")]
-/// Summarises a completed scan.
-pub struct ScanCompletedPayload {
-    pub scan_type: ScanType,
-    pub target: String,
-    pub items_scanned: u64,
-    pub items_found: u64,
-    pub duration_ms: u64,
-    pub errors: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "journald", event_type = "log_entry.captured")]
 /// Captures a journald log entry with raw fields.
 pub struct JournalEntryPayload {
@@ -233,16 +212,6 @@ pub struct SystemdUnitStoppedPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "systemd", event_type = "unit.status")]
-pub struct SystemdUnitStatusPayload {
-    pub unit_name: String,
-    pub unit_type: SystemdUnitType,
-    pub description: String,
-    pub action: String,
-    pub timestamp: Timestamp,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "systemd", event_type = "unit.failed")]
 pub struct SystemdUnitFailedPayload {
     pub unit_name: String,
@@ -276,30 +245,6 @@ pub struct SystemdTimerTriggeredPayload {
     pub uid: Option<String>,
     pub timestamp: Timestamp,
     pub journal_timestamp: Option<Timestamp>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "systemd", event_type = "unit.starting")]
-pub struct SystemdUnitStartingPayload {
-    pub status: String,
-    pub status_detail: String,
-    pub timestamp: Timestamp,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "systemd", event_type = "unit.stopping")]
-pub struct SystemdUnitStoppingPayload {
-    pub status: String,
-    pub status_detail: String,
-    pub timestamp: Timestamp,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "systemd", event_type = "unit.state_changed")]
-pub struct SystemdUnitStateChangedPayload {
-    pub status: String,
-    pub status_detail: String,
-    pub timestamp: Timestamp,
 }
 
 // udev device events

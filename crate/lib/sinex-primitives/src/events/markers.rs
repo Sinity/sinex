@@ -64,8 +64,6 @@ impl DesktopRelated for desktop::WindowManagerHistoricalPayload {}
 impl DocumentRelated for document::DocumentIngestedPayload {}
 
 // System
-impl SystemRelated for system::ScanStartedPayload {}
-impl SystemRelated for system::ScanCompletedPayload {}
 impl SystemRelated for system::JournalEntryPayload {}
 impl SystemRelated for system::JournalSyncCompletedPayload {}
 impl SystemRelated for system::JournalEntryWrittenPayload {}
@@ -80,13 +78,9 @@ impl SystemRelated for system::DbusNetworkStateChangedPayload {}
 impl SystemRelated for system::DbusMountEventPayload {}
 impl SystemRelated for system::SystemdUnitStartedPayload {}
 impl SystemRelated for system::SystemdUnitStoppedPayload {}
-impl SystemRelated for system::SystemdUnitStatusPayload {}
 impl SystemRelated for system::SystemdUnitFailedPayload {}
 impl SystemRelated for system::SystemdUnitReloadedPayload {}
 impl SystemRelated for system::SystemdTimerTriggeredPayload {}
-impl SystemRelated for system::SystemdUnitStartingPayload {}
-impl SystemRelated for system::SystemdUnitStoppingPayload {}
-impl SystemRelated for system::SystemdUnitStateChangedPayload {}
 impl SystemRelated for system::UdevDeviceAddedPayload {}
 impl SystemRelated for system::UdevDeviceRemovedPayload {}
 impl SystemRelated for system::UdevDeviceConnectedPayload {}
