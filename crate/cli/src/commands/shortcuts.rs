@@ -72,7 +72,14 @@ impl StatusCommand {
         match client.list_nodes(None).await {
             Ok(nodes) => {
                 let total = nodes.len();
-                let healthy = nodes.iter().filter(|n| n.last_heartbeat.is_some()).count();
+                let now = Timestamp::now();
+                let healthy = nodes
+                    .iter()
+                    .filter(|n| {
+                        n.last_heartbeat
+                            .is_some_and(|hb| (now - hb).whole_seconds() < 60)
+                    })
+                    .count();
                 let status = if healthy == total {
                     RuntimeStatusSignalStatus::Healthy
                 } else if healthy > 0 {
@@ -213,7 +220,7 @@ EXAMPLES:
     sinexctl recent -n 50
 
     # Last 100 events from terminal
-    sinexctl recent -n 100 --source terminal-ingestor
+    sinexctl recent -n 100 --source shell.atuin
 ")]
 pub struct RecentCommand {
     /// Number of events to show
@@ -438,10 +445,10 @@ EXAMPLES:
     sinexctl watch
 
     # Watch events from terminal ingestor
-    sinexctl watch --source terminal-ingestor
+    sinexctl watch --source shell.atuin
 
     # Watch process execution events
-    sinexctl watch --event-type process_exec
+    sinexctl watch --event-type process.started
 ")]
 pub struct WatchCommand {
     /// Filter by source
@@ -517,6 +524,8 @@ impl WatchCommand {
                             .as_object()
                             .and_then(|obj| {
                                 obj.get("path")
+                                    .or(obj.get("command_string"))
+                                    .or(obj.get("window_title"))
                                     .or(obj.get("command"))
                                     .or(obj.get("title"))
                                     .and_then(|v| v.as_str())

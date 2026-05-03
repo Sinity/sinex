@@ -184,14 +184,18 @@ impl ContextCommand {
 /// Anything else: strip leading "sinex-" and trailing "-ingestor"/"-automaton".
 fn display_source(source: &str) -> String {
     let friendly = match source {
-        s if s.contains("fs") && s.contains("ingestor") => "filesystem",
-        s if s.contains("terminal") && s.contains("ingestor") => "terminal",
-        s if s.contains("desktop") && s.contains("ingestor") => "desktop",
-        s if s.contains("system") && s.contains("ingestor") => "system",
-        s if s.contains("document") && s.contains("ingestor") => "document",
-        s if s.contains("analytics") && s.contains("automaton") => "analytics",
-        s if s.contains("health") && s.contains("automaton") => "health",
-        s if s.contains("terminal") && s.contains("command") => "cmd-canonical",
+        "shell.atuin" | "shell.asciinema" | "shell.kitty" | "shell.scrollback" => "terminal",
+        "wm.hyprland" | "wm.unhandled" => "desktop",
+        "fs-watcher" => "filesystem",
+        "journald" | "dbus" | "udev" => "system",
+        "clipboard" => "clipboard",
+        s if s.starts_with("browser.") => "browser",
+        s if s.starts_with("derived.") => "derived",
+        s if s.starts_with("device.") => "device",
+        s if s.starts_with("bluetooth.") => "bluetooth",
+        s if s.starts_with("blob") => "blob-store",
+        s if s.starts_with("sinex.") => "platform",
+        s if s.starts_with("canonical.") => "canonical",
         _ => "",
     };
 
@@ -199,9 +203,10 @@ fn display_source(source: &str) -> String {
         return friendly.to_string();
     }
 
-    // Generic strip
+    // Fallback: strip common prefixes/suffixes
     let mut s = source;
     s = s.strip_prefix("sinex-").unwrap_or(s);
+    s = s.strip_prefix("sinex.").unwrap_or(s);
     s = s.strip_suffix("-ingestor").unwrap_or(s);
     s = s.strip_suffix("-automaton").unwrap_or(s);
     s.to_string()
@@ -222,6 +227,7 @@ fn build_detail(result_event: &sinex_primitives::query::QueryResultEvent) -> Str
     if let Some(obj) = payload.as_object() {
         // Priority order of fields to use as the summary
         for key in &[
+            "command_string", "window_title", "unit_name", "process_name",
             "command", "path", "title", "app_name", "unit", "message", "url", "name",
         ] {
             if let Some(val) = obj.get(*key).and_then(|v| v.as_str()) {
