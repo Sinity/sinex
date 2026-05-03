@@ -25,19 +25,12 @@ workspace = true
 
 [dependencies]
 human-panic = "2.0"
-gethostname = "0.4"
 tracing = "0.1"
 
 [dependencies.mimalloc]
 workspace = true
 
 [dependencies.camino]
-workspace = true
-
-[dependencies.color-eyre]
-workspace = true
-
-[dependencies.async-trait]
 workspace = true
 
 [dependencies.tokio]
@@ -47,9 +40,6 @@ features = [
 ]
 
 [dependencies.time]
-workspace = true
-
-[dependencies.tracing-subscriber]
 workspace = true
 
 [dependencies.clap]

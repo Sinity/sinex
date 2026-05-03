@@ -31,12 +31,6 @@ workspace = true
 [dependencies.color-eyre]
 workspace = true
 
-[dependencies.thiserror]
-workspace = true
-
-[dependencies.async-trait]
-workspace = true
-
 [dependencies.tokio]
 workspace = true
 features = [
@@ -44,9 +38,6 @@ features = [
 ]
 
 [dependencies.tracing]
-workspace = true
-
-[dependencies.tracing-subscriber]
 workspace = true
 
 [dependencies.clap]
@@ -61,9 +52,6 @@ workspace = true
 [dependencies.serde_json]
 workspace = true
 
-[dependencies.dirs]
-workspace = true
-
 [dependencies.sqlx]
 workspace = true
 
@@ -74,9 +62,6 @@ features = [
 ]
 
 [dependencies.time]
-workspace = true
-
-[dependencies.futures]
 workspace = true
 
 [dependencies.notify]

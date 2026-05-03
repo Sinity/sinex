@@ -14,12 +14,6 @@ tempfile = "3.10"
 [dependencies.mimalloc]
 workspace = true
 
-[dependencies.async-trait]
-workspace = true
-
-[dependencies.color-eyre]
-workspace = true
-
 [dependencies.serde]
 workspace = true
 
