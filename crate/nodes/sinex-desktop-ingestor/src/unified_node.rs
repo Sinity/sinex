@@ -29,6 +29,7 @@ use sinex_node_sdk::{
     ingestor_node::IngestorNode,
     nats_publisher::NatsPublisher,
     stage_as_you_go::StageAsYouGoContext,
+    supervised_watcher::spawn_watcher_with_panic_catch,
     wait_for_shutdown_signal,
     watcher_handle::WatcherHandle,
 };
@@ -927,12 +928,11 @@ impl IngestorNode for DesktopNode {
                 Ok(mut watcher) => {
                     *handle = WatcherHandle::initialized("clipboard");
                     let health = handle.health_tracker();
-                    let task = tokio::spawn(async move {
-                        if let Err(e) = watcher.start_monitoring().await {
-                            error!("Clipboard monitoring failed: {}", e);
-                            health.write().last_error = Some(e.to_string());
-                        }
-                    });
+                    let task = spawn_watcher_with_panic_catch(
+                        "clipboard",
+                        Some(Arc::clone(&health)),
+                        async move { watcher.start_monitoring().await },
+                    );
                     handle.start(task, None)?;
                     state.health.clipboard_active = true;
                     state.health.clipboard_last_error = None;
@@ -966,12 +966,11 @@ impl IngestorNode for DesktopNode {
                 Ok(mut watcher) => {
                     *handle = WatcherHandle::initialized("window_manager");
                     let health = handle.health_tracker();
-                    let task = tokio::spawn(async move {
-                        if let Err(e) = watcher.start_monitoring().await {
-                            error!("Window manager monitoring failed: {}", e);
-                            health.write().last_error = Some(e.to_string());
-                        }
-                    });
+                    let task = spawn_watcher_with_panic_catch(
+                        "window_manager",
+                        Some(Arc::clone(&health)),
+                        async move { watcher.start_monitoring().await },
+                    );
                     handle.start(task, None)?;
                     state.health.window_manager_active = true;
                     state.health.window_manager_last_error = None;

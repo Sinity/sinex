@@ -95,6 +95,8 @@ pub mod stage_as_you_go;
 pub mod systemd_notify;
 pub mod version;
 #[cfg(feature = "messaging")]
+pub mod supervised_watcher;
+#[cfg(feature = "messaging")]
 pub mod watcher_handle;
 
 #[cfg(feature = "messaging")]
@@ -195,6 +197,10 @@ pub use sqlite_source::{
 #[cfg(feature = "messaging")]
 pub use systemd_notify::{notify_ready, notify_stopping, spawn_watchdog, stop_watchdog};
 pub use version::{NodeInstance, NodeVersion};
+#[cfg(feature = "messaging")]
+pub use supervised_watcher::{
+    SupervisedWatcherConfig, spawn_supervised_watcher, spawn_watcher_with_panic_catch,
+};
 #[cfg(feature = "messaging")]
 pub use watcher_handle::{WatcherHandle, WatcherHealth, WatcherState};
 
