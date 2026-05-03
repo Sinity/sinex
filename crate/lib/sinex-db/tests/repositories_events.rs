@@ -1432,3 +1432,54 @@ async fn event_replacements_record_and_query(ctx: TestContext) -> TestResult<()>
 
     Ok(())
 }
+
+/// `get_by_ids` must return all events when the ID list exceeds 1000 (the per-query chunk size).
+///
+/// Regression test for #916: the previous implementation silently truncated to the first 1000 IDs.
+#[sinex_test]
+async fn get_by_ids_returns_all_events_beyond_chunk_boundary(
+    ctx: TestContext,
+) -> TestResult<()> {
+    use sinex_db::repositories::source_materials::material_types;
+
+    const TOTAL_EVENTS: usize = 1050; // exceeds the 1000-per-chunk boundary
+
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            material_types::STREAM,
+            Some("get-by-ids-chunking-test"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
+
+    let mut inserted_ids = Vec::with_capacity(TOTAL_EVENTS);
+    for i in 0..TOTAL_EVENTS {
+        let payload =
+            KittyCommandExecutedPayload::test_default(format!("echo get-by-ids-chunk-{i}"));
+        let event = Event::builder(payload)
+            .with_provenance(Provenance::from_material(
+                material_id,
+                i as i64,
+                None,
+                None,
+            ))
+            .build()
+            .expect("valid provenance");
+        let inserted = ctx.pool.events().insert(event).await?;
+        inserted_ids.push(inserted.id.expect("inserted event must have an id"));
+    }
+
+    let fetched = ctx.pool.events().get_by_ids(&inserted_ids).await?;
+
+    assert_eq!(
+        fetched.len(),
+        TOTAL_EVENTS,
+        "get_by_ids must return all {} events, not silently truncate to 1000",
+        TOTAL_EVENTS,
+    );
+
+    Ok(())
+}
