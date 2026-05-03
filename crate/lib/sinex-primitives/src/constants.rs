@@ -49,6 +49,13 @@ pub mod limits {
     /// Maximum event batch size for bulk operations
     pub const MAX_EVENT_BATCH_SIZE: usize = 1000;
 
+    /// Maximum raw byte size for a single ingestd event payload (10 MiB).
+    ///
+    /// Enforced before JSON parsing so that oversized payloads are rejected
+    /// without allocating memory for the parse attempt. Corresponds to the
+    /// NATS per-message limit enforced on the publisher side.
+    pub const MAX_EVENT_PAYLOAD_BYTES: usize = 10 * 1024 * 1024;
+
     /// Maximum string length for source names
     pub const MAX_SOURCE_NAME_LENGTH: usize = 255;
 

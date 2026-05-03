@@ -1349,3 +1349,157 @@ async fn test_dlq_entry_omits_missing_nats_msg_id() -> TestResult<()> {
     setup.handle.abort();
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Payload size cap and structural guard tests (#919)
+// ---------------------------------------------------------------------------
+
+/// Helper: build raw bytes that are valid UTF-8 but exceed MAX_EVENT_PAYLOAD_BYTES by 1 byte.
+fn oversized_raw_event_bytes() -> Vec<u8> {
+    use sinex_primitives::constants::limits::MAX_EVENT_PAYLOAD_BYTES;
+    // The padding string must be long enough to push the total byte count over the limit.
+    let padding_len = MAX_EVENT_PAYLOAD_BYTES + 1;
+    let padding = "x".repeat(padding_len);
+    let envelope = format!(
+        r#"{{"id":"{id}","source":"test.size","event_type":"test.oversized","payload":{{"data":"{padding}"}},"ts_orig":"{ts}","host":"test-host"}}"#,
+        id = uuid::Uuid::now_v7(),
+        ts = sinex_primitives::temporal::now().format_rfc3339(),
+        padding = padding,
+    );
+    envelope.into_bytes()
+}
+
+/// Helper: build a JSON envelope whose `payload` field nests deeper than the 32-level limit.
+fn deep_nested_raw_event_bytes() -> Vec<u8> {
+    let mut inner = r#""leaf""#.to_string();
+    // 35 levels of nesting — exceeds the validate_json depth limit of 32.
+    for _ in 0..35 {
+        inner = format!(r#"{{"k":{inner}}}"#);
+    }
+    let envelope = format!(
+        r#"{{"id":"{id}","source":"test.depth","event_type":"test.deep","payload":{inner},"ts_orig":"{ts}","host":"test-host"}}"#,
+        id = uuid::Uuid::now_v7(),
+        ts = sinex_primitives::temporal::now().format_rfc3339(),
+        inner = inner,
+    );
+    envelope.into_bytes()
+}
+
+async fn wait_for_dlq_messages(
+    js: &jetstream::Context,
+    dlq_stream: &str,
+    min_messages: u64,
+) -> TestResult<()> {
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = js.clone();
+            let dlq_stream = dlq_stream.to_string();
+            async move {
+                let mut stream = js
+                    .get_stream(&dlq_stream)
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?;
+                let info = stream
+                    .info()
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?;
+                Ok::<bool, SinexError>(info.state.messages >= min_messages)
+            }
+        },
+        Timeouts::STANDARD,
+    )
+    .await?;
+    Ok(())
+}
+
+/// A payload exceeding 10 MiB must be routed to the DLQ without being parsed.
+#[sinex_test]
+async fn oversized_payload_routes_to_dlq() -> TestResult<()> {
+    let ctx = TestContext::new().await?.with_nats().shared().await?;
+    let suffix = ctx.unique_suffix();
+    let hooks = TestHooks::with_validation();
+    let setup =
+        start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
+            .await?;
+
+    let publisher = TestNodePublisher::with_namespace(
+        setup.nats_client.clone(),
+        "test.size",
+        Some(setup.namespace.clone()),
+    );
+
+    publisher
+        .publish_raw_event_bytes("test.oversized", &oversized_raw_event_bytes())
+        .await?;
+
+    wait_for_dlq_messages(&setup.js, &setup.topology.dlq_stream, 1).await?;
+
+    setup.handle.abort();
+    Ok(())
+}
+
+/// A payload with JSON depth > 32 must be routed to the DLQ.
+#[sinex_test]
+async fn depth_exceeded_payload_routes_to_dlq() -> TestResult<()> {
+    let ctx = TestContext::new().await?.with_nats().shared().await?;
+    let suffix = ctx.unique_suffix();
+    let hooks = TestHooks::with_validation();
+    let setup =
+        start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
+            .await?;
+
+    let publisher = TestNodePublisher::with_namespace(
+        setup.nats_client.clone(),
+        "test.depth",
+        Some(setup.namespace.clone()),
+    );
+
+    publisher
+        .publish_raw_event_bytes("test.deep", &deep_nested_raw_event_bytes())
+        .await?;
+
+    wait_for_dlq_messages(&setup.js, &setup.topology.dlq_stream, 1).await?;
+
+    setup.handle.abort();
+    Ok(())
+}
+
+/// A well-formed event within size and depth limits must be accepted (not routed to DLQ).
+#[sinex_test]
+async fn normal_payload_accepted() -> TestResult<()> {
+    let ctx = TestContext::new().await?.with_nats().shared().await?;
+    let suffix = ctx.unique_suffix();
+    let hooks = TestHooks::with_validation();
+    let setup =
+        start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
+            .await?;
+
+    let publisher = TestNodePublisher::with_namespace(
+        setup.nats_client.clone(),
+        "test.normal",
+        Some(setup.namespace.clone()),
+    );
+
+    publisher
+        .publish("test.event", json!({"hello": "world"}))
+        .await?;
+
+    // Allow a brief window for processing, then assert DLQ stays empty.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let mut stream = setup
+        .js
+        .get_stream(&setup.topology.dlq_stream)
+        .await
+        .map_err(|e| SinexError::network(e.to_string()))?;
+    let info = stream
+        .info()
+        .await
+        .map_err(|e| SinexError::network(e.to_string()))?;
+    assert_eq!(
+        info.state.messages, 0,
+        "DLQ must be empty for a well-formed payload"
+    );
+
+    setup.handle.abort();
+    Ok(())
+}
