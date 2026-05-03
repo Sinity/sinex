@@ -206,8 +206,10 @@ let
   ];
   restartRateLimits = {
     # Long-running capture services must recover after transient infra outages
-    # without requiring a manual `systemctl reset-failed`.
-    StartLimitIntervalSec = 0;
+    # without requiring a manual `systemctl reset-failed`. Defaults disable the
+    # limit; workstations bound it via services.sinex.runtime.restartPolicy.
+    StartLimitIntervalSec = cfg.runtime.restartPolicy.intervalSec;
+    StartLimitBurst = cfg.runtime.restartPolicy.burst;
   };
 
   mkServiceEnv = additionalEnv: baseEnv ++ coordinationEnv ++ additionalEnv;
@@ -237,8 +239,8 @@ let
       Type = "notify";
       User = serviceUser;
       Group = serviceUser;
-      Restart = "on-failure";
-      RestartSec = 10;
+      Restart = cfg.runtime.restartPolicy.mode;
+      RestartSec = cfg.runtime.restartPolicy.backoffSec;
       WatchdogSec = "60s";
       Environment = env;
       ProtectSystem = "strict";
@@ -452,11 +454,12 @@ let
     {
       "sinex-ingestd" = {
         description = "Sinex ingestion daemon";
-        wantedBy = [ "multi-user.target" ];
+        wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
+        restartIfChanged = cfg.runtime.restartOnSwitch;
         after = coreAfter;
         requires = coreRequires;
         wants = coreWants;
-        unitConfig = restartRateLimits // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
+        unitConfig = restartRateLimits // { PartOf = [ "sinex-runtime.target" ]; } // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
         path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
         serviceConfig = mkBaseServiceConfig coreCfg.ingestd.resources
           (
@@ -502,12 +505,14 @@ let
       };
       "sinex-gateway" = {
         description = "Sinex gateway";
-        wantedBy = [ "multi-user.target" ];
+        wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
+        restartIfChanged = cfg.runtime.restartOnSwitch;
         after = gatewayAfter;
         requires = coreRequires ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
         wants = coreWants;
         unitConfig =
           restartRateLimits
+          // { PartOf = [ "sinex-runtime.target" ]; }
           // existingPathAssertions (
             databaseSecretAssertPaths ++ natsSecretAssertPaths ++ gatewaySecretAssertPaths
           );
@@ -677,11 +682,12 @@ let
         in
         {
           description = "Terminal source unit ${sourceUnitId}";
-          wantedBy = [ "multi-user.target" ];
+          wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
+          restartIfChanged = cfg.runtime.restartOnSwitch;
           after = afterUnits;
           requires = requireUnits;
           wants = wantsUnits;
-          unitConfig = restartRateLimits // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
+          unitConfig = restartRateLimits // { PartOf = [ "sinex-runtime.target" ]; } // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
           serviceConfig = mkBaseServiceConfig resources env ({
             ExecStart = mkDatabasePasswordExec {
               name = sourceUnitId;
@@ -1567,11 +1573,12 @@ let
       env = mkServiceEnv envExtras;
       mkUnit = instance: {
         description = "${params.description} (instance ${toString instance})";
-        wantedBy = [ "multi-user.target" ];
+        wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
+        restartIfChanged = cfg.runtime.restartOnSwitch;
         after = afterUnits ++ additionalAfterUnits;
         requires = requireUnits ++ additionalRequireUnits;
         wants = wantsUnits ++ additionalWantsUnits;
-        unitConfig = restartRateLimits // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
+        unitConfig = restartRateLimits // { PartOf = [ "sinex-runtime.target" ]; } // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
         path = unitPath;
         serviceConfig = mkBaseServiceConfig resources env ({
           ExecStart = mkDatabasePasswordExec {
@@ -1608,10 +1615,11 @@ let
     in
     {
       description = params.description;
-      wantedBy = [ "multi-user.target" ];
+      wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
+      restartIfChanged = cfg.runtime.restartOnSwitch;
       after = schemaApplyUnits ++ postgresServiceUnits ++ optionals coreEnabled [ "sinex-ingestd.service" ];
       requires = schemaApplyUnits ++ postgresServiceUnits;
-      unitConfig = restartRateLimits // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
+      unitConfig = restartRateLimits // { PartOf = [ "sinex-runtime.target" ]; } // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
       serviceConfig = mkBaseServiceConfig resources env {
         ExecStart = mkDatabasePasswordExec {
           name = automaton;
