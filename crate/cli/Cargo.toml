@@ -25,7 +25,7 @@ workspace = true
 rand                = { workspace = true }
 blake3              = { workspace = true }
 clap_complete       = "4"
-serde_yaml          = "0.9"
+serde_yml = "0.0.12"
 tabled              = "0.17"
 console             = "0.15"
 directories         = "5.0"

@@ -42,7 +42,7 @@ async fn format_yaml_null() -> TestResult<()> {
 async fn format_yaml_special_chars() -> TestResult<()> {
     let val = json!({"text": "hello: world\nline2"});
     let result = format_yaml(&val).unwrap();
-    let parsed: serde_json::Value = serde_yaml::from_str(&result).unwrap();
+    let parsed: serde_json::Value = serde_yml::from_str(&result).unwrap();
     assert_eq!(parsed["text"], "hello: world\nline2");
     Ok(())
 }

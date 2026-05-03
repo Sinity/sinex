@@ -542,7 +542,7 @@ mod tests {
         let jobs = vec![crate::jobs::Job {
             id: 7,
             invocation_id: None,
-            command: "/realm/project/sinex/.sinex/target/debug/sinex-ingestd".into(),
+            command: "/realm/project/sinex/.sinex/cache/target/debug/sinex-ingestd".into(),
             args: vec![],
             started_at: time::OffsetDateTime::now_utc(),
             pid: Some(std::process::id()),

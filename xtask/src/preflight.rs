@@ -6,7 +6,7 @@
 //!
 //! ## Preflight Result Cache
 //!
-//! After a successful preflight, the result is cached in `{state_dir()}/preflight-cache.json`.
+//! After a successful preflight, the result is cached in `{state_dir}/preflight/preflight-cache.json`.
 //! Subsequent invocations within the TTL window skip preflight entirely if nothing relevant
 //! changed: schema files, contract payload files, or the git HEAD commit.
 //!
@@ -15,7 +15,7 @@
 //! - Declarative schema source changes (detected via blake3 hash)
 //! - Contract payload file content changes (detected via blake3 hash)
 //! - Git HEAD commit change (new commit or branch switch)
-//! - `xtask infra reset` (deletes the entire `.sinex/preflight/` directory)
+//! - `xtask infra reset` (deletes the configured preflight state directory)
 //! - `xtask reset --yes --db` (explicitly invalidates the cache)
 
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
@@ -25,7 +25,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::config::workspace_root;
+use crate::config::{config, workspace_root};
 use crate::tools::{ToolInfo, ToolManager};
 
 /// Spawn a watchdog thread that prints a "still waiting..." message every `interval` seconds.
@@ -86,8 +86,7 @@ fn tls_dir_ready(tls_dir: &Path) -> bool {
 
 /// Get the state directory for caching preflight state.
 fn state_dir() -> std::path::PathBuf {
-    let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    crate_dir.join("../.sinex/preflight")
+    config().preflight_state_dir()
 }
 
 /// Path to the preflight result cache file.
@@ -500,7 +499,7 @@ fn hash_named_sources(file_contents: &std::collections::BTreeMap<String, Vec<u8>
 /// Delete the preflight result cache file, forcing a full preflight on the next run.
 ///
 /// Called by `xtask reset --yes --db` after dropping and recreating the database.
-/// `xtask infra reset` achieves the same by deleting the entire `.sinex/preflight/` directory.
+/// `xtask infra reset` achieves the same by deleting the configured preflight state directory.
 pub fn invalidate_cache() {
     let path = cache_path();
     if path.exists() {
@@ -1281,7 +1280,7 @@ where
 /// 5. Auto-deploy contracts if payload schemas changed
 ///
 /// **Caching**: After a successful preflight, a cache entry is written to
-/// `.sinex/preflight/preflight-cache.json`. Subsequent calls within the TTL
+/// `{state_dir}/preflight/preflight-cache.json`. Subsequent calls within the TTL
 /// window (default 60s, override via `SINEX_PREFLIGHT_TTL_SECS`) skip preflight
 /// entirely if schema files, contract payload files, and git HEAD are unchanged.
 ///
@@ -1464,6 +1463,20 @@ mod tests {
 
         assert!(state_dir.is_dir());
         assert!(schema_apply_lock_path(&state_dir).is_file());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_state_dir_uses_configured_state_dir_preflight_child() -> TestResult<()> {
+        let dir = tempdir()?;
+        let mut env = EnvGuard::with_keys(&["SINEX_STATE_DIR"]);
+        env.set("SINEX_STATE_DIR", dir.path());
+
+        assert_eq!(state_dir(), dir.path().join("preflight"));
+        assert_eq!(
+            cache_path(),
+            dir.path().join("preflight/preflight-cache.json")
+        );
         Ok(())
     }
 

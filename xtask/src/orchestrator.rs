@@ -41,14 +41,7 @@ pub struct RunArgs {
 }
 
 pub(crate) fn get_target_dir(workspace_root: &std::path::Path) -> std::path::PathBuf {
-    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
-        return std::path::PathBuf::from(dir);
-    }
-    let custom_target = workspace_root.join(".sinex/target");
-    if custom_target.exists() {
-        return custom_target;
-    }
-    workspace_root.join("target")
+    crate::config::workspace_target_dir_for(workspace_root)
 }
 
 /// Orchestrator for development mode with hot reload

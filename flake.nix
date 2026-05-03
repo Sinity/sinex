@@ -18,13 +18,13 @@
   };
 
   outputs =
-    inputs@{
-      self,
-      nixpkgs,
-      fenix,
-      crane,
-      agenix,
-      flake-utils,
+    inputs@{ self
+    , nixpkgs
+    , fenix
+    , crane
+    , agenix
+    , flake-utils
+    ,
     }:
     let
       # pg_jsonschema - PostgreSQL JSON Schema validation extension
@@ -309,7 +309,7 @@
                   exit 1
                 fi
 
-                cargo_target_dir="''${CARGO_TARGET_DIR:-$root_dir/.sinex/target}"
+                cargo_target_dir="''${CARGO_TARGET_DIR:-''${SINEX_DEV_CACHE_ROOT:-$root_dir/.sinex/cache}/target}"
                 bin_path="$cargo_target_dir/debug/xtask"
                 build_lock_dir="$root_dir/.sinex/state/xtask-build.lock"
                 build_failure_stamp="$root_dir/.sinex/state/xtask-build.failed"
@@ -675,12 +675,12 @@
                 export SINEX_DEV_STATE_DIR="$PWD/${stateDir}"
                 export SINEX_DEV_TOOLCHAIN="${rustToolchain.name}"
                 if [ -z "''${SINEX_DEV_CACHE_ROOT:-}" ]; then
-                  export SINEX_DEV_CACHE_ROOT="$SINEX_DEV_STATE_DIR/cache"
+                  export SINEX_DEV_CACHE_ROOT="$SINEX_DEV_ROOT/.sinex/cache"
                 fi
-                mkdir -p "$SINEX_DEV_CACHE_ROOT/target" "$SINEX_DEV_CACHE_ROOT/cache"
                 if [ -z "''${CARGO_TARGET_DIR:-}" ]; then
                   export CARGO_TARGET_DIR="$SINEX_DEV_CACHE_ROOT/target"
                 fi
+                mkdir -p "$SINEX_DEV_CACHE_ROOT" "$CARGO_TARGET_DIR"
                 _sinex_path_append_unique "$CARGO_TARGET_DIR/debug"
                 export PATH
                 export LD_LIBRARY_PATH="${
@@ -688,7 +688,7 @@
                 }''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
                 export CLIPPY_CONF_DIR="$PWD/.config"
                 export SINEX_STATE_DIR="$SINEX_DEV_STATE_DIR/state"
-                export SINEX_CACHE_DIR="$SINEX_DEV_CACHE_ROOT/cache"
+                export SINEX_CACHE_DIR="$SINEX_DEV_CACHE_ROOT"
                 export SINEX_TEST_RESULTS_DIR="$SINEX_CACHE_DIR/test-results"
                 export SINEX_NATS_DIR="$SINEX_STATE_DIR/nats"
                 export SINEX_DEV_PG_PORT="${toString pgPort}"

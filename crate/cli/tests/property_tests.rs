@@ -261,8 +261,8 @@ sinex_proptest! {
 
     /// Same data serialized multiple times produces identical YAML.
     fn yaml_output_is_deterministic(item in test_output_item_strategy()) -> TestResult<()> {
-        let yaml1 = serde_yaml::to_string(&item).expect("should serialize");
-        let yaml2 = serde_yaml::to_string(&item).expect("should serialize again");
+        let yaml1 = serde_yml::to_string(&item).expect("should serialize");
+        let yaml2 = serde_yml::to_string(&item).expect("should serialize again");
 
         prop_assert_eq!(yaml1, yaml2, "YAML output should be deterministic");
         Ok(())
