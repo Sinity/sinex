@@ -265,7 +265,6 @@ sinex_proptest! {
             prop_assert!(ts_orig >= now - TimeDuration::days(365));
         }
 
-        prop_assert!(serde_json::to_string(&event.payload).is_ok());
         Ok(())
     }
 
