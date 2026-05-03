@@ -32,8 +32,6 @@ external-tests = []
 workspace = true
 [dependencies.thiserror]
 workspace = true
-[dependencies.color-eyre]
-workspace = true
 [dependencies.bon]
 workspace = true
 [dependencies.async-trait]
@@ -102,6 +100,8 @@ tempfile = "3.13"
 proptest = "1"
 xtask = { path = "../../../xtask" }
 sinex-primitives = { path = "../sinex-primitives", features = ["testing"] }
+[dev-dependencies.color-eyre]
+workspace = true
 
 [lints]
 workspace = true
