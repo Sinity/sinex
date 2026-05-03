@@ -1318,7 +1318,7 @@ const TELEMETRY_CONTINUOUS_AGGREGATES_SQL: &str = r"
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.gateway_stats_1h
 WITH (timescaledb.continuous) AS
 SELECT
-    time_bucket('1 hour', ts_coided) AS bucket,
+    time_bucket('1 hour', id) AS bucket,
     source,
     COUNT(*) FILTER (WHERE event_type = 'request.stats') AS stat_events,
     AVG((payload->>'total_requests')::bigint) AS avg_total_requests,
@@ -1328,7 +1328,7 @@ SELECT
 FROM core.events
 WHERE source LIKE 'sinex.gateway%'
   AND event_type IN ('request.stats', 'rate_limit.exceeded', 'replay.stats')
-GROUP BY time_bucket('1 hour', ts_coided), source
+GROUP BY time_bucket('1 hour', id), source
 WITH NO DATA;
 
 SELECT add_continuous_aggregate_policy('sinex_telemetry.gateway_stats_1h',
@@ -1339,7 +1339,7 @@ SELECT add_continuous_aggregate_policy('sinex_telemetry.gateway_stats_1h',
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.stream_stats_1h
 WITH (timescaledb.continuous) AS
 SELECT
-    time_bucket('1 hour', ts_coided) AS bucket,
+    time_bucket('1 hour', id) AS bucket,
     payload->>'stream' AS stream_name,
     AVG((payload->>'fill_pct')::float) AS avg_fill_pct,
     MAX((payload->>'fill_pct')::float) AS max_fill_pct,
@@ -1349,7 +1349,7 @@ SELECT
 FROM core.events
 WHERE source = 'sinex.ingestd'
   AND event_type = 'stream.stats'
-GROUP BY time_bucket('1 hour', ts_coided), payload->>'stream'
+GROUP BY time_bucket('1 hour', id), payload->>'stream'
 WITH NO DATA;
 
 SELECT add_continuous_aggregate_policy('sinex_telemetry.stream_stats_1h',
@@ -1360,7 +1360,7 @@ SELECT add_continuous_aggregate_policy('sinex_telemetry.stream_stats_1h',
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.assembly_stats_1h
 WITH (timescaledb.continuous) AS
 SELECT
-    time_bucket('1 hour', ts_coided) AS bucket,
+    time_bucket('1 hour', id) AS bucket,
     MAX((payload->>'active_assemblies')::int) AS max_active_assemblies,
     SUM((payload->>'total_completed')::bigint) AS total_completed,
     SUM((payload->>'total_cancelled')::bigint) AS total_cancelled,
@@ -1371,7 +1371,7 @@ SELECT
 FROM core.events
 WHERE source = 'sinex.ingestd'
   AND event_type = 'assembly.stats'
-GROUP BY time_bucket('1 hour', ts_coided)
+GROUP BY time_bucket('1 hour', id)
 WITH NO DATA;
 
 SELECT add_continuous_aggregate_policy('sinex_telemetry.assembly_stats_1h',
@@ -1382,7 +1382,7 @@ SELECT add_continuous_aggregate_policy('sinex_telemetry.assembly_stats_1h',
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.node_stats_1h
 WITH (timescaledb.continuous) AS
 SELECT
-    time_bucket('1 hour', ts_coided) AS bucket,
+    time_bucket('1 hour', id) AS bucket,
     payload->>'node_type' AS node_type,
     SUM((payload->>'events_processed')::bigint) AS total_events_processed,
     SUM((payload->>'events_dropped')::bigint) AS total_events_dropped,
@@ -1393,7 +1393,7 @@ SELECT
 FROM core.events
 WHERE source = 'sinex.node'
   AND event_type = 'processing.stats'
-GROUP BY time_bucket('1 hour', ts_coided), payload->>'node_type'
+GROUP BY time_bucket('1 hour', id), payload->>'node_type'
 WITH NO DATA;
 
 SELECT add_continuous_aggregate_policy('sinex_telemetry.node_stats_1h',
@@ -1404,7 +1404,7 @@ SELECT add_continuous_aggregate_policy('sinex_telemetry.node_stats_1h',
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.metric_counters_1h
 WITH (timescaledb.continuous) AS
 SELECT
-    time_bucket('1 hour', ts_coided) AS bucket,
+    time_bucket('1 hour', id) AS bucket,
     payload->>'component' AS component,
     payload->>'name' AS metric_name,
     SUM((payload->>'value')::bigint) AS total_value,
@@ -1413,7 +1413,7 @@ SELECT
 FROM core.events
 WHERE source = 'sinex'
   AND event_type = 'metric.counter'
-GROUP BY time_bucket('1 hour', ts_coided), payload->>'component', payload->>'name'
+GROUP BY time_bucket('1 hour', id), payload->>'component', payload->>'name'
 WITH NO DATA;
 
 SELECT add_continuous_aggregate_policy('sinex_telemetry.metric_counters_1h',
@@ -1424,7 +1424,7 @@ SELECT add_continuous_aggregate_policy('sinex_telemetry.metric_counters_1h',
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.ingestd_batch_stats_1h
 WITH (timescaledb.continuous) AS
 SELECT
-    time_bucket('1 hour', ts_coided) AS bucket,
+    time_bucket('1 hour', id) AS bucket,
     AVG((payload->>'batch_size')::int) AS avg_batch_size,
     MAX((payload->>'batch_size')::int) AS max_batch_size,
     AVG((payload->>'fetch_to_ack_ms')::float) AS avg_latency_ms,
@@ -1442,7 +1442,7 @@ SELECT
 FROM core.events
 WHERE source = 'sinex.ingestd'
   AND event_type = 'batch.stats'
-GROUP BY time_bucket('1 hour', ts_coided)
+GROUP BY time_bucket('1 hour', id)
 WITH NO DATA;
 
 SELECT add_continuous_aggregate_policy('sinex_telemetry.ingestd_batch_stats_1h',
@@ -1453,7 +1453,7 @@ SELECT add_continuous_aggregate_policy('sinex_telemetry.ingestd_batch_stats_1h',
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.current_window_focus
 WITH (timescaledb.continuous) AS
 SELECT
-    time_bucket('5 minutes', ts_orig) AS bucket,
+    time_bucket('5 minutes', id) AS bucket,
     payload->>'workspace_id' AS workspace,
     last(payload->>'window_class', ts_orig) AS window_class,
     last(payload->>'window_title', ts_orig) AS window_title,
@@ -1463,7 +1463,7 @@ SELECT
 FROM core.events
 WHERE event_type = 'window.focused'
   AND source LIKE 'wm.%'
-GROUP BY time_bucket('5 minutes', ts_orig), payload->>'workspace_id'
+GROUP BY time_bucket('5 minutes', id), payload->>'workspace_id'
 WITH NO DATA;
 
 SELECT add_continuous_aggregate_policy('sinex_telemetry.current_window_focus',
@@ -1474,7 +1474,7 @@ SELECT add_continuous_aggregate_policy('sinex_telemetry.current_window_focus',
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.command_frequency_hourly
 WITH (timescaledb.continuous) AS
 SELECT
-    time_bucket('1 hour', ts_orig) AS bucket,
+    time_bucket('1 hour', id) AS bucket,
     COALESCE(payload->>'command', payload->>'command_string') AS command,
     CASE
         WHEN source = 'shell.kitty' THEN COALESCE(payload->>'shell_type', 'kitty')
@@ -1506,7 +1506,7 @@ WHERE event_type = 'command.executed'
   )
   AND COALESCE(payload->>'command', payload->>'command_string') IS NOT NULL
 GROUP BY
-    time_bucket('1 hour', ts_orig),
+    time_bucket('1 hour', id),
     COALESCE(payload->>'command', payload->>'command_string'),
     CASE
         WHEN source = 'shell.kitty' THEN COALESCE(payload->>'shell_type', 'kitty')
@@ -1524,7 +1524,7 @@ SELECT add_continuous_aggregate_policy('sinex_telemetry.command_frequency_hourly
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.file_activity_summary
 WITH (timescaledb.continuous) AS
 SELECT
-    time_bucket('1 hour', ts_orig) AS bucket,
+    time_bucket('1 hour', id) AS bucket,
     regexp_replace(payload->>'path', '/[^/]*$', '') AS directory,
     event_type,
     COUNT(*) AS total_events,
@@ -1532,7 +1532,7 @@ SELECT
 FROM core.events
 WHERE event_type IN ('file.created', 'file.modified', 'file.deleted')
   AND source = 'fs-watcher'
-GROUP BY time_bucket('1 hour', ts_orig), regexp_replace(payload->>'path', '/[^/]*$', ''), event_type
+GROUP BY time_bucket('1 hour', id), regexp_replace(payload->>'path', '/[^/]*$', ''), event_type
 WITH NO DATA;
 
 SELECT add_continuous_aggregate_policy('sinex_telemetry.file_activity_summary',

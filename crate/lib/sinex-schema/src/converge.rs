@@ -163,17 +163,22 @@ fn col_is_generated(col: &ColumnDef) -> bool {
 ///
 /// A column is NOT NULL when it carries `ColumnSpec::NotNull` and no
 /// `ColumnSpec::Null` spec overrides it (later spec wins, matching sea-query's
-/// own rendering logic).
+/// own rendering logic), or when it is an inline primary key. PostgreSQL
+/// primary keys imply `NOT NULL`; convergence must not try to drop that
+/// database-enforced nullability just because the column lacks an explicit
+/// `NOT NULL` spec.
 fn col_is_not_null(col: &ColumnDef) -> bool {
     let mut not_null = false;
+    let mut primary_key = false;
     for s in col.get_column_spec() {
         match s {
             ColumnSpec::NotNull => not_null = true,
             ColumnSpec::Null => not_null = false,
+            ColumnSpec::PrimaryKey => primary_key = true,
             _ => {}
         }
     }
-    not_null
+    not_null || primary_key
 }
 
 /// Extracts `(column_name, is_not_null)` pairs from a `TableCreateStatement`.
@@ -266,6 +271,26 @@ pub(crate) async fn actual_column_nullability(
         .into_iter()
         .map(|(name, nullable)| (name, nullable == "NO"))
         .collect())
+}
+
+async fn actual_primary_key_columns(
+    pool: &PgPool,
+    schema: &str,
+    table: &str,
+) -> Result<HashSet<String>, ApplyError> {
+    let rows = sqlx::query_scalar::<_, String>(
+        "SELECT a.attname
+         FROM pg_index i
+         JOIN pg_class c ON c.oid = i.indrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(i.indkey)
+         WHERE n.nspname = $1 AND c.relname = $2 AND i.indisprimary",
+    )
+    .bind(schema)
+    .bind(table)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().collect())
 }
 
 async fn actual_named_constraints(
@@ -387,6 +412,7 @@ async fn converge_column_nullability(
     declared: &[(String, bool)], // (column_name, is_not_null)
 ) -> Result<(), ApplyError> {
     let live = actual_column_nullability(pool, schema, table).await?;
+    let live_primary_key_columns = actual_primary_key_columns(pool, schema, table).await?;
 
     for (col_name, declared_not_null) in declared {
         let Some(&live_not_null) = live.get(col_name) else {
@@ -396,6 +422,10 @@ async fn converge_column_nullability(
 
         if *declared_not_null == live_not_null {
             continue; // already aligned
+        }
+
+        if !*declared_not_null && live_primary_key_columns.contains(col_name) {
+            continue; // Primary-key nullability is implied by PostgreSQL.
         }
 
         let action = if *declared_not_null {
@@ -1035,10 +1065,15 @@ pub async fn report_column_gaps(
         // Report nullability mismatches for existing columns.
         let live_nullability =
             actual_column_nullability(pool, ct.meta.schema, ct.meta.name).await?;
+        let live_primary_key_columns =
+            actual_primary_key_columns(pool, ct.meta.schema, ct.meta.name).await?;
         for (col_name, declared_not_null) in &declared_nullability {
             let Some(&live_not_null) = live_nullability.get(col_name) else {
                 continue; // column absent — reported as missing above
             };
+            if !*declared_not_null && live_primary_key_columns.contains(col_name) {
+                continue; // Primary-key nullability is implied by PostgreSQL.
+            }
             if *declared_not_null != live_not_null {
                 let declared_str = if *declared_not_null { "NOT NULL" } else { "nullable" };
                 let live_str = if live_not_null { "NOT NULL" } else { "nullable" };
