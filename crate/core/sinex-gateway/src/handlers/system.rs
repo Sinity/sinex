@@ -4,7 +4,7 @@ use crate::service_container::{GatewayHealthReport, GatewayHealthStatus, Service
 use serde_json::Value;
 use sinex_primitives::domain::HealthStatus;
 use sinex_primitives::rpc::system::{
-    ComponentHealth, ComponentsHealth, ReplayControlHealth, SystemHealthResponse,
+    ComponentHealthReport, ComponentsHealth, ReplayControlHealth, SystemHealthResponse,
 };
 use sinex_primitives::{Result, SinexError};
 
@@ -43,7 +43,7 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
         serving,
         degradation_reasons,
         components: ComponentsHealth {
-            database: ComponentHealth {
+            database: ComponentHealthReport {
                 status: if db_ok {
                     HealthStatus::Healthy
                 } else {
@@ -84,8 +84,8 @@ fn system_component_health(
     connected: bool,
     latency_ms: Option<f64>,
     detail: Option<String>,
-) -> ComponentHealth {
-    ComponentHealth {
+) -> ComponentHealthReport {
+    ComponentHealthReport {
         status: if connected {
             HealthStatus::Healthy
         } else {

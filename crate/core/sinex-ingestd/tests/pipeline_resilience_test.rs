@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::json;
-use sinex_ingestd::validator::EventValidator;
+use sinex_ingestd::validator::IngestIngestEventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_primitives::{Uuid, temporal};
 use tokio::sync::RwLock;
@@ -61,7 +61,7 @@ async fn spawn_consumer(
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
-    let validator = EventValidator::new(false);
+    let validator = IngestEventValidator::new(false);
     let js = nats.jetstream_with_client(nats_client.clone());
     let env = ctx.env().clone();
     let namespace = ctx.pipeline_namespace().prefix().to_string();

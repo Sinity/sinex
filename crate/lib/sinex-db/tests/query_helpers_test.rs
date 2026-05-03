@@ -114,11 +114,13 @@ async fn retryable_substring_in_longer_message() -> TestResult<()> {
 
 #[sinex_test]
 async fn retry_config_defaults() -> TestResult<()> {
+    // RetryConfig is now re-exported from sinex-primitives (issue #746 A8).
+    // Field is `multiplier` (was `exponential_base` in the old hand-rolled DB copy).
     let config = RetryConfig::default();
     assert_eq!(config.max_attempts, 3);
     assert_eq!(config.initial_delay, std::time::Duration::from_millis(100));
-    assert_eq!(config.max_delay, std::time::Duration::from_secs(5));
-    assert!((config.exponential_base - 2.0).abs() < f64::EPSILON);
+    assert_eq!(config.max_delay, std::time::Duration::from_secs(1));
+    assert!((config.multiplier - 2.0).abs() < f64::EPSILON);
     Ok(())
 }
 
@@ -284,12 +286,13 @@ async fn retry_transaction_returns_error_on_non_retryable(ctx: TestContext) -> T
 #[sinex_test]
 async fn retry_transaction_respects_max_attempts(ctx: TestContext) -> TestResult<()> {
     let pool = &ctx.pool;
-    let config = RetryConfig {
-        max_attempts: 2,
-        initial_delay: std::time::Duration::from_millis(10),
-        max_delay: std::time::Duration::from_millis(50),
-        exponential_base: 2.0,
-    };
+    // Use the builder API — primitives RetryConfig uses bon::Builder (issue #746 A8).
+    let config = RetryConfig::builder()
+        .max_attempts(2)
+        .initial_delay(std::time::Duration::from_millis(10))
+        .max_delay(std::time::Duration::from_millis(50))
+        .multiplier(2.0)
+        .build();
 
     let result =
         with_retry_transaction_idempotent(pool, config, IdempotentTransaction::new(), |_tx| {

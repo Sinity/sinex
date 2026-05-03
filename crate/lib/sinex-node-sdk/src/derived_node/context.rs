@@ -2,7 +2,7 @@
 
 use sinex_primitives::domain::{EventSource, EventType, ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
-use sinex_primitives::events::builder::Operation;
+use sinex_primitives::events::builder::OperationMarker;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Id, JsonValue, Uuid};
 
@@ -35,13 +35,13 @@ pub struct DerivedTriggerContext {
     pub trigger_kind: TriggerKind,
 
     /// If processing was initiated by a replay operation, its ID.
-    pub created_by_operation_id: Option<Id<Operation>>,
+    pub created_by_operation_id: Option<Id<OperationMarker>>,
 }
 
 impl DerivedTriggerContext {
     /// Operation lineage, if this processing call belongs to a replay/operation.
     #[must_use]
-    pub fn operation_id(&self) -> Option<Id<Operation>> {
+    pub fn operation_id(&self) -> Option<Id<OperationMarker>> {
         self.created_by_operation_id
     }
 
@@ -82,14 +82,14 @@ impl DerivedTriggerContext {
             trigger_kind: TriggerKind::NewEvent,
             created_by_operation_id: event
                 .created_by_operation_id
-                .map(Id::<Operation>::from_uuid),
+                .map(Id::<OperationMarker>::from_uuid),
         })
     }
 
     /// Create a context for historical replay processing.
     pub fn historical(
         event: &Event<JsonValue>,
-        operation_id: Option<Id<Operation>>,
+        operation_id: Option<Id<OperationMarker>>,
     ) -> NodeResult<Self> {
         let trigger_event_id = event.id.ok_or_else(|| {
             SinexError::validation("derived-node replay event is missing an id")
@@ -108,7 +108,7 @@ impl DerivedTriggerContext {
             created_by_operation_id: operation_id.or_else(|| {
                 event
                     .created_by_operation_id
-                    .map(Id::<Operation>::from_uuid)
+                    .map(Id::<OperationMarker>::from_uuid)
             }),
         })
     }

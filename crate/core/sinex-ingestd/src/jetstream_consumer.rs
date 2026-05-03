@@ -44,7 +44,7 @@ use tracing::{debug, error, info, instrument, warn};
 use crate::{
     IngestdResult, SinexError,
     material_ready_set::MaterialReadySet,
-    validator::{EventValidator, ValidationResult},
+    validator::{IngestEventValidator, ValidationResult},
 };
 use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::Provenance;
@@ -88,7 +88,7 @@ struct DlqEntry {
 pub struct JetStreamConsumer {
     js: jetstream::Context,
     pool: DbPool,
-    validator: Arc<RwLock<EventValidator>>,
+    validator: Arc<RwLock<IngestEventValidator>>,
     topology: JetStreamTopology,
     ack_wait: Duration,
     max_ack_pending: i64,
@@ -477,7 +477,7 @@ impl JetStreamConsumer {
     pub fn new(
         nats_client: NatsClient,
         pool: DbPool,
-        validator: Arc<RwLock<EventValidator>>,
+        validator: Arc<RwLock<IngestEventValidator>>,
         topology: JetStreamTopology,
     ) -> Self {
         let js = jetstream::new(nats_client);
@@ -536,7 +536,7 @@ impl JetStreamConsumer {
     pub fn with_ack_wait(
         nats_client: NatsClient,
         pool: DbPool,
-        validator: Arc<RwLock<EventValidator>>,
+        validator: Arc<RwLock<IngestEventValidator>>,
         topology: JetStreamTopology,
         ack_wait: Duration,
     ) -> Self {
@@ -571,7 +571,7 @@ impl JetStreamConsumer {
     pub fn with_ack_wait_and_fail_once(
         nats_client: NatsClient,
         pool: DbPool,
-        validator: Arc<RwLock<EventValidator>>,
+        validator: Arc<RwLock<IngestEventValidator>>,
         topology: JetStreamTopology,
         ack_wait: Duration,
         fail_once: Arc<AtomicBool>,
@@ -595,7 +595,7 @@ impl JetStreamConsumer {
     pub fn with_test_hooks(
         nats_client: NatsClient,
         pool: DbPool,
-        validator: Arc<RwLock<EventValidator>>,
+        validator: Arc<RwLock<IngestEventValidator>>,
         topology: JetStreamTopology,
         ack_wait: Duration,
         fail_once: Option<Arc<AtomicBool>>,
@@ -1112,7 +1112,7 @@ impl JetStreamConsumer {
             return Ok(None);
         }
 
-        // Validate event using EventValidator; capture the matched schema_id for persistence.
+        // Validate event using IngestEventValidator; capture the matched schema_id for persistence.
         let validated_schema_id = match self.validate_event(&event).await {
             Ok(schema_id) => schema_id,
             Err(e) => {

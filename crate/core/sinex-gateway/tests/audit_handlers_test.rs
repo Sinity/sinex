@@ -13,12 +13,12 @@ use sinex_primitives::rpc::audit::{
     AuditGetRequest, AuditGetResponse, AuditTrail, OperationRecord,
 };
 use sinex_primitives::rpc::lifecycle::LifecycleOperationSummary;
-use sinex_primitives::rpc::ops::Operation;
+use sinex_primitives::events::builder::OperationMarker;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn request_defaults_limit_to_100() -> TestResult<()> {
-    let id = Id::<Operation>::new();
+    let id = Id::<OperationMarker>::new();
     let value = json!({ "operation_id": id });
     let req: AuditGetRequest = serde_json::from_value(value)?;
     assert_eq!(req.limit, 100);
@@ -28,7 +28,7 @@ async fn request_defaults_limit_to_100() -> TestResult<()> {
 
 #[sinex_test]
 async fn request_roundtrips_limit_and_cursor() -> TestResult<()> {
-    let op_id = Id::<Operation>::new();
+    let op_id = Id::<OperationMarker>::new();
     let cursor = Id::<Event>::new();
     let value = json!({
         "operation_id": op_id,
@@ -43,7 +43,7 @@ async fn request_roundtrips_limit_and_cursor() -> TestResult<()> {
 
 #[sinex_test]
 async fn response_serializes_no_more() -> TestResult<()> {
-    let op_id = Id::<Operation>::new();
+    let op_id = Id::<OperationMarker>::new();
     let response = AuditGetResponse {
         audit_trail: AuditTrail {
             operation: OperationRecord {
@@ -71,7 +71,7 @@ async fn response_serializes_no_more() -> TestResult<()> {
 
 #[sinex_test]
 async fn missing_operation_returns_not_found(ctx: TestContext) -> TestResult<()> {
-    let fake_id = Id::<Operation>::new();
+    let fake_id = Id::<OperationMarker>::new();
     let err = handle_audit_get(ctx.pool(), json!({ "operation_id": fake_id }))
         .await
         .expect_err("missing operation should return not found");
@@ -250,7 +250,7 @@ async fn audit_get_ignores_non_lifecycle_preview_summary_shapes(
             duration_ms: Some(12),
         })
         .await?;
-    let operation_id = Id::<Operation>::from_uuid(*record.id.as_uuid());
+    let operation_id = Id::<OperationMarker>::from_uuid(*record.id.as_uuid());
 
     let response = handle_audit_get(ctx.pool(), json!({ "operation_id": operation_id })).await?;
     let response: AuditGetResponse = serde_json::from_value(response)?;

@@ -7,7 +7,7 @@ use async_nats::jetstream;
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::schema_management::NewEventSchema;
-use sinex_ingestd::validator::EventValidator;
+use sinex_ingestd::validator::IngestIngestEventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_primitives::{
     Uuid,
@@ -138,7 +138,7 @@ async fn test_dlq_cases_table() -> TestResult<()> {
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
-    let validator = EventValidator::new(true);
+    let validator = IngestEventValidator::new(true);
 
     let js = nats.jetstream_with_client(nats_client.clone());
     let env = ctx.env();
@@ -384,7 +384,7 @@ async fn start_consumer_with_hooks_and_batch_config(
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
     ensure_fixture_source_material(&pool).await?;
-    let validator = EventValidator::new(hooks.validate);
+    let validator = IngestEventValidator::new(hooks.validate);
 
     let js = nats.jetstream_with_client(nats_client.clone());
     let env = ctx.env();

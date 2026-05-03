@@ -1,7 +1,7 @@
 use async_nats::jetstream;
 use serde_json::json;
 use sinex_ingestd::{
-    IngestdResult, JetStreamConsumer, JetStreamTopology, validator::EventValidator,
+    IngestdResult, JetStreamConsumer, JetStreamTopology, validator::IngestIngestEventValidator,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,7 +36,7 @@ async fn start_ingestd(
     let consumer = JetStreamConsumer::new(
         nats_client.clone(),
         ctx.pool.clone(),
-        Arc::new(RwLock::new(EventValidator::new(false))),
+        Arc::new(RwLock::new(IngestEventValidator::new(false))),
         topology.clone(),
     );
     let handle = tokio::spawn(async move { consumer.run().await });

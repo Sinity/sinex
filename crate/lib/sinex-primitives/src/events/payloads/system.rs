@@ -369,8 +369,13 @@ pub enum SystemHealthStatus {
     Missing,
 }
 
+/// Event payload carrying per-service resource metrics in a health summary.
+///
+/// Renamed from `ComponentHealth` to `ServiceHealthMetrics` to distinguish
+/// from the RPC `ComponentHealthReport` (status/connected/latency) and the
+/// automaton's in-memory `ComponentHealth` state — see issue #746 (A4).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ComponentHealth {
+pub struct ServiceHealthMetrics {
     pub service_name: String,
     pub status: SystemHealthStatus,
     pub last_heartbeat: Timestamp,
@@ -391,7 +396,7 @@ pub struct SystemHealthSummaryPayload {
     pub missing_components: u32,
     pub total_components: u32,
     pub last_updated: Timestamp,
-    pub components: HashMap<String, ComponentHealth>,
+    pub components: HashMap<String, ServiceHealthMetrics>,
 }
 
 // Node heartbeat events

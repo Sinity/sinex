@@ -14,7 +14,7 @@ use crate::derived_node::traits::DerivedNodeImpl;
 use crate::{NodeResult, SinexError};
 
 use sinex_primitives::events::Event;
-use sinex_primitives::events::builder::Operation;
+use sinex_primitives::events::builder::OperationMarker;
 use sinex_primitives::{Id, JsonValue, Uuid};
 
 use std::time::Instant;
@@ -56,7 +56,7 @@ where
                 scopes: Vec::new(),
                 operation_uuid: invalidation
                     .operation_id
-                    .unwrap_or_else(|| *Id::<Operation>::new().as_uuid()),
+                    .unwrap_or_else(|| *Id::<OperationMarker>::new().as_uuid()),
             });
         }
 
@@ -67,10 +67,10 @@ where
             runtime.db_pool().clone()
         };
 
-        let operation_id = invalidation.operation_id.map(Id::<Operation>::from_uuid);
+        let operation_id = invalidation.operation_id.map(Id::<OperationMarker>::from_uuid);
         let operation_uuid = invalidation
             .operation_id
-            .unwrap_or_else(|| *Id::<Operation>::new().as_uuid());
+            .unwrap_or_else(|| *Id::<OperationMarker>::new().as_uuid());
         let trigger_event_id = invalidation
             .affected_event_ids
             .first()

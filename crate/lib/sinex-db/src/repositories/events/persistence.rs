@@ -2849,7 +2849,7 @@ mod tests {
     #[sinex_test]
     async fn mismatched_operation_lineage_is_rejected() -> color_eyre::Result<()> {
         let parent_id = Id::<Event<JsonValue>>::new();
-        let provenance_operation_id = Id::<sinex_primitives::events::builder::Operation>::new();
+        let provenance_operation_id = Id::<sinex_primitives::events::builder::OperationMarker>::new();
         let event = Event {
             id: Some(Id::new()),
             source: EventSource::new("test.source")?,

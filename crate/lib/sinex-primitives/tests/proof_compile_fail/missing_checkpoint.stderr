@@ -14,4 +14,4 @@ error[E0599]: no method named `build` found for struct `RuntimeUnitDescriptorBui
    |
    |
    = note: the method was found for
-           - `RuntimeUnitDescriptorBuilder<HasOutput, HasPrivacy, HasMaterial, HasCheckpoint>`
+           - `RuntimeUnitDescriptorBuilder<HasOutput, HasPrivacy, HasMaterial, CheckpointPresent>`
