@@ -20,7 +20,14 @@
       user = "sinex";
     };
 
-    nats.environment = "prod";
+    nats = {
+      environment = "prod";
+      # Staging environment prefers quick shutdowns over graceful drains.
+      killPolicy = {
+        signal = "SIGTERM";
+        timeoutStopSec = "15s";
+      };
+    };
 
     lifecycle.maintenance.enable = true;
 
