@@ -8,7 +8,6 @@
 
 pub mod builder;
 pub mod enums;
-mod markers;
 pub mod payload;
 pub mod payloads;
 pub mod schema_registry;

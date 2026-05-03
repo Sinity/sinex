@@ -20,7 +20,6 @@
 ### Phase B: Consistency & Refactoring ✅
 
 **Code Quality:**
-- JSON utility helpers (get_str, get_i64, etc.)
 - Reduced 15+ instances of code duplication
 - Standardized output formatting module
 - Validation for limits, offsets, URLs, time ranges
