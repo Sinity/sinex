@@ -396,7 +396,8 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
     let healthy_nodes = app
         .nodes
         .iter()
-        .filter(|n| n.last_heartbeat.is_some())
+        .filter(|n| n.last_heartbeat
+            .is_some_and(|hb| (Timestamp::now() - hb).whole_seconds() < 60))
         .count();
     let total_nodes = app.nodes.len();
     let dlq_total = app.dlq_stats.as_ref().map_or(0, |s| s.total_messages);
@@ -431,9 +432,10 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         .nodes
         .iter()
         .map(|n| {
-            let has_heartbeat = n.last_heartbeat.is_some();
-            let status_icon = if has_heartbeat { "●" } else { "○" };
-            let color = if has_heartbeat {
+            let has_recent_heartbeat = n.last_heartbeat
+                .is_some_and(|hb| (Timestamp::now() - hb).whole_seconds() < 60);
+            let status_icon = if has_recent_heartbeat { "●" } else { "○" };
+            let color = if has_recent_heartbeat {
                 Color::Green
             } else {
                 Color::Red
@@ -463,9 +465,10 @@ fn render_nodes(f: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .map(|(i, n)| {
-            let has_heartbeat = n.last_heartbeat.is_some();
-            let status_icon = if has_heartbeat { "●" } else { "○" };
-            let color = if has_heartbeat {
+            let has_recent_heartbeat = n.last_heartbeat
+                .is_some_and(|hb| (Timestamp::now() - hb).whole_seconds() < 60);
+            let status_icon = if has_recent_heartbeat { "●" } else { "○" };
+            let color = if has_recent_heartbeat {
                 Color::Green
             } else {
                 Color::Red
