@@ -146,10 +146,16 @@ pub fn workspace_state_root() -> PathBuf {
 /// Cargo target directory for this checkout.
 #[must_use]
 pub fn workspace_target_dir() -> PathBuf {
+    workspace_target_dir_for(&workspace_root())
+}
+
+/// Cargo target directory for a specific checkout root.
+#[must_use]
+pub fn workspace_target_dir_for(workspace_root: &Path) -> PathBuf {
     if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
         return PathBuf::from(dir);
     }
-    default_workspace_cache_root(&workspace_root()).join("target")
+    default_workspace_cache_root(workspace_root).join("target")
 }
 
 fn default_workspace_cache_root(workspace_root: &Path) -> PathBuf {

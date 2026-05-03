@@ -158,6 +158,7 @@ impl XtaskCommand for SnapshotCommand {
 
         // Add excludes (with sensible defaults for sinex)
         let default_excludes = [
+            ".sinex/cache/target/",
             ".sinex/target/",
             "target/",
             "node_modules/",

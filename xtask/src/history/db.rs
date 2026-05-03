@@ -212,7 +212,10 @@ fn preserve_history_artifacts_for_recreation(
     let mut preserved = Vec::new();
     for artifact in artifacts {
         let artifact_name = artifact.file_name().ok_or_else(|| {
-            color_eyre::eyre::eyre!("history artifact path has no file name: {}", artifact.display())
+            color_eyre::eyre::eyre!(
+                "history artifact path has no file name: {}",
+                artifact.display()
+            )
         })?;
         let backup_path = backup_dir.join(artifact_name);
         match std::fs::rename(&artifact, &backup_path) {
@@ -1681,16 +1684,6 @@ impl HistoryDb {
             })
             .collect();
         Ok(result)
-    }
-
-    /// Prune ETA samples older than N days to keep the table small.
-    pub fn prune_eta_samples(&self, older_than_days: u32) -> Result<usize> {
-        let count = self.conn.execute(
-            r"DELETE FROM invocation_eta_samples
-              WHERE sampled_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?1)",
-            params![format!("-{older_than_days} days")],
-        )?;
-        Ok(count)
     }
 
     /// Mark invocations stuck in 'running' for over 10 minutes as 'cancelled'.
@@ -4242,8 +4235,12 @@ mod tests {
             ));
         };
         let message = format!("{error:#}");
-        assert!(message.contains("failed to remove empty history database before recreation"));
+        assert!(message.contains("failed to create history artifact backup directory"));
         assert!(message.contains(&db_path.display().to_string()));
+        assert!(
+            db_path.exists(),
+            "failed preservation must leave the original empty DB in place"
+        );
         Ok(())
     }
 

@@ -290,13 +290,13 @@ Top 10 slowest crates:
   7. sinex-test-utils - 2.89s (2.3%)
   8. xtask - 0.56s (0.4%)
 
-HTML report: /realm/project/sinex/.sinex/target/cargo-timings/cargo-timing.html
+HTML report: /realm/project/sinex/.sinex/cache/target/cargo-timings/cargo-timing.html
 ```
 
 **Notes**:
 
 - First run executes `cargo build --release --timings` which may take time
-- Generates an HTML report with detailed timing breakdown at `.sinex/target/cargo-timings/cargo-timing.html`
+- Generates an HTML report with detailed timing breakdown under the resolved Cargo target directory, for example `.sinex/cache/target/cargo-timings/cargo-timing.html`
 - Compare parameter (--compare) reserved for future enhancement
 - Run periodically to track build performance trends
 
