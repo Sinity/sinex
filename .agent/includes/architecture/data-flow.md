@@ -56,7 +56,7 @@ sinex-primitives         Foundation: types, validation, errors, domain enums, ID
 
 sinexctl                 Unified CLI (query, trace, telemetry, context, report, import)
 
-xtask                    Build automation (64K lines, 28% of total 228K)
+xtask                    Build automation (~110K lines, 20% of ~540K total)
 ```
 
 ### NATS Subject Topology
@@ -156,4 +156,4 @@ impl WindowedNode for SessionDetector {
 | Checkpoints | NATS KV + local file | Yes (at-least-once) |
 | Material readiness | In-memory `MaterialReadySet` | No (rebuilt on startup) |
 | Schema cache | In-memory `Arc<RwLock>` | No (rebuilt from DB) |
-| xtask history | SQLite `~/.sinex/history.db` | Yes |
+| xtask history | SQLite `.sinex/state/xtask-history.db` | Yes |
