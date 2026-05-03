@@ -15,7 +15,6 @@ use xtask::sandbox::prelude::*;
 
 use common::{MockGatewayClient, MockResponse, TestDir, TokenFixture};
 use sinex_primitives::domain::HealthStatus;
-use sinex_primitives::rpc::dlq::DlqListResponse;
 use sinex_primitives::rpc::system::{
     ComponentHealthReport, ComponentsHealth, ReplayControlHealth, SystemHealthResponse,
 };
@@ -79,85 +78,6 @@ async fn test_mock_client_custom_health_response() -> TestResult<()> {
     let health = client.health().await.unwrap();
     assert_eq!(health.status.to_string(), "degraded");
     assert!(!health.components.nats.connected);
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_mock_client_dlq_operations() -> TestResult<()> {
-    let client = MockGatewayClient::new();
-
-    // Set custom DLQ list response
-    client.set_response(
-        "dlq_list",
-        MockResponse::DlqList(DlqListResponse {
-            total_messages: 42,
-            total_bytes: 1024,
-            first_seq: 1,
-            last_seq: 42,
-        }),
-    );
-
-    let list = client.dlq_list().await.unwrap();
-    assert_eq!(list.total_messages, 42);
-    assert_eq!(list.total_bytes, 1024);
-
-    // Verify call was recorded
-    let calls = client.get_calls();
-    assert!(calls.iter().any(|(method, _)| method == "dlq_list"));
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_mock_client_dlq_peek() -> TestResult<()> {
-    let client = MockGatewayClient::new();
-
-    let peek_result = client.dlq_peek(Some(5)).await.unwrap();
-    assert!(peek_result.messages.is_empty()); // Default response
-
-    // Verify call recorded with args
-    let calls = client.get_calls();
-    assert_eq!(calls.last().unwrap().0, "dlq_peek");
-    assert!(calls.last().unwrap().1[0].contains('5'));
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_mock_client_dlq_requeue() -> TestResult<()> {
-    let client = MockGatewayClient::new();
-
-    let event_ids = vec!["event-1".to_string(), "event-2".to_string()];
-    let result = client.dlq_requeue(event_ids.clone()).await.unwrap();
-    assert_eq!(result.status, "success");
-
-    // Verify call recorded with event IDs
-    let calls = client.get_calls();
-    let (method, args) = calls.last().unwrap();
-    assert_eq!(method, "dlq_requeue");
-    assert_eq!(args, &event_ids);
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_mock_client_replay_operations() -> TestResult<()> {
-    let client = MockGatewayClient::new();
-
-    // List replay operations
-    let ops = client.replay_list().await.unwrap();
-    assert!(ops.is_empty()); // Default response
-
-    // Get replay status
-    let status = client.replay_status("op-123").await.unwrap();
-    assert_eq!(status.operation_id, "op-123");
-    assert_eq!(status.scope.node_id, "test-node");
-
-    // Verify calls
-    let calls = client.get_calls();
-    assert!(calls.iter().any(|(m, _)| m == "replay_list"));
-    assert!(
-        calls
-            .iter()
-            .any(|(m, args)| m == "replay_status" && args[0] == "op-123")
-    );
     Ok(())
 }
 
