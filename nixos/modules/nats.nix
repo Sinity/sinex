@@ -249,6 +249,36 @@ in
       description = "Optional JetStream file store cap (e.g., \"20GB\").";
     };
 
+    killPolicy = mkOption {
+      type = submodule {
+        options = {
+          signal = mkOption {
+            type = str;
+            default = "SIGINT";
+            description = ''
+              Signal sent to terminate the NATS server. Default SIGINT
+              triggers a coordinated shutdown. Workstations may set
+              SIGTERM to skip JetStream graceful drain when speed
+              matters more than completeness.
+            '';
+          };
+          timeoutStopSec = mkOption {
+            type = str;
+            default = "90s";
+            description = ''
+              TimeoutStopSec for NATS. Time the server has to shut down
+              before SIGKILL.
+            '';
+          };
+        };
+      };
+      default = { };
+      description = ''
+        NATS termination policy. Lets workstations swap SIGINT for
+        SIGTERM and shorten the stop timeout when fast restarts matter.
+      '';
+    };
+
     tls = mkOption {
       type = submodule {
         options = {
@@ -580,6 +610,11 @@ in
         // cfg.extraSettings;
     };
 
+    systemd.services.nats.serviceConfig = {
+      KillSignal = lib.mkForce cfg.killPolicy.signal;
+      TimeoutStopSec = lib.mkForce cfg.killPolicy.timeoutStopSec;
+    };
+
     systemd.services.sinex-nats-bootstrap = mkIf (cfg.bootstrapStreams.enable && natsCli != null) {
       description = "Sinex NATS JetStream bootstrap";
       requires = [ "nats.service" ];
@@ -643,7 +678,7 @@ in
         user = natsUser;
         group = natsUser;
         extra = {
-          Restart = "on-failure";
+          Restart = sinexCfg.bootstrap.restartPolicy;
           RestartSec = 5;
           TimeoutStartSec = 330;
         };

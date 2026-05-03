@@ -25,7 +25,34 @@
       user = "sinex";
     };
 
-    nats.environment = "prod"; # REQUIRED for production; use "dev" for local testing only
+    nats = {
+      environment = "prod"; # REQUIRED for production; use "dev" for local testing only
+      # Workstations prefer a fast, terminal-style shutdown over the JetStream
+      # graceful drain that hosted deployments rely on.
+      killPolicy = {
+        signal = "SIGTERM";
+        timeoutStopSec = "10s";
+      };
+    };
+
+    # Workstation runtime policy: keep the runtime out of automatic activation
+    # restarts and bound the restart loop so a misbehaving capture node can't
+    # spin forever under interactive load.
+    runtime = {
+      target = {
+        attachToMultiUser = false;
+        manualStartOnly = true;
+      };
+      restartOnSwitch = false;
+      restartPolicy = {
+        intervalSec = 600;
+        burst = 3;
+        backoffSec = 30;
+      };
+    };
+
+    # Surface bootstrap failures instead of looping silently on a workstation.
+    bootstrap.restartPolicy = "no";
 
     core = {
       enable = true;

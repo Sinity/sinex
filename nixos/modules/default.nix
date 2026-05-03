@@ -1636,6 +1636,120 @@ in
       description = "Lifecycle management configuration.";
     };
 
+    runtime = mkOption {
+      type = submodule {
+        options = {
+          target = mkOption {
+            type = submodule {
+              options = {
+                attachToMultiUser = mkOption {
+                  type = bool;
+                  default = true;
+                  description = ''
+                    When true (default), Sinex runtime services attach to
+                    multi-user.target and start at boot. Set to false on
+                    hosts that gate the runtime behind a deferred timer or
+                    operator action; services attach to
+                    sinex-runtime.target instead, which only starts when
+                    explicitly pulled.
+                  '';
+                };
+                manualStartOnly = mkOption {
+                  type = bool;
+                  default = false;
+                  description = ''
+                    When true, sinex-runtime.target carries
+                    X-OnlyManualStart=true so it never starts implicitly.
+                    Has no effect when attachToMultiUser = true.
+                  '';
+                };
+              };
+            };
+            default = { };
+            description = "How runtime services are wired into systemd targets.";
+          };
+
+          restartOnSwitch = mkOption {
+            type = bool;
+            default = true;
+            description = ''
+              When true (default), NixOS activation restarts changed Sinex
+              services. When false, services keep running with the
+              previously active code until next manual restart. Workstations
+              set false because activation under load triggers I/O pressure
+              while large in-memory state (NATS, Postgres) is recreated.
+            '';
+          };
+
+          restartPolicy = mkOption {
+            type = submodule {
+              options = {
+                mode = mkOption {
+                  type = enum [ "no" "on-failure" "always" "on-success" "on-abnormal" "on-watchdog" "on-abort" ];
+                  default = "on-failure";
+                  description = "systemd Restart= for runtime services.";
+                };
+                backoffSec = mkOption {
+                  type = positive;
+                  default = 10;
+                  description = "RestartSec=. Delay before retrying after a crash.";
+                };
+                intervalSec = mkOption {
+                  type = unsigned;
+                  default = 0;
+                  description = ''
+                    StartLimitIntervalSec=. 0 disables the rate limit
+                    (legacy behaviour for hosted deployments where capture
+                    must recover indefinitely).
+                  '';
+                };
+                burst = mkOption {
+                  type = unsigned;
+                  default = 0;
+                  description = ''
+                    StartLimitBurst=. Maximum start attempts within
+                    intervalSec; unit fails after this. 0 disables.
+                  '';
+                };
+              };
+            };
+            default = { };
+            description = ''
+              Failure-recovery policy applied to long-running Sinex services.
+              Default suits hosted deployments. Workstations bound the
+              policy:
+
+                services.sinex.runtime.restartPolicy = {
+                  intervalSec = 600;
+                  burst = 3;
+                };
+            '';
+          };
+        };
+      };
+      default = { };
+      description = "Runtime systemd integration policy.";
+    };
+
+    bootstrap = mkOption {
+      type = submodule {
+        options = {
+          restartPolicy = mkOption {
+            type = enum [ "no" "on-failure" "always" "on-abnormal" "on-watchdog" "on-abort" ];
+            default = "on-failure";
+            description = ''
+              Restart= applied to one-shot bootstrap units (NATS stream
+              provisioning, schema-apply, blob repository init). Set to "no"
+              on workstations so failed bootstraps are visible instead of
+              looping.
+            '';
+          };
+        };
+      };
+      default = { };
+      description = "Bootstrap unit lifecycle policy.";
+    };
+
     shell = mkOption {
       type = submodule {
         options = {
@@ -2112,6 +2226,14 @@ in
           [ pkgs.dbus pkgs.git pkgs.git-annex ]
           ++ optionals cfg.shell.asciinema.autoRecord [ pkgs.asciinema ]
         );
+
+        systemd.targets.sinex-runtime = {
+          description = "Sinex runtime services aggregate target";
+          wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
+          unitConfig = lib.optionalAttrs
+            (cfg.runtime.target.manualStartOnly && !cfg.runtime.target.attachToMultiUser)
+            { X-OnlyManualStart = true; };
+        };
       })
 
       (mkIf (cfg.cliPackage != null) {
