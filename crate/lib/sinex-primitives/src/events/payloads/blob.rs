@@ -7,29 +7,11 @@ use serde::{Deserialize, Serialize};
 use sinex_macros::EventPayload;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "blob_storage", event_type = "blob.stored")]
-pub struct BlobStoredPayload {
-    pub blob_id: String,
-    pub content_type: String,
-    pub size_bytes: u64,
-    pub hash_sha256: String,
-    pub stored_at: Timestamp,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "blob_storage", event_type = "blob.retrieved")]
 pub struct BlobRetrievedPayload {
     pub blob_id: String,
     pub retrieval_time_ms: u64,
     pub cache_hit: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "blob_storage", event_type = "blob.deleted")]
-pub struct BlobDeletedPayload {
-    pub blob_id: String,
-    pub deletion_reason: String,
-    pub freed_bytes: u64,
 }
 
 // Operation events with blob context
@@ -65,20 +47,6 @@ pub struct StorageStatisticsPayload {
 }
 
 // Test helpers for external tests
-#[cfg(any(test, feature = "testing"))]
-impl BlobStoredPayload {
-    #[must_use]
-    pub fn test_default() -> Self {
-        Self {
-            blob_id: "test-blob-id".into(),
-            content_type: "application/octet-stream".into(),
-            size_bytes: 0,
-            hash_sha256: "test-hash".into(),
-            stored_at: crate::temporal::now(),
-        }
-    }
-}
-
 #[cfg(any(test, feature = "testing"))]
 impl BlobIngestedPayload {
     #[must_use]

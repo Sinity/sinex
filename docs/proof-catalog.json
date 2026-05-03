@@ -892,13 +892,6 @@
       "type_name": "sinex_primitives::events::payloads::desktop::ActivityWatchWindowActivePayload"
     },
     {
-      "subject": "event_payload:blob_storage/blob.deleted/1.0.0",
-      "source": "blob_storage",
-      "event_type": "blob.deleted",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::blob::BlobDeletedPayload"
-    },
-    {
       "subject": "event_payload:blob_storage/blob.ingested/1.0.0",
       "source": "blob_storage",
       "event_type": "blob.ingested",
@@ -911,13 +904,6 @@
       "event_type": "blob.retrieved",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::blob::BlobRetrievedPayload"
-    },
-    {
-      "subject": "event_payload:blob_storage/blob.stored/1.0.0",
-      "source": "blob_storage",
-      "event_type": "blob.stored",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::blob::BlobStoredPayload"
     },
     {
       "subject": "event_payload:blob_storage/blob.verified/1.0.0",
@@ -1445,20 +1431,6 @@
       "type_name": "sinex_primitives::events::payloads::system::SystemMonitoringStartedPayload"
     },
     {
-      "subject": "event_payload:system/scan.completed/1.0.0",
-      "source": "system",
-      "event_type": "scan.completed",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::system::ScanCompletedPayload"
-    },
-    {
-      "subject": "event_payload:system/scan.started/1.0.0",
-      "source": "system",
-      "event_type": "scan.started",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::system::ScanStartedPayload"
-    },
-    {
       "subject": "event_payload:system/snapshot/1.0.0",
       "source": "system",
       "event_type": "snapshot",
@@ -1494,39 +1466,11 @@
       "type_name": "sinex_primitives::events::payloads::system::SystemdUnitStartedPayload"
     },
     {
-      "subject": "event_payload:systemd/unit.starting/1.0.0",
-      "source": "systemd",
-      "event_type": "unit.starting",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::system::SystemdUnitStartingPayload"
-    },
-    {
-      "subject": "event_payload:systemd/unit.state_changed/1.0.0",
-      "source": "systemd",
-      "event_type": "unit.state_changed",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::system::SystemdUnitStateChangedPayload"
-    },
-    {
-      "subject": "event_payload:systemd/unit.status/1.0.0",
-      "source": "systemd",
-      "event_type": "unit.status",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::system::SystemdUnitStatusPayload"
-    },
-    {
       "subject": "event_payload:systemd/unit.stopped/1.0.0",
       "source": "systemd",
       "event_type": "unit.stopped",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::system::SystemdUnitStoppedPayload"
-    },
-    {
-      "subject": "event_payload:systemd/unit.stopping/1.0.0",
-      "source": "systemd",
-      "event_type": "unit.stopping",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::system::SystemdUnitStoppingPayload"
     },
     {
       "subject": "event_payload:terminal.kitty/session.ended/1.0.0",
@@ -1550,39 +1494,11 @@
       "type_name": "sinex_primitives::events::payloads::shell::TerminalMonitoringStartedPayload"
     },
     {
-      "subject": "event_payload:test.alpha/test.alpha_event/1.0.0",
-      "source": "test.alpha",
-      "event_type": "test.alpha_event",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::testing::TestAlphaPayload"
-    },
-    {
-      "subject": "event_payload:test.beta/test.beta_event/1.0.0",
-      "source": "test.beta",
-      "event_type": "test.beta_event",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::testing::TestBetaPayload"
-    },
-    {
       "subject": "event_payload:test/test.event/1.0.0",
       "source": "test",
       "event_type": "test.event",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::testing::TestEventPayload"
-    },
-    {
-      "subject": "event_payload:test/test.numeric/1.0.0",
-      "source": "test",
-      "event_type": "test.numeric",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::testing::TestNumericPayload"
-    },
-    {
-      "subject": "event_payload:test/test.structured/1.0.0",
-      "source": "test",
-      "event_type": "test.structured",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::testing::TestStructuredPayload"
     },
     {
       "subject": "event_payload:udev/device.added/1.0.0",
@@ -1708,12 +1624,12 @@
     {
       "subject": "xtask_command:analytics",
       "path": "analytics",
-      "about": "`xtask analytics` — developer intelligence analytics"
+      "about": "`xtask analytics` \u2014 developer intelligence analytics"
     },
     {
       "subject": "xtask_command:analytics.hotspots",
       "path": "analytics.hotspots",
-      "about": "Diagnostic churn analysis — most active recurring and chronic issues (J2)"
+      "about": "Diagnostic churn analysis \u2014 most active recurring and chronic issues (J2)"
     },
     {
       "subject": "xtask_command:analytics.recommend",
@@ -1723,7 +1639,7 @@
     {
       "subject": "xtask_command:analytics.reliability",
       "path": "analytics.reliability",
-      "about": "Test reliability per package — pass rates and flakiness (J3)"
+      "about": "Test reliability per package \u2014 pass rates and flakiness (J3)"
     },
     {
       "subject": "xtask_command:analytics.resources",
@@ -2053,7 +1969,7 @@
     {
       "subject": "xtask_command:history.view",
       "path": "history.view",
-      "about": "Semantic named views — shortcuts to common queries (I1)"
+      "about": "Semantic named views \u2014 shortcuts to common queries (I1)"
     },
     {
       "subject": "xtask_command:infra",
