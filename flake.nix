@@ -309,7 +309,7 @@
                   exit 1
                 fi
 
-                cargo_target_dir="''${CARGO_TARGET_DIR:-$root_dir/.sinex/target}"
+                cargo_target_dir="''${CARGO_TARGET_DIR:-''${SINEX_DEV_CACHE_ROOT:-$root_dir/.sinex/cache}/target}"
                 bin_path="$cargo_target_dir/debug/xtask"
                 build_lock_dir="$root_dir/.sinex/state/xtask-build.lock"
                 build_failure_stamp="$root_dir/.sinex/state/xtask-build.failed"
@@ -671,11 +671,35 @@
                     *) PATH="''${PATH:+$PATH:}$1" ;;
                   esac
                 }
+                _sinex_default_cache_root() {
+                  local root="$1"
+                  local root_name
+                  local root_hash
+                  local candidate
+                  local probe
+                  root_name="$(basename "$root" | tr -c 'A-Za-z0-9._-' '-')"
+                  root_name="''${root_name%-}"
+                  if [ -z "$root_name" ]; then
+                    root_name="workspace"
+                  fi
+                  root_hash="$(printf '%s' "$root" | sha256sum | cut -c1-12)"
+                  if [ -d /cache ]; then
+                    candidate="/cache/sinex/$root_name-$root_hash"
+                    probe="$candidate/.write-probe-$$"
+                    if mkdir -p "$candidate" 2>/dev/null && : > "$probe" 2>/dev/null; then
+                      rm -f "$probe"
+                      printf '%s\n' "$candidate"
+                      return
+                    fi
+                    rm -f "$probe" 2>/dev/null || true
+                  fi
+                  printf '%s/.sinex/cache\n' "$root"
+                }
                 export SINEX_DEV_ROOT="$PWD"
                 export SINEX_DEV_STATE_DIR="$PWD/${stateDir}"
                 export SINEX_DEV_TOOLCHAIN="${rustToolchain.name}"
                 if [ -z "''${SINEX_DEV_CACHE_ROOT:-}" ]; then
-                  export SINEX_DEV_CACHE_ROOT="$SINEX_DEV_STATE_DIR/cache"
+                  export SINEX_DEV_CACHE_ROOT="$(_sinex_default_cache_root "$SINEX_DEV_ROOT")"
                 fi
                 mkdir -p "$SINEX_DEV_CACHE_ROOT/target" "$SINEX_DEV_CACHE_ROOT/cache"
                 if [ -z "''${CARGO_TARGET_DIR:-}" ]; then

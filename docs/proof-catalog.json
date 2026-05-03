@@ -1946,11 +1946,6 @@
       "about": "Show live or final progress for an invocation"
     },
     {
-      "subject": "xtask_command:history.prune",
-      "path": "history.prune",
-      "about": "Prune old history entries"
-    },
-    {
       "subject": "xtask_command:history.query",
       "path": "history.query",
       "about": "Execute a read-only SQL query against the history database (I2)"

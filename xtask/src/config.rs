@@ -23,10 +23,13 @@
 //! '';
 //! ```
 
+use sha2::{Digest, Sha256};
 use std::{
     env,
     path::{Path, PathBuf},
 };
+
+const SYSTEM_CACHE_ROOT: &str = "/cache";
 
 /// User-managed preferences loaded from `~/.config/xtask/preferences.toml`.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
@@ -65,12 +68,15 @@ pub struct Config {
 impl Config {
     /// Load configuration from environment variables.
     pub(crate) fn from_env() -> Self {
-        let repo_state_root = workspace_root().join(".sinex");
+        let workspace_root = workspace_root();
+        let repo_state_root = workspace_root.join(".sinex");
         let state_dir = env::var("SINEX_STATE_DIR")
             .map_or_else(|_| repo_state_root.join("state"), PathBuf::from);
 
-        let cache_dir = env::var("SINEX_CACHE_DIR")
-            .map_or_else(|_| repo_state_root.join("cache"), PathBuf::from);
+        let cache_dir = env::var("SINEX_CACHE_DIR").map_or_else(
+            |_| default_workspace_cache_root(&workspace_root).join("cache"),
+            PathBuf::from,
+        );
 
         let hostname = gethostname::gethostname().to_string_lossy().into_owned();
 
@@ -99,8 +105,9 @@ impl Config {
 
     /// Path to the history database.
     ///
-    /// `XTASK_HISTORY_DB` overrides the default path, enabling per-session
-    /// alternate databases (e.g. synthetic history for exercises).
+    /// `XTASK_HISTORY_DB` is a test/exercise escape hatch for synthetic
+    /// ledgers. Normal developer and observability flows should use the
+    /// checkout-scoped canonical DB at `SINEX_STATE_DIR/xtask-history.db`.
     pub(crate) fn history_db_path(&self) -> PathBuf {
         if let Ok(path) = env::var("XTASK_HISTORY_DB") {
             return PathBuf::from(path);
@@ -142,7 +149,78 @@ pub fn workspace_target_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
         return PathBuf::from(dir);
     }
-    workspace_state_root().join("target")
+    default_workspace_cache_root(&workspace_root()).join("target")
+}
+
+fn default_workspace_cache_root(workspace_root: &Path) -> PathBuf {
+    default_workspace_cache_root_with_system_cache(workspace_root, Path::new(SYSTEM_CACHE_ROOT))
+}
+
+fn default_workspace_cache_root_with_system_cache(
+    workspace_root: &Path,
+    system_cache_root: &Path,
+) -> PathBuf {
+    if let Some(cache_root) = writable_system_cache_root(workspace_root, system_cache_root) {
+        return cache_root;
+    }
+    workspace_root.join(".sinex/cache")
+}
+
+fn writable_system_cache_root(workspace_root: &Path, system_cache_root: &Path) -> Option<PathBuf> {
+    if !system_cache_root.is_dir() {
+        return None;
+    }
+
+    let cache_root = system_cache_root
+        .join("sinex")
+        .join(workspace_cache_key(workspace_root));
+    if std::fs::create_dir_all(&cache_root).is_err() {
+        return None;
+    }
+
+    let probe_path = cache_root.join(format!(".write-probe-{}", std::process::id()));
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe_path)
+    {
+        Ok(_) => {
+            let _ = std::fs::remove_file(probe_path);
+            Some(cache_root)
+        }
+        Err(_) => None,
+    }
+}
+
+fn workspace_cache_key(workspace_root: &Path) -> String {
+    let name = workspace_root
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .map(sanitize_cache_path_component)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "workspace".to_string());
+    let mut hasher = Sha256::new();
+    hasher.update(workspace_root.as_os_str().as_encoded_bytes());
+    let digest = hasher.finalize();
+    let fingerprint = digest
+        .iter()
+        .take(6)
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("{name}-{fingerprint}")
+}
+
+fn sanitize_cache_path_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect()
 }
 
 /// Global configuration singleton.
@@ -336,6 +414,41 @@ mod tests {
         env.set("CARGO_TARGET_DIR", &target_dir);
 
         assert_eq!(workspace_target_dir(), target_dir);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_default_workspace_cache_root_prefers_writable_system_cache() -> TestResult<()> {
+        let workspace = tempfile::tempdir()?;
+        let system_cache = tempfile::tempdir()?;
+
+        let cache_root =
+            default_workspace_cache_root_with_system_cache(workspace.path(), system_cache.path());
+
+        assert!(
+            cache_root.starts_with(system_cache.path().join("sinex")),
+            "writable system cache should be preferred, got {}",
+            cache_root.display()
+        );
+        let expected_key = workspace_cache_key(workspace.path());
+        assert_eq!(
+            cache_root.file_name().and_then(std::ffi::OsStr::to_str),
+            Some(expected_key.as_str())
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_default_workspace_cache_root_falls_back_without_system_cache() -> TestResult<()> {
+        let workspace = tempfile::tempdir()?;
+        let unavailable_system_cache = workspace.path().join("missing-system-cache");
+
+        let cache_root = default_workspace_cache_root_with_system_cache(
+            workspace.path(),
+            &unavailable_system_cache,
+        );
+
+        assert_eq!(cache_root, workspace.path().join(".sinex/cache"));
         Ok(())
     }
 
