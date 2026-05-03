@@ -262,7 +262,7 @@ mod tests {
 
         for relative in [
             Path::new("Cargo.toml"),
-            Path::new("crate/nodes/sinex-hourly-summarizer/Cargo.toml"),
+            Path::new("crate/nodes/sinex-process/Cargo.toml"),
             Path::new("docs/README.md"),
         ] {
             assert!(

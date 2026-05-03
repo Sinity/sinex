@@ -201,12 +201,7 @@
             "sinex-desktop-ingestor"
             "sinex-system-ingestor"
             "sinex-document-ingestor"
-            "sinex-terminal-command-canonicalizer"
-            "sinex-health-automaton"
-            "sinex-analytics-automaton"
-            "sinex-session-detector"
-            "sinex-hourly-summarizer"
-            "sinex-daily-summarizer"
+            "sinex-process"
             "sinex-node-sdk"
             "xtask"
           ];
@@ -243,13 +238,8 @@
             sinex-system-ingestor = mkPackage "sinex-system-ingestor";
             sinex-document-ingestor = mkPackage "sinex-document-ingestor";
 
-            # Automatons (processing nodes)
-            sinex-terminal-command-canonicalizer = mkPackage "sinex-terminal-command-canonicalizer";
-            sinex-health-automaton = mkPackage "sinex-health-automaton";
-            sinex-analytics-automaton = mkPackage "sinex-analytics-automaton";
-            sinex-session-detector = mkPackage "sinex-session-detector";
-            sinex-hourly-summarizer = mkPackage "sinex-hourly-summarizer";
-            sinex-daily-summarizer = mkPackage "sinex-daily-summarizer";
+            # Automata process pack (single binary hosting all six derived nodes)
+            sinex-process = mkPackage "sinex-process";
 
             # Node SDK binaries (sinex-preflight lives here)
             sinex-node-sdk = mkPackage "sinex-node-sdk";
@@ -989,12 +979,7 @@
             sinex-desktop-ingestor
             sinex-system-ingestor
             sinex-document-ingestor
-            sinex-terminal-command-canonicalizer
-            sinex-health-automaton
-            sinex-analytics-automaton
-            sinex-session-detector
-            sinex-hourly-summarizer
-            sinex-daily-summarizer
+            sinex-process
             sinex-node-sdk
             ;
         }
