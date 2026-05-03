@@ -25,7 +25,31 @@
       user = "sinex";
     };
 
-    nats.environment = "dev";
+    nats = {
+      environment = "dev";
+      # Developer sandboxes prefer a fast shutdown over graceful drains.
+      killPolicy = {
+        signal = "SIGTERM";
+        timeoutStopSec = "10s";
+      };
+    };
+
+    # Developer sandbox runtime policy: deactivate auto-restart on NixOS
+    # switch and bound restart loops so a buggy node can't spin forever.
+    runtime = {
+      target = {
+        attachToMultiUser = false;
+        manualStartOnly = true;
+      };
+      restartOnSwitch = false;
+      restartPolicy = {
+        intervalSec = 300;
+        burst = 5;
+        backoffSec = 15;
+      };
+    };
+
+    bootstrap.restartPolicy = "no";
 
     lifecycle.maintenance.enable = true;
 

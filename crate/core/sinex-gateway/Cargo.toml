@@ -3,12 +3,9 @@ name = "sinex-gateway"
 
 [dependencies]
 socket2        = "0.5"
-once_cell      = "1"
 subtle         = "2"
 tokio-rustls   = "0.26"
-shadow-rs      = "0.35"
 human-panic    = "2.0"
-sd-notify      = { workspace = true }
 sinex-primitives = { path = "../../lib/sinex-primitives", features = ["nats"] }
 sinex-db = { path = "../../lib/sinex-db" }
 

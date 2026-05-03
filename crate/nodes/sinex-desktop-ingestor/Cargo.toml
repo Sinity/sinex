@@ -6,13 +6,10 @@ path = "src/main.rs"
 name = "sinex-desktop-ingestor"
 
 [dependencies]
-futures     = "0.3"
 copypasta   = "0.10"
 arboard     = "3.4"
 blake3      = "1.5"
-gethostname = "0.4"
 human-panic = "2.0"
-regex       = { workspace = true }
 
 [package.version]
 workspace = true
@@ -24,9 +21,6 @@ workspace = true
 workspace = true
 
 [dependencies.mimalloc]
-workspace = true
-
-[dependencies.async-trait]
 workspace = true
 
 [dependencies.color-eyre]
@@ -42,9 +36,6 @@ features = [
 workspace = true
 
 [dependencies.tracing]
-workspace = true
-
-[dependencies.tracing-subscriber]
 workspace = true
 
 [dependencies.camino]

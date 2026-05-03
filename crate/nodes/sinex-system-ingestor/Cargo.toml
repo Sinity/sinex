@@ -8,11 +8,8 @@ build = "build.rs"
 
 [dependencies]
 tokio-util   = "0.7"
-futures      = "0.3"
-sha2         = "0.10"
 dbus         = "0.9"
 dbus-tokio   = "0.7"
-futures-util = "0.3"
 libc         = "0.2"
 human-panic = "2.0"
 
@@ -52,9 +49,6 @@ workspace = true
 [dependencies.tracing]
 workspace = true
 
-[dependencies.tracing-subscriber]
-workspace = true
-
 [dependencies.clap]
 workspace = true
 features = [
@@ -67,9 +61,6 @@ workspace = true
 [dependencies.serde_json]
 workspace = true
 
-[dependencies.indexmap]
-workspace = true
-
 [dependencies.bon]
 workspace = true
 
@@ -77,9 +68,6 @@ workspace = true
 workspace = true
 
 [dependencies.tokio-retry]
-workspace = true
-
-[dependencies.dirs]
 workspace = true
 
 [dependencies.nix]
