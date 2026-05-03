@@ -282,15 +282,15 @@ const INVOCATION_RESOURCE_SAMPLE_INTERVAL_MS: u64 = 100;
 const DEFAULT_CGROUP_ROOT: &str = "/sys/fs/cgroup";
 #[cfg(target_os = "linux")]
 const NIX_DAEMON_CGROUP_CANDIDATES: &[&str] = &[
-    "nix.slice/nix-build.slice/nix-daemon.service",
     "system.slice/nix-daemon.service",
+    "nix.slice/nix-build.slice/nix-daemon.service",
     "nix-daemon.service",
 ];
 #[cfg(target_os = "linux")]
 const NIX_BUILD_SLICE_CANDIDATES: &[&str] = &[
+    "system.slice/nix-build.slice",
     "nix.slice/nix-build.slice",
     "nix-build.slice",
-    "system.slice/nix-build.slice",
 ];
 #[cfg(target_os = "linux")]
 const BACKGROUND_SLICE_CANDIDATES: &[&str] = &["background.slice"];
@@ -2336,6 +2336,34 @@ mod tests {
 
         terminate_std_child_process_group(&mut child, "probe-process-tree", "test cleanup")?;
         let _ = child.wait();
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[sinex_test(timeout = 30)]
+    async fn test_resolve_shared_cgroup_targets_prefers_system_slice() -> TestResult<()> {
+        let dir = tempdir()?;
+        let system_nix_daemon_dir = dir.path().join("system.slice/nix-daemon.service");
+        let legacy_nix_daemon_dir = dir
+            .path()
+            .join("nix.slice/nix-build.slice/nix-daemon.service");
+        let system_nix_build_dir = dir.path().join("system.slice/nix-build.slice");
+        let legacy_nix_build_dir = dir.path().join("nix.slice/nix-build.slice");
+        for path in [
+            &system_nix_daemon_dir,
+            &legacy_nix_daemon_dir,
+            &system_nix_build_dir,
+            &legacy_nix_build_dir,
+        ] {
+            std::fs::create_dir_all(path)?;
+            std::fs::write(path.join("cpu.stat"), "usage_usec 1000\n")?;
+            std::fs::write(path.join("memory.current"), "67108864\n")?;
+        }
+
+        let targets = resolve_shared_cgroup_targets(dir.path());
+
+        assert_eq!(targets.nix_daemon, Some(system_nix_daemon_dir));
+        assert_eq!(targets.nix_build_slice, Some(system_nix_build_dir));
         Ok(())
     }
 

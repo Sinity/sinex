@@ -146,16 +146,100 @@ fn history_process_is_alive(pid: i64) -> bool {
     )
 }
 
-fn remove_history_artifact(path: &Path, reason: &str) -> Result<()> {
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error).with_context(|| format!("{reason}: {}", path.display())),
-    }
-}
-
 fn history_integrity_stamp_path(path: &Path) -> PathBuf {
     path.with_extension(HISTORY_DB_INTEGRITY_STAMP_EXTENSION)
+}
+
+fn history_recreation_artifact_paths(path: &Path) -> [PathBuf; 4] {
+    [
+        path.to_path_buf(),
+        path.with_extension("db-wal"),
+        path.with_extension("db-shm"),
+        history_integrity_stamp_path(path),
+    ]
+}
+
+fn history_artifact_backup_dir(path: &Path, suffix: &str) -> Result<PathBuf> {
+    let file_name = path.file_name().ok_or_else(|| {
+        color_eyre::eyre::eyre!("history artifact path has no file name: {}", path.display())
+    })?;
+    let file_name = file_name.to_string_lossy();
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    for index in 0..1000 {
+        let candidate_name = if index == 0 {
+            format!("{file_name}.{suffix}.bak")
+        } else {
+            format!("{file_name}.{suffix}.{index}.bak")
+        };
+        let candidate = parent.join(candidate_name);
+        match std::fs::create_dir(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "failed to create history artifact backup directory: {}",
+                        candidate.display()
+                    )
+                });
+            }
+        }
+    }
+
+    color_eyre::eyre::bail!(
+        "failed to allocate unique backup directory for history artifact: {}",
+        path.display()
+    );
+}
+
+fn preserve_history_artifacts_for_recreation(
+    path: &Path,
+    reason: &str,
+) -> Result<Vec<(PathBuf, PathBuf)>> {
+    let suffix = format!(
+        "{reason}-{}",
+        OffsetDateTime::now_utc().unix_timestamp_nanos()
+    );
+    let artifacts = history_recreation_artifact_paths(path)
+        .into_iter()
+        .filter(|artifact| artifact.exists())
+        .collect::<Vec<_>>();
+    if artifacts.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let backup_dir = history_artifact_backup_dir(path, &suffix)?;
+    let mut preserved = Vec::new();
+    for artifact in artifacts {
+        let artifact_name = artifact.file_name().ok_or_else(|| {
+            color_eyre::eyre::eyre!(
+                "history artifact path has no file name: {}",
+                artifact.display()
+            )
+        })?;
+        let backup_path = backup_dir.join(artifact_name);
+        match std::fs::rename(&artifact, &backup_path) {
+            Ok(()) => preserved.push((artifact, backup_path)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "failed to preserve history artifact {} before recreation",
+                        artifact.display()
+                    )
+                });
+            }
+        }
+    }
+    Ok(preserved)
+}
+
+fn format_preserved_history_artifact_destinations(backups: &[(PathBuf, PathBuf)]) -> String {
+    backups
+        .iter()
+        .map(|(_, backup)| backup.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn history_integrity_check_interval() -> Duration {
@@ -616,23 +700,17 @@ impl HistoryDb {
 
         // Detect and recover from corrupted (0-byte) database files.
         // SQLite treats a 0-byte file as valid (empty DB) but our WAL/schema
-        // setup may leave it in an inconsistent state. Delete and recreate.
+        // setup may leave it in an inconsistent state. Preserve and recreate.
         if db_existed
             && let Ok(meta) = std::fs::metadata(path)
             && meta.len() == 0
         {
+            let backups = preserve_history_artifacts_for_recreation(path, "empty-history-db")?;
             eprintln!(
-                "⚠️  History database at {} is empty (0 bytes), recreating",
-                path.display()
+                "⚠️  History database at {} is empty (0 bytes); preserved artifacts at [{}] and recreating",
+                path.display(),
+                format_preserved_history_artifact_destinations(&backups)
             );
-            remove_history_artifact(
-                path,
-                "failed to remove empty history database before recreation",
-            )?;
-            remove_history_artifact(
-                &history_integrity_stamp_path(path),
-                "failed to remove empty history database integrity stamp before recreation",
-            )?;
             db_existed = false;
         }
 
@@ -667,29 +745,13 @@ impl HistoryDb {
                 || sqlite_integrity_pragma_ok(&conn, "PRAGMA integrity_check");
             if !integrity_ok {
                 drop(conn);
+                let backups =
+                    preserve_history_artifacts_for_recreation(path, "integrity-check-failure")?;
                 eprintln!(
-                    "⚠️  History database at {} failed integrity check, recreating",
-                    path.display()
+                    "⚠️  History database at {} failed integrity check; preserved artifacts at [{}] and recreating",
+                    path.display(),
+                    format_preserved_history_artifact_destinations(&backups)
                 );
-                remove_history_artifact(
-                    path,
-                    "failed to remove corrupt history database before recreation",
-                )?;
-                let wal_path = path.with_extension("db-wal");
-                let shm_path = path.with_extension("db-shm");
-                let stamp_path = history_integrity_stamp_path(path);
-                remove_history_artifact(
-                    &wal_path,
-                    "failed to remove corrupt history database WAL before recreation",
-                )?;
-                remove_history_artifact(
-                    &shm_path,
-                    "failed to remove corrupt history database SHM before recreation",
-                )?;
-                remove_history_artifact(
-                    &stamp_path,
-                    "failed to remove corrupt history database integrity stamp before recreation",
-                )?;
                 let conn = Connection::open(path).with_context(|| {
                     format!("failed to recreate history database: {}", path.display())
                 })?;
@@ -715,37 +777,13 @@ impl HistoryDb {
             Ok(version) => version,
             Err(error) if is_recoverable_history_schema_version_error(&error) => {
                 drop(db);
-                let backup_path = path.with_extension("db.schema-version-read-failure.bak");
-                match std::fs::copy(path, &backup_path) {
-                    Ok(_) => eprintln!(
-                        "⚠️  History DB schema version read failed at {}, backed up to {} and recreating",
-                        path.display(),
-                        backup_path.display()
-                    ),
-                    Err(copy_error) => eprintln!(
-                        "⚠️  History DB schema version read failed at {}, backup failed ({}), recreating anyway",
-                        path.display(),
-                        copy_error
-                    ),
-                }
-                remove_history_artifact(
-                    path,
-                    "failed to remove unreadable history database before recreation",
-                )?;
-                let wal_path = path.with_extension("db-wal");
-                let shm_path = path.with_extension("db-shm");
-                remove_history_artifact(
-                    &wal_path,
-                    "failed to remove unreadable history database WAL before recreation",
-                )?;
-                remove_history_artifact(
-                    &shm_path,
-                    "failed to remove unreadable history database SHM before recreation",
-                )?;
-                remove_history_artifact(
-                    &history_integrity_stamp_path(path),
-                    "failed to remove unreadable history database integrity stamp before recreation",
-                )?;
+                let backups =
+                    preserve_history_artifacts_for_recreation(path, "schema-version-read-failure")?;
+                eprintln!(
+                    "⚠️  History DB schema version read failed at {}; preserved artifacts at [{}] and recreating",
+                    path.display(),
+                    format_preserved_history_artifact_destinations(&backups)
+                );
                 let conn = Connection::open(path).with_context(|| {
                     format!(
                         "failed to recreate history database after unreadable schema version: {}",
@@ -1648,16 +1686,6 @@ impl HistoryDb {
         Ok(result)
     }
 
-    /// Prune ETA samples older than N days to keep the table small.
-    pub fn prune_eta_samples(&self, older_than_days: u32) -> Result<usize> {
-        let count = self.conn.execute(
-            r"DELETE FROM invocation_eta_samples
-              WHERE sampled_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?1)",
-            params![format!("-{older_than_days} days")],
-        )?;
-        Ok(count)
-    }
-
     /// Mark invocations stuck in 'running' for over 10 minutes as 'cancelled'.
     ///
     /// Called on `open()` to prevent orphaned invocations from accumulating
@@ -2050,30 +2078,10 @@ impl HistoryDb {
         Ok(())
     }
 
-    /// Prune old invocations older than the given number of days.
-    pub fn prune(&self, older_than_days: u32) -> Result<usize> {
-        // If 0 days, don't prune anything (nothing is "older than right now")
-        if older_than_days == 0 {
-            return Ok(0);
-        }
-
-        let cutoff = Timestamp::now() - time::Duration::days(i64::from(older_than_days));
-        let cutoff_str = cutoff.format_rfc3339();
-
-        let deleted = self.conn.execute(
-            "DELETE FROM invocations WHERE started_at < ?1",
-            params![cutoff_str],
-        )?;
-
-        Ok(deleted)
-    }
-
     /// Prune old background job handles (from `background_jobs`) older than `older_than_days`.
     ///
     /// This removes operational job handles and their cached logs, but does NOT touch the
     /// `invocations` table. Durable execution history survives independently of job pruning.
-    ///
-    /// Use `prune()` to remove invocations (which cascades to background_jobs automatically).
     pub fn prune_background_jobs(&self, older_than_days: u32) -> Result<usize> {
         if older_than_days == 0 {
             return Ok(0);
@@ -4131,7 +4139,28 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
-    use xtask::sandbox::sinex_test;
+    use xtask::sandbox::{TestResult, sinex_test};
+
+    fn preserved_history_backup_dirs(
+        dir: &Path,
+        original_file_name: &str,
+        reason: &str,
+    ) -> TestResult<Vec<PathBuf>> {
+        let prefix = format!("{original_file_name}.{reason}-");
+        let mut backup_dirs = Vec::new();
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let file_name = entry.file_name().to_string_lossy().into_owned();
+            if entry.file_type()?.is_dir()
+                && file_name.starts_with(&prefix)
+                && file_name.ends_with(".bak")
+            {
+                backup_dirs.push(entry.path());
+            }
+        }
+        backup_dirs.sort();
+        Ok(backup_dirs)
+    }
 
     #[sinex_test]
     async fn test_capture_working_directory_success() -> TestResult<()> {
@@ -4206,8 +4235,12 @@ mod tests {
             ));
         };
         let message = format!("{error:#}");
-        assert!(message.contains("failed to remove empty history database before recreation"));
+        assert!(message.contains("failed to create history artifact backup directory"));
         assert!(message.contains(&db_path.display().to_string()));
+        assert!(
+            db_path.exists(),
+            "failed preservation must leave the original empty DB in place"
+        );
         Ok(())
     }
 
@@ -4655,6 +4688,61 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_preserve_history_artifacts_for_recreation_moves_db_wal_shm_and_stamp()
+    -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-preserve-history-artifacts.db");
+        let wal_path = db_path.with_extension("db-wal");
+        let shm_path = db_path.with_extension("db-shm");
+        let stamp_path = history_integrity_stamp_path(&db_path);
+
+        std::fs::write(&db_path, b"db")?;
+        std::fs::write(&wal_path, b"wal")?;
+        std::fs::write(&shm_path, b"shm")?;
+        std::fs::write(&stamp_path, b"stamp")?;
+
+        let backups = preserve_history_artifacts_for_recreation(&db_path, "test-recovery")?;
+        assert_eq!(backups.len(), 4);
+        for artifact in [&db_path, &wal_path, &shm_path, &stamp_path] {
+            assert!(
+                !artifact.exists(),
+                "live artifact should move out of the way: {}",
+                artifact.display()
+            );
+        }
+
+        let backup_dirs = preserved_history_backup_dirs(
+            dir.path(),
+            "test-preserve-history-artifacts.db",
+            "test-recovery",
+        )?;
+        assert_eq!(
+            backup_dirs.len(),
+            1,
+            "one backup directory should preserve the DB and all sidecars together"
+        );
+        let backup_dir = &backup_dirs[0];
+
+        assert_eq!(
+            std::fs::read(backup_dir.join("test-preserve-history-artifacts.db"))?,
+            b"db"
+        );
+        assert_eq!(
+            std::fs::read(backup_dir.join("test-preserve-history-artifacts.db-wal"))?,
+            b"wal"
+        );
+        assert_eq!(
+            std::fs::read(backup_dir.join("test-preserve-history-artifacts.db-shm"))?,
+            b"shm"
+        );
+        assert_eq!(
+            std::fs::read(backup_dir.join("test-preserve-history-artifacts.db.integrity.json"))?,
+            b"stamp"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_history_db_open_recreates_when_schema_version_read_is_unreadable()
     -> TestResult<()> {
         let dir = tempdir()?;
@@ -4690,11 +4778,21 @@ mod tests {
             recent.is_empty(),
             "history DB should be recreated after unreadable schema version"
         );
+        let backup_dirs = preserved_history_backup_dirs(
+            dir.path(),
+            "test-history-open-schema-version-read-failure.db",
+            "schema-version-read-failure",
+        )?;
+        assert_eq!(
+            backup_dirs.len(),
+            1,
+            "schema-version read failure should preserve artifacts in one directory before recreation"
+        );
         assert!(
-            db_path
-                .with_extension("db.schema-version-read-failure.bak")
+            backup_dirs[0]
+                .join("test-history-open-schema-version-read-failure.db")
                 .exists(),
-            "schema-version read failure should preserve a backup before recreation"
+            "preserved backup directory should include the original DB file"
         );
         Ok(())
     }
@@ -4793,28 +4891,6 @@ mod tests {
             db.has_stale_invocations()?,
             "old running rows should be detected as stale"
         );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_prune() -> TestResult<()> {
-        let dir = tempdir()?;
-        let db_path = dir.path().join("test-prune.db");
-
-        let db = HistoryDb::open(&db_path)?;
-
-        // Create some invocations
-        for _ in 0..5 {
-            let id = db.start_invocation("check", None, None, None)?;
-            db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.1)?;
-        }
-
-        assert_eq!(db.count()?, 5);
-
-        // Prune with 0 days should remove nothing (they're all recent)
-        let pruned = db.prune(0)?;
-        // All were created just now, so none should be pruned
-        assert_eq!(pruned, 0);
         Ok(())
     }
 

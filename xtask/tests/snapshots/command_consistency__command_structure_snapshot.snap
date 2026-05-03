@@ -2195,23 +2195,6 @@ expression: json
           "subcommands": []
         },
         {
-          "about": "Prune old history entries",
-          "args": [
-            {
-              "global": false,
-              "help": null,
-              "long": "older-than",
-              "name": "older_than",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "prune",
-          "subcommands": []
-        },
-        {
           "about": "Query test result history",
           "args": [],
           "name": "tests",

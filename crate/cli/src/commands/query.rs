@@ -810,8 +810,8 @@ mod tests {
     #[sinex_test]
     async fn render_non_event_query_result_respects_yaml_format() -> TestResult<()> {
         let rendered = render_count_result(OutputFormat::Yaml)?;
-        let value: serde_yaml::Value = serde_yaml::from_str(&rendered)?;
-        assert_eq!(value["count"], serde_yaml::Value::from(7));
+        let value: serde_yml::Value = serde_yml::from_str(&rendered)?;
+        assert_eq!(value["count"], serde_yml::Value::from(7));
         Ok(())
     }
 

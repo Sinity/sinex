@@ -135,7 +135,7 @@ fn config_show(format: OutputFormat) -> Result<()> {
         }
         OutputFormat::Yaml | OutputFormat::Table => {
             // YAML is more readable for config display
-            let yaml = serde_yaml::to_string(&config)?;
+            let yaml = serde_yml::to_string(&config)?;
             println!("{yaml}");
         }
     }

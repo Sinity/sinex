@@ -141,7 +141,7 @@ impl StatusCommand {
                 println!("{}", serde_json::to_string_pretty(&snapshot)?);
             }
             OutputFormat::Yaml => {
-                println!("{}", serde_yaml::to_string(&snapshot)?);
+                println!("{}", serde_yml::to_string(&snapshot)?);
             }
             OutputFormat::Table => {
                 println!("{}", style("System Status").bold().cyan());
