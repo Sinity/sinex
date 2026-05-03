@@ -41,26 +41,10 @@ impl ReplayExecutionEngine {
             .map(Id::<StoredEvent>::from_uuid)
             .collect();
 
-        // get_by_ids silently clamps to 1000; chunk to avoid the truncation.
-        const CHUNK_SIZE: usize = 1000;
-        if event_ids.len() <= CHUNK_SIZE {
-            return pool
-                .events()
-                .get_by_ids(&event_ids)
-                .await
-                .map_err(|e| eyre!("Failed to hydrate replay scope events: {e}"));
-        }
-
-        let mut all_events = Vec::with_capacity(event_ids.len());
-        for chunk in event_ids.chunks(CHUNK_SIZE) {
-            let chunk_events = pool
-                .events()
-                .get_by_ids(chunk)
-                .await
-                .map_err(|e| eyre!("Failed to hydrate replay scope events (chunk): {e}"))?;
-            all_events.extend(chunk_events);
-        }
-        Ok(all_events)
+        pool.events()
+            .get_by_ids(&event_ids)
+            .await
+            .map_err(|e| eyre!("Failed to hydrate replay scope events: {e}"))
     }
 
     pub(crate) async fn collect_operation_output_events(

@@ -12,7 +12,7 @@ use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::{Id, Pagination, Uuid};
 use sqlx::types::Json;
 use std::collections::HashSet;
-use tracing::{instrument, warn};
+use tracing::instrument;
 
 impl EventRepository<'_> {
     #[instrument(skip(self), fields(event_id = %id))]
@@ -589,24 +589,41 @@ impl EventRepository<'_> {
         self.get_by_id(id).await
     }
 
-    /// Get events by multiple IDs efficiently (prevents N+1 queries)
+    /// Get events by multiple IDs efficiently (prevents N+1 queries).
+    ///
+    /// Accepts any number of IDs. When the count exceeds 1000, the lookup is
+    /// issued in chunks of 1000 and the results are concatenated. The returned
+    /// order is stable within each chunk (most-recent `ts_coided` first) but is
+    /// NOT globally sorted across chunks; callers that need a total order should
+    /// sort the result themselves.
     pub async fn get_by_ids(
         &self,
         ids: &[Id<Event<JsonValue>>],
     ) -> DbResult<Vec<Event<JsonValue>>> {
+        const CHUNK_SIZE: usize = 1000;
+
         if ids.is_empty() {
             return Ok(Vec::new());
         }
 
-        let ids = if ids.len() > 1000 {
-            warn!(
-                count = ids.len(),
-                "get_by_ids called with too many IDs, clamping to 1000"
-            );
-            &ids[..1000]
-        } else {
-            ids
-        };
+        if ids.len() <= CHUNK_SIZE {
+            return self.get_by_ids_chunk(ids).await;
+        }
+
+        let mut all_events = Vec::with_capacity(ids.len());
+        for chunk in ids.chunks(CHUNK_SIZE) {
+            let chunk_events = self.get_by_ids_chunk(chunk).await?;
+            all_events.extend(chunk_events);
+        }
+        Ok(all_events)
+    }
+
+    /// Fetch a single chunk of ≤ 1000 event IDs in one query.
+    async fn get_by_ids_chunk(
+        &self,
+        ids: &[Id<Event<JsonValue>>],
+    ) -> DbResult<Vec<Event<JsonValue>>> {
+        debug_assert!(ids.len() <= 1000, "get_by_ids_chunk called with {} ids", ids.len());
 
         let uuids: Vec<uuid::Uuid> = ids.iter().map(sinex_primitives::Id::to_uuid).collect();
 

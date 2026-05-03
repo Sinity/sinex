@@ -28,7 +28,7 @@ use sinex_node_sdk::SelfObserver;
 use sinex_node_sdk::heartbeat::HeartbeatCounterHandle;
 use sinex_node_sdk::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
 use sinex_primitives::Timestamp;
-use sinex_primitives::constants::env_vars;
+use sinex_primitives::constants::{env_vars, limits::MAX_EVENT_PAYLOAD_BYTES};
 use sinex_primitives::{
     Id, JsonValue, Uuid,
     nats::{JetStreamTopology, NatsTrafficClass, insert_traffic_class_header},
@@ -964,6 +964,41 @@ impl JetStreamConsumer {
 
     #[instrument(skip(self, msg), fields(event_id, source, event_type))]
     async fn prepare_event(&self, msg: jetstream::Message) -> IngestdResult<Option<PreparedEvent>> {
+        // Reject payloads that exceed the hard size cap before allocating for parse.
+        if msg.payload.len() > MAX_EVENT_PAYLOAD_BYTES {
+            let reason = format!(
+                "Event payload too large: {} bytes (limit: {} bytes)",
+                msg.payload.len(),
+                MAX_EVENT_PAYLOAD_BYTES,
+            );
+            error!(
+                size_bytes = msg.payload.len(),
+                limit_bytes = MAX_EVENT_PAYLOAD_BYTES,
+                "Event payload exceeds maximum size; routing to DLQ"
+            );
+            self.route_validation_failure(&msg, reason).await?;
+            return Ok(None);
+        }
+
+        // Guard against pathological structure (depth, key count, array length) before
+        // deserializing into the typed Event model.  The UTF-8 check here also catches
+        // payloads that are not valid JSON strings at all.
+        let payload_str = match std::str::from_utf8(&msg.payload) {
+            Ok(s) => s,
+            Err(e) => {
+                let reason = format!("Event payload is not valid UTF-8: {e}");
+                error!("Event payload UTF-8 check failed; routing to DLQ");
+                self.route_validation_failure(&msg, reason).await?;
+                return Ok(None);
+            }
+        };
+        if let Err(e) = sinex_primitives::validation::validate_json(payload_str) {
+            let reason = format!("Event payload failed structural validation: {e}");
+            error!("Event payload structural guard rejected payload; routing to DLQ");
+            self.route_validation_failure(&msg, reason).await?;
+            return Ok(None);
+        }
+
         // Parse event using unified Event model.
         // Distinguish pure JSON syntax errors from typed deserialization failures
         // (e.g. an invalid timestamp string in a Timestamp field).
