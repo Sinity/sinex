@@ -53,7 +53,6 @@ const TELEMETRY_VIEW_RELATIONS: &[&str] = &[
     "current_window_focus",
     "command_frequency_hourly",
     "file_activity_summary",
-    "current_system_state",
     "node_stats_1h",
     "recent_activity_summary",
     "stream_stats_1h",
@@ -584,7 +583,6 @@ async fn recreate_telemetry_read_models(pool: &PgPool) -> Result<(), ApplyError>
             FOREACH relation_name IN ARRAY ARRAY[
                 'recent_activity_summary',
                 'ingestd_batch_stats_1h',
-                'current_system_state',
                 'file_activity_summary',
                 'command_frequency_hourly',
                 'current_window_focus',
@@ -1294,12 +1292,12 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.current_device_state AS
 SELECT DISTINCT ON (payload->>'unit_name')
     payload->>'unit_name' AS unit_name,
     payload->>'unit_type' AS unit_type,
-    payload->>'state' AS state,
+    payload->>'active_state' AS state,
     payload->>'sub_state' AS sub_state,
     ts_coided AS last_update
 FROM core.events
-WHERE event_type IN ('systemd.unit_changed', 'udev.device_changed')
-  AND source = 'system-ingestor'
+WHERE event_type IN ('systemd.unit.started', 'systemd.unit.stopped', 'systemd.unit.failed', 'systemd.unit.reloaded', 'systemd.unit.status', 'systemd.unit.starting', 'systemd.unit.stopping', 'systemd.unit.state_changed')
+  AND source = 'systemd'
   AND ts_coided > NOW() - INTERVAL '7 days'
 ORDER BY payload->>'unit_name', ts_coided DESC;
 
@@ -1474,20 +1472,24 @@ WHERE event_type IN ('file.created', 'file.modified', 'file.deleted')
   AND source = 'fs-watcher'
 GROUP BY bucket, regexp_replace(payload->>'path', '/[^/]*$', ''), event_type;
 
-CREATE OR REPLACE VIEW sinex_telemetry.current_system_state AS
-SELECT
-    time_bucket('5 minutes', ts_orig) AS bucket,
-    AVG((payload->>'cpu_percent')::float) AS avg_cpu_percent,
-    MAX((payload->>'cpu_percent')::float) AS max_cpu_percent,
-    AVG((payload->>'memory_percent')::float) AS avg_memory_percent,
-    MAX((payload->>'memory_percent')::float) AS max_memory_percent,
-    AVG((payload->>'disk_percent')::float) AS avg_disk_percent,
-    last((payload->>'active_units')::int, ts_orig) FILTER (WHERE payload ? 'active_units') AS current_active_units,
-    COUNT(*) AS sample_count
-FROM core.events
-WHERE event_type IN ('system.resources', 'systemd.units_summary')
-  AND source = 'system-ingestor'
-GROUP BY bucket;
+-- NOTE: current_system_state view disabled due to issue #917.
+-- It requires non-existent event types 'system.resources' and 'systemd.units_summary'
+-- which are not emitted by any ingestor.
+-- Original SQL (commented):
+-- CREATE OR REPLACE VIEW sinex_telemetry.current_system_state AS
+-- SELECT
+--     time_bucket('5 minutes', ts_orig) AS bucket,
+--     AVG((payload->>'cpu_percent')::float) AS avg_cpu_percent,
+--     MAX((payload->>'cpu_percent')::float) AS max_cpu_percent,
+--     AVG((payload->>'memory_percent')::float) AS avg_memory_percent,
+--     MAX((payload->>'memory_percent')::float) AS max_memory_percent,
+--     AVG((payload->>'disk_percent')::float) AS avg_disk_percent,
+--     last((payload->>'active_units')::int, ts_orig) FILTER (WHERE payload ? 'active_units') AS current_active_units,
+--     COUNT(*) AS sample_count
+-- FROM core.events
+-- WHERE event_type IN ('system.resources', 'systemd.units_summary')
+--   AND source = 'system-ingestor'
+-- GROUP BY bucket;
 ";
 
 const RECENT_ACTIVITY_SUMMARY_SQL: &str = r"
@@ -1498,18 +1500,6 @@ CREATE OR REPLACE VIEW sinex_telemetry.recent_activity_summary AS
     window_class AS detail,
     last_focus_time AS timestamp
  FROM sinex_telemetry.current_window_focus
- WHERE bucket >= NOW() - INTERVAL '30 minutes'
- ORDER BY bucket DESC
- LIMIT 1)
-
-UNION ALL
-
-(SELECT
-    'system_load' AS activity_type,
-    'cpu' AS context,
-    ROUND(avg_cpu_percent::numeric, 2)::text AS detail,
-    bucket AS timestamp
- FROM sinex_telemetry.current_system_state
  WHERE bucket >= NOW() - INTERVAL '30 minutes'
  ORDER BY bucket DESC
  LIMIT 1)
