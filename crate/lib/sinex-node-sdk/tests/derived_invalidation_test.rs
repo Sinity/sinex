@@ -833,6 +833,23 @@ async fn initialize_scope_reconciler_adapter_with_pool(
     initialize_scope_reconciler_adapter_with_node(ctx, pool, TestReconciler).await
 }
 
+/// Construct a deliberately unreachable pool for fault-injection tests.
+///
+/// Uses `connect_lazy` so no connection is attempted at construction time; the
+/// first query will fail immediately because port 1 is not a valid Postgres
+/// endpoint. The 100 ms acquire timeout keeps tests fast even on CI.
+///
+/// Note: raw `PgPoolOptions` is intentional here — the goal is a broken pool,
+/// not the working pool from `TestContext`. This cannot use the `sinex-db`
+/// canonical pool factory because the purpose is specifically to inject failure.
+fn broken_pool_for_fault_injection() -> TestResult<sqlx::PgPool> {
+    use sqlx::postgres::PgPoolOptions;
+    use std::time::Duration;
+    Ok(PgPoolOptions::new()
+        .acquire_timeout(Duration::from_millis(100))
+        .connect_lazy("postgresql://127.0.0.1:1/sinex_test")?)
+}
+
 async fn initialize_scope_reconciler_adapter_with_node<N>(
     ctx: &TestContext,
     pool: sqlx::PgPool,
@@ -1067,10 +1084,6 @@ async fn scope_invalidation_uses_real_affected_event_as_trigger_identity(
 
 #[sinex_test]
 async fn scope_invalidation_surfaces_scope_lookup_failures(ctx: TestContext) -> TestResult<()> {
-    use sinex_db::DbPoolExt;
-    use sqlx::postgres::PgPoolOptions;
-    use std::time::Duration;
-
     let ctx = ctx.with_nats().shared().await?;
     let material_id = ctx
         .create_source_material(Some("derived-invalidation-scope-lookup"))
@@ -1097,10 +1110,9 @@ async fn scope_invalidation_surfaces_scope_lookup_failures(ctx: TestContext) -> 
         EventType::from_static("measurement.taken"),
     );
 
-    let bad_pool = PgPoolOptions::new()
-        .acquire_timeout(Duration::from_millis(100))
-        .connect_lazy("postgresql://127.0.0.1:1/sinex_test")?;
-    let mut adapter = initialize_scope_reconciler_adapter_with_pool(&ctx, bad_pool).await?;
+    let mut adapter =
+        initialize_scope_reconciler_adapter_with_pool(&ctx, broken_pool_for_fault_injection()?)
+            .await?;
 
     let error = adapter
         .process_invalidation(&invalidation)
@@ -1116,9 +1128,6 @@ async fn scope_invalidation_surfaces_scope_lookup_failures(ctx: TestContext) -> 
 async fn scope_invalidation_surfaces_stale_output_lookup_failures(
     ctx: TestContext,
 ) -> TestResult<()> {
-    use sqlx::postgres::PgPoolOptions;
-    use std::time::Duration;
-
     let ctx = ctx.with_nats().shared().await?;
     let material_id = ctx
         .create_source_material(Some("derived-invalidation-stale-lookup"))
@@ -1147,10 +1156,9 @@ async fn scope_invalidation_surfaces_stale_output_lookup_failures(
     )
     .with_scope_keys(vec![scope_key.to_string()]);
 
-    let bad_pool = PgPoolOptions::new()
-        .acquire_timeout(Duration::from_millis(100))
-        .connect_lazy("postgresql://127.0.0.1:1/sinex_test")?;
-    let mut adapter = initialize_scope_reconciler_adapter_with_pool(&ctx, bad_pool).await?;
+    let mut adapter =
+        initialize_scope_reconciler_adapter_with_pool(&ctx, broken_pool_for_fault_injection()?)
+            .await?;
 
     let error = adapter
         .process_invalidation(&invalidation)
