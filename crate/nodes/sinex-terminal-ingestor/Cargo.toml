@@ -6,7 +6,6 @@ path = "src/main.rs"
 name = "sinex-terminal-ingestor"
 
 [dependencies]
-futures      = "0.3"
 notify       = { workspace = true }
 glob = { workspace = true }
 nix          = "0.27"
@@ -14,7 +13,6 @@ whoami       = "1.4"
 libc         = "0.2"
 which        = "5.0"
 sysinfo      = "0.30"
-regex        = "1.10"
 async-stream = "0.3"
 human-panic = "2.0"
 parking_lot = { workspace = true }
@@ -37,12 +35,6 @@ workspace = true
 [dependencies.color-eyre]
 workspace = true
 
-[dependencies.thiserror]
-workspace = true
-
-[dependencies.async-trait]
-workspace = true
-
 [dependencies.tokio]
 workspace = true
 features = [
@@ -56,9 +48,6 @@ workspace = true
 workspace = true
 
 [dependencies.tracing]
-workspace = true
-
-[dependencies.tracing-subscriber]
 workspace = true
 
 [dependencies.clap]
@@ -116,9 +105,6 @@ path = "../../lib/sinex-node-sdk"
 
 [dependencies.sinex-primitives]
 path = "../../lib/sinex-primitives"
-
-[dev-dependencies.gethostname]
-workspace = true
 
 [dev-dependencies.xtask]
 path = "../../../xtask"
