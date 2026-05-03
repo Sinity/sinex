@@ -5,7 +5,7 @@
 
 use crate::IngestdResult;
 use sinex_db::validation::{
-    EventValidator as CoreEventValidator, SchemaInfo, SchemaValidationOutcome,
+    EventValidator as DbEventValidator, SchemaInfo, SchemaValidationOutcome,
 };
 use sinex_primitives::JsonValue;
 use sinex_primitives::domain::{EventSource, EventType};
@@ -80,21 +80,25 @@ impl ValidationStatsSnapshot {
     }
 }
 
-/// Event validator that wraps the shared sinex-db validator.
+/// Ingestd-specific event validator that wraps `sinex_db::validation::EventValidator`.
+///
+/// Renamed from `EventValidator` to `IngestEventValidator` to avoid name collision with
+/// the underlying DB validator — see issue #746 (A7). Ingestd-specific concerns are:
+/// `strict_mode` (reject events with no registered schema) and per-node `ValidationStats`.
 #[derive(Clone)]
-pub struct EventValidator {
-    inner: CoreEventValidator,
+pub struct IngestEventValidator {
+    inner: DbEventValidator,
     validation_enabled: bool,
     strict_mode: bool,
     stats: Arc<ValidationStats>,
 }
 
-impl EventValidator {
+impl IngestEventValidator {
     /// Create a new event validator (schemas can be loaded later).
     #[must_use]
     pub fn new(validation_enabled: bool) -> Self {
         Self {
-            inner: CoreEventValidator::with_validation_enabled(validation_enabled),
+            inner: DbEventValidator::with_validation_enabled(validation_enabled),
             validation_enabled,
             strict_mode: false,
             stats: Arc::new(ValidationStats::default()),
@@ -113,7 +117,7 @@ impl EventValidator {
     #[must_use]
     pub fn new_strict(validation_enabled: bool) -> Self {
         Self {
-            inner: CoreEventValidator::with_validation_enabled(validation_enabled),
+            inner: DbEventValidator::with_validation_enabled(validation_enabled),
             validation_enabled,
             strict_mode: true,
             stats: Arc::new(ValidationStats::default()),
@@ -125,7 +129,7 @@ impl EventValidator {
         pool: &PgPool,
         validation_enabled: bool,
     ) -> IngestdResult<Self> {
-        let inner = CoreEventValidator::load_from_db_with_options(pool, validation_enabled)
+        let inner = DbEventValidator::load_from_db_with_options(pool, validation_enabled)
             .await
             .map_err(|e| {
                 SinexError::database(format!("Failed to load event schemas: {e}"))
@@ -145,7 +149,7 @@ impl EventValidator {
         pool: &PgPool,
         validation_enabled: bool,
     ) -> IngestdResult<Self> {
-        let inner = CoreEventValidator::load_from_db_with_options(pool, validation_enabled)
+        let inner = DbEventValidator::load_from_db_with_options(pool, validation_enabled)
             .await
             .map_err(|e| {
                 SinexError::database(format!("Failed to load event schemas: {e}"))
@@ -179,8 +183,8 @@ impl EventValidator {
     /// // Swap under a brief write lock (no I/O):
     /// validator.write().await.swap_inner(new_inner);
     /// ```
-    pub async fn load_fresh_schemas(&self, pool: &PgPool) -> IngestdResult<CoreEventValidator> {
-        CoreEventValidator::load_from_db_with_options(pool, self.validation_enabled)
+    pub async fn load_fresh_schemas(&self, pool: &PgPool) -> IngestdResult<DbEventValidator> {
+        DbEventValidator::load_from_db_with_options(pool, self.validation_enabled)
             .await
             .map_err(|e| {
                 SinexError::database(format!("Failed to load fresh schemas: {e}"))
@@ -197,15 +201,15 @@ impl EventValidator {
     /// // Snapshot validation_enabled under a brief read lock (no I/O):
     /// let enabled = validator.read().await.validation_enabled();
     /// // Load schemas without holding any lock (DB I/O):
-    /// let new_inner = EventValidator::load_fresh_schemas_with_options(&pool, enabled).await?;
+    /// let new_inner = IngestEventValidator::load_fresh_schemas_with_options(&pool, enabled).await?;
     /// // Swap under a brief write lock (no I/O):
     /// validator.write().await.swap_inner(new_inner);
     /// ```
     pub async fn load_fresh_schemas_with_options(
         pool: &PgPool,
         validation_enabled: bool,
-    ) -> IngestdResult<CoreEventValidator> {
-        CoreEventValidator::load_from_db_with_options(pool, validation_enabled)
+    ) -> IngestdResult<DbEventValidator> {
+        DbEventValidator::load_from_db_with_options(pool, validation_enabled)
             .await
             .map_err(|e| {
                 SinexError::database(format!("Failed to load fresh schemas: {e}"))
@@ -215,7 +219,7 @@ impl EventValidator {
 
     /// Swap in a freshly-loaded inner validator. Intended to be called under a
     /// brief write lock after `load_fresh_schemas` has done its I/O work.
-    pub fn swap_inner(&mut self, new_inner: CoreEventValidator) {
+    pub fn swap_inner(&mut self, new_inner: DbEventValidator) {
         self.inner = new_inner;
     }
 
@@ -401,7 +405,7 @@ mod tests {
 
     #[sinex_test]
     async fn validate_event_preserves_no_schema_result() -> xtask::sandbox::TestResult<()> {
-        let validator = EventValidator::new(true);
+        let validator = IngestEventValidator::new(true);
         let result = validator.validate_event(&event_without_registered_schema());
 
         assert!(

@@ -876,11 +876,11 @@ impl GatewayClient {
         operation_id: &str,
     ) -> Result<sinex_primitives::rpc::audit::AuditGetResponse> {
         use sinex_primitives::Id;
+        use sinex_primitives::events::builder::OperationMarker;
         use sinex_primitives::rpc::audit::{AuditGetRequest, AuditGetResponse};
-        use sinex_primitives::rpc::ops::Operation;
 
         let op_id = operation_id
-            .parse::<Id<Operation>>()
+            .parse::<Id<OperationMarker>>()
             .map_err(|e| color_eyre::eyre::eyre!("Invalid operation ID: {}", e))?;
 
         let request = AuditGetRequest {

@@ -131,7 +131,7 @@ impl MockGatewayClient {
 
     pub(crate) async fn health(&self) -> Result<SystemHealthResponse> {
         use sinex_primitives::rpc::system::{
-            ComponentHealth, ComponentsHealth, ReplayControlHealth,
+            ComponentHealthReport, ComponentsHealth, ReplayControlHealth,
         };
 
         self.record_call("health", vec![]);
@@ -150,13 +150,13 @@ impl MockGatewayClient {
                 serving: true,
                 degradation_reasons: Vec::new(),
                 components: ComponentsHealth {
-                    database: ComponentHealth {
+                    database: ComponentHealthReport {
                         status: HealthStatus::Healthy,
                         connected: true,
                         latency_ms: None,
                         detail: None,
                     },
-                    nats: ComponentHealth {
+                    nats: ComponentHealthReport {
                         status: HealthStatus::Healthy,
                         connected: true,
                         latency_ms: None,

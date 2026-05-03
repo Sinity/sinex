@@ -1731,11 +1731,6 @@ impl std::str::FromStr for HealthStatus {
     }
 }
 
-/// Common trait for components that can be health-checked.
-pub trait HealthCheck: Send + Sync {
-    async fn check_health(&self) -> Result<HealthStatus, crate::error::SinexError>;
-}
-
 /// Type of node in the system
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -2111,9 +2106,14 @@ pub struct Entity;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntityRelation;
 
-/// Service metadata for registration and discovery
+/// Service metadata for registration and discovery.
+///
+/// This is the wire/registration metadata carried by the gateway and discovery layer.
+/// It is distinct from `sinex_node_sdk::ServiceInfo`, which describes the *runtime*
+/// service (process-local, carries `runner_pack`). Named `ServiceRegistrationInfo` to
+/// avoid the collision — see issue #746 (A6).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ServiceInfo {
+pub struct ServiceRegistrationInfo {
     pub name: String,
     pub version: String,
     pub kind: ServiceKind,
