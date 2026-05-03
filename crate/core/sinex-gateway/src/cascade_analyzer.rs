@@ -4,7 +4,7 @@ use color_eyre::eyre::{Result, eyre};
 use petgraph::graphmap::DiGraphMap;
 use serde::{Deserialize, Serialize};
 use sinex_db::query_helpers::db_error;
-use sinex_db::repositories::EventRepositoryTx;
+use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
 use sinex_primitives::constants::replay::DEFAULT_CASCADE_MAX_DEPTH;
 use sinex_primitives::SinexError;
 use sqlx::PgPool;
@@ -286,44 +286,19 @@ impl StreamingCascadeAnalyzer {
         // Generate unique session ID for this analysis
         let session_id = uuid::Uuid::now_v7().simple().to_string();
 
-        // Wrap the entire transaction in a timeout to prevent indefinite holds
+        // Wrap the entire transaction in a timeout to prevent indefinite holds.
+        // Transaction lifecycle (begin/commit/rollback) is managed by pool.with_transaction;
+        // the timeout cancels the future on drop which triggers automatic rollback.
         let timeout_duration = self.config.timeout;
-        let analysis_future = async {
-            // Start a transaction for the entire analysis
-            let mut tx = self
-                .pool
-                .begin()
+        let analysis_future = self.pool.with_transaction(async |tx| {
+            self.analyze_cascades_in_transaction(tx, event_ids, &session_id)
                 .await
-                .map_err(|e| db_error(e, "begin cascade analysis transaction"))?;
-
-            // Execute analysis within transaction
-            let result = self
-                .analyze_cascades_in_transaction(&mut tx, event_ids, &session_id)
-                .await;
-
-            // Commit or rollback based on result
-            match result {
-                Ok(analysis) => {
-                    tx.commit()
-                        .await
-                        .map_err(|e| db_error(e, "commit cascade analysis transaction"))?;
-                    Ok(analysis)
-                }
-                Err(e) => {
-                    // Rollback automatically happens on drop, but be explicit
-                    if let Err(rollback_err) = tx.rollback().await {
-                        warn!(
-                            "Failed to rollback cascade analysis transaction: {}",
-                            rollback_err
-                        );
-                    }
-                    Err(e)
-                }
-            }
-        };
+                .map_err(|e| SinexError::processing(e.to_string()))
+        });
 
         match tokio::time::timeout(timeout_duration, analysis_future).await {
-            Ok(result) => result,
+            Ok(Ok(analysis)) => Ok(analysis),
+            Ok(Err(e)) => Err(eyre!("{e}")),
             Err(_elapsed) => {
                 warn!(
                     timeout_secs = timeout_duration.as_secs(),

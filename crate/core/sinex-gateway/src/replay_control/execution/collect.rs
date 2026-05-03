@@ -278,50 +278,56 @@ impl ReplayExecutionEngine {
         operation_id: Uuid,
         root_ids: &[Uuid],
     ) -> Result<Vec<Uuid>> {
-        let mut tx = pool
-            .begin()
-            .await
-            .wrap_err("Failed to begin transaction for cascade expansion")?;
-        let mut repo_tx = EventRepositoryTx::new(&mut tx);
         let session_id = format!("replay_{}", operation_id.simple());
 
-        let table_name = repo_tx
-            .prepare_cascade_session(&session_id, false)
-            .await
-            .map_err(|e| eyre!("{e}"))
-            .wrap_err("Failed to prepare replay cascade session")?;
-        repo_tx
-            .populate_cascade_roots(&table_name, root_ids)
-            .await
-            .map_err(|e| eyre!("{e}"))
-            .wrap_err("Failed to populate replay cascade roots")?;
-        repo_tx
-            .expand_cascade(
-                &table_name,
-                i32::try_from(sinex_primitives::constants::replay::DEFAULT_CASCADE_MAX_DEPTH)
-                    .unwrap_or(i32::MAX),
-            )
-            .await
-            .map_err(|e| eyre!("{e}"))
-            .wrap_err("Failed to expand replay cascade")?;
+        let mut cascade_ids = pool
+            .with_transaction(async |tx| {
+                let mut repo_tx = EventRepositoryTx::new(tx);
 
-        let mut cascade_ids: Vec<Uuid> = repo_tx
-            .get_event_dependencies(&table_name)
-            .await
-            .map_err(|e| eyre!("{e}"))
-            .wrap_err("Failed to read replay cascade members")?
-            .into_iter()
-            .map(|(event_id, _)| event_id)
-            .collect();
+                let table_name = repo_tx
+                    .prepare_cascade_session(&session_id, false)
+                    .await
+                    .map_err(|e| {
+                        e.with_context("operation", "prepare replay cascade session")
+                    })?;
+                repo_tx
+                    .populate_cascade_roots(&table_name, root_ids)
+                    .await
+                    .map_err(|e| {
+                        e.with_context("operation", "populate replay cascade roots")
+                    })?;
+                repo_tx
+                    .expand_cascade(
+                        &table_name,
+                        i32::try_from(
+                            sinex_primitives::constants::replay::DEFAULT_CASCADE_MAX_DEPTH,
+                        )
+                        .unwrap_or(i32::MAX),
+                    )
+                    .await
+                    .map_err(|e| e.with_context("operation", "expand replay cascade"))?;
 
-        repo_tx
-            .cleanup_cascade_session(&table_name)
+                let cascade_ids: Vec<Uuid> = repo_tx
+                    .get_event_dependencies(&table_name)
+                    .await
+                    .map_err(|e| {
+                        e.with_context("operation", "read replay cascade members")
+                    })?
+                    .into_iter()
+                    .map(|(event_id, _)| event_id)
+                    .collect();
+
+                repo_tx
+                    .cleanup_cascade_session(&table_name)
+                    .await
+                    .map_err(|e| {
+                        e.with_context("operation", "cleanup replay cascade session")
+                    })?;
+
+                Ok(cascade_ids)
+            })
             .await
-            .map_err(|e| eyre!("{e}"))
-            .wrap_err("Failed to cleanup replay cascade session")?;
-        tx.commit()
-            .await
-            .wrap_err("Failed to commit replay cascade transaction")?;
+            .map_err(|e| eyre!("{e}"))?;
 
         cascade_ids.sort_unstable();
         cascade_ids.dedup();
