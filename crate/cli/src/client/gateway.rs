@@ -5,7 +5,7 @@ use reqwest::{ClientBuilder, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_primitives::constants::env_vars;
-use sinex_primitives::domain::EventSource;
+use sinex_primitives::domain::{EventSource, NodeType};
 use sinex_primitives::rpc::{
     JsonRpcError,
     automata::{AutomataStatusRequest, AutomataStatusResponse},
@@ -472,9 +472,17 @@ impl GatewayClient {
         serde_json::from_value(result).map_err(Into::into)
     }
 
-    /// List all nodes
-    pub async fn list_nodes(&self, _role: Option<NodeRole>) -> Result<Vec<InstanceInfo>> {
-        let req = ListInstancesRequest::default();
+    /// List all nodes, optionally filtered by role.
+    pub async fn list_nodes(&self, role: Option<NodeRole>) -> Result<Vec<InstanceInfo>> {
+        let req = ListInstancesRequest {
+            node_type: role.map(|r| match r {
+                NodeRole::Capture => NodeType::Ingestor,
+                NodeRole::Synthesis => NodeType::Automaton,
+                NodeRole::Core => NodeType::Service,
+                NodeRole::Gateway => NodeType::Service,
+            }),
+            ..Default::default()
+        };
         let result = self
             .call_rpc(
                 methods::COORDINATION_LIST_INSTANCES,

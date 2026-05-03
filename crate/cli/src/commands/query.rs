@@ -28,13 +28,13 @@ EXAMPLES:
     sinexctl query -s 24h --cursor-json '{\"after\":{\"id\":\"0195f3a1-7b0d-7a6f-9d8f-44a4d6d30b19\"}}'
 
     # Filter by source and event type
-    sinexctl query --source shell.atuin --event-type shell.command -s 2d
+    sinexctl query --source shell.atuin --event-type command.executed -s 2d
 
     # Search within a date range
     sinexctl query -s 2025-01-10 -u 2025-01-15
 
     # Multiple sources (OR filter)
-    sinexctl query --source shell.atuin --source desktop.hyprland -s 1d
+    sinexctl query --source shell.atuin --source wm.hyprland -s 1d
 
     # Output as JSON for piping
     sinexctl query -s 1h -f json | jq '.event_type'
@@ -408,7 +408,7 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
     let selected_sources = prompt::optional_text(
         "Sources (comma-separated, optional)",
         Some(
-            "Examples: shell.atuin, desktop.hyprland, system.journal. Leave empty to search all sources.",
+            "Examples: shell.atuin, wm.hyprland, journald. Leave empty to search all sources.",
         ),
     )?
         .map(|input| parse_event_sources(&input))
@@ -418,7 +418,7 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
     let selected_types = prompt::optional_text(
         "Event types (comma-separated, optional)",
         Some(
-            "Examples: shell.command, window.focused, file.created. Leave empty to search all event types.",
+            "Examples: command.executed, window.focused, file.created. Leave empty to search all event types.",
         ),
     )?
         .map(|input| parse_event_types(&input))
