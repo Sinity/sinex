@@ -294,6 +294,41 @@ pub enum PrivacyError {
     InvalidKey(String),
 }
 
+impl From<PrivacyError> for crate::error::SinexError {
+    fn from(err: PrivacyError) -> Self {
+        match err {
+            PrivacyError::Config(inner) => {
+                crate::error::SinexError::from(inner)
+                    .with_context("privacy_component", "config")
+            }
+            PrivacyError::InvalidPattern { ref rule, ref source } => {
+                crate::error::SinexError::configuration("invalid regex pattern in privacy rule")
+                    .with_context("rule", rule)
+                    .with_source(source)
+            }
+            PrivacyError::EncryptionFailed(ref msg) => {
+                crate::error::SinexError::processing("privacy encryption failed")
+                    .with_context("detail", msg)
+            }
+            PrivacyError::DecryptionFailed(ref msg) => {
+                crate::error::SinexError::processing("privacy decryption failed")
+                    .with_context("detail", msg)
+            }
+            PrivacyError::NoKey => {
+                crate::error::SinexError::configuration("no privacy key configured")
+            }
+            PrivacyError::InvalidToken(ref msg) => {
+                crate::error::SinexError::parse("invalid privacy token format")
+                    .with_context("detail", msg)
+            }
+            PrivacyError::InvalidKey(ref msg) => {
+                crate::error::SinexError::configuration("invalid privacy key")
+                    .with_context("detail", msg)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     // Exception to per-crate tests/: this exercises private privacy-engine

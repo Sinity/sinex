@@ -27,6 +27,31 @@ pub enum ClientError {
     Gateway(String),
 }
 
+impl From<ClientError> for sinex_primitives::error::SinexError {
+    fn from(err: ClientError) -> Self {
+        match err {
+            ClientError::Io(ref source) => {
+                sinex_primitives::error::SinexError::io("gateway client IO error")
+                    .with_source(source)
+            }
+            ClientError::Request(ref source) => {
+                sinex_primitives::error::SinexError::network("gateway client request failed")
+                    .with_source(source)
+            }
+            ClientError::Serialization(ref source) => {
+                sinex_primitives::error::SinexError::serialization(
+                    "gateway client serialization error",
+                )
+                .with_source(source)
+            }
+            ClientError::Gateway(ref msg) => {
+                sinex_primitives::error::SinexError::service("gateway error")
+                    .with_context("detail", msg)
+            }
+        }
+    }
+}
+
 fn format_http_error(status: reqwest::StatusCode, body: Option<&str>) -> String {
     match body.map(str::trim).filter(|body| !body.is_empty()) {
         Some(body) => format!("HTTP Error: {status}: {body}"),

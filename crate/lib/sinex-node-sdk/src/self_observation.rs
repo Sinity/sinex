@@ -694,6 +694,32 @@ pub enum SelfObservationError {
     Publish(String),
 }
 
+impl From<SelfObservationError> for SinexError {
+    fn from(err: SelfObservationError) -> Self {
+        match err {
+            SelfObservationError::Build(inner) => {
+                SinexError::processing("failed to build self-observation event")
+                    .with_source(&inner)
+            }
+            SelfObservationError::Serialization(ref msg) => {
+                SinexError::serialization("failed to serialize self-observation event")
+                    .with_context("detail", msg)
+            }
+            SelfObservationError::Materialization(ref msg) => {
+                SinexError::processing("self-observation materialization failed")
+                    .with_context("detail", msg)
+            }
+            SelfObservationError::Unavailable => SinexError::invalid_state(
+                "self-observation is enabled but the runtime path is unavailable",
+            ),
+            SelfObservationError::Publish(ref msg) => {
+                SinexError::processing("failed to publish self-observation event")
+                    .with_context("detail", msg)
+            }
+        }
+    }
+}
+
 #[derive(serde::Serialize)]
 struct SelfObservationRecord<'a> {
     component: &'a str,

@@ -406,6 +406,30 @@ pub enum PrivacyConfigError {
     InvalidEnv { var: String, reason: String },
 }
 
+impl From<PrivacyConfigError> for crate::error::SinexError {
+    fn from(err: PrivacyConfigError) -> Self {
+        match &err {
+            PrivacyConfigError::Io { path, source } => {
+                crate::error::SinexError::configuration("failed to read privacy config")
+                    .with_context("path", path.display())
+                    .with_source(source)
+            }
+            PrivacyConfigError::Parse { path, source } => {
+                crate::error::SinexError::parse("failed to parse privacy config")
+                    .with_context("path", path.display())
+                    .with_source(source)
+            }
+            PrivacyConfigError::InvalidEnv { var, reason } => {
+                crate::error::SinexError::configuration(
+                    "invalid privacy environment override",
+                )
+                .with_context("var", var)
+                .with_context("reason", reason)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

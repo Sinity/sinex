@@ -58,6 +58,44 @@ pub enum ValidationError {
     SchemaViolation { message: String },
 }
 pub type ValidationResult = std::result::Result<(), ValidationError>;
+
+impl From<ValidationError> for sinex_primitives::error::SinexError {
+    fn from(err: ValidationError) -> Self {
+        match err {
+            ValidationError::MissingField { ref field } => {
+                sinex_primitives::error::SinexError::validation("missing required field")
+                    .with_context("field", field)
+            }
+            ValidationError::InvalidType {
+                ref field,
+                ref expected,
+                ref actual,
+            } => sinex_primitives::error::SinexError::validation("invalid field type")
+                .with_context("field", field)
+                .with_context("expected", expected)
+                .with_context("actual", actual),
+            ValidationError::InvalidValue {
+                ref field,
+                ref reason,
+            } => sinex_primitives::error::SinexError::validation("invalid field value")
+                .with_context("field", field)
+                .with_context("reason", reason),
+            ValidationError::SecurityValidation(ref msg) => {
+                sinex_primitives::error::SinexError::validation("security validation failed")
+                    .with_context("detail", msg)
+            }
+            ValidationError::PayloadTooLarge { size, max } => {
+                sinex_primitives::error::SinexError::validation("payload too large")
+                    .with_context("size_bytes", size)
+                    .with_context("max_bytes", max)
+            }
+            ValidationError::SchemaViolation { ref message } => {
+                sinex_primitives::error::SinexError::validation("schema violation")
+                    .with_context("detail", message)
+            }
+        }
+    }
+}
 /// Outcome of schema validation used by ingestd for streaming pipelines.
 #[derive(Debug, Clone)]
 pub enum SchemaValidationOutcome {
