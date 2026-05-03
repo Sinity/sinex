@@ -1650,17 +1650,10 @@ impl RpcServer {
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> JoinHandle<color_eyre::eyre::Result<()>> {
         tokio::spawn(async move {
-            let mut task = Some(task);
+            let mut task = task;
             tokio::select! {
-                task_result = async {
-                    let Some(task_handle) = task.take() else {
-                        return Err(eyre!(
-                            "background task handle for {task_name} was unexpectedly missing before await"
-                        ));
-                    };
-                    Ok(task_handle.await)
-                } => {
-                    match task_result? {
+                task_result = &mut task => {
+                    match task_result {
                         Ok(()) => {
                             if *shutdown.borrow() {
                                 Ok(())
@@ -1676,12 +1669,7 @@ impl RpcServer {
                     if shutdown_result.is_err() {
                         warn!(task = task_name, "Background task monitor shutdown channel dropped before explicit shutdown");
                     }
-                    let Some(task_handle) = task.take() else {
-                        return Err(eyre!(
-                            "background task handle for {task_name} was unexpectedly missing after shutdown"
-                        ));
-                    };
-                    match task_handle.await {
+                    match task.await {
                         Ok(()) => {
                             if shutdown_requested {
                                 Ok(())
@@ -2081,6 +2069,32 @@ mod tests {
         RpcServer::monitor_background_task("SSE subscription bus", completed, shutdown_rx)
             .await
             .expect("monitor join should succeed")?;
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn monitor_background_task_retains_pending_handle_after_shutdown_signal() -> TestResult<()>
+    {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+        let task = tokio::spawn(async move {
+            let _ = release_rx.await;
+        });
+        let monitor = RpcServer::monitor_background_task("SSE subscription bus", task, shutdown_rx);
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        shutdown_tx.send(true)?;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let _ = release_tx.send(());
+
+        RpcServer::wait_for_background_tasks_with_timeout(
+            None,
+            None,
+            Some(monitor),
+            Duration::from_millis(200),
+        )
+        .await?;
 
         Ok(())
     }

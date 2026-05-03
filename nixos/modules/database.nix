@@ -173,10 +173,11 @@ let
     # overhead PostgreSQL would otherwise reserve for prepared transactions.
     max_prepared_transactions = mkDefault 0;
 
-    # Logging: log DDL + DML statements for audit purposes.
+    # Logging: keep schema changes and slow statements visible without writing
+    # every ingest INSERT/UPDATE into journald during backlog catch-up.
     # log_duration is intentionally OFF; use log_min_duration_statement to catch
     # slow queries without flooding the log for every fast INSERT in the ingest path.
-    log_statement = mkDefault "mod";
+    log_statement = mkDefault "ddl";
     log_duration = mkDefault false;
     log_min_duration_statement = mkDefault "1000ms";
     log_line_prefix = mkDefault "%m [%p] %q%u@%d ";
