@@ -1,11 +1,13 @@
 //! Workspace-level contracts for production derived-node output schemas.
 
-use sinex_analytics_automaton::AnalyticsAutomaton;
-use sinex_health_automaton::HealthAggregator;
 use sinex_node_sdk::{ScopeReconcilerNode, TransducerNode, WindowedNode};
 use sinex_primitives::events::schema_registry::get_all_payloads;
-use sinex_session_detector::SessionDetector;
-use sinex_terminal_command_canonicalizer::TerminalCommandCanonicalizer;
+use sinex_process::automata::{
+    analytics::AnalyticsAutomaton,
+    health::HealthAggregator,
+    session::SessionDetector,
+    canonicalizer::TerminalCommandCanonicalizer,
+};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]

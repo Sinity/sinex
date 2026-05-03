@@ -42,7 +42,10 @@ fn unix_timestamp_micros(now: std::time::SystemTime, context: &str) -> Result<u1
 /// Check if a package/name refers to a node (ingestor, automaton, or canonicalizer).
 /// Nodes expose `--service-name`; core services don't.
 fn is_node_package(name: &str) -> bool {
-    name.contains("ingestor") || name.contains("automaton") || name.contains("canonicalizer")
+    name.contains("ingestor")
+        || name.contains("automaton")
+        || name.contains("canonicalizer")
+        || name == "sinex-process"
 }
 
 /// Build a deterministic instance ID from a binary name and optional prefix.
@@ -53,12 +56,20 @@ fn make_instance_id(name: &str, prefix: Option<&str>) -> String {
     )
 }
 
-fn runtime_cli_args(package: &str, run_identity: &str) -> Vec<String> {
+/// Build the runtime CLI arguments for a node or gateway binary.
+///
+/// When `automaton` is `Some`, the `--automaton <name>` flag is prepended before
+/// `--service-name`; this dispatches to the correct automaton inside `sinex-process`.
+fn runtime_cli_args(package: &str, run_identity: &str, automaton: Option<&str>) -> Vec<String> {
     if is_node_package(package) {
-        vec![
-            format!("--service-name={run_identity}"),
-            "service".to_string(),
-        ]
+        let mut args = Vec::new();
+        if let Some(name) = automaton {
+            args.push("--automaton".to_string());
+            args.push(name.to_string());
+        }
+        args.push(format!("--service-name={run_identity}"));
+        args.push("service".to_string());
+        args
     } else if package.contains("gateway") {
         vec!["rpc-server".to_string()]
     } else {
@@ -67,8 +78,13 @@ fn runtime_cli_args(package: &str, run_identity: &str) -> Vec<String> {
 }
 
 /// Append node/gateway runtime args after the cargo `--` separator when needed.
-fn append_binary_extra_args(args: &mut Vec<String>, package: &str, run_identity: &str) {
-    let extra_args = runtime_cli_args(package, run_identity);
+fn append_binary_extra_args(
+    args: &mut Vec<String>,
+    package: &str,
+    run_identity: &str,
+    automaton: Option<&str>,
+) {
+    let extra_args = runtime_cli_args(package, run_identity, automaton);
     if !extra_args.is_empty() {
         args.push("--".to_string());
         args.extend(extra_args);
@@ -329,59 +345,76 @@ async fn stop_bundle_child(name: &str, child: &mut Child) -> Result<()> {
     Ok(())
 }
 
-/// Known binary targets and their package names
-static BINARIES: &[(&str, &str, &str)] = &[
-    // (name, package, binary name)
-    ("ingestd", "sinex-ingestd", "sinex-ingestd"),
-    ("gateway", "sinex-gateway", "sinex-gateway"),
+/// Known binary targets and their package names.
+///
+/// Tuple layout: `(short_name, package, binary_name, automaton_name)`.
+/// `automaton_name` is `Some` only for `sinex-process` dispatch entries —
+/// the `--automaton <name>` flag is forwarded to `sinex-process` at runtime.
+static BINARIES: &[(&str, &str, &str, Option<&str>)] = &[
+    // (name, package, binary name, automaton)
+    ("ingestd", "sinex-ingestd", "sinex-ingestd", None),
+    ("gateway", "sinex-gateway", "sinex-gateway", None),
     // Ingestors
-    ("fs-ingestor", "sinex-fs-ingestor", "sinex-fs-ingestor"),
+    (
+        "fs-ingestor",
+        "sinex-fs-ingestor",
+        "sinex-fs-ingestor",
+        None,
+    ),
     (
         "terminal-ingestor",
         "sinex-terminal-ingestor",
         "sinex-terminal-ingestor",
+        None,
     ),
     (
         "desktop-ingestor",
         "sinex-desktop-ingestor",
         "sinex-desktop-ingestor",
+        None,
     ),
     (
         "system-ingestor",
         "sinex-system-ingestor",
         "sinex-system-ingestor",
+        None,
     ),
-    // Automatons
+    // Automatons — all dispatched through sinex-process via --automaton <name>
     (
         "analytics-automaton",
-        "sinex-analytics-automaton",
-        "sinex-analytics-automaton",
+        "sinex-process",
+        "sinex-process",
+        Some("analytics"),
     ),
     (
         "health-automaton",
-        "sinex-health-automaton",
-        "sinex-health-automaton",
+        "sinex-process",
+        "sinex-process",
+        Some("health"),
     ),
     (
         "session-detector",
-        "sinex-session-detector",
-        "sinex-session-detector",
+        "sinex-process",
+        "sinex-process",
+        Some("session"),
     ),
     (
         "hourly-summarizer",
-        "sinex-hourly-summarizer",
-        "sinex-hourly-summarizer",
+        "sinex-process",
+        "sinex-process",
+        Some("hourly"),
     ),
     (
         "daily-summarizer",
-        "sinex-daily-summarizer",
-        "sinex-daily-summarizer",
+        "sinex-process",
+        "sinex-process",
+        Some("daily"),
     ),
-    // Processors
     (
         "terminal-canonicalizer",
-        "sinex-terminal-command-canonicalizer",
-        "sinex-terminal-command-canonicalizer",
+        "sinex-process",
+        "sinex-process",
+        Some("canonicalizer"),
     ),
 ];
 
@@ -401,14 +434,16 @@ const AUTOMATON_TARGETS: &[&str] = &[
     "terminal-canonicalizer",
 ];
 
-fn lookup_binary(name: &str) -> Option<&'static (&'static str, &'static str, &'static str)> {
-    BINARIES.iter().find(|(candidate, _, _)| *candidate == name)
+fn lookup_binary(
+    name: &str,
+) -> Option<&'static (&'static str, &'static str, &'static str, Option<&'static str>)> {
+    BINARIES.iter().find(|(candidate, _, _, _)| *candidate == name)
 }
 
 pub(crate) fn list_run_targets() -> Vec<String> {
     let mut targets: Vec<String> = BINARIES
         .iter()
-        .map(|(name, _, _)| (*name).to_string())
+        .map(|(name, _, _, _)| (*name).to_string())
         .collect();
     targets.extend(
         ["core", "all-ingestors", "all-automatons"]
@@ -694,12 +729,17 @@ impl RunCommand {
         crate::preflight::local_runtime_env_overrides()
     }
 
-    fn build_cargo_run_args(&self, package: &str, instance_id: &str) -> Vec<String> {
+    fn build_cargo_run_args(
+        &self,
+        package: &str,
+        instance_id: &str,
+        automaton: Option<&str>,
+    ) -> Vec<String> {
         let mut args = vec!["run".to_string(), "-p".to_string(), package.to_string()];
         if self.release {
             args.push("--release".to_string());
         }
-        append_binary_extra_args(&mut args, package, instance_id);
+        append_binary_extra_args(&mut args, package, instance_id, automaton);
         args
     }
 
@@ -743,10 +783,10 @@ impl RunCommand {
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         // Find binary info
-        let (_, package, binary) =
+        let (_, package, binary, automaton) =
             BINARIES
                 .iter()
-                .find(|(n, _, _)| *n == name)
+                .find(|(n, _, _, _)| *n == name)
                 .ok_or_else(|| {
                     eyre!(
                         "Unknown binary '{name}'. Use 'xtask run list' to see available binaries."
@@ -760,7 +800,7 @@ impl RunCommand {
 
         if ctx.is_background() {
             return self
-                .run_background(package, binary, &instance_id, ctx)
+                .run_background(package, binary, &instance_id, *automaton, ctx)
                 .await;
         }
 
@@ -773,11 +813,14 @@ impl RunCommand {
         }
 
         if self.watch {
-            return self.run_watch(package, binary, &instance_id, ctx).await;
+            return self
+                .run_watch(package, binary, &instance_id, *automaton, ctx)
+                .await;
         }
 
         // Direct run
-        self.run_direct(package, binary, &instance_id, ctx).await
+        self.run_direct(package, binary, &instance_id, *automaton, ctx)
+            .await
     }
 
     async fn run_bundle(
@@ -824,8 +867,8 @@ impl RunCommand {
             .map(|name| {
                 BINARIES
                     .iter()
-                    .find(|(n, _, _)| n == name)
-                    .map(|(_, package, _)| *package)
+                    .find(|(n, _, _, _)| n == name)
+                    .map(|(_, package, _, _)| *package)
                     .ok_or_else(|| eyre!("Unknown binary: {name}"))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -833,16 +876,16 @@ impl RunCommand {
         self.build_packages(&packages, ctx).await?;
 
         for name in binaries {
-            let (_, package, binary) = BINARIES
+            let (_, package, binary, automaton) = BINARIES
                 .iter()
-                .find(|(n, _, _)| n == name)
+                .find(|(n, _, _, _)| n == name)
                 .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
 
             let instance_id = make_instance_id(name, instance_prefix);
             let binary_command = target_binary_path(self.release, binary)
                 .to_string_lossy()
                 .into_owned();
-            let args = runtime_cli_args(package, &instance_id);
+            let args = runtime_cli_args(package, &instance_id, *automaton);
 
             let job = manager.spawn_with_env(&binary_command, &args, &runtime_env)?;
             job_ids.push(job.id);
@@ -871,8 +914,8 @@ impl RunCommand {
             .map(|name| {
                 BINARIES
                     .iter()
-                    .find(|(n, _, _)| n == name)
-                    .map(|(_, package, _)| *package)
+                    .find(|(n, _, _, _)| n == name)
+                    .map(|(_, package, _, _)| *package)
                     .ok_or_else(|| eyre!("Unknown binary: {name}"))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -888,9 +931,9 @@ impl RunCommand {
         let runtime_env = self.local_run_env_vars();
 
         for name in binaries {
-            let (_, package, binary) = BINARIES
+            let (_, package, binary, automaton) = BINARIES
                 .iter()
-                .find(|(n, _, _)| n == name)
+                .find(|(n, _, _, _)| n == name)
                 .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
 
             let instance_id = make_instance_id(name, instance_prefix);
@@ -902,7 +945,7 @@ impl RunCommand {
 
             let mut cmd = Command::new(&binary_path);
             configure_managed_child_tokio(&mut cmd);
-            cmd.args(runtime_cli_args(package, &instance_id));
+            cmd.args(runtime_cli_args(package, &instance_id, *automaton));
 
             let (stdout_io, stderr_io) = if pipe_output {
                 (Stdio::piped(), Stdio::piped())
@@ -998,6 +1041,7 @@ impl RunCommand {
         package: &str,
         binary: &str,
         instance_id: &str,
+        automaton: Option<&str>,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         if ctx.is_human() {
@@ -1008,11 +1052,11 @@ impl RunCommand {
         // so we can pipe stdout/stderr through the journal shim.
         if self.dev_journal || self.logs {
             return self
-                .run_direct_piped(package, binary, instance_id, ctx)
+                .run_direct_piped(package, binary, instance_id, automaton, ctx)
                 .await;
         }
 
-        let args = self.build_cargo_run_args(package, instance_id);
+        let args = self.build_cargo_run_args(package, instance_id, automaton);
 
         self.maybe_spawn_metrics_overlay(ctx);
         let runtime_env = self.local_run_env_vars();
@@ -1068,6 +1112,7 @@ impl RunCommand {
         package: &str,
         binary: &str,
         instance_id: &str,
+        automaton: Option<&str>,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         // Step 1: build
@@ -1107,7 +1152,7 @@ impl RunCommand {
 
         let mut cmd = Command::new(&binary_path);
         configure_managed_child_tokio(&mut cmd);
-        cmd.args(runtime_cli_args(package, instance_id));
+        cmd.args(runtime_cli_args(package, instance_id, automaton));
         cmd.envs(self.local_run_env_vars());
 
         let mut child = cmd
@@ -1122,8 +1167,8 @@ impl RunCommand {
         // Derive a short name for display/journal from the binary name
         let short_name = BINARIES
             .iter()
-            .find(|(_, pkg, _)| *pkg == package)
-            .map_or(binary, |(n, _, _)| *n);
+            .find(|(_, pkg, _, _)| *pkg == package)
+            .map_or(binary, |(n, _, _, _)| *n);
         register_tokio_child_process_group(&child, short_name);
 
         let journal_path = self
@@ -1201,6 +1246,7 @@ impl RunCommand {
         package: &str,
         binary: &str,
         instance_id: &str,
+        automaton: Option<&str>,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         let cfg = config();
@@ -1210,7 +1256,7 @@ impl RunCommand {
         let binary_command = target_binary_path(self.release, binary)
             .to_string_lossy()
             .into_owned();
-        let args = runtime_cli_args(package, instance_id);
+        let args = runtime_cli_args(package, instance_id, automaton);
         let runtime_env = self.local_run_env_vars();
 
         let job = manager.spawn_with_env(&binary_command, &args, &runtime_env)?;
@@ -1230,6 +1276,7 @@ impl RunCommand {
         package: &str,
         _binary: &str,
         instance_id: &str,
+        automaton: Option<&str>,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         if ctx.is_human() {
@@ -1243,7 +1290,7 @@ impl RunCommand {
 
         // Build extra args for this binary type
         let mut extra_args = Vec::new();
-        append_binary_extra_args(&mut extra_args, package, instance_id);
+        append_binary_extra_args(&mut extra_args, package, instance_id, automaton);
 
         let args = RunArgs {
             binary: package.to_string(),
@@ -1275,19 +1322,19 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
         println!("Available binaries:\n");
         println!("Core Services:");
         for name in CORE_TARGETS {
-            let (_, package, _) = lookup_binary(name).expect("core target must exist");
+            let (_, package, _, _) = lookup_binary(name).expect("core target must exist");
             println!("  {name:<25} ({package})");
         }
 
         println!("\nIngestors:");
         for name in INGESTOR_TARGETS {
-            let (_, package, _) = lookup_binary(name).expect("ingestor target must exist");
+            let (_, package, _, _) = lookup_binary(name).expect("ingestor target must exist");
             println!("  {name:<25} ({package})");
         }
 
         println!("\nAutomatons:");
         for name in AUTOMATON_TARGETS {
-            let (_, package, _) = lookup_binary(name).expect("automaton target must exist");
+            let (_, package, _, _) = lookup_binary(name).expect("automaton target must exist");
             println!("  {name:<25} ({package})");
         }
 
@@ -1311,11 +1358,12 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
         );
     }
 
-    for (name, package, binary) in BINARIES {
+    for (name, package, binary, automaton) in BINARIES {
         binaries.push(serde_json::json!({
             "name": name,
             "package": package,
             "binary": binary,
+            "automaton": automaton,
         }));
     }
 
@@ -1454,7 +1502,7 @@ mod tests {
     #[sinex_test]
     async fn test_binary_lookup() -> ::xtask::sandbox::TestResult<()> {
         // All binaries should be findable
-        for (name, package, _) in BINARIES {
+        for (name, package, _, _) in BINARIES {
             let found = lookup_binary(name);
             assert!(found.is_some(), "Binary {name} not found");
             assert_eq!(found.unwrap().1, *package);
@@ -1482,7 +1530,7 @@ mod tests {
     async fn test_runtime_cli_args_use_service_name_for_nodes() -> ::xtask::sandbox::TestResult<()>
     {
         assert_eq!(
-            runtime_cli_args("sinex-terminal-ingestor", "terminal-ingestor-123"),
+            runtime_cli_args("sinex-terminal-ingestor", "terminal-ingestor-123", None),
             vec![
                 "--service-name=terminal-ingestor-123".to_string(),
                 "service".to_string(),
@@ -1495,8 +1543,23 @@ mod tests {
     async fn test_runtime_cli_args_use_rpc_server_for_gateway() -> ::xtask::sandbox::TestResult<()>
     {
         assert_eq!(
-            runtime_cli_args("sinex-gateway", "gateway-123"),
+            runtime_cli_args("sinex-gateway", "gateway-123", None),
             vec!["rpc-server".to_string()]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_runtime_cli_args_prepend_automaton_for_sinex_process()
+    -> ::xtask::sandbox::TestResult<()> {
+        assert_eq!(
+            runtime_cli_args("sinex-process", "analytics-automaton-123", Some("analytics")),
+            vec![
+                "--automaton".to_string(),
+                "analytics".to_string(),
+                "--service-name=analytics-automaton-123".to_string(),
+                "service".to_string(),
+            ]
         );
         Ok(())
     }
@@ -1509,7 +1572,7 @@ mod tests {
             instance_id: None,
         });
         assert_eq!(
-            command.build_cargo_run_args("sinex-terminal-ingestor", "terminal-ingestor-123"),
+            command.build_cargo_run_args("sinex-terminal-ingestor", "terminal-ingestor-123", None),
             vec![
                 "run".to_string(),
                 "-p".to_string(),

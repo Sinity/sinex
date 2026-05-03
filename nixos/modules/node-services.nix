@@ -1597,9 +1597,12 @@ let
     let
       profile = mkAutomataProfile params.profile;
       resources = profile.resources;
+      # params.automaton is the --automaton selector (canonicalizer | analytics | health | session | hourly | daily).
+      # params.binary is kept for the --service-name value for backwards-compatible service identification.
+      automaton = params.automaton;
       extraArgs = params.extraArgs or [ ];
       execArgs = concatStringsSep " " (
-        [ "--service-name sinex-${params.binary}" ] ++ extraArgs ++ [ "service" ]
+        [ "--automaton ${automaton}" "--service-name sinex-${params.binary}" ] ++ extraArgs ++ [ "service" ]
       );
       env = mkServiceEnv ([ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList params.env);
     in
@@ -1611,8 +1614,8 @@ let
       unitConfig = restartRateLimits // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
       serviceConfig = mkBaseServiceConfig resources env {
         ExecStart = mkDatabasePasswordExec {
-          name = params.binary;
-          command = "${sinexPackage}/bin/sinex-${params.binary} ${execArgs}";
+          name = automaton;
+          command = "${sinexPackage}/bin/sinex-process ${execArgs}";
           passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
         };
         WorkingDirectory = stateRoot;
@@ -1631,6 +1634,7 @@ let
       canonicalizerUnit =
         if !canon.enable then { } else {
           "sinex-canonicalizer" = mkAutomataUnit {
+            automaton = "canonicalizer";
             binary = "terminal-command-canonicalizer";
             description = "Sinex canonical command synthesizer";
             profile = canon.profile;
@@ -1641,6 +1645,7 @@ let
       healthUnit =
         if !health.enable then { } else {
           "sinex-health-automaton" = mkAutomataUnit {
+            automaton = "health";
             binary = "health-automaton";
             description = "Sinex health automaton";
             profile = health.profile;
@@ -1651,6 +1656,7 @@ let
       analyticsUnit =
         if !analytics.enable then { } else {
           "sinex-analytics-automaton" = mkAutomataUnit {
+            automaton = "analytics";
             binary = "analytics-automaton";
             description = "Sinex analytics automaton";
             profile = analytics.profile;
@@ -1661,6 +1667,7 @@ let
       sessionUnit =
         if !session.enable then { } else {
           "sinex-session-detector" = mkAutomataUnit {
+            automaton = "session";
             binary = "session-detector";
             description = "Sinex session detector";
             profile = session.profile;
@@ -1671,6 +1678,7 @@ let
       hourlyUnit =
         if !hourly.enable then { } else {
           "sinex-hourly-summarizer" = mkAutomataUnit {
+            automaton = "hourly";
             binary = "hourly-summarizer";
             description = "Sinex hourly activity summarizer";
             profile = hourly.profile;
@@ -1681,6 +1689,7 @@ let
       dailyUnit =
         if !daily.enable then { } else {
           "sinex-daily-summarizer" = mkAutomataUnit {
+            automaton = "daily";
             binary = "daily-summarizer";
             description = "Sinex daily activity summarizer";
             profile = daily.profile;
