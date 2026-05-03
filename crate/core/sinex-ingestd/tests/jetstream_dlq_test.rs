@@ -1015,8 +1015,10 @@ async fn test_persistence_error_naked_when_dlq_routing_disabled() -> TestResult<
     )
     .await?;
 
-    // Give the retry a moment to complete after the initial failure.
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // Wait until the retry has persisted the event before asserting the DLQ is empty.
+    ctx.timing()
+        .wait_for_source_events(&format!("persist.{suffix}"), 1)
+        .await?;
 
     // Verify DLQ stream has 0 messages — the error was NAK'd, not DLQ'd.
     let mut dlq_stream = setup

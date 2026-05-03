@@ -17,6 +17,11 @@
 //! See issue #556 for the categories this detects (and the ones still
 //! marked as follow-up).
 
+// PgPoolOptions is used directly here instead of sinex_db::pool::create_pool because
+// sinex-schema cannot depend on sinex-db without reversing the dependency direction
+// (sinex-db depends on sinex-schema for schema definitions). These binaries are
+// standalone tools that only need a minimal pool to apply or diff schema; they have
+// no need for the full sinex-db pool configuration or repository layer.
 use sqlx::postgres::PgPoolOptions;
 
 #[tokio::main]
