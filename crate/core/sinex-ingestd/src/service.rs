@@ -1302,7 +1302,7 @@ impl IngestService {
             .into_iter()
             .map(|s| SchemaBroadcastEntry {
                 name: s.name,
-                version: (*s.version).clone(),
+                version: s.version.to_string(),
                 schema_id: s.schema_id.to_string(),
             })
             .collect();

@@ -110,7 +110,7 @@ impl SchemaCache {
         self.cache.read().iter().map(f).collect()
     }
 }
-type LookupMap = AHashMap<(Arc<String>, Arc<String>), Uuid>;
+type LookupMap = AHashMap<(Arc<str>, Arc<str>), Uuid>;
 #[derive(Clone, Default)]
 struct SchemaLookup {
     lookup: Arc<RwLock<LookupMap>>,
@@ -119,7 +119,7 @@ impl SchemaLookup {
     fn new() -> Self {
         Self::default()
     }
-    fn get(&self, key: &(Arc<String>, Arc<String>)) -> Option<Uuid> {
+    fn get(&self, key: &(Arc<str>, Arc<str>)) -> Option<Uuid> {
         self.lookup.read().get(key).copied()
     }
     fn bulk_update(&self, new_lookup: LookupMap) {
@@ -130,15 +130,15 @@ impl SchemaLookup {
 struct SchemaCacheEntry {
     schema_id: Uuid,
     compiled_schema: Arc<Validator>,
-    source: Arc<String>,
-    event_type: Arc<String>,
-    version: Arc<String>,
+    source: Arc<str>,
+    event_type: Arc<str>,
+    version: Arc<str>,
 }
 /// Information about a schema for diagnostics/CLI display
 #[derive(Debug, Clone)]
 pub struct SchemaInfo {
     pub name: String,
-    pub version: Arc<String>,
+    pub version: Arc<str>,
     pub schema_id: Uuid,
 }
 /// Lightweight event validator used everywhere in Sinex.
@@ -230,8 +230,8 @@ impl EventValidator {
     /// Lookup schema ID for a `source/event_type` pair.
     #[must_use]
     pub fn get_schema_id(&self, source: &EventSource, event_type: &EventType) -> Option<Uuid> {
-        let source_key = Arc::new(source.as_str().to_string());
-        let event_key = Arc::new(event_type.as_str().to_string());
+        let source_key: Arc<str> = Arc::from(source.as_str());
+        let event_key: Arc<str> = Arc::from(event_type.as_str());
         self.schema_lookup.get(&(source_key, event_key))
     }
     /// Lookup schema version for a `source/event_type` pair.
@@ -240,7 +240,7 @@ impl EventValidator {
         &self,
         source: &EventSource,
         event_type: &EventType,
-    ) -> Option<Arc<String>> {
+    ) -> Option<Arc<str>> {
         let schema_id = self.get_schema_id(source, event_type)?;
         self.schema_cache.get(&schema_id).map(|entry| entry.version)
     }
@@ -315,8 +315,8 @@ impl EventValidator {
             // Validation disabled: no schema was matched, so no schema_id to carry.
             return SchemaValidationOutcome::NoSchema;
         }
-        let source_key = Arc::new(source.to_string());
-        let event_key = Arc::new(event_type.to_string());
+        let source_key: Arc<str> = Arc::from(source);
+        let event_key: Arc<str> = Arc::from(event_type);
         let Some(schema_id) = self
             .schema_lookup
             .get(&(source_key.clone(), event_key.clone()))
@@ -603,9 +603,9 @@ fn compile_schemas(
     for schema in schemas {
         match jsonschema::validator_for(&schema.schema_content) {
             Ok(compiled_schema) => {
-                let source = Arc::new(schema.source);
-                let event_type = Arc::new(schema.event_type);
-                let version = Arc::new(schema.schema_version);
+                let source: Arc<str> = Arc::from(schema.source.as_str());
+                let event_type: Arc<str> = Arc::from(schema.event_type.as_str());
+                let version: Arc<str> = Arc::from(schema.schema_version.as_str());
                 let entry = SchemaCacheEntry {
                     schema_id: schema.id,
                     compiled_schema: Arc::new(compiled_schema),
