@@ -105,9 +105,11 @@ in
     (mkIf enableNatsExporter {
       systemd.services.sinex-nats-prometheus-exporter = {
         description = "NATS Prometheus exporter for Sinex";
-        wantedBy = [ "multi-user.target" ];
+        wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
+        restartIfChanged = cfg.runtime.restartOnSwitch;
         after = [ "nats.service" ];
         wants = [ "nats.service" ];
+        unitConfig.PartOf = [ "sinex-runtime.target" ];
         serviceConfig = {
           Type = "simple";
           ExecStart = "${natsExporterPkg}/bin/prometheus-nats-exporter"
@@ -117,8 +119,8 @@ in
             + " -connz"
             + " -routez"
             + " ${natsMonitoringUrl}";
-          Restart = "on-failure";
-          RestartSec = 5;
+          Restart = cfg.runtime.restartPolicy.mode;
+          RestartSec = cfg.runtime.restartPolicy.backoffSec;
           DynamicUser = true;
           NoNewPrivileges = true;
           ProtectSystem = "strict";
