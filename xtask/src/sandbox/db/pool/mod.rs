@@ -6,6 +6,7 @@ use parking_lot::Mutex;
 
 use sinex_primitives::SinexError;
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::validation::validate_pg_identifier;
 
 use sqlx::Connection;
 use sqlx::postgres::PgConnection;
@@ -748,6 +749,8 @@ async fn try_lock_slot_database_for_drop(
     slot_name: &str,
     slot_url: &str,
 ) -> TestResult<SlotDropLockOutcome> {
+    validate_pg_identifier(slot_name, "database")
+        .map_err(|e| eyre!("cannot lock slot for drop: {e}"))?;
     let mut slot_conn = match PgConnection::connect(slot_url).await {
         Ok(conn) => conn,
         Err(error) => match classify_slot_connection_error(admin_conn, slot_name, &error).await? {
@@ -1008,8 +1011,12 @@ impl DatabasePool {
                 .fetch_all(&admin_pool)
                 .await?;
 
-                // Drop them
+                // Drop them (validate each name before interpolation into DDL)
                 for db in dbs_to_drop {
+                    if validate_pg_identifier(&db, "database").is_err() {
+                        tracing::warn!("skipping DROP for non-standard database name: {db:?}");
+                        continue;
+                    }
                     let quoted = quote_ident(&db);
                     let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS {quoted}"))
                         .execute(&admin_pool)

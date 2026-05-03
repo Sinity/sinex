@@ -4,28 +4,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// Validate a PostgreSQL identifier (role name, database name) against a strict allowlist.
-///
-/// Accepts only ASCII letters, digits, and underscores; must start with a letter or
-/// underscore; length bounded to 63 bytes (PostgreSQL identifier limit).  This rejects
-/// anything that could escape a bare (un-quoted) identifier context and prevents SQL
-/// injection via `format!`-constructed DDL statements.
+/// Validate a PostgreSQL identifier against the strict ASCII allowlist defined in
+/// `sinex_primitives::validation::validate_pg_identifier`, adapted to `eyre::Result`.
 pub(crate) fn validate_pg_identifier(ident: &str, kind: &str) -> Result<()> {
-    let valid = !ident.is_empty()
-        && ident.len() <= 63
-        && ident
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && ident.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-    if valid {
-        Ok(())
-    } else {
-        bail!(
-            "invalid PostgreSQL {kind} identifier {:?}: must match [a-zA-Z_][a-zA-Z0-9_]{{0,62}}",
-            ident
-        )
-    }
+    sinex_primitives::validation::validate_pg_identifier(ident, kind)
+        .map_err(|e| color_eyre::eyre::eyre!("{e}"))
 }
 
 fn pg_identifier(ident: &str, kind: &str) -> Result<String> {
