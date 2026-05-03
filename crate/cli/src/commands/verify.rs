@@ -53,7 +53,7 @@ const TERMINAL_PROOF_SOURCES: &[&str] = &[
 const BROWSER_PROOF_SOURCES: &[&str] = &["webhistory"];
 const DESKTOP_PROOF_SOURCES: &[&str] = &["desktop", "activitywatch", "clipboard", "wm.hyprland"];
 const FILESYSTEM_PROOF_SOURCES: &[&str] = &["fs-watcher"];
-const SYSTEM_PROOF_SOURCES: &[&str] = &["system", "journald", "systemd"];
+const SYSTEM_PROOF_SOURCES: &[&str] = &["system", "journald", "systemd", "dbus", "udev"];
 
 const PASSIVE_DERIVED_SIGNAL_CHECKS: &[PassiveSignalCheck] = &[
     PassiveSignalCheck {
