@@ -458,6 +458,38 @@ async fn nullability_convergence_sets_not_null_on_empty_table(
 }
 
 #[sinex_test]
+async fn nullability_convergence_preserves_primary_key_nullability(
+    ctx: TestContext,
+) -> TestResult<()> {
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    // A second apply exercises convergence against existing tables. PostgreSQL
+    // reports primary-key columns as NOT NULL even when the sea-query column
+    // declaration only says PRIMARY KEY, so convergence must not try to drop
+    // the primary-key-implied nullability.
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    let is_nullable: String = sqlx::query_scalar(
+        "SELECT is_nullable FROM information_schema.columns
+         WHERE table_schema = 'core' AND table_name = 'events'
+           AND column_name = 'id'",
+    )
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert_eq!(is_nullable, "NO", "primary-key id must remain NOT NULL");
+
+    let drifts = sinex_schema::apply::diff(&ctx.pool).await?;
+    assert!(
+        !drifts
+            .iter()
+            .any(|d| d.contains("nullability mismatch core.events.id")),
+        "primary-key id nullability must not be reported as drift: {drifts:?}"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn nullability_convergence_fails_loudly_on_null_rows(ctx: TestContext) -> TestResult<()> {
     sinex_schema::apply::apply(&ctx.pool).await?;
 
