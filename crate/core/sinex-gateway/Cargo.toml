@@ -6,6 +6,7 @@ socket2        = "0.5"
 subtle         = "2"
 tokio-rustls   = "0.26"
 human-panic    = "2.0"
+shadow-rs      = "0.35"
 sinex-primitives = { path = "../../lib/sinex-primitives", features = ["nats"] }
 sinex-db = { path = "../../lib/sinex-db" }
 
