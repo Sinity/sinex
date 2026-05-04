@@ -429,14 +429,13 @@ impl BlobMigrateCommand {
                             continue;
                         }
                     };
-                    let cas_target = content_store
-                        .store_file(&path)
-                        .await;
-                    match cas_target {
-                        Ok(cas_key) => {
-                            if self.apply {
-                                // Update the blob row: storage_backend -> SINEXBLAKE3
-                                let _ = sqlx::query(
+                    if self.apply {
+                        let cas_target = content_store
+                            .store_file(&path)
+                            .await;
+                        match cas_target {
+                            Ok(cas_key) => {
+                                let update_result = sqlx::query(
                                     "UPDATE core.blobs SET annex_backend = 'SINEXBLAKE3', content_hash = $1, checksum_blake3 = $2 WHERE id = $3",
                                 )
                                 .bind(&blake3_hash)
@@ -444,22 +443,41 @@ impl BlobMigrateCommand {
                                 .bind(blob_id)
                                 .execute(&pool)
                                 .await;
+                                match update_result {
+                                    Ok(_) => {
+                                        migrated_count += 1;
+                                        migrated_keys.push(MigratedKey {
+                                            annex_key: annex_key.clone(),
+                                            cas_key: cas_key.key,
+                                            size_bytes: *size_bytes,
+                                        });
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            error = %e,
+                                            blob_id = %blob_id,
+                                            "Failed to update blob row during migration"
+                                        );
+                                        failed += 1;
+                                    }
+                                }
                             }
-                            migrated_count += 1;
-                            migrated_keys.push(MigratedKey {
-                                annex_key: annex_key.clone(),
-                                cas_key: cas_key.key,
-                                size_bytes: *size_bytes,
-                            });
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    annex_key = %annex_key,
+                                    "Failed to store blob in CAS, skipping"
+                                );
+                                failed += 1;
+                            }
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                error = %e,
-                                annex_key = %annex_key,
-                                "Failed to store blob in CAS, skipping"
-                            );
-                            failed += 1;
-                        }
+                    } else {
+                        migrated_count += 1;
+                        migrated_keys.push(MigratedKey {
+                            annex_key: annex_key.clone(),
+                            cas_key: format!("would-migrate:{}", blake3_hash),
+                            size_bytes: *size_bytes,
+                        });
                     }
                 }
             }
