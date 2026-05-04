@@ -39,9 +39,11 @@
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::{
-    env as shared_env, environment::environment, units::Seconds, validation::validate_path,
+    env as shared_env, environment::environment, units::Seconds,
+    utils::wait_helpers::RetryConfig, validation::validate_path,
 };
 use std::collections::HashMap;
+use std::time::Duration;
 use validator::Validate;
 
 #[derive(thiserror::Error, Debug)]
@@ -135,6 +137,14 @@ pub struct NodeConfig {
     #[serde(default)]
     #[builder(default = false)]
     pub dry_run: bool,
+
+    /// Core retry configuration (max attempts, delays, backoff, jitter).
+    ///
+    /// Controls retry behavior for transient failures. Individual env-var
+    /// overrides are available via `SINEX_RETRY_MAX_ATTEMPTS` etc.
+    #[serde(skip)]
+    #[builder(default = RetryConfig::default())]
+    pub retry_config: RetryConfig,
 }
 
 /// Configuration for event source nodes
@@ -207,6 +217,7 @@ impl NodeConfig {
             database_pool_size: default_pool_size(),
             work_dir: default_work_dir(),
             dry_run: false,
+            retry_config: RetryConfig::default(),
         }
     }
 
@@ -247,6 +258,26 @@ impl NodeConfig {
     pub fn load_from_env(service_name: &str) -> Result<Self, ConfigError> {
         let defaults = Self::defaults(service_name);
         let env_prefix = Self::env_prefix(service_name);
+        let retry_config = RetryConfig {
+            max_attempts: service_or_global_env_parse(&env_prefix, "RETRY_MAX_ATTEMPTS")?
+                .unwrap_or(3),
+            initial_delay: std::time::Duration::from_millis(
+                service_or_global_env_parse::<u64>(&env_prefix, "RETRY_INITIAL_DELAY_MS")?
+                    .unwrap_or(100),
+            ),
+            max_delay: std::time::Duration::from_millis(
+                service_or_global_env_parse::<u64>(&env_prefix, "RETRY_MAX_DELAY_MS")?
+                    .unwrap_or(1000),
+            ),
+            multiplier: service_or_global_env_parse(&env_prefix, "RETRY_MULTIPLIER")?
+                .unwrap_or(2.0),
+            jitter: service_or_global_env_bool(&env_prefix, "RETRY_JITTER")?
+                .unwrap_or(true),
+            publish_ack_timeout: std::time::Duration::from_millis(
+                service_or_global_env_parse::<u64>(&env_prefix, "PUBLISH_ACK_TIMEOUT_MS")?
+                    .unwrap_or(10000),
+            ),
+        };
         let config = Self {
             service_name: defaults.service_name,
             log_level: service_or_global_env_string(&env_prefix, "LOG_LEVEL")?
@@ -263,6 +294,7 @@ impl NodeConfig {
                 .unwrap_or(defaults.work_dir),
             dry_run: service_or_global_env_bool(&env_prefix, "DRY_RUN")?
                 .unwrap_or(defaults.dry_run),
+            retry_config,
         };
         config.validate_config()?;
         Ok(config)

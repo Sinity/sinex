@@ -7,14 +7,16 @@ use crate::{NodeResult, SinexError};
 use async_nats::jetstream;
 use futures::StreamExt;
 use serde_json::Value as JsonValue;
-use sinex_primitives::{environment::SinexEnvironment, temporal, transport, units::Seconds};
+use sinex_primitives::{
+    environment::SinexEnvironment, temporal, transport, units::Seconds,
+    utils::wait_helpers::RetryConfig,
+};
 use std::time::Duration;
 use tracing::{error, info, warn};
 
 // Default DLQ retry configuration values
 const DEFAULT_DLQ_CONSUMER_NAME: &str = "dlq-retry-consumer";
 const DEFAULT_DLQ_BATCH_SIZE: usize = 10;
-const DEFAULT_DLQ_MAX_RETRIES: u32 = 3;
 const DEFAULT_DLQ_RETRY_DELAY: Seconds = Seconds::from_secs(60);
 const DEFAULT_DLQ_ACK_WAIT: Seconds = Seconds::from_secs(60);
 const DEFAULT_DLQ_INTER_BATCH_DELAY_MS: u64 = 200;
@@ -26,13 +28,26 @@ pub struct DlqRetryConfig {
     pub consumer_name: String,
     /// Batch size for processing DLQ messages
     pub batch_size: usize,
-    /// Maximum number of retry attempts
-    pub max_retries: u32,
-    /// Delay between retries
-    pub retry_delay: Duration,
+    /// Core retry parameters (max attempts, delays, jitter, backoff).
+    /// The DLQ-specific `max_retries` and `retry_delay` are derived from this.
+    pub retry_config: RetryConfig,
     /// Per-message delay in milliseconds to smooth burst republishing within batches.
     /// Prevents downstream spike when an entire batch is republished at once.
     pub per_message_delay_ms: u64,
+}
+
+impl DlqRetryConfig {
+    /// Maximum number of retry attempts, derived from `retry_config.max_attempts`.
+    #[must_use]
+    pub fn max_retries(&self) -> u32 {
+        self.retry_config.max_attempts.saturating_sub(1)
+    }
+
+    /// Delay between retries, derived from `retry_config.max_delay`.
+    #[must_use]
+    pub fn retry_delay(&self) -> Duration {
+        self.retry_config.max_delay
+    }
 }
 
 /// Default per-message delay (10ms) — smooths burst within a batch without
@@ -44,8 +59,7 @@ impl Default for DlqRetryConfig {
         Self {
             consumer_name: DEFAULT_DLQ_CONSUMER_NAME.to_string(),
             batch_size: DEFAULT_DLQ_BATCH_SIZE,
-            max_retries: DEFAULT_DLQ_MAX_RETRIES,
-            retry_delay: Duration::from_secs(DEFAULT_DLQ_RETRY_DELAY.as_secs()),
+            retry_config: RetryConfig::default(),
             per_message_delay_ms: DEFAULT_DLQ_PER_MESSAGE_DELAY_MS,
         }
     }
@@ -138,7 +152,7 @@ impl DlqRetryHandler {
                 Ok(Some(Ok(msg))) => {
                     if self.handle_dlq_message(&js, &msg).await? {
                         result.retried += 1;
-                    } else if dlq_retry_attempts(&msg)? >= self.config.max_retries {
+                    } else if dlq_retry_attempts(&msg)? >= self.config.max_retries() {
                         result.permanently_failed += 1;
                     } else {
                         result.transient_failures += 1;
@@ -244,12 +258,12 @@ impl DlqRetryHandler {
             }
 
             let retry_count = dlq_stored_retry_count(&message.headers)?;
-            if retry_count >= self.config.max_retries {
+            if retry_count >= self.config.max_retries() {
                 warn!(
                     event_id,
                     sequence,
                     retry_count,
-                    max_retries = self.config.max_retries,
+                    max_retries = self.config.max_retries(),
                     "DLQ event exceeded max retries during direct retry request; permanently failing it instead of requeueing"
                 );
                 self.permanently_fail_stream_message(&stream, &message)
@@ -259,7 +273,7 @@ impl DlqRetryHandler {
                 )
                 .with_context("event_id", event_id.to_string())
                 .with_context("retry_count", retry_count.to_string())
-                .with_context("max_retries", self.config.max_retries.to_string()));
+                .with_context("max_retries", self.config.max_retries().to_string()));
             }
 
             self.retry_stream_message(&js, &stream, &message).await?;
@@ -281,12 +295,12 @@ impl DlqRetryHandler {
     ) -> NodeResult<bool> {
         let retry_count = dlq_retry_attempts(msg)?;
 
-        if retry_count >= self.config.max_retries {
+        if retry_count >= self.config.max_retries() {
             let subject = &msg.subject;
             warn!(
                 subject = %subject,
                 retry_count,
-                max_retries = self.config.max_retries,
+                max_retries = self.config.max_retries(),
                 "Message exceeded max retries, permanently failing"
             );
             msg.ack().await.map_err(|error| {
@@ -313,7 +327,7 @@ impl DlqRetryHandler {
             Err(e) => {
                 error!("Failed to retry message: {e}");
                 msg.ack_with(async_nats::jetstream::AckKind::Nak(Some(
-                    self.config.retry_delay,
+                    self.config.retry_delay(),
                 )))
                 .await
                 .map_err(|nak_err| {

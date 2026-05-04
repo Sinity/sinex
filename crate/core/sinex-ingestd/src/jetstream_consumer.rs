@@ -118,6 +118,10 @@ pub struct JetStreamConsumer {
     future_ts_skew: time::Duration,
     /// Earliest accepted ts_orig as a timestamp (default: 2000-01-01 UTC)
     ts_orig_lower_bound: Timestamp,
+    /// Max concurrent batch-processing tasks during startup catch-up.
+    /// Limits I/O pressure while the consumer works through the backlog.
+    /// Default: 4. Set to 0 to disable catch-up limiting (full speed).
+    startup_catch_up_max_concurrent: usize,
 }
 
 const DB_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -500,6 +504,7 @@ impl JetStreamConsumer {
             heartbeat_handle: None,
             future_ts_skew: time::Duration::hours(1),
             ts_orig_lower_bound: Timestamp::from_const(time::macros::datetime!(2000-01-01 00:00:00 UTC)),
+            startup_catch_up_max_concurrent: 4,
         }
     }
 
@@ -514,6 +519,14 @@ impl JetStreamConsumer {
     #[must_use]
     pub fn with_ts_orig_lower_bound(mut self, lower_bound: Timestamp) -> Self {
         self.ts_orig_lower_bound = lower_bound;
+        self
+    }
+
+    /// Set max concurrent batch-processing tasks during startup catch-up.
+    /// 0 disables the semaphore entirely (full speed).
+    #[must_use]
+    pub fn with_startup_catch_up_max_concurrent(mut self, max_concurrent: usize) -> Self {
+        self.startup_catch_up_max_concurrent = max_concurrent;
         self
     }
 
@@ -882,8 +895,21 @@ impl JetStreamConsumer {
         // Consumer lag check interval (30s)
         let mut lag_check_interval = tokio::time::interval(std::time::Duration::from_secs(30));
         let mut confirmation_retry_interval = tokio::time::interval(CONFIRM_RETRY_POLL_INTERVAL);
-        let mut batch_future: BoxFuture<'_, IngestdResult<()>> =
-            Box::pin(self.process_batch(&consumer));
+
+        // Startup catch-up semaphore: limits I/O pressure while the consumer
+        // works through the initial backlog. Once the consumer is caught up
+        // (num_pending == 0), the semaphore is no longer used.
+        let catch_up_semaphore = (self.startup_catch_up_max_concurrent > 0)
+            .then(|| Arc::new(tokio::sync::Semaphore::new(self.startup_catch_up_max_concurrent)));
+        let mut catching_up = catch_up_semaphore.is_some();
+        let mut batch_future: BoxFuture<'_, IngestdResult<()>> = Box::pin(
+            Self::process_batch_with_semaphore(
+                &self,
+                &consumer,
+                &catch_up_semaphore,
+                catching_up,
+            ),
+        );
 
         loop {
             tokio::select! {
@@ -926,6 +952,11 @@ impl JetStreamConsumer {
                                     info.num_ack_pending as f64,
                                     Some(labels),
                                 ).await;
+                                // Detect catch-up completion when pending drops to zero
+                                if catching_up && info.num_pending == 0 {
+                                    catching_up = false;
+                                    info!("Startup catch-up complete; releasing semaphore throttle");
+                                }
                             }
                             Err(e) => {
                                 debug!("Consumer lag check failed: {e}");
@@ -946,10 +977,36 @@ impl JetStreamConsumer {
                         }
                         error!("Batch processing error: {}", e);
                     }
-                    batch_future = Box::pin(self.process_batch(&consumer));
+                    batch_future = Box::pin(Self::process_batch_with_semaphore(
+                        &self,
+                        &consumer,
+                        &catch_up_semaphore,
+                        catching_up,
+                    ));
                 }
             }
         }
+    }
+
+    /// Process a batch, acquiring a catch-up semaphore permit during the
+    /// startup catch-up phase to limit I/O pressure.
+    ///
+    /// Catch-up detection (setting `catching_up = false`) is handled in the
+    /// lag-check interval of the main loop, where we already have mutable
+    /// access to `lag_consumer`.
+    async fn process_batch_with_semaphore(
+        this: &Self,
+        consumer: &jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,
+        catch_up_semaphore: &Option<Arc<tokio::sync::Semaphore>>,
+        catching_up: bool,
+    ) -> IngestdResult<()> {
+        if let (true, Some(sem)) = (catching_up, catch_up_semaphore.as_ref()) {
+            let _permit = sem.acquire().await;
+            this.process_batch(consumer).await?;
+        } else {
+            this.process_batch(consumer).await?;
+        }
+        Ok(())
     }
 
     #[tracing::instrument(skip(self, consumer), fields(consumer_name = %self.topology.consumer_durable))]

@@ -964,11 +964,10 @@ where
 }
 
 #[cfg(feature = "db")]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct SqliteSnapshotLinker<'a> {
     pool: &'a PgPool,
-    max_attempts: usize,
-    retry_delay: std::time::Duration,
+    retry_config: sinex_primitives::utils::wait_helpers::RetryConfig,
 }
 
 #[cfg(feature = "db")]
@@ -977,42 +976,55 @@ impl<'a> SqliteSnapshotLinker<'a> {
     pub fn new(pool: &'a PgPool) -> Self {
         Self {
             pool,
-            max_attempts: 10,
-            retry_delay: std::time::Duration::from_millis(100),
+            retry_config: sinex_primitives::utils::wait_helpers::RetryConfig {
+                max_attempts: 10,
+                initial_delay: std::time::Duration::from_millis(100),
+                ..Default::default()
+            },
         }
     }
 
     #[must_use]
-    pub fn with_retry(mut self, max_attempts: usize, retry_delay: std::time::Duration) -> Self {
-        self.max_attempts = max_attempts.max(1);
-        self.retry_delay = retry_delay;
+    pub fn with_retry(
+        mut self,
+        max_attempts: usize,
+        retry_delay: std::time::Duration,
+    ) -> Self {
+        self.retry_config = sinex_primitives::utils::wait_helpers::RetryConfig {
+            max_attempts: max_attempts.max(1) as u32,
+            initial_delay: retry_delay,
+            ..self.retry_config
+        };
         self
     }
 
     async fn link_backing_material(
-        self,
+        &self,
         from_material_id: sinex_primitives::Uuid,
         to_material_id: sinex_primitives::Uuid,
         metadata: serde_json::Value,
     ) -> Result<(), String> {
-        let mut last_error = None;
-        for attempt in 1..=self.max_attempts {
-            match self
-                .pool
-                .source_materials()
-                .link_backing_material(from_material_id, to_material_id, metadata.clone())
-                .await
-            {
-                Ok(_) => return Ok(()),
-                Err(error) => {
-                    last_error = Some(error.to_string());
-                    if attempt < self.max_attempts {
-                        tokio::time::sleep(self.retry_delay).await;
-                    }
+        let max_retries = self.retry_config.max_attempts.saturating_sub(1) as usize;
+        sinex_primitives::utils::wait_helpers::retry_with_fixed_interval(
+            "link_backing_material",
+            self.retry_config.initial_delay,
+            max_retries,
+            false,
+            || {
+                let pool = self.pool;
+                let metadata = metadata.clone();
+                async move {
+                    pool.source_materials()
+                        .link_backing_material(from_material_id, to_material_id, metadata)
+                        .await
+                        .map(|record| Some(record))
+                        .map_err(|e| e.to_string())
                 }
-            }
-        }
-        Err(last_error.unwrap_or_else(|| "source-material link failed".to_string()))
+            },
+        )
+        .await
+        .map(|_record| ())
+        .map_err(|e| e.to_string())
     }
 }
 

@@ -36,8 +36,8 @@ async fn test_dlq_retry_config_defaults() -> TestResult<()> {
     let config = DlqRetryConfig::default();
     assert_eq!(config.consumer_name, "dlq-retry-consumer");
     assert_eq!(config.batch_size, 10);
-    assert_eq!(config.max_retries, 3);
-    assert_eq!(config.retry_delay, std::time::Duration::from_mins(1));
+    assert_eq!(config.max_retries(), 2); // max_attempts(3) - 1
+    assert_eq!(config.retry_delay(), std::time::Duration::from_secs(1)); // max_delay
     assert_eq!(config.per_message_delay_ms, 10);
     Ok(())
 }
@@ -296,7 +296,10 @@ async fn dlq_retry_by_id_honors_max_retry_limit(ctx: TestContext) -> TestResult<
         client.clone(),
         env,
         DlqRetryConfig {
-            max_retries: 1,
+            retry_config: sinex_primitives::utils::wait_helpers::RetryConfig {
+                max_attempts: 2, // max_retries() == 1
+                ..Default::default()
+            },
             ..DlqRetryConfig::default()
         },
     );

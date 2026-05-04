@@ -237,19 +237,9 @@ impl<T: Node + 'static> NodeRunner<T> {
             None,
         ));
 
-        let consumer_failure = Arc::new(tokio::sync::Mutex::new(None));
-        let consumer_runner = consumer.clone();
-        let consumer_failure_reporter = Arc::clone(&consumer_failure);
-        let consumer_handle = tokio::spawn(async move {
-            if let Err(err) = consumer_runner.run().await {
-                warn!(error = %err, "Automaton JetStream consumer terminated unexpectedly");
-                let mut guard = consumer_failure_reporter.lock().await;
-                *guard = Some(err);
-            }
-        });
-        drain_controller.register_runtime_abort(consumer_handle.abort_handle());
-        self.consumer_handle = Some(consumer_handle);
-
+        // Process historical backlog BEFORE starting the JetStream consumer.
+        // This ensures events published after consumer creation but present in
+        // the DB at scan time are not processed twice.
         if !matches!(from, Checkpoint::None) && self.node.capabilities().supports_historical {
             info!("Processing historical backlog before entering continuous mode");
             let _ = self
@@ -263,6 +253,19 @@ impl<T: Node + 'static> NodeRunner<T> {
                 )
                 .await?;
         }
+
+        let consumer_failure = Arc::new(tokio::sync::Mutex::new(None));
+        let consumer_runner = consumer.clone();
+        let consumer_failure_reporter = Arc::clone(&consumer_failure);
+        let consumer_handle = tokio::spawn(async move {
+            if let Err(err) = consumer_runner.run().await {
+                warn!(error = %err, "Automaton JetStream consumer terminated unexpectedly");
+                let mut guard = consumer_failure_reporter.lock().await;
+                *guard = Some(err);
+            }
+        });
+        drain_controller.register_runtime_abort(consumer_handle.abort_handle());
+        self.consumer_handle = Some(consumer_handle);
 
         if drain_controller.is_requested() {
             let _ = drain_controller.abort_runtime_work();

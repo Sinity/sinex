@@ -88,7 +88,17 @@ impl HeartbeatLogSink for StdoutHeartbeatSink {
     }
 }
 
-/// Heartbeat emitter that logs structured JSON to stdout
+/// Heartbeat emitter that logs structured JSON to stdout.
+///
+/// TODO(#754): This is superseded by [`crate::health_reporter::HealthReporter`] and will be
+/// removed once all consumers are migrated. The HealthReporter provides the same
+/// functionality (tracking status, emitting on transition) with a cleaner API and
+/// is now wired into both `DerivedNodeAdapter` and `IngestorNodeAdapter`.
+/// Consumers should migrate to using the adapter's `health_reporter()` accessor.
+#[deprecated(
+    since = "0.1.0",
+    note = "Use `HealthReporter` via `IngestorNodeAdapter::health_reporter()` or `DerivedNodeAdapter` health accessor. See #754."
+)]
 #[derive(Debug, Clone)]
 pub struct HeartbeatEmitter {
     service_name: String,

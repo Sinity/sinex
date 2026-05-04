@@ -10,6 +10,7 @@ use sinex_primitives::{
     env as shared_env,
     environment::environment,
     units::{Bytes, Milliseconds, Seconds},
+    utils::wait_helpers::RetryConfig,
     validation::deserialize_validated_utf8_path,
 };
 use std::time::Duration;
@@ -292,6 +293,24 @@ pub struct IngestdConfig {
     #[validate(range(min = 5, max = 3600))]
     pub stats_log_interval_secs: u64,
 
+    /// Core retry configuration (max attempts, delays, backoff, jitter).
+    ///
+    /// Controls retry behavior for transient failures (DLQ, DB, NATS).
+    /// Individual env-var overrides are available via `SINEX_INGESTD_RETRY_MAX_ATTEMPTS` etc.
+    #[serde(skip)]
+    #[builder(default = RetryConfig::default())]
+    pub retry_config: RetryConfig,
+
+    /// Max concurrent batch-processing tasks during startup catch-up.
+    /// Limits I/O pressure while the consumer works through the backlog.
+    /// Default: 4. Set to 0 to disable catch-up limiting (full speed).
+    ///
+    /// Set via: `SINEX_INGESTD_STARTUP_CATCH_UP_MAX_CONCURRENT=4`
+    #[serde(default = "default_startup_catch_up_max_concurrent")]
+    #[builder(default = default_startup_catch_up_max_concurrent())]
+    #[validate(range(min = 0, max = 256))]
+    pub startup_catch_up_max_concurrent: usize,
+
     /// Interval between automatic blob garbage collection sweeps. None = disabled.
     ///
     /// When set, ingestd periodically sweeps content-store keys that are unused
@@ -420,6 +439,36 @@ impl IngestdConfig {
         if let Some(path) = assembler_state_dir {
             config.assembler_state_dir =
                 validated_path_override(&path, "assembler state directory")?;
+        }
+
+        // Retry config overrides from env vars
+        if let Some(value) = env_parsed("SINEX_INGESTD_RETRY_MAX_ATTEMPTS")? {
+            config.retry_config.max_attempts = value;
+        }
+        if let Some(value) =
+            env_parsed::<u64>("SINEX_INGESTD_RETRY_INITIAL_DELAY_MS")?
+        {
+            config.retry_config.initial_delay = Duration::from_millis(value);
+        }
+        if let Some(value) = env_parsed::<u64>("SINEX_INGESTD_RETRY_MAX_DELAY_MS")? {
+            config.retry_config.max_delay = Duration::from_millis(value);
+        }
+        if let Some(value) = env_parsed("SINEX_INGESTD_RETRY_MULTIPLIER")? {
+            config.retry_config.multiplier = value;
+        }
+        if let Some(value) = env_flag("SINEX_INGESTD_RETRY_JITTER")? {
+            config.retry_config.jitter = value;
+        }
+        if let Some(value) =
+            env_parsed::<u64>("SINEX_INGESTD_RETRY_PUBLISH_ACK_TIMEOUT_MS")?
+        {
+            config.retry_config.publish_ack_timeout = Duration::from_millis(value);
+        }
+        // Startup catch-up concurrency override from env
+        if let Some(value) =
+            env_parsed("SINEX_INGESTD_STARTUP_CATCH_UP_MAX_CONCURRENT")?
+        {
+            config.startup_catch_up_max_concurrent = value;
         }
 
         Ok(config.normalize())
@@ -726,6 +775,8 @@ impl Default for IngestdConfig {
             gitops_work_dir: default_gitops_work_dir(),
             schema_reload_interval_secs: default_schema_reload_interval_secs(),
             stats_log_interval_secs: default_stats_log_interval_secs(),
+            retry_config: RetryConfig::default(),
+            startup_catch_up_max_concurrent: default_startup_catch_up_max_concurrent(),
             blob_gc_interval_secs: default_blob_gc_interval_secs(),
         }
     }
@@ -1151,6 +1202,21 @@ fn default_schema_reload_interval_secs() -> u64 {
 
 fn default_stats_log_interval_secs() -> u64 {
     60 // 1 minute
+}
+
+fn default_startup_catch_up_max_concurrent() -> usize {
+    match env_parsed("SINEX_INGESTD_STARTUP_CATCH_UP_MAX_CONCURRENT") {
+        Ok(Some(value)) => value,
+        Ok(None) => 4,
+        Err(error) => {
+            error!(
+                env = "SINEX_INGESTD_STARTUP_CATCH_UP_MAX_CONCURRENT",
+                %error,
+                "Invalid env override for startup catch-up max concurrent; using default"
+            );
+            4
+        }
+    }
 }
 
 fn default_blob_gc_interval_secs() -> Option<u64> {
