@@ -56,7 +56,10 @@ let
       + (if cfg.nodes.automata.sessionDetector.enable then 1 else 0)
       + (if cfg.nodes.automata.hourlySummarizer.enable then 1 else 0)
       + (if cfg.nodes.automata.dailySummarizer.enable then 1 else 0)
-      + (if cfg.nodes.automata.documentParser.enable then 1 else 0);
+      + (if cfg.nodes.automata.documentParser.enable then 1 else 0)
+      + (if cfg.nodes.automata.entityResolver.enable then 1 else 0)
+      + (if cfg.nodes.automata.relationExtractor.enable then 1 else 0)
+      + (if cfg.nodes.automata.entityEnricher.enable then 1 else 0);
 
   coreServiceCount = (if ingestEnabled then 1 else 0) + (if gatewayEnabled then 1 else 0);
 
