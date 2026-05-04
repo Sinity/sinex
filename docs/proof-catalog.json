@@ -25,7 +25,7 @@
       "subject": "source_unit:analytics",
       "id": "analytics",
       "namespace": "derived",
-      "runner_pack": "analytics",
+      "runner_pack": "process",
       "modes": [
         "continuous"
       ],
@@ -42,7 +42,7 @@
       "occurrence_identity": "uuid5:(source_unit, parent_event_ids)",
       "access_policy": "event_stream_read",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:analytics",
+      "implementation_mode": "rust_in_pack:process",
       "proof_obligations": []
     },
     {
@@ -74,7 +74,7 @@
       "subject": "source_unit:daily-summarizer",
       "id": "daily-summarizer",
       "namespace": "derived",
-      "runner_pack": "daily",
+      "runner_pack": "process",
       "modes": [
         "continuous"
       ],
@@ -91,7 +91,7 @@
       "occurrence_identity": "uuid5:(source_unit, day_bucket, parent_event_ids)",
       "access_policy": "event_stream_read",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:daily",
+      "implementation_mode": "rust_in_pack:process",
       "proof_obligations": []
     },
     {
@@ -278,7 +278,7 @@
       "subject": "source_unit:health",
       "id": "health",
       "namespace": "derived",
-      "runner_pack": "health",
+      "runner_pack": "process",
       "modes": [
         "continuous"
       ],
@@ -295,14 +295,14 @@
       "occurrence_identity": "uuid5:(source_unit, component_scope, parent_event_ids)",
       "access_policy": "event_stream_read",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:health",
+      "implementation_mode": "rust_in_pack:process",
       "proof_obligations": []
     },
     {
       "subject": "source_unit:hourly-summarizer",
       "id": "hourly-summarizer",
       "namespace": "derived",
-      "runner_pack": "hourly",
+      "runner_pack": "process",
       "modes": [
         "continuous"
       ],
@@ -319,14 +319,14 @@
       "occurrence_identity": "uuid5:(source_unit, hour_bucket, parent_event_ids)",
       "access_policy": "event_stream_read",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:hourly",
+      "implementation_mode": "rust_in_pack:process",
       "proof_obligations": []
     },
     {
       "subject": "source_unit:session-detector",
       "id": "session-detector",
       "namespace": "derived",
-      "runner_pack": "session",
+      "runner_pack": "process",
       "modes": [
         "continuous"
       ],
@@ -343,7 +343,7 @@
       "occurrence_identity": "uuid5:(source_unit, parent_event_ids)",
       "access_policy": "event_stream_read",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:session",
+      "implementation_mode": "rust_in_pack:process",
       "proof_obligations": []
     },
     {
@@ -540,7 +540,7 @@
       "subject": "source_unit:terminal-canonicalizer",
       "id": "terminal-canonicalizer",
       "namespace": "derived",
-      "runner_pack": "terminal-canonicalizer",
+      "runner_pack": "process",
       "modes": [
         "continuous"
       ],
@@ -557,7 +557,7 @@
       "occurrence_identity": "uuid5:(source_unit, parent_event_id)",
       "access_policy": "event_stream_read",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal-canonicalizer",
+      "implementation_mode": "rust_in_pack:process",
       "proof_obligations": []
     },
     {
@@ -1081,6 +1081,27 @@
       "type_name": "sinex_primitives::events::payloads::document::DocumentParsedPayload"
     },
     {
+      "subject": "event_payload:entity-enricher/entity.enriched/1.0.0",
+      "source": "entity-enricher",
+      "event_type": "entity.enriched",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::entity::EntityEnrichedPayload"
+    },
+    {
+      "subject": "event_payload:entity-extractor/entity.extracted/1.0.0",
+      "source": "entity-extractor",
+      "event_type": "entity.extracted",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::entity::EntityExtractedPayload"
+    },
+    {
+      "subject": "event_payload:entity-resolver/entity.resolved/1.0.0",
+      "source": "entity-resolver",
+      "event_type": "entity.resolved",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::entity::EntityResolvedPayload"
+    },
+    {
       "subject": "event_payload:fs-watcher/dir.created/1.0.0",
       "source": "fs-watcher",
       "event_type": "dir.created",
@@ -1184,6 +1205,13 @@
       "event_type": "log.line",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::system::LogLinePayload"
+    },
+    {
+      "subject": "event_payload:relation-extractor/entity.related/1.0.0",
+      "source": "relation-extractor",
+      "event_type": "entity.related",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::entity::EntityRelatedPayload"
     },
     {
       "subject": "event_payload:shell.asciinema/shell.session_ended/1.0.0",
@@ -1324,6 +1352,20 @@
       "event_type": "batch.stats",
       "version": "2.0.0",
       "type_name": "sinex_primitives::events::payloads::metrics::IngestdBatchStatsPayload"
+    },
+    {
+      "subject": "event_payload:sinex.ingestd/consumer.startup_replay_risk/1.0.0",
+      "source": "sinex.ingestd",
+      "event_type": "consumer.startup_replay_risk",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::DangerousReplayWarningPayload"
+    },
+    {
+      "subject": "event_payload:sinex.ingestd/consumer.startup_snapshot/1.0.0",
+      "source": "sinex.ingestd",
+      "event_type": "consumer.startup_snapshot",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::ConsumerStartupSnapshotPayload"
     },
     {
       "subject": "event_payload:sinex.ingestd/stream.stats/1.0.0",
@@ -1624,12 +1666,12 @@
     {
       "subject": "xtask_command:analytics",
       "path": "analytics",
-      "about": "`xtask analytics` \u2014 developer intelligence analytics"
+      "about": "`xtask analytics` — developer intelligence analytics"
     },
     {
       "subject": "xtask_command:analytics.hotspots",
       "path": "analytics.hotspots",
-      "about": "Diagnostic churn analysis \u2014 most active recurring and chronic issues (J2)"
+      "about": "Diagnostic churn analysis — most active recurring and chronic issues (J2)"
     },
     {
       "subject": "xtask_command:analytics.recommend",
@@ -1639,7 +1681,7 @@
     {
       "subject": "xtask_command:analytics.reliability",
       "path": "analytics.reliability",
-      "about": "Test reliability per package \u2014 pass rates and flakiness (J3)"
+      "about": "Test reliability per package — pass rates and flakiness (J3)"
     },
     {
       "subject": "xtask_command:analytics.resources",
@@ -1969,7 +2011,7 @@
     {
       "subject": "xtask_command:history.view",
       "path": "history.view",
-      "about": "Semantic named views \u2014 shortcuts to common queries (I1)"
+      "about": "Semantic named views — shortcuts to common queries (I1)"
     },
     {
       "subject": "xtask_command:infra",
