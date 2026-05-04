@@ -37,11 +37,7 @@ pub enum ConfigCommands {
     },
 
     /// Show effective configuration (runtime env/CLI + local preferences)
-    Show {
-        /// Output format
-        #[arg(long, short = 'f', value_enum, default_value = "yaml")]
-        format: OutputFormat,
-    },
+    Show,
 
     /// Show config file path
     Path,
@@ -51,10 +47,10 @@ pub enum ConfigCommands {
 }
 
 impl ConfigCommands {
-    pub fn execute(&self) -> Result<()> {
+    pub fn execute(&self, format: OutputFormat) -> Result<()> {
         match self {
             Self::Init { force } => config_init(*force),
-            Self::Show { format } => config_show(*format),
+            Self::Show => config_show(format),
             Self::Path => config_path(),
             Self::Edit => config_edit(),
         }

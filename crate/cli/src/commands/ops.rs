@@ -39,10 +39,6 @@ pub enum OpsCommands {
         /// Scope JSON (optional)
         #[arg(long, short = 's')]
         scope: Option<String>,
-
-        /// Output format
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// List operations
@@ -59,20 +55,12 @@ pub enum OpsCommands {
         /// Maximum number of results
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
-
-        /// Output format
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Get operation details
     Get {
         /// Operation ID
         operation_id: String,
-
-        /// Output format
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Cancel an operation
@@ -87,12 +75,11 @@ pub enum OpsCommands {
 }
 
 impl OpsCommands {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match self {
             Self::Start {
                 operation_type,
                 scope,
-                format,
             } => {
                 let scope_json: Option<Value> = scope
                     .as_ref()
@@ -106,27 +93,25 @@ impl OpsCommands {
                 )
                 .await?;
 
-                CommandOutput::single(response, format_ops_start_table).display(format)?;
+                CommandOutput::single(response, format_ops_start_table).display(&format)?;
             }
             Self::List {
                 operation_type,
                 status,
                 limit,
-                format,
             } => {
                 let operations = client
                     .ops_list(operation_type.clone(), status.clone(), Some(*limit))
                     .await?;
 
                 CommandOutput::list(operations, "No operations found.", format_ops_list_table)
-                    .display(format)?;
+                    .display(&format)?;
             }
             Self::Get {
                 operation_id,
-                format,
             } => {
                 let operation = client.ops_get(operation_id).await?;
-                CommandOutput::single(operation, format_ops_get_table).display(format)?;
+                CommandOutput::single(operation, format_ops_get_table).display(&format)?;
             }
             Self::Cancel {
                 operation_id,

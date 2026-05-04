@@ -66,50 +66,30 @@ pub enum ReplayCommands {
         /// Filter by event type (repeatable)
         #[arg(long = "event-type", value_name = "TYPE")]
         event_types: Vec<String>,
-
-        /// Output format
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Preview what a replay operation will affect
     Preview {
         /// Operation ID
         operation_id: String,
-
-        /// Output format
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Approve a previewed replay operation for execution
     Approve {
         /// Operation ID
         operation_id: String,
-
-        /// Output format
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Execute an approved replay operation
     Execute {
         /// Operation ID
         operation_id: String,
-
-        /// Output format
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Approve and execute in one step (convenience)
     Submit {
         /// Operation ID
         operation_id: String,
-
-        /// Output format
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Cancel a replay operation
@@ -120,20 +100,12 @@ pub enum ReplayCommands {
         /// Reason for cancellation
         #[arg(long)]
         reason: Option<String>,
-
-        /// Output format
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Get replay operation status
     Status {
         /// Operation ID
         operation_id: String,
-
-        /// Output format
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Watch replay operation progress in real-time
@@ -144,10 +116,6 @@ pub enum ReplayCommands {
         /// Poll interval in seconds
         #[arg(long, default_value = "2")]
         interval: u64,
-
-        /// Output format (json for streaming updates)
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// List replay operations
@@ -164,10 +132,6 @@ pub enum ReplayCommands {
         /// Maximum number of results
         #[arg(long, default_value = "50")]
         limit: i64,
-
-        /// Output format
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Full lifecycle: plan + preview + approve + execute (convenience)
@@ -195,10 +159,6 @@ pub enum ReplayCommands {
         /// Dry-run: stop after preview without approving or executing any changes
         #[arg(long)]
         dry_run: bool,
-
-        /// Output format
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 }
 
@@ -233,7 +193,7 @@ impl From<ReplayStateFilter> for ReplayState {
 use sinex_primitives::rpc::replay::ReplayOperation;
 
 impl ReplayCommands {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match self {
             Self::Plan {
                 node,
@@ -241,7 +201,6 @@ impl ReplayCommands {
                 until,
                 materials,
                 event_types,
-                format,
             } => {
                 let operation = client
                     .replay_plan(
@@ -252,13 +211,10 @@ impl ReplayCommands {
                         event_types,
                     )
                     .await?;
-                CommandOutput::single(operation, format_replay_plan_table).display(format)?;
+                CommandOutput::single(operation, format_replay_plan_table).display(&format)?;
             }
 
-            Self::Preview {
-                operation_id,
-                format,
-            } => {
+            Self::Preview { operation_id } => {
                 let (operation, preview) = client.replay_preview(operation_id).await?;
                 match format {
                     OutputFormat::Json => println!(
@@ -281,34 +237,24 @@ impl ReplayCommands {
                 }
             }
 
-            Self::Approve {
-                operation_id,
-                format,
-            } => {
+            Self::Approve { operation_id } => {
                 let operation = client.replay_approve(operation_id).await?;
-                CommandOutput::single(operation, format_replay_approve_table).display(format)?;
+                CommandOutput::single(operation, format_replay_approve_table).display(&format)?;
             }
 
-            Self::Execute {
-                operation_id,
-                format,
-            } => {
+            Self::Execute { operation_id } => {
                 let operation = client.replay_execute(operation_id).await?;
-                CommandOutput::single(operation, format_replay_execute_table).display(format)?;
+                CommandOutput::single(operation, format_replay_execute_table).display(&format)?;
             }
 
-            Self::Submit {
-                operation_id,
-                format,
-            } => {
+            Self::Submit { operation_id } => {
                 let operation = client.replay_submit(operation_id).await?;
-                CommandOutput::single(operation, format_replay_submit_table).display(format)?;
+                CommandOutput::single(operation, format_replay_submit_table).display(&format)?;
             }
 
             Self::Cancel {
                 operation_id,
                 reason,
-                format,
             } => {
                 let operation = client
                     .replay_cancel(operation_id, reason.as_deref())
@@ -331,27 +277,22 @@ impl ReplayCommands {
                 }
             }
 
-            Self::Status {
-                operation_id,
-                format,
-            } => {
+            Self::Status { operation_id } => {
                 let operation = client.replay_status(operation_id).await?;
-                CommandOutput::single(operation, format_replay_status_table).display(format)?;
+                CommandOutput::single(operation, format_replay_status_table).display(&format)?;
             }
 
             Self::Watch {
                 operation_id,
                 interval,
-                format,
             } => {
-                execute_watch(client, operation_id, *interval, format).await?;
+                execute_watch(client, operation_id, *interval, &format).await?;
             }
 
             Self::List {
                 state,
                 node,
                 limit,
-                format,
             } => {
                 let operations = client
                     .replay_list_filtered(state.map(Into::into), node.as_deref(), Some(*limit))
@@ -361,7 +302,7 @@ impl ReplayCommands {
                     "No replay operations found.",
                     format_replay_list_table,
                 )
-                .display(format)?;
+                .display(&format)?;
             }
 
             Self::Run {
@@ -371,7 +312,6 @@ impl ReplayCommands {
                 materials,
                 event_types,
                 dry_run,
-                format,
             } => {
                 execute_run(
                     client,
@@ -381,7 +321,7 @@ impl ReplayCommands {
                     materials,
                     event_types,
                     *dry_run,
-                    format,
+                    &format,
                 )
                 .await?;
             }

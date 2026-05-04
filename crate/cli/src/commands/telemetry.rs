@@ -29,10 +29,6 @@ pub enum TelemetryCommands {
         /// Maximum number of rows to return (default: 50)
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
-
-        /// Output format
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Latest system/device state rows (materialized view)
@@ -40,10 +36,6 @@ pub enum TelemetryCommands {
         /// Maximum number of rows to return (default: 50)
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
-
-        /// Output format
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Window focus aggregates (5-minute buckets)
@@ -54,8 +46,6 @@ pub enum TelemetryCommands {
         to: Option<String>,
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Command frequency aggregates (hourly buckets)
@@ -66,8 +56,6 @@ pub enum TelemetryCommands {
         to: Option<String>,
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// File activity aggregates (hourly buckets, per directory)
@@ -78,16 +66,12 @@ pub enum TelemetryCommands {
         to: Option<String>,
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Recent activity summary (hardcoded lookback window)
     RecentActivity {
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// System state aggregates (5-minute buckets)
@@ -98,8 +82,6 @@ pub enum TelemetryCommands {
         to: Option<String>,
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Gateway hourly operator telemetry
@@ -110,8 +92,6 @@ pub enum TelemetryCommands {
         to: Option<String>,
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Stream hourly operator telemetry
@@ -122,8 +102,6 @@ pub enum TelemetryCommands {
         to: Option<String>,
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Assembly hourly operator telemetry
@@ -134,8 +112,6 @@ pub enum TelemetryCommands {
         to: Option<String>,
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Node hourly operator telemetry
@@ -146,8 +122,6 @@ pub enum TelemetryCommands {
         to: Option<String>,
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Metric-counter hourly operator telemetry
@@ -158,8 +132,6 @@ pub enum TelemetryCommands {
         to: Option<String>,
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Ingestd hourly batch-stat aggregates
@@ -170,46 +142,36 @@ pub enum TelemetryCommands {
         to: Option<String>,
         #[arg(long, short = 'n', default_value = "50")]
         limit: i64,
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Latest ingestd validation and plausibility snapshot
-    IngestdValidation {
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
-    },
+    IngestdValidation,
 }
 
 impl TelemetryCommands {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match self {
-            Self::CurrentHealth { limit, format } => {
+            Self::CurrentHealth { limit } => {
                 let entries = client.telemetry_current_health(Some(*limit)).await?;
                 CommandOutput::list(
                     entries,
                     "No current-health data found.",
                     format_current_health_table,
                 )
-                .display(format)?;
+                .display(&format)?;
             }
 
-            Self::CurrentDeviceState { limit, format } => {
+            Self::CurrentDeviceState { limit } => {
                 let entries = client.telemetry_current_device_state(Some(*limit)).await?;
                 CommandOutput::list(
                     entries,
                     "No current-device-state data found.",
                     format_current_device_state_table,
                 )
-                .display(format)?;
+                .display(&format)?;
             }
 
-            Self::WindowFocus {
-                from,
-                to,
-                limit,
-                format,
-            } => {
+            Self::WindowFocus { from, to, limit } => {
                 let from_rfc = from.as_deref().map(resolve_time_arg).transpose()?;
                 let to_rfc = to.as_deref().map(resolve_time_arg).transpose()?;
                 let buckets = client
@@ -220,15 +182,10 @@ impl TelemetryCommands {
                     "No window-focus data found.",
                     format_window_focus_table,
                 )
-                .display(format)?;
+                .display(&format)?;
             }
 
-            Self::CommandFrequency {
-                from,
-                to,
-                limit,
-                format,
-            } => {
+            Self::CommandFrequency { from, to, limit } => {
                 let from_rfc = from.as_deref().map(resolve_time_arg).transpose()?;
                 let to_rfc = to.as_deref().map(resolve_time_arg).transpose()?;
                 let entries = client
@@ -239,15 +196,10 @@ impl TelemetryCommands {
                     "No command-frequency data found.",
                     format_command_frequency_table,
                 )
-                .display(format)?;
+                .display(&format)?;
             }
 
-            Self::FileActivity {
-                from,
-                to,
-                limit,
-                format,
-            } => {
+            Self::FileActivity { from, to, limit } => {
                 let from_rfc = from.as_deref().map(resolve_time_arg).transpose()?;
                 let to_rfc = to.as_deref().map(resolve_time_arg).transpose()?;
                 let entries = client
@@ -258,25 +210,20 @@ impl TelemetryCommands {
                     "No file-activity data found.",
                     format_file_activity_table,
                 )
-                .display(format)?;
+                .display(&format)?;
             }
 
-            Self::RecentActivity { limit, format } => {
+            Self::RecentActivity { limit } => {
                 let entries = client.telemetry_recent_activity(Some(*limit)).await?;
                 CommandOutput::list(
                     entries,
                     "No recent activity found.",
                     format_recent_activity_table,
                 )
-                .display(format)?;
+                .display(&format)?;
             }
 
-            Self::SystemState {
-                from,
-                to,
-                limit,
-                format,
-            } => {
+            Self::SystemState { from, to, limit } => {
                 let from_rfc = from.as_deref().map(resolve_time_arg).transpose()?;
                 let to_rfc = to.as_deref().map(resolve_time_arg).transpose()?;
                 let buckets = client
@@ -287,15 +234,10 @@ impl TelemetryCommands {
                     "No system-state data found.",
                     format_system_state_table,
                 )
-                .display(format)?;
+                .display(&format)?;
             }
 
-            Self::GatewayStats {
-                from,
-                to,
-                limit,
-                format,
-            } => {
+            Self::GatewayStats { from, to, limit } => {
                 let from_rfc = from.as_deref().map(resolve_time_arg).transpose()?;
                 let to_rfc = to.as_deref().map(resolve_time_arg).transpose()?;
                 let buckets = client
@@ -306,15 +248,10 @@ impl TelemetryCommands {
                     "No gateway-stats data found.",
                     format_gateway_stats_table,
                 )
-                .display(format)?;
+                .display(&format)?;
             }
 
-            Self::StreamStats {
-                from,
-                to,
-                limit,
-                format,
-            } => {
+            Self::StreamStats { from, to, limit } => {
                 let from_rfc = from.as_deref().map(resolve_time_arg).transpose()?;
                 let to_rfc = to.as_deref().map(resolve_time_arg).transpose()?;
                 let buckets = client
@@ -325,15 +262,10 @@ impl TelemetryCommands {
                     "No stream-stats data found.",
                     format_stream_stats_table,
                 )
-                .display(format)?;
+                .display(&format)?;
             }
 
-            Self::AssemblyStats {
-                from,
-                to,
-                limit,
-                format,
-            } => {
+            Self::AssemblyStats { from, to, limit } => {
                 let from_rfc = from.as_deref().map(resolve_time_arg).transpose()?;
                 let to_rfc = to.as_deref().map(resolve_time_arg).transpose()?;
                 let buckets = client
@@ -344,15 +276,10 @@ impl TelemetryCommands {
                     "No assembly-stats data found.",
                     format_assembly_stats_table,
                 )
-                .display(format)?;
+                .display(&format)?;
             }
 
-            Self::NodeStats {
-                from,
-                to,
-                limit,
-                format,
-            } => {
+            Self::NodeStats { from, to, limit } => {
                 let from_rfc = from.as_deref().map(resolve_time_arg).transpose()?;
                 let to_rfc = to.as_deref().map(resolve_time_arg).transpose()?;
                 let buckets = client
@@ -363,15 +290,10 @@ impl TelemetryCommands {
                     "No node-stats data found.",
                     format_node_stats_table,
                 )
-                .display(format)?;
+                .display(&format)?;
             }
 
-            Self::MetricCounters {
-                from,
-                to,
-                limit,
-                format,
-            } => {
+            Self::MetricCounters { from, to, limit } => {
                 let from_rfc = from.as_deref().map(resolve_time_arg).transpose()?;
                 let to_rfc = to.as_deref().map(resolve_time_arg).transpose()?;
                 let buckets = client
@@ -382,15 +304,10 @@ impl TelemetryCommands {
                     "No metric-counter data found.",
                     format_metric_counters_table,
                 )
-                .display(format)?;
+                .display(&format)?;
             }
 
-            Self::IngestdBatchStats {
-                from,
-                to,
-                limit,
-                format,
-            } => {
+            Self::IngestdBatchStats { from, to, limit } => {
                 let from_rfc = from.as_deref().map(resolve_time_arg).transpose()?;
                 let to_rfc = to.as_deref().map(resolve_time_arg).transpose()?;
                 let buckets = client
@@ -401,19 +318,19 @@ impl TelemetryCommands {
                     "No ingestd-batch-stats data found.",
                     format_ingestd_batch_stats_table,
                 )
-                .display(format)?;
+                .display(&format)?;
             }
 
-            Self::IngestdValidation { format } => {
+            Self::IngestdValidation => {
                 match client.telemetry_ingestd_validation().await? {
                     Some(snapshot) => {
                         CommandOutput::single(snapshot, format_ingestd_validation_table)
-                            .display(format)?;
+                            .display(&format)?;
                     }
                     None => CommandOutput::<IngestdValidationSnapshot>::empty(
                         "No ingestd-validation data found.",
                     )
-                    .display(format)?,
+                    .display(&format)?,
                 }
             }
         }

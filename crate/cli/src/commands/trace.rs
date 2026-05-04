@@ -49,10 +49,6 @@ pub struct TraceCommand {
     #[arg(long, short = 'n', default_value = "10")]
     max_depth: u32,
 
-    /// Output format
-    #[arg(long, short = 'f', value_enum, default_value = "table")]
-    format: OutputFormat,
-
     /// Poll and re-render the provenance chain every N seconds (default: 3)
     #[arg(long, value_name = "SECS", default_missing_value = "3", num_args = 0..=1)]
     follow: Option<u64>,
@@ -77,7 +73,7 @@ impl From<DirectionArg> for LineageDirection {
 }
 
 impl TraceCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let query = LineageQuery {
             event_id: self.event_id,
             direction: self.direction.into(),
@@ -85,7 +81,7 @@ impl TraceCommand {
         };
 
         let result = client.trace_lineage(query.clone()).await?;
-        self.render(&result)?;
+        self.render(&result, format)?;
 
         if let Some(interval_secs) = self.follow {
             let interval_secs = if interval_secs == 0 { 3 } else { interval_secs };
@@ -102,7 +98,7 @@ impl TraceCommand {
                             // Move cursor to top-left and clear screen.
                             print!("\x1B[2J\x1B[1;1H");
                         }
-                        self.render(&result)?;
+                        self.render(&result, format)?;
                     }
                     _ = tokio::signal::ctrl_c() => {
                         break;
@@ -114,8 +110,8 @@ impl TraceCommand {
         Ok(())
     }
 
-    fn render(&self, result: &LineageResult) -> Result<()> {
-        match self.format {
+    fn render(&self, result: &LineageResult, format: OutputFormat) -> Result<()> {
+        match format {
             OutputFormat::Table => render_tree(result),
             OutputFormat::Json => println!("{}", format_json(result)?),
             OutputFormat::Yaml => println!("{}", format_yaml(result)?),
