@@ -615,9 +615,34 @@ impl DocumentNode {
             .to_json_event()
             .map_err(|e| SinexError::processing("Failed to serialize event").with_source(e))?;
 
-        stage_context
+        let document_event_uuid = stage_context
             .emit_event_with_provenance(json_event, material_id, Some(0), Some(total_bytes))
             .await?;
+
+        // Auto-tag based on detected MIME type — emit synthesis events
+        // derived from the document.ingested parent event.
+        let auto_tags = tags::auto_tags_for_mime(&document.mime);
+        for tag_name in &auto_tags {
+            let tag_payload = KnowledgeTagAppliedPayload {
+                entity_id: material_id,
+                tag_name: tag_name.clone(),
+                tag_source: "auto.mime".into(),
+            };
+            let tag_event = tag_payload
+                .from_parents([EventId::from_uuid(document_event_uuid)])
+                .map_err(|e| {
+                    SinexError::processing("Failed to set auto-tag event provenance")
+                        .with_source(e)
+                })?
+                .build()
+                .map_err(|e| {
+                    SinexError::processing("Failed to build auto-tag event").with_source(e)
+                })?;
+            let tag_json_event = tag_event.to_json_event().map_err(|e| {
+                SinexError::processing("Failed to serialize auto-tag event").with_source(e)
+            })?;
+            stage_context.emit_derived_event(tag_json_event).await?;
+        }
 
         Ok(Some(material_id))
     }
