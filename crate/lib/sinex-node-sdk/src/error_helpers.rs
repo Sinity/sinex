@@ -151,11 +151,6 @@ pub fn nats_settlement_error(
 }
 
 #[must_use]
-pub fn env_bool_with_default(var: &str, default: bool, context: &str) -> bool {
-    shared_env::bool_or(var, default, context)
-}
-
-#[must_use]
 pub fn elapsed_seconds_with_warning(start_time: SystemTime, context: &str) -> u64 {
     match start_time.elapsed() {
         Ok(elapsed) => elapsed.as_secs(),
@@ -186,13 +181,8 @@ pub fn unix_timestamp_secs_with_warning(timestamp: SystemTime, context: &str) ->
 }
 
 #[must_use]
-pub fn env_string_optional(var: &str, context: &str) -> Option<String> {
-    shared_env::var_optional(var, context)
-}
-
-#[must_use]
 pub fn env_nonempty_string_optional(var: &str, context: &str) -> Option<String> {
-    env_string_optional(var, context).and_then(|raw| {
+    shared_env::var_optional(var, context).and_then(|raw| {
         if raw.trim().is_empty() {
             warn!(
                 variable = var,
@@ -204,15 +194,6 @@ pub fn env_nonempty_string_optional(var: &str, context: &str) -> Option<String> 
         }
     })
 }
-
-pub fn env_parse_with_default<T>(var: &str, default: T, context: &str) -> T
-where
-    T: std::str::FromStr + Clone,
-    T::Err: std::fmt::Display,
-{
-    shared_env::parse_or(var, default, context)
-}
-
 /// Path sanitization utilities
 pub mod path_utils {
     /// Sanitize a path component for safe storage
@@ -332,8 +313,8 @@ impl<T, E: std::fmt::Display> NodeErrorExt<T> for Result<T, E> {
 mod tests {
     // Inline because these helpers are local implementation detail and only exercised via env-driven call sites.
     use super::{
-        elapsed_seconds_with_warning, env_bool_with_default, env_nonempty_string_optional,
-        env_parse_with_default, env_string_optional, unix_timestamp_secs_with_warning,
+        elapsed_seconds_with_warning, env_nonempty_string_optional,
+        unix_timestamp_secs_with_warning,
     };
     #[cfg(unix)]
     use std::ffi::OsString;
@@ -348,7 +329,7 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set("SINEX_TEST_BOOL_OVERRIDE", "bogus");
 
-        let value = env_bool_with_default("SINEX_TEST_BOOL_OVERRIDE", true, "test");
+        let value = shared_env::bool_or("SINEX_TEST_BOOL_OVERRIDE", true, "test");
         assert!(value);
         Ok(())
     }
@@ -359,7 +340,7 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set("SINEX_TEST_U64_OVERRIDE", "bogus");
 
-        let value = env_parse_with_default("SINEX_TEST_U64_OVERRIDE", 42_u64, "test");
+        let value = shared_env::parse_or("SINEX_TEST_U64_OVERRIDE", 42_u64, "test");
         assert_eq!(value, 42);
         Ok(())
     }
@@ -373,7 +354,7 @@ mod tests {
             OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]),
         );
 
-        let value = env_string_optional("SINEX_TEST_STRING_OVERRIDE", "test");
+        let value = shared_env::var_optional("SINEX_TEST_STRING_OVERRIDE", "test");
         assert_eq!(value, None);
         Ok(())
     }

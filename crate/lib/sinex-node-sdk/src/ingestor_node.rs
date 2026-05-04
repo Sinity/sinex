@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::checkpoint::{CheckpointManager, CheckpointState, decode_checkpoint_data};
 #[cfg(feature = "messaging")]
-use crate::error_helpers::env_bool_with_default;
+use sinex_primitives::env as shared_env;
 use crate::runtime::stream::{
     Checkpoint, ContinuousStart, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState,
     NodeType, RuntimeDrainController, ScanArgs, ScanReport, TimeHorizon,
@@ -414,7 +414,7 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
                 use crate::health_reporter::{HealthReporter, HealthThresholds};
                 use crate::self_observation::{SelfObserver, SelfObserverConfig};
 
-                let health_enabled = env_bool_with_default(
+                let health_enabled = shared_env::bool_or(
                     "SINEX_HEALTH_MONITORING_ENABLED",
                     true,
                     "ingestor node health monitoring",

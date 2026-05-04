@@ -148,12 +148,15 @@ fn is_source_material_fk_constraint_name(value: &str) -> bool {
 /// stamps the schema UUID on the event) and the INSERT. We treat it as recoverable
 /// by stripping `payload_schema_id` from the batch and retrying.
 fn is_payload_schema_fk_violation(err: &SinexError) -> bool {
+    // Per #751 F32: use SQLSTATE FK classification + constraint name from context_map,
+    // not rendered error text. The constraint name is extracted by sinex_db::db_error()
+    // and stored in the "constraint" context field from the sqlx error.
     if !is_foreign_key_violation(err) {
         return false;
     }
     err.context_map().get("constraint").is_some_and(|c| {
         c == EVENTS_PAYLOAD_SCHEMA_ID_FKEY || c.contains(EVENTS_PAYLOAD_SCHEMA_ID_FKEY)
-    }) || err.to_string().contains(EVENTS_PAYLOAD_SCHEMA_ID_FKEY)
+    })
 }
 
 /// Hard guard for node-supplied event IDs.
@@ -166,10 +169,12 @@ fn is_uuid_v7(value: &Uuid) -> bool {
 }
 
 fn is_foreign_key_violation(err: &SinexError) -> bool {
+    // Per #751 F32: classify FK violations by SQLSTATE (23503 foreign_key_violation)
+    // instead of inspecting rendered error text. SQLSTATE is always set when errors
+    // flow through sinex_db::db_error(), which extracts pg errcode from the sqlx error.
     err.context_map()
         .get("sqlstate")
         .is_some_and(|value| value == "23503")
-        || err.to_string().contains("Foreign key constraint violation")
 }
 
 fn has_explicit_source_material_fk_marker(err: &SinexError) -> bool {
@@ -1863,17 +1868,28 @@ impl JetStreamConsumer {
         })?;
 
         // If the INSERT failed due to a payload_schema_id FK violation (schema deleted between
-        // validation and insert), retry without schema IDs. This is safe: we lose the
-        // payload_schema_id annotation but the event itself is persisted correctly.
+        // validation and insert), retry after stripping schema IDs. #751 F15: strip per-event,
+        // not per-batch — only clear payload_schema_id from rows that have one set, preserving
+        // the annotation for unaffected events that never referenced the deleted schema.
         let insert_result = match insert_result {
             Err(ref err) if is_payload_schema_fk_violation(err) => {
+                let schema_stripped_count = rows
+                    .iter()
+                    .filter(|r| r.payload_schema_id.is_some())
+                    .count();
                 warn!(
                     batch_size = to_persist.len(),
-                    "INSERT hit FK violation on payload_schema_id (schema deleted during validation race); retrying without schema IDs"
+                    schema_stripped_count,
+                    "INSERT hit FK violation on payload_schema_id (schema deleted during validation race); retrying without schema IDs on affected rows"
                 );
                 let mut rows_without_schema: Vec<StreamBatchRow> = rows.clone();
+                // #751 F15: only strip from rows that had a payload_schema_id.
+                // Rows without one were never referencing the deleted schema and
+                // should preserve their (empty) annotation.
                 for row in &mut rows_without_schema {
-                    row.payload_schema_id = None;
+                    if row.payload_schema_id.is_some() {
+                        row.payload_schema_id = None;
+                    }
                 }
                 timeout(
                     DB_WRITE_TIMEOUT,

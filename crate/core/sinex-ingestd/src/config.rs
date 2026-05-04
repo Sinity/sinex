@@ -347,32 +347,32 @@ impl IngestdConfig {
             strict_env_validated_path("SINEX_ASSEMBLER_STATE_DIR", "assembler state directory")?;
         let gitops_work_dir_override =
             strict_env_validated_path("SINEX_INGESTD_GITOPS_WORK_DIR", "gitops work directory")?;
-        let skip_schema_sync = env_flag("SINEX_SKIP_SCHEMA_SYNC")?.unwrap_or(false);
-        let validate_schemas = env_flag("SINEX_VALIDATE_SCHEMAS")?.unwrap_or(true);
-        let strict_validation = env_flag("SINEX_INGESTD_STRICT_VALIDATION")?.unwrap_or(false);
-        let gitops_enabled = env_flag("SINEX_INGESTD_GITOPS_ENABLED")?.unwrap_or(false);
+        let skip_schema_sync = shared_env::strict_flag("SINEX_SKIP_SCHEMA_SYNC")?.unwrap_or(false);
+        let validate_schemas = shared_env::strict_flag("SINEX_VALIDATE_SCHEMAS")?.unwrap_or(true);
+        let strict_validation = shared_env::strict_flag("SINEX_INGESTD_STRICT_VALIDATION")?.unwrap_or(false);
+        let gitops_enabled = shared_env::strict_flag("SINEX_INGESTD_GITOPS_ENABLED")?.unwrap_or(false);
         let consumer_fetch_max_messages_env =
-            env_parsed("SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES")?;
-        let consumer_fetch_timeout_ms_env = env_parsed("SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS")?;
-        let consumer_max_ack_pending_env = env_parsed("SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING")?;
+            shared_env::strict_parsed("SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES")?;
+        let consumer_fetch_timeout_ms_env = shared_env::strict_parsed("SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS")?;
+        let consumer_max_ack_pending_env = shared_env::strict_parsed("SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING")?;
         let material_slices_max_ack_pending_env =
-            env_parsed("SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING")?;
+            shared_env::strict_parsed("SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING")?;
         let schema_reload_interval_secs: u64 =
-            env_parsed("SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS")?
+            shared_env::strict_parsed("SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS")?
                 .unwrap_or_else(default_schema_reload_interval_secs);
-        let stats_log_interval_secs: u64 = env_parsed("SINEX_INGESTD_STATS_LOG_INTERVAL_SECS")?
+        let stats_log_interval_secs: u64 = shared_env::strict_parsed("SINEX_INGESTD_STATS_LOG_INTERVAL_SECS")?
             .unwrap_or_else(default_stats_log_interval_secs);
         let blob_gc_interval_secs: Option<u64> =
-            env_parsed("SINEX_INGESTD_BLOB_GC_INTERVAL_SECS")?;
-        let pool_acquire_timeout_secs: u64 = env_parsed("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS")?
+            shared_env::strict_parsed("SINEX_INGESTD_BLOB_GC_INTERVAL_SECS")?;
+        let pool_acquire_timeout_secs: u64 = shared_env::strict_parsed("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS")?
             .unwrap_or_else(default_pool_acquire_timeout_secs);
-        let pool_idle_timeout_secs: u64 = env_parsed("SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS")?
+        let pool_idle_timeout_secs: u64 = shared_env::strict_parsed("SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS")?
             .unwrap_or_else(default_pool_idle_timeout_secs);
         let ts_orig_future_skew_secs: u64 =
-            env_parsed("SINEX_INGESTD_TS_ORIG_FUTURE_SKEW_SECS")?
+            shared_env::strict_parsed("SINEX_INGESTD_TS_ORIG_FUTURE_SKEW_SECS")?
                 .unwrap_or_else(default_ts_orig_future_skew_secs);
         let ts_orig_lower_bound_unix: i64 =
-            env_parsed("SINEX_INGESTD_TS_ORIG_LOWER_BOUND_UNIX")?
+            shared_env::strict_parsed("SINEX_INGESTD_TS_ORIG_LOWER_BOUND_UNIX")?
                 .unwrap_or_else(default_ts_orig_lower_bound_unix);
 
         // Construct NatsConnectionConfig from args/environment.
@@ -384,7 +384,7 @@ impl IngestdConfig {
 
         let db_url = match database_url {
             Some(url) => url,
-            None => env_string("DATABASE_URL")?.unwrap_or_else(default_database_url_fallback),
+            None => shared_env::strict_var("DATABASE_URL")?.unwrap_or_else(default_database_url_fallback),
         };
         let mut config = Self::default();
         config.database_url = db_url;
@@ -442,31 +442,31 @@ impl IngestdConfig {
         }
 
         // Retry config overrides from env vars
-        if let Some(value) = env_parsed("SINEX_INGESTD_RETRY_MAX_ATTEMPTS")? {
+        if let Some(value) = shared_env::strict_parsed("SINEX_INGESTD_RETRY_MAX_ATTEMPTS")? {
             config.retry_config.max_attempts = value;
         }
         if let Some(value) =
-            env_parsed::<u64>("SINEX_INGESTD_RETRY_INITIAL_DELAY_MS")?
+            shared_env::strict_parsed::<u64>("SINEX_INGESTD_RETRY_INITIAL_DELAY_MS")?
         {
             config.retry_config.initial_delay = Duration::from_millis(value);
         }
-        if let Some(value) = env_parsed::<u64>("SINEX_INGESTD_RETRY_MAX_DELAY_MS")? {
+        if let Some(value) = shared_env::strict_parsed::<u64>("SINEX_INGESTD_RETRY_MAX_DELAY_MS")? {
             config.retry_config.max_delay = Duration::from_millis(value);
         }
-        if let Some(value) = env_parsed("SINEX_INGESTD_RETRY_MULTIPLIER")? {
+        if let Some(value) = shared_env::strict_parsed("SINEX_INGESTD_RETRY_MULTIPLIER")? {
             config.retry_config.multiplier = value;
         }
-        if let Some(value) = env_flag("SINEX_INGESTD_RETRY_JITTER")? {
+        if let Some(value) = shared_env::strict_flag("SINEX_INGESTD_RETRY_JITTER")? {
             config.retry_config.jitter = value;
         }
         if let Some(value) =
-            env_parsed::<u64>("SINEX_INGESTD_RETRY_PUBLISH_ACK_TIMEOUT_MS")?
+            shared_env::strict_parsed::<u64>("SINEX_INGESTD_RETRY_PUBLISH_ACK_TIMEOUT_MS")?
         {
             config.retry_config.publish_ack_timeout = Duration::from_millis(value);
         }
         // Startup catch-up concurrency override from env
         if let Some(value) =
-            env_parsed("SINEX_INGESTD_STARTUP_CATCH_UP_MAX_CONCURRENT")?
+            shared_env::strict_parsed("SINEX_INGESTD_STARTUP_CATCH_UP_MAX_CONCURRENT")?
         {
             config.startup_catch_up_max_concurrent = value;
         }
@@ -638,22 +638,6 @@ impl IngestdConfig {
                 .with_operation("service.init_db_pool")
         })
     }
-}
-
-fn env_flag(name: &str) -> IngestdResult<Option<bool>> {
-    shared_env::strict_flag(name)
-}
-
-fn env_string(name: &str) -> IngestdResult<Option<String>> {
-    shared_env::strict_var(name)
-}
-
-fn env_parsed<T>(name: &str) -> IngestdResult<Option<T>>
-where
-    T: std::str::FromStr,
-    T::Err: std::fmt::Display,
-{
-    shared_env::strict_parsed(name)
 }
 
 fn env_validated_path(name: &str, context: &str) -> Option<Utf8PathBuf> {
@@ -844,7 +828,7 @@ fn default_pool_idle_timeout_secs() -> u64 {
 }
 
 fn default_consumer_fetch_max_messages() -> usize {
-    match env_parsed("SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES") {
+    match shared_env::strict_parsed("SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES") {
         Ok(Some(value)) => value,
         Ok(None) => 100,
         Err(error) => {
@@ -859,7 +843,7 @@ fn default_consumer_fetch_max_messages() -> usize {
 }
 
 fn default_consumer_fetch_timeout_ms() -> Milliseconds {
-    match env_parsed("SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS") {
+    match shared_env::strict_parsed("SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS") {
         Ok(Some(value)) => Milliseconds::from_millis(value),
         Ok(None) => Milliseconds::from_millis(100),
         Err(error) => {
@@ -874,7 +858,7 @@ fn default_consumer_fetch_timeout_ms() -> Milliseconds {
 }
 
 fn default_consumer_max_ack_pending() -> i64 {
-    match env_parsed("SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING") {
+    match shared_env::strict_parsed("SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING") {
         Ok(Some(value)) => value,
         Ok(None) => 100,
         Err(error) => {
@@ -889,7 +873,7 @@ fn default_consumer_max_ack_pending() -> i64 {
 }
 
 fn default_material_slices_max_ack_pending() -> i64 {
-    match env_parsed("SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING") {
+    match shared_env::strict_parsed("SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING") {
         Ok(Some(value)) => value,
         Ok(None) => 1_000,
         Err(error) => {
@@ -1032,7 +1016,7 @@ fn validate_fetch_timeout(value: &Milliseconds) -> Result<(), ValidationError> {
 }
 
 fn default_max_buffered_slices() -> usize {
-    match env_parsed("SINEX_INGESTD_MAX_BUFFERED_SLICES") {
+    match shared_env::strict_parsed("SINEX_INGESTD_MAX_BUFFERED_SLICES") {
         Ok(Some(value)) => value,
         Ok(None) => 100,
         Err(error) => {
@@ -1047,7 +1031,7 @@ fn default_max_buffered_slices() -> usize {
 }
 
 fn default_slice_timeout_secs() -> u64 {
-    match env_parsed("SINEX_INGESTD_SLICE_TIMEOUT_SECS") {
+    match shared_env::strict_parsed("SINEX_INGESTD_SLICE_TIMEOUT_SECS") {
         Ok(Some(value)) => value,
         Ok(None) => 300,
         Err(error) => {
@@ -1062,7 +1046,7 @@ fn default_slice_timeout_secs() -> u64 {
 }
 
 fn default_orphan_threshold_secs() -> u64 {
-    match env_parsed("SINEX_INGESTD_ORPHAN_THRESHOLD_SECS") {
+    match shared_env::strict_parsed("SINEX_INGESTD_ORPHAN_THRESHOLD_SECS") {
         Ok(Some(value)) => value,
         Ok(None) => 3600,
         Err(error) => {
@@ -1077,7 +1061,7 @@ fn default_orphan_threshold_secs() -> u64 {
 }
 
 fn default_disk_threshold_percent() -> u8 {
-    match env_parsed("SINEX_INGESTD_DISK_THRESHOLD_PERCENT") {
+    match shared_env::strict_parsed("SINEX_INGESTD_DISK_THRESHOLD_PERCENT") {
         Ok(Some(value)) => value,
         Ok(None) => 90,
         Err(error) => {
@@ -1092,7 +1076,7 @@ fn default_disk_threshold_percent() -> u8 {
 }
 
 fn default_max_material_size_bytes() -> Bytes {
-    match env_parsed("SINEX_INGESTD_MAX_MATERIAL_SIZE_BYTES") {
+    match shared_env::strict_parsed("SINEX_INGESTD_MAX_MATERIAL_SIZE_BYTES") {
         Ok(Some(value)) => Bytes::from_bytes(value),
         Ok(None) => Bytes::from_mebibytes(512),
         Err(error) => {
@@ -1107,7 +1091,7 @@ fn default_max_material_size_bytes() -> Bytes {
 }
 
 fn default_material_staged_sync_bytes() -> Bytes {
-    match env_parsed("SINEX_INGESTD_MATERIAL_STAGED_SYNC_BYTES") {
+    match shared_env::strict_parsed("SINEX_INGESTD_MATERIAL_STAGED_SYNC_BYTES") {
         Ok(Some(value)) => Bytes::from_bytes(value),
         Ok(None) => Bytes::from_mebibytes(1),
         Err(error) => {
@@ -1122,7 +1106,7 @@ fn default_material_staged_sync_bytes() -> Bytes {
 }
 
 fn default_material_staged_sync_interval_ms() -> Milliseconds {
-    match env_parsed("SINEX_INGESTD_MATERIAL_STAGED_SYNC_INTERVAL_MS") {
+    match shared_env::strict_parsed("SINEX_INGESTD_MATERIAL_STAGED_SYNC_INTERVAL_MS") {
         Ok(Some(value)) => Milliseconds::from_millis(value),
         Ok(None) => Milliseconds::from_millis(1000),
         Err(error) => {
@@ -1137,7 +1121,7 @@ fn default_material_staged_sync_interval_ms() -> Milliseconds {
 }
 
 fn default_material_wal_sync_bytes() -> Bytes {
-    match env_parsed("SINEX_INGESTD_MATERIAL_WAL_SYNC_BYTES") {
+    match shared_env::strict_parsed("SINEX_INGESTD_MATERIAL_WAL_SYNC_BYTES") {
         Ok(Some(value)) => Bytes::from_bytes(value),
         Ok(None) => Bytes::from_kibibytes(256),
         Err(error) => {
@@ -1152,7 +1136,7 @@ fn default_material_wal_sync_bytes() -> Bytes {
 }
 
 fn default_material_wal_sync_entries() -> u32 {
-    match env_parsed("SINEX_INGESTD_MATERIAL_WAL_SYNC_ENTRIES") {
+    match shared_env::strict_parsed("SINEX_INGESTD_MATERIAL_WAL_SYNC_ENTRIES") {
         Ok(Some(value)) => value,
         Ok(None) => 128,
         Err(error) => {
@@ -1167,7 +1151,7 @@ fn default_material_wal_sync_entries() -> u32 {
 }
 
 fn default_material_wal_sync_interval_ms() -> Milliseconds {
-    match env_parsed("SINEX_INGESTD_MATERIAL_WAL_SYNC_INTERVAL_MS") {
+    match shared_env::strict_parsed("SINEX_INGESTD_MATERIAL_WAL_SYNC_INTERVAL_MS") {
         Ok(Some(value)) => Milliseconds::from_millis(value),
         Ok(None) => Milliseconds::from_millis(1000),
         Err(error) => {
@@ -1205,7 +1189,7 @@ fn default_stats_log_interval_secs() -> u64 {
 }
 
 fn default_startup_catch_up_max_concurrent() -> usize {
-    match env_parsed("SINEX_INGESTD_STARTUP_CATCH_UP_MAX_CONCURRENT") {
+    match shared_env::strict_parsed("SINEX_INGESTD_STARTUP_CATCH_UP_MAX_CONCURRENT") {
         Ok(Some(value)) => value,
         Ok(None) => 4,
         Err(error) => {

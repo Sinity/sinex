@@ -594,10 +594,6 @@ impl DesktopNode {
         handle.and_then(|watcher| watcher.health().last_error)
     }
 
-    fn env_string_override(name: &str) -> NodeResult<Option<String>> {
-        shared_env::strict_var(name)
-    }
-
     fn parse_window_manager_type_override(raw: &str) -> NodeResult<WindowManagerType> {
         raw.parse::<WindowManagerType>().map_err(|error| {
             SinexError::processing(format!("Invalid window manager type `{raw}`: {error}"))
@@ -643,11 +639,11 @@ impl DesktopNode {
     }
 
     fn apply_env_overrides(config: &mut DesktopConfig) -> NodeResult<()> {
-        if let Some(val) = Self::env_string_override("SINEX_DESKTOP_REQUIRE_HYPRLAND")? {
+        if let Some(val) = shared_env::strict_var("SINEX_DESKTOP_REQUIRE_HYPRLAND")? {
             config.require_hyprland =
                 Self::parse_bool_env_override("SINEX_DESKTOP_REQUIRE_HYPRLAND", &val)?;
         }
-        if let Some(path) = Self::env_string_override("SINEX_ACTIVITYWATCH_DB_PATH")? {
+        if let Some(path) = shared_env::strict_var("SINEX_ACTIVITYWATCH_DB_PATH")? {
             config.activitywatch_db_path = Some(Utf8PathBuf::from(path));
         }
 

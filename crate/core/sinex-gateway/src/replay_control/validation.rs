@@ -6,7 +6,7 @@
 //! and reused as defense-in-depth checks on both sides of the NATS bus.
 
 use crate::cascade_analyzer::{CascadeAnalyzerConfig, Severity, StreamingCascadeAnalyzer};
-use crate::config::env_bool_optional;
+use sinex_primitives::env as shared_env;
 use color_eyre::eyre::{Result, eyre};
 use sinex_db::replay::state_machine::{ReplayOperation, ReplayState};
 use sinex_primitives::Uuid;
@@ -55,7 +55,7 @@ pub(super) fn allow_test_actors_in_runtime(is_test_runtime: bool) -> Result<bool
         return Ok(true);
     }
 
-    Ok(env_bool_optional("SINEX_ALLOW_TEST_ACTORS")?.unwrap_or(false))
+    Ok(shared_env::strict_flag("SINEX_ALLOW_TEST_ACTORS")?.unwrap_or(false))
 }
 
 pub(super) fn allow_test_actors() -> Result<bool> {

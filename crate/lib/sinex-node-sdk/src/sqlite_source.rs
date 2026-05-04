@@ -33,10 +33,10 @@ fn open_immutable_read_only(path: &Utf8Path) -> Result<Connection, rusqlite::Err
 }
 
 fn sqlite_read_needs_immutable_fallback(error: &rusqlite::Error) -> bool {
+    // #751 F32: classify by error code, not error message text.
     error
         .sqlite_error_code()
         .is_some_and(|code| code == rusqlite::ErrorCode::ReadOnly)
-        || error.to_string().contains("readonly database")
 }
 
 fn with_read_only_connection<T>(

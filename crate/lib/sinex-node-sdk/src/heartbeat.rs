@@ -5,7 +5,8 @@
 //! which gets picked up by the journald ingestor as regular events, and processed
 //! by the health aggregator automaton.
 
-use crate::error_helpers::{elapsed_seconds_with_warning, env_parse_with_default};
+use crate::error_helpers::elapsed_seconds_with_warning;
+use sinex_primitives::env as shared_env;
 use crate::runtime::stream::NodeRuntimeState;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -42,7 +43,7 @@ fn get_failed_threshold() -> usize {
 }
 
 fn env_usize_with_default(var: &str, default: usize) -> usize {
-    env_parse_with_default(var, default, "heartbeat")
+    shared_env::parse_or(var, default, "heartbeat")
 }
 
 /// Heartbeat metrics and status

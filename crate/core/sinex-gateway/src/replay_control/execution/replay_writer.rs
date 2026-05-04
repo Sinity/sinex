@@ -269,6 +269,13 @@ impl ReplayExecutionEngine {
         // in the narrow post-commit window, surface the ERROR and rely on the
         // replay integrity checks/operator recovery rather than reintroducing
         // the retired outbox machinery.
+        //
+        // Known race (#751 F1): if the process crashes after archive_cascade
+        // commits but before publish_scope_invalidations completes, archived
+        // rows stay in audit.archived_events but no invalidation signals reach
+        // downstream automata. On recovery, the cascade analyzer's integrity
+        // check catches dangling references before the next replay — the race
+        // is detectable and self-healing rather than silent data corruption.
 
         // Publish scope invalidation signals for archived derived events
         if !scope_metadata.is_empty()

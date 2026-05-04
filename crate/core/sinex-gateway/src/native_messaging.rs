@@ -1,7 +1,7 @@
 #![doc = include_str!("../docs/native_messaging.md")]
 
 use crate::config::GatewayConfig;
-use crate::config::env_var_optional;
+use sinex_primitives::env as shared_env;
 use color_eyre::eyre::{Context, Result, bail, eyre};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -175,11 +175,11 @@ impl NativeMessagingConfig {
     /// Load configuration from environment variables.
     pub fn from_env() -> Result<Self> {
         Ok(Self::from_raw(
-            env_var_optional(TRUSTED_EXTENSION_ENV)?.as_ref(),
-            env_var_optional(TRUSTED_HOSTS_ENV)?.as_ref(),
-            env_var_optional(PROTOCOL_VERSION_ENV)?.as_ref(),
-            env_var_optional(CAPABILITIES_ENV)?.as_ref(),
-            env_var_optional(EXTENSION_ROLES_ENV)?.as_ref(),
+            shared_env::strict_var(TRUSTED_EXTENSION_ENV)?.as_ref(),
+            shared_env::strict_var(TRUSTED_HOSTS_ENV)?.as_ref(),
+            shared_env::strict_var(PROTOCOL_VERSION_ENV)?.as_ref(),
+            shared_env::strict_var(CAPABILITIES_ENV)?.as_ref(),
+            shared_env::strict_var(EXTENSION_ROLES_ENV)?.as_ref(),
             env_positive_usize_with_default(MAX_MESSAGE_SIZE_ENV, DEFAULT_MAX_MESSAGE_SIZE_BYTES),
             std::time::Duration::from_secs(env_positive_u64_with_default(
                 READ_TIMEOUT_ENV,
