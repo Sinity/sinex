@@ -301,6 +301,7 @@ fn extension(path: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::{sinex_test, TestResult};
     use camino::Utf8PathBuf;
     use sinex_node_sdk::ImportedFileFingerprint;
 
@@ -322,8 +323,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn parse_json_array_dump() {
+    #[sinex_test]
+    async fn parse_json_array_dump() -> TestResult<()> {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("chrome_history.json");
         std::fs::write(
@@ -340,10 +341,11 @@ mod tests {
             parsed.visits[0].normalized_url.as_deref(),
             Some("https://example.com/?a=1")
         );
+        Ok(())
     }
 
-    #[test]
-    fn parse_csv_dump_handles_edge_datetime() {
+    #[sinex_test]
+    async fn parse_csv_dump_handles_edge_datetime() -> TestResult<()> {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("edge_history.csv");
         std::fs::write(
@@ -357,10 +359,11 @@ mod tests {
         assert_eq!(parsed.visits.len(), 1);
         assert_eq!(parsed.visits[0].browser, "edge");
         assert_eq!(parsed.visits[0].line_number, Some(2));
+        Ok(())
     }
 
-    #[test]
-    fn parse_csv_dump_rejects_rows_without_usable_timestamp() {
+    #[sinex_test]
+    async fn parse_csv_dump_rejects_rows_without_usable_timestamp() -> TestResult<()> {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("edge_history.csv");
         std::fs::write(
@@ -378,10 +381,11 @@ mod tests {
             error.to_string().contains("missing a usable timestamp"),
             "unexpected error: {error}"
         );
+        Ok(())
     }
 
-    #[test]
-    fn parse_append_only_ndjson_starts_at_prior_line_count() {
+    #[sinex_test]
+    async fn parse_append_only_ndjson_starts_at_prior_line_count() -> TestResult<()> {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("full_history.ndjson");
         std::fs::write(
@@ -394,5 +398,6 @@ mod tests {
         file.start_line_number = 12;
         let parsed = parse_append_only_dump(&file, None).unwrap();
         assert_eq!(parsed.visits[0].line_number, Some(13));
+        Ok(())
     }
 }

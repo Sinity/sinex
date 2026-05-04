@@ -769,6 +769,7 @@ impl ContentStoreManager {
 
 #[cfg(test)]
 mod tests {
+    use xtask::sandbox::{sinex_test, TestResult};
     use super::{
         attach_verification_status_update_error, content_hash_is_backend_digest,
         material_name_for_blob, require_ingest_filename, verification_status_persist_error,
@@ -779,8 +780,8 @@ mod tests {
     use sinex_primitives::domain::BlobVerificationStatus;
 
     // Inline because these cover private blob verification error helpers only.
-    #[test]
-    fn verification_status_persist_error_is_explicit() {
+    #[sinex_test]
+    async fn verification_status_persist_error_is_explicit() -> TestResult<()> {
         let error = verification_status_persist_error(
             "SHA256E-s1--deadbeef.txt",
             BlobVerificationStatus::Verified,
@@ -802,10 +803,11 @@ mod tests {
                 .iter()
                 .any(|source| source.contains("write failed"))
         );
+        Ok(())
     }
 
-    #[test]
-    fn verification_status_update_error_is_attached_to_mismatch() {
+    #[sinex_test]
+    async fn verification_status_update_error_is_attached_to_mismatch() -> TestResult<()> {
         let mismatch = SinexError::processing("Blob content hash mismatch");
         let combined = attach_verification_status_update_error(
             mismatch,
@@ -818,10 +820,11 @@ mod tests {
                 .get("verification_status_update_error"),
             Some(&"Processing error: failed to persist blob verification status".to_string()),
         );
+        Ok(())
     }
 
-    #[test]
-    fn material_name_for_blob_uses_content_key_when_filename_missing() {
+    #[sinex_test]
+    async fn material_name_for_blob_uses_content_key_when_filename_missing() -> TestResult<()> {
         let blob = Blob::builder()
             .storage_backend("SHA256E".to_string())
             .content_hash("deadbeef".to_string())
@@ -829,10 +832,11 @@ mod tests {
             .build();
 
         assert_eq!(material_name_for_blob(&blob), "SHA256E-s42--deadbeef");
+        Ok(())
     }
 
-    #[test]
-    fn local_cas_content_hash_is_not_treated_as_annex_digest() {
+    #[sinex_test]
+    async fn local_cas_content_hash_is_not_treated_as_annex_digest() -> TestResult<()> {
         let blob = Blob::builder()
             .storage_backend("SINEXBLAKE3".to_string())
             .content_hash("b3f00d".to_string())
@@ -840,10 +844,11 @@ mod tests {
             .build();
 
         assert!(!content_hash_is_backend_digest(&blob));
+        Ok(())
     }
 
-    #[test]
-    fn git_annex_content_hash_is_verified_as_annex_digest() {
+    #[sinex_test]
+    async fn git_annex_content_hash_is_verified_as_annex_digest() -> TestResult<()> {
         let blob = Blob::builder()
             .storage_backend("SHA256E".to_string())
             .content_hash("deadbeef".to_string())
@@ -851,20 +856,22 @@ mod tests {
             .build();
 
         assert!(content_hash_is_backend_digest(&blob));
+        Ok(())
     }
 
-    #[test]
-    fn require_ingest_filename_prefers_explicit_filename() {
+    #[sinex_test]
+    async fn require_ingest_filename_prefers_explicit_filename() -> TestResult<()> {
         let path = Utf8Path::new("/tmp/example.txt");
 
         let filename =
             require_ingest_filename(path, Some("provided.txt")).expect("explicit filename");
 
         assert_eq!(filename, "provided.txt");
+        Ok(())
     }
 
-    #[test]
-    fn require_ingest_filename_rejects_paths_without_final_component() {
+    #[sinex_test]
+    async fn require_ingest_filename_rejects_paths_without_final_component() -> TestResult<()> {
         let error = require_ingest_filename(Utf8Path::new("/"), None)
             .expect_err("paths without a filename must fail honestly");
 
@@ -874,5 +881,6 @@ mod tests {
                 .contains("Blob ingestion requires a file name"),
             "unexpected error: {error}"
         );
+        Ok(())
     }
 }

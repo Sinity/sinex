@@ -251,11 +251,12 @@ impl std::fmt::Debug for MaterialReadySet {
 
 #[cfg(test)]
 mod tests {
+    use xtask::sandbox::{sinex_test, TestResult};
     // Inline because testing TTL eviction cleanly needs access to the internal policy constructor.
     use super::*;
 
-    #[test]
-    fn stale_entries_are_evicted() {
+    #[sinex_test]
+    async fn stale_entries_are_evicted() -> TestResult<()> {
         let set = MaterialReadySet::with_policy(Duration::from_millis(1), 1);
         let material_id = Uuid::now_v7();
 
@@ -264,10 +265,11 @@ mod tests {
 
         assert!(!set.is_ready(&material_id));
         assert!(set.is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn purge_stale_removes_idle_entries_without_lookup() {
+    #[sinex_test]
+    async fn purge_stale_removes_idle_entries_without_lookup() -> TestResult<()> {
         let set = MaterialReadySet::with_policy(Duration::from_millis(1), u64::MAX);
         let material_id = Uuid::now_v7();
 
@@ -276,5 +278,6 @@ mod tests {
 
         assert_eq!(set.purge_stale(), 1);
         assert!(set.is_empty());
+        Ok(())
     }
 }

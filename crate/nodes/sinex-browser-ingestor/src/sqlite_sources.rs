@@ -272,6 +272,7 @@ fn chromium_timestamp_bound(end_time: Timestamp) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::{sinex_test, TestResult};
     use sinex_db::repositories::{DbPoolExt, source_material_relation_types};
     use sinex_node_sdk::{
         AcquisitionManager, BufferedRecordSourceHarness, RecordProcessingOutcome,
@@ -281,10 +282,11 @@ mod tests {
     use std::sync::Arc;
     use xtask::sandbox::prelude::*;
 
-    #[test]
-    fn chromium_visit_timestamp_converts_epoch() {
+    #[sinex_test]
+    async fn chromium_visit_timestamp_converts_epoch() -> TestResult<()> {
         let timestamp = chromium_visit_timestamp(133_869_418_254_638_00).unwrap();
         assert_eq!(timestamp.format_rfc3339(), "2025-03-20T10:57:05.4638Z");
+        Ok(())
     }
 
     #[sinex_test]
