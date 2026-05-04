@@ -44,6 +44,8 @@ pub enum Entities {
     ConfidenceScore,
     IsMerged,
     MergedIntoId,
+    VerifiedAt,
+    ExternalIds,
     CreatedAt,
     UpdatedAt,
 }
@@ -73,6 +75,8 @@ pub struct EntityRecord {
     pub confidence_score: f64,
     pub is_merged: bool,
     pub merged_into_id: Option<Uuid>,
+    pub verified_at: Option<Timestamp>,
+    pub external_ids: JsonValue,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -131,6 +135,13 @@ impl Entities {
                     .default(false),
             )
             .col(ColumnDef::new(Entities::MergedIntoId).custom(Alias::new("UUID")))
+            .col(ColumnDef::new(Entities::VerifiedAt).timestamp_with_time_zone())
+            .col(
+                ColumnDef::new(Entities::ExternalIds)
+                    .json_binary()
+                    .not_null()
+                    .default(Expr::cust("'{}'::jsonb")),
+            )
             .col(
                 ColumnDef::new(Entities::CreatedAt)
                     .timestamp_with_time_zone()
@@ -174,7 +185,9 @@ impl Entities {
     #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![
-            // Unique constraint on entity type and name combination
+            // Unique constraint on entity type and name combination.
+            // Partial: excludes merged entities so a new entity can reuse the
+            // (type, name) pair after the previous occupant was merged away.
             Index::create()
                 .if_not_exists()
                 .name("uk_entities_type_name")
@@ -182,6 +195,7 @@ impl Entities {
                 .col(Entities::EntityType)
                 .col(Entities::Name)
                 .unique()
+                .cond_where(Expr::col(Entities::IsMerged).eq(false))
                 .to_owned(),
             // Note: GIN indexes require raw SQL - see create_gin_indexes_sql()
             Index::create()
