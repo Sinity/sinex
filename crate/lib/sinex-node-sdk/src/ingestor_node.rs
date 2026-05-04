@@ -12,7 +12,6 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::checkpoint::{CheckpointManager, CheckpointState, decode_checkpoint_data};
-#[cfg(feature = "messaging")]
 use sinex_primitives::env as shared_env;
 use crate::runtime::stream::{
     Checkpoint, ContinuousStart, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState,
@@ -275,6 +274,75 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
         reported_checkpoint
     }
 
+    /// Apply `FailurePolicy::settle()` to a scan error and return the appropriate
+    /// action: propagate the error (Halt/Retry), or swallow it (Commit/skip).
+    fn settle_scan_error(
+        &self,
+        error: crate::SinexError,
+        phase: &str,
+        from: &Checkpoint,
+    ) -> NodeResult<ScanReport> {
+        use sinex_primitives::settlement::{
+            DefaultFailurePolicy, FailureContext, FailurePolicy, RuntimeOperation, RuntimePhase,
+            Settlement,
+        };
+
+        let failure_ctx = FailureContext {
+            unit_id: self.ingestor.name().to_string(),
+            operation: RuntimeOperation::ProcessBatch,
+            phase: RuntimePhase::ProcessInput,
+            input_scope: None,
+            effect_kind: None,
+            delivery_count: None,
+            attempts: 0,
+        };
+        let settlement = DefaultFailurePolicy.settle(&error, &failure_ctx);
+
+        match settlement {
+            Settlement::Commit => {
+                warn!(
+                    node = %self.ingestor.name(),
+                    phase,
+                    error = %error,
+                    "Ingestor scan error settled as benign; returning empty report"
+                );
+                Ok(ScanReport {
+                    events_processed: 0,
+                    duration: std::time::Duration::ZERO,
+                    final_checkpoint: from.clone(),
+                    time_range: None,
+                    node_stats: std::collections::HashMap::new(),
+                    failed_targets: Vec::new(),
+                    successful_targets: Vec::new(),
+                    warnings: Vec::new(),
+                })
+            }
+            Settlement::Retry { .. } => {
+                warn!(
+                    node = %self.ingestor.name(),
+                    phase,
+                    error = %error,
+                    "Ingestor scan error settled as retryable; propagating for caller retry"
+                );
+                Err(error)
+            }
+            Settlement::SendToProcessingFailure
+            | Settlement::Park { .. }
+            | Settlement::Quarantine { .. }
+            | Settlement::HaltNode { .. }
+            | Settlement::DrainRuntimeUnit { .. } => {
+                warn!(
+                    node = %self.ingestor.name(),
+                    phase,
+                    error = %error,
+                    settlement = ?settlement,
+                    "Ingestor scan error settled as terminal; propagating"
+                );
+                Err(error)
+            }
+        }
+    }
+
     async fn load_state(&mut self) -> NodeResult<()> {
         let checkpoint_path = self
             .shutdown_config
@@ -458,16 +526,27 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
         args: ScanArgs,
     ) -> NodeResult<ScanReport> {
         let previous_checkpoint = self.state.checkpoint.clone();
+        let from_for_errors = from.clone();
         let mut report = match &until {
             TimeHorizon::Snapshot => {
-                self.ingestor
+                let result = self
+                    .ingestor
                     .scan_snapshot(&mut self.state.user_state, args)
-                    .await?
+                    .await;
+                match result {
+                    Ok(report) => report,
+                    Err(e) => return self.settle_scan_error(e, "snapshot", &from_for_errors),
+                }
             }
             TimeHorizon::Historical { .. } => {
-                self.ingestor
+                let result = self
+                    .ingestor
                     .scan_historical(&mut self.state.user_state, from, until.clone(), args)
-                    .await?
+                    .await;
+                match result {
+                    Ok(report) => report,
+                    Err(e) => return self.settle_scan_error(e, "historical", &from_for_errors),
+                }
             }
             TimeHorizon::Continuous => {
                 let runtime = self.runtime.as_ref().ok_or_else(|| {
@@ -512,7 +591,10 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
                     result = continuous_fut => result,
                     () = health_fut => unreachable!("health ticker never completes"),
                 };
-                continuous_result?
+                match continuous_result {
+                    Ok(report) => report,
+                    Err(e) => return self.settle_scan_error(e, "continuous", &from_for_errors),
+                }
             }
         };
 
