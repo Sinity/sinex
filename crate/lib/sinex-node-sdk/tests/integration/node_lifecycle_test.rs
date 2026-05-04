@@ -17,6 +17,7 @@ use sinex_node_sdk::{
 use sinex_primitives::Seconds;
 use sinex_primitives::SinexError;
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::utils::wait_helpers::RetryConfig;
 use std::collections::HashMap;
 use std::sync::{
     Arc,
@@ -512,6 +513,7 @@ fn create_minimal_config(service_name: &str) -> EventSourceConfig {
             database_pool_size: 5,
             work_dir: Utf8PathBuf::from("/tmp/sinex-minimal"),
             dry_run: true,
+            retry_config: RetryConfig::default(),
         },
         batch_size: 10,
         batch_timeout_secs: Seconds::from_secs(30),
@@ -536,6 +538,7 @@ fn create_standard_config(service_name: &str) -> EventSourceConfig {
             database_pool_size: 10,
             work_dir: Utf8PathBuf::from("/tmp/sinex-standard"),
             dry_run: false,
+            retry_config: RetryConfig::default(),
         },
         batch_size: 50,
         batch_timeout_secs: Seconds::from_secs(10),
@@ -562,6 +565,7 @@ fn create_enhanced_config(service_name: &str) -> EventSourceConfig {
             database_pool_size: 20,
             work_dir: Utf8PathBuf::from("/tmp/sinex-enhanced"),
             dry_run: false,
+            retry_config: RetryConfig::default(),
         },
         batch_size: 100,
         batch_timeout_secs: Seconds::from_secs(5),

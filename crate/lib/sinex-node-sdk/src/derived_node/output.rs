@@ -70,6 +70,14 @@ pub struct DerivedOutput<T> {
     /// This stays in runtime metadata rather than the event row so the adapter
     /// can expose truthful fan-in metrics without widening core provenance.
     pub aggregation: Option<DerivedAggregationMeta>,
+
+    /// Per-output event type override.
+    ///
+    /// When `Some`, the adapter stamps this event type on the emitted event
+    /// instead of `DerivedNodeImpl::output_event_type()`. Used by
+    /// `MultiOutputTransducerNode` to emit events of different types from
+    /// a single processing call.
+    pub event_type: Option<&'static str>,
 }
 
 impl<T> DerivedOutput<T> {
@@ -84,6 +92,7 @@ impl<T> DerivedOutput<T> {
             scope_key: None,
             equivalence_key: None,
             aggregation: None,
+            event_type: None,
         }
     }
 
@@ -106,6 +115,7 @@ impl<T> DerivedOutput<T> {
             scope_key: None,
             equivalence_key: None,
             aggregation: None,
+            event_type: None,
         }
     }
 
@@ -124,6 +134,7 @@ impl<T> DerivedOutput<T> {
             scope_key: None,
             equivalence_key: None,
             aggregation: None,
+            event_type: None,
         }
     }
 
@@ -143,6 +154,7 @@ impl<T> DerivedOutput<T> {
             scope_key: Some(scope_key),
             equivalence_key: None,
             aggregation: None,
+            event_type: None,
         }
     }
 
@@ -171,6 +183,16 @@ impl<T> DerivedOutput<T> {
     #[must_use]
     pub fn with_temporal_policy(mut self, policy: SyntheticTemporalPolicy) -> Self {
         self.temporal_policy = policy;
+        self
+    }
+
+    /// Set the per-output event type for multi-output nodes.
+    ///
+    /// When set, the adapter stamps this event type on the emitted event instead
+    /// of falling back to `DerivedNodeImpl::output_event_type()`.
+    #[must_use]
+    pub fn with_event_type(mut self, event_type: &'static str) -> Self {
+        self.event_type = Some(event_type);
         self
     }
 

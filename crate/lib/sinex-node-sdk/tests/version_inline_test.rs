@@ -51,7 +51,6 @@ async fn test_build_age_invalid_timestamp() -> TestResult<()> {
         full_version: "0.0.0".to_string(),
         version: Version::new(0, 0, 0),
         commit_hash: "test".to_string(),
-        commit_count: 0,
         branch: "test".to_string(),
         build_timestamp: "not-a-timestamp".to_string(),
         is_dirty: false,

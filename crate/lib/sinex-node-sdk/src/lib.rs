@@ -129,8 +129,9 @@ pub use coordination::{HandoffRequest, InstanceMode, NodeCoordination};
 pub use derived_node::{
     DerivedAggregationMeta, DerivedNodeAdapter, DerivedNodeConfig, DerivedOutput,
     DerivedScopeInvalidation, DerivedTriggerContext, INVALIDATION_SUBJECT, InputProvenanceFilter,
-    ScopeReconcilerNode, ScopeReconcilerNodeAdapter, TransducerNode, TransducerNodeAdapter,
-    WindowedNode, WindowedNodeAdapter,
+    MultiOutputTransducerNode, MultiOutputTransducerNodeAdapter, MultiOutputTransducerWrapper, ScopeReconcilerNode,
+    ScopeReconcilerNodeAdapter, ScopeReconcilerWrapper, TransducerNode, TransducerNodeAdapter,
+    TransducerWrapper, WindowedNode, WindowedNodeAdapter, WindowedWrapper,
 };
 #[cfg(feature = "messaging")]
 pub use dlq_retry::{DlqRetryConfig, DlqRetryHandler, DlqRetryResult, DlqStats};
