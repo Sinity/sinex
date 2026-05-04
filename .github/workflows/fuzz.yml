@@ -23,6 +23,7 @@ jobs:
   fuzz-primitives:
     name: Fuzz sinex-primitives/${{ matrix.target }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -92,6 +93,7 @@ jobs:
   fuzz-db:
     name: Fuzz sinex-db/${{ matrix.target }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -159,6 +161,7 @@ jobs:
   summary:
     name: Fuzzing Summary
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs: [fuzz-primitives, fuzz-db]
     if: always()
 

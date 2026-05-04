@@ -27,6 +27,7 @@ jobs:
   n1-compat:
     name: N-1 Compatibility Check
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v5

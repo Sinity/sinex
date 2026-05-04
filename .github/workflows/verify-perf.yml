@@ -12,6 +12,7 @@ env:
 jobs:
   verify-perf:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
     - uses: actions/checkout@v5
