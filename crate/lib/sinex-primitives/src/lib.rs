@@ -26,14 +26,6 @@ pub mod query;
 pub mod rpc;
 pub mod runtime_target;
 pub mod settlement;
-pub mod source_unit {
-    //! Compatibility re-export module. Source-unit types live in [`proof`] since #744 (A1).
-    pub use crate::proof::{
-        CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
-        RuntimeShape, SourceUnitBuildImpact, SourceUnitDescriptor, __register,
-        all_source_units, find_source_unit,
-    };
-}
 pub mod temporal;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
