@@ -388,6 +388,7 @@ pub async fn create_database_if_not_exists(database_url: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use xtask::sandbox::{sinex_test, TestResult};
     // Inline because this covers local env parsing semantics in the pool module.
     use super::{
         DEFAULT_POOL_ACQUIRE_WARN_MS, PoolConfig, env_parse_override, env_parse_with_default,
@@ -396,19 +397,21 @@ mod tests {
 
     use xtask::sandbox::EnvGuard;
 
-    #[test]
-    fn env_parse_override_rejects_invalid_numeric_values() {
+    #[sinex_test]
+    async fn env_parse_override_rejects_invalid_numeric_values() -> TestResult<()> {
         let mut env = EnvGuard::new();
         env.set("SINEX_UNUSED", "bogus");
         let parsed = env_parse_override::<u64>("SINEX_UNUSED", "test context");
         assert!(parsed.is_none());
+        Ok(())
     }
 
-    #[test]
-    fn env_parse_with_default_keeps_default_without_override() {
+    #[sinex_test]
+    async fn env_parse_with_default_keeps_default_without_override() -> TestResult<()> {
         let parsed =
             env_parse_with_default("SINEX_UNUSED", DEFAULT_POOL_ACQUIRE_WARN_MS, "test context");
         assert_eq!(parsed, DEFAULT_POOL_ACQUIRE_WARN_MS);
+        Ok(())
     }
 
     #[sinex_serial_test]

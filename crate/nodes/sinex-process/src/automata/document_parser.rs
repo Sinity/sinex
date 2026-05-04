@@ -486,60 +486,67 @@ fn redact_chunk_text(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::{sinex_test, TestResult};
 
-    #[test]
-    fn test_frontmatter_extraction() {
+    #[sinex_test]
+    async fn test_frontmatter_extraction() -> TestResult<()> {
         let input = "---\ntitle: My Note\ntags: rust\n---\n\nBody text here.";
         let (fm, body) = extract_frontmatter(input);
         assert_eq!(fm.get("title").map(|s| s.as_str()), Some("My Note"));
         assert_eq!(fm.get("tags").map(|s| s.as_str()), Some("rust"));
         assert!(body.contains("Body text here"));
+        Ok(())
     }
 
-    #[test]
-    fn test_wikilink_extraction() {
+    #[sinex_test]
+    async fn test_wikilink_extraction() -> TestResult<()> {
         let text = "See [[design-doc]] and also [[rust/ownership]] for details.";
         let links = extract_wikilinks(text);
         assert!(links.contains(&"design-doc".to_string()));
         assert!(links.contains(&"rust/ownership".to_string()));
+        Ok(())
     }
 
-    #[test]
-    fn test_paragraph_split_basic() {
+    #[sinex_test]
+    async fn test_paragraph_split_basic() -> TestResult<()> {
         let text = "Para one.\n\nPara two.\n\n\nPara three.";
         let chunks = paragraph_split(text);
         assert_eq!(chunks.len(), 3);
         assert_eq!(chunks[0], "Para one.");
         assert_eq!(chunks[1], "Para two.");
         assert_eq!(chunks[2], "Para three.");
+        Ok(())
     }
 
-    #[test]
-    fn test_paragraph_split_empty() {
+    #[sinex_test]
+    async fn test_paragraph_split_empty() -> TestResult<()> {
         let chunks = paragraph_split("");
         assert_eq!(chunks.len(), 1);
         assert!(chunks[0].is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn test_document_id_determinism() {
+    #[sinex_test]
+    async fn test_document_id_determinism() -> TestResult<()> {
         let id1 = derive_document_id("dendron", "notes/design.md");
         let id2 = derive_document_id("dendron", "notes/design.md");
         assert_eq!(id1, id2);
 
         let id3 = derive_document_id("dendron", "notes/other.md");
         assert_ne!(id1, id3);
+        Ok(())
     }
 
-    #[test]
-    fn test_frontmatter_no_closing() {
+    #[sinex_test]
+    async fn test_frontmatter_no_closing() -> TestResult<()> {
         let input = "---\ntitle: Unclosed\nBody here.";
         let (fm, body) = extract_frontmatter(input);
         assert!(fm.is_empty() || body.contains("Body"));
+        Ok(())
     }
 
-    #[test]
-    fn test_overlong_chunk_split() {
+    #[sinex_test]
+    async fn test_overlong_chunk_split() -> TestResult<()> {
         let mut big = String::with_capacity(MAX_CHUNK_BYTES + 1000);
         for _ in 0..((MAX_CHUNK_BYTES / 50) + 10) {
             big.push_str("This is a sentence that takes up some space. ");
@@ -554,6 +561,7 @@ mod tests {
                 MAX_CHUNK_BYTES
             );
         }
+        Ok(())
     }
 }
 

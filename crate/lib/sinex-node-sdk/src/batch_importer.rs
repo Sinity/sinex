@@ -254,6 +254,7 @@ pub fn read_file_lines(file: &DiscoveredFile) -> Result<Vec<String>, std::io::Er
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::{sinex_test, TestResult};
     use std::io::Write;
     use std::thread::sleep;
     use std::time::Duration;
@@ -281,8 +282,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn scan_finds_new_files() {
+    #[sinex_test]
+    async fn scan_finds_new_files() -> TestResult<()> {
         let dir = TempDir::new().unwrap();
         create_test_file(dir.path(), "data1.json", r#"{"key":"val"}"#);
         create_test_file(dir.path(), "data2.json", r#"{"key":"val2"}"#);
@@ -296,10 +297,11 @@ mod tests {
         assert_eq!(files[0].change_kind, ImportFileChangeKind::New);
         assert_eq!(files[1].filename, "data2.json");
         assert_eq!(files[1].change_kind, ImportFileChangeKind::New);
+        Ok(())
     }
 
-    #[test]
-    fn scan_skips_unchanged_processed_files() {
+    #[sinex_test]
+    async fn scan_skips_unchanged_processed_files() -> TestResult<()> {
         let dir = TempDir::new().unwrap();
         let path1 = dir.path().join("data1.json");
         let path2 = dir.path().join("data2.json");
@@ -317,18 +319,20 @@ mod tests {
         state.mark_processed(utf8(&path2), fingerprint_for(&path2), 2, 1);
         let files = scan_for_new_files(&state, utf8(dir.path()), &[".json"]).unwrap();
         assert!(files.is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn scan_empty_directory() {
+    #[sinex_test]
+    async fn scan_empty_directory() -> TestResult<()> {
         let dir = TempDir::new().unwrap();
         let state = BatchImporterState::default();
         let files = scan_for_new_files(&state, utf8(dir.path()), &[]).unwrap();
         assert!(files.is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn scan_no_extension_filter() {
+    #[sinex_test]
+    async fn scan_no_extension_filter() -> TestResult<()> {
         let dir = TempDir::new().unwrap();
         create_test_file(dir.path(), "data.json", "{}");
         create_test_file(dir.path(), "data.csv", "a,b");
@@ -337,20 +341,22 @@ mod tests {
         let state = BatchImporterState::default();
         let files = scan_for_new_files(&state, utf8(dir.path()), &[]).unwrap();
         assert_eq!(files.len(), 3);
+        Ok(())
     }
 
-    #[test]
-    fn scan_missing_path() {
+    #[sinex_test]
+    async fn scan_missing_path() -> TestResult<()> {
         let state = BatchImporterState::default();
         let path = Utf8Path::new("/tmp/sinex-test-nonexistent-batch-dir");
         assert!(matches!(
             scan_for_new_files(&state, path, &[]),
             Err(ScanError::PathNotFound(_))
         ));
+        Ok(())
     }
 
-    #[test]
-    fn read_file_content_works() {
+    #[sinex_test]
+    async fn read_file_content_works() -> TestResult<()> {
         let dir = TempDir::new().unwrap();
         create_test_file(dir.path(), "test.json", r#"{"hello":"world"}"#);
 
@@ -371,10 +377,11 @@ mod tests {
             std::str::from_utf8(&content).unwrap(),
             r#"{"hello":"world"}"#
         );
+        Ok(())
     }
 
-    #[test]
-    fn read_file_lines_works() {
+    #[sinex_test]
+    async fn read_file_lines_works() -> TestResult<()> {
         let dir = TempDir::new().unwrap();
         create_test_file(dir.path(), "lines.txt", "line1\nline2\nline3\n");
 
@@ -392,10 +399,11 @@ mod tests {
         };
         let lines = read_file_lines(&file).unwrap();
         assert_eq!(lines, vec!["line1", "line2", "line3"]);
+        Ok(())
     }
 
-    #[test]
-    fn state_tracks_processed_files() {
+    #[sinex_test]
+    async fn state_tracks_processed_files() -> TestResult<()> {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("file.json");
         create_test_file(dir.path(), "file.json", "{}");
@@ -406,10 +414,11 @@ mod tests {
         assert_eq!(state.total_bytes_processed, 2);
         assert_eq!(state.total_lines_processed, 1);
         assert!(state.file_state(utf8(&path)).is_some());
+        Ok(())
     }
 
-    #[test]
-    fn scan_detects_appended_file() {
+    #[sinex_test]
+    async fn scan_detects_appended_file() -> TestResult<()> {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("history.ndjson");
         create_test_file(dir.path(), "history.ndjson", "{\"x\":1}\n");
@@ -429,10 +438,11 @@ mod tests {
         assert_eq!(files[0].change_kind, ImportFileChangeKind::Appended);
         assert_eq!(files[0].start_offset_bytes, 8);
         assert_eq!(files[0].start_line_number, 1);
+        Ok(())
     }
 
-    #[test]
-    fn scan_detects_replaced_file() {
+    #[sinex_test]
+    async fn scan_detects_replaced_file() -> TestResult<()> {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("history.json");
         create_test_file(dir.path(), "history.json", "[1,2,3]");
@@ -448,5 +458,6 @@ mod tests {
         assert_eq!(files[0].change_kind, ImportFileChangeKind::Replaced);
         assert_eq!(files[0].start_offset_bytes, 0);
         assert_eq!(files[0].start_line_number, 0);
+        Ok(())
     }
 }
