@@ -8,7 +8,9 @@ use super::{DerivedNodeAdapter, historical_resume_position, recv_invalidation};
 use crate::derived_node::context::DerivedTriggerContext;
 use crate::derived_node::traits::DerivedNodeImpl;
 use sinex_primitives::env as shared_env;
-use crate::processing::ErrorAction;
+use sinex_primitives::settlement::{
+    DefaultFailurePolicy, FailureContext, FailurePolicy, RuntimeOperation, RuntimePhase, Settlement,
+};
 use crate::runtime::stream::{Checkpoint, NodeRuntimeState, ScanArgs, ScanReport};
 use crate::{NodeResult, SinexError};
 
@@ -387,12 +389,26 @@ where
                         }
                     }
                     Err(e) => {
-                        let action = self.node.handle_error_derived(&e);
-                        match action {
-                            ErrorAction::Skip => {
-                                warn!(node = %self.node.name(), error = %e, "Skipping event in historical replay");
+                        let sinex_error = SinexError::processing("derived node historical replay error")
+                            .with_source(e.to_string());
+                        let failure_ctx = FailureContext {
+                            unit_id: self.node.name().to_string(),
+                            operation: RuntimeOperation::ProcessBatch,
+                            phase: RuntimePhase::ProcessInput,
+                            input_scope: None,
+                            effect_kind: None,
+                            delivery_count: None,
+                            attempts: 0,
+                        };
+                        let settlement = DefaultFailurePolicy.settle(&sinex_error, &failure_ctx);
+                        match settlement {
+                            Settlement::Commit => {
+                                warn!(node = %self.node.name(), error = %e, "Committing (settled as benign) during historical replay");
                             }
-                            ErrorAction::SendToProcessingFailureQueue => {
+                            Settlement::SendToProcessingFailure
+                            | Settlement::Park { .. }
+                            | Settlement::Quarantine { .. } => {
+                                warn!(node = %self.node.name(), error = %e, "Routing to processing-failure queue during historical replay");
                                 let failed_event = query_event.event.clone();
                                 let failure_err = self
                                     .send_to_processing_failure_queue_or_fail(&failed_event, &e)
@@ -406,12 +422,30 @@ where
                                 }
                                 failure_err?;
                             }
-                            ErrorAction::Retry => {
+                            Settlement::Retry { .. } => {
                                 error!(node = %self.node.name(), error = %e, "Retryable error in historical replay; halting replay");
                                 if let Err(cp_err) = self.save_state().await {
                                     error!(node = %self.node.name(), error = %cp_err, "Failed to save checkpoint after replay error");
                                 }
                                 return Err(e.into());
+                            }
+                            Settlement::HaltNode { reason } => {
+                                error!(node = %self.node.name(), error = %e, reason = ?reason, "Halting node during historical replay");
+                                if let Err(cp_err) = self.save_state().await {
+                                    error!(node = %self.node.name(), error = %cp_err, "Failed to save checkpoint after replay halt error");
+                                }
+                                return Err(SinexError::processing(format!(
+                                    "Node halted during replay: {reason:?} — {e}"
+                                )));
+                            }
+                            Settlement::DrainRuntimeUnit { reason } => {
+                                error!(node = %self.node.name(), error = %e, reason = %reason, "Draining runtime unit during historical replay");
+                                if let Err(cp_err) = self.save_state().await {
+                                    error!(node = %self.node.name(), error = %cp_err, "Failed to save checkpoint after replay drain error");
+                                }
+                                return Err(SinexError::processing(format!(
+                                    "Runtime unit drained during replay: {reason} — {e}"
+                                )));
                             }
                         }
                     }

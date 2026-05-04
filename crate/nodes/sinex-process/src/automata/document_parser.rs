@@ -27,7 +27,7 @@
 use sinex_node_sdk::derived_node::{
     DerivedOutput, DerivedTriggerContext, InputProvenanceFilter, MultiOutputTransducerNode,
 };
-use sinex_node_sdk::processing::{ErrorAction, NodeLogicError};
+use sinex_node_sdk::processing::NodeLogicError;
 use sinex_primitives::events::payloads::DocumentKind;
 use sinex_primitives::privacy;
 use sinex_primitives::privacy::ProcessingContext;
@@ -105,9 +105,6 @@ impl MultiOutputTransducerNode for DocumentParserNode {
         }
     }
 
-    fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
-        ErrorAction::SendToProcessingFailureQueue
-    }
 }
 
 // ── Processing ──────────────────────────────────────────────────────────

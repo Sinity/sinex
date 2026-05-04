@@ -10,7 +10,7 @@
 
 use super::context::DerivedTriggerContext;
 use super::output::DerivedOutput;
-use crate::processing::{ErrorAction, NodeLogicError};
+use crate::processing::{NodeLogicError};
 
 use serde::{Serialize, de::DeserializeOwned};
 use sinex_primitives::JsonValue;
@@ -152,11 +152,6 @@ pub trait TransducerNode: Send + Sync + 'static {
     ) -> impl std::future::Future<
         Output = Result<Option<DerivedOutput<Self::Output>>, NodeLogicError>,
     > + Send;
-
-    fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
-        ErrorAction::SendToProcessingFailureQueue
-    }
-
     fn on_initialize(
         &mut self,
         _state: &Self::State,
@@ -252,11 +247,6 @@ pub trait WindowedNode: Send + Sync + 'static {
             Ok(output)
         }
     }
-
-    fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
-        ErrorAction::SendToProcessingFailureQueue
-    }
-
     fn on_initialize(
         &mut self,
         _state: &Self::State,
@@ -352,11 +342,6 @@ pub trait ScopeReconcilerNode: Send + Sync + 'static {
             Ok(outputs)
         }
     }
-
-    fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
-        ErrorAction::SendToProcessingFailureQueue
-    }
-
     fn on_initialize(
         &mut self,
         _state: &Self::State,
@@ -421,11 +406,6 @@ pub trait MultiOutputTransducerNode: Send + Sync + 'static {
     ) -> impl std::future::Future<
         Output = Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError>,
     > + Send;
-
-    fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
-        ErrorAction::SendToProcessingFailureQueue
-    }
-
     fn on_initialize(
         &mut self,
         _state: &Self::State,
@@ -481,8 +461,6 @@ pub trait DerivedNodeImpl: Send + Sync + 'static {
         working_set: Vec<sinex_primitives::events::Event<JsonValue>>,
         context: &DerivedTriggerContext,
     ) -> impl std::future::Future<Output = Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError>> + Send;
-
-    fn handle_error_derived(&self, error: &NodeLogicError) -> ErrorAction;
 
     fn on_initialize_derived(
         &mut self,
@@ -557,11 +535,6 @@ impl<N: TransducerNode> DerivedNodeImpl for TransducerWrapper<N> {
     ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
         Ok(Vec::new())
     }
-
-    fn handle_error_derived(&self, error: &NodeLogicError) -> ErrorAction {
-        self.0.handle_error(error)
-    }
-
     async fn on_initialize_derived(&mut self, state: &Self::State) -> Result<(), NodeLogicError> {
         self.0.on_initialize(state).await
     }
@@ -665,11 +638,6 @@ impl<N: WindowedNode> DerivedNodeImpl for WindowedWrapper<N> {
             None => Ok(Vec::new()),
         }
     }
-
-    fn handle_error_derived(&self, error: &NodeLogicError) -> ErrorAction {
-        self.0.handle_error(error)
-    }
-
     async fn on_initialize_derived(&mut self, state: &Self::State) -> Result<(), NodeLogicError> {
         self.0.on_initialize(state).await
     }
@@ -781,11 +749,6 @@ where
             })
             .collect()
     }
-
-    fn handle_error_derived(&self, error: &NodeLogicError) -> ErrorAction {
-        self.0.handle_error(error)
-    }
-
     async fn on_initialize_derived(&mut self, state: &Self::State) -> Result<(), NodeLogicError> {
         self.0.on_initialize(state).await
     }
@@ -855,11 +818,6 @@ impl<N: MultiOutputTransducerNode> DerivedNodeImpl for MultiOutputTransducerWrap
     ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
         Ok(Vec::new())
     }
-
-    fn handle_error_derived(&self, error: &NodeLogicError) -> ErrorAction {
-        self.0.handle_error(error)
-    }
-
     async fn on_initialize_derived(&mut self, state: &Self::State) -> Result<(), NodeLogicError> {
         self.0.on_initialize(state).await
     }
