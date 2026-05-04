@@ -7,6 +7,7 @@
 //! - Error recovery and resilience
 //! - Graceful shutdown and cleanup
 
+use sinex_primitives::domain::ServiceName;
 use camino::Utf8PathBuf;
 use sinex_node_sdk::{
     checkpoint::{CheckpointManager, CheckpointState},
@@ -316,7 +317,7 @@ async fn test_node_configuration_lifecycle(ctx: TestContext) -> color_eyre::Resu
         );
 
         // Test configuration with runtime builder
-        let runtime = TestRuntimeBuilder::new(&ctx, &config.base.service_name)
+        let runtime = TestRuntimeBuilder::new(&ctx, config.base.service_name.as_str())
             .build()
             .await?;
 
@@ -503,7 +504,7 @@ async fn test_node_concurrent_lifecycle(_ctx: TestContext) -> color_eyre::Result
 fn create_minimal_config(service_name: &str) -> EventSourceConfig {
     EventSourceConfig {
         base: NodeConfig {
-            service_name: service_name.to_string(),
+            service_name: ServiceName::new(service_name),
             log_level: "info".to_string(),
             nats: sinex_primitives::nats::NatsConnectionConfig {
                 url: "nats://localhost:4222".to_string(),
@@ -528,7 +529,7 @@ fn create_standard_config(service_name: &str) -> EventSourceConfig {
 
     EventSourceConfig {
         base: NodeConfig {
-            service_name: service_name.to_string(),
+            service_name: ServiceName::new(service_name),
             log_level: "debug".to_string(),
             nats: sinex_primitives::nats::NatsConnectionConfig {
                 url: "nats://localhost:4222".to_string(),
@@ -555,7 +556,7 @@ fn create_enhanced_config(service_name: &str) -> EventSourceConfig {
 
     EventSourceConfig {
         base: NodeConfig {
-            service_name: service_name.to_string(),
+            service_name: ServiceName::new(service_name),
             log_level: "trace".to_string(),
             nats: sinex_primitives::nats::NatsConnectionConfig {
                 url: "nats://localhost:4222".to_string(),

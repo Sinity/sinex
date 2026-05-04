@@ -239,7 +239,7 @@ mod tests {
         let coordination =
             NodeCoordination::from_runtime(&harness.runtime, "source-unit-instance".to_string())?;
 
-        assert_eq!(coordination.instance.service_name, "terminal.atuin-history");
+        assert_eq!(coordination.instance.service_name.as_str(), "terminal.atuin-history");
 
         coordination
             .kv_client
@@ -299,7 +299,7 @@ mod tests {
             "0.0.1".parse::<NodeVersion>().expect("valid version"),
             handoff_sender,
             handoff_drops.clone(),
-            "coordination-test".to_string(),
+            ServiceName::new("coordination-test"),
         )
         .await;
 
