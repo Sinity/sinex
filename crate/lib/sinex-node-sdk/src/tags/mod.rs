@@ -30,6 +30,53 @@ pub mod inferred {
     pub const LANGUAGE_PREFIX: &str = "inferred.language";
 }
 
+/// Map a MIME type to a tag suffix for use with [`system::MIME_PREFIX`].
+///
+/// Returns `None` when the MIME type has no known suffix mapping.
+///
+/// ```
+/// use sinex_node_sdk::tags::mime_to_tag_suffix;
+/// assert_eq!(mime_to_tag_suffix("text/markdown"), Some("text-markdown"));
+/// assert_eq!(mime_to_tag_suffix("text/plain"), Some("text-plain"));
+/// assert_eq!(mime_to_tag_suffix("application/pdf"), Some("pdf"));
+/// assert_eq!(mime_to_tag_suffix("image/png"), None);
+/// ```
+#[must_use]
+pub fn mime_to_tag_suffix(mime_type: &str) -> Option<&'static str> {
+    match mime_type {
+        "text/markdown" => Some("text-markdown"),
+        "text/plain" => Some("text-plain"),
+        "text/html" => Some("text-html"),
+        "text/css" => Some("text-css"),
+        "text/csv" => Some("text-csv"),
+        "text/xml" | "application/xml" => Some("xml"),
+        "application/json" => Some("json"),
+        "application/pdf" => Some("pdf"),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => Some("docx"),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => Some("xlsx"),
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation" => Some("pptx"),
+        _ => None,
+    }
+}
+
+/// Return auto-tags for a detected MIME type.
+///
+/// Returns a list of `sys.mime.<suffix>` tags from the MIME suffix mapping.
+/// Returns an empty vector when the MIME type has no known mapping.
+///
+/// ```
+/// use sinex_node_sdk::tags::auto_tags_for_mime;
+/// assert_eq!(auto_tags_for_mime("text/markdown"), vec!["sys.mime.text-markdown"]);
+/// assert!(auto_tags_for_mime("image/png").is_empty());
+/// ```
+#[must_use]
+pub fn auto_tags_for_mime(mime_type: &str) -> Vec<String> {
+    mime_to_tag_suffix(mime_type)
+        .map(|suffix| tag_name(system::MIME_PREFIX, suffix))
+        .into_iter()
+        .collect()
+}
+
 /// Construct a tag name from a prefix and suffix.
 ///
 /// ```

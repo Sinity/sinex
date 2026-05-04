@@ -657,6 +657,16 @@ impl StageAsYouGoContext {
         Ok(event_id)
     }
 
+    /// Emit a synthesis (derived) event through the stage context.
+    ///
+    /// Unlike [`emit_event_with_provenance`], this does not enforce
+    /// material-provenance checks or deterministic ID assignment. Use
+    /// for events derived from material-provenance parent events (e.g.,
+    /// auto-tag application after document ingestion).
+    pub async fn emit_derived_event(&self, event: Event<JsonValue>) -> NodeResult<()> {
+        self.event_emitter.emit(event).await
+    }
+
     /// Finalize in-flight source material with actual content details
     ///
     /// This is the final step of Stage-as-You-Go: once the content is fully
