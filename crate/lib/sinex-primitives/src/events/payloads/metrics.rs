@@ -85,13 +85,13 @@ pub struct MetricHistogramPayload {
     #[serde(deserialize_with = "crate::validation::reject_non_finite_f64")]
     pub max: f64,
     /// Percentiles: p50, p90, p95, p99
-    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "crate::validation::reject_non_finite_optional_f64")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::validation::reject_non_finite_optional_f64")]
     pub p50: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "crate::validation::reject_non_finite_optional_f64")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::validation::reject_non_finite_optional_f64")]
     pub p90: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "crate::validation::reject_non_finite_optional_f64")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::validation::reject_non_finite_optional_f64")]
     pub p95: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "crate::validation::reject_non_finite_optional_f64")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::validation::reject_non_finite_optional_f64")]
     pub p99: Option<f64>,
     /// Labels for dimensional filtering
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]

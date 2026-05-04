@@ -500,6 +500,18 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
         report.final_checkpoint = effective_checkpoint.clone();
         self.state.checkpoint = effective_checkpoint;
         self.save_state(false).await?;
+
+        #[cfg(feature = "messaging")]
+        if let Some(reporter) = self.health_reporter.as_ref() {
+            reporter.record_success();
+            for (_target, error_msg) in &report.failed_targets {
+                reporter.record_error(&SinexError::processing(error_msg));
+            }
+            if let Err(e) = reporter.check_and_emit().await {
+                warn!(node = %self.ingestor.name(), error = %e, "Failed to emit ingestor health status");
+            }
+        }
+
         Ok(report)
     }
 
