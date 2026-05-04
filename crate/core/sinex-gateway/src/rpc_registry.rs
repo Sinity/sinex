@@ -66,12 +66,6 @@ struct RegistryEntry {
 ///
 /// Maps method names to handler functions and required authorization roles.
 /// Keeps dispatch data-driven instead of embedding one large match tree.
-#[cfg(not(any(test, feature = "test-support")))]
-pub(crate) struct RpcRegistry {
-    methods: HashMap<&'static str, RegistryEntry>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
 pub struct RpcRegistry {
     methods: HashMap<&'static str, RegistryEntry>,
 }
@@ -308,13 +302,24 @@ impl RpcRegistry {
     }
 
     /// Returns a map of method names to their required roles.
-    #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub fn method_roles(&self) -> HashMap<&'static str, Role> {
         self.methods
             .iter()
             .map(|(&name, entry)| (name, entry.required_role))
             .collect()
+    }
+
+    /// Returns a list of all registered method names with their required roles.
+    #[must_use]
+    pub fn list_methods(&self) -> Vec<(&'static str, Role)> {
+        let mut methods: Vec<_> = self
+            .methods
+            .iter()
+            .map(|(&name, entry)| (name, entry.required_role))
+            .collect();
+        methods.sort_by_key(|(name, _)| *name);
+        methods
     }
 
     /// Dispatch an RPC method call
@@ -357,16 +362,22 @@ impl RpcRegistry {
 /// This function registers all RPC methods from the original dispatch table.
 /// Handler functions are imported from the handlers module.
 #[must_use]
-#[cfg(not(any(test, feature = "test-support")))]
-pub(crate) fn build_registry() -> RpcRegistry {
+pub fn build_registry() -> RpcRegistry {
     build_registry_impl()
 }
 
-/// Public in test/test-support builds so integration tests can introspect the registry.
+/// List all registered RPC methods with their required roles.
+///
+/// Returns a sorted Vec of (method_name, required_role) tuples for display
+/// or programmatic inspection.
 #[must_use]
-#[cfg(any(test, feature = "test-support"))]
-pub fn build_registry() -> RpcRegistry {
-    build_registry_impl()
+pub fn list_all_methods() -> Vec<(String, crate::auth::Role)> {
+    let registry = build_registry_impl();
+    registry
+        .list_methods()
+        .into_iter()
+        .map(|(name, role)| (name.to_string(), role))
+        .collect()
 }
 
 fn build_registry_impl() -> RpcRegistry {

@@ -227,6 +227,14 @@ impl GatewayClient {
         })
     }
 
+    /// Call a JSON-RPC method by name with retry logic.
+    ///
+    /// This is the public escape hatch for commands whose RPC contract has not
+    /// yet been promoted to a typed client method (e.g. `sources.stage`).
+    pub async fn call_raw_rpc(&self, method: &str, params: Value) -> Result<Value> {
+        self.call_rpc(method, params).await
+    }
+
     /// Call a JSON-RPC method with retry logic
     async fn call_rpc(&self, method: &str, params: Value) -> Result<Value> {
         let mut attempt = 0;

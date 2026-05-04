@@ -6,9 +6,9 @@ use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
     AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand, ConfigCommands,
     ContextCommand, CoreCommands, DemoCommand, DlqCommands, ErrorsCommand, ExplainCommand,
-    GatewayCommands, GitOpsCommands, LifecycleCommands, NodeCommands, OpsCommands, QueryCommand,
-    RecentCommand, ReplayCommands, ReportCommands, StatusCommand, TelemetryCommands, TraceCommand,
-    TuiCommand, VerifyCommand, WatchCommand,
+    GatewayCommands, GitOpsCommands, LifecycleCommands, NodeCommands, NodesCommand, NowCommand,
+    OpsCommands, QueryCommand, RecentCommand, ReplayCommands, ReportCommands, SourcesCommand,
+    StatusCommand, TelemetryCommands, TraceCommand, TuiCommand, VerifyCommand, WatchCommand,
 };
 use sinexctl::model::OutputFormat;
 use sinexctl::{Config, default_rpc_url, render_format_matrix_terminal, validate_format};
@@ -149,6 +149,9 @@ enum Commands {
     /// Seed database with deterministic fake events for testing/demos
     Demo(DemoCommand),
 
+    /// Source material inventory and staging
+    Sources(SourcesCommand),
+
     /// Data lifecycle management (archive, restore, tombstone)
     Lifecycle {
         #[command(subcommand)]
@@ -194,6 +197,12 @@ enum Commands {
 
     /// Verify trustworthiness invariants across the event store
     Verify(VerifyCommand),
+
+    /// Show what's happening right now — dashboard view
+    Now(NowCommand),
+
+    /// List running nodes with status and health
+    Nodes(NodesCommand),
 
     /// Generate shell completions
     Completions(CompletionsCommand),
@@ -296,6 +305,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Tui(cmd) => cmd.execute(&client).await?,
                 Commands::Config { .. } => unreachable!("Config command handled above"),
                 Commands::Demo(_) => unreachable!("Demo command handled above"),
+                Commands::Sources(cmd) => cmd.execute(&client, format).await?,
                 Commands::Lifecycle { cmd } => cmd.execute(&client, format).await?,
                 Commands::GitOps { cmd } => cmd.execute(&client, format).await?,
                 Commands::Telemetry { cmd } => cmd.execute(&client, format).await?,
@@ -310,6 +320,8 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Context(cmd) => cmd.execute(&client, format).await?,
                 Commands::Explain(cmd) => cmd.execute(&client, format).await?,
                 Commands::Verify(cmd) => cmd.execute(&client, format).await?,
+                Commands::Now(cmd) => cmd.execute(&client, format).await?,
+                Commands::Nodes(cmd) => cmd.execute(&client, format).await?,
                 Commands::Completions(_) => unreachable!("Completions command handled above"),
             }
         }
@@ -375,6 +387,15 @@ fn command_path(cmd: &Commands) -> String {
             ConfigCommands::Edit => "config edit".to_string(),
         },
         Commands::Demo(_) => "demo".to_string(),
+        Commands::Sources(cmd) => {
+            use sinexctl::commands::sources::SourcesSubcommand;
+            match cmd.subcommand() {
+                SourcesSubcommand::Stage(_) => "sources stage".to_string(),
+                SourcesSubcommand::List(_) => "sources list".to_string(),
+                SourcesSubcommand::Show(_) => "sources show".to_string(),
+                SourcesSubcommand::Coverage(_) => "sources coverage".to_string(),
+            }
+        }
         Commands::Lifecycle { cmd } => match cmd {
             LifecycleCommands::Status(_) => "lifecycle status".to_string(),
             LifecycleCommands::Archive(_) => "lifecycle archive".to_string(),
@@ -428,6 +449,8 @@ fn command_path(cmd: &Commands) -> String {
         Commands::Context(_) => "context".to_string(),
         Commands::Explain(_) => "explain".to_string(),
         Commands::Verify(_) => "verify".to_string(),
+        Commands::Now(_) => "now".to_string(),
+        Commands::Nodes(_) => "nodes".to_string(),
         Commands::Completions(_) => "completions".to_string(),
     }
 }

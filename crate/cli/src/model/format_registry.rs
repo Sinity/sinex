@@ -131,6 +131,12 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     // ── Audit ────────────────────────────────────────────────────────────────
     m.insert("audit", FormatCapability::single_shot(TABLE_JSON_YAML));
 
+    // ── Sources ──────────────────────────────────────────────────────────────
+    m.insert("sources stage",    FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("sources list",     FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("sources show",     FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("sources coverage", FormatCapability::single_shot(TABLE_JSON_YAML));
+
     // ── Lifecycle ────────────────────────────────────────────────────────────
     m.insert("lifecycle status",            FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("lifecycle archive",           FormatCapability::single_shot(TABLE_JSON_YAML));
@@ -184,6 +190,12 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     m.insert("context", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("explain", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("verify",  FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "now",
+        FormatCapability::single_shot(TABLE_JSON_YAML)
+            .with_note("compact dashboard; json/yaml emit full snapshot"),
+    );
+    m.insert("nodes", FormatCapability::single_shot(TABLE_JSON_YAML));
 
     // ── TUI ──────────────────────────────────────────────────────────────────
     m.insert(

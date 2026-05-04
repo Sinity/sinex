@@ -968,6 +968,214 @@ async fn handle_rpc(
     (StatusCode::OK, Json(response))
 }
 
+/// Maximum number of requests allowed in a single JSON-RPC batch
+const MAX_BATCH_SIZE: usize = 10;
+
+/// JSON-RPC 2.0 batch request handler
+///
+/// Accepts an array of JSON-RPC requests, processes each individually, and returns an
+/// array of responses. Authentication is performed once for the entire batch; rate
+/// limiting, validation, and dispatch are applied per-request so each batch item
+/// consumes a rate-limit token independently.
+async fn handle_rpc_batch(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(requests): Json<Vec<JsonRpcRequest>>,
+) -> axum::response::Response {
+    state.metrics.record_request_start();
+    let start = std::time::Instant::now();
+
+    // Empty batch is invalid per JSON-RPC 2.0 spec
+    if requests.is_empty() {
+        state.metrics.record_request_rejected();
+        log_access_audit(
+            "rpc",
+            "<batch>",
+            AccessOutcome::InvalidRequest,
+            None,
+            Some("empty batch"),
+        );
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(JsonRpcResponse::error(
+                None,
+                -32600,
+                "Batch request must not be empty".to_string(),
+            )),
+        )
+            .into_response();
+    }
+
+    if requests.len() > MAX_BATCH_SIZE {
+        state.metrics.record_request_rejected();
+        log_access_audit(
+            "rpc",
+            "<batch>",
+            AccessOutcome::InvalidRequest,
+            None,
+            Some("batch too large"),
+        );
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(JsonRpcResponse::error(
+                None,
+                -32600,
+                format!(
+                    "Batch size {} exceeds maximum of {MAX_BATCH_SIZE}",
+                    requests.len()
+                ),
+            )),
+        )
+            .into_response();
+    }
+
+    // Authenticate once for the entire batch
+    let token = match state.auth.verify(&headers) {
+        Ok(t) => t,
+        Err(err) => {
+            state.metrics.record_request_rejected();
+            let detail = err.to_string();
+            log_access_audit(
+                "rpc",
+                "<batch>",
+                AccessOutcome::Unauthenticated,
+                None,
+                Some(&detail),
+            );
+            return err.into_response().into_response();
+        }
+    };
+
+    let auth_context = match RpcAuthContext::from_token(&token) {
+        Ok(ctx) => ctx,
+        Err(err) => {
+            state.metrics.record_request_rejected();
+            let detail = err.to_string();
+            log_access_audit(
+                "rpc",
+                "<batch>",
+                AccessOutcome::Rejected,
+                None,
+                Some(&detail),
+            );
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(JsonRpcResponse::error(
+                    None,
+                    -32001,
+                    format!("Invalid token role encoding: {err}"),
+                )),
+            )
+                .into_response();
+        }
+    };
+
+    let mut responses = Vec::with_capacity(requests.len());
+    for request in requests {
+        // Rate limit each request individually
+        if !state.rate_limiter.check(&token).await {
+            let token_prefix = &token[..8.min(token.len())];
+            warn!(token_prefix, "Batch request rejected: rate limit exceeded");
+            state.metrics.record_rate_limited();
+            log_access_audit(
+                "rpc",
+                &request.method,
+                AccessOutcome::RateLimited,
+                Some(&auth_context),
+                None,
+            );
+            responses.push(JsonRpcResponse::error(
+                request.id,
+                -32029,
+                "Rate limit exceeded for this token".to_string(),
+            ));
+            continue;
+        }
+
+        if let Err(err) = validate_jsonrpc_request(&request) {
+            state.metrics.record_request_rejected();
+            let detail = err.client_message();
+            log_access_audit(
+                "rpc",
+                &request.method,
+                AccessOutcome::InvalidRequest,
+                Some(&auth_context),
+                Some(&detail),
+            );
+            responses.push(JsonRpcResponse::error(
+                request.id,
+                -32600,
+                detail.to_string(),
+            ));
+            continue;
+        }
+
+        let method = request.method.clone();
+
+        let result = dispatch_rpc_method(
+            "rpc",
+            &state.services,
+            &request.method,
+            request.params,
+            &auth_context,
+        )
+        .await;
+
+        let response = match result {
+            Ok(value) => {
+                state.metrics.record_request_success(0);
+                JsonRpcResponse::success(request.id, value)
+            }
+            Err(err)
+                if matches!(&err, SinexError::NotFound(_))
+                    && err.to_string().starts_with("Unknown method:") =>
+            {
+                state.metrics.record_request_rejected();
+                JsonRpcResponse::error(request.id, -32601, err.to_string())
+            }
+            Err(err) => {
+                state.metrics.record_request_rejected();
+                let error_id = Uuid::now_v7();
+                error!(
+                    error_id = %error_id,
+                    method = %method,
+                    error = %err,
+                    "RPC method failed (batch)"
+                );
+
+                let (code, message) = sinex_error_to_rpc_code(&err);
+
+                #[cfg(feature = "dev-errors")]
+                let data = serde_json::json!({
+                    "error_id": error_id.to_string(),
+                    "error": err,
+                });
+
+                #[cfg(not(feature = "dev-errors"))]
+                let data = serde_json::json!({
+                    "error_id": error_id.to_string(),
+                });
+
+                JsonRpcResponse::error_with_data(request.id, code, message, data)
+            }
+        };
+        responses.push(response);
+    }
+
+    let latency_us = start.elapsed().as_micros() as u64;
+    state.metrics.record_request_success(latency_us);
+
+    let batch_result = serde_json::to_value(&responses).unwrap_or_else(|_| {
+        serde_json::json!([{
+            "jsonrpc": "2.0",
+            "error": {"code": -32603, "message": "Internal error serializing batch response"},
+            "id": null
+        }])
+    });
+
+    (StatusCode::OK, Json(batch_result)).into_response()
+}
+
 /// Server bind address configuration
 #[derive(Debug)]
 enum BindAddress {
@@ -1495,6 +1703,7 @@ impl RpcServer {
     fn setup_router() -> Router<AppState> {
         Router::new()
             .route("/rpc", post(handle_rpc))
+            .route("/rpc/batch", post(handle_rpc_batch))
             .route("/", post(handle_rpc))
             .route("/health", get(health_check))
             .route("/ready", get(health_check))
