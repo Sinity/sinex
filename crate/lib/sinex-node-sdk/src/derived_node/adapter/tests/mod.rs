@@ -18,7 +18,7 @@
     use crate::self_observation::{SelfObservationError, SelfObserver, SelfObserverConfig};
     use crate::shutdown::ShutdownConfig;
     use crate::{CheckpointManager, CheckpointState, EventTransport, NatsPublisher, SinexError};
-    use crate::{ErrorAction, NodeLogicError, ScopeReconcilerNode, TransducerNode};
+    use crate::{NodeLogicError, ScopeReconcilerNode, TransducerNode};
     use camino::Utf8PathBuf;
     use futures::TryStreamExt;
     use serde::{Deserialize, Serialize};
@@ -156,9 +156,6 @@
             Err(NodeLogicError::Processing("retry requested".to_string()))
         }
 
-        fn handle_error(&self, _error: &NodeLogicError) -> crate::ErrorAction {
-            crate::ErrorAction::Retry
-        }
     }
 
     struct EmittingDerivedNode;
@@ -419,9 +416,6 @@
             Err(NodeLogicError::Processing("route me to dlq".to_string()))
         }
 
-        fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
-            ErrorAction::SendToProcessingFailureQueue
-        }
     }
 
     fn make_input_event(value: &str) -> std::result::Result<Event<JsonValue>, SinexError> {

@@ -75,6 +75,9 @@ enum Commands {
         #[arg(long)]
         database_url: Option<String>,
     },
+
+    /// List all registered RPC methods with their required roles
+    ListMethods,
 }
 
 fn setup_tracing(format: LogFormat, tokio_console: bool) -> Result<()> {
@@ -169,6 +172,17 @@ async fn main() -> Result<()> {
                 .map_err(|e| color_eyre::eyre::eyre!("Native messaging failed").wrap_err(e));
 
             result?;
+        }
+
+        Commands::ListMethods => {
+            let methods = sinex_gateway::rpc_registry::list_all_methods();
+            println!("{:45} {:12}", "METHOD", "MIN ROLE");
+            println!("{}", "-".repeat(58));
+            for (method, role) in &methods {
+                println!("{method:45} {role:12}");
+            }
+            println!();
+            println!("{} methods registered", methods.len());
         }
     }
 

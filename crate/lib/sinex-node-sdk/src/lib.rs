@@ -161,7 +161,7 @@ pub use nats_publisher::NatsPublisher;
 #[cfg(all(feature = "db", feature = "messaging"))]
 pub use node_cli::{NodeCli, NodeCliRunner, NodeCommand, parse_checkpoint, parse_time_horizon};
 pub use pressure::PressureMonitor;
-pub use processing::{ErrorAction, NodeLogicError};
+pub use processing::NodeLogicError;
 #[cfg(all(feature = "db", feature = "messaging"))]
 pub use record_source::SqliteSnapshotLinker;
 #[cfg(feature = "messaging")]

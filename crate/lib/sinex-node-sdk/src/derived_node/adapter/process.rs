@@ -231,8 +231,7 @@ where
                 Ok(output_events)
             }
             Err(e) => {
-                // Use the richer FailurePolicy::settle() instead of the
-                // 3-variant ErrorAction. DefaultFailurePolicy maps ErrorClass
+                // Use FailurePolicy::settle() which maps ErrorClass
                 // to Settlement variants with backoff and retry budgets.
                 let sinex_error = SinexError::processing("derived node processing error")
                     .with_source(e.to_string());
@@ -287,7 +286,7 @@ where
 
     /// Process a batch of events.
     ///
-    /// Events that fail with `ErrorAction::Retry` halt the batch — the checkpoint
+    /// Events that fail with `Settlement::Retry` halt the batch — the checkpoint
     /// is NOT advanced past them and the first retry error is returned.
     pub async fn process_batch(
         &mut self,

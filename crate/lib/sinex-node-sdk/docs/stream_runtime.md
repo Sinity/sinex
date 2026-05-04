@@ -105,13 +105,17 @@ All filesystem operations must pass through the `VerifiedPath` type. This preven
 - **Directory Traversal**: Patterns like `../../etc/passwd` are rejected at the type level.
 - **Symlink Attacks**: Predictable temp filenames are avoided via `create_secure_temp_path`.
 
-## 🚦 Error Actions
+## 🚦 Error Settlement
 
-Nodes define their behavior via the `ErrorAction` enum:
-- `Retry`: NAK the message for redelivery.
-- `SendToProcessingFailureQueue`: Log failure and move the payload to the
-  processing-failure stream.
-- `Skip`: Continue processing without further action.
+Error handling uses `FailurePolicy::settle()` with `DefaultFailurePolicy`, which
+maps `ErrorClass` to `Settlement` variants with backoff and retry budgets:
+
+- `Settlement::Commit`: Benign error — continue processing.
+- `Settlement::SendToProcessingFailure`: Route the event to the processing-failure queue.
+- `Settlement::Retry`: Retry with exponential backoff and budget.
+- `Settlement::Park`: Retry budget exhausted — park for later inspection.
+- `Settlement::HaltNode`: Fatal error — halt the node.
+- `Settlement::DrainRuntimeUnit`: Drain the runtime unit and restart.
 
 ## Historical context
 
@@ -119,4 +123,4 @@ Two retired design branches are worth keeping as explicit history so they do
 not drift back in as supposed current doctrine:
 
 - **The actual `WindowedNode` API delegates window-completion to the implementor.** Earlier design documents describe a `WindowPolicy` / `WindowAction` enum-based API that was never implemented. The current trait (see `derived_node/traits.rs`) requires `accumulate`, `window_complete(&self, state) -> bool`, and `emit`, with `recompute_window` as a default-impl hook. Don't reintroduce the policy-enum shape — it lost against delegating the completion predicate to the implementor.
-- **`AutomatonNode` has been fully removed** in favor of the derived-node model family (`TransducerNode` / `WindowedNode` / `ScopeReconcilerNode`). `PersistedState` and `ErrorAction` still exist as standalone types in the derived-node module; they survived the removal because they were useful independent of the dropped trait.
+- **`AutomatonNode` has been fully removed** in favor of the derived-node model family (`TransducerNode` / `WindowedNode` / `ScopeReconcilerNode`). `PersistedState` still exists as a standalone type in the derived-node module. `ErrorAction` has been replaced by `DefaultFailurePolicy::settle()` which maps `ErrorClass` to `Settlement` variants with backoff and retry budgets.
