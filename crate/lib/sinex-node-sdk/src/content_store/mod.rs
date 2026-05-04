@@ -1284,6 +1284,7 @@ mod tests {
             root_path: repo_path.clone(),
             num_copies: None,
             large_files: None,
+            ..Default::default()
         })?;
         reset_content_store_process_counters();
 
