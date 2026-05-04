@@ -374,38 +374,43 @@ pub fn build_material_bytes(payload: &Map<String, Value>) -> NodeResult<Vec<u8>>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::{sinex_test, TestResult};
     use serde_json::json;
 
-    #[test]
-    fn normalize_url_strips_tracking_params() {
+    #[sinex_test]
+    async fn normalize_url_strips_tracking_params() -> TestResult<()> {
         let normalized =
             normalize_url("https://www.youtube.com/watch?v=abc123&utm_source=test&list=playlist");
         assert_eq!(
             normalized.as_deref(),
             Some("https://youtube.com/watch?v=abc123&list=playlist")
         );
+        Ok(())
     }
 
-    #[test]
-    fn normalize_url_ignores_non_http_schemes() {
+    #[sinex_test]
+    async fn normalize_url_ignores_non_http_schemes() -> TestResult<()> {
         assert_eq!(normalize_url("chrome-extension://abc/onetab.html"), None);
         assert_eq!(normalize_url("file:///tmp/test.html"), None);
+        Ok(())
     }
 
-    #[test]
-    fn parse_numeric_timestamp_supports_milliseconds_with_fraction() {
+    #[sinex_test]
+    async fn parse_numeric_timestamp_supports_milliseconds_with_fraction() -> TestResult<()> {
         let timestamp = parse_numeric_timestamp_f64(1_729_462_321_215.972).unwrap();
         assert_eq!(timestamp.format_rfc3339(), "2024-10-20T22:12:01.215972Z");
+        Ok(())
     }
 
-    #[test]
-    fn parse_slash_timestamp_uses_warsaw_timezone() {
+    #[sinex_test]
+    async fn parse_slash_timestamp_uses_warsaw_timezone() -> TestResult<()> {
         let timestamp = parse_slash_timestamp("12/19/2025 16:55:45").unwrap();
         assert_eq!(timestamp.format_rfc3339(), "2025-12-19T15:55:45Z");
+        Ok(())
     }
 
-    #[test]
-    fn payload_timestamp_uses_known_fields() {
+    #[sinex_test]
+    async fn payload_timestamp_uses_known_fields() -> TestResult<()> {
         let payload = json!({
             "title": "Example",
             "url": "https://example.com",
@@ -414,5 +419,6 @@ mod tests {
         let payload = payload.as_object().unwrap();
         let timestamp = payload_timestamp(payload).unwrap();
         assert_eq!(timestamp.format_rfc3339(), "2025-10-03T21:38:15.463789Z");
+        Ok(())
     }
 }

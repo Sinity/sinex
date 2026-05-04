@@ -1005,10 +1005,11 @@ mod tests {
     use crate::runtime::stream::Checkpoint;
     use sinex_primitives::SanitizedPath;
     use std::str::FromStr;
+    use xtask::sandbox::{sinex_test, TestResult};
     use xtask::sandbox::sinex_serial_test;
 
-    #[test]
-    fn export_result_surfaces_failure_with_path_context() {
+    #[sinex_test]
+    async fn export_result_surfaces_failure_with_path_context() -> TestResult<()> {
         let path =
             SanitizedPath::from_str("/tmp/export.json").expect("test export path should validate");
         let error = handle_export_result(&path, Err(SinexError::io("disk full while exporting")))
@@ -1018,18 +1019,21 @@ mod tests {
         assert!(message.contains("failed to export node exploration data"));
         assert!(message.contains("/tmp/export.json"));
         assert!(message.contains("disk full while exporting"));
+        Ok(())
     }
 
-    #[test]
-    fn render_cli_value_is_explicit_on_format_failure() {
+    #[sinex_test]
+    async fn render_cli_value_is_explicit_on_format_failure() -> TestResult<()> {
         let rendered = render_cli_value::<&str>(Err("bad timestamp field"));
 
         assert_eq!(rendered, "<format error: bad timestamp field>");
+        Ok(())
     }
 
-    #[test]
-    fn render_optional_cli_timestamp_is_explicit_when_unknown() {
+    #[sinex_test]
+    async fn render_optional_cli_timestamp_is_explicit_when_unknown() -> TestResult<()> {
         assert_eq!(render_optional_cli_timestamp(None), "unknown");
+        Ok(())
     }
 
     fn test_cli_with_database_url(database_url: Option<&str>) -> NodeCli {
@@ -1060,26 +1064,27 @@ mod tests {
         }
     }
 
-    #[test]
-    fn parse_checkpoint_rejects_malformed_json_input() {
+    #[sinex_test]
+    async fn parse_checkpoint_rejects_malformed_json_input() -> TestResult<()> {
         let error = parse_checkpoint("{ definitely-not-json")
             .expect_err("JSON-like checkpoint input must not silently fall back to a stream id");
 
         assert!(format!("{error:#}").contains("Failed to parse checkpoint JSON"));
+        Ok(())
     }
 
-    #[test]
-    fn parse_checkpoint_rejects_invalid_timestamp_like_input() {
+    #[sinex_test]
+    async fn parse_checkpoint_rejects_invalid_timestamp_like_input() -> TestResult<()> {
         let error = parse_checkpoint("2026-03-28T25:61:61Z").expect_err(
             "timestamp-like checkpoint input must not silently fall back to a stream id",
         );
 
         assert!(format!("{error:#}").contains("Invalid timestamp format"));
+        Ok(())
     }
 
-    #[test]
-    fn parse_checkpoint_accepts_stream_ids_after_structured_parsers_fail()
-    -> xtask::sandbox::TestResult<()> {
+    #[sinex_test]
+    async fn parse_checkpoint_accepts_stream_ids_after_structured_parsers_fail() -> TestResult<()> {
         let checkpoint = parse_checkpoint("1234567890-0")?;
         match checkpoint {
             Checkpoint::Stream { message_id, .. } => {
@@ -1095,37 +1100,41 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn validate_identity_token_accepts_source_unit_spelling() {
+    #[sinex_test]
+    async fn validate_identity_token_accepts_source_unit_spelling() -> TestResult<()> {
         assert_eq!(
             validate_identity_token("terminal.atuin-history").expect("valid source unit"),
             "terminal.atuin-history"
         );
+        Ok(())
     }
 
-    #[test]
-    fn validate_identity_token_rejects_shell_syntax() {
+    #[sinex_test]
+    async fn validate_identity_token_rejects_shell_syntax() -> TestResult<()> {
         let error = validate_identity_token("terminal;rm -rf")
             .expect_err("identity tokens must not accept shell syntax");
         assert!(error.contains("ASCII letters"));
+        Ok(())
     }
 
-    #[test]
-    fn source_unit_supplies_default_service_name() {
+    #[sinex_test]
+    async fn source_unit_supplies_default_service_name() -> TestResult<()> {
         let mut cli = test_cli_with_database_url(None);
         cli.source_unit = Some("terminal.atuin-history".to_string());
 
         assert_eq!(default_service_name(&cli), "sinex-terminal.atuin-history");
+        Ok(())
     }
 
-    #[test]
-    fn resolve_primary_database_url_rejects_invalid_namespaced_url() {
+    #[sinex_test]
+    async fn resolve_primary_database_url_rejects_invalid_namespaced_url() -> TestResult<()> {
         let cli = test_cli_with_database_url(Some("not-a-valid-postgres-url"));
         let error = resolve_primary_database_url(&cli)
             .expect_err("invalid database URLs must not silently bypass namespacing");
 
         let rendered = format!("{error:#}");
         assert!(rendered.contains("Failed to validate node DATABASE_URL"));
+        Ok(())
     }
 
     #[sinex_serial_test]

@@ -60,6 +60,7 @@ pub use persistence::{
 
 #[cfg(test)]
 mod tests {
+    use xtask::sandbox::{sinex_test, TestResult};
     // event_select_columns! is available in scope from the parent module
 
     /// Number of physical columns in `core.events` (24 columns).
@@ -102,8 +103,8 @@ mod tests {
         "node_model",
     ];
 
-    #[test]
-    fn column_count_matches_schema() {
+    #[sinex_test]
+    async fn column_count_matches_schema() -> TestResult<()> {
         let cols: &str = event_select_columns!();
         let count = cols.split(',').count();
         assert_eq!(
@@ -112,10 +113,11 @@ mod tests {
              Either the schema changed or the macro drifted — update both, then update \
              EXPECTED_COLUMN_COUNT in this test."
         );
+        Ok(())
     }
 
-    #[test]
-    fn all_declared_columns_present() {
+    #[sinex_test]
+    async fn all_declared_columns_present() -> TestResult<()> {
         let cols: &str = event_select_columns!();
         for expected in EXPECTED_COLUMNS {
             assert!(
@@ -124,10 +126,11 @@ mod tests {
                  Schema may have drifted — update the macro above and EXPECTED_COLUMNS in this test."
             );
         }
+        Ok(())
     }
 
-    #[test]
-    fn no_extraneous_columns() {
+    #[sinex_test]
+    async fn no_extraneous_columns() -> TestResult<()> {
         // Count must equal the declared list length. Combined with
         // `all_declared_columns_present`, this guarantees the macro outputs
         // exactly the declared set — no extras, no missing entries.
@@ -140,5 +143,6 @@ mod tests {
              Update EXPECTED_COLUMNS to match the macro.",
             EXPECTED_COLUMNS.len()
         );
+        Ok(())
     }
 }

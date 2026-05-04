@@ -2903,8 +2903,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn oversized_skip_logging_is_bucketed_per_path() {
+    #[sinex_test]
+    async fn oversized_skip_logging_is_bucketed_per_path() -> TestResult<()> {
         let buckets = StdMutex::new(HashMap::new());
         let path = Path::new("/tmp/session.cast");
 
@@ -2915,6 +2915,7 @@ mod tests {
             11 * 1024 * 1024 + 512,
         ));
         assert!(should_log_oversized_skip(&buckets, path, 12 * 1024 * 1024,));
+        Ok(())
     }
 
     #[cfg(unix)]

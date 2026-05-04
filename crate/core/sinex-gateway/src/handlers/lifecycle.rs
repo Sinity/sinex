@@ -1238,9 +1238,10 @@ pub async fn handle_tombstone_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::{sinex_test, TestResult};
 
-    #[test]
-    fn parse_duration_to_timestamp_preserves_subsecond_precision() {
+    #[sinex_test]
+    async fn parse_duration_to_timestamp_preserves_subsecond_precision() -> TestResult<()> {
         let before = Timestamp::now();
         let parsed = parse_duration_to_timestamp("500ms")
             .expect("500ms should parse")
@@ -1251,10 +1252,11 @@ mod tests {
             (400..1000).contains(&delta_ms),
             "expected roughly 500ms delta, got {delta_ms}ms"
         );
+        Ok(())
     }
 
-    #[test]
-    fn tombstone_duration_ms_clamps_large_elapsed_values() {
+    #[sinex_test]
+    async fn tombstone_duration_ms_clamps_large_elapsed_values() -> TestResult<()> {
         let operation = TombstoneOperation {
             operation_id: "op-test".to_string(),
             phase: TombstoneOperationPhase::Executing,
@@ -1280,10 +1282,11 @@ mod tests {
             .expect("old timestamps should still produce a bounded duration");
 
         assert_eq!(duration_ms, Some(i32::MAX));
+        Ok(())
     }
 
-    #[test]
-    fn matches_requested_tombstone_state_uses_reconciled_state() {
+    #[sinex_test]
+    async fn matches_requested_tombstone_state_uses_reconciled_state() -> TestResult<()> {
         let operation = TombstoneOperation {
             operation_id: "op-test".to_string(),
             phase: TombstoneOperationPhase::Expired,
@@ -1314,5 +1317,6 @@ mod tests {
             Some(TombstoneOperationState::Expired),
             &operation
         ));
+        Ok(())
     }
 }
