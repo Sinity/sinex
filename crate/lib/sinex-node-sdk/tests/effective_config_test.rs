@@ -13,7 +13,7 @@ async fn node_config_uses_global_env_defaults() -> TestResult<()> {
     env.set("DATABASE_URL", "postgresql://global/db");
 
     let config = NodeConfig::load_from_env("test-node")?;
-    assert_eq!(config.service_name, "test-node");
+    assert_eq!(config.service_name.as_str(), "test-node");
     assert_eq!(config.log_level, "debug");
     assert_eq!(config.nats.url, "tls://global-nats:4222");
     assert_eq!(config.database_pool_size, 32);
@@ -56,7 +56,7 @@ async fn event_source_config_loads_env_overrides() -> TestResult<()> {
     env.set("SINEX_FILESYSTEM_WATCHER_BATCH_SIZE", "50");
 
     let config = EventSourceConfig::load_from_env("filesystem-watcher")?;
-    assert_eq!(config.base.service_name, "filesystem-watcher");
+    assert_eq!(config.base.service_name.as_str(), "filesystem-watcher");
     assert_eq!(config.batch_size, 50);
     assert_eq!(config.batch_timeout_secs, Seconds::from_secs(7));
     config.validate_config()?;
@@ -84,7 +84,7 @@ async fn automaton_config_loads_env_overrides() -> TestResult<()> {
     env.set("SINEX_TERMINAL_CANONICALIZER_CHECKPOINT_INTERVAL_SECS", "9");
 
     let config = AutomatonConfig::load_from_env("terminal-canonicalizer")?;
-    assert_eq!(config.base.service_name, "terminal-canonicalizer");
+    assert_eq!(config.base.service_name.as_str(), "terminal-canonicalizer");
     assert_eq!(config.consumer_group, "canon-group");
     assert_eq!(config.consumer_name, "canon-instance");
     assert_eq!(
@@ -112,7 +112,7 @@ async fn node_config_defaults_without_env() -> TestResult<()> {
     }
 
     let config = NodeConfig::load_from_env("defaults-node")?;
-    assert_eq!(config.service_name, "defaults-node");
+    assert_eq!(config.service_name.as_str(), "defaults-node");
     assert_eq!(config.log_level, "info");
     assert_eq!(config.database_pool_size, 10);
     assert!(!config.dry_run);
