@@ -52,6 +52,9 @@ features = [
 [dependencies.serde]
 workspace = true
 
+[dependencies.regex]
+workspace = true
+
 [dependencies.serde_json]
 workspace = true
 

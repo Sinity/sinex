@@ -17,6 +17,7 @@
 //! | `entity-resolver` | `--automaton entity-resolver` | [`WindowedNode`] |
 //! | `relation-extractor` | `--automaton relation-extractor` | [`ScopeReconcilerNode`] |
 //! | `entity-enricher` | `--automaton entity-enricher` | [`ScopeReconcilerNode`] |
+//! | `entity-extractor` | `--automaton entity-extractor` | [`TransducerNode`] |
 //! | `document-parser` | `--automaton document-parser` | [`MultiOutputTransducerNode`] |
 //!
 //! All nine [`SourceUnitDescriptor`](sinex_primitives::proof::SourceUnitDescriptor)s are
@@ -28,6 +29,7 @@ pub mod automata {
     pub mod daily;
     pub mod document_parser;
     pub mod entity_enricher;
+    pub mod entity_extractor;
     pub mod entity_resolver;
     pub mod health;
     pub mod hourly;
@@ -41,6 +43,7 @@ pub use automata::daily::DailySummarizerNode;
 pub use automata::document_parser::DocumentParserNode;
 pub use automata::document_parser::DocumentParserNodeAdapter;
 pub use automata::entity_enricher::EntityEnricherNode;
+pub use automata::entity_extractor::EntityExtractorNode;
 pub use automata::entity_resolver::EntityResolverNode;
 pub use automata::health::HealthAggregatorNode;
 pub use automata::hourly::HourlySummarizerNode;
