@@ -164,6 +164,18 @@ fn execute_start(
 ) -> Result<CommandResult> {
     ctx.heading("infra start");
 
+    // Validate process names before starting anything
+    for p in processes {
+        if p != "postgres" && p != "nats" {
+            return Ok(CommandResult::failure(crate::output::StructuredError {
+                code: "UNKNOWN_PROCESS".to_string(),
+                message: format!("unknown process: {p}"),
+                location: Some("infra::start".to_string()),
+                suggestion: Some("valid processes: postgres, nats".to_string()),
+            }));
+        }
+    }
+
     let start_pg = all || processes.is_empty() || processes.iter().any(|p| p == "postgres");
     let start_nats = all || processes.is_empty() || processes.iter().any(|p| p == "nats");
 
