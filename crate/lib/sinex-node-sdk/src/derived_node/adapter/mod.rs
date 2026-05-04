@@ -38,17 +38,6 @@ const INVALIDATION_QUERY_PAGE_SIZE: i64 = Pagination::MAX_LIMIT;
 const DERIVED_OUTPUT_PARENT_WARN_THRESHOLD: usize = 100;
 const DERIVED_OUTPUT_PARENT_HARD_LIMIT: usize = 1000;
 
-fn request_runtime_drain(drain: &RuntimeDrainController, node_name: &str) -> bool {
-    if !drain.request_drain() && !drain.is_requested() {
-        warn!(
-            node = node_name,
-            "Derived-node runtime drain signal could not be delivered before graceful shutdown"
-        );
-        return false;
-    }
-    true
-}
-
 fn stale_output_ids_or_fail_scope(
     node_name: &str,
     scope_key: &str,
@@ -216,7 +205,7 @@ where
     /// Signal shutdown.
     pub fn signal_shutdown(&self) {
         if let Some(tx) = &self.shutdown_tx {
-            request_runtime_drain(tx, self.node.name());
+            tx.request_drain_and_warn(self.node.name());
         }
     }
 

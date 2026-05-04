@@ -125,14 +125,26 @@ impl DocumentParserNode {
             .unwrap_or("unknown")
             .to_string();
 
-        // Read file content from the file system (the ingestor staged the file).
+        // Read file content. In production the parser runs as the sinex service
+        // user and may not have access to the original file path. The long-term
+        // fix is to retrieve content via `source_material_id` through the content
+        // store (BLAKE3 CAS), which is world-readable. Tracked as a follow-up to
+        // the document parser reliability hardening.
+        //
+        // For now, fall back gracefully: if the file is unreadable, skip it and
+        // log at warn level so the operator can diagnose the gap.
         let content = match std::fs::read_to_string(&file_path) {
             Ok(c) => c,
             Err(e) => {
+                let material_id = input["source_material_id"]
+                    .as_str()
+                    .unwrap_or("unknown");
                 tracing::warn!(
                     file_path = %file_path,
+                    source_material_id = %material_id,
                     error = %e,
-                    "Document parser could not read source file"
+                    "Document parser could not read source file — content store retrieval \
+                     not yet wired (see document parser reliability follow-up)"
                 );
                 return Ok(Vec::new());
             }
