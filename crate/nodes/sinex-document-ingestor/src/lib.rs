@@ -932,7 +932,7 @@ mod tests {
 // --- Source-unit descriptor (issue #690 / #734) ---
 
 use sinex_primitives::register_source_unit;
-use sinex_primitives::source_unit::{
+use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
     RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
@@ -960,6 +960,6 @@ register_source_unit! {
         access_policy: "configured_document_roots",
         package_impact: "no_new_output",
         implementation_mode: "rust_in_pack:document",
-        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }

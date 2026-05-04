@@ -12,7 +12,7 @@ pub use sqlite_sources::{BrowserSqliteFormat, BrowserSqliteSourceConfig};
 pub use unified_node::{BrowserIngestorConfig, BrowserNode};
 
 use sinex_primitives::register_source_unit;
-use sinex_primitives::source_unit::{
+use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
     RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
@@ -45,6 +45,6 @@ register_source_unit! {
         access_policy: "target_home_read:browser_history",
         package_impact: "no_new_output",
         implementation_mode: "rust_in_pack:browser",
-        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }

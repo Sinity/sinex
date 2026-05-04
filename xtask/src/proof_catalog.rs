@@ -11,11 +11,9 @@ use color_eyre::eyre::Result;
 use serde::Serialize;
 use sinex_primitives::events::schema_registry::get_all_payloads;
 use sinex_primitives::proof::{
-    self, Claim, Exemption, PROOF_CATALOG_SCHEMA_VERSION, ProofObligation, RunnerBinding,
-    RuntimeUnitDescriptor,
-};
-use sinex_primitives::source_unit::{
-    self, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
+    self, CheckpointFamily, Claim, Exemption, Horizon, OccurrenceIdentity,
+    PROOF_CATALOG_SCHEMA_VERSION, PrivacyTier, ProofObligation, RetentionPolicy, RunnerBinding,
+    RuntimeShape, RuntimeUnitDescriptor,
 };
 
 use crate::command_catalog::{CommandInfo, collect_command_catalog};
@@ -100,7 +98,7 @@ pub fn build_proof_catalog(workspace_root: &Path) -> Result<ProofCatalog> {
         .collect::<Vec<_>>();
     runtime_units.sort_by(|left, right| left.subject.as_str().cmp(right.subject.as_str()));
 
-    let mut source_units = source_unit::all_source_units()
+    let mut source_units = proof::all_source_units()
         .map(source_unit_subject)
         .collect::<Vec<_>>();
     source_units.sort_by(|left, right| left.subject.cmp(&right.subject));
@@ -154,7 +152,7 @@ fn collect_event_payload_subjects() -> Vec<EventPayloadSubject> {
     subjects
 }
 
-fn source_unit_subject(unit: &'static source_unit::SourceUnitDescriptor) -> SourceUnitSubject {
+fn source_unit_subject(unit: &'static proof::SourceUnitDescriptor) -> SourceUnitSubject {
     SourceUnitSubject {
         subject: format!("source_unit:{}", unit.id),
         id: unit.id.to_string(),
@@ -223,13 +221,13 @@ fn retention_policy(policy: RetentionPolicy) -> String {
     }
 }
 
-fn checkpoint_family_name(family: source_unit::CheckpointFamily) -> &'static str {
+fn checkpoint_family_name(family: proof::CheckpointFamily) -> &'static str {
     match family {
-        source_unit::CheckpointFamily::AppendStream => "append_stream",
-        source_unit::CheckpointFamily::MutableSnapshot { .. } => "mutable_snapshot",
-        source_unit::CheckpointFamily::Journal => "journal",
-        source_unit::CheckpointFamily::Polling => "polling",
-        source_unit::CheckpointFamily::LiveObservation => "live_observation",
+        proof::CheckpointFamily::AppendStream => "append_stream",
+        proof::CheckpointFamily::MutableSnapshot { .. } => "mutable_snapshot",
+        proof::CheckpointFamily::Journal => "journal",
+        proof::CheckpointFamily::Polling => "polling",
+        proof::CheckpointFamily::LiveObservation => "live_observation",
     }
 }
 

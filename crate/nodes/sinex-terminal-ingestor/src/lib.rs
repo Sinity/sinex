@@ -17,7 +17,7 @@ pub mod unified_node;
 pub use unified_node::{HistorySourceConfig, TerminalConfig, TerminalNode, TerminalState};
 
 use sinex_primitives::register_source_unit;
-use sinex_primitives::source_unit::{
+use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitDescriptor,
 };
@@ -42,7 +42,7 @@ register_source_unit! {
         access_policy: "runtime_self_observation",
         package_impact: "no_new_output",
         implementation_mode: "rust_in_pack:terminal",
-        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -65,7 +65,7 @@ register_source_unit! {
         access_policy: "target_home_read:shell_history_text",
         package_impact: "no_new_output",
         implementation_mode: "rust_in_pack:terminal",
-        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -91,7 +91,7 @@ register_source_unit! {
         access_policy: "target_home_read:.local/share/atuin/history.db",
         package_impact: "no_new_output",
         implementation_mode: "rust_in_pack:terminal",
-        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -114,7 +114,7 @@ register_source_unit! {
         access_policy: "target_home_read:.zsh_history",
         package_impact: "no_new_output",
         implementation_mode: "rust_in_pack:terminal",
-        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -140,7 +140,7 @@ register_source_unit! {
         access_policy: "target_home_read:.local/share/fish/fish_history",
         package_impact: "no_new_output",
         implementation_mode: "rust_in_pack:terminal",
-        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -163,6 +163,6 @@ register_source_unit! {
         access_policy: "target_home_read:.bash_history",
         package_impact: "no_new_output",
         implementation_mode: "rust_in_pack:terminal",
-        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
