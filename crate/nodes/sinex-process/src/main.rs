@@ -21,6 +21,7 @@
 //! - `entity-resolver`    — entity resolver (WindowedNode)
 //! - `relation-extractor` — relation extractor (ScopeReconcilerNode)
 //! - `entity-enricher`    — entity enricher (ScopeReconcilerNode)
+//! - `entity-extractor`   — entity extractor (TransducerNode)
 //! - `document-parser`    — document parser (MultiOutputTransducerNode)
 
 #[cfg(not(target_env = "msvc"))]
@@ -32,8 +33,8 @@ static GLOBAL: MiMalloc = MiMalloc;
 
 use sinex_process::{
     AnalyticsAutomatonNode, DailySummarizerNode, DocumentParserNodeAdapter, EntityEnricherNode,
-    EntityResolverNode, HealthAggregatorNode, HourlySummarizerNode, RelationExtractorNode,
-    SessionDetectorNode, TerminalCommandCanonicalizerNode,
+    EntityExtractorNode, EntityResolverNode, HealthAggregatorNode, HourlySummarizerNode,
+    RelationExtractorNode, SessionDetectorNode, TerminalCommandCanonicalizerNode,
 };
 
 /// Extract `--automaton <name>` (or `SINEX_AUTOMATON`) from raw argv and return
@@ -82,7 +83,7 @@ fn extract_automaton(
     let name = automaton.unwrap_or_else(|| {
         eprintln!(
             "error: --automaton <name> is required (or set SINEX_AUTOMATON).\n\
-             Valid values: canonicalizer | analytics | health | session | hourly | daily | entity-resolver | relation-extractor | entity-enricher | document-parser"
+             Valid values: canonicalizer | analytics | health | session | hourly | daily | entity-extractor | entity-resolver | relation-extractor | entity-enricher | document-parser"
         );
         std::process::exit(1);
     });
@@ -107,6 +108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "session" => run_node::<SessionDetectorNode>(filtered_args).await,
         "hourly" => run_node::<HourlySummarizerNode>(filtered_args).await,
         "daily" => run_node::<DailySummarizerNode>(filtered_args).await,
+        "entity-extractor" => run_node::<EntityExtractorNode>(filtered_args).await,
         "entity-resolver" => run_node::<EntityResolverNode>(filtered_args).await,
         "relation-extractor" => run_node::<RelationExtractorNode>(filtered_args).await,
         "entity-enricher" => run_node::<EntityEnricherNode>(filtered_args).await,
@@ -114,7 +116,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         other => {
             eprintln!(
                 "error: unknown automaton '{other}'.\n\
-                 Valid values: canonicalizer | analytics | health | session | hourly | daily | entity-resolver | relation-extractor | entity-enricher | document-parser"
+                 Valid values: canonicalizer | analytics | health | session | hourly | daily | entity-extractor | entity-resolver | relation-extractor | entity-enricher | document-parser"
             );
             std::process::exit(1);
         }
