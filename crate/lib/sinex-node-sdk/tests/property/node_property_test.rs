@@ -142,14 +142,14 @@ sinex_proptest! {
             .build();
 
         // Configuration should be valid with proper inputs
-        assert_eq!(config.service_name, service_name);
+        assert_eq!(config.service_name.as_str(), service_name);
 
         // Validate the configuration
         assert!(config.validate_config().is_ok());
 
         // Test environment-based loading doesn't panic
         let env_config = NodeConfig::load_from_env(&service_name)?;
-        assert_eq!(env_config.service_name, service_name);
+        assert_eq!(env_config.service_name.as_str(), service_name);
 
         Ok::<(), color_eyre::Report>(())
     }

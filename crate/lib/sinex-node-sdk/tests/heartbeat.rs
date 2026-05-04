@@ -1,3 +1,4 @@
+use sinex_primitives::domain::ServiceName;
 use sinex_db::DbPoolExt;
 use sinex_node_sdk::emit_heartbeat;
 use sinex_node_sdk::heartbeat::HeartbeatEmitter;
@@ -9,15 +10,15 @@ use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn heartbeat_emitter_tracks_metadata() -> TestResult<()> {
-    let emitter = HeartbeatEmitter::new("test-service".to_string(), Seconds::from_secs(30));
-    assert_eq!(emitter.service_name(), "test-service");
+    let emitter = HeartbeatEmitter::new(ServiceName::new("test-service"), Seconds::from_secs(30));
+    assert_eq!(emitter.service_name().as_str(), "test-service");
     assert_eq!(emitter.interval_seconds(), Seconds::from_secs(30));
     Ok(())
 }
 
 #[sinex_test]
 async fn counter_handle_updates_metrics() -> TestResult<()> {
-    let emitter = HeartbeatEmitter::new("test-service".to_string(), Seconds::from_secs(30));
+    let emitter = HeartbeatEmitter::new(ServiceName::new("test-service"), Seconds::from_secs(30));
     let handle = emitter.get_counter_handle();
 
     handle.increment_events_processed(5);
@@ -30,12 +31,12 @@ async fn counter_handle_updates_metrics() -> TestResult<()> {
 
 #[sinex_test]
 async fn heartbeat_metrics_include_latest_state() -> TestResult<()> {
-    let emitter = HeartbeatEmitter::new("test-service".to_string(), Seconds::from_secs(30));
+    let emitter = HeartbeatEmitter::new(ServiceName::new("test-service"), Seconds::from_secs(30));
     emitter.increment_events_processed(10);
     emitter.record_error("test error");
 
     let metrics = emitter.create_heartbeat_metrics(None).await;
-    assert_eq!(metrics.service_name, "test-service");
+    assert_eq!(metrics.service_name.as_str(), "test-service");
     assert_eq!(metrics.errors_count, 1);
     assert!(metrics.last_error_message.is_some());
     Ok(())
@@ -54,7 +55,7 @@ async fn heartbeat_invalid_threshold_overrides_fall_back_to_defaults() -> TestRe
     env.set("SINEX_HEARTBEAT_DEGRADED_THRESHOLD", "bogus");
     env.set("SINEX_HEARTBEAT_FAILED_THRESHOLD", "bogus");
 
-    let emitter = HeartbeatEmitter::new("test-service".to_string(), Seconds::from_secs(30));
+    let emitter = HeartbeatEmitter::new(ServiceName::new("test-service"), Seconds::from_secs(30));
     for _ in 0..11 {
         emitter.record_error("test error");
     }
@@ -80,7 +81,7 @@ async fn heartbeat_emitter_persists_manifest_heartbeat(ctx: TestContext) -> Test
         )
         .await?;
 
-    let emitter = HeartbeatEmitter::new("test-service".to_string(), Seconds::from_secs(30))
+    let emitter = HeartbeatEmitter::new(ServiceName::new("test-service"), Seconds::from_secs(30))
         .with_node_name(node_name.clone())
         .with_db_pool(pool.clone());
     emitter.emit_heartbeat(None).await;
@@ -105,7 +106,7 @@ async fn heartbeat_emitter_persists_manifest_heartbeat(ctx: TestContext) -> Test
 async fn heartbeat_emitter_records_missing_db_heartbeat_rows(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
     let emitter =
-        HeartbeatEmitter::new("missing-heartbeat-rows".to_string(), Seconds::from_secs(30))
+        HeartbeatEmitter::new(ServiceName::new("missing-heartbeat-rows"), Seconds::from_secs(30))
             .with_node_name(NodeName::new("missing-heartbeat-rows"))
             .with_node_run_id(Uuid::now_v7())
             .with_db_pool(pool.clone());

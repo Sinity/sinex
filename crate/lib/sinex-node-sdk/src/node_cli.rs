@@ -1124,7 +1124,7 @@ mod tests {
         let mut cli = test_cli_with_database_url(None);
         cli.source_unit = Some("terminal.atuin-history".to_string());
 
-        assert_eq!(default_service_name(&cli), "sinex-terminal.atuin-history");
+        assert_eq!(default_service_name(&cli).as_str(), "sinex-terminal.atuin-history");
         Ok(())
     }
 

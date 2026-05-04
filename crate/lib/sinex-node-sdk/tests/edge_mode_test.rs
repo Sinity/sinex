@@ -193,7 +193,7 @@ async fn test_runner_registers_node_run_when_database_is_available(
     .await?;
 
     assert_eq!(node_run.node_manifest_id, manifest.id);
-    assert_eq!(node_run.service_name, "registered_ingestor");
+    assert_eq!(node_run.service_name.as_str(), "registered_ingestor");
     assert_eq!(node_run.status, "running");
     assert!(node_run.effective_config_hash.is_some());
     assert_eq!(
