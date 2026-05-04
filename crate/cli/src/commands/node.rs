@@ -34,20 +34,12 @@ pub enum NodeCommands {
         /// Filter by role
         #[arg(long)]
         role: Option<NodeRole>,
-
-        /// Output format
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Show node status
     Status {
         /// Node ID or name
         node: String,
-
-        /// Output format
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Drain a node for maintenance
@@ -76,16 +68,16 @@ pub enum NodeCommands {
 }
 
 impl NodeCommands {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match self {
-            Self::List { role, format } => {
+            Self::List { role } => {
                 let nodes = client.list_nodes(*role).await?;
                 CommandOutput::list(nodes, "No nodes found.", format_table_nodes)
-                    .display(format)?;
+                    .display(&format)?;
             }
-            Self::Status { node, format } => {
+            Self::Status { node } => {
                 let response = client.node_status(node).await?;
-                CommandOutput::single(response, format_node_status_table).display(format)?;
+                CommandOutput::single(response, format_node_status_table).display(&format)?;
             }
             Self::Drain { node, reason } => {
                 with_spinner_result(

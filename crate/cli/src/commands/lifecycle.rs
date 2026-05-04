@@ -66,26 +66,22 @@ pub enum LifecycleCommands {
 }
 
 impl LifecycleCommands {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match self {
-            Self::Status(cmd) => cmd.execute(client).await,
-            Self::Archive(cmd) => cmd.execute(client).await,
-            Self::Restore(cmd) => cmd.execute(client).await,
-            Self::Tombstone(cmd) => cmd.execute(client).await,
+            Self::Status(cmd) => cmd.execute(client, format).await,
+            Self::Archive(cmd) => cmd.execute(client, format).await,
+            Self::Restore(cmd) => cmd.execute(client, format).await,
+            Self::Tombstone(cmd) => cmd.execute(client, format).await,
         }
     }
 }
 
 /// Show lifecycle tier status
 #[derive(Debug, Args)]
-pub struct LifecycleStatusCommand {
-    /// Output format
-    #[arg(long, short = 'f', value_enum, default_value = "table")]
-    format: OutputFormat,
-}
+pub struct LifecycleStatusCommand {}
 
 impl LifecycleStatusCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let response = with_spinner_result(
             "Fetching lifecycle status...".to_string(),
             "Lifecycle status retrieved",
@@ -93,7 +89,7 @@ impl LifecycleStatusCommand {
         )
         .await?;
 
-        CommandOutput::single(response, format_status_table).display(&self.format)?;
+        CommandOutput::single(response, format_status_table).display(&format)?;
         Ok(())
     }
 }
@@ -120,14 +116,10 @@ pub struct LifecycleArchiveCommand {
     /// Actually perform the archive (otherwise dry-run)
     #[arg(long)]
     confirm: bool,
-
-    /// Output format
-    #[arg(long, short = 'f', value_enum, default_value = "table")]
-    format: OutputFormat,
 }
 
 impl LifecycleArchiveCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let before_str = self.before.map(|d| format!("{}s", d.as_secs()));
         let dry_run = !self.confirm;
 
@@ -152,7 +144,7 @@ impl LifecycleArchiveCommand {
         )
         .await?;
 
-        CommandOutput::single(response, format_archive_table).display(&self.format)?;
+        CommandOutput::single(response, format_archive_table).display(&format)?;
 
         if dry_run {
             println!();
@@ -173,14 +165,10 @@ pub struct LifecycleRestoreCommand {
     /// Actually perform the restore (otherwise dry-run)
     #[arg(long)]
     confirm: bool,
-
-    /// Output format
-    #[arg(long, short = 'f', value_enum, default_value = "table")]
-    format: OutputFormat,
 }
 
 impl LifecycleRestoreCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let dry_run = !self.confirm;
 
         let response = with_spinner_result(
@@ -201,7 +189,7 @@ impl LifecycleRestoreCommand {
         )
         .await?;
 
-        CommandOutput::single(response, format_restore_table).display(&self.format)?;
+        CommandOutput::single(response, format_restore_table).display(&format)?;
 
         if dry_run {
             println!();
@@ -258,14 +246,14 @@ pub enum TombstoneCommands {
 }
 
 impl TombstoneCommands {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match self {
-            Self::Create(cmd) => cmd.execute(client).await,
-            Self::Approve(cmd) => cmd.execute(client).await,
-            Self::Preview(cmd) => cmd.execute(client).await,
-            Self::Cancel(cmd) => cmd.execute(client).await,
-            Self::List(cmd) => cmd.execute(client).await,
-            Self::Status(cmd) => cmd.execute(client).await,
+            Self::Create(cmd) => cmd.execute(client, format).await,
+            Self::Approve(cmd) => cmd.execute(client, format).await,
+            Self::Preview(cmd) => cmd.execute(client, format).await,
+            Self::Cancel(cmd) => cmd.execute(client, format).await,
+            Self::List(cmd) => cmd.execute(client, format).await,
+            Self::Status(cmd) => cmd.execute(client, format).await,
         }
     }
 }
@@ -292,14 +280,10 @@ pub struct TombstoneCreateCommand {
     /// Reason for tombstoning (required for audit)
     #[arg(long)]
     reason: String,
-
-    /// Output format
-    #[arg(long, short = 'f', value_enum, default_value = "table")]
-    format: OutputFormat,
 }
 
 impl TombstoneCreateCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let before_str = self.before.map(|d| format!("{}s", d.as_secs()));
 
         let response = with_spinner_result(
@@ -316,7 +300,7 @@ impl TombstoneCreateCommand {
         .await?;
 
         CommandOutput::single(response, format_tombstone_create_table)
-            .display(&self.format)?;
+            .display(&format)?;
 
         Ok(())
     }
@@ -331,14 +315,10 @@ pub struct TombstoneApproveCommand {
     /// REQUIRED: Acknowledge that data will be permanently deleted
     #[arg(long, required = true)]
     yes_i_understand_data_is_gone: bool,
-
-    /// Output format
-    #[arg(long, short = 'f', value_enum, default_value = "table")]
-    format: OutputFormat,
 }
 
 impl TombstoneApproveCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         if !self.yes_i_understand_data_is_gone {
             return Err(color_eyre::eyre::eyre!(
                 "You must acknowledge that tombstoning is PERMANENT.\n\
@@ -350,7 +330,7 @@ impl TombstoneApproveCommand {
         let status = client.tombstone_status(self.operation_id.clone()).await?;
 
         // Print the warning banner for table mode
-        if matches!(self.format, OutputFormat::Table) {
+        if matches!(format, OutputFormat::Table) {
             println!();
             println!("⚠️  WARNING: TOMBSTONING IS PERMANENT!");
             println!("{}", "═".repeat(60));
@@ -374,7 +354,7 @@ impl TombstoneApproveCommand {
         .await?;
 
         CommandOutput::single(response, format_tombstone_approve_table)
-            .display(&self.format)?;
+            .display(&format)?;
 
         Ok(())
     }
@@ -385,14 +365,10 @@ impl TombstoneApproveCommand {
 pub struct TombstonePreviewCommand {
     /// Operation ID to preview
     operation_id: String,
-
-    /// Output format
-    #[arg(long, short = 'f', value_enum, default_value = "table")]
-    format: OutputFormat,
 }
 
 impl TombstonePreviewCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let response = with_spinner_result(
             "Fetching tombstone preview...".to_string(),
             "Preview retrieved",
@@ -401,7 +377,7 @@ impl TombstonePreviewCommand {
         .await?;
 
         CommandOutput::single(response, format_tombstone_preview_table)
-            .display(&self.format)?;
+            .display(&format)?;
 
         Ok(())
     }
@@ -419,7 +395,7 @@ pub struct TombstoneCancelCommand {
 }
 
 impl TombstoneCancelCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, _format: OutputFormat) -> Result<()> {
         let response = with_spinner_result(
             "Cancelling tombstone operation...".to_string(),
             "Operation cancelled",
@@ -472,14 +448,10 @@ pub struct TombstoneListCommand {
     /// Maximum number of operations to show
     #[arg(long, default_value = "20")]
     limit: i64,
-
-    /// Output format
-    #[arg(long, short = 'f', value_enum, default_value = "table")]
-    format: OutputFormat,
 }
 
 impl TombstoneListCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let response = with_spinner_result(
             "Fetching tombstone operations...".to_string(),
             "Operations retrieved",
@@ -491,12 +463,12 @@ impl TombstoneListCommand {
         .await?;
 
         if response.operations.is_empty() {
-            CommandOutput::<serde_json::Value>::empty("No tombstone operations found.").display(&self.format)?;
+            CommandOutput::<serde_json::Value>::empty("No tombstone operations found.").display(&format)?;
             return Ok(());
         }
 
         CommandOutput::single(response, format_tombstone_list_table)
-            .display(&self.format)?;
+            .display(&format)?;
 
         Ok(())
     }
@@ -507,14 +479,10 @@ impl TombstoneListCommand {
 pub struct TombstoneStatusCommand {
     /// Operation ID to query
     operation_id: String,
-
-    /// Output format
-    #[arg(long, short = 'f', value_enum, default_value = "table")]
-    format: OutputFormat,
 }
 
 impl TombstoneStatusCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let response = with_spinner_result(
             "Fetching operation status...".to_string(),
             "Status retrieved",
@@ -523,7 +491,7 @@ impl TombstoneStatusCommand {
         .await?;
 
         CommandOutput::single(response, format_tombstone_status_table)
-            .display(&self.format)?;
+            .display(&format)?;
 
         Ok(())
     }
