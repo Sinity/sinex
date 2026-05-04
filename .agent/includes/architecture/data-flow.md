@@ -56,7 +56,7 @@ sinex-primitives         Foundation: types, validation, errors, domain enums, ID
 
 sinexctl                 Unified CLI (query, trace, telemetry, context, report, import)
 
-xtask                    Build automation (~110K lines, 20% of ~540K total)
+xtask                    Build automation (~115K lines, ~20% of total)
 ```
 
 ### NATS Subject Topology
@@ -86,23 +86,22 @@ All share `DerivedNodeAdapter<N>` for: NATS consumer, checkpoint persistence, he
 
 Each synthesis event carries `node_model`, `temporal_policy`, and `semantics_version` — self-documenting provenance metadata.
 
-**Current automata** (live as of 2026-04-26):
-- `sinex-terminal-command-canonicalizer` — Transducer, `command.canonical`
-- `sinex-analytics-automaton` — Windowed (1000-event sliding window), `analytics.insight`
-- `sinex-health-automaton` — ScopeReconciler, `health.aggregated_report`
-- `sinex-session-detector` — Windowed, `activity.session.boundary` (enabled by NixOS module default)
-- `sinex-hourly-summarizer` — Windowed, hourly rollups
-- `sinex-daily-summarizer` — Windowed, daily rollups
+**Current automata** (consolidated into `sinex-process` per #944, deployed as per-automaton systemd services):
+- Command canonicalizer — Transducer, `command.canonical`
+- Analytics — Windowed (1000-event sliding window), `analytics.insight`
+- Health aggregator — ScopeReconciler, `health.aggregated_report`
+- Session detector — Windowed, `activity.session.boundary` (enabled by NixOS module default)
+- Hourly summarizer — Windowed, hourly rollups
+- Daily summarizer — Windowed, daily rollups
 
-Entity extractor is not yet implemented. The SDK and the basic intelligence
-layer are present; richer derivations (entity extraction, document-level
-synthesis) are the open frontier.
+Entity extractor is not yet implemented (#331). Document parsing/chunking is
+designed but not wired (#733). Richer derivations are the open frontier.
 
 ### WindowedNode Example: Session Detector
 
 ```rust
 // Groups events by temporal proximity. Gap > 5 minutes = new session boundary.
-// Actual implementation: crate/nodes/sinex-session-detector/src/lib.rs
+// Actual implementation: crate/nodes/sinex-process/src/automata/session.rs
 struct SessionDetector;
 
 impl WindowedNode for SessionDetector {

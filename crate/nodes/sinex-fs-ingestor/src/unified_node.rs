@@ -30,7 +30,7 @@ use sinex_node_sdk::{
 use sinex_node_sdk::{ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState};
 use sinex_primitives::{
     Seconds, Uuid,
-    domain::{HostName, RecordedPath, SanitizedPath},
+    domain::{HostName, RecordedPath, SanitizedPath, SourceIdentifier},
     events::{
         EventPayload,
         enums::FileModificationType,
@@ -2308,17 +2308,16 @@ fn file_modified_at(
     filesystem_timestamp(metadata.modified(), "modified_at", path)
 }
 
-fn replay_material_identifier(material: &ResolvedReplayMaterial) -> &str {
+fn replay_material_identifier(material: &ResolvedReplayMaterial) -> String {
     material
         .material_metadata
         .get("logical_source_identifier")
         .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
         .unwrap_or_else(|| {
-            material
-                .source_identifier
-                .split("#material=")
-                .next()
-                .unwrap_or(material.source_identifier.as_str())
+            SourceIdentifier::from_wire(&material.source_identifier)
+                .map(|si| si.logical_id)
+                .unwrap_or_else(|_| material.source_identifier.clone())
         })
 }
 
@@ -2332,8 +2331,8 @@ fn historical_scan_targets(
     if let Some(replay) = replay {
         for material in &replay.materials {
             let identifier = replay_material_identifier(material);
-            if seen.insert(identifier.to_string()) {
-                targets.push(identifier.to_string());
+            if seen.insert(identifier.clone()) {
+                targets.push(identifier);
             }
         }
     }
@@ -3487,11 +3486,11 @@ mod tests {
                             ResolvedReplayMaterial {
                                 source_material_id: Uuid::now_v7(),
                                 material_kind: "annex".to_string(),
-                                source_identifier: format!(
-                                    "{}#material={}",
-                                    file_a.display(),
-                                    Uuid::now_v7()
-                                ),
+                                source_identifier: SourceIdentifier::new(
+                                    file_a.display().to_string(),
+                                    Uuid::now_v7(),
+                                )
+                                .to_wire(),
                                 material_metadata: serde_json::json!({
                                     "logical_source_identifier": file_a.display().to_string()
                                 }),
@@ -3501,11 +3500,11 @@ mod tests {
                             ResolvedReplayMaterial {
                                 source_material_id: Uuid::now_v7(),
                                 material_kind: "annex".to_string(),
-                                source_identifier: format!(
-                                    "{}#material={}",
-                                    file_b.display(),
-                                    Uuid::now_v7()
-                                ),
+                                source_identifier: SourceIdentifier::new(
+                                    file_b.display().to_string(),
+                                    Uuid::now_v7(),
+                                )
+                                .to_wire(),
                                 material_metadata: serde_json::json!({
                                     "logical_source_identifier": file_b.display().to_string()
                                 }),

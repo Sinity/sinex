@@ -1,55 +1,38 @@
-## Current Issue Summary
+## Current State
 
-Canonical current-work tracking lives in GitHub:
+**Canonical tracking lives in GitHub issues.** Use `gh issue list --state open` for the live set.
+Do not duplicate issue state here.
 
-- `#308` — Core hardening follow-up: SDK, test harness, runtime proof boundaries.
+Scratch notes are not a backlog. Promote durable findings into GitHub issues.
 
-Scratch notes are not a backlog. If scratch content becomes durable project work, promote it into
-GitHub issues or tracked docs and delete the scratch file.
+### Active Issue Clusters (as of 2026-05-03)
 
-This include keeps only the compressed memory surface for AGENTS consumers.
+| Cluster | Key Issues | Meaning |
+|---------|-----------|---------|
+| Declaration→consumer drift | #744, #743, #752, #755 | 25+ orphans, type-name collisions, provenance semantics, stringly-typed identifiers |
+| Runtime unification | #754, #751, #759, #762 | Config/batching/checkpoint/failure-policy consolidation; error-handling drift; DB pattern drift |
+| Storage modernization | #848, #777, #987 | git-annex→local BLAKE3 CAS migration; typed content-store contracts; GC + safety |
+| Intelligence layer | #331, #332, #733, #934 | Entity extraction, document retrieval, pipeline stages 2-4 |
+| Operational gaps | #945, #951, #986-#994 | Backup, compression, views→CAs, schema safety, hardening, audit findings |
+| CLI/TUI convergence | #846, #368, #806, #807 | Compact sinexctl IA, verify suite, demo scenarios |
+| Deployment hardening | #910, #914, #915, #990 | Resource scoping, pressure observability, NixOS service hardening |
+| Documentation | #805, #809, #950, #991 | Glossary, README assets, source-unit workflow, CLAUDE.md freshness |
 
-### Open Work Clusters
-
-| Cluster | Issues | Meaning |
-|---------|--------|---------|
-| Transport and failure routing | `#326`, `#327`, `#338` | Define publish intent/QoS, split DLQ vs processing failure vs local spool semantics, and formalize node drain behavior. |
-| Service-crate cleanup | `#328`, `#351` | Remove the retired `sinex-services` workspace/tooling/docs traces now that PKM and content ownership moved. |
-| Content-store and SDK docs | `#313`, `#235` | Finish backend-neutral content-store naming and refresh node-SDK docs around the current framework/proof architecture. |
-| Deployment and VM coverage | `#318`, `#234` | Make VM scenarios representative of deployment hardening and remove stale satellite-era VM surfaces. |
-| Derived runtime rollout | `#334`, `#329`, `#331`, `#332` | Add operator-visible derived-node telemetry, deploy/session-detector surfaces, and unblock entity/document-layer research after derived-output proof. |
-| Schema and temporal semantics | `#233`, `#325` | Unify schema-source bundles and decide late-arriving event coordination before expanding canonicalization/intelligence. |
-
-### Recently Landed Work Worth Remembering
-
-| Area | Current state |
-|------|---------------|
-| Source-material transport | Lifecycle frames now use one ordered SDK-owned stream instead of separate begin/slice/end streams. |
-| Material hot path | WAL and staged-file syncs are batched on the slice path while begin/end boundaries remain crash-visible. |
-| Logical record batching | SDK append streams batch many logical records into one physical material slice while returning exact byte anchors per event. |
-| Metadata-only observations | Filesystem and system metadata events use buffered observation streams instead of creating tiny or zero-byte one-shot materials. |
-| Small material storage | Small materials route through local CAS; large/long-lived content still uses annex-backed paths. |
-| Blob persistence | Duplicate BLAKE3 inserts are deduplicated instead of redelivering batches forever. |
-| Startup pressure | Continuous startup no longer performs unbounded browser or journal historical replay. |
-| UUID validity | ingestd rejects malformed UUIDv7 variants before persistence; system ingestor emits deterministic valid UUIDv7 IDs. |
-| Runtime target boundaries | `xtask`, `sinexctl`, test, benchmark, VM, dev, and deployed-runtime responsibilities are explicit in issues #309-#311/#322 and tracked docs. |
-| Material assembler split | Restore planning, assembly transitions, durability policy, finalization, and redelivery decisions were extracted through #314/#339-#343. |
-| Source-path proof | Historical backfill and browser-history ingestion were proved/hardened through the normal node/runtime plane in #319/#320. |
-| Proof/scenario/evidence spine | #485/#323/#324/#316/#315/#317 landed the initial proof catalog, evidence envelopes, scenario taxonomy, source-material scenarios, and resource-shape benchmarks. |
-| Automata proof | #321 verified deployed automata output quality, lag, and runtime budgets; operator-facing telemetry remains #334. |
-| Agent memory | Scratch is no longer a durable backlog; tracked memory points at GitHub issues. |
-
-### Architectural Fragilities Still Worth Remembering
+### Known Architectural Fragilities
 
 | Fragility | Tracking |
 |-----------|----------|
-| Publish backpressure is not yet intent-aware across raw, control, DLQ, gateway, and telemetry paths. | `#326` |
-| DLQ, processing failure, and local recovery spool semantics are still too easy to conflate. | `#327` |
-| Blob/material APIs still expose annex-centric naming despite the hybrid local-CAS/annex backend. | `#313` |
-| VM/deployment coverage still lags the current runtime-target and target-user bridge model. | `#318`, `#234` |
-| Derived-node telemetry is not yet operator-visible enough through `sinexctl`/status surfaces. | `#334` |
+| Publish backpressure not intent-aware across traffic classes | #326 |
+| DLQ/processing-failure/recovery-spool semantics conflated | #327 |
+| git-annex storage path is dead code; local CAS needs delete-on-tombstone (not GC) | #848, #987 |
+| Cascade two-transaction gap — replay can leave dangling references | #751 |
+| Settlement system (FailurePolicy, ErrorClass) designed but never wired to production | #754 |
+| IngestorNodeAdapter lacks SelfObserver/HealthReporter — 6 ingestors invisible to telemetry | #754, #992 |
+| Cascade archiving trigger fn_archive_before_delete needs extending to event_embeddings/cluster_members/validation_cache | #988 |
+| Ingestors have no health/degradation observability — silent watcher death undetected | #992 |
+| Schema sync UPSERTs in-place when version unchanged (84/102 payloads at "1.0.0") | #951 |
 
-### Clean Codebase Signals
+### Deep Audit Reference
 
-- No known scratch-backed backlog remains outside GitHub issues or tracked docs.
-- Generated AGENTS surface is derived from tracked includes, not from ignored scratch state.
+A 47-report comprehensive audit (2026-05-03) is at `.agent/scratch/deep-audit-2026-05-03/index.md`.
+Key findings are tracked in GitHub issues #986-#994 and linked from existing issues #744, #751, #754, #759, #945.

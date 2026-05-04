@@ -5,7 +5,6 @@
 
 use super::{
     DERIVED_OUTPUT_PARENT_HARD_LIMIT, DERIVED_OUTPUT_PARENT_WARN_THRESHOLD, DerivedNodeAdapter,
-    derived_event_anchor,
 };
 #[cfg(feature = "messaging")]
 use super::log_self_observation_failure;
@@ -13,7 +12,6 @@ use super::log_self_observation_failure;
 use crate::derived_node::context::DerivedTriggerContext;
 use crate::derived_node::output::DerivedOutput;
 use crate::derived_node::traits::DerivedNodeImpl;
-use crate::ids::deterministic_event_id;
 use crate::runtime::stream::NodeRuntimeState;
 use crate::{NodeResult, SinexError};
 
@@ -21,7 +19,7 @@ use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::Provenance;
 use sinex_primitives::non_empty::NonEmptyVec;
 use sinex_primitives::privacy;
-use sinex_primitives::{EventSource, EventType, HostName, Id, JsonValue};
+use sinex_primitives::{EventSource, EventType, HostName, Id, JsonValue, Uuid};
 
 use tracing::{debug, warn};
 
@@ -192,7 +190,7 @@ where
     pub(super) fn build_output_event(
         &self,
         output: DerivedOutput<JsonValue>,
-        output_index: usize,
+        _output_index: usize,
         fallback_source_id: Option<Id<Event<JsonValue>>>,
         context: &DerivedTriggerContext,
     ) -> NodeResult<Event<JsonValue>> {
@@ -246,20 +244,6 @@ where
                 }
             }
         };
-        let event_id_source = format!(
-            "{}:{}:{}",
-            self.node.name(),
-            self.node.output_event_source(),
-            self.node.output_event_type()
-        );
-        let event_id_anchor = derived_event_anchor(
-            output_index,
-            &source_event_ids,
-            &temporal_policy,
-            semantics_version.as_deref(),
-            scope_key.as_deref(),
-            equivalence_key.as_deref(),
-        );
         let provenance = Provenance::Synthesis {
             source_event_ids,
             operation_id: context.operation_id(),
@@ -267,12 +251,13 @@ where
         // Extract before moving provenance into the event struct.
         let created_by_operation_id = provenance.operation_uuid();
 
+        // Use Uuid::now_v7() instead of deterministic_event_id to ensure
+        // ts_coided (extracted from UUIDv7) >= ts_orig. The previous pattern
+        // embedded ts_orig into the UUIDv7 timestamp, which truncated to
+        // milliseconds and made ts_coided up to 999us earlier than ts_orig.
+        // (#751 F34)
         Ok(Event {
-            id: Some(Id::from_uuid(deterministic_event_id(
-                event_id_source,
-                event_id_anchor,
-                ts_orig,
-            ))),
+            id: Some(Id::from_uuid(Uuid::now_v7())),
             source: EventSource::new(self.node.output_event_source())?,
             event_type: EventType::new(self.node.output_event_type())?,
             payload: filtered_payload,

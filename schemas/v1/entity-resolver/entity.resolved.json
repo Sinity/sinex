@@ -1,0 +1,40 @@
+{
+  "$defs": {
+    "EntityTypeName": {
+      "description": "The type of an entity (e.g., `person`, `project`, `document`)",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Resolved entity with a deterministic UUIDv5 identity and canonical name.\n\nThe entity resolver (Stage 2) consumes `entity.extracted` events and emits\none `entity.resolved` per unique `(entity_type, canonical_name)` pair.\nThe UUIDv5 is deterministically derived from that pair so that replay\nagainst the same source always produces identical IDs.",
+  "properties": {
+    "canonical_name": {
+      "description": "Type-aware canonicalized name (e.g., lowercased tool, normalized URL host).",
+      "type": "string"
+    },
+    "entity_id": {
+      "description": "Deterministic entity identity. UUIDv5 over `(entity_type, canonical_name)`.",
+      "format": "uuid",
+      "type": "string"
+    },
+    "entity_type": {
+      "$ref": "#/$defs/EntityTypeName",
+      "description": "Normalized entity type classification."
+    },
+    "original_name": {
+      "description": "The raw name as originally extracted, preserved for audit.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "entity_id",
+    "canonical_name",
+    "entity_type",
+    "original_name"
+  ],
+  "title": "EntityResolvedPayload",
+  "type": "object",
+  "x-sinex-event-type": "entity.resolved",
+  "x-sinex-source": "entity-resolver",
+  "x-sinex-version": "1.0.0"
+}

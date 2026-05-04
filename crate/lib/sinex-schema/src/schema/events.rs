@@ -220,6 +220,14 @@ impl Events {
             .check(Expr::cust(
                 "offset_start IS NULL OR offset_end IS NULL OR offset_end >= offset_start",
             ))
+            // Temporal ordering safety net: ts_orig must not exceed ts_coided by
+            // more than 1 second. UUIDv7 timestamp extraction has millisecond
+            // precision, so ts_coided can lag ts_orig by up to 999 microseconds
+            // when the UUID encodes ts_orig directly. The 1-second tolerance also
+            // covers clock skew between ingestor hosts. (#751 F34)
+            .check(Expr::cust(
+                "ts_orig <= ts_coided + INTERVAL '1 second'",
+            ))
             .foreign_key(
                 ForeignKey::create()
                     .from(Self::table_iden(), Events::SourceMaterialId)
@@ -665,6 +673,28 @@ impl ArchivedEvents {
           ON CONFLICT (id) DO NOTHING;
 
           DELETE FROM core.event_annotations WHERE event_id = OLD.id;
+
+          -- Cascade embeddings: archive then delete (same pattern as annotations).
+          -- The FK on core.event_embeddings.event_id REFERENCES core.events(id) ON DELETE
+          -- CASCADE is not enforced by TimescaleDB when core.events is the hypertable
+          -- side (#579), so we cascade manually.
+          INSERT INTO audit.archived_embeddings
+            SELECT e.*, now(), who, why
+            FROM core.event_embeddings e
+            WHERE e.event_id = OLD.id
+          ON CONFLICT (id) DO NOTHING;
+
+          DELETE FROM core.event_embeddings WHERE event_id = OLD.id;
+
+          -- Cascade cluster memberships (no archive table — graph metadata follows
+          -- the deleted event). The FK on core.event_cluster_members.event_id has
+          -- ON DELETE CASCADE but is not enforced by TimescaleDB (#579).
+          DELETE FROM core.event_cluster_members WHERE event_id = OLD.id;
+
+          -- Cascade validation cache (no archive table — cache entries are disposable
+          -- and will be recomputed on next read). The FK on event_id is also not
+          -- enforced by TimescaleDB (#579).
+          DELETE FROM sinex_schemas.validation_cache WHERE event_id = OLD.id;
 
           RETURN OLD;
         END $$;

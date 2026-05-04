@@ -1,0 +1,42 @@
+{
+  "$defs": {
+    "RelationType": {
+      "description": "The type of relationship between entities (e.g., `works_on`, `mentions`, `depends_on`)",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A typed relationship between two resolved entities.\n\nThe relation extractor (Stage 3) consumes `entity.resolved` events and emits\n`entity.related` events when entities co-occur in the same source window or\nwhen explicit relationships are found (e.g., tool to project from CWD, website\nto topic from page title).",
+  "properties": {
+    "confidence": {
+      "description": "Confidence score for this relationship in [0.0, 1.0].",
+      "format": "double",
+      "type": "number"
+    },
+    "relation_type": {
+      "$ref": "#/$defs/RelationType",
+      "description": "Semantic type of the relationship (e.g. works_on, co_occurs_with)."
+    },
+    "source_entity_id": {
+      "description": "The source entity of the relationship.",
+      "format": "uuid",
+      "type": "string"
+    },
+    "target_entity_id": {
+      "description": "The target entity of the relationship.",
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "source_entity_id",
+    "target_entity_id",
+    "relation_type",
+    "confidence"
+  ],
+  "title": "EntityRelatedPayload",
+  "type": "object",
+  "x-sinex-event-type": "entity.related",
+  "x-sinex-source": "relation-extractor",
+  "x-sinex-version": "1.0.0"
+}

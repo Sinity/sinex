@@ -49,57 +49,6 @@ fn request_runtime_drain(drain: &RuntimeDrainController, node_name: &str) -> boo
     true
 }
 
-fn derived_event_anchor(
-    output_index: usize,
-    source_event_ids: &NonEmptyVec<Id<Event<JsonValue>>>,
-    temporal_policy: &sinex_primitives::domain::SyntheticTemporalPolicy,
-    semantics_version: Option<&str>,
-    scope_key: Option<&str>,
-    equivalence_key: Option<&str>,
-) -> Vec<u8> {
-    let mut anchor = Vec::new();
-    append_anchor_field(
-        &mut anchor,
-        b"output_index",
-        output_index.to_string().as_bytes(),
-    );
-    append_anchor_field(
-        &mut anchor,
-        b"temporal_policy",
-        temporal_policy.to_string().as_bytes(),
-    );
-    append_anchor_field(
-        &mut anchor,
-        b"semantics_version",
-        semantics_version.unwrap_or("").as_bytes(),
-    );
-    append_anchor_field(
-        &mut anchor,
-        b"scope_key",
-        scope_key.unwrap_or("").as_bytes(),
-    );
-    append_anchor_field(
-        &mut anchor,
-        b"equivalence_key",
-        equivalence_key.unwrap_or("").as_bytes(),
-    );
-    for source_event_id in source_event_ids {
-        append_anchor_field(
-            &mut anchor,
-            b"source_event_id",
-            source_event_id.as_uuid().to_string().as_bytes(),
-        );
-    }
-    anchor
-}
-
-fn append_anchor_field(anchor: &mut Vec<u8>, name: &[u8], value: &[u8]) {
-    anchor.extend_from_slice(&u64::try_from(name.len()).unwrap_or(u64::MAX).to_be_bytes());
-    anchor.extend_from_slice(name);
-    anchor.extend_from_slice(&u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
-    anchor.extend_from_slice(value);
-}
-
 fn stale_output_ids_or_fail_scope(
     node_name: &str,
     scope_key: &str,

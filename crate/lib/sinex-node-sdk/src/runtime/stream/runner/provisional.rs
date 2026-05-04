@@ -37,13 +37,15 @@ impl<T: Node + 'static> NodeRunner<T> {
         })
     }
 
-    pub(super) fn parse_offset_kind(kind: Option<&str>) -> OffsetKind {
+    pub(super) fn parse_offset_kind(kind: Option<&str>) -> NodeResult<OffsetKind> {
         match kind {
-            Some("line") => OffsetKind::Line,
-            Some("rowid") => OffsetKind::Record,
-            Some("logical") => OffsetKind::Character,
-            Some("byte") | None => OffsetKind::Byte,
-            Some(_) => OffsetKind::Byte,
+            Some("line") => Ok(OffsetKind::Line),
+            Some("rowid") => Ok(OffsetKind::Record),
+            Some("logical") => Ok(OffsetKind::Character),
+            Some("byte") | None => Ok(OffsetKind::Byte),
+            Some(invalid) => Err(SinexError::processing(format!(
+                "Unknown offset_kind in provisional event: '{invalid}' (expected one of: byte, line, rowid, logical)"
+            ))),
         }
     }
 
@@ -85,7 +87,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                     anchor_byte,
                     offset_start: published.offset_start,
                     offset_end: published.offset_end,
-                    offset_kind: Self::parse_offset_kind(published.offset_kind.as_deref()),
+                    offset_kind: Self::parse_offset_kind(published.offset_kind.as_deref())?,
                 }
             }
             (None, Some(source_ids)) => {

@@ -12,6 +12,7 @@ use serde::Serialize;
 use serde_json::{Value as JsonValue, json};
 use sinex_primitives::{
     Uuid,
+    domain::SourceIdentifier,
     environment::{SinexEnvironment, environment},
     temporal::Timestamp,
     transport,
@@ -174,7 +175,7 @@ struct MaterialEndMessage {
 }
 
 fn registry_source_identifier(logical_source_identifier: &str, material_id: Uuid) -> String {
-    format!("{logical_source_identifier}#material={material_id}")
+    SourceIdentifier::new(logical_source_identifier, material_id).to_wire()
 }
 
 fn annotate_material_metadata(

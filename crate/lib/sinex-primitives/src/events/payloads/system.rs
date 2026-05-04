@@ -13,17 +13,6 @@ use sinex_macros::EventPayload;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "journald", event_type = "log_entry.captured")]
-/// Captures a journald log entry with raw fields.
-pub struct JournalEntryPayload {
-    pub unit: Option<String>,
-    pub priority: SyslogPriority,
-    pub message: String,
-    pub fields: HashMap<String, String>,
-    pub timestamp: Timestamp,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "journald", event_type = "sync.completed")]
 /// Records the outcome of a journald cursor sync.
 pub struct JournalSyncCompletedPayload {
@@ -250,26 +239,6 @@ pub struct SystemdTimerTriggeredPayload {
 // udev device events
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "udev", event_type = "device.added")]
-pub struct UdevDeviceAddedPayload {
-    pub syspath: String,
-    pub devpath: String,
-    pub subsystem: String,
-    pub devtype: Option<String>,
-    pub driver: Option<String>,
-    pub properties: HashMap<String, String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "udev", event_type = "device.removed")]
-pub struct UdevDeviceRemovedPayload {
-    pub syspath: String,
-    pub devpath: String,
-    pub subsystem: String,
-    pub devtype: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "udev", event_type = "device.connected")]
 pub struct UdevDeviceConnectedPayload {
     pub action: UdevAction,
@@ -344,74 +313,6 @@ pub struct UdevDeviceOtherPayload {
     pub timestamp: Timestamp,
 }
 
-// Log processing events
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "log_processor", event_type = "log.line")]
-pub struct LogLinePayload {
-    pub line: String,
-    pub line_number: u64,
-    pub log_source: String, // "nginx", "apache", "syslog", etc.
-    pub log_file: String,   // Full path to the log file
-    pub offset_start: i64,
-    pub offset_end: i64,
-    pub source_material_id: String,
-}
-
-// Health aggregation events
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum SystemHealthStatus {
-    Healthy,
-    Degraded,
-    Failed,
-    Missing,
-}
-
-/// Event payload carrying per-service resource metrics in a health summary.
-///
-/// Renamed from `ComponentHealth` to `ServiceHealthMetrics` to distinguish
-/// from the RPC `ComponentHealthReport` (status/connected/latency) and the
-/// automaton's in-memory `ComponentHealth` state — see issue #746 (A4).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ServiceHealthMetrics {
-    pub service_name: String,
-    pub status: SystemHealthStatus,
-    pub last_heartbeat: Timestamp,
-    pub uptime_seconds: Option<i64>,
-    pub memory_usage_mb: Option<i32>,
-    pub events_processed: Option<i64>,
-    pub version: Option<String>,
-    pub git_hash: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "health-aggregator", event_type = "system.health_summary")]
-pub struct SystemHealthSummaryPayload {
-    pub overall_status: SystemHealthStatus,
-    pub healthy_components: u32,
-    pub degraded_components: u32,
-    pub failed_components: u32,
-    pub missing_components: u32,
-    pub total_components: u32,
-    pub last_updated: Timestamp,
-    pub components: HashMap<String, ServiceHealthMetrics>,
-}
-
-// Node heartbeat events
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "journald", event_type = "node.heartbeat")]
-pub struct NodeHeartbeatPayload {
-    pub service_name: String,
-    pub uptime_seconds: Option<i64>,
-    pub memory_usage_mb: Option<i32>,
-    pub events_processed: Option<i64>,
-    pub version: Option<String>,
-    pub git_hash: Option<String>,
-}
-
 // System monitoring lifecycle events
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
@@ -424,32 +325,7 @@ pub struct SystemMonitoringStartedPayload {
     pub start_time: Timestamp,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "system", event_type = "snapshot")]
-pub struct SystemSnapshotPayload {
-    pub active_watchers: usize,
-    pub dbus_enabled: bool,
-    pub journal_enabled: bool,
-    pub udev_enabled: bool,
-    pub systemd_enabled: bool,
-    pub snapshot_time: Timestamp,
-}
-
 // Test helpers for external tests
-#[cfg(any(test, feature = "testing"))]
-impl JournalEntryPayload {
-    #[must_use]
-    pub fn test_default() -> Self {
-        Self {
-            unit: None,
-            priority: SyslogPriority::INFO,
-            message: "test log entry".into(),
-            fields: HashMap::new(),
-            timestamp: crate::temporal::now(),
-        }
-    }
-}
-
 #[cfg(any(test, feature = "testing"))]
 impl SystemdUnitStartedPayload {
     #[must_use]

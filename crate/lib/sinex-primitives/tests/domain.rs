@@ -8,7 +8,6 @@ use sinex_primitives::domain::{
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
     desktop::DesktopMonitoringStartedPayload, filesystem::FileCreatedPayload,
-    shell::TerminalMonitoringStartedPayload,
 };
 use xtask::sandbox::sinex_test;
 
@@ -45,7 +44,6 @@ async fn event_type_validation_enforces_format() -> TestResult<()> {
 async fn event_source_validation_preserves_rules() -> TestResult<()> {
     // from_static constants should pass validation
     assert!(EventSource::new(FileCreatedPayload::SOURCE.as_str()).is_ok());
-    assert!(EventSource::new(TerminalMonitoringStartedPayload::SOURCE.as_str()).is_ok());
     assert!(EventSource::new(DesktopMonitoringStartedPayload::SOURCE.as_str()).is_ok());
     // Valid sources parse successfully
     assert!(EventSource::new("shell.bash").is_ok());
