@@ -28,21 +28,13 @@ EXAMPLES:
 pub enum DlqCommands {
     /// Show DLQ statistics
     #[command(alias = "ls")]
-    List {
-        /// Output format
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
-    },
+    List,
 
     /// Peek at messages in the DLQ
     Peek {
         /// Number of messages to peek
         #[arg(long, short = 'n', default_value = "10")]
         limit: usize,
-
-        /// Output format
-        #[arg(long, short = 'f', value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 
     /// Requeue messages from DLQ back to processing
@@ -65,20 +57,20 @@ pub enum DlqCommands {
 }
 
 impl DlqCommands {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match self {
-            Self::List { format } => {
+            Self::List => {
                 let stats = client.dlq_list().await?;
-                CommandOutput::single(stats, format_dlq_stats_table).display(format)?;
+                CommandOutput::single(stats, format_dlq_stats_table).display(&format)?;
             }
-            Self::Peek { limit, format } => {
+            Self::Peek { limit } => {
                 let response = client.dlq_peek(Some(*limit)).await?;
                 CommandOutput::list(
                     response.messages,
                     "No messages in DLQ.",
                     format_dlq_messages_table,
                 )
-                .display(format)?;
+                .display(&format)?;
             }
             Self::Requeue { event_id, all } => {
                 if !all && event_id.is_none() {

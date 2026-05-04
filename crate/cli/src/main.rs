@@ -271,7 +271,7 @@ async fn main() -> color_eyre::Result<()> {
     }
 
     match command {
-        Commands::Config { cmd } => cmd.execute()?,
+        Commands::Config { cmd } => cmd.execute(format)?,
         Commands::Completions(cmd) => {
             let mut clap_cmd = Cli::command();
             cmd.execute(&mut clap_cmd)?;
@@ -285,20 +285,20 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Gateway { cmd } => cmd.execute(&client, format).await?,
                 Commands::Blob { .. } => unreachable!("Blob command handled above"),
                 Commands::Core { cmd } => cmd.execute(&client, format).await?,
-                Commands::Node { cmd } => cmd.execute(&client).await?,
-                Commands::Automata(cmd) => cmd.execute(&client).await?,
-                Commands::Replay { cmd } => cmd.execute(&client).await?,
-                Commands::Dlq { cmd } => cmd.execute(&client).await?,
-                Commands::Query(cmd) => cmd.execute(&client).await?,
-                Commands::Trace(cmd) => cmd.execute(&client).await?,
-                Commands::Ops { cmd } => cmd.execute(&client).await?,
-                Commands::Audit(cmd) => cmd.execute(&client).await?,
+                Commands::Node { cmd } => cmd.execute(&client, format).await?,
+                Commands::Automata(cmd) => cmd.execute(&client, format).await?,
+                Commands::Replay { cmd } => cmd.execute(&client, format).await?,
+                Commands::Dlq { cmd } => cmd.execute(&client, format).await?,
+                Commands::Query(cmd) => cmd.execute(&client, format).await?,
+                Commands::Trace(cmd) => cmd.execute(&client, format).await?,
+                Commands::Ops { cmd } => cmd.execute(&client, format).await?,
+                Commands::Audit(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tui(cmd) => cmd.execute(&client).await?,
                 Commands::Config { .. } => unreachable!("Config command handled above"),
                 Commands::Demo(_) => unreachable!("Demo command handled above"),
-                Commands::Lifecycle { cmd } => cmd.execute(&client).await?,
+                Commands::Lifecycle { cmd } => cmd.execute(&client, format).await?,
                 Commands::GitOps { cmd } => cmd.execute(&client, format).await?,
-                Commands::Telemetry { cmd } => cmd.execute(&client).await?,
+                Commands::Telemetry { cmd } => cmd.execute(&client, format).await?,
                 Commands::Report { cmd } => cmd.execute(&client, format).await?,
                 Commands::Status(cmd) => {
                     cmd.execute(&client, config.runtime_target.as_ref(), format)

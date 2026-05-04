@@ -85,16 +85,13 @@ pub struct QueryCommand {
     #[arg(long, value_name = "JSON")]
     cursor_json: Option<String>,
 
-    /// Output format
-    #[arg(long, short = 'f', value_enum, default_value = "table")]
-    format: OutputFormat,
 }
 
 impl QueryCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         // Launch interactive mode if requested
         if self.interactive {
-            return interactive_query(client, self.format).await;
+            return interactive_query(client, format).await;
         }
 
         let start_time = self.since.as_ref().map(|s| parse_time(s)).transpose()?;
@@ -129,7 +126,7 @@ impl QueryCommand {
             ..Default::default()
         };
 
-        execute_query(client, query, self.format).await
+        execute_query(client, query, format).await
     }
 }
 

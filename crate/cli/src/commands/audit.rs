@@ -23,14 +23,10 @@ EXAMPLES:
 pub struct AuditCommand {
     /// Operation ID
     operation_id: String,
-
-    /// Output format
-    #[arg(long, short = 'f', value_enum, default_value = "table")]
-    format: OutputFormat,
 }
 
 impl AuditCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         // Try to fetch audit trail, handle 404 gracefully
         let response: AuditGetResponse = match client.audit_get(&self.operation_id).await {
             Ok(resp) => resp,
@@ -43,7 +39,7 @@ impl AuditCommand {
             Err(e) => return Err(e),
         };
 
-        match self.format {
+        match format {
             OutputFormat::Table => {
                 println!("Audit Trail for Operation: {}", self.operation_id);
                 println!("{}", "─".repeat(80));
