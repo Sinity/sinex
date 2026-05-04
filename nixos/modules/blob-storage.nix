@@ -12,8 +12,9 @@ let
   repositoryUser = cfg.users.nodes;
 
   maintenanceEnabled = cfg.lifecycle.maintenance.enable;
-  runBlobGc = maintenanceEnabled && maintenanceCfg.tasks.blobGc && blob.maintenance.gc.enable;
-  runBlobFsck = maintenanceEnabled && maintenanceCfg.tasks.blobFsck && blob.maintenance.fsck.enable;
+  legacyAnnexEnabled = blob.enable && blob.legacyAnnexData;
+  runBlobGc = maintenanceEnabled && maintenanceCfg.tasks.blobGc && blob.maintenance.gc.enable && legacyAnnexEnabled;
+  runBlobFsck = maintenanceEnabled && maintenanceCfg.tasks.blobFsck && blob.maintenance.fsck.enable && legacyAnnexEnabled;
   healthEnabled = maintenanceEnabled && blob.health.enable;
 
   gcSchedule = blob.maintenance.gc.schedule;
@@ -80,7 +81,7 @@ let
 in
 {
   config = mkMerge [
-    (mkIf (blob.enable && blob.autoInit) {
+    (mkIf (blob.enable && blob.legacyAnnexData && blob.autoInit) {
       systemd.services.sinex-blob-init = {
         description = "Initialize Sinex blob repository";
         wantedBy = [ "multi-user.target" ];
@@ -97,7 +98,7 @@ in
       };
     })
 
-    (mkIf (blob.enable && runBlobGc) {
+    (mkIf (blob.enable && blob.legacyAnnexData && runBlobGc) {
       systemd.services.sinex-blob-gc = {
         description = "Sinex blob garbage collection";
         after = [ "sinex-blob-init.service" ];
@@ -123,7 +124,7 @@ in
       };
     })
 
-    (mkIf (blob.enable && runBlobFsck) {
+    (mkIf (blob.enable && blob.legacyAnnexData && runBlobFsck) {
       systemd.services.sinex-blob-fsck = {
         description = "Sinex blob fsck";
         after = [ "sinex-blob-init.service" ];
@@ -150,7 +151,7 @@ in
       };
     })
 
-    (mkIf (blob.enable && healthEnabled) {
+    (mkIf (blob.enable && blob.legacyAnnexData && healthEnabled) {
       systemd.services.sinex-blob-health = {
         description = "Sinex blob health check";
         after = [ "sinex-blob-init.service" ];

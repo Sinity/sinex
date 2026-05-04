@@ -42,6 +42,8 @@ async fn setup_test_content_store()
         root_path: repo_path.clone(),
         num_copies: Some(1),
         large_files: None,
+        legacy_annex_enabled: true,
+        ..Default::default()
     };
 
     let content_store = MaterialContentStore::new(config)?;
@@ -179,6 +181,8 @@ async fn test_git_annex_configuration(ctx: TestContext) -> TestResult<()> {
         root_path: repo_path.clone(),
         num_copies: Some(2),
         large_files: Some("*.bin".to_string()),
+        legacy_annex_enabled: true,
+        ..Default::default()
     };
 
     let content_store = MaterialContentStore::new(config)?;

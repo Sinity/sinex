@@ -246,7 +246,9 @@ let
       ProtectSystem = "strict";
       ProtectHome = true;
       PrivateTmp = true;
+      PrivateIPC = true;
       NoNewPrivileges = true;
+      RestrictSUIDSGID = true;
       ProtectKernelTunables = true;
       ProtectKernelModules = true;
       ProtectKernelLogs = true;
@@ -460,7 +462,7 @@ let
         requires = coreRequires;
         wants = coreWants;
         unitConfig = restartRateLimits // { PartOf = [ "sinex-runtime.target" ]; } // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
-        path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
+        path = optionals (cfg.storage.blob.enable && cfg.storage.blob.legacyAnnexData) [ pkgs.git pkgs.git-annex ];
         serviceConfig = mkBaseServiceConfig coreCfg.ingestd.resources
           (
             mkServiceEnv [
@@ -516,7 +518,7 @@ let
           // existingPathAssertions (
             databaseSecretAssertPaths ++ natsSecretAssertPaths ++ gatewaySecretAssertPaths
           );
-        path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
+        path = optionals (cfg.storage.blob.enable && cfg.storage.blob.legacyAnnexData) [ pkgs.git pkgs.git-annex ];
         serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources gatewayEnv (
           {
             Type = lib.mkForce "notify";
@@ -1514,7 +1516,7 @@ let
         requires = requiredUnits;
         wants = optionals coreEnabled [ "sinex-ingestd.service" ];
         unitConfig = existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
-        path = optionals cfg.storage.blob.enable [ pkgs.git pkgs.git-annex ];
+        path = optionals (cfg.storage.blob.enable && cfg.storage.blob.legacyAnnexData) [ pkgs.git pkgs.git-annex ];
         serviceConfig = (mkBaseServiceConfig resources env {
           Type = lib.mkForce "oneshot";
           Restart = lib.mkForce "no";

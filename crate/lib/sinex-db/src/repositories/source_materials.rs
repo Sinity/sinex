@@ -17,6 +17,7 @@ use uuid::Uuid;
 pub mod material_kinds {
     pub const ANNEX: &str = "annex";
     pub const GIT: &str = "git";
+    pub const LOCAL_CAS: &str = "local_cas";
 }
 /// Canonical timing info types
 pub mod timing_info_types {

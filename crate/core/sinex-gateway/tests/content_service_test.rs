@@ -33,6 +33,8 @@ async fn content_service_fixture(ctx: &TestContext) -> TestResult<(ContentServic
         root_path: repo_utf8,
         num_copies: Some(1),
         large_files: Some("anything".to_string()),
+        legacy_annex_enabled: true,
+        ..Default::default()
     };
 
     let content_store = ContentStoreManager::new(content_store_config, ctx.pool().clone(), None)?;

@@ -26,7 +26,14 @@ pub mod query;
 pub mod rpc;
 pub mod runtime_target;
 pub mod settlement;
-pub mod source_unit;
+pub mod source_unit {
+    //! Compatibility re-export module. Source-unit types live in [`proof`] since #744 (A1).
+    pub use crate::proof::{
+        CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
+        RuntimeShape, SourceUnitBuildImpact, SourceUnitDescriptor, __register,
+        all_source_units, find_source_unit,
+    };
+}
 pub mod temporal;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
@@ -41,7 +48,7 @@ pub mod buffers {
 }
 
 pub mod prelude {
-    pub use crate::domain::{EventSource, EventType, HostName, RecordedPath, SourceIdentifier};
+    pub use crate::domain::{EventName, EventSource, EventType, HostName, RecordedPath, SourceIdentifier};
     pub use crate::environment::SinexEnvironment;
     pub use crate::error::{Result, SinexError};
     pub use crate::events::builder::{OffsetKind, Provenance};
@@ -71,7 +78,9 @@ pub use deployment_readiness::{
     DeploymentSecrets, DeploymentSurface, DeploymentTarget, DesktopDeploymentSurface,
     DocumentDeploymentSurface, TerminalDeploymentSurface, TerminalHistorySource,
 };
-pub use domain::{EventSource, EventType, HostName, RecordedPath, SanitizedPath, SourceIdentifier};
+pub use domain::{
+    EventName, EventSource, EventType, HostName, RecordedPath, SanitizedPath, SourceIdentifier,
+};
 pub use env::strict_env_filter_source;
 pub use environment::{SinexEnvironment, environment};
 pub use error::{Result, SinexError};

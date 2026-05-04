@@ -38,5 +38,5 @@ The sinex service user (uid=991) runs all services. The target user (sinity, uid
 | Publish intent/DLQ/failure-routing/drain semantics not finalized | #326, #327 |
 | VM coverage lags runtime-target model | #318 |
 | No backup tooling (no WAL archiving, no pg_basebackup) | #945 |
-| NixOS service hardening gaps (restart rate-limiting, SUID/SGID, IPC leaks) | #990 |
+| NixOS service hardening: `RestrictSUIDSGID` + `PrivateIPC` added to all service configs; git-annex gated behind `legacyAnnexData` | #990 |
 | Local CAS has zero GC — disk fill guaranteed over time | #987, #848 |

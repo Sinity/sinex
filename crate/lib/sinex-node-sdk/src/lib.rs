@@ -87,6 +87,7 @@ pub mod schema_validator;
 pub mod self_observation;
 pub mod service_runtime;
 pub mod shutdown;
+pub mod pressure;
 pub mod source_material;
 pub mod sqlite_source;
 #[cfg(feature = "messaging")]
@@ -117,7 +118,7 @@ pub use checkpoint::{
     CheckpointCleanupConfig, CheckpointCleanupResult, CheckpointManager, CheckpointState,
     cleanup_stale_checkpoints, spawn_checkpoint_cleanup_task,
 };
-pub use config::{AutomatonConfig, EventSourceConfig, NodeConfig};
+pub use config::{AutomatonConfig, EventSourceConfig, MaterialMetadataPolicy, NodeConfig, PathClassRule};
 pub use confirmation_handler::{
     ConfirmationBuffer, ConfirmedEventHandler, EventConfirmation, ProcessingModel,
     ProvisionalEvent, ProvisionalEventHandler,
@@ -157,6 +158,7 @@ pub use jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfi
 pub use nats_publisher::NatsPublisher;
 #[cfg(all(feature = "db", feature = "messaging"))]
 pub use node_cli::{NodeCli, NodeCliRunner, NodeCommand, parse_checkpoint, parse_time_horizon};
+pub use pressure::PressureMonitor;
 pub use processing::{ErrorAction, NodeLogicError};
 #[cfg(all(feature = "db", feature = "messaging"))]
 pub use record_source::SqliteSnapshotLinker;
