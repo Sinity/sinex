@@ -161,9 +161,7 @@ pub struct IngestorNodeAdapter<I: IngestorNode> {
     checkpoint_manager: Option<Arc<CheckpointManager>>,
     shutdown_tx: Option<Arc<RuntimeDrainController>>,
     pending_hot_reload_cleanup: Option<PathBuf>,
-    #[cfg(feature = "messaging")]
     health_reporter: Option<Arc<crate::health_reporter::HealthReporter>>,
-    #[cfg(feature = "messaging")]
     self_observer: Option<Arc<crate::self_observation::SelfObserver>>,
 }
 
@@ -177,9 +175,7 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
             checkpoint_manager: None,
             shutdown_tx: None,
             pending_hot_reload_cleanup: None,
-            #[cfg(feature = "messaging")]
             health_reporter: None,
-            #[cfg(feature = "messaging")]
             self_observer: None,
         }
     }
@@ -194,13 +190,11 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
     }
 
     /// Access the self-observer for emitting telemetry metrics.
-    #[cfg(feature = "messaging")]
     pub fn self_observer(&self) -> Option<&Arc<crate::self_observation::SelfObserver>> {
         self.self_observer.as_ref()
     }
 
     /// Access the health reporter for recording successes/errors.
-    #[cfg(feature = "messaging")]
     pub fn health_reporter(&self) -> Option<&Arc<crate::health_reporter::HealthReporter>> {
         self.health_reporter.as_ref()
     }
@@ -408,11 +402,9 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
         self.checkpoint_manager = Some(runtime.checkpoint_manager().clone());
         self.runtime = Some(runtime.clone());
 
-        #[cfg(feature = "messaging")]
-        {
-            if let Some(nats_client) = runtime.nats_client() {
-                use crate::health_reporter::{HealthReporter, HealthThresholds};
-                use crate::self_observation::{SelfObserver, SelfObserverConfig};
+        if let Some(nats_client) = runtime.nats_client() {
+            use crate::health_reporter::{HealthReporter, HealthThresholds};
+            use crate::self_observation::{SelfObserver, SelfObserverConfig};
 
                 let health_enabled = shared_env::bool_or(
                     "SINEX_HEALTH_MONITORING_ENABLED",
@@ -446,7 +438,6 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
                     self.self_observer = Some(observer);
 
                     info!(node = %self.ingestor.name(), "Health monitoring auto-enabled");
-                }
             }
         }
 
@@ -485,13 +476,43 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
                 let drain = runtime.runtime_drain();
                 let rx = drain.subscribe();
                 self.shutdown_tx = Some(drain);
-                self.ingestor
-                    .run_continuous(
-                        &mut self.state.user_state,
-                        ContinuousStart::from_checkpoint(from),
-                        rx,
-                    )
-                    .await?
+
+                let health_reporter = self.health_reporter.clone();
+                let node_name = self.ingestor.name().to_string();
+
+                let continuous_fut = self.ingestor.run_continuous(
+                    &mut self.state.user_state,
+                    ContinuousStart::from_checkpoint(from),
+                    rx,
+                );
+
+                // Emit health at 30s intervals during continuous operation.
+                // If no health reporter is configured, this future never resolves.
+                let health_fut = async {
+                    if let Some(reporter) = health_reporter {
+                        let mut interval =
+                            tokio::time::interval(std::time::Duration::from_secs(30));
+                        loop {
+                            interval.tick().await;
+                            reporter.record_success();
+                            if let Err(e) = reporter.check_and_emit().await {
+                                warn!(
+                                    node = %node_name,
+                                    error = %e,
+                                    "Failed to emit ingestor health status"
+                                );
+                            }
+                        }
+                    } else {
+                        std::future::pending::<()>().await
+                    }
+                };
+
+                let continuous_result = tokio::select! {
+                    result = continuous_fut => result,
+                    () = health_fut => unreachable!("health ticker never completes"),
+                };
+                continuous_result?
             }
         };
 
@@ -501,7 +522,6 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
         self.state.checkpoint = effective_checkpoint;
         self.save_state(false).await?;
 
-        #[cfg(feature = "messaging")]
         if let Some(reporter) = self.health_reporter.as_ref() {
             reporter.record_success();
             for (_target, error_msg) in &report.failed_targets {
