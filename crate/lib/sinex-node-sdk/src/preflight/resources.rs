@@ -21,33 +21,29 @@ use tracing::info;
 
 use super::VerificationStatus;
 
-fn env_string(name: &str) -> NodeResult<Option<String>> {
-    shared_env::strict_var(name)
-}
-
 fn configured_state_dir() -> NodeResult<String> {
-    if let Some(state_dir) = env_string("SINEX_STATE_DIR")? {
+    if let Some(state_dir) = shared_env::strict_var("SINEX_STATE_DIR")? {
         return Ok(state_dir);
     }
-    if let Some(state_home) = env_string("XDG_STATE_HOME")? {
+    if let Some(state_home) = shared_env::strict_var("XDG_STATE_HOME")? {
         return Ok(format!("{state_home}/sinex"));
     }
     Ok("/var/lib/sinex".to_string())
 }
 
 fn configured_data_dir() -> NodeResult<String> {
-    env_string("SINEX_DATA_DIR")?.map_or_else(configured_state_dir, Ok)
+    shared_env::strict_var("SINEX_DATA_DIR")?.map_or_else(configured_state_dir, Ok)
 }
 
 fn configured_log_dir() -> NodeResult<String> {
-    if let Some(log_dir) = env_string("SINEX_LOG_DIR")? {
+    if let Some(log_dir) = shared_env::strict_var("SINEX_LOG_DIR")? {
         return Ok(log_dir);
     }
     Ok(format!("{}/logs", configured_state_dir()?))
 }
 
 fn configured_work_dir() -> NodeResult<String> {
-    if let Some(work_dir) = env_string("SINEX_WORK_DIR")? {
+    if let Some(work_dir) = shared_env::strict_var("SINEX_WORK_DIR")? {
         return Ok(work_dir);
     }
 
@@ -67,7 +63,7 @@ fn configured_work_dir() -> NodeResult<String> {
 }
 
 fn configured_tmp_dir() -> NodeResult<String> {
-    Ok(env_string("TMPDIR")?.unwrap_or_else(|| "/tmp".to_string()))
+    Ok(shared_env::strict_var("TMPDIR")?.unwrap_or_else(|| "/tmp".to_string()))
 }
 
 fn nearest_existing_ancestor(path: &Utf8Path) -> NodeResult<Utf8PathBuf> {

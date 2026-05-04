@@ -7,10 +7,12 @@ use super::{DerivedNodeAdapter, INVALIDATION_QUERY_PAGE_SIZE, event_lag_ms};
 
 use crate::derived_node::context::DerivedTriggerContext;
 use crate::derived_node::traits::DerivedNodeImpl;
-use crate::processing::ErrorAction;
 use crate::{NodeResult, SinexError};
 
 use sinex_primitives::events::Event;
+use sinex_primitives::settlement::{
+    DefaultFailurePolicy, FailureContext, FailurePolicy, RuntimeOperation, RuntimePhase, Settlement,
+};
 use sinex_primitives::JsonValue;
 #[cfg(feature = "db")]
 use sinex_primitives::query::{EventQuery, EventQueryResult, QueryResultEvent};
@@ -191,6 +193,25 @@ where
                     let sinex_error = SinexError::processing("derived node processing error")
                         .with_source(e.to_string());
                     reporter.record_error(&sinex_error);
+
+                    // Emit automaton error telemetry before routing
+                    if let Some(ref observer) = self.self_observer {
+                        let mut labels = self.derived_metric_labels();
+                        labels.insert("error".to_string(), e.to_string());
+                        labels.insert(
+                            "error_class".to_string(),
+                            format!("{:?}", sinex_error.error_class()),
+                        );
+                        if let Err(obs_err) =
+                            observer.emit_counter("automaton.error", 1, Some(labels)).await
+                        {
+                            warn!(
+                                node = %self.node.name(),
+                                error = %obs_err,
+                                "Failed to emit automaton error counter"
+                            );
+                        }
+                    }
                 }
             }
 
@@ -210,22 +231,55 @@ where
                 Ok(output_events)
             }
             Err(e) => {
-                let action = self.node.handle_error_derived(&e);
-                match action {
-                    ErrorAction::Skip => {
-                        warn!(node = %self.node.name(), error = %e, "Skipping event");
+                // Use the richer FailurePolicy::settle() instead of the
+                // 3-variant ErrorAction. DefaultFailurePolicy maps ErrorClass
+                // to Settlement variants with backoff and retry budgets.
+                let sinex_error = SinexError::processing("derived node processing error")
+                    .with_source(e.to_string());
+                let failure_ctx = FailureContext {
+                    unit_id: self.node.name().to_string(),
+                    operation: RuntimeOperation::ProcessBatch,
+                    phase: RuntimePhase::ProcessInput,
+                    input_scope: None,
+                    effect_kind: None,
+                    delivery_count: None,
+                    attempts: 0,
+                };
+                let settlement = DefaultFailurePolicy.settle(&sinex_error, &failure_ctx);
+
+                match settlement {
+                    Settlement::Commit => {
+                        warn!(node = %self.node.name(), error = %e, "Committing (settled as benign)");
                         self.record_processed_input(source_event_id);
                         self.observe_runtime_snapshot().await;
                         Ok(Vec::new())
                     }
-                    ErrorAction::SendToProcessingFailureQueue => {
+                    Settlement::SendToProcessingFailure
+                    | Settlement::Park { .. }
+                    | Settlement::Quarantine { .. } => {
+                        warn!(node = %self.node.name(), error = %e, "Routing to processing-failure queue");
                         self.send_to_processing_failure_queue_or_fail(&event, &e)
                             .await?;
                         self.record_processed_input(source_event_id);
                         self.observe_runtime_snapshot().await;
                         Ok(Vec::new())
                     }
-                    ErrorAction::Retry => Err(e.into()),
+                    Settlement::Retry { .. } => {
+                        error!(node = %self.node.name(), error = %e, "Retryable error; halting batch");
+                        Err(e.into())
+                    }
+                    Settlement::HaltNode { reason } => {
+                        error!(node = %self.node.name(), error = %e, reason = ?reason, "Halting node");
+                        Err(SinexError::processing(format!(
+                            "Node halted: {reason:?} — {e}"
+                        )))
+                    }
+                    Settlement::DrainRuntimeUnit { reason } => {
+                        error!(node = %self.node.name(), error = %e, reason = %reason, "Draining runtime unit");
+                        Err(SinexError::processing(format!(
+                            "Runtime unit drained: {reason} — {e}"
+                        )))
+                    }
                 }
             }
         }

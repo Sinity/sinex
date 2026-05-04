@@ -12,6 +12,8 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::checkpoint::{CheckpointManager, CheckpointState, decode_checkpoint_data};
+#[cfg(feature = "messaging")]
+use sinex_primitives::env as shared_env;
 use crate::runtime::stream::{
     Checkpoint, ContinuousStart, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState,
     NodeType, RuntimeDrainController, ScanArgs, ScanReport, TimeHorizon,
@@ -159,6 +161,10 @@ pub struct IngestorNodeAdapter<I: IngestorNode> {
     checkpoint_manager: Option<Arc<CheckpointManager>>,
     shutdown_tx: Option<Arc<RuntimeDrainController>>,
     pending_hot_reload_cleanup: Option<PathBuf>,
+    #[cfg(feature = "messaging")]
+    health_reporter: Option<Arc<crate::health_reporter::HealthReporter>>,
+    #[cfg(feature = "messaging")]
+    self_observer: Option<Arc<crate::self_observation::SelfObserver>>,
 }
 
 impl<I: IngestorNode> IngestorNodeAdapter<I> {
@@ -171,6 +177,10 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
             checkpoint_manager: None,
             shutdown_tx: None,
             pending_hot_reload_cleanup: None,
+            #[cfg(feature = "messaging")]
+            health_reporter: None,
+            #[cfg(feature = "messaging")]
+            self_observer: None,
         }
     }
 
@@ -181,6 +191,18 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
 
     pub fn ingestor(&self) -> &I {
         &self.ingestor
+    }
+
+    /// Access the self-observer for emitting telemetry metrics.
+    #[cfg(feature = "messaging")]
+    pub fn self_observer(&self) -> Option<&Arc<crate::self_observation::SelfObserver>> {
+        self.self_observer.as_ref()
+    }
+
+    /// Access the health reporter for recording successes/errors.
+    #[cfg(feature = "messaging")]
+    pub fn health_reporter(&self) -> Option<&Arc<crate::health_reporter::HealthReporter>> {
+        self.health_reporter.as_ref()
     }
 
     fn checkpoint_file_identity(&self) -> &str {
@@ -385,6 +407,48 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
         let (config, runtime) = init.into_runtime();
         self.checkpoint_manager = Some(runtime.checkpoint_manager().clone());
         self.runtime = Some(runtime.clone());
+
+        #[cfg(feature = "messaging")]
+        {
+            if let Some(nats_client) = runtime.nats_client() {
+                use crate::health_reporter::{HealthReporter, HealthThresholds};
+                use crate::self_observation::{SelfObserver, SelfObserverConfig};
+
+                let health_enabled = shared_env::bool_or(
+                    "SINEX_HEALTH_MONITORING_ENABLED",
+                    true,
+                    "ingestor node health monitoring",
+                );
+
+                if health_enabled {
+                    let config = SelfObserverConfig {
+                        component: self.ingestor.name().to_string(),
+                        namespace: None,
+                        enabled: true,
+                        min_emission_interval: std::time::Duration::from_secs(1),
+                    };
+
+                    let observer = Arc::new(SelfObserver::new(nats_client, config));
+                    let thresholds = HealthThresholds::from_env().unwrap_or_else(|error| {
+                        warn!(
+                            node = %self.ingestor.name(),
+                            error = %error,
+                            "Invalid health monitoring threshold override; using defaults"
+                        );
+                        HealthThresholds::default()
+                    });
+
+                    self.health_reporter = Some(Arc::new(HealthReporter::new(
+                        self.ingestor.name().to_string(),
+                        Arc::clone(&observer),
+                        thresholds,
+                    )));
+                    self.self_observer = Some(observer);
+
+                    info!(node = %self.ingestor.name(), "Health monitoring auto-enabled");
+                }
+            }
+        }
 
         self.load_state().await?;
 

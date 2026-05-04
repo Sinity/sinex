@@ -26,7 +26,6 @@ use crate::{
     NodeResult, SinexError,
     checkpoint::CheckpointManager,
     confirmation_handler::{ConfirmedEventHandler, ProcessingModel, ProvisionalEvent},
-    error_helpers::env_parse_with_default,
     event_node::{EventBatcherConfig, EventTransport, spawn_event_batcher},
     jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
     systemd_notify,

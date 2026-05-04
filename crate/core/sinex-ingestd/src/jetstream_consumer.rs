@@ -118,6 +118,10 @@ pub struct JetStreamConsumer {
     future_ts_skew: time::Duration,
     /// Earliest accepted ts_orig as a timestamp (default: 2000-01-01 UTC)
     ts_orig_lower_bound: Timestamp,
+    /// Max concurrent batch-processing tasks during startup catch-up.
+    /// Limits I/O pressure while the consumer works through the backlog.
+    /// Default: 4. Set to 0 to disable catch-up limiting (full speed).
+    startup_catch_up_max_concurrent: usize,
 }
 
 const DB_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -144,12 +148,15 @@ fn is_source_material_fk_constraint_name(value: &str) -> bool {
 /// stamps the schema UUID on the event) and the INSERT. We treat it as recoverable
 /// by stripping `payload_schema_id` from the batch and retrying.
 fn is_payload_schema_fk_violation(err: &SinexError) -> bool {
+    // Per #751 F32: use SQLSTATE FK classification + constraint name from context_map,
+    // not rendered error text. The constraint name is extracted by sinex_db::db_error()
+    // and stored in the "constraint" context field from the sqlx error.
     if !is_foreign_key_violation(err) {
         return false;
     }
     err.context_map().get("constraint").is_some_and(|c| {
         c == EVENTS_PAYLOAD_SCHEMA_ID_FKEY || c.contains(EVENTS_PAYLOAD_SCHEMA_ID_FKEY)
-    }) || err.to_string().contains(EVENTS_PAYLOAD_SCHEMA_ID_FKEY)
+    })
 }
 
 /// Hard guard for node-supplied event IDs.
@@ -162,10 +169,12 @@ fn is_uuid_v7(value: &Uuid) -> bool {
 }
 
 fn is_foreign_key_violation(err: &SinexError) -> bool {
+    // Per #751 F32: classify FK violations by SQLSTATE (23503 foreign_key_violation)
+    // instead of inspecting rendered error text. SQLSTATE is always set when errors
+    // flow through sinex_db::db_error(), which extracts pg errcode from the sqlx error.
     err.context_map()
         .get("sqlstate")
         .is_some_and(|value| value == "23503")
-        || err.to_string().contains("Foreign key constraint violation")
 }
 
 fn has_explicit_source_material_fk_marker(err: &SinexError) -> bool {
@@ -500,6 +509,7 @@ impl JetStreamConsumer {
             heartbeat_handle: None,
             future_ts_skew: time::Duration::hours(1),
             ts_orig_lower_bound: Timestamp::from_const(time::macros::datetime!(2000-01-01 00:00:00 UTC)),
+            startup_catch_up_max_concurrent: 4,
         }
     }
 
@@ -514,6 +524,14 @@ impl JetStreamConsumer {
     #[must_use]
     pub fn with_ts_orig_lower_bound(mut self, lower_bound: Timestamp) -> Self {
         self.ts_orig_lower_bound = lower_bound;
+        self
+    }
+
+    /// Set max concurrent batch-processing tasks during startup catch-up.
+    /// 0 disables the semaphore entirely (full speed).
+    #[must_use]
+    pub fn with_startup_catch_up_max_concurrent(mut self, max_concurrent: usize) -> Self {
+        self.startup_catch_up_max_concurrent = max_concurrent;
         self
     }
 
@@ -882,8 +900,21 @@ impl JetStreamConsumer {
         // Consumer lag check interval (30s)
         let mut lag_check_interval = tokio::time::interval(std::time::Duration::from_secs(30));
         let mut confirmation_retry_interval = tokio::time::interval(CONFIRM_RETRY_POLL_INTERVAL);
-        let mut batch_future: BoxFuture<'_, IngestdResult<()>> =
-            Box::pin(self.process_batch(&consumer));
+
+        // Startup catch-up semaphore: limits I/O pressure while the consumer
+        // works through the initial backlog. Once the consumer is caught up
+        // (num_pending == 0), the semaphore is no longer used.
+        let catch_up_semaphore = (self.startup_catch_up_max_concurrent > 0)
+            .then(|| Arc::new(tokio::sync::Semaphore::new(self.startup_catch_up_max_concurrent)));
+        let mut catching_up = catch_up_semaphore.is_some();
+        let mut batch_future: BoxFuture<'_, IngestdResult<()>> = Box::pin(
+            Self::process_batch_with_semaphore(
+                &self,
+                &consumer,
+                &catch_up_semaphore,
+                catching_up,
+            ),
+        );
 
         loop {
             tokio::select! {
@@ -926,6 +957,11 @@ impl JetStreamConsumer {
                                     info.num_ack_pending as f64,
                                     Some(labels),
                                 ).await;
+                                // Detect catch-up completion when pending drops to zero
+                                if catching_up && info.num_pending == 0 {
+                                    catching_up = false;
+                                    info!("Startup catch-up complete; releasing semaphore throttle");
+                                }
                             }
                             Err(e) => {
                                 debug!("Consumer lag check failed: {e}");
@@ -946,10 +982,36 @@ impl JetStreamConsumer {
                         }
                         error!("Batch processing error: {}", e);
                     }
-                    batch_future = Box::pin(self.process_batch(&consumer));
+                    batch_future = Box::pin(Self::process_batch_with_semaphore(
+                        &self,
+                        &consumer,
+                        &catch_up_semaphore,
+                        catching_up,
+                    ));
                 }
             }
         }
+    }
+
+    /// Process a batch, acquiring a catch-up semaphore permit during the
+    /// startup catch-up phase to limit I/O pressure.
+    ///
+    /// Catch-up detection (setting `catching_up = false`) is handled in the
+    /// lag-check interval of the main loop, where we already have mutable
+    /// access to `lag_consumer`.
+    async fn process_batch_with_semaphore(
+        this: &Self,
+        consumer: &jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,
+        catch_up_semaphore: &Option<Arc<tokio::sync::Semaphore>>,
+        catching_up: bool,
+    ) -> IngestdResult<()> {
+        if let (true, Some(sem)) = (catching_up, catch_up_semaphore.as_ref()) {
+            let _permit = sem.acquire().await;
+            this.process_batch(consumer).await?;
+        } else {
+            this.process_batch(consumer).await?;
+        }
+        Ok(())
     }
 
     #[tracing::instrument(skip(self, consumer), fields(consumer_name = %self.topology.consumer_durable))]
@@ -1806,17 +1868,28 @@ impl JetStreamConsumer {
         })?;
 
         // If the INSERT failed due to a payload_schema_id FK violation (schema deleted between
-        // validation and insert), retry without schema IDs. This is safe: we lose the
-        // payload_schema_id annotation but the event itself is persisted correctly.
+        // validation and insert), retry after stripping schema IDs. #751 F15: strip per-event,
+        // not per-batch — only clear payload_schema_id from rows that have one set, preserving
+        // the annotation for unaffected events that never referenced the deleted schema.
         let insert_result = match insert_result {
             Err(ref err) if is_payload_schema_fk_violation(err) => {
+                let schema_stripped_count = rows
+                    .iter()
+                    .filter(|r| r.payload_schema_id.is_some())
+                    .count();
                 warn!(
                     batch_size = to_persist.len(),
-                    "INSERT hit FK violation on payload_schema_id (schema deleted during validation race); retrying without schema IDs"
+                    schema_stripped_count,
+                    "INSERT hit FK violation on payload_schema_id (schema deleted during validation race); retrying without schema IDs on affected rows"
                 );
                 let mut rows_without_schema: Vec<StreamBatchRow> = rows.clone();
+                // #751 F15: only strip from rows that had a payload_schema_id.
+                // Rows without one were never referencing the deleted schema and
+                // should preserve their (empty) annotation.
                 for row in &mut rows_without_schema {
-                    row.payload_schema_id = None;
+                    if row.payload_schema_id.is_some() {
+                        row.payload_schema_id = None;
+                    }
                 }
                 timeout(
                     DB_WRITE_TIMEOUT,

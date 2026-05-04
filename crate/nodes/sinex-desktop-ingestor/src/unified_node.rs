@@ -177,6 +177,11 @@ pub struct DesktopNode {
     // We store the Watcher instance inside the handle's material context until started
     clipboard_watcher: Option<WatcherHandle<ClipboardWatcher>>,
     window_manager_watcher: Option<WatcherHandle<WindowManagerWatcher>>,
+
+    /// Shutdown signal sender for watchers created during the continuous loop.
+    /// Populated in `run_continuous` so `ensure_watchers_running` can subscribe
+    /// fresh receivers when restarting dead watchers.
+    watcher_shutdown_tx: Option<watch::Sender<bool>>,
 }
 
 impl DesktopNode {
@@ -193,6 +198,7 @@ impl DesktopNode {
             acquisition: None,
             clipboard_watcher: None,
             window_manager_watcher: None,
+            watcher_shutdown_tx: None,
         }
     }
 
@@ -588,10 +594,6 @@ impl DesktopNode {
         handle.and_then(|watcher| watcher.health().last_error)
     }
 
-    fn env_string_override(name: &str) -> NodeResult<Option<String>> {
-        shared_env::strict_var(name)
-    }
-
     fn parse_window_manager_type_override(raw: &str) -> NodeResult<WindowManagerType> {
         raw.parse::<WindowManagerType>().map_err(|error| {
             SinexError::processing(format!("Invalid window manager type `{raw}`: {error}"))
@@ -637,11 +639,11 @@ impl DesktopNode {
     }
 
     fn apply_env_overrides(config: &mut DesktopConfig) -> NodeResult<()> {
-        if let Some(val) = Self::env_string_override("SINEX_DESKTOP_REQUIRE_HYPRLAND")? {
+        if let Some(val) = shared_env::strict_var("SINEX_DESKTOP_REQUIRE_HYPRLAND")? {
             config.require_hyprland =
                 Self::parse_bool_env_override("SINEX_DESKTOP_REQUIRE_HYPRLAND", &val)?;
         }
-        if let Some(path) = Self::env_string_override("SINEX_ACTIVITYWATCH_DB_PATH")? {
+        if let Some(path) = shared_env::strict_var("SINEX_ACTIVITYWATCH_DB_PATH")? {
             config.activitywatch_db_path = Some(Utf8PathBuf::from(path));
         }
 
@@ -662,6 +664,93 @@ impl DesktopNode {
                 .window_manager_watcher
                 .as_ref()
                 .is_some_and(WatcherHandle::is_active)
+    }
+
+    /// Ensure all configured watchers are running, restarting any that have died.
+    ///
+    /// Called periodically from the continuous loop (every 30 seconds).
+    /// Follows the same pattern as the system ingestor's `ensure_watchers_running`.
+    async fn ensure_watchers_running(
+        &mut self,
+        state: &mut DesktopPersistentState,
+        mut watcher_shutdown_rx: watch::Receiver<bool>,
+    ) -> NodeResult<()> {
+        let stage_context = self
+            .stage_context
+            .as_ref()
+            .ok_or_else(|| SinexError::lifecycle("Stage context not initialized"))?;
+
+        // Clipboard Watcher
+        if self.config.clipboard_enabled
+            && let Some(handle) = &mut self.clipboard_watcher
+            && !handle.is_active()
+        {
+            match ClipboardWatcher::new(
+                self.config.clipboard_poll_interval_secs,
+                stage_context.clone(),
+                watcher_shutdown_rx.clone(),
+            ) {
+                Ok(mut watcher) => {
+                    *handle = WatcherHandle::initialized("clipboard");
+                    let health = handle.health_tracker();
+                    let task = spawn_watcher_with_panic_catch(
+                        "clipboard",
+                        Some(Arc::clone(&health)),
+                        async move { watcher.start_monitoring().await },
+                    );
+                    handle.start(task, None)?;
+                    state.health.clipboard_active = true;
+                    state.health.clipboard_last_error = None;
+                }
+                Err(e) => {
+                    if !Self::is_platform_missing_error(&e) || self.config.require_hyprland {
+                        error!("Failed to initialize clipboard watcher: {}", e);
+                        state.health.clipboard_active = false;
+                        state.health.clipboard_last_error = Some(e.to_string());
+                    } else {
+                        warn!("Clipboard watcher skipped: {}", e);
+                    }
+                }
+            }
+        }
+
+        // Window Manager Watcher
+        if self.config.window_manager_enabled
+            && let Some(handle) = &mut self.window_manager_watcher
+            && !handle.is_active()
+        {
+            match WindowManagerWatcher::new(
+                self.config.window_manager_type.clone(),
+                stage_context.clone(),
+                watcher_shutdown_rx,
+            )
+            .await
+            {
+                Ok(mut watcher) => {
+                    *handle = WatcherHandle::initialized("window_manager");
+                    let health = handle.health_tracker();
+                    let task = spawn_watcher_with_panic_catch(
+                        "window_manager",
+                        Some(Arc::clone(&health)),
+                        async move { watcher.start_monitoring().await },
+                    );
+                    handle.start(task, None)?;
+                    state.health.window_manager_active = true;
+                    state.health.window_manager_last_error = None;
+                }
+                Err(e) => {
+                    if !Self::is_platform_missing_error(&e) || self.config.require_hyprland {
+                        error!("Failed to initialize window manager watcher: {}", e);
+                        state.health.window_manager_active = false;
+                        state.health.window_manager_last_error = Some(e.to_string());
+                    } else {
+                        warn!("Window manager watcher skipped: {}", e);
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -907,96 +996,43 @@ impl IngestorNode for DesktopNode {
         // Ensure handles are initialized
         self.initialize_watcher_handles();
 
-        let stage_context = self
-            .stage_context
-            .as_ref()
-            .ok_or_else(|| SinexError::lifecycle("Stage context not initialized"))?;
+        // Create a local watch channel so ensure_watchers_running can subscribe
+        // fresh receivers when restarting dead watchers.
+        let (watcher_tx, watcher_rx) = watch::channel(false);
+        self.watcher_shutdown_tx = Some(watcher_tx);
 
-        // Start Clipboard Watcher
-        if self.config.clipboard_enabled
-            && let Some(handle) = &mut self.clipboard_watcher
-            && !handle.is_active()
-        {
-            // Create actual watcher
-            let watcher_shutdown_rx = shutdown_rx.clone(); // Clone for this watcher
+        // Bootstrap watchers on first entry
+        self.ensure_watchers_running(state, watcher_rx).await;
 
-            match ClipboardWatcher::new(
-                self.config.clipboard_poll_interval_secs,
-                stage_context.clone(),
-                watcher_shutdown_rx,
-            ) {
-                Ok(mut watcher) => {
-                    *handle = WatcherHandle::initialized("clipboard");
-                    let health = handle.health_tracker();
-                    let task = spawn_watcher_with_panic_catch(
-                        "clipboard",
-                        Some(Arc::clone(&health)),
-                        async move { watcher.start_monitoring().await },
-                    );
-                    handle.start(task, None)?;
-                    state.health.clipboard_active = true;
-                    state.health.clipboard_last_error = None;
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        // Skip the first tick — watchers were just started above.
+        interval.tick().await;
+
+        loop {
+            tokio::select! {
+                shutdown_result = shutdown_rx.changed() => {
+                    if shutdown_result.is_err() {
+                        let warning =
+                            "desktop continuous monitoring shutdown channel dropped before explicit shutdown";
+                        warn!("{warning}");
+                        warnings.push(warning.to_string());
+                    }
+                    break;
                 }
-                Err(e) => {
-                    if !Self::is_platform_missing_error(&e) || self.config.require_hyprland {
-                        error!("Failed to initialize clipboard watcher: {}", e);
-                        state.health.clipboard_active = false;
-                        state.health.clipboard_last_error = Some(e.to_string());
-                    } else {
-                        warn!("Clipboard watcher skipped: {}", e);
+                _ = interval.tick() => {
+                    // Check and restart watchers if needed
+                    let fresh_rx = self.watcher_shutdown_tx
+                        .as_ref()
+                        .expect("watcher_shutdown_tx should be set")
+                        .subscribe();
+                    if let Err(e) = self.ensure_watchers_running(state, fresh_rx).await {
+                        warn!(error = %e, "Failed to ensure desktop watchers are running");
                     }
                 }
             }
         }
 
-        // Start Window Manager Watcher
-        if self.config.window_manager_enabled
-            && let Some(handle) = &mut self.window_manager_watcher
-            && !handle.is_active()
-        {
-            let watcher_shutdown_rx = shutdown_rx.clone();
-
-            match WindowManagerWatcher::new(
-                self.config.window_manager_type.clone(),
-                stage_context.clone(),
-                watcher_shutdown_rx,
-            )
-            .await
-            {
-                Ok(mut watcher) => {
-                    *handle = WatcherHandle::initialized("window_manager");
-                    let health = handle.health_tracker();
-                    let task = spawn_watcher_with_panic_catch(
-                        "window_manager",
-                        Some(Arc::clone(&health)),
-                        async move { watcher.start_monitoring().await },
-                    );
-                    handle.start(task, None)?;
-                    state.health.window_manager_active = true;
-                    state.health.window_manager_last_error = None;
-                }
-                Err(e) => {
-                    if !Self::is_platform_missing_error(&e) || self.config.require_hyprland {
-                        error!("Failed to initialize window manager watcher: {}", e);
-                        state.health.window_manager_active = false;
-                        state.health.window_manager_last_error = Some(e.to_string());
-                    } else {
-                        warn!("Window manager watcher skipped: {}", e);
-                    }
-                }
-            }
-        }
-
-        // Wait for shutdown
-        if !wait_for_shutdown_signal(&mut shutdown_rx).await {
-            let warning =
-                "desktop continuous monitoring shutdown channel dropped before explicit shutdown";
-            warn!("{warning}");
-            warnings.push(warning.to_string());
-        }
-
-        // Cleanup handled by Drop of WatcherHandles when DesktopNode is dropped?
-        // IngestorNode doesn't drop self immediately, shutdown is called.
+        self.watcher_shutdown_tx = None;
         let finished_at = Timestamp::now();
 
         Ok(ScanReport {

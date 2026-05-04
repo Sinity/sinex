@@ -487,11 +487,11 @@ async fn test_sequential_ingestion(ctx: TestContext) -> Result<()> {
                     created = true;
                     break;
                 }
-                Err(e)
+                // #751 F32: use structured retryability classification (SQLSTATE),
+                // not error message text matching.
+                Err(ref e)
                     if attempts < 4
-                        && (e.to_string().contains("deadlock detected")
-                            || e.to_string().contains("could not serialize")
-                            || e.to_string().contains("restart the transaction")) =>
+                        && sinex_db::query_helpers::is_retryable_db_error(e) =>
                 {
                     tracing::warn!(
                         attempt = attempts,

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use sinex_db::query_helpers::db_error;
 use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
 use sinex_primitives::constants::replay::DEFAULT_CASCADE_MAX_DEPTH;
+use sinex_primitives::env as shared_env;
 use sinex_primitives::SinexError;
 use sqlx::PgPool;
 use std::collections::{HashMap, VecDeque};
@@ -110,7 +111,7 @@ impl CascadeAnalyzerConfig {
         Self {
             batch_size: env_var_usize("SINEX_CASCADE_BATCH_SIZE", DEFAULT_CASCADE_BATCH_SIZE),
             max_depth: env_var_usize("SINEX_CASCADE_MAX_DEPTH", DEFAULT_CASCADE_MAX_DEPTH),
-            include_weak_dependencies: env_var_bool("SINEX_CASCADE_INCLUDE_WEAK", false),
+            include_weak_dependencies: shared_env::bool_or("SINEX_CASCADE_INCLUDE_WEAK", false, "cascade analyzer"),
             memory_limit_bytes: Some(env_var_usize(
                 "SINEX_CASCADE_MEMORY_LIMIT_BYTES",
                 DEFAULT_CASCADE_MEMORY_LIMIT,
@@ -187,32 +188,6 @@ fn env_var_u64(var: &str, default: u64) -> u64 {
             warn!(
                 variable = var,
                 default, "Cascade analyzer override is not valid UTF-8; using default"
-            );
-            default
-        }
-    }
-}
-
-fn env_var_bool(var: &str, default: bool) -> bool {
-    match std::env::var(var) {
-        Ok(raw) => match raw.trim().to_ascii_lowercase().as_str() {
-            "true" | "1" | "yes" => true,
-            "false" | "0" | "no" => false,
-            _ => {
-                warn!(
-                    variable = var,
-                    value = %raw,
-                    default,
-                    "Invalid cascade analyzer boolean override; using default"
-                );
-                default
-            }
-        },
-        Err(std::env::VarError::NotPresent) => default,
-        Err(std::env::VarError::NotUnicode(_)) => {
-            warn!(
-                variable = var,
-                default, "Cascade analyzer boolean override is not valid UTF-8; using default"
             );
             default
         }
