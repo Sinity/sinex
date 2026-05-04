@@ -19,7 +19,7 @@ pub use unified_node::{
 };
 
 use sinex_primitives::register_source_unit;
-use sinex_primitives::source_unit::{
+use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
     RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
@@ -47,7 +47,7 @@ register_source_unit! {
         access_policy: "target_runtime_bridge:clipboard",
         package_impact: "no_new_output",
         implementation_mode: "rust_in_pack:desktop",
-        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -77,7 +77,7 @@ register_source_unit! {
         access_policy: "target_runtime_bridge:window_manager",
         package_impact: "no_new_output",
         implementation_mode: "rust_in_pack:desktop",
-        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -106,6 +106,6 @@ register_source_unit! {
         access_policy: "target_home_read:activitywatch_sqlite",
         package_impact: "no_new_output",
         implementation_mode: "rust_in_pack:desktop",
-        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }

@@ -18,7 +18,7 @@
 //! | `relation-extractor` | `--automaton relation-extractor` | [`ScopeReconcilerNode`] |
 //! | `entity-enricher` | `--automaton entity-enricher` | [`ScopeReconcilerNode`] |
 //!
-//! All nine [`SourceUnitDescriptor`](sinex_primitives::source_unit::SourceUnitDescriptor)s are
+//! All nine [`SourceUnitDescriptor`](sinex_primitives::proof::SourceUnitDescriptor)s are
 //! registered at program load via the `register_source_unit!` macro in each submodule.
 
 pub mod automata {

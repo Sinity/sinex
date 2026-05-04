@@ -11,9 +11,9 @@ use crate::output::StructuredError;
 use color_eyre::eyre::{Context, Result};
 use serde::Serialize;
 use sinex_primitives::events::schema_registry::get_all_payloads;
-use sinex_primitives::proof::{self, ProofObligation};
-use sinex_primitives::source_unit::{
-    self, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
+use sinex_primitives::proof::{
+    self, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ProofObligation,
+    RetentionPolicy, RuntimeShape,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -252,7 +252,7 @@ fn execute_check(output: Option<&Path>, ctx: &CommandContext) -> Result<CommandR
 fn build_source_unit_manifest() -> SourceUnitManifest {
     crate::source_unit_inventory::link_source_unit_inventories();
 
-    let mut source_units = source_unit::all_source_units()
+    let mut source_units = proof::all_source_units()
         .map(canonical_source_unit_descriptor)
         .collect::<Vec<_>>();
     source_units.sort_by(|left, right| left.subject.cmp(&right.subject));
@@ -288,7 +288,7 @@ fn build_source_unit_manifest() -> SourceUnitManifest {
 }
 
 fn canonical_source_unit_descriptor(
-    unit: &'static source_unit::SourceUnitDescriptor,
+    unit: &'static proof::SourceUnitDescriptor,
 ) -> SourceUnitDescriptor {
     SourceUnitDescriptor {
         subject: format!("source_unit:{}", unit.id),
@@ -411,7 +411,7 @@ fn package_impact_report(source_units: &[SourceUnitDescriptor]) -> SourceUnitImp
     }
 }
 
-fn role_for(unit: &source_unit::SourceUnitDescriptor) -> &'static str {
+fn role_for(unit: &proof::SourceUnitDescriptor) -> &'static str {
     if unit.namespace == "derived" {
         "derived_node"
     } else {
@@ -419,7 +419,7 @@ fn role_for(unit: &source_unit::SourceUnitDescriptor) -> &'static str {
     }
 }
 
-fn material_policy_for(unit: &source_unit::SourceUnitDescriptor) -> &'static str {
+fn material_policy_for(unit: &proof::SourceUnitDescriptor) -> &'static str {
     if unit.namespace == "derived" {
         "synthesis_provenance"
     } else {
