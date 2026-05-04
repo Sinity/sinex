@@ -563,21 +563,25 @@ async fn generate_verification_report(
 
 #[cfg(test)]
 mod tests {
+    use xtask::sandbox::{sinex_test, TestResult};
     use super::exit_code_for_status;
     use sinex_node_sdk::preflight::VerificationStatus;
 
-    #[test]
-    fn pass_status_exits_successfully() {
+    #[sinex_test]
+    async fn pass_status_exits_successfully() -> TestResult<()> {
         assert_eq!(exit_code_for_status(VerificationStatus::Pass), 0);
+        Ok(())
     }
 
-    #[test]
-    fn warning_status_exits_successfully() {
+    #[sinex_test]
+    async fn warning_status_exits_successfully() -> TestResult<()> {
         assert_eq!(exit_code_for_status(VerificationStatus::Warning), 0);
+        Ok(())
     }
 
-    #[test]
-    fn fail_status_exits_with_error() {
+    #[sinex_test]
+    async fn fail_status_exits_with_error() -> TestResult<()> {
         assert_eq!(exit_code_for_status(VerificationStatus::Fail), 1);
+        Ok(())
     }
 }

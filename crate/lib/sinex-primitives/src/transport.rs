@@ -286,9 +286,10 @@ pub fn has_transport_class_headers(headers: &async_nats::HeaderMap) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::{sinex_test, TestResult};
 
-    #[test]
-    fn transport_headers_include_wire_and_semantic_classes() {
+    #[sinex_test]
+    async fn transport_headers_include_wire_and_semantic_classes() -> TestResult<()> {
         let mut headers = async_nats::HeaderMap::new();
         insert_transport_class_headers(&mut headers, Class::SourceMaterial);
 
@@ -307,5 +308,6 @@ mod tests {
                 .as_deref(),
             Some("source_material")
         );
+        Ok(())
     }
 }

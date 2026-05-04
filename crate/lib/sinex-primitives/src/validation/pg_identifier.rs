@@ -64,9 +64,10 @@ pub fn validate_pg_identifier(ident: &str, kind: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::{sinex_test, TestResult};
 
-    #[test]
-    fn valid_identifiers_are_accepted() {
+    #[sinex_test]
+    async fn valid_identifiers_are_accepted() -> TestResult<()> {
         for ident in &[
             "sinex_dev",
             "sinex_app",
@@ -83,10 +84,11 @@ mod tests {
                 ident
             );
         }
+        Ok(())
     }
 
-    #[test]
-    fn malicious_identifiers_are_rejected() {
+    #[sinex_test]
+    async fn malicious_identifiers_are_rejected() -> TestResult<()> {
         let malicious = [
             "; DROP TABLE events; --",
             "has space",
@@ -105,27 +107,32 @@ mod tests {
                 ident
             );
         }
+        Ok(())
     }
 
-    #[test]
-    fn empty_identifier_is_rejected() {
+    #[sinex_test]
+    async fn empty_identifier_is_rejected() -> TestResult<()> {
         assert!(validate_pg_identifier("", "database").is_err());
+        Ok(())
     }
 
-    #[test]
-    fn too_long_identifier_is_rejected() {
+    #[sinex_test]
+    async fn too_long_identifier_is_rejected() -> TestResult<()> {
         let long = "a".repeat(64);
         assert!(validate_pg_identifier(&long, "table").is_err());
+        Ok(())
     }
 
-    #[test]
-    fn exactly_63_chars_is_accepted() {
+    #[sinex_test]
+    async fn exactly_63_chars_is_accepted() -> TestResult<()> {
         let ident = "a".repeat(63);
         assert!(validate_pg_identifier(&ident, "table").is_ok());
+        Ok(())
     }
 
-    #[test]
-    fn digit_first_char_is_rejected() {
+    #[sinex_test]
+    async fn digit_first_char_is_rejected() -> TestResult<()> {
         assert!(validate_pg_identifier("1bad_start", "column").is_err());
+        Ok(())
     }
 }

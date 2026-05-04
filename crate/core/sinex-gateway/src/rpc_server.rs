@@ -1833,8 +1833,8 @@ mod tests {
         apply_rpc_layers(base, &limits, &[])
     }
 
-    #[test]
-    fn parse_cors_origin_values_keeps_valid_entries_and_rejects_invalid_ones() {
+    #[sinex_test]
+    async fn parse_cors_origin_values_keeps_valid_entries_and_rejects_invalid_ones() -> TestResult<()> {
         let origins = parse_cors_origin_values(&[
             "http://localhost:3000".to_string(),
             "bad\norigin".to_string(),
@@ -1847,12 +1847,14 @@ mod tests {
             .collect();
 
         assert_eq!(parsed, vec!["http://localhost:3000", "https://example.com"]);
+        Ok(())
     }
 
-    #[test]
-    fn parse_cors_origin_values_rejects_all_invalid_entries() {
+    #[sinex_test]
+    async fn parse_cors_origin_values_rejects_all_invalid_entries() -> TestResult<()> {
         let origins = parse_cors_origin_values(&["bad\norigin".to_string(), "\u{7f}".to_string()]);
         assert!(origins.is_empty());
+        Ok(())
     }
 
     async fn spawn_router(router: Router) -> (SocketAddr, JoinHandle<()>) {

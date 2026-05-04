@@ -718,6 +718,7 @@ pub type Result<T> = std::result::Result<T, SinexError>;
 
 #[cfg(test)]
 mod retryability_tests {
+    use xtask::sandbox::{sinex_test, TestResult};
     use super::{ErrorClass, ErrorDetails, SinexError};
 
     fn details() -> ErrorDetails {
@@ -772,8 +773,8 @@ mod retryability_tests {
     /// every variant. This test will fail to compile if a variant is missing
     /// from `all_variants()` because the exhaustive `match` below covers the
     /// enum — add missing variants to the list to fix it.
-    #[test]
-    fn is_retryable_agrees_with_error_class() {
+    #[sinex_test]
+    async fn is_retryable_agrees_with_error_class() -> TestResult<()> {
         for err in all_variants() {
             let class = err.error_class();
             assert_eq!(
@@ -783,10 +784,11 @@ mod retryability_tests {
                 err
             );
         }
+        Ok(())
     }
 
-    #[test]
-    fn is_permanent_agrees_with_error_class() {
+    #[sinex_test]
+    async fn is_permanent_agrees_with_error_class() -> TestResult<()> {
         for err in all_variants() {
             let class = err.error_class();
             assert_eq!(
@@ -796,10 +798,11 @@ mod retryability_tests {
                 err
             );
         }
+        Ok(())
     }
 
-    #[test]
-    fn retryable_and_permanent_are_mutually_exclusive() {
+    #[sinex_test]
+    async fn retryable_and_permanent_are_mutually_exclusive() -> TestResult<()> {
         for err in all_variants() {
             assert!(
                 !(err.is_retryable() && err.is_permanent()),
@@ -807,6 +810,7 @@ mod retryability_tests {
                 err
             );
         }
+        Ok(())
     }
 }
 

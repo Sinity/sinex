@@ -324,14 +324,15 @@ fn default_runtime_target_name() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::{sinex_test, TestResult};
     use crate::{
         DeploymentDatabaseRuntime, DeploymentGatewayRuntime, DeploymentNatsRuntime,
         DeploymentReadinessMode, DeploymentSecrets, DeploymentTarget,
     };
     use std::env;
 
-    #[test]
-    fn configured_path_treats_empty_override_as_disabled() {
+    #[sinex_test]
+    async fn configured_path_treats_empty_override_as_disabled() -> TestResult<()> {
         let previous = env::var_os("SINEX_RUNTIME_TARGET_CONFIG");
         unsafe { env::set_var("SINEX_RUNTIME_TARGET_CONFIG", "") };
 
@@ -343,10 +344,11 @@ mod tests {
         }
 
         assert!(configured.is_none());
+        Ok(())
     }
 
-    #[test]
-    fn load_from_path_sets_source_path() {
+    #[sinex_test]
+    async fn load_from_path_sets_source_path() -> TestResult<()> {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("runtime-target.json");
         std::fs::write(
@@ -364,10 +366,11 @@ mod tests {
             Some("https://127.0.0.1:9999")
         );
         assert_eq!(descriptor.source_path.as_deref(), Some(path.as_path()));
+        Ok(())
     }
 
-    #[test]
-    fn deployment_readiness_maps_to_runtime_target() {
+    #[sinex_test]
+    async fn deployment_readiness_maps_to_runtime_target() -> TestResult<()> {
         let readiness = DeploymentReadinessDescriptor {
             version: 1,
             mode: DeploymentReadinessMode::Enabled,
@@ -426,10 +429,11 @@ mod tests {
             Some(RuntimeTargetGatewayTokenRole::Admin)
         );
         assert_eq!(target.services.managed_units, ["sinex-gateway.service"]);
+        Ok(())
     }
 
-    #[test]
-    fn gateway_token_role_applies_expected_suffix() {
+    #[sinex_test]
+    async fn gateway_token_role_applies_expected_suffix() -> TestResult<()> {
         assert_eq!(
             RuntimeTargetGatewayTokenRole::Admin.apply_to_token("sinex_secret\n"),
             "sinex_secret:admin"
@@ -442,5 +446,6 @@ mod tests {
             RuntimeTargetGatewayTokenRole::Readonly.apply_to_token("sinex_secret:admin"),
             "sinex_secret:admin"
         );
+        Ok(())
     }
 }
