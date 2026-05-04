@@ -7,6 +7,7 @@ use camino::Utf8PathBuf;
 #[cfg(feature = "db")]
 use sinex_db::DbPool as PgPool;
 use sinex_primitives::events::Event;
+use sinex_primitives::domain::ServiceName;
 use sinex_primitives::{HostName, Id, JsonValue, Uuid};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -110,7 +111,7 @@ impl Default for RuntimeDrainController {
 /// Basic metadata about the running service.
 #[derive(Debug, Clone)]
 pub struct ServiceInfo {
-    service_name: String,
+    service_name: ServiceName,
     node_name: String,
     source_unit_id: Option<String>,
     runner_pack: Option<String>,
@@ -125,7 +126,7 @@ pub struct ServiceInfo {
 impl ServiceInfo {
     #[must_use]
     pub fn new(
-        service_name: String,
+        service_name: impl Into<ServiceName>,
         node_name: String,
         host: HostName,
         work_dir: PathBuf,
@@ -135,7 +136,7 @@ impl ServiceInfo {
         node_run_id: Option<Uuid>,
     ) -> Self {
         Self {
-            service_name,
+            service_name: service_name.into(),
             node_name,
             source_unit_id: None,
             runner_pack: None,
@@ -151,7 +152,7 @@ impl ServiceInfo {
     #[must_use]
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_runtime_identity(
-        service_name: String,
+        service_name: impl Into<ServiceName>,
         node_name: String,
         source_unit_id: Option<String>,
         runner_pack: Option<String>,
@@ -163,7 +164,7 @@ impl ServiceInfo {
         node_run_id: Option<Uuid>,
     ) -> Self {
         Self {
-            service_name,
+            service_name: service_name.into(),
             node_name,
             source_unit_id,
             runner_pack,
@@ -177,7 +178,7 @@ impl ServiceInfo {
     }
 
     #[must_use]
-    pub fn service_name(&self) -> &str {
+    pub fn service_name(&self) -> &ServiceName {
         &self.service_name
     }
 

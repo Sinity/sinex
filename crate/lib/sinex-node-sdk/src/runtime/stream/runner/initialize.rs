@@ -5,12 +5,13 @@
 //! preparation, DB-backed registration, and runtime state assembly.
 
 use super::*;
+use sinex_primitives::domain::ServiceName;
 
 impl<T: Node + 'static> NodeRunner<T> {
     /// Initialize the node with a specific transport
     pub async fn initialize_with_transport(
         &mut self,
-        service_name: String,
+        service_name: impl Into<ServiceName>,
         raw_config: HashMap<String, serde_json::Value>,
         #[cfg(feature = "db")] db_pool: Option<PgPool>,
         transport: EventTransport,
@@ -37,6 +38,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             }
         }
         self.lifecycle = RunnerLifecycle::Initializing;
+        let service_name: ServiceName = service_name.into();
 
         // DATABASE_URL is optional - nodes that need it will call
         // require_db_pool() which provides a clear error message.
@@ -118,7 +120,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         let runner_pack = Self::config_identity_value(&raw_config, "runner_pack");
         let checkpoint_identity = source_unit_id
             .clone()
-            .unwrap_or_else(|| service_name.clone());
+            .unwrap_or_else(|| service_name.to_string());
 
         // Initialize checkpoint manager with KV
         let checkpoint_manager = Arc::new(CheckpointManager::with_missing_checkpoint_warning(

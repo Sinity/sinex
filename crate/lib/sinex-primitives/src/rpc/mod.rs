@@ -37,6 +37,7 @@ pub mod ops;
 pub mod pkm;
 pub mod replay;
 pub mod shadow;
+pub mod sources;
 pub mod system;
 pub mod telemetry;
 
@@ -56,6 +57,7 @@ pub mod prelude {
     pub use super::pkm::*;
     pub use super::replay::*;
     pub use super::shadow::*;
+    pub use super::sources::*;
     pub use super::system::*;
     pub use super::telemetry::*;
 }
