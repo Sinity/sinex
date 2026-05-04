@@ -110,7 +110,7 @@ impl Default for SystemConfig {
 }
 
 use sinex_primitives::register_source_unit;
-use sinex_primitives::source_unit::{
+use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
     RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
@@ -135,7 +135,7 @@ register_source_unit! {
         access_policy: "runtime_self_observation",
         package_impact: "no_new_output",
         implementation_mode: "rust_in_pack:system",
-        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -163,7 +163,7 @@ register_source_unit! {
         access_policy: "systemd_journal_read",
         package_impact: "no_new_output",
         implementation_mode: "rust_in_pack:system",
-        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -188,7 +188,7 @@ register_source_unit! {
         access_policy: "systemd_journal_read",
         package_impact: "no_new_output",
         implementation_mode: "rust_in_pack:system",
-        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -218,7 +218,7 @@ register_source_unit! {
         access_policy: "system_bus_session_bus_read",
         package_impact: "no_new_output",
         implementation_mode: "rust_in_pack:system",
-        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -244,6 +244,6 @@ register_source_unit! {
         access_policy: "udev_monitor_read",
         package_impact: "no_new_output",
         implementation_mode: "rust_in_pack:system",
-        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }

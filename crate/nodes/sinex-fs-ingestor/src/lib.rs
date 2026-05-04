@@ -9,7 +9,7 @@ pub mod unified_node;
 pub use unified_node::{FilesystemConfig, FilesystemNode, FilesystemState};
 
 use sinex_primitives::register_source_unit;
-use sinex_primitives::source_unit::{
+use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitDescriptor,
 };
@@ -41,6 +41,6 @@ register_source_unit! {
         access_policy: "configured_watch_roots",
         package_impact: "no_new_output",
         implementation_mode: "rust_in_pack:fs",
-        build_impact: sinex_primitives::source_unit::SourceUnitBuildImpact::ZERO,
+        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
