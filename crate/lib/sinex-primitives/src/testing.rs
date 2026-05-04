@@ -24,7 +24,6 @@
 //!
 //! For **DB tests**: Use `ctx.pipeline().publish()` or `ctx.pipeline().publish_with_timestamp()`.
 
-use crate::events::Publishable;
 
 /// Create a minimal event stub for testing when source/type don't matter.
 ///
@@ -48,31 +47,6 @@ pub fn event_stub(payload: crate::JsonValue) -> crate::Event<crate::JsonValue> {
         payload,
     )
 }
-
-/// Extension trait for creating test events from typed payloads.
-///
-/// # Example
-/// ```rust,ignore
-/// use sinex_primitives::testing::TestablePayload;
-/// use my_crate::FileCreatedPayload;
-///
-/// let payload = FileCreatedPayload { path: "/test".into(), size: 1024 };
-/// let event = payload.into_test_event();  // Source/type inferred from payload
-/// ```
-pub trait TestablePayload: Publishable + Sized {
-    /// Convert this payload into a test event.
-    ///
-    /// **WARNING**: Do NOT insert into database. Use for pure logic tests only.
-    fn into_test_event(self) -> crate::Event<crate::JsonValue> {
-        let payload_json = self
-            .to_json_value()
-            .expect("TestablePayload serialization should not fail");
-        event_fixture(self.source(), self.event_type(), payload_json)
-    }
-}
-
-// Blanket impl for all Publishable types
-impl<T: Publishable + Sized> TestablePayload for T {}
 
 /// Create an event fixture for testing (in-memory only).
 ///
@@ -136,7 +110,6 @@ pub mod strategies {
 
     use crate::domain::{CommandText, HostName, RecordedPath, SanitizedPath, ShellName};
     use crate::events::payloads::{FileCreatedPayload, HyprlandWindowFocusedPayload, KittyCommandExecutedPayload};
-    use crate::testing::TestablePayload;
     use crate::units::{ExitCode, Nanoseconds};
     use crate::{EventSource, EventType, Timestamp, Uuid};
     use proptest::prelude::*;
@@ -299,21 +272,42 @@ pub mod strategies {
     ///
     /// WARNING: Do NOT insert into database — no valid provenance.
     pub fn file_created_event() -> impl Strategy<Value = crate::Event<crate::JsonValue>> {
-        file_created_payload().prop_map(|payload| payload.into_test_event())
+        file_created_payload().prop_map(|payload| {
+            let json = serde_json::to_value(&payload).expect("serialization should not fail");
+            event_fixture(
+                crate::EventSource::from_static(<FileCreatedPayload as crate::events::EventPayload>::SOURCE),
+                crate::EventType::from_static(<FileCreatedPayload as crate::events::EventPayload>::EVENT_TYPE),
+                json,
+            )
+        })
     }
 
     /// Generate a complete Event<JsonValue> with random KittyCommandExecutedPayload for property testing.
     ///
     /// WARNING: Do NOT insert into database — no valid provenance.
     pub fn kitty_command_executed_event() -> impl Strategy<Value = crate::Event<crate::JsonValue>> {
-        kitty_command_executed_payload().prop_map(|payload| payload.into_test_event())
+        kitty_command_executed_payload().prop_map(|payload| {
+            let json = serde_json::to_value(&payload).expect("serialization should not fail");
+            event_fixture(
+                crate::EventSource::from_static(<KittyCommandExecutedPayload as crate::events::EventPayload>::SOURCE),
+                crate::EventType::from_static(<KittyCommandExecutedPayload as crate::events::EventPayload>::EVENT_TYPE),
+                json,
+            )
+        })
     }
 
     /// Generate a complete Event<JsonValue> with random HyprlandWindowFocusedPayload for property testing.
     ///
     /// WARNING: Do NOT insert into database — no valid provenance.
     pub fn window_focused_event() -> impl Strategy<Value = crate::Event<crate::JsonValue>> {
-        window_focused_payload().prop_map(|payload| payload.into_test_event())
+        window_focused_payload().prop_map(|payload| {
+            let json = serde_json::to_value(&payload).expect("serialization should not fail");
+            event_fixture(
+                crate::EventSource::from_static(<HyprlandWindowFocusedPayload as crate::events::EventPayload>::SOURCE),
+                crate::EventType::from_static(<HyprlandWindowFocusedPayload as crate::events::EventPayload>::EVENT_TYPE),
+                json,
+            )
+        })
     }
 
     #[cfg(test)]

@@ -15,39 +15,50 @@ use xtask::sandbox::prelude::*;
 // =============================================================================
 // is_retryable_db_error — pure function tests (no DB needed)
 // =============================================================================
+//
+// #751 F32: tests use SQLSTATE codes in context_map (set by db_error())
+// instead of raw message strings. Class 40 = transaction rollback;
+// 25P02 = current transaction is aborted.
 
 #[sinex_test]
 async fn retryable_deadlock_detected() -> TestResult<()> {
-    let err = SinexError::database("deadlock detected");
+    // SQLSTATE 40P01 = deadlock_detected
+    let err = SinexError::database("query failed during deadlock")
+        .with_context("sqlstate", "40P01");
     assert!(is_retryable_db_error(&err));
     Ok(())
 }
 
 #[sinex_test]
 async fn retryable_could_not_serialize_access() -> TestResult<()> {
-    let err = SinexError::database("could not serialize access due to concurrent update");
+    // SQLSTATE 40001 = serialization_failure
+    let err = SinexError::database("query failed during concurrent update")
+        .with_context("sqlstate", "40001");
     assert!(is_retryable_db_error(&err));
     Ok(())
 }
 
 #[sinex_test]
 async fn retryable_transaction_rollback() -> TestResult<()> {
-    let err = SinexError::database("transaction rollback due to serialization failure");
+    // Class 40 — any 40xxx SQLSTATE is retryable
+    let err = SinexError::database("query failed")
+        .with_context("sqlstate", "40002"); // transaction_rollback / integrity violation
     assert!(is_retryable_db_error(&err));
     Ok(())
 }
 
 #[sinex_test]
 async fn retryable_current_transaction_is_aborted() -> TestResult<()> {
-    let err = SinexError::database(
-        "current transaction is aborted, commands ignored until end of transaction block",
-    );
+    // SQLSTATE 25P02 = in_failed_sql_transaction
+    let err = SinexError::database("query failed in aborted transaction")
+        .with_context("sqlstate", "25P02");
     assert!(is_retryable_db_error(&err));
     Ok(())
 }
 
 #[sinex_test]
 async fn not_retryable_generic_database_error() -> TestResult<()> {
+    // No sqlstate = non-retryable
     let err = SinexError::database("relation \"core.events\" does not exist");
     assert!(!is_retryable_db_error(&err));
     Ok(())
@@ -55,14 +66,18 @@ async fn not_retryable_generic_database_error() -> TestResult<()> {
 
 #[sinex_test]
 async fn not_retryable_constraint_violation() -> TestResult<()> {
-    let err = SinexError::database("duplicate key value violates unique constraint");
+    // SQLSTATE 23505 = unique_violation (class 23, not retryable)
+    let err = SinexError::database("duplicate key value violates unique constraint")
+        .with_context("sqlstate", "23505");
     assert!(!is_retryable_db_error(&err));
     Ok(())
 }
 
 #[sinex_test]
 async fn not_retryable_syntax_error() -> TestResult<()> {
-    let err = SinexError::database("syntax error at or near SELECT");
+    // SQLSTATE 42601 = syntax_error (class 42, not retryable)
+    let err = SinexError::database("syntax error at or near SELECT")
+        .with_context("sqlstate", "42601");
     assert!(!is_retryable_db_error(&err));
     Ok(())
 }
@@ -83,28 +98,32 @@ async fn not_retryable_network_error() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn retryable_message_in_context_chain() -> TestResult<()> {
-    // SinexError with retryable message embedded in context
-    let err = SinexError::database("query failed")
-        .with_context("detail", "deadlock detected between two transactions");
-    // The Display impl includes context, so "deadlock detected" should appear in to_string()
+async fn retryable_sqlstate_from_chain() -> TestResult<()> {
+    // #751 F32: sqlstate in context_map is the classification mechanism.
+    // An error with a retryable SQLSTATE is retryable regardless of message text.
+    let err = SinexError::database("generic query failure")
+        .with_context("sqlstate", "40P01")
+        .with_context("detail", "some additional info");
     assert!(is_retryable_db_error(&err));
     Ok(())
 }
 
 #[sinex_test]
-async fn not_retryable_empty_message() -> TestResult<()> {
+async fn not_retryable_empty_sqlstate() -> TestResult<()> {
+    // No sqlstate entry = non-retryable
     let err = SinexError::database("");
     assert!(!is_retryable_db_error(&err));
     Ok(())
 }
 
 #[sinex_test]
-async fn retryable_substring_in_longer_message() -> TestResult<()> {
+async fn not_retryable_without_sqlstate() -> TestResult<()> {
+    // #751 F32: without a sqlstate context entry, the error is non-retryable
+    // even if the message text historically looked retryable.
     let err = SinexError::database(
         "ERROR: could not serialize access due to read/write dependencies among transactions",
     );
-    assert!(is_retryable_db_error(&err));
+    assert!(!is_retryable_db_error(&err));
     Ok(())
 }
 

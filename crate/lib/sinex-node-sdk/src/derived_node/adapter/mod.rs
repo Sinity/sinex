@@ -14,7 +14,7 @@ mod state_io;
 use super::traits::{DerivedNodeConfig, DerivedNodeImpl};
 
 use crate::checkpoint::CheckpointManager;
-use crate::error_helpers::env_bool_with_default;
+use sinex_primitives::env as shared_env;
 use crate::processing::PersistedState;
 use crate::runtime::stream::{
     Checkpoint, EventEmitter, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType,
@@ -374,7 +374,7 @@ where
                 use crate::health_reporter::{HealthReporter, HealthThresholds};
                 use crate::self_observation::{SelfObserver, SelfObserverConfig};
 
-                let health_enabled = env_bool_with_default(
+                let health_enabled = shared_env::bool_or(
                     "SINEX_HEALTH_MONITORING_ENABLED",
                     true,
                     "derived node health monitoring",

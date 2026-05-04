@@ -6,6 +6,7 @@
 //! and automaton processing.
 
 use super::*;
+use sinex_primitives::env as shared_env;
 
 impl<T: Node + 'static> NodeRunner<T> {
     /// Run a scan operation
@@ -84,7 +85,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             "Starting service with startup sequence"
         );
 
-        let heartbeat_interval = env_parse_with_default(
+        let heartbeat_interval = shared_env::parse_or(
             "SINEX_COORDINATION_HEARTBEAT",
             30_u64,
             "node coordination heartbeat",

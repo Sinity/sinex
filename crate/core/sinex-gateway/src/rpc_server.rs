@@ -2,13 +2,15 @@
 
 // Local crate imports
 use crate::{
-    config::{GatewayConfig, env_var_optional},
+    config::GatewayConfig,
     distributed_rate_limit::{DistributedRateLimitConfig, DistributedRateLimiter},
     gateway_metrics::GatewayMetrics,
     handlers::system::system_health_response,
     rate_limit::TokenRateLimiter,
     service_container::ServiceContainer,
 };
+
+use sinex_primitives::env as shared_env;
 
 // External crates
 use axum::{
@@ -420,21 +422,21 @@ impl GatewayAuth {
 }
 
 fn read_token_and_path_from_env() -> color_eyre::eyre::Result<(Option<String>, Option<PathBuf>)> {
-    if let Some(path_str) = env_var_optional("SINEX_GATEWAY_ADMIN_TOKEN_FILE")? {
+    if let Some(path_str) = shared_env::strict_var("SINEX_GATEWAY_ADMIN_TOKEN_FILE")? {
         let path = PathBuf::from(&path_str);
         let contents = std::fs::read_to_string(&path)
             .wrap_err("Failed to read SINEX_GATEWAY_ADMIN_TOKEN_FILE")?;
         return Ok((Some(contents.trim().to_string()), Some(path)));
     }
 
-    if let Some(path_str) = env_var_optional("SINEX_RPC_TOKEN_FILE")? {
+    if let Some(path_str) = shared_env::strict_var("SINEX_RPC_TOKEN_FILE")? {
         let path = PathBuf::from(&path_str);
         let contents =
             std::fs::read_to_string(&path).wrap_err("Failed to read SINEX_RPC_TOKEN_FILE")?;
         return Ok((Some(contents.trim().to_string()), Some(path)));
     }
 
-    if let Some(token) = env_var_optional("SINEX_RPC_TOKEN")? {
+    if let Some(token) = shared_env::strict_var("SINEX_RPC_TOKEN")? {
         return Ok((Some(token.trim().to_string()), None));
     }
 

@@ -1,6 +1,7 @@
 //! NATS `JetStream` event publisher
 
-use crate::{NodeResult, error_helpers::env_parse_with_default};
+use crate::NodeResult;
+use sinex_primitives::env as shared_env;
 use serde::Serialize;
 use sinex_primitives::{
     JsonValue,
@@ -55,6 +56,7 @@ pub struct NatsPublisher {
     namespace: Option<String>,
     semaphores: PublishSemaphores,
     processing_failure_log_count: Arc<AtomicU64>,
+    publish_ack_timeout: Duration,
 }
 
 /// Destructured provenance fields for publish payloads.
@@ -138,27 +140,32 @@ impl NatsPublisher {
     #[must_use]
     pub fn with_namespace(nats_client: async_nats::Client, namespace: Option<String>) -> Self {
         let env = environment().clone();
-        let raw_event_concurrency = env_parse_with_default(
+        let raw_event_concurrency = shared_env::parse_or(
             "SINEX_PUBLISH_CONCURRENCY",
             DEFAULT_RAW_EVENT_PUBLISH_CONCURRENCY,
             "nats raw-event publisher concurrency",
         );
-        let telemetry_concurrency = env_parse_with_default(
+        let telemetry_concurrency = shared_env::parse_or(
             "SINEX_TELEMETRY_PUBLISH_CONCURRENCY",
             DEFAULT_TELEMETRY_PUBLISH_CONCURRENCY,
             "nats telemetry publisher concurrency",
         );
-        let raw_ingest_dlq_concurrency = env_parse_with_default(
+        let raw_ingest_dlq_concurrency = shared_env::parse_or(
             "SINEX_RAW_INGEST_DLQ_PUBLISH_CONCURRENCY",
             DEFAULT_RAW_INGEST_DLQ_PUBLISH_CONCURRENCY,
             "nats raw-ingest DLQ publisher concurrency",
         );
-        let processing_failure_concurrency = env_parse_with_default(
+        let processing_failure_concurrency = shared_env::parse_or(
             "SINEX_PROCESSING_FAILURE_PUBLISH_CONCURRENCY",
             DEFAULT_PROCESSING_FAILURE_PUBLISH_CONCURRENCY,
             "nats processing-failure publisher concurrency",
         );
         let js = async_nats::jetstream::new(nats_client.clone());
+        let publish_ack_timeout: u64 = shared_env::parse_or(
+            "SINEX_PUBLISH_ACK_TIMEOUT_MS",
+            DEFAULT_PUBLISH_ACK_TIMEOUT.as_millis() as u64,
+            "nats publish ack timeout (ms)",
+        );
         Self {
             nats_client,
             js,
@@ -171,7 +178,15 @@ impl NatsPublisher {
                 processing_failure_concurrency,
             ),
             processing_failure_log_count: Arc::new(AtomicU64::new(0)),
+            publish_ack_timeout: Duration::from_millis(publish_ack_timeout),
         }
+    }
+
+    /// Set the publish ack timeout (e.g. from `RetryConfig::publish_ack_timeout`).
+    #[must_use]
+    pub fn with_publish_ack_timeout(mut self, timeout: Duration) -> Self {
+        self.publish_ack_timeout = timeout;
+        self
     }
 
     /// Get the underlying NATS client
@@ -254,7 +269,7 @@ impl NatsPublisher {
                 "Failed to publish raw-ingest DLQ message",
             )
             .await?;
-        let ack = wait_for_publish_ack(ack_future, DEFAULT_PUBLISH_ACK_TIMEOUT).await?;
+        let ack = wait_for_publish_ack(ack_future, self.publish_ack_timeout).await?;
 
         tracing::warn!(
             event_id = %event_id,
@@ -388,7 +403,7 @@ impl NatsPublisher {
                 "Failed to publish processing-failure message",
             )
             .await?;
-        let ack = wait_for_publish_ack(ack_future, DEFAULT_PUBLISH_ACK_TIMEOUT).await?;
+        let ack = wait_for_publish_ack(ack_future, self.publish_ack_timeout).await?;
 
         let count = self
             .processing_failure_log_count
@@ -443,7 +458,7 @@ impl NatsPublisher {
         let ack_future = self
             .publish_with_headers(subject, headers, payload, "Failed to publish event")
             .await?;
-        let ack = wait_for_publish_ack(ack_future, DEFAULT_PUBLISH_ACK_TIMEOUT).await?;
+        let ack = wait_for_publish_ack(ack_future, self.publish_ack_timeout).await?;
 
         tracing::debug!(
             event_id = %event_id_str,

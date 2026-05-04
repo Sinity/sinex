@@ -497,33 +497,33 @@ impl GatewayConfig {
         self.database_url = env_string_override("DATABASE_URL", self.database_url.clone())?;
         self.content_store_path =
             env_string_override("SINEX_CONTENT_STORE_PATH", self.content_store_path.clone())?;
-        self.rpc_token = env_var_optional("SINEX_RPC_TOKEN")?
+        self.rpc_token = shared_env::strict_var("SINEX_RPC_TOKEN")?
             .map(|v| v.trim().to_string())
             .or(self.rpc_token.take());
         self.rpc_token_file =
-            env_var_optional("SINEX_RPC_TOKEN_FILE")?.or(self.rpc_token_file.take());
+            shared_env::strict_var("SINEX_RPC_TOKEN_FILE")?.or(self.rpc_token_file.take());
         self.admin_token_file =
-            env_var_optional("SINEX_GATEWAY_ADMIN_TOKEN_FILE")?.or(self.admin_token_file.take());
+            shared_env::strict_var("SINEX_GATEWAY_ADMIN_TOKEN_FILE")?.or(self.admin_token_file.take());
         self.nats.url = env_string_override("SINEX_NATS_URL", self.nats.url.clone())?;
-        self.nats.name = env_var_optional("SINEX_NATS_NAME")?.or(self.nats.name.take());
+        self.nats.name = shared_env::strict_var("SINEX_NATS_NAME")?.or(self.nats.name.take());
         self.nats.require_tls = env_bool_override("SINEX_NATS_REQUIRE_TLS", self.nats.require_tls)?;
-        self.nats.ca_cert = env_var_optional("SINEX_NATS_CA_CERT")?
+        self.nats.ca_cert = shared_env::strict_var("SINEX_NATS_CA_CERT")?
             .map(PathBuf::from)
             .or(self.nats.ca_cert.take());
-        self.nats.client_cert = env_var_optional("SINEX_NATS_CLIENT_CERT")?
+        self.nats.client_cert = shared_env::strict_var("SINEX_NATS_CLIENT_CERT")?
             .map(PathBuf::from)
             .or(self.nats.client_cert.take());
-        self.nats.client_key = env_var_optional("SINEX_NATS_CLIENT_KEY")?
+        self.nats.client_key = shared_env::strict_var("SINEX_NATS_CLIENT_KEY")?
             .map(PathBuf::from)
             .or(self.nats.client_key.take());
-        self.nats.creds_file = env_var_optional("SINEX_NATS_CREDS_FILE")?
+        self.nats.creds_file = shared_env::strict_var("SINEX_NATS_CREDS_FILE")?
             .map(PathBuf::from)
             .or(self.nats.creds_file.take());
-        self.nats.nkey_seed_file = env_var_optional("SINEX_NATS_NKEY_SEED_FILE")?
+        self.nats.nkey_seed_file = shared_env::strict_var("SINEX_NATS_NKEY_SEED_FILE")?
             .map(PathBuf::from)
             .or(self.nats.nkey_seed_file.take());
-        self.nats.token = env_var_optional("SINEX_NATS_TOKEN")?.or(self.nats.token.take());
-        self.nats.token_file = env_var_optional("SINEX_NATS_TOKEN_FILE")?
+        self.nats.token = shared_env::strict_var("SINEX_NATS_TOKEN")?.or(self.nats.token.take());
+        self.nats.token_file = shared_env::strict_var("SINEX_NATS_TOKEN_FILE")?
             .map(PathBuf::from)
             .or(self.nats.token_file.take());
 
@@ -556,19 +556,19 @@ impl GatewayConfig {
             self.nats_consumer_create_timeout_secs,
         )?;
         self.native_messaging_trusted_extensions =
-            env_var_optional("SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS")?
+            shared_env::strict_var("SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS")?
                 .or(self.native_messaging_trusted_extensions.take());
         self.native_messaging_trusted_hosts =
-            env_var_optional("SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS")?
+            shared_env::strict_var("SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS")?
                 .or(self.native_messaging_trusted_hosts.take());
         self.native_messaging_protocol_version =
-            env_var_optional("SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION")?
+            shared_env::strict_var("SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION")?
                 .or(self.native_messaging_protocol_version.take());
         self.native_messaging_capabilities =
-            env_var_optional("SINEX_NATIVE_MESSAGING_CAPABILITIES")?
+            shared_env::strict_var("SINEX_NATIVE_MESSAGING_CAPABILITIES")?
                 .or(self.native_messaging_capabilities.take());
         self.native_messaging_extension_roles =
-            env_var_optional("SINEX_NATIVE_MESSAGING_EXTENSION_ROLES")?
+            shared_env::strict_var("SINEX_NATIVE_MESSAGING_EXTENSION_ROLES")?
                 .or(self.native_messaging_extension_roles.take());
         self.native_messaging_read_timeout_secs = env_u64_override(
             "SINEX_NATIVE_MESSAGING_READ_TIMEOUT_SECS",
@@ -582,40 +582,16 @@ impl GatewayConfig {
     }
 }
 
-pub(crate) fn env_var_optional(name: &str) -> Result<Option<String>, SinexError> {
-    match std::env::var(name) {
-        Ok(value) => Ok(Some(value)),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(_)) => Err(SinexError::configuration(format!(
-            "Environment variable {name} is not valid UTF-8"
-        ))),
-    }
-}
-
-pub(crate) fn env_bool_optional(name: &str) -> Result<Option<bool>, SinexError> {
-    let Some(raw) = env_var_optional(name)? else {
-        return Ok(None);
-    };
-
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Ok(Some(true)),
-        "0" | "false" | "no" | "off" => Ok(Some(false)),
-        _ => Err(SinexError::configuration(format!(
-            "Environment variable {name} has invalid boolean value `{raw}`"
-        ))),
-    }
-}
-
 fn env_string_override(name: &str, current: String) -> Result<String, SinexError> {
     Ok(shared_env::strict_var(name)?.unwrap_or(current))
 }
 
 fn env_option_override(name: &str, current: Option<String>) -> Result<Option<String>, SinexError> {
-    Ok(env_var_optional(name)?.or(current))
+    Ok(shared_env::strict_var(name)?.or(current))
 }
 
 fn env_u32_override(name: &str, current: u32) -> Result<u32, SinexError> {
-    let Some(raw) = env_var_optional(name)? else {
+    let Some(raw) = shared_env::strict_var(name)? else {
         return Ok(current);
     };
 
@@ -627,7 +603,7 @@ fn env_u32_override(name: &str, current: u32) -> Result<u32, SinexError> {
 }
 
 fn env_u64_override(name: &str, current: u64) -> Result<u64, SinexError> {
-    let Some(raw) = env_var_optional(name)? else {
+    let Some(raw) = shared_env::strict_var(name)? else {
         return Ok(current);
     };
 
@@ -639,7 +615,7 @@ fn env_u64_override(name: &str, current: u64) -> Result<u64, SinexError> {
 }
 
 fn env_usize_override(name: &str, current: usize) -> Result<usize, SinexError> {
-    let Some(raw) = env_var_optional(name)? else {
+    let Some(raw) = shared_env::strict_var(name)? else {
         return Ok(current);
     };
 
@@ -651,5 +627,5 @@ fn env_usize_override(name: &str, current: usize) -> Result<usize, SinexError> {
 }
 
 fn env_bool_override(name: &str, current: bool) -> Result<bool, SinexError> {
-    Ok(env_bool_optional(name)?.unwrap_or(current))
+    Ok(shared_env::strict_flag(name)?.unwrap_or(current))
 }

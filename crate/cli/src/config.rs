@@ -295,9 +295,9 @@ impl Config {
         env_option_override("SINEX_RPC_CA_CERT", &mut self.ca_cert);
         env_option_override("SINEX_RPC_CLIENT_CERT", &mut self.client_cert);
         env_option_override("SINEX_RPC_CLIENT_KEY", &mut self.client_key);
-        env_bool_override("SINEX_RPC_INSECURE", &mut self.insecure);
-        env_parse_override("SINEX_RPC_TIMEOUT_SECS", &mut self.timeout);
-        env_parse_override("SINEX_TIMEOUT", &mut self.timeout);
+        self.insecure = shared_env::bool_or("SINEX_RPC_INSECURE", self.insecure, "sinexctl config");
+        self.timeout = shared_env::parse_or("SINEX_RPC_TIMEOUT_SECS", self.timeout, "sinexctl config");
+        self.timeout = shared_env::parse_or("SINEX_TIMEOUT", self.timeout, "sinexctl config");
     }
 
     fn apply_user_preferences(&mut self, user_config: UserConfigFile) {
@@ -348,24 +348,6 @@ fn env_override(key: &str, target: &mut String) {
 fn env_option_override(key: &str, target: &mut Option<String>) {
     if let Ok(value) = std::env::var(key) {
         *target = Some(value);
-    }
-}
-
-fn env_bool_override(key: &str, target: &mut bool) {
-    if let Ok(value) = std::env::var(key)
-        && let Ok(parsed) = value.parse::<bool>()
-    {
-        *target = parsed;
-    }
-}
-
-fn env_parse_override<T>(key: &str, target: &mut T)
-where
-    T: std::str::FromStr,
-    T::Err: std::fmt::Display,
-{
-    if let Some(parsed) = shared_env::parse_optional(key, "") {
-        *target = parsed;
     }
 }
 

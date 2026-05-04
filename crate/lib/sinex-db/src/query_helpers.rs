@@ -110,24 +110,27 @@ where
     }
 }
 
-/// Check if a database error is retryable
+/// Check if a database error is retryable.
+///
+/// Uses typed SQLSTATE classification from the `sqlstate` context set by
+/// `db_error()` when it converts a `sqlx::Error` to a `SinexError`.
+///
+/// #751 F32: removed the `to_string().contains()` fallback so classification
+/// is deterministic and only depends on structured error metadata. If an
+/// error reaches this function without a `sqlstate` context entry, it is
+/// treated as non-retryable — callers must ensure errors flow through
+/// `sinex_db::db_error()`.
 #[must_use]
 pub fn is_retryable_db_error(err: &SinexError) -> bool {
-    // Prefer typed SQLSTATE classification from db_error() context.
-    // Class 40 = transaction rollback (includes serialization/deadlock).
+    // Class 40 = transaction rollback (includes 40P01 deadlock, 40001 serialization).
+    // 25P02 = current transaction is aborted (in failed sql transaction).
     if let Some(sqlstate) = err.context_map().get("sqlstate")
         && (sqlstate.starts_with("40") || sqlstate == "25P02")
     {
         return true;
     }
 
-    // Preserve legacy message-based classification for plain Database errors
-    // created without SQLSTATE context.
-    let rendered = err.to_string().to_lowercase();
-    rendered.contains("deadlock detected")
-        || rendered.contains("could not serialize access")
-        || rendered.contains("transaction rollback")
-        || rendered.contains("current transaction is aborted")
+    false
 }
 
 /// Execute a single operation within a transaction.

@@ -37,11 +37,8 @@
 //! - Frequent checkpoint updates are batched for better performance
 //! - Historical checkpoint queries are limited to prevent memory issues
 
-use crate::{
-    NodeResult, SinexError,
-    error_helpers::{env_bool_with_default, env_parse_with_default},
-    runtime::stream::Checkpoint,
-};
+use crate::{NodeResult, SinexError, runtime::stream::Checkpoint};
+use sinex_primitives::env as shared_env;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sinex_primitives::temporal::Timestamp;
@@ -410,7 +407,7 @@ impl CheckpointManager {
             // Warn if the restored checkpoint is stale — the node may replay already-processed events.
             // Only warn for non-empty checkpoints (Checkpoint::None means a fresh/reset state).
             if !matches!(state.checkpoint, Checkpoint::None) {
-                let max_age_hours: u64 = env_parse_with_default(
+                let max_age_hours: u64 = shared_env::parse_or(
                     "SINEX_CHECKPOINT_MAX_AGE_HOURS",
                     24_u64,
                     "checkpoint staleness",
@@ -745,17 +742,17 @@ impl CheckpointCleanupConfig {
     /// - `SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS`: Run interval in hours (default: 24)
     #[must_use]
     pub fn from_env() -> Self {
-        let enabled = env_bool_with_default(
+        let enabled = shared_env::bool_or(
             "SINEX_CHECKPOINT_CLEANUP_ENABLED",
             false,
             "checkpoint cleanup",
         );
-        let max_age_days: u64 = env_parse_with_default(
+        let max_age_days: u64 = shared_env::parse_or(
             "SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS",
             30_u64,
             "checkpoint cleanup",
         );
-        let interval_hours: u64 = env_parse_with_default(
+        let interval_hours: u64 = shared_env::parse_or(
             "SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS",
             24_u64,
             "checkpoint cleanup",
