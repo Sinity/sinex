@@ -12,7 +12,8 @@ The cascade analyzer uses an iterative deepening approach to build dependency gr
    up to a configurable maximum depth.
 3. **Memory Management** – process events in batches to avoid memory exhaustion.
 4. **Integrity Analysis** – detect violations where live events would reference archived events.
-5. **Circular Dependency Detection** – use recursive CTEs to find potential cycles.
+5. **Circular Dependency Detection** – use Tarjan's strongly connected components algorithm
+   (`petgraph::algo::tarjan_scc`) on an in-memory directed graph to find cycles at any depth.
 
 ## Transaction Management
 
@@ -25,8 +26,13 @@ The analyzer operates within a **single transaction** to ensure a consistent sna
 
 ### Scalability
 - **Time Complexity**: `O(V + E)` where `V` is events and `E` is dependencies.
-- **Recursion**: SQL recursion depth is capped (default 100) to prevent infinite loops in pathological graphs.
-- **Real-World**: Designed for provenance chains with moderate fanout. Expected to handle thousands of events within the default timeout.
+- **Cycle Detection**: Tarjan's SCC via `petgraph::algo::tarjan_scc` runs in `O(V + E)` guaranteed,
+  detecting cycles at any depth without a recursive CTE.
+- **GIN Index**: The GIN index on `core.events.source_event_ids[]` accelerates dependency
+  lookups when expanding the cascade graph from parent arrays.
+- **Iterative Deepening**: Depth is capped (default 100) to prevent runaway expansion in pathological graphs.
+- **Real-World**: Designed for provenance chains with moderate fanout. Expected to handle
+  thousands of events within the default timeout.
 
 ### Memory Usage
 - **Database**: Uses `TEMP` tables, which spill to disk if they exceed `temp_buffers`, keeping database memory usage predictable.

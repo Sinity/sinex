@@ -18,7 +18,7 @@ use sinex_node_sdk::{
 // Channel size constant - not in sinex_primitives::constants, use local
 const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1000;
 use sinex_primitives::JsonValue;
-use sinex_primitives::events::{EventPayload, payloads::LogLinePayload};
+use sinex_primitives::events::DynamicPayload;
 use tokio::io::{AsyncRead, ReadBuf};
 use tokio::sync::{mpsc, oneshot};
 use tracing::info;
@@ -112,15 +112,19 @@ impl TestLogFileStageNode {
                 .sum::<usize>() as i64;
             let offset_end = offset_start + line.len() as i64;
 
-            let payload = LogLinePayload {
-                line: line.to_string(),
-                line_number: (line_num + 1) as u64,
-                log_source: self.log_source.clone(),
-                log_file: source_uri.to_string(),
-                offset_start,
-                offset_end,
-                source_material_id: source_material_id.to_string(),
-            };
+            let payload = DynamicPayload::new(
+                "log_processor",
+                "log.line",
+                json!({
+                    "line": line.to_string(),
+                    "line_number": (line_num + 1) as u64,
+                    "log_source": self.log_source.clone(),
+                    "log_file": source_uri.to_string(),
+                    "offset_start": offset_start,
+                    "offset_end": offset_end,
+                    "source_material_id": source_material_id.to_string(),
+                }),
+            );
 
             let mut event = payload
                 .from_material_at(source_material_id, offset_start)

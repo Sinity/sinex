@@ -135,12 +135,9 @@ pub mod strategies {
     //! Property testing strategies for domain types.
 
     use crate::domain::{CommandText, HostName, RecordedPath, SanitizedPath, ShellName};
-    use crate::events::payloads::{
-        FileCreatedPayload, HyprlandWindowFocusedPayload, KittyCommandExecutedPayload,
-        ProcessHeartbeatPayload,
-    };
+    use crate::events::payloads::{FileCreatedPayload, HyprlandWindowFocusedPayload, KittyCommandExecutedPayload};
     use crate::testing::TestablePayload;
-    use crate::units::{ExitCode, Nanoseconds, SequenceNumber};
+    use crate::units::{ExitCode, Nanoseconds};
     use crate::{EventSource, EventType, Timestamp, Uuid};
     use proptest::prelude::*;
 
@@ -209,11 +206,6 @@ pub mod strategies {
             Just(ExitCode::SUCCESS),
             (1i32..=255i32).prop_map(ExitCode::from_raw),
         ]
-    }
-
-    /// Generate random SequenceNumber values.
-    pub fn sequence_number() -> impl Strategy<Value = SequenceNumber> {
-        any::<u64>().prop_map(SequenceNumber::from_raw)
     }
 
     /// Generate random Nanoseconds values (0-1 hour in nanoseconds).
@@ -303,27 +295,6 @@ pub mod strategies {
             )
     }
 
-    /// Generate random ProcessHeartbeatPayload values.
-    pub fn process_heartbeat_payload() -> impl Strategy<Value = ProcessHeartbeatPayload> {
-        use crate::events::payloads::ProcessStatus;
-
-        (
-            "[a-z][a-z0-9-]{2,20}",
-            sequence_number(),
-            prop_oneof![
-                Just(ProcessStatus::Healthy),
-                Just(ProcessStatus::Degraded),
-                Just(ProcessStatus::Failed),
-            ],
-        )
-            .prop_map(|(source, sequence, status)| ProcessHeartbeatPayload {
-                source,
-                sequence,
-                status,
-                metrics: None,
-            })
-    }
-
     /// Generate a complete Event<JsonValue> with random FileCreatedPayload for property testing.
     ///
     /// WARNING: Do NOT insert into database — no valid provenance.
@@ -343,13 +314,6 @@ pub mod strategies {
     /// WARNING: Do NOT insert into database — no valid provenance.
     pub fn window_focused_event() -> impl Strategy<Value = crate::Event<crate::JsonValue>> {
         window_focused_payload().prop_map(|payload| payload.into_test_event())
-    }
-
-    /// Generate a complete Event<JsonValue> with random ProcessHeartbeatPayload for property testing.
-    ///
-    /// WARNING: Do NOT insert into database — no valid provenance.
-    pub fn process_heartbeat_event() -> impl Strategy<Value = crate::Event<crate::JsonValue>> {
-        process_heartbeat_payload().prop_map(|payload| payload.into_test_event())
     }
 
     #[cfg(test)]

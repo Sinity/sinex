@@ -16,6 +16,22 @@
         "null"
       ]
     },
+    "max_latency_ms": {
+      "description": "Maximum latency in milliseconds (over the snapshot window)",
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "min_latency_ms": {
+      "description": "Minimum latency in milliseconds (over the snapshot window)",
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
     "p99_latency_ms": {
       "description": "P99 latency in milliseconds",
       "format": "double",

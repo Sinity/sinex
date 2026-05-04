@@ -1,0 +1,35 @@
+{
+  "$defs": {
+    "EntityTypeName": {
+      "description": "The type of an entity (e.g., `person`, `project`, `document`)",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Raw entity extracted from document text by the entity extractor.\n\nThis is the initial output of Stage 1 -- a lightweight signal carrying the\nentity type and the raw text span as it appeared in the source document.\nDownstream stages (resolver) canonicalize the name and assign a\ndeterministic UUIDv5 identity.",
+  "properties": {
+    "confidence": {
+      "description": "Extraction confidence in [0.0, 1.0].",
+      "format": "double",
+      "type": "number"
+    },
+    "entity_type": {
+      "$ref": "#/$defs/EntityTypeName",
+      "description": "Classification of the extracted entity (e.g. tool, url, file, person)."
+    },
+    "raw_name": {
+      "description": "The raw text span as it appeared in the source document.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "entity_type",
+    "raw_name",
+    "confidence"
+  ],
+  "title": "EntityExtractedPayload",
+  "type": "object",
+  "x-sinex-event-type": "entity.extracted",
+  "x-sinex-source": "entity-extractor",
+  "x-sinex-version": "1.0.0"
+}

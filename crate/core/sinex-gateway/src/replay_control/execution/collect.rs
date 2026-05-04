@@ -12,7 +12,7 @@ use sinex_node_sdk::runtime::stream::{
     Checkpoint, MaterialReplayContext, NodeScanAck, NodeScanCommand, NodeScanProgress,
     ReplayScopeFilters as NodeReplayScopeFilters, ResolvedReplayMaterial, ScanArgs, TimeHorizon,
 };
-use sinex_primitives::domain::{EventSource, EventType, NodeName};
+use sinex_primitives::domain::{EventSource, EventType, NodeName, SourceIdentifier};
 use sinex_primitives::events::{Event as StoredEvent, Provenance};
 use sinex_primitives::{Id, SinexError, Timestamp, Uuid, transport};
 use std::collections::{HashMap, HashSet};
@@ -41,10 +41,26 @@ impl ReplayExecutionEngine {
             .map(Id::<StoredEvent>::from_uuid)
             .collect();
 
-        pool.events()
-            .get_by_ids(&event_ids)
-            .await
-            .map_err(|e| eyre!("Failed to hydrate replay scope events: {e}"))
+        // get_by_ids enforces a 1000-ID limit; chunk here when needed.
+        const CHUNK_SIZE: usize = 1000;
+        if event_ids.len() <= CHUNK_SIZE {
+            return pool
+                .events()
+                .get_by_ids(&event_ids)
+                .await
+                .map_err(|e| eyre!("Failed to hydrate replay scope events: {e}"));
+        }
+
+        let mut all_events = Vec::with_capacity(event_ids.len());
+        for chunk in event_ids.chunks(CHUNK_SIZE) {
+            let chunk_events = pool
+                .events()
+                .get_by_ids(chunk)
+                .await
+                .map_err(|e| eyre!("Failed to hydrate replay scope event chunk: {e}"))?;
+            all_events.extend(chunk_events);
+        }
+        Ok(all_events)
     }
 
     pub(crate) async fn collect_operation_output_events(
@@ -116,17 +132,16 @@ impl ReplayExecutionEngine {
         })
     }
 
-    pub(crate) fn logical_source_identifier(material: &ResolvedReplayMaterial) -> &str {
+    pub(crate) fn logical_source_identifier(material: &ResolvedReplayMaterial) -> String {
         material
             .material_metadata
             .get("logical_source_identifier")
             .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
             .unwrap_or_else(|| {
-                material
-                    .source_identifier
-                    .split("#material=")
-                    .next()
-                    .unwrap_or(material.source_identifier.as_str())
+                SourceIdentifier::from_wire(&material.source_identifier)
+                    .map(|si| si.logical_id)
+                    .unwrap_or_else(|_| material.source_identifier.clone())
             })
     }
 
@@ -137,7 +152,6 @@ impl ReplayExecutionEngine {
         let mut logical_source_identifiers = replay_materials
             .iter()
             .map(Self::logical_source_identifier)
-            .map(str::to_owned)
             .collect::<Vec<_>>();
         logical_source_identifiers.sort_unstable();
         logical_source_identifiers.dedup();
@@ -159,6 +173,12 @@ impl ReplayExecutionEngine {
         operation_id: Uuid,
         expected: &ExpectedReplayOutputs,
     ) -> Result<i64> {
+        // NOTE: SQL-level `split_part(…, '#material=', 1)` decomposes the
+        // wire format that `SourceIdentifier::to_wire()` produces.  The
+        // canonical parser/formatter for this encoding is
+        // `sinex_primitives::domain::SourceIdentifier`.  Long-term the
+        // source_identifier column should carry separate logical_id /
+        // material_id columns so SQL callers can avoid string parsing.
         sqlx::query_scalar::<_, i64>(
             r"
             SELECT COUNT(DISTINCT COALESCE(

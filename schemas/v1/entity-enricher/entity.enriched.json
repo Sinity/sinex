@@ -1,0 +1,105 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "EntityCategory": {
+      "description": "Refined classification label for an entity.\n\nProduced by the entity enricher (Stage 4) based on temporal signals,\nco-occurrence patterns, and source context.",
+      "oneOf": [
+        {
+          "const": "tool",
+          "description": "Command-line tool or binary.",
+          "type": "string"
+        },
+        {
+          "const": "project",
+          "description": "Software project or repository.",
+          "type": "string"
+        },
+        {
+          "const": "website",
+          "description": "Web domain or URL.",
+          "type": "string"
+        },
+        {
+          "const": "document",
+          "description": "Document or file.",
+          "type": "string"
+        },
+        {
+          "const": "person",
+          "description": "Person or user identity.",
+          "type": "string"
+        }
+      ]
+    },
+    "EntityTypeName": {
+      "description": "The type of an entity (e.g., `person`, `project`, `document`)",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Enriched entity with temporal statistics and category refinement.\n\nThe entity enricher (Stage 4) consumes `entity.resolved` events and emits\nperiodically enriched snapshots that include first/last seen timestamps,\noccurrence frequency, an active-hours histogram, and a refined category.",
+  "properties": {
+    "active_hours": {
+      "additionalProperties": false,
+      "description": "Active-hours histogram: maps hour-of-day (0-23) to occurrence count.",
+      "patternProperties": {
+        "^\\d+$": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "canonical_name": {
+      "description": "Canonical name of the entity (pass-through from resolved).",
+      "type": "string"
+    },
+    "entity_id": {
+      "description": "The resolved entity identity this enrichment snapshot describes.",
+      "format": "uuid",
+      "type": "string"
+    },
+    "entity_type": {
+      "$ref": "#/$defs/EntityTypeName",
+      "description": "Entity type classification (pass-through from resolved)."
+    },
+    "first_seen": {
+      "$ref": "#/$defs/DateTime",
+      "description": "Earliest observation timestamp."
+    },
+    "last_seen": {
+      "$ref": "#/$defs/DateTime",
+      "description": "Most recent observation timestamp."
+    },
+    "occurrence_count": {
+      "description": "Total number of observations.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "refined_category": {
+      "$ref": "#/$defs/EntityCategory",
+      "description": "Refined category assigned by the enricher."
+    }
+  },
+  "required": [
+    "entity_id",
+    "canonical_name",
+    "entity_type",
+    "refined_category",
+    "first_seen",
+    "last_seen",
+    "occurrence_count",
+    "active_hours"
+  ],
+  "title": "EntityEnrichedPayload",
+  "type": "object",
+  "x-sinex-event-type": "entity.enriched",
+  "x-sinex-source": "entity-enricher",
+  "x-sinex-version": "1.0.0"
+}
