@@ -1410,6 +1410,18 @@ in
                   description = "Daily summarizer automaton. Rolls hourly `activity.summary.hourly` inputs into UTC-day `activity.summary.daily` outputs.";
                 };
 
+                documentParser = mkOption {
+                  type = submodule {
+                    options = {
+                      enable = mkOption { type = bool; default = true; description = "Enable document parser automaton."; };
+                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+                    };
+                  };
+                  default = { };
+                  description = "Document parser automaton. Consumes `document.ingested` and `command.canonical` events, emits `document.parsed` + `document.chunked` synthesis events.";
+                };
+
                 profiles = mkOption {
                   type = attrsOf (submodule {
                     options = {
@@ -2083,6 +2095,10 @@ in
               cfg.nodes.enable
               && cfg.nodes.automata.enable
               && cfg.nodes.automata.dailySummarizer.enable;
+            document_parser =
+              cfg.nodes.enable
+              && cfg.nodes.automata.enable
+              && cfg.nodes.automata.documentParser.enable;
           };
         expectations = {
           schema_apply = cfg.database.enable && cfg.database.autoSetup;

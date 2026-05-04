@@ -182,7 +182,7 @@ pub fn unix_timestamp_secs_with_warning(timestamp: SystemTime, context: &str) ->
 
 #[must_use]
 pub fn env_nonempty_string_optional(var: &str, context: &str) -> Option<String> {
-    shared_env::var_optional(var, context).and_then(|raw| {
+    sinex_primitives::env::var_optional(var, context).and_then(|raw| {
         if raw.trim().is_empty() {
             warn!(
                 variable = var,
@@ -329,7 +329,7 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set("SINEX_TEST_BOOL_OVERRIDE", "bogus");
 
-        let value = shared_env::bool_or("SINEX_TEST_BOOL_OVERRIDE", true, "test");
+        let value = sinex_primitives::env::bool_or("SINEX_TEST_BOOL_OVERRIDE", true, "test");
         assert!(value);
         Ok(())
     }
@@ -340,7 +340,7 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set("SINEX_TEST_U64_OVERRIDE", "bogus");
 
-        let value = shared_env::parse_or("SINEX_TEST_U64_OVERRIDE", 42_u64, "test");
+        let value = sinex_primitives::env::parse_or("SINEX_TEST_U64_OVERRIDE", 42_u64, "test");
         assert_eq!(value, 42);
         Ok(())
     }
@@ -354,7 +354,7 @@ mod tests {
             OsString::from_vec(vec![0x66, 0x6f, 0x80, 0x6f]),
         );
 
-        let value = shared_env::var_optional("SINEX_TEST_STRING_OVERRIDE", "test");
+        let value = sinex_primitives::env::var_optional("SINEX_TEST_STRING_OVERRIDE", "test");
         assert_eq!(value, None);
         Ok(())
     }

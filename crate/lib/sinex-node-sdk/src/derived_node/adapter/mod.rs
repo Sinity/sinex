@@ -658,5 +658,9 @@ pub type WindowedNodeAdapter<N> = DerivedNodeAdapter<super::traits::WindowedWrap
 pub type ScopeReconcilerNodeAdapter<N> =
     DerivedNodeAdapter<super::traits::ScopeReconcilerWrapper<N>>;
 
+/// Adapter for a `MultiOutputTransducerNode` implementation.
+pub type MultiOutputTransducerNodeAdapter<N> =
+    DerivedNodeAdapter<super::traits::MultiOutputTransducerWrapper<N>>;
+
 #[cfg(test)]
 mod tests;
