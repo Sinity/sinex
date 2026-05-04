@@ -26,18 +26,14 @@ pub struct AutomataCommand {
     /// Recent output window in seconds
     #[arg(long, default_value_t = 300)]
     recent_window_secs: u64,
-
-    /// Output format
-    #[arg(long, short = 'f', value_enum, default_value = "table")]
-    format: OutputFormat,
 }
 
 impl AutomataCommand {
-    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let response = client
             .automata_status(self.stale_after_secs, self.recent_window_secs)
             .await?;
-        CommandOutput::single(response, format_automata_status_table).display(&self.format)?;
+        CommandOutput::single(response, format_automata_status_table).display(&format)?;
         Ok(())
     }
 }
