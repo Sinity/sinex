@@ -637,6 +637,151 @@ inventory::submit! {
     }
 }
 
+// ─────────────────────────────────────────────────────────────
+// Source-unit declaration & promotion contract (issue #690)
+//
+// Moved from source_unit.rs → proof.rs (#744 A1).
+// ─────────────────────────────────────────────────────────────
+
+/// How the source's checkpoint state is shaped.
+///
+/// Determines what the SDK's checkpoint adapter must support and what
+/// idempotency/replay strategy the source uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CheckpointFamily {
+    /// Append-only stream (filesystem watcher, journald tail, browser export).
+    AppendStream,
+    /// Mutable backing store snapshotted with row-level occurrence anchors.
+    MutableSnapshot {
+        backing_store_kind: &'static str,
+        occurrence_anchor: &'static str,
+    },
+    /// Journal/log API consumed by sequential cursor (e.g. systemd journal).
+    Journal,
+    /// Source has no native cursor; ingestor polls and diffs.
+    Polling,
+    /// Internal in-memory state observed at intervals.
+    LiveObservation,
+}
+
+/// Privacy classification of the source's payloads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrivacyTier {
+    Public,
+    Sensitive,
+    Secret,
+}
+
+/// Time horizons the source serves on the *normal* runtime plane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Horizon {
+    Continuous,
+    Historical,
+}
+
+/// How the source is invoked at runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeShape {
+    Continuous,
+    OnDemand,
+    Scheduled,
+}
+
+/// Retention policy for events emitted by this source unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RetentionPolicy {
+    Forever,
+    Days { days: u32 },
+    Tiered { hot_days: u32, warm_days: u32 },
+}
+
+/// How the source identifies real-world occurrences.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OccurrenceIdentity {
+    Uuid5From(&'static str),
+    Natural,
+    Anchor,
+}
+
+/// Physical/build footprint declared by a source-unit descriptor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct SourceUnitBuildImpact {
+    pub crate_impact: &'static str,
+    pub binary_impact: &'static str,
+    pub nix_output_impact: &'static str,
+    pub derivation_impact: &'static str,
+    pub sqlx_validation_impact: &'static str,
+    pub dedicated_build_rationale: Option<&'static str>,
+}
+
+impl SourceUnitBuildImpact {
+    pub const ZERO: Self = Self {
+        crate_impact: "0",
+        binary_impact: "0",
+        nix_output_impact: "0",
+        derivation_impact: "0",
+        sqlx_validation_impact: "0",
+        dedicated_build_rationale: None,
+    };
+}
+
+/// The typed declaration every ingestor fills in.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct SourceUnitDescriptor {
+    pub id: &'static str,
+    pub namespace: &'static str,
+    pub runner_pack: &'static str,
+    pub checkpoint_family: CheckpointFamily,
+    pub event_types: &'static [(&'static str, &'static str)],
+    pub privacy_tier: PrivacyTier,
+    pub runtime_shape: RuntimeShape,
+    pub horizons: &'static [Horizon],
+    pub retention: RetentionPolicy,
+    pub proof_obligations: &'static [&'static str],
+    pub occurrence_identity: OccurrenceIdentity,
+    pub access_policy: &'static str,
+    pub package_impact: &'static str,
+    pub implementation_mode: &'static str,
+    pub build_impact: SourceUnitBuildImpact,
+}
+
+inventory::collect!(SourceUnitDescriptor);
+
+/// Iterate over every registered source-unit descriptor in the binary.
+pub fn all_source_units() -> impl Iterator<Item = &'static SourceUnitDescriptor> {
+    inventory::iter::<SourceUnitDescriptor>()
+}
+
+/// Find a source-unit descriptor by `id`.
+#[must_use]
+pub fn find_source_unit(id: &str) -> Option<&'static SourceUnitDescriptor> {
+    all_source_units().find(|descriptor| descriptor.id == id)
+}
+
+/// Re-exported `inventory` for consumers of [`register_source_unit!`].
+#[doc(hidden)]
+pub mod __register {
+    pub use inventory;
+}
+
+/// Register a source-unit descriptor with the binary's inventory.
+///
+/// Thin wrapper over `inventory::submit!` — kept as a macro so the registration
+/// surface is greppable (`register_source_unit!`) and so future evolution of the
+/// registration mechanism does not require every ingestor to change.
+#[macro_export]
+macro_rules! register_source_unit {
+    ($descriptor:expr $(,)?) => {
+        $crate::proof::__register::inventory::submit! { $descriptor }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -3,13 +3,13 @@
 use crate::config::GatewayConfig;
 use crate::content_service::ContentService;
 use crate::replay_control::{ReplayControlClient, ReplayControlError, spawn_replay_control};
-use color_eyre::eyre::Result;
 use sinex_db::create_pool_with_config;
 use sinex_db::pkm::PkmService;
 use sinex_db::replay::state_machine::ReplayStateMachine;
 use sinex_node_sdk::content_store::{ContentStoreConfig, ContentStoreManager};
 use sinex_primitives::{
     coordination::CoordinationKvClient, environment as sinex_environment, error::SinexError,
+    Result as SinexResult,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -47,7 +47,7 @@ const REPLAY_CONTROL_CONNECT_ATTEMPTS: usize = 3;
 const REPLAY_CONTROL_CONNECT_BACKOFF_BASE: Duration = Duration::from_millis(100);
 const REPLAY_CONTROL_CONNECT_BACKOFF_MAX: Duration = Duration::from_secs(1);
 
-async fn recover_stale_replay_operations(replay: &ReplayStateMachine) -> Result<()> {
+async fn recover_stale_replay_operations(replay: &ReplayStateMachine) -> SinexResult<()> {
     const STALE_EXECUTING_THRESHOLD: Duration = Duration::from_mins(10);
 
     match replay
@@ -77,18 +77,17 @@ impl ServiceContainer {
     /// Loads the normal environment-backed gateway configuration, then forces the
     /// provided database URL on top. For production use, prefer `new()` with a full
     /// `GatewayConfig` loaded by the process entrypoint.
-    pub async fn from_database_url(database_url: impl Into<String>) -> Result<Self> {
+    pub async fn from_database_url(database_url: impl Into<String>) -> SinexResult<Self> {
         let config = GatewayConfig::load_with_database_url(database_url.into())?;
         Self::new(&config).await
     }
 
     /// Create a new service container from gateway configuration.
-    pub async fn new(config: &GatewayConfig) -> Result<Self> {
+    pub async fn new(config: &GatewayConfig) -> SinexResult<Self> {
         let db_url = if config.database_url.trim().is_empty() {
             return Err(SinexError::configuration(
                 "Database URL not provided — set DATABASE_URL or the NixOS module option that exports it",
-            )
-            .into());
+            ));
         } else {
             config.database_url.clone()
         };
@@ -413,7 +412,7 @@ async fn connect_replay_control_with_backoff(
     nats_config: &sinex_primitives::nats::NatsConnectionConfig,
     replay: Arc<ReplayStateMachine>,
     request_timeout: Duration,
-) -> Result<ReplayControlClient> {
+) -> SinexResult<ReplayControlClient> {
     let mut attempt = 0usize;
     let mut backoff = REPLAY_CONTROL_CONNECT_BACKOFF_BASE;
 
@@ -439,7 +438,7 @@ async fn connect_replay_control_with_backoff(
             Ok(client) => return Ok(client),
             Err(err) => {
                 if attempt >= REPLAY_CONTROL_CONNECT_ATTEMPTS {
-                    return Err(err.into());
+                    return Err(err);
                 }
                 warn!(
                     attempt,

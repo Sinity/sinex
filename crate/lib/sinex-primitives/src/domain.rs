@@ -753,6 +753,61 @@ impl std::ops::Deref for EventType {
     }
 }
 
+/// A typed `(source, event_type)` pair identifying the NATS wire identity of an
+/// event stream. Replaces ad-hoc `format!("events.raw.{}.{}", source, event_type)`
+/// subject construction — see issue #752.
+///
+/// Parses from `"source.event_type"` via `FromStr`; formats back to the same
+/// dotted form via `Display`. The `nats_subject` method delegates to
+/// [`crate::environment::SinexEnvironment::nats_raw_event_subject_with_namespace`]
+/// for correct subject-token encoding.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct EventName {
+    pub source: EventSource,
+    pub event_type: EventType,
+}
+
+impl EventName {
+    /// Create a new `EventName` from validated source and event type.
+    #[must_use]
+    pub fn new(source: EventSource, event_type: EventType) -> Self {
+        Self { source, event_type }
+    }
+
+    /// Build the canonical raw-event NATS subject for this event name.
+    ///
+    /// Delegates to the environment's subject-token encoding so that `_` and `.`
+    /// characters in source/event_type are correctly escaped.
+    #[must_use]
+    pub fn nats_subject(
+        &self,
+        namespace: Option<&str>,
+        env: &crate::environment::SinexEnvironment,
+    ) -> String {
+        env.nats_raw_event_subject_with_namespace(namespace, &self.source, &self.event_type)
+    }
+}
+
+impl fmt::Display for EventName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}", self.source, self.event_type)
+    }
+}
+
+impl std::str::FromStr for EventName {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (source, event_type) = s
+            .split_once('.')
+            .ok_or_else(|| format!("expected 'source.event_type' format, got: {s}"))?;
+        Ok(Self {
+            source: EventSource::from_str(source)?,
+            event_type: EventType::from_str(event_type)?,
+        })
+    }
+}
+
 /// The hostname where an event occurred.
 ///
 /// Always valid by construction. Use [`HostName::new`] to parse runtime input,
@@ -2238,10 +2293,15 @@ pub struct EntityRelation;
 
 /// Service metadata for registration and discovery.
 ///
-/// This is the wire/registration metadata carried by the gateway and discovery layer.
-/// It is distinct from `sinex_node_sdk::ServiceInfo`, which describes the *runtime*
-/// service (process-local, carries `runner_pack`). Named `ServiceRegistrationInfo` to
-/// avoid the collision — see issue #746 (A6).
+/// This is the wire/registration metadata carried by the gateway and
+/// discovery layer. It is distinct from `sinex_node_sdk::ServiceInfo`,
+/// which describes the *runtime* service (process-local, carries
+/// `runner_pack`). Named `ServiceRegistrationInfo` to avoid the
+/// collision — see issue #746 (A6).
+///
+/// The `runner_pack` field was added per #744 (A6) to converge the
+/// vocabulary: both the SDK runtime `ServiceInfo` and this registration
+/// shape now carry the runner-pack identifier.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ServiceRegistrationInfo {
     pub name: String,
@@ -2249,6 +2309,9 @@ pub struct ServiceRegistrationInfo {
     pub kind: ServiceKind,
     pub status: HealthStatus,
     pub started_at: crate::events::Timestamp,
+    /// Runner pack / binary family that hosts this service.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner_pack: Option<String>,
     pub metadata: std::collections::HashMap<String, serde_json::Value>,
 }
 

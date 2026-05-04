@@ -423,66 +423,66 @@ fn build_registry_impl() -> RpcRegistry {
             },
         )
         // Composable event query methods (ReadOnly)
-        .pool_rpc("events.query", Role::ReadOnly, boxed!(handle_events_query))
+        .pool_rpc(methods::EVENTS_QUERY, Role::ReadOnly, boxed!(handle_events_query))
         .pool_rpc(
-            "events.lineage",
+            methods::EVENTS_LINEAGE,
             Role::ReadOnly,
             boxed!(handle_events_lineage),
         )
         // Coordination methods (ReadOnly)
         .coord_rpc(
-            "coordination.list_instances",
+            methods::COORDINATION_LIST_INSTANCES,
             Role::ReadOnly,
             boxed!(handle_coordination_list_instances),
         )
         .coord_rpc(
-            "coordination.get_leader",
+            methods::COORDINATION_GET_LEADER,
             Role::ReadOnly,
             boxed!(handle_coordination_get_leader),
         )
         .coord_rpc(
-            "coordination.instance_health",
+            methods::COORDINATION_INSTANCE_HEALTH,
             Role::ReadOnly,
             boxed!(handle_coordination_instance_health),
         )
         // Audit trail methods (ReadOnly)
-        .pool_rpc("audit.get", Role::ReadOnly, boxed!(handle_audit_get))
+        .pool_rpc(methods::AUDIT_GET, Role::ReadOnly, boxed!(handle_audit_get))
         // Operations log read methods (ReadOnly)
-        .pool_auth_rpc("ops.list", Role::ReadOnly, boxed!(handle_ops_list, 3))
-        .pool_auth_rpc("ops.get", Role::ReadOnly, boxed!(handle_ops_get, 3))
+        .pool_auth_rpc(methods::OPS_LIST, Role::ReadOnly, boxed!(handle_ops_list, 3))
+        .pool_auth_rpc(methods::OPS_GET, Role::ReadOnly, boxed!(handle_ops_get, 3))
         // Lifecycle status (ReadOnly)
         .pool_rpc(
-            "lifecycle.status",
+            methods::LIFECYCLE_STATUS,
             Role::ReadOnly,
             boxed!(handle_lifecycle_status),
         )
         // DLQ read methods (ReadOnly)
-        .register("dlq.list", Role::ReadOnly, |params, services, _auth| {
+        .register(methods::DLQ_LIST, Role::ReadOnly, |params, services, _auth| {
             Box::pin(async move { handle_dlq_list(services, params).await })
         })
-        .register("dlq.peek", Role::ReadOnly, |params, services, _auth| {
+        .register(methods::DLQ_PEEK, Role::ReadOnly, |params, services, _auth| {
             Box::pin(async move { handle_dlq_peek(services, params).await })
         })
         // Node listing (ReadOnly)
-        .nats_rpc("nodes.list", Role::ReadOnly, boxed!(handle_nodes_list, 3))
+        .nats_rpc(methods::NODES_LIST, Role::ReadOnly, boxed!(handle_nodes_list, 3))
         // Replay status/list (ReadOnly)
         .replay_rpc(
-            "replay.operation_status",
+            methods::REPLAY_OPERATION_STATUS,
             Role::ReadOnly,
             boxed!(handle_replay_operation_status, 3),
         )
         .replay_rpc(
-            "replay.list_operations",
+            methods::REPLAY_LIST_OPERATIONS,
             Role::ReadOnly,
             boxed!(handle_replay_list_operations, 3),
         )
         // Node registry status methods (ReadOnly)
         .pool_rpc(
-            "nodes.list_active",
+            methods::NODES_LIST_ACTIVE,
             Role::ReadOnly,
             boxed!(handle_nodes_list_active),
         )
-        .pool_rpc("nodes.health", Role::ReadOnly, boxed!(handle_nodes_health))
+        .pool_rpc(methods::NODES_HEALTH, Role::ReadOnly, boxed!(handle_nodes_health))
         .pool_rpc(
             methods::AUTOMATA_STATUS,
             Role::ReadOnly,
@@ -569,11 +569,11 @@ fn build_registry_impl() -> RpcRegistry {
         // Write methods (requires Write or Admin role)
         // ─────────────────────────────────────────────────────────────
         // PKM methods (Write)
-        .register("pkm.create_note", Role::Write, |params, services, auth| {
+        .register(methods::PKM_CREATE_NOTE, Role::Write, |params, services, auth| {
             Box::pin(async move { handle_create_note(services.pkm.as_ref(), params, auth).await })
         })
         .register(
-            "pkm.create_entities_from_list",
+            methods::PKM_CREATE_ENTITIES,
             Role::Write,
             |params, services, auth| {
                 Box::pin(async move {
@@ -582,7 +582,7 @@ fn build_registry_impl() -> RpcRegistry {
             },
         )
         .register(
-            "pkm.link_entities",
+            methods::PKM_LINK_ENTITIES,
             Role::Write,
             |params, services, auth| {
                 Box::pin(
@@ -592,37 +592,37 @@ fn build_registry_impl() -> RpcRegistry {
         )
         // Content methods (Write)
         .register(
-            "content.store_blob",
+            methods::CONTENT_STORE_BLOB,
             Role::Write,
             |params, services, auth| {
                 Box::pin(async move { handle_store_blob(services, params, auth).await })
             },
         )
         .register(
-            "content.retrieve_blob",
+            methods::CONTENT_RETRIEVE_BLOB,
             Role::ReadOnly,
             |params, services, _auth| {
                 Box::pin(async move { handle_retrieve_blob(services, params).await })
             },
         )
         // Node operations (Write - affects system but not destructive)
-        .nats_auth_rpc("nodes.drain", Role::Write, boxed!(handle_nodes_drain, 4))
-        .nats_auth_rpc("nodes.resume", Role::Write, boxed!(handle_nodes_resume, 4))
+        .nats_auth_rpc(methods::NODES_DRAIN, Role::Write, boxed!(handle_nodes_drain, 4))
+        .nats_auth_rpc(methods::NODES_RESUME, Role::Write, boxed!(handle_nodes_resume, 4))
         .nats_auth_rpc(
-            "nodes.set_horizon",
+            methods::NODES_SET_HORIZON,
             Role::Write,
             boxed!(handle_nodes_set_horizon, 4),
         )
         // Operations log write (Write)
-        .pool_auth_rpc("ops.start", Role::Write, boxed!(handle_ops_start, 3))
+        .pool_auth_rpc(methods::OPS_START, Role::Write, boxed!(handle_ops_start, 3))
         // Replay create/preview (Write - doesn't execute yet)
         .replay_rpc(
-            "replay.create_operation",
+            methods::REPLAY_CREATE_OPERATION,
             Role::Write,
             boxed!(handle_replay_create_operation, 3),
         )
         .replay_rpc(
-            "replay.preview_operation",
+            methods::REPLAY_PREVIEW_OPERATION,
             Role::Write,
             boxed!(handle_replay_preview_operation, 3),
         )
@@ -631,100 +631,100 @@ fn build_registry_impl() -> RpcRegistry {
         // ─────────────────────────────────────────────────────────────
         // Replay approve/execute/cancel (Admin - actually modifies data)
         .replay_rpc(
-            "replay.approve_operation",
+            methods::REPLAY_APPROVE_OPERATION,
             Role::Admin,
             boxed!(handle_replay_approve_operation, 3),
         )
         .replay_rpc(
-            "replay.submit_operation",
+            methods::REPLAY_SUBMIT_OPERATION,
             Role::Admin,
             boxed!(handle_replay_submit_operation, 3),
         )
         .replay_rpc(
-            "replay.execute_operation",
+            methods::REPLAY_EXECUTE_OPERATION,
             Role::Admin,
             boxed!(handle_replay_execute_operation, 3),
         )
         .replay_rpc(
-            "replay.cancel_operation",
+            methods::REPLAY_CANCEL_OPERATION,
             Role::Admin,
             boxed!(handle_replay_cancel_operation, 3),
         )
         // DLQ mutation methods (Admin)
-        .register("dlq.requeue", Role::Admin, |params, services, auth| {
+        .register(methods::DLQ_REQUEUE, Role::Admin, |params, services, auth| {
             Box::pin(async move { handle_dlq_requeue(services, params, auth).await })
         })
-        .register("dlq.purge", Role::Admin, |params, services, auth| {
+        .register(methods::DLQ_PURGE, Role::Admin, |params, services, auth| {
             Box::pin(async move { handle_dlq_purge(services, params, auth).await })
         })
         // Operations cancel (Admin)
-        .pool_auth_rpc("ops.cancel", Role::Admin, boxed!(handle_ops_cancel, 3))
+        .pool_auth_rpc(methods::OPS_CANCEL, Role::Admin, boxed!(handle_ops_cancel, 3))
         // Data lifecycle mutations (Admin - DESTRUCTIVE)
         .pool_auth_rpc(
-            "lifecycle.archive",
+            methods::LIFECYCLE_ARCHIVE,
             Role::Admin,
             boxed!(handle_lifecycle_archive, 3),
         )
         .pool_auth_rpc(
-            "lifecycle.restore",
+            methods::LIFECYCLE_RESTORE,
             Role::Admin,
             boxed!(handle_lifecycle_restore, 3),
         )
         // Two-step tombstone operations (SEC-003)
         .pool_auth_rpc(
-            "lifecycle.tombstone.create",
+            methods::LIFECYCLE_TOMBSTONE_CREATE,
             Role::Admin,
             boxed!(handle_tombstone_create, 3),
         )
         .pool_auth_rpc(
-            "lifecycle.tombstone.preview",
+            methods::LIFECYCLE_TOMBSTONE_PREVIEW,
             Role::Admin,
             boxed!(handle_tombstone_preview, 3),
         )
         .pool_auth_rpc(
-            "lifecycle.tombstone.approve",
+            methods::LIFECYCLE_TOMBSTONE_APPROVE,
             Role::Admin,
             boxed!(handle_tombstone_approve, 3),
         )
         .pool_auth_rpc(
-            "lifecycle.tombstone.cancel",
+            methods::LIFECYCLE_TOMBSTONE_CANCEL,
             Role::Admin,
             boxed!(handle_tombstone_cancel, 3),
         )
         .pool_auth_rpc(
-            "lifecycle.tombstone.list",
+            methods::LIFECYCLE_TOMBSTONE_LIST,
             Role::Admin,
             boxed!(handle_tombstone_list, 3),
         )
         .pool_auth_rpc(
-            "lifecycle.tombstone.status",
+            methods::LIFECYCLE_TOMBSTONE_STATUS,
             Role::Admin,
             boxed!(handle_tombstone_status, 3),
         )
         // GitOps source management (Admin)
         .pool_rpc(
-            "gitops.create_source",
+            methods::GITOPS_CREATE_SOURCE,
             Role::Admin,
             boxed!(handle_gitops_create_source),
         )
         .pool_rpc(
-            "gitops.delete_source",
+            methods::GITOPS_DELETE_SOURCE,
             Role::Admin,
             boxed!(handle_gitops_delete_source),
         )
         .pool_rpc(
-            "gitops.trigger_sync",
+            methods::GITOPS_TRIGGER_SYNC,
             Role::Admin,
             boxed!(handle_gitops_trigger_sync),
         )
         // Shadow consumer mutations (Admin)
-        .register("shadow.create", Role::Admin, |params, services, _auth| {
+        .register(methods::SHADOW_CREATE, Role::Admin, |params, services, _auth| {
             Box::pin(async move { handle_shadow_create(services, params).await })
         })
-        .register("shadow.list", Role::ReadOnly, |params, services, _auth| {
+        .register(methods::SHADOW_LIST, Role::ReadOnly, |params, services, _auth| {
             Box::pin(async move { handle_shadow_list(services, params).await })
         })
-        .register("shadow.delete", Role::Admin, |params, services, auth| {
+        .register(methods::SHADOW_DELETE, Role::Admin, |params, services, auth| {
             Box::pin(async move { handle_shadow_delete(services, params, auth).await })
         })
 }

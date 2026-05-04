@@ -1,6 +1,6 @@
 //! sinex-process — consolidated automata binary.
 //!
-//! Hosts six derived-node automata in a single binary. The automaton to run
+//! Hosts nine derived-node automata in a single binary. The automaton to run
 //! is selected by the `--automaton <name>` argument (or `SINEX_AUTOMATON` env).
 //!
 //! # Usage
@@ -12,12 +12,15 @@
 //!
 //! # Automaton names
 //!
-//! - `canonicalizer` — terminal command canonicalizer (TransducerNode)
-//! - `analytics`     — activity window analytics (WindowedNode)
-//! - `health`        — health aggregator (ScopeReconcilerNode)
-//! - `session`       — session detector (WindowedNode)
-//! - `hourly`        — hourly activity summarizer (WindowedNode)
-//! - `daily`         — daily activity summarizer (WindowedNode)
+//! - `canonicalizer`      — terminal command canonicalizer (TransducerNode)
+//! - `analytics`          — activity window analytics (WindowedNode)
+//! - `health`             — health aggregator (ScopeReconcilerNode)
+//! - `session`            — session detector (WindowedNode)
+//! - `hourly`             — hourly activity summarizer (WindowedNode)
+//! - `daily`              — daily activity summarizer (WindowedNode)
+//! - `entity-resolver`    — entity resolver (WindowedNode)
+//! - `relation-extractor` — relation extractor (ScopeReconcilerNode)
+//! - `entity-enricher`    — entity enricher (ScopeReconcilerNode)
 
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;
@@ -27,8 +30,9 @@ use mimalloc::MiMalloc;
 static GLOBAL: MiMalloc = MiMalloc;
 
 use sinex_process::{
-    AnalyticsAutomatonNode, DailySummarizerNode, HealthAggregatorNode, HourlySummarizerNode,
-    SessionDetectorNode, TerminalCommandCanonicalizerNode,
+    AnalyticsAutomatonNode, DailySummarizerNode, EntityEnricherNode, EntityResolverNode,
+    HealthAggregatorNode, HourlySummarizerNode, RelationExtractorNode, SessionDetectorNode,
+    TerminalCommandCanonicalizerNode,
 };
 
 /// Extract `--automaton <name>` (or `SINEX_AUTOMATON`) from raw argv and return
@@ -77,7 +81,7 @@ fn extract_automaton(
     let name = automaton.unwrap_or_else(|| {
         eprintln!(
             "error: --automaton <name> is required (or set SINEX_AUTOMATON).\n\
-             Valid values: canonicalizer | analytics | health | session | hourly | daily"
+             Valid values: canonicalizer | analytics | health | session | hourly | daily | entity-resolver | relation-extractor | entity-enricher"
         );
         std::process::exit(1);
     });
@@ -102,10 +106,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "session" => run_node::<SessionDetectorNode>(filtered_args).await,
         "hourly" => run_node::<HourlySummarizerNode>(filtered_args).await,
         "daily" => run_node::<DailySummarizerNode>(filtered_args).await,
+        "entity-resolver" => run_node::<EntityResolverNode>(filtered_args).await,
+        "relation-extractor" => run_node::<RelationExtractorNode>(filtered_args).await,
+        "entity-enricher" => run_node::<EntityEnricherNode>(filtered_args).await,
         other => {
             eprintln!(
                 "error: unknown automaton '{other}'.\n\
-                 Valid values: canonicalizer | analytics | health | session | hourly | daily"
+                 Valid values: canonicalizer | analytics | health | session | hourly | daily | entity-resolver | relation-extractor | entity-enricher"
             );
             std::process::exit(1);
         }

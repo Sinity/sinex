@@ -2263,7 +2263,7 @@ in
           }
         ];
         environment.systemPackages = mkAfter (
-          [ pkgs.dbus pkgs.git pkgs.git-annex ]
+          [ pkgs.dbus pkgs.git ] ++ optionals cfg.storage.blob.legacyAnnexData [ pkgs.git-annex ]
           ++ optionals cfg.shell.asciinema.autoRecord [ pkgs.asciinema ]
         );
 

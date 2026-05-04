@@ -42,5 +42,6 @@ crate/
   tests/
     vm-suite               NixOS VM test binary
 tests/e2e/                 End-to-end integration tests
+tests/workspace/           Workspace-level test harness
 xtask/                     Build automation (~105K lines, sandbox test infra)
 ```
