@@ -5911,6 +5911,7 @@ dependencies = [
  "clap",
  "human-panic",
  "mimalloc",
+ "regex",
  "serde",
  "serde_json",
  "sinex-node-sdk",

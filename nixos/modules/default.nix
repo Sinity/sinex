@@ -1422,6 +1422,18 @@ in
                   description = "Document parser automaton. Consumes `document.ingested` and `command.canonical` events, emits `document.parsed` + `document.chunked` synthesis events.";
                 };
 
+                entityExtractor = mkOption {
+                  type = submodule {
+                    options = {
+                      enable = mkOption { type = bool; default = true; description = "Enable entity extractor automaton."; };
+                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+                    };
+                  };
+                  default = { };
+                  description = "Entity extractor automaton (Stage 1). Scans events for URLs, file paths, commands, emails — emits `entity.extracted`.";
+                };
+
                 entityResolver = mkOption {
                   type = submodule {
                     options = {
@@ -2135,6 +2147,10 @@ in
               cfg.nodes.enable
               && cfg.nodes.automata.enable
               && cfg.nodes.automata.documentParser.enable;
+            entity_extractor =
+              cfg.nodes.enable
+              && cfg.nodes.automata.enable
+              && cfg.nodes.automata.entityExtractor.enable;
             entity_resolver =
               cfg.nodes.enable
               && cfg.nodes.automata.enable
