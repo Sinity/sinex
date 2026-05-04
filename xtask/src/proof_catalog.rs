@@ -11,7 +11,7 @@ use color_eyre::eyre::Result;
 use serde::Serialize;
 use sinex_primitives::events::schema_registry::get_all_payloads;
 use sinex_primitives::proof::{
-    self, CheckpointFamily, Claim, Exemption, Horizon, OccurrenceIdentity,
+    self, Claim, Exemption, Horizon, OccurrenceIdentity,
     PROOF_CATALOG_SCHEMA_VERSION, PrivacyTier, ProofObligation, RetentionPolicy, RunnerBinding,
     RuntimeShape, RuntimeUnitDescriptor,
 };
