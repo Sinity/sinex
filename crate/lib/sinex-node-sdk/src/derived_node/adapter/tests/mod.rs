@@ -2,7 +2,6 @@
     // Inline because these cover a private shutdown-signaling helper.
     #[cfg(feature = "messaging")]
     use super::log_self_observation_failure;
-    use super::request_runtime_drain;
     use super::{DerivedNodeAdapter, stale_output_ids_or_fail_scope};
     use crate::derived_node::{
         DerivedNodeConfig, DerivedOutput, DerivedTriggerContext, InputProvenanceFilter,
@@ -604,7 +603,7 @@
         let drain = RuntimeDrainController::new();
         let mut rx = drain.subscribe();
 
-        assert!(request_runtime_drain(&drain, "test-derived"));
+        assert!(drain.request_drain_and_warn("test-derived"));
         rx.changed().await?;
         assert!(*rx.borrow());
         Ok(())
@@ -614,8 +613,8 @@
     async fn request_runtime_drain_is_idempotent() -> TestResult<()> {
         let drain = RuntimeDrainController::new();
 
-        assert!(request_runtime_drain(&drain, "test-derived"));
-        assert!(request_runtime_drain(&drain, "test-derived"));
+        assert!(drain.request_drain_and_warn("test-derived"));
+        assert!(drain.request_drain_and_warn("test-derived"));
         assert!(drain.is_requested());
         Ok(())
     }

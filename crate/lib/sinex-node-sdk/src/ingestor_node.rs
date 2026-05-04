@@ -28,17 +28,6 @@ use std::sync::Arc;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
-fn request_runtime_drain(drain: &RuntimeDrainController, node_name: &str) -> bool {
-    if !drain.request_drain() && !drain.is_requested() {
-        warn!(
-            node = node_name,
-            "Ingestor runtime drain signal could not be delivered before graceful shutdown"
-        );
-        return false;
-    }
-    true
-}
-
 /// Adapter state around user state with metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngestorState<S> {
@@ -619,7 +608,7 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
 
     async fn shutdown(&mut self) -> NodeResult<()> {
         if let Some(tx) = self.shutdown_tx.take()
-            && !request_runtime_drain(&tx, self.ingestor.name())
+            && !tx.request_drain_and_warn(self.ingestor.name())
         {
             warn!(
                 node = self.ingestor.name(),
@@ -667,7 +656,7 @@ impl<I: IngestorNode> ExplorationProvider for IngestorNodeAdapter<I> {
 #[cfg(test)]
 mod tests {
     // Inline because these cover a private shutdown-signaling helper.
-    use super::{IngestorNodeAdapter, IngestorState, request_runtime_drain};
+    use super::{IngestorNodeAdapter, IngestorState};
     use crate::checkpoint::{CheckpointManager, CheckpointState};
     use crate::runtime::stream::{
         Checkpoint, ContinuousStart, NodeCapabilities, RuntimeDrainController, ScanArgs,
@@ -773,7 +762,7 @@ mod tests {
         let drain = RuntimeDrainController::new();
         let mut rx = drain.subscribe();
 
-        assert!(request_runtime_drain(&drain, "test-ingestor"));
+        assert!(drain.request_drain_and_warn("test-ingestor"));
         rx.changed().await?;
         assert!(*rx.borrow());
         Ok(())
@@ -783,8 +772,8 @@ mod tests {
     async fn request_runtime_drain_is_idempotent() -> TestResult<()> {
         let drain = RuntimeDrainController::new();
 
-        assert!(request_runtime_drain(&drain, "test-ingestor"));
-        assert!(request_runtime_drain(&drain, "test-ingestor"));
+        assert!(drain.request_drain_and_warn("test-ingestor"));
+        assert!(drain.request_drain_and_warn("test-ingestor"));
         assert!(drain.is_requested());
         Ok(())
     }

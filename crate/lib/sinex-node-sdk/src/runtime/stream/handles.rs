@@ -11,7 +11,7 @@ use sinex_primitives::{HostName, Id, JsonValue, Uuid};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
-use tracing::info;
+use tracing::{info, warn};
 
 pub type EventSender = mpsc::Sender<Event<JsonValue>>;
 pub type EventStream = mpsc::Receiver<Event<JsonValue>>;
@@ -52,6 +52,22 @@ impl RuntimeDrainController {
             return false;
         }
         self.drain_tx.send_replace(true);
+        true
+    }
+
+    /// Request drain with a warning if the signal could not be delivered.
+    ///
+    /// Returns `true` if the drain was already requested or successfully
+    /// delivered, `false` if the signal could not be sent.
+    #[must_use]
+    pub fn request_drain_and_warn(&self, node_name: &str) -> bool {
+        if !self.request_drain() && !self.is_requested() {
+            warn!(
+                node = node_name,
+                "Runtime drain signal could not be delivered before graceful shutdown"
+            );
+            return false;
+        }
         true
     }
 

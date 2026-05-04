@@ -18,6 +18,7 @@ use sinex_node_sdk::{
     },
     stage_as_you_go::StageAsYouGoContext,
     stage_material_from_file,
+    tags,
 };
 use sinex_node_sdk::{ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState};
 use sinex_primitives::temporal::Timestamp;
@@ -25,7 +26,10 @@ use sinex_primitives::validation::validate_path_within_root;
 use sinex_primitives::{
     Uuid,
     domain::SanitizedPath,
-    events::{EventPayload, payloads::document::DocumentIngestedPayload},
+    events::{
+        EventId, EventPayload,
+        payloads::{document::DocumentIngestedPayload, KnowledgeTagAppliedPayload},
+    },
     privacy::{self, ProcessingContext},
 };
 use std::{
