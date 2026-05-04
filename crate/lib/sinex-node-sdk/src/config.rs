@@ -38,6 +38,7 @@
 
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
+use sinex_primitives::domain::ServiceName;
 use sinex_primitives::{
     env as shared_env, environment::environment, units::Seconds,
     utils::wait_helpers::RetryConfig, validation::validate_path,
@@ -92,8 +93,9 @@ impl From<ConfigError> for sinex_primitives::error::SinexError {
 #[builder(on(String, into))]
 pub struct NodeConfig {
     /// Service name (used for logging and identification)
-    #[validate(length(min = 1, message = "Service name cannot be empty"))]
-    pub service_name: String,
+    #[builder(into)]
+    #[validate(custom(function = "validate_service_name", message = "Service name cannot be empty"))]
+    pub service_name: ServiceName,
 
     /// Log level
     #[serde(default = "default_log_level")]
@@ -209,7 +211,7 @@ pub struct AutomatonConfig {
 impl NodeConfig {
     fn defaults(service_name: &str) -> Self {
         Self {
-            service_name: service_name.to_string(),
+            service_name: ServiceName::new(service_name),
             log_level: default_log_level(),
             #[cfg(feature = "messaging")]
             nats: sinex_primitives::nats::NatsConnectionConfig::default(),
@@ -502,6 +504,13 @@ fn default_checkpoint_interval() -> Seconds {
 }
 
 // Custom validator functions
+
+fn validate_service_name(name: &ServiceName) -> Result<(), validator::ValidationError> {
+    if name.is_empty() {
+        return Err(validator::ValidationError::new("service_name_empty"));
+    }
+    Ok(())
+}
 
 fn validate_log_level(level: &str) -> Result<(), validator::ValidationError> {
     if matches!(level, "trace" | "debug" | "info" | "warn" | "error") {

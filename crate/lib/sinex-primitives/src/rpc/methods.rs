@@ -91,6 +91,12 @@ pub const TELEMETRY_METRIC_COUNTERS: &str = "telemetry.metric_counters";
 pub const TELEMETRY_INGESTD_BATCH_STATS: &str = "telemetry.ingestd_batch_stats";
 pub const TELEMETRY_INGESTD_VALIDATION: &str = "telemetry.ingestd_validation";
 
+// Sources
+pub const SOURCES_STAGE: &str = "sources.stage";
+pub const SOURCES_LIST: &str = "sources.list";
+pub const SOURCES_SHOW: &str = "sources.show";
+pub const SOURCES_COVERAGE: &str = "sources.coverage";
+
 // Tombstone (two-step)
 pub const LIFECYCLE_TOMBSTONE_CREATE: &str = "lifecycle.tombstone.create";
 pub const LIFECYCLE_TOMBSTONE_PREVIEW: &str = "lifecycle.tombstone.preview";
