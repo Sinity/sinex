@@ -279,7 +279,7 @@ pub struct NodeArgs {
 
     /// Service name for identification
     #[arg(long, default_value = "node")]
-    pub service_name: String,
+    pub service_name: ServiceName,
 
     /// Event batch size.
     ///
@@ -305,6 +305,7 @@ pub struct NodeArgs {
 }
 
 // Re-export commonly used types from dependencies
+use sinex_primitives::domain::ServiceName;
 pub use sinex_primitives::error::{ErrorDetails, SinexError};
 pub use sinex_primitives::temporal::Timestamp;
 pub use uuid::Uuid;

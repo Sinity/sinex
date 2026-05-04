@@ -5,6 +5,7 @@
 //! This module provides the standardized CLI interface for all node binaries
 //! implementing the service/scan/explore subcommand pattern.
 
+use sinex_primitives::domain::ServiceName;
 use sinex_primitives::env as shared_env;
 use crate::event_node::EventTransport;
 pub use crate::exploration::{ExplorationProvider, ExportFormat, SourceState};
@@ -438,15 +439,16 @@ fn edge_mode_enabled(database_url_supplied: bool) -> bool {
     shared_env::bool_or("SINEX_EDGE_MODE", false, "node cli edge mode") && !database_url_supplied
 }
 
-fn default_service_name(args: &NodeCli) -> String {
-    args.service_name
+fn default_service_name(args: &NodeCli) -> ServiceName {
+    let name = args.service_name
         .clone()
         .or_else(|| {
             args.source_unit
                 .as_ref()
                 .map(|unit| format!("sinex-{unit}"))
         })
-        .unwrap_or_else(|| "sinex-node".to_string())
+        .unwrap_or_else(|| "sinex-node".to_string());
+    ServiceName::new(name)
 }
 
 impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> NodeCliRunner<T> {
@@ -921,7 +923,7 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
         Ok(())
     }
 
-    fn resolve_service_name(args: &NodeCli) -> String {
+    fn resolve_service_name(args: &NodeCli) -> ServiceName {
         default_service_name(args)
     }
 
