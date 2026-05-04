@@ -124,7 +124,7 @@ impl SourceMaterialRegistry {
                 ColumnDef::new(SourceMaterialRegistry::MaterialKind)
                     .text()
                     .not_null()
-                    .check(Expr::cust("material_kind IN ('annex', 'git')")),
+                    .check(Expr::cust("material_kind IN ('annex', 'git', 'local_cas')")),
             )
             .col(
                 ColumnDef::new(SourceMaterialRegistry::SourceIdentifier)

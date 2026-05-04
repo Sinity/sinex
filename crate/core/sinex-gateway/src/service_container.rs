@@ -130,6 +130,7 @@ impl ServiceContainer {
             root_path: content_store_path,
             num_copies: None,
             large_files: None,
+            ..Default::default()
         };
         let content_store = Arc::new(
             ContentStoreManager::new(content_store_config, content_pool.clone(), None).map_err(

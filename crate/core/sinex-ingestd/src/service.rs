@@ -890,6 +890,7 @@ impl IngestService {
                 root_path: content_store_path.clone(),
                 num_copies: None,
                 large_files: None,
+                ..Default::default()
             };
 
             let content_store = match MaterialContentStore::new(content_store_config) {
@@ -1085,6 +1086,7 @@ impl IngestService {
                             root_path: content_store_path.clone(),
                             num_copies: None,
                             large_files: None,
+                            ..Default::default()
                         }) {
                             Ok(store) => store,
                             Err(error) => {

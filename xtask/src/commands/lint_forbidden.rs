@@ -149,6 +149,18 @@ impl XtaskCommand for LintForbiddenCommand {
         let anyhow_allow: [&str; 0] = [];
         violations.extend(check_anyhow_in_lib("anyhow::", r"anyhow::", &anyhow_allow)?);
 
+        // `color_eyre::` in library code is disallowed; libraries use the project error stack.
+        // This is separate from anyhow because color_eyre is only permitted in xtask and binaries.
+        let color_eyre_lib_allow = [
+            // xtask is a build tool, not a library — color_eyre is its error stack.
+            "xtask/src/commands/lint_forbidden.rs",
+        ];
+        violations.extend(check_color_eyre_in_lib(
+            "color_eyre::",
+            r"color_eyre::",
+            &color_eyre_lib_allow,
+        )?);
+
         // println! in library code (use tracing for structured logging)
         let println_lib_allow = [
             "crate/lib/sinex-node-sdk/src/node_cli.rs",
@@ -164,6 +176,26 @@ impl XtaskCommand for LintForbiddenCommand {
             "println!",
             r"println!",
             &println_lib_allow,
+        )?);
+
+        // Raw `INSERT INTO core.events` in non-test code should use the repository layer.
+        // Tests that bypass the repository for cascade / schema testing are allowed.
+        let insert_core_events_allow = [
+            // Gateway tests that test cascade infrastructure at the DB level.
+            "crate/core/sinex-gateway/src/cascade_analyzer.rs",
+            "crate/core/sinex-gateway/tests/cascade_analyzer_cycle_test.rs",
+            "crate/core/sinex-gateway/tests/cascade_depth_truncation_test.rs",
+            "crate/core/sinex-gateway/tests/sse_stream_test.rs",
+            // Schema bootstrap and test fixture modules.
+            "crate/lib/sinex-db/src/repositories/events/persistence.rs",
+            "xtask/src/sandbox/events.rs",
+            "xtask/src/commands/lint_forbidden.rs",
+        ];
+        violations.extend(check_pattern(
+            "raw INSERT INTO core.events",
+            r"INSERT INTO core\.events",
+            &insert_core_events_allow,
+            is_tests_path,
         )?);
 
         // Report runtime vs compile-time SQLx query usage
@@ -382,6 +414,25 @@ fn file_has_inline_cfg_test_module(path: &str) -> bool {
 
 /// Check for anyhow usage in library code (not xtask, not tests, not binaries)
 fn check_anyhow_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
+    run_rg(pattern)
+        .and_then(|matches| {
+            filter_allowlist(matches, allow, |path| {
+                // Allow in xtask, tests, binaries, build scripts, CLI, examples
+                path.starts_with("xtask/")
+                    || is_tests_path(path)
+                    || path.ends_with("/main.rs")
+                    || path.ends_with("build.rs")
+                    || path.contains("/bin/")
+                    || path.contains("/examples/")
+                    || path.starts_with("crate/cli/")
+            })
+        })
+        .with_context(|| format!("failed to scan for {label}"))
+}
+
+/// Check for `color_eyre::` usage in library code (use SinexError error stack).
+/// color_eyre is only permitted in xtask (build tooling) and binaries.
+fn check_color_eyre_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
     run_rg(pattern)
         .and_then(|matches| {
             filter_allowlist(matches, allow, |path| {

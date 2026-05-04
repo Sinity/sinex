@@ -20,6 +20,7 @@ async fn fake_content_store() -> TestResult<(Arc<MaterialContentStore>, tempfile
         root_path: repo_path,
         num_copies: None,
         large_files: None,
+        ..Default::default()
     })?;
     Ok((Arc::new(content_store), dir))
 }

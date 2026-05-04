@@ -20,10 +20,12 @@ use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+pub mod cas_fsck;
 pub mod gc;
 pub mod manager;
 pub mod path_validator;
 
+pub use cas_fsck::{CasFsckReport, CasFileStatus, CasStatus, check_cas, sweep_orphans_cas};
 pub use manager::{BlobMetadata, ContentStoreManager};
 pub use path_validator::{VerifiedPath, create_secure_temp_path, validate_and_convert_path};
 
@@ -196,6 +198,30 @@ pub struct ContentStoreConfig {
     pub root_path: Utf8PathBuf,
     pub num_copies: Option<u8>,
     pub large_files: Option<String>,
+    /// When true, git-annex is available for legacy large-object storage.
+    /// When false (default), only local BLAKE3 CAS is used.
+    #[serde(default)]
+    pub legacy_annex_enabled: bool,
+    /// Maximum blob size in bytes before ingestion is rejected.
+    /// Defaults to 100 MB. Set to 0 to disable.
+    #[serde(default = "default_max_blob_size")]
+    pub max_blob_size: usize,
+}
+
+const fn default_max_blob_size() -> usize {
+    100 * 1024 * 1024 // 100 MB
+}
+
+impl Default for ContentStoreConfig {
+    fn default() -> Self {
+        Self {
+            root_path: Utf8PathBuf::new(),
+            num_copies: None,
+            large_files: None,
+            legacy_annex_enabled: false,
+            max_blob_size: default_max_blob_size(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -332,53 +358,60 @@ pub struct MaterialContentStore {
 
 impl MaterialContentStore {
     pub fn new(config: ContentStoreConfig) -> NodeResult<Self> {
-        // Verify git-annex is available
-        which::which("git-annex")
-            .map_err(|e| SinexError::processing("git-annex not found in PATH").with_source(e))?;
-
-        // Ensure repository exists; initialize git + git-annex even when the
-        // directory already exists (e.g., tempdirs created by tests).
+        // Ensure the content-store root directory exists.
         std::fs::create_dir_all(&config.root_path).map_err(SinexError::io)?;
 
-        let git_dir = config.root_path.join(".git");
-        if !git_dir.exists() {
-            info!(
-                "Initializing git repository for content store at {:?}",
-                config.root_path
-            );
+        // Always ensure the local CAS directory structure exists.
+        let cas_dir = config.root_path.join(LOCAL_BLAKE3_CAS_DIR);
+        std::fs::create_dir_all(&cas_dir).map_err(SinexError::io)?;
 
-            let mut git_cmd = Command::new("git");
-            git_cmd.arg("init").current_dir(&config.root_path);
-            let git_output =
-                run_command_blocking(git_cmd, "Failed to run git init for content-store root")?;
-            if !git_output.status.success() {
-                return Err(SinexError::processing(format!(
-                    "git init failed for content-store root: {}",
-                    String::from_utf8_lossy(&git_output.stderr)
-                )));
+        if config.legacy_annex_enabled {
+            // Verify git-annex is available
+            which::which("git-annex")
+                .map_err(|e| SinexError::processing("git-annex not found in PATH").with_source(e))?;
+
+            let git_dir = config.root_path.join(".git");
+            if !git_dir.exists() {
+                info!(
+                    "Initializing git repository for content store at {:?}",
+                    config.root_path
+                );
+
+                let mut git_cmd = Command::new("git");
+                git_cmd.arg("init").current_dir(&config.root_path);
+                let git_output = run_command_blocking(
+                    git_cmd,
+                    "Failed to run git init for content-store root",
+                )?;
+                if !git_output.status.success() {
+                    return Err(SinexError::processing(format!(
+                        "git init failed for content-store root: {}",
+                        String::from_utf8_lossy(&git_output.stderr)
+                    )));
+                }
             }
-        }
 
-        let annex_dir = git_dir.join("annex");
-        if !annex_dir.exists() {
-            info!(
-                "Initializing git-annex repository at {:?}",
-                config.root_path
-            );
+            let annex_dir = git_dir.join("annex");
+            if !annex_dir.exists() {
+                info!(
+                    "Initializing git-annex repository at {:?}",
+                    config.root_path
+                );
 
-            let mut annex_cmd = Command::new("git-annex");
-            annex_cmd
-                .args(["init", "sinex"])
-                .current_dir(&config.root_path);
-            let annex_output = run_command_blocking(
-                annex_cmd,
-                "Failed to run git-annex init for content-store root",
-            )?;
-            if !annex_output.status.success() {
-                return Err(SinexError::processing(format!(
-                    "git-annex init failed for content-store root: {}",
-                    String::from_utf8_lossy(&annex_output.stderr)
-                )));
+                let mut annex_cmd = Command::new("git-annex");
+                annex_cmd
+                    .args(["init", "sinex"])
+                    .current_dir(&config.root_path);
+                let annex_output = run_command_blocking(
+                    annex_cmd,
+                    "Failed to run git-annex init for content-store root",
+                )?;
+                if !annex_output.status.success() {
+                    return Err(SinexError::processing(format!(
+                        "git-annex init failed for content-store root: {}",
+                        String::from_utf8_lossy(&annex_output.stderr)
+                    )));
+                }
             }
         }
 
@@ -391,49 +424,70 @@ impl MaterialContentStore {
         &self.config.root_path
     }
 
-    /// Initialize a content-store root with the current git-annex large-object backend.
-    pub async fn init(repo_path: &Utf8Path, description: Option<&str>) -> NodeResult<()> {
-        info!("Initializing git-annex repository at {:?}", repo_path);
+    /// Initialize a content-store root. Uses git-annex when `legacy_annex_enabled` is true;
+    /// otherwise creates only the local CAS directory structure.
+    pub async fn init_with_config(
+        repo_path: &Utf8Path,
+        description: Option<&str>,
+        legacy_annex_enabled: bool,
+    ) -> NodeResult<()> {
+        info!("Initializing content-store repository at {:?}", repo_path);
 
         // Ensure directory exists
         tokio::fs::create_dir_all(repo_path)
             .await
             .map_err(SinexError::io)?;
 
-        // Initialize git repository if needed
-        let git_dir = repo_path.join(".git");
-        if !git_dir.exists() {
-            let mut git_cmd = AsyncCommand::new("git");
-            git_cmd.arg("init").current_dir(repo_path);
-            let output = run_command_async(git_cmd, "Failed to run git init").await?;
+        // Always create the local CAS directory structure
+        let cas_dir = repo_path.join(LOCAL_BLAKE3_CAS_DIR);
+        tokio::fs::create_dir_all(&cas_dir)
+            .await
+            .map_err(SinexError::io)?;
+
+        if legacy_annex_enabled {
+            // Initialize git repository if needed
+            let git_dir = repo_path.join(".git");
+            if !git_dir.exists() {
+                let mut git_cmd = AsyncCommand::new("git");
+                git_cmd.arg("init").current_dir(repo_path);
+                let output = run_command_async(git_cmd, "Failed to run git init").await?;
+
+                if !output.status.success() {
+                    return Err(SinexError::processing(format!(
+                        "git init failed: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    )));
+                }
+            }
+
+            // Initialize git-annex
+            let mut cmd = AsyncCommand::new("git-annex");
+            cmd.arg("init").current_dir(repo_path);
+
+            if let Some(desc) = description {
+                cmd.arg(desc);
+            }
+
+            let output = run_command_async(cmd, "Failed to run git-annex init").await?;
 
             if !output.status.success() {
                 return Err(SinexError::processing(format!(
-                    "git init failed: {}",
+                    "git-annex init failed: {}",
                     String::from_utf8_lossy(&output.stderr)
                 )));
             }
+
+            info!("Successfully initialized git-annex repository");
+        } else {
+            info!("Content-store root initialized with local CAS only");
         }
-
-        // Initialize git-annex
-        let mut cmd = AsyncCommand::new("git-annex");
-        cmd.arg("init").current_dir(repo_path);
-
-        if let Some(desc) = description {
-            cmd.arg(desc);
-        }
-
-        let output = run_command_async(cmd, "Failed to run git-annex init").await?;
-
-        if !output.status.success() {
-            return Err(SinexError::processing(format!(
-                "git-annex init failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-
-        info!("Successfully initialized git-annex repository");
         Ok(())
+    }
+
+    /// Initialize a content-store root with the current git-annex large-object backend.
+    #[deprecated(note = "Use `init_with_config` with explicit legacy_annex_enabled")]
+    pub async fn init(repo_path: &Utf8Path, description: Option<&str>) -> NodeResult<()> {
+        Self::init_with_config(repo_path, description, true).await
     }
 
     fn require_utf8_path(path: impl AsRef<Path>) -> NodeResult<Utf8PathBuf> {
@@ -532,11 +586,60 @@ impl MaterialContentStore {
         Ok(Some(self.local_blake3_cas_path_for_hash(&parsed.digest)))
     }
 
+    /// Resolve a git-annex content key to a local file path.
+    ///
+    /// Uses `git-annex contentlocation` to find the file backing a legacy annex key.
+    /// Returns an error when `legacy_annex_enabled` is false or the key is local CAS.
+    pub async fn resolve_annex_content_path(&self, key: &str) -> NodeResult<Utf8PathBuf> {
+        if let Some(path) = self.path_if_local(key)? {
+            return Err(SinexError::processing(format!(
+                "resolve_annex_content_path is for legacy annex keys, but got local CAS key: {key}"
+            )).with_context("local_cas_path", path.to_string()));
+        }
+        if !self.config.legacy_annex_enabled {
+            return Err(SinexError::processing(
+                "legacy annex is disabled; cannot resolve annex content path",
+            ));
+        }
+        let output = AsyncCommand::new("git-annex")
+            .arg("contentlocation")
+            .arg(key)
+            .current_dir(&self.config.root_path)
+            .output()
+            .await
+            .map_err(SinexError::io)?;
+
+        if !output.status.success() {
+            return Err(SinexError::processing(format!(
+                "git-annex contentlocation failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+
+        let relative = String::from_utf8(output.stdout).map_err(|e| {
+            SinexError::processing("Invalid UTF-8 from git-annex contentlocation").with_source(e)
+        })?;
+        let trimmed = relative.trim();
+        if trimmed.is_empty() {
+            return Err(SinexError::processing(format!(
+                "git-annex contentlocation returned empty path for {key}"
+            )));
+        }
+
+        let path = self.config.root_path.join(trimmed);
+        Ok(path)
+    }
+
     async fn add_file_direct(
         &self,
         relative_path: &Utf8Path,
         resolved_path: &Utf8Path,
     ) -> NodeResult<ContentStoreKey> {
+        if !self.config.legacy_annex_enabled {
+            return Err(SinexError::processing(
+                "add_file_direct requires legacy_annex_enabled; use store_file_local_cas instead",
+            ));
+        }
         let mut cmd = AsyncCommand::new("git-annex");
         cmd.arg("add")
             .arg("--json")
@@ -582,11 +685,32 @@ impl MaterialContentStore {
     }
 
     /// Get the content-store key for a file.
+    ///
+    /// When `legacy_annex_enabled` is false, compute the BLAKE3 hash and
+    /// build a local CAS key directly (no git-annex subprocess).
     pub async fn lookup_content_key(
         &self,
         file_path: impl AsRef<Path>,
     ) -> NodeResult<ContentStoreKey> {
         let file_path = Self::require_utf8_path(file_path)?;
+        if !self.config.legacy_annex_enabled {
+            let resolved_path = if file_path.is_absolute() {
+                file_path
+            } else {
+                self.config.root_path.join(&file_path)
+            };
+            let file_size = tokio::fs::metadata(&resolved_path)
+                .await
+                .map_err(SinexError::io)?
+                .len();
+            let hash = Self::compute_blake3_hash(&resolved_path).await?;
+            return Ok(ContentStoreKey {
+                key: format!("{LOCAL_BLAKE3_CAS_BACKEND}-s{file_size}--{hash}"),
+                backend: ContentBackend::LocalBlake3Cas,
+                size: file_size,
+                digest: hash,
+            });
+        }
         let mut cmd = AsyncCommand::new("git-annex");
         cmd.arg("lookupkey")
             .arg(file_path.as_str())
@@ -635,6 +759,12 @@ impl MaterialContentStore {
             )));
         }
 
+        if !self.config.legacy_annex_enabled {
+            return Err(SinexError::processing(format!(
+                "legacy annex is disabled; cannot retrieve non-local-CAS key: {key_or_path}"
+            )));
+        }
+
         let (is_key, argument) = self.resolve_argument(key_or_path);
 
         let mut cmd = AsyncCommand::new("git-annex");
@@ -673,6 +803,12 @@ impl MaterialContentStore {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
                 Err(error) => return Err(SinexError::io(error)),
             }
+        }
+
+        if !self.config.legacy_annex_enabled {
+            return Err(SinexError::processing(format!(
+                "legacy annex is disabled; cannot drop non-local-CAS key: {key_or_path}"
+            )));
         }
 
         let (is_key, argument) = self.resolve_argument(key_or_path);
@@ -727,6 +863,16 @@ impl MaterialContentStore {
             });
         }
 
+        if !self.config.legacy_annex_enabled {
+            return Ok(ContentVerificationResult {
+                output: format!(
+                    "legacy annex disabled; cannot verify non-local-CAS key: {:?}",
+                    key.unwrap_or("<none>")
+                ),
+                success: false,
+            });
+        }
+
         let mut cmd = AsyncCommand::new("git-annex");
         cmd.arg("fsck");
 
@@ -762,8 +908,13 @@ impl MaterialContentStore {
         })
     }
 
-    /// Get repository status information
+    /// Get repository status information.
+    ///
+    /// When `legacy_annex_enabled` is false, returns a local CAS directory summary.
     pub async fn status(&self) -> NodeResult<String> {
+        if !self.config.legacy_annex_enabled {
+            return self.local_cas_status().await;
+        }
         let mut cmd = AsyncCommand::new("git-annex");
         cmd.arg("status").current_dir(&self.config.root_path);
         let output = run_command_async(cmd, "Failed to run git-annex status").await?;
@@ -773,7 +924,16 @@ impl MaterialContentStore {
     }
 
     /// List content-store keys reported as unused by the current repository.
+    ///
+    /// When `legacy_annex_enabled` is false, this operation is not applicable;
+    /// use CAS fsck (`cas_fsck::sweep_orphans_cas`) instead.
     pub async fn list_unused(&self) -> NodeResult<Vec<UnusedContentEntry>> {
+        if !self.config.legacy_annex_enabled {
+            return Err(SinexError::processing(
+                "git-annex unused is not available when legacy_annex_enabled is false. \
+                 Use CAS fsck for orphan detection.",
+            ));
+        }
         let mut cmd = AsyncCommand::new("git-annex");
         cmd.arg("unused")
             .arg("--json")
@@ -791,9 +951,16 @@ impl MaterialContentStore {
     }
 
     /// Drop unused git-annex content by the numbered slots returned from `unused`.
+    ///
+    /// When `legacy_annex_enabled` is false, returns an error.
     pub async fn drop_unused(&self, numbers: &[u32], force: bool) -> NodeResult<()> {
         if numbers.is_empty() {
             return Ok(());
+        }
+        if !self.config.legacy_annex_enabled {
+            return Err(SinexError::processing(
+                "git-annex dropunused is not available when legacy_annex_enabled is false",
+            ));
         }
 
         let mut cmd = AsyncCommand::new("git-annex");
@@ -825,8 +992,95 @@ impl MaterialContentStore {
         Ok(hash.to_hex().to_string())
     }
 
-    /// Configure repository settings
+    /// Walk the local CAS directory structure and yield all discovered hash paths.
+    ///
+    /// Returns a list of `(hash_hex, full_path, file_size)` tuples.
+    /// The `sinex-cas/XX/YY/` prefix layout is traversed recursively.
+    pub async fn walk_cas(&self) -> NodeResult<Vec<(String, Utf8PathBuf, u64)>> {
+        let cas_root = self.config.root_path.join(LOCAL_BLAKE3_CAS_DIR);
+        if !cas_root.exists() {
+            return Ok(Vec::new());
+        }
+        let mut entries = Vec::new();
+        let mut read_dir = tokio::fs::read_dir(&cas_root)
+            .await
+            .map_err(SinexError::io)?;
+        while let Some(entry) = read_dir.next_entry().await.map_err(SinexError::io)? {
+            let prefix_a = entry.path();
+            if !entry.file_type().await.map_err(SinexError::io)?.is_dir() {
+                continue;
+            }
+            let mut inner = tokio::fs::read_dir(&prefix_a)
+                .await
+                .map_err(SinexError::io)?;
+            while let Some(sub_entry) = inner.next_entry().await.map_err(SinexError::io)? {
+                if !sub_entry.file_type().await.map_err(SinexError::io)?.is_dir() {
+                    continue;
+                }
+                let mut hash_dir =
+                    tokio::fs::read_dir(sub_entry.path()).await.map_err(SinexError::io)?;
+                while let Some(hash_entry) =
+                    hash_dir.next_entry().await.map_err(SinexError::io)?
+                {
+                    let path = hash_entry.path();
+                    if !hash_entry.file_type().await.map_err(SinexError::io)?.is_file() {
+                        continue;
+                    }
+                    let metadata =
+                        tokio::fs::metadata(&path).await.map_err(SinexError::io)?;
+                    let path_utf8 = Utf8PathBuf::from_path_buf(path.clone())
+                        .map_err(|p| SinexError::processing(format!(
+                            "non-UTF-8 path in CAS tree: {}",
+                            p.display()
+                        )))?;
+                    let hash_str = path_utf8
+                        .file_name()
+                        .ok_or_else(|| SinexError::processing(format!(
+                            "CAS path has no filename: {path_utf8}"
+                        )))?;
+                    entries.push((hash_str.to_string(), path_utf8, metadata.len()));
+                }
+            }
+        }
+        Ok(entries)
+    }
+
+    /// Produce a human-readable summary of the local CAS directory.
+    async fn local_cas_status(&self) -> NodeResult<String> {
+        let cas_root = self.config.root_path.join(LOCAL_BLAKE3_CAS_DIR);
+        if !cas_root.exists() {
+            return Ok("Local CAS directory does not exist.".to_string());
+        }
+
+        let entries = self.walk_cas().await?;
+        let total_size: u64 = entries.iter().map(|(_, _, s)| s).sum();
+        let mut out = format!(
+            "Local CAS status:\n  Path: {}\n  Files: {}\n  Total size: {} bytes\n",
+            cas_root,
+            entries.len(),
+            total_size,
+        );
+        if !entries.is_empty() {
+            out.push_str(&format!(
+                "  Largest file: {} bytes ({})\n",
+                entries.iter().map(|(_, _, s)| s).max().copied().unwrap_or(0),
+                entries
+                    .iter()
+                    .max_by_key(|(_, _, s)| s)
+                    .map(|(h, _, _)| h.as_str())
+                    .unwrap_or("N/A"),
+            ));
+        }
+        Ok(out)
+    }
+
+    /// Configure repository settings.
+    ///
+    /// When `legacy_annex_enabled` is false, this is a no-op (no annex config to set).
     pub async fn configure(&self) -> NodeResult<()> {
+        if !self.config.legacy_annex_enabled {
+            return Ok(());
+        }
         if let Some(num_copies) = self.config.num_copies {
             self.set_config("annex.numcopies", &num_copies.to_string())
                 .await?;

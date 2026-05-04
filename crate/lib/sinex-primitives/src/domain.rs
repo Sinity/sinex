@@ -1877,6 +1877,61 @@ impl std::str::FromStr for BlobVerificationStatus {
     }
 }
 
+/// Storage backend for the content-addressed store.
+///
+/// Distinguishes local BLAKE3 CAS from legacy backend digests.
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum StorageBackend {
+    /// Local BLAKE3 content-addressed store (`sinex-cas/` prefix layout).
+    LocalCas,
+    /// Legacy backend identified by digest algorithm (e.g. "SHA256E").
+    BackendDigest(#[serde(rename = "backend")] String),
+}
+
+impl StorageBackend {
+    /// Parse a storage backend string into the canonical enum variant.
+    #[must_use]
+    pub fn from_storage_backend(backend: &str) -> Self {
+        if backend == "SINEXBLAKE3" || backend == "local_cas" {
+            Self::LocalCas
+        } else {
+            Self::BackendDigest(backend.to_string())
+        }
+    }
+
+    /// The string representation used in `storage_backend` columns.
+    #[must_use]
+    pub fn as_storage_backend_str(&self) -> &str {
+        match self {
+            Self::LocalCas => "SINEXBLAKE3",
+            Self::BackendDigest(backend) => backend.as_str(),
+        }
+    }
+
+    /// Whether this is the local BLAKE3 CAS backend.
+    #[must_use]
+    pub fn is_local_cas(&self) -> bool {
+        matches!(self, Self::LocalCas)
+    }
+}
+
+impl std::fmt::Display for StorageBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_storage_backend_str())
+    }
+}
+
+impl std::str::FromStr for StorageBackend {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self::from_storage_backend(s))
+    }
+}
+
 /// Outcome of a completed replay operation.
 ///
 /// Stored in the `outcome` field of `ReplayOperation` (serialized to JSON).

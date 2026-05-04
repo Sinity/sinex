@@ -40,9 +40,9 @@ pub async fn handle_store_blob(
     })?;
 
     serde_json::to_value(StoreBlobResponse {
-        key,
+        content_key: key,
         size,
-        hash: metadata.content_hash,
+        blake3_hash: metadata.content_hash,
     })
     .map_err(|error| {
         SinexError::serialization("failed to serialize content.store_blob response")
@@ -52,7 +52,7 @@ pub async fn handle_store_blob(
 
 pub async fn handle_retrieve_blob(services: &ServiceContainer, params: Value) -> Result<Value> {
     let params = RpcParams::new(&params);
-    let key = params.require_str("key")?;
+    let key = params.require_str("content_key")?;
 
     let content = services.content.retrieve_content(key).await?;
     let metadata = services.content.get_content_metadata(key).await?;

@@ -7,7 +7,9 @@ pub mod embeddings;
 pub mod events;
 pub mod events_extensions;
 pub mod gitops;
+pub mod integrity;
 pub mod knowledge_graph;
+pub mod replay;
 pub mod schema_cache;
 pub mod schema_management;
 pub mod source_materials;
@@ -42,6 +44,8 @@ pub use source_materials::{
 pub use state::{
     Operation, OperationRecord, OperationStatistics, StateRepository, SystemHealthReport,
 };
+pub use integrity::IntegrityRepository;
+pub use replay::ReplayRepository;
 
 use sqlx::PgPool;
 
@@ -63,6 +67,8 @@ pub trait DbPoolExt {
     fn state(&self) -> state::StateRepository<'_>;
     fn schemas(&self) -> schema_management::SchemaManagementRepository<'_>;
     fn schema_cache(&self) -> schema_cache::SchemaCacheRepository<'_>;
+    fn replay(&self) -> replay::ReplayRepository<'_>;
+    fn integrity(&self) -> integrity::IntegrityRepository<'_>;
     async fn with_transaction<F, T>(&self, f: F) -> crate::DbResult<T>
     where
         F: for<'tx> AsyncFnOnce(&'tx mut crate::DbTransaction<'_>) -> crate::DbResult<T>;
@@ -103,6 +109,14 @@ impl DbPoolExt for PgPool {
 
     fn schema_cache(&self) -> schema_cache::SchemaCacheRepository<'_> {
         schema_cache::SchemaCacheRepository::new(self)
+    }
+
+    fn replay(&self) -> replay::ReplayRepository<'_> {
+        replay::ReplayRepository::new(self)
+    }
+
+    fn integrity(&self) -> integrity::IntegrityRepository<'_> {
+        integrity::IntegrityRepository::new(self)
     }
 
     async fn with_transaction<F, T>(&self, f: F) -> crate::DbResult<T>
