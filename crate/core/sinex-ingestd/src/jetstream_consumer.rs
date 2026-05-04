@@ -1492,7 +1492,9 @@ impl JetStreamConsumer {
                     let ack_results = join_all(ack_futs).await;
                     for result in &ack_results {
                         if let Err(e) = result {
-                            return Err(SinexError::network(format!("Failed to ack: {e}")));
+                            return Err(SinexError::network("Failed to ack batch")
+                                .with_context("batch_size", ack_messages.len().to_string())
+                                .with_source(e.to_string()));
                         }
                     }
 
@@ -2407,6 +2409,7 @@ impl JetStreamConsumer {
         msg: &jetstream::Message,
         error: String,
     ) -> IngestdResult<()> {
+        let dlq_error = error.clone();
         match self.route_to_dlq(msg, error).await {
             Ok(()) => {
                 msg.ack().await.map_err(|e| {
@@ -2423,7 +2426,9 @@ impl JetStreamConsumer {
                     .await
                     .map_err(|nak_err| {
                         self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
-                        SinexError::network(format!("Failed to NAK after DLQ failure: {nak_err}"))
+                        SinexError::network("Failed to NAK after DLQ publish failure")
+                            .with_context("dlq_error", dlq_error.clone())
+                            .with_source(nak_err.to_string())
                     })?;
             }
         }
