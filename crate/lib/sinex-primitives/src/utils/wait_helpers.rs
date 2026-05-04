@@ -14,7 +14,7 @@ use tokio_retry::strategy::{ExponentialBackoff, FixedInterval, jitter};
 use tracing::{debug, warn};
 
 /// Retry configuration for flexible retry strategies
-#[derive(Debug, Clone, Builder)]
+#[derive(Debug, Clone, Builder, serde::Serialize, serde::Deserialize)]
 pub struct RetryConfig {
     /// Maximum number of attempts
     #[builder(default = 3)]
@@ -31,11 +31,29 @@ pub struct RetryConfig {
     /// Add jitter to delays
     #[builder(default = true)]
     pub jitter: bool,
+    /// Timeout for a single JetStream publish ack wait.
+    ///
+    /// Default: 10 seconds. Controls how long `NatsPublisher` waits for
+    /// a JetStream publish acknowledgment before timing out.
+    #[builder(default = Duration::from_secs(10))]
+    #[serde(default = "default_publish_ack_timeout")]
+    pub publish_ack_timeout: Duration,
+}
+
+fn default_publish_ack_timeout() -> Duration {
+    Duration::from_secs(10)
 }
 
 impl Default for RetryConfig {
     fn default() -> Self {
-        Self::builder().build()
+        Self {
+            max_attempts: 3,
+            initial_delay: Duration::from_millis(100),
+            max_delay: Duration::from_secs(1),
+            multiplier: 2.0,
+            jitter: true,
+            publish_ack_timeout: default_publish_ack_timeout(),
+        }
     }
 }
 

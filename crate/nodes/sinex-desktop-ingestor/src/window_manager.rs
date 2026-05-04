@@ -90,15 +90,6 @@ fn platform_error(message: impl Into<String>, class: &'static str) -> sinex_node
     sinex_node_sdk::SinexError::processing(message.into()).with_context("error_class", class)
 }
 
-fn env_string(name: &str) -> NodeResult<Option<String>> {
-    shared_env::strict_var(name).map_err(|err| {
-        platform_error(
-            err.to_string(),
-            ERROR_CLASS_HYPRLAND_EVENT_SOCKET_UNAVAILABLE,
-        )
-    })
-}
-
 fn collect_hyprland_candidates<I>(entries: I, hypr_dir: &Path) -> NodeResult<Vec<PathBuf>>
 where
     I: IntoIterator<Item = std::io::Result<PathBuf>>,
@@ -142,11 +133,11 @@ struct HyprlandSocketPaths {
 }
 
 fn resolve_hyprland_runtime_dir() -> NodeResult<PathBuf> {
-    if let Some(runtime_dir) = env_string("SINEX_HYPRLAND_RUNTIME_DIR")? {
+    if let Some(runtime_dir) = shared_env::strict_var("SINEX_HYPRLAND_RUNTIME_DIR")? {
         return Ok(PathBuf::from(runtime_dir));
     }
 
-    if let Some(runtime_dir) = env_string("XDG_RUNTIME_DIR")? {
+    if let Some(runtime_dir) = shared_env::strict_var("XDG_RUNTIME_DIR")? {
         return Ok(PathBuf::from(runtime_dir));
     }
 
@@ -241,8 +232,8 @@ fn select_hyprland_base_path(
 }
 
 fn resolve_hyprland_socket_paths() -> NodeResult<HyprlandSocketPaths> {
-    if let Some(event_socket) = env_string("SINEX_HYPRLAND_EVENT_SOCKET")? {
-        let command_socket = env_string("SINEX_HYPRLAND_COMMAND_SOCKET")?
+    if let Some(event_socket) = shared_env::strict_var("SINEX_HYPRLAND_EVENT_SOCKET")? {
+        let command_socket = shared_env::strict_var("SINEX_HYPRLAND_COMMAND_SOCKET")?
             .unwrap_or_else(|| derive_hyprland_command_socket(&event_socket));
         return Ok(HyprlandSocketPaths {
             event_socket,
@@ -251,8 +242,8 @@ fn resolve_hyprland_socket_paths() -> NodeResult<HyprlandSocketPaths> {
     }
 
     let runtime_dir = resolve_hyprland_runtime_dir()?;
-    let explicit_signature = env_string("SINEX_HYPRLAND_INSTANCE_SIGNATURE")?
-        .or(env_string("HYPRLAND_INSTANCE_SIGNATURE")?);
+    let explicit_signature = shared_env::strict_var("SINEX_HYPRLAND_INSTANCE_SIGNATURE")?
+        .or(shared_env::strict_var("HYPRLAND_INSTANCE_SIGNATURE")?);
     let base_path = select_hyprland_base_path(&runtime_dir, explicit_signature)?;
 
     Ok(HyprlandSocketPaths {

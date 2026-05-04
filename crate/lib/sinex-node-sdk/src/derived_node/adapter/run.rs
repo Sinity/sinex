@@ -7,7 +7,7 @@ use super::{DerivedNodeAdapter, historical_resume_position, recv_invalidation};
 
 use crate::derived_node::context::DerivedTriggerContext;
 use crate::derived_node::traits::DerivedNodeImpl;
-use crate::error_helpers::env_parse_with_default;
+use sinex_primitives::env as shared_env;
 use crate::processing::ErrorAction;
 use crate::runtime::stream::{Checkpoint, NodeRuntimeState, ScanArgs, ScanReport};
 use crate::{NodeResult, SinexError};
@@ -133,7 +133,7 @@ where
         // Invalidation debounce: buffer signals and process after a quiet period.
         // This prevents a replay archiving N scopes from triggering N immediate
         // recomputations — instead they coalesce into a single batch.
-        let debounce_ms = env_parse_with_default(
+        let debounce_ms = shared_env::parse_or(
             "SINEX_DERIVED_INVALIDATION_DEBOUNCE_MS",
             500_u64,
             "derived invalidation debounce",

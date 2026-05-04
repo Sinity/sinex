@@ -31,9 +31,8 @@
 //! ```
 
 use crate::acquisition_manager::{AcquisitionManager, RotationPolicy};
-use crate::error_helpers::{
-    env_bool_with_default, env_nonempty_string_optional, env_parse_with_default,
-};
+use crate::error_helpers::env_nonempty_string_optional;
+use sinex_primitives::env as shared_env;
 use crate::{BufferedRecordMaterializer, NatsPublisher, deterministic_material_event_id};
 use async_nats::Client as NatsClient;
 use sinex_primitives::events::payloads::{
@@ -110,8 +109,8 @@ impl SelfObserverConfig {
     #[must_use]
     pub fn from_env(component: &str) -> Self {
         let enabled =
-            env_bool_with_default("SINEX_SELF_OBSERVATION_ENABLED", true, "self-observation");
-        let min_interval_secs = env_parse_with_default(
+            shared_env::bool_or("SINEX_SELF_OBSERVATION_ENABLED", true, "self-observation");
+        let min_interval_secs = shared_env::parse_or(
             "SINEX_SELF_OBSERVATION_INTERVAL_SECS",
             1_u64,
             "self-observation",

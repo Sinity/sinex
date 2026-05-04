@@ -4,11 +4,10 @@
 //! persistence directly. This module keeps only the shared checkpoint-path and
 //! shutdown-configuration surface that the runtimes still use.
 
-use sinex_primitives::env as shared_env;
+use crate::error_helpers::env_nonempty_string_optional;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tracing::warn;
 
 /// Wait until shutdown is signaled via an `Arc<AtomicBool>` + `Arc<Notify>` pair.
 ///
@@ -81,20 +80,6 @@ pub fn default_checkpoint_path(node_name: &str) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/tmp/sinex"));
     let safe_name = sanitize_node_name_for_filename(node_name);
     runtime_dir.join(format!("{safe_name}.checkpoint.json"))
-}
-
-fn env_nonempty_string_optional(var: &str, context: &str) -> Option<String> {
-    shared_env::var_optional(var, context).and_then(|raw| {
-        if raw.trim().is_empty() {
-            warn!(
-                variable = var,
-                context, "Environment override is blank; ignoring value"
-            );
-            None
-        } else {
-            Some(raw)
-        }
-    })
 }
 
 /// Configuration for shutdown behavior.

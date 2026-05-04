@@ -192,20 +192,12 @@ impl HealthThresholds {
     /// Load thresholds from environment variables
     pub fn from_env() -> Result<Self> {
         Self {
-            error_rate_degraded: env_parsed("SINEX_HEALTH_ERROR_RATE_DEGRADED")?.unwrap_or(0.05),
-            error_rate_failed: env_parsed("SINEX_HEALTH_ERROR_RATE_FAILED")?.unwrap_or(0.20),
-            window_seconds: env_parsed("SINEX_HEALTH_WINDOW_SECONDS")?.unwrap_or(300),
+            error_rate_degraded: shared_env::strict_parsed("SINEX_HEALTH_ERROR_RATE_DEGRADED")?.unwrap_or(0.05),
+            error_rate_failed: shared_env::strict_parsed("SINEX_HEALTH_ERROR_RATE_FAILED")?.unwrap_or(0.20),
+            window_seconds: shared_env::strict_parsed("SINEX_HEALTH_WINDOW_SECONDS")?.unwrap_or(300),
         }
         .validate()
     }
-}
-
-fn env_parsed<T>(name: &str) -> Result<Option<T>>
-where
-    T: std::str::FromStr,
-    T::Err: std::fmt::Display,
-{
-    shared_env::strict_parsed(name)
 }
 
 /// Standardized health reporter for nodes

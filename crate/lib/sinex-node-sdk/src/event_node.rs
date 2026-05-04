@@ -78,6 +78,10 @@ struct EventBatcherStats {
     events_sent: AtomicU64,
     publish_failures: AtomicU64,
     recovery_spool_write_failures: AtomicU64,
+    /// Events silently discarded because the recovery spool replay cap
+    /// (`MAX_REMAINING_LINES`) was hit. #751 F36: these events are lost
+    /// after sustained NATS outages and require manual intervention.
+    recovery_spool_discards: AtomicU64,
 }
 
 impl EventBatcherStats {
@@ -88,6 +92,7 @@ impl EventBatcherStats {
             publish_failures = self.publish_failures.load(Ordering::Relaxed),
             recovery_spool_write_failures =
                 self.recovery_spool_write_failures.load(Ordering::Relaxed),
+            recovery_spool_discards = self.recovery_spool_discards.load(Ordering::Relaxed),
             "Event batcher stats"
         );
     }
@@ -285,10 +290,13 @@ impl EventBatcher {
                     malformed += 1;
                     if remaining_lines.len() >= MAX_REMAINING_LINES {
                         discarded += 1;
-                        warn!(
+                        self.stats
+                            .recovery_spool_discards
+                            .fetch_add(1, Ordering::Relaxed);
+                        error!(
                             path = ?recovery_spool_path,
                             error = %error,
-                            "Discarding malformed recovery-spool entry (remaining-lines cap reached)"
+                            "Discarding malformed recovery-spool entry (remaining-lines cap of {MAX_REMAINING_LINES} reached); event is permanently lost"
                         );
                     } else {
                         warn!(
@@ -314,11 +322,14 @@ impl EventBatcher {
             if let Err(error) = publish_result {
                 if remaining_lines.len() >= MAX_REMAINING_LINES {
                     discarded += 1;
-                    warn!(
+                    self.stats
+                        .recovery_spool_discards
+                        .fetch_add(1, Ordering::Relaxed);
+                    error!(
                         path = ?recovery_spool_path,
                         event_id = ?event.id,
                         error = %error,
-                        "Discarding unpublished recovery-spool entry (remaining-lines cap reached)"
+                        "Discarding recovery-spool event after replay publish failure (remaining-lines cap of {MAX_REMAINING_LINES} reached); event is permanently lost"
                     );
                 } else {
                     warn!(
@@ -337,25 +348,50 @@ impl EventBatcher {
 
         if remaining_lines.is_empty() {
             tokio::fs::remove_file(&recovery_spool_path).await?;
-            info!(
-                path = ?recovery_spool_path,
-                recovered,
-                malformed,
-                discarded,
-                "Replayed and removed leftover local recovery spool"
-            );
+            if discarded > 0 {
+                // #751 F36: events were lost due to MAX_REMAINING_LINES cap during
+                // sustained NATS outage. The spool is now clean but the loss is durable.
+                error!(
+                    path = ?recovery_spool_path,
+                    recovered,
+                    malformed,
+                    discarded,
+                    max_remaining = MAX_REMAINING_LINES,
+                    "Replayed and removed leftover local recovery spool; {discarded} events permanently lost due to remaining-lines cap"
+                );
+            } else {
+                info!(
+                    path = ?recovery_spool_path,
+                    recovered,
+                    malformed,
+                    discarded,
+                    "Replayed and removed leftover local recovery spool"
+                );
+            }
             return Ok(());
         }
 
         Self::rewrite_recovery_spool_file(&remaining_lines, &recovery_spool_path).await?;
-        warn!(
-            path = ?recovery_spool_path,
-            recovered,
-            malformed,
-            discarded,
-            remaining = remaining_lines.len(),
-            "Replayed local recovery spool partially; unreadable or unpublished entries were preserved"
-        );
+        if discarded > 0 {
+            error!(
+                path = ?recovery_spool_path,
+                recovered,
+                malformed,
+                discarded,
+                remaining = remaining_lines.len(),
+                max_remaining = MAX_REMAINING_LINES,
+                "Replayed local recovery spool partially; {discarded} events permanently lost due to remaining-lines cap — unreadable or unpublished entries were preserved"
+            );
+        } else {
+            warn!(
+                path = ?recovery_spool_path,
+                recovered,
+                malformed,
+                discarded,
+                remaining = remaining_lines.len(),
+                "Replayed local recovery spool partially; unreadable or unpublished entries were preserved"
+            );
+        }
         Ok(())
     }
 

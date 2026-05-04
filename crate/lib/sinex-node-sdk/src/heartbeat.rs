@@ -5,7 +5,8 @@
 //! which gets picked up by the journald ingestor as regular events, and processed
 //! by the health aggregator automaton.
 
-use crate::error_helpers::{elapsed_seconds_with_warning, env_parse_with_default};
+use crate::error_helpers::elapsed_seconds_with_warning;
+use sinex_primitives::env as shared_env;
 use crate::runtime::stream::NodeRuntimeState;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -42,7 +43,7 @@ fn get_failed_threshold() -> usize {
 }
 
 fn env_usize_with_default(var: &str, default: usize) -> usize {
-    env_parse_with_default(var, default, "heartbeat")
+    shared_env::parse_or(var, default, "heartbeat")
 }
 
 /// Heartbeat metrics and status
@@ -88,7 +89,17 @@ impl HeartbeatLogSink for StdoutHeartbeatSink {
     }
 }
 
-/// Heartbeat emitter that logs structured JSON to stdout
+/// Heartbeat emitter that logs structured JSON to stdout.
+///
+/// TODO(#754): This is superseded by [`crate::health_reporter::HealthReporter`] and will be
+/// removed once all consumers are migrated. The HealthReporter provides the same
+/// functionality (tracking status, emitting on transition) with a cleaner API and
+/// is now wired into both `DerivedNodeAdapter` and `IngestorNodeAdapter`.
+/// Consumers should migrate to using the adapter's `health_reporter()` accessor.
+#[deprecated(
+    since = "0.1.0",
+    note = "Use `HealthReporter` via `IngestorNodeAdapter::health_reporter()` or `DerivedNodeAdapter` health accessor. See #754."
+)]
 #[derive(Debug, Clone)]
 pub struct HeartbeatEmitter {
     service_name: String,

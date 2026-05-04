@@ -5,7 +5,7 @@
 //! This module provides the standardized CLI interface for all node binaries
 //! implementing the service/scan/explore subcommand pattern.
 
-use crate::error_helpers::env_bool_with_default;
+use sinex_primitives::env as shared_env;
 use crate::event_node::EventTransport;
 pub use crate::exploration::{ExplorationProvider, ExportFormat, SourceState};
 use crate::runtime::stream::{Checkpoint, NodeRunner, NodeType, TimeHorizon};
@@ -435,7 +435,7 @@ fn render_cli_time(timestamp: Timestamp) -> String {
 }
 
 fn edge_mode_enabled(database_url_supplied: bool) -> bool {
-    env_bool_with_default("SINEX_EDGE_MODE", false, "node cli edge mode") && !database_url_supplied
+    shared_env::bool_or("SINEX_EDGE_MODE", false, "node cli edge mode") && !database_url_supplied
 }
 
 fn default_service_name(args: &NodeCli) -> String {
@@ -606,7 +606,7 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
             .await?;
 
         let coordination_disabled =
-            env_bool_with_default("SINEX_COORDINATION_DISABLED", false, "node coordination");
+            shared_env::bool_or("SINEX_COORDINATION_DISABLED", false, "node coordination");
         let node_type = runner.node_type();
 
         // Run service with optional coordination

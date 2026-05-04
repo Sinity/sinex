@@ -42,20 +42,7 @@ impl Default for BrowserIngestorConfig {
     fn default() -> Self {
         Self {
             dump_sources: Vec::new(),
-            sqlite_sources: vec![
-                BrowserSqliteSourceConfig {
-                    path: Utf8PathBuf::from("/home/sinity/.local/share/qutebrowser/history.sqlite"),
-                    browser: "qutebrowser".to_string(),
-                    format: BrowserSqliteFormat::QutebrowserNative,
-                },
-                BrowserSqliteSourceConfig {
-                    path: Utf8PathBuf::from(
-                        "/home/sinity/.local/share/qutebrowser/webengine/History",
-                    ),
-                    browser: "qutebrowser".to_string(),
-                    format: BrowserSqliteFormat::ChromiumHistory,
-                },
-            ],
+            sqlite_sources: Vec::new(),
             polling_interval_secs: Seconds::from_secs(DEFAULT_POLLING_INTERVAL_SECS),
         }
     }
@@ -847,20 +834,15 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn default_browser_config_keeps_live_sqlite_sources_only() -> TestResult<()> {
+    async fn default_browser_config_uses_empty_initial_sources() -> TestResult<()> {
         let config = BrowserIngestorConfig::default();
         assert!(
             config.dump_sources.is_empty(),
-            "live defaults should not replay static dump roots on startup"
+            "default dump sources should be empty"
         );
-        assert_eq!(config.sqlite_sources.len(), 2);
-        assert_eq!(
-            config.sqlite_sources[0].format,
-            BrowserSqliteFormat::QutebrowserNative
-        );
-        assert_eq!(
-            config.sqlite_sources[1].format,
-            BrowserSqliteFormat::ChromiumHistory
+        assert!(
+            config.sqlite_sources.is_empty(),
+            "default sqlite sources should be empty — actual sources configured via env/NixOS module"
         );
         Ok(())
     }
