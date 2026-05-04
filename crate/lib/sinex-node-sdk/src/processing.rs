@@ -33,14 +33,6 @@ impl From<NodeLogicError> for SinexError {
     }
 }
 
-/// Action to take when node logic returns an error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ErrorAction {
-    Retry,
-    SendToProcessingFailureQueue,
-    Skip,
-}
-
 /// Persisted state wrapper used by derived node checkpointing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct PersistedState<S> {
