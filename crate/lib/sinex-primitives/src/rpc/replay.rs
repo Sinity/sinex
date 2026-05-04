@@ -10,8 +10,17 @@ use std::collections::HashMap;
 
 /// Replay operation states with well-defined transitions.
 ///
-/// Serde uses default `PascalCase` to match `sinex_db::replay::state_machine::ReplayState`,
-/// which is serialized directly by the gateway RPC handlers.
+/// This is the wire-serialization mirror of the authoritative
+/// [`sinex_db::replay::state_machine::ReplayState`]. The two are
+/// structurally identical; the duplicate exists because the
+/// authoritative version carries `sqlx::Type` annotations that the
+/// primitives crate cannot import (dependency direction: primitives
+/// ranks below sinex-db).
+///
+/// Preferred canonical path for non-RPC consumers:
+/// `sinex_db::replay::state_machine::ReplayState`.
+///
+/// Serde uses default `PascalCase` to match the DB type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ReplayState {
     /// Initial state, gathering scope and planning

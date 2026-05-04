@@ -41,6 +41,8 @@ pub const DLQ_PURGE: &str = "dlq.purge";
 
 // Nodes
 pub const NODES_LIST: &str = "nodes.list";
+pub const NODES_LIST_ACTIVE: &str = "nodes.list_active";
+pub const NODES_HEALTH: &str = "nodes.health";
 pub const NODES_DRAIN: &str = "nodes.drain";
 pub const NODES_RESUME: &str = "nodes.resume";
 pub const NODES_SET_HORIZON: &str = "nodes.set_horizon";

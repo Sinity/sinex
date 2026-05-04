@@ -90,16 +90,18 @@ pub(crate) struct JsonRpcRequest {
     id: Option<Value>,
 }
 
-pub(crate) fn validate_jsonrpc_request(request: &JsonRpcRequest) -> color_eyre::eyre::Result<()> {
+pub(crate) fn validate_jsonrpc_request(request: &JsonRpcRequest) -> SinexResult<()> {
     if request.jsonrpc != "2.0" {
-        return Err(eyre!("jsonrpc must be '2.0'"));
+        return Err(SinexError::validation("jsonrpc must be '2.0'"));
     }
     if request.method.trim().is_empty() {
-        return Err(eyre!("method must be a non-empty string"));
+        return Err(SinexError::validation("method must be a non-empty string"));
     }
     match request.params {
         Value::Object(_) | Value::Array(_) | Value::Null => Ok(()),
-        _ => Err(eyre!("params must be an object, array, or null")),
+        _ => Err(SinexError::validation(
+            "params must be an object, array, or null",
+        )),
     }
 }
 
@@ -421,18 +423,24 @@ impl GatewayAuth {
     }
 }
 
-fn read_token_and_path_from_env() -> color_eyre::eyre::Result<(Option<String>, Option<PathBuf>)> {
+fn read_token_and_path_from_env() -> SinexResult<(Option<String>, Option<PathBuf>)> {
     if let Some(path_str) = shared_env::strict_var("SINEX_GATEWAY_ADMIN_TOKEN_FILE")? {
         let path = PathBuf::from(&path_str);
-        let contents = std::fs::read_to_string(&path)
-            .wrap_err("Failed to read SINEX_GATEWAY_ADMIN_TOKEN_FILE")?;
+        let contents = std::fs::read_to_string(&path).map_err(|e| {
+            SinexError::configuration("Failed to read SINEX_GATEWAY_ADMIN_TOKEN_FILE")
+                .with_context("path", path.display().to_string())
+                .with_std_error(&e)
+        })?;
         return Ok((Some(contents.trim().to_string()), Some(path)));
     }
 
     if let Some(path_str) = shared_env::strict_var("SINEX_RPC_TOKEN_FILE")? {
         let path = PathBuf::from(&path_str);
-        let contents =
-            std::fs::read_to_string(&path).wrap_err("Failed to read SINEX_RPC_TOKEN_FILE")?;
+        let contents = std::fs::read_to_string(&path).map_err(|e| {
+            SinexError::configuration("Failed to read SINEX_RPC_TOKEN_FILE")
+                .with_context("path", path.display().to_string())
+                .with_std_error(&e)
+        })?;
         return Ok((Some(contents.trim().to_string()), Some(path)));
     }
 
@@ -882,7 +890,7 @@ async fn handle_rpc(
 
     if let Err(err) = validate_jsonrpc_request(&request) {
         state.metrics.record_request_rejected();
-        let detail = err.to_string();
+        let detail = err.client_message();
         log_access_audit(
             "rpc",
             &request.method,
@@ -890,7 +898,7 @@ async fn handle_rpc(
             Some(&auth_context),
             Some(&detail),
         );
-        let response = JsonRpcResponse::error(request.id, -32600, err.to_string());
+        let response = JsonRpcResponse::error(request.id, -32600, detail.to_string());
         return (StatusCode::BAD_REQUEST, Json(response));
     }
 
@@ -1000,7 +1008,7 @@ fn parse_tcp_listen(spec: &str) -> color_eyre::eyre::Result<(String, u16)> {
 /// Priority: `SINEX_GATEWAY_ADMIN_TOKEN_FILE` > `SINEX_RPC_TOKEN_FILE` > `SINEX_RPC_TOKEN`
 ///
 /// Used by test support utilities and external consumers that need token access.
-pub fn read_token_from_env() -> color_eyre::eyre::Result<Option<String>> {
+pub fn read_token_from_env() -> SinexResult<Option<String>> {
     let (token, _) = read_token_and_path_from_env()?;
     Ok(token)
 }

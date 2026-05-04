@@ -306,6 +306,19 @@ impl ContentStoreManager {
 
         info!("Ingesting file: {:?}", validated_path);
 
+        // Check max blob size before computing hash
+        let file_metadata = tokio::fs::metadata(validated_path)
+            .await
+            .map_err(SinexError::io)?;
+        let size_bytes = file_metadata.len() as i64;
+        let max_size = self.content_store.config.max_blob_size;
+        if max_size > 0 && file_metadata.len() as usize > max_size {
+            return Err(SinexError::blob_storage(format!(
+                "blob size {} exceeds limit {max_size} for {:?}",
+                file_metadata.len(), validated_path
+            )));
+        }
+
         let blake3_hash = MaterialContentStore::compute_blake3_hash(validated_path)
             .await
             .map_err(|e| SinexError::blob_storage(e).with_operation("compute_hash"))?;
@@ -315,11 +328,6 @@ impl ContentStoreManager {
         if let Some(existing) = self.check_dedup(&blake3_hash, effective_filename).await? {
             return Ok(existing);
         }
-
-        let file_metadata = tokio::fs::metadata(validated_path)
-            .await
-            .map_err(SinexError::io)?;
-        let size_bytes = file_metadata.len() as i64;
 
         let mime_type = Self::detect_mime_type(validated_path)
             .map_err(|e| SinexError::blob_storage(e).with_operation("detect_mime_type"))?;
@@ -354,6 +362,15 @@ impl ContentStoreManager {
         content_type: &str,
     ) -> NodeResult<BlobMetadata> {
         info!("Ingesting {} bytes as {}", content.len(), filename);
+
+        // Check max blob size
+        let max_size = self.content_store.config.max_blob_size;
+        if max_size > 0 && content.len() > max_size {
+            return Err(SinexError::blob_storage(format!(
+                "blob size {} exceeds limit {max_size} for {filename}",
+                content.len(),
+            )));
+        }
 
         let blake3_hash = blake3::hash(content).to_hex().to_string();
 
@@ -633,6 +650,12 @@ impl ContentStoreManager {
             return Ok(path);
         }
 
+        if !self.content_store.config.legacy_annex_enabled {
+            return Err(SinexError::processing(format!(
+                "legacy annex disabled; cannot locate non-local-CAS key: {content_key}"
+            )));
+        }
+
         let output = AsyncCommand::new("git-annex")
             .arg("contentlocation")
             .arg(content_key)
@@ -701,13 +724,19 @@ impl ContentStoreManager {
 
         let material_id = Id::<SourceMaterial>::from_uuid(metrics_material.id);
 
+        let backend_label = if self.content_store.config.legacy_annex_enabled {
+            "hybrid-local-cas-git-annex"
+        } else {
+            "local-cas"
+        };
+
         let new_event = Self::create_blob_event(
             "storage.statistics",
             StorageStatisticsPayload {
                 total_blobs: blob_count,
                 total_size_bytes: total_size,
                 failed_verifications: failed_count,
-                storage_backend: "hybrid-local-cas-git-annex".to_string(),
+                storage_backend: backend_label.to_string(),
             },
             material_id,
         )?;

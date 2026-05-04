@@ -15,8 +15,8 @@ Scratch notes are not a backlog. Promote durable findings into GitHub issues.
 | Intelligence layer | #331, #332, #733, #934 | Entity extraction, document retrieval, pipeline stages 2-4 |
 | Operational gaps | #945, #951, #986-#994 | Backup, compression, views→CAs, schema safety, hardening, audit findings |
 | CLI/TUI convergence | #846, #368, #806, #807 | Compact sinexctl IA, verify suite, demo scenarios |
-| Deployment hardening | #910, #914, #915, #990 | Resource scoping, pressure observability, NixOS service hardening |
-| Documentation | #805, #809, #950, #991 | Glossary, README assets, source-unit workflow, CLAUDE.md freshness |
+| Deployment hardening | #910, #914, #915 | Resource scoping, pressure observability (PSI monitor landed; doctor cgroup check deferred) |
+| Documentation | #805, #800, #809, #950, #991 | Glossary + CI policy created; source-unit workflow, CLAUDE.md freshness |
 
 ### Known Architectural Fragilities
 
