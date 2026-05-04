@@ -2,6 +2,27 @@
 
 **Nightly Rust** (1.95.0-nightly) + **Edition 2024** via Nix flake (`fenix.packages.complete`).
 
+### ABSOLUTE RULE — Never bare `cargo`
+
+**Every Rust compilation or test command goes through `xtask`.** This is not advisory.
+
+| Instead of | Use | Why |
+|------------|-----|-----|
+| `cargo check -p <pkg>` | `xtask check -p <pkg>` | Preflight, history, JSON output, proper `CARGO_TARGET_DIR` |
+| `cargo check -p <pkg> --lib` | `xtask check -p <pkg>` | Same — `xtask check` is already scoped correctly |
+| `cargo test -p <pkg>` | `xtask test -p <pkg>` | Nextest wiring, preflight, history capture |
+| `cargo build -p <pkg>` | `xtask build -p <pkg>` | Captures diagnostics, proper target dir |
+
+Bare `cargo` bypasses: preflight checks, the shared `.sinex/target` directory, xtask history
+capture, and JSON-formatted diagnostics. The cost of `xtask check` over `cargo check` is
+negligible (~0.3s preflight), and the cost of bypassing xtask is invisible drift.
+
+When you need a fast compile check while iterating: `xtask check -p <pkg>`. When you want it
+in the background while you continue working: `xtask check -p <pkg> --bg`. Never `cargo check`.
+
+This rule has been violated repeatedly despite being documented. If you catch yourself typing
+`cargo`, stop and re-type `xtask`.
+
 ### Edition 2024 Rules
 
 | Rule | Pattern |

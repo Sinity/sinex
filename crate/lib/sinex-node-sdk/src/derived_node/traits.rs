@@ -64,6 +64,7 @@ fn serialize_output<T: Serialize>(
         scope_key: output.scope_key,
         equivalence_key: output.equivalence_key,
         aggregation: output.aggregation,
+        event_type: output.event_type,
     })
 }
 
@@ -371,6 +372,75 @@ pub trait ScopeReconcilerNode: Send + Sync + 'static {
     }
 }
 
+// ── MultiOutputTransducerNode ───────────────────────────────────────────
+
+/// A 1:N event transducer: one input event produces zero or more output events,
+/// each potentially of a different event type.
+///
+/// Unlike [`TransducerNode`], which emits at most one output per input, this node
+/// can emit multiple outputs with distinct event types — necessary when a single
+/// logical operation (e.g. document parsing) produces events of multiple kinds
+/// (`document.parsed` + N× `document.chunked`). Each output carries its own
+/// event type via [`DerivedOutput::with_event_type`].
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` does not implement `MultiOutputTransducerNode`",
+    label = "missing MultiOutputTransducerNode implementation",
+    note = "implement `name()`, `input_event_type()`, `output_event_types()`, and `process()`"
+)]
+pub trait MultiOutputTransducerNode: Send + Sync + 'static {
+    type State: Serialize + DeserializeOwned + Default + Send + Sync;
+    type Input: DeserializeOwned + Send;
+    type Output: Serialize + Send;
+
+    fn name(&self) -> &'static str;
+    fn input_event_type(&self) -> &'static str;
+    /// The set of event types this node can produce. Callers stamp each output
+    /// with the appropriate type from this list via
+    /// [`DerivedOutput::with_event_type`].
+    fn output_event_types(&self) -> &[&'static str];
+    fn output_event_source(&self) -> &'static str {
+        self.name()
+    }
+    fn output_privacy_context(&self) -> ProcessingContext;
+    fn input_provenance_filter(&self) -> InputProvenanceFilter {
+        InputProvenanceFilter::Any
+    }
+    fn node_model(&self) -> DerivedNodeModel {
+        DerivedNodeModel::Transducer
+    }
+
+    /// Process a single input event into zero or more output events.
+    ///
+    /// Each output should carry its event type set via
+    /// `DerivedOutput::with_event_type(output_event_types()[idx])`.
+    fn process(
+        &mut self,
+        state: &mut Self::State,
+        input: Self::Input,
+        context: &DerivedTriggerContext,
+    ) -> impl std::future::Future<
+        Output = Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError>,
+    > + Send;
+
+    fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
+        ErrorAction::SendToProcessingFailureQueue
+    }
+
+    fn on_initialize(
+        &mut self,
+        _state: &Self::State,
+    ) -> impl std::future::Future<Output = Result<(), NodeLogicError>> + Send {
+        async { Ok(()) }
+    }
+
+    fn on_shutdown(
+        &mut self,
+        _state: &Self::State,
+    ) -> impl std::future::Future<Output = Result<(), NodeLogicError>> + Send {
+        async { Ok(()) }
+    }
+}
+
 // ── DerivedNodeImpl — unified dispatch trait ───────────────────────────
 
 /// Internal trait that unifies all three derived node models for the adapter.
@@ -589,6 +659,7 @@ impl<N: WindowedNode> DerivedNodeImpl for WindowedWrapper<N> {
                     scope_key: output.scope_key,
                     equivalence_key: output.equivalence_key,
                     aggregation: output.aggregation,
+                    event_type: output.event_type,
                 }])
             }
             None => Ok(Vec::new()),
@@ -705,9 +776,84 @@ where
                     scope_key: output.scope_key,
                     equivalence_key: output.equivalence_key,
                     aggregation: output.aggregation,
+                    event_type: None,
                 })
             })
             .collect()
+    }
+
+    fn handle_error_derived(&self, error: &NodeLogicError) -> ErrorAction {
+        self.0.handle_error(error)
+    }
+
+    async fn on_initialize_derived(&mut self, state: &Self::State) -> Result<(), NodeLogicError> {
+        self.0.on_initialize(state).await
+    }
+
+    async fn on_shutdown_derived(&mut self, state: &Self::State) -> Result<(), NodeLogicError> {
+        self.0.on_shutdown(state).await
+    }
+}
+
+/// Wrapper that bridges `MultiOutputTransducerNode` to `DerivedNodeImpl`.
+pub struct MultiOutputTransducerWrapper<N: MultiOutputTransducerNode>(pub N);
+
+impl<N: MultiOutputTransducerNode + Default> Default for MultiOutputTransducerWrapper<N> {
+    fn default() -> Self {
+        Self(N::default())
+    }
+}
+
+impl<N: MultiOutputTransducerNode> DerivedNodeImpl for MultiOutputTransducerWrapper<N> {
+    type State = N::State;
+
+    fn name(&self) -> &'static str {
+        self.0.name()
+    }
+    fn input_event_type(&self) -> &'static str {
+        self.0.input_event_type()
+    }
+    fn input_provenance_filter(&self) -> InputProvenanceFilter {
+        self.0.input_provenance_filter()
+    }
+    fn output_event_type(&self) -> &'static str {
+        self.0
+            .output_event_types()
+            .first()
+            .copied()
+            .unwrap_or("unknown")
+    }
+    fn output_event_source(&self) -> &'static str {
+        self.0.output_event_source()
+    }
+    fn output_privacy_context(&self) -> ProcessingContext {
+        self.0.output_privacy_context()
+    }
+    fn node_model(&self) -> DerivedNodeModel {
+        self.0.node_model()
+    }
+
+    async fn process_derived(
+        &mut self,
+        state: &mut Self::State,
+        event: sinex_primitives::events::Event<JsonValue>,
+        context: &DerivedTriggerContext,
+    ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
+        let input: N::Input = serde_json::from_value(event.payload)
+            .map_err(|e| NodeLogicError::Processing(format!("Failed to parse input: {e}")))?;
+
+        let outputs = self.0.process(state, input, context).await?;
+        serialize_outputs(outputs)
+    }
+
+    async fn process_invalidation_derived(
+        &mut self,
+        _state: &mut Self::State,
+        _scope_key: &str,
+        _working_set: Vec<sinex_primitives::events::Event<JsonValue>>,
+        _context: &DerivedTriggerContext,
+    ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
+        Ok(Vec::new())
     }
 
     fn handle_error_derived(&self, error: &NodeLogicError) -> ErrorAction {

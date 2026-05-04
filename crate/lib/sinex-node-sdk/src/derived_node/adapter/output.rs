@@ -203,8 +203,10 @@ where
             scope_key,
             equivalence_key,
             aggregation: _aggregation,
+            event_type,
         } = output;
 
+        let resolved_event_type = event_type.unwrap_or_else(|| self.node.output_event_type());
         let privacy_context = self.node.output_privacy_context();
         let filtered_payload =
             privacy::process_json(&payload, privacy_context).map_err(|error| {
@@ -216,7 +218,7 @@ where
         if filtered_payload != payload {
             debug!(
                 node = %self.node.name(),
-                output_event_type = %self.node.output_event_type(),
+                output_event_type = %resolved_event_type,
                 ?privacy_context,
                 "Applied privacy filtering to derived output payload"
             );
@@ -234,7 +236,7 @@ where
                         "derived invalidation output missing source event ids",
                     )
                     .with_context("node", self.node.name())
-                    .with_context("output_event_type", self.node.output_event_type())
+                    .with_context("output_event_type", resolved_event_type)
                     .with_context("processing_mode", format!("{:?}", context.processing_mode))
                     .with_context("trigger_kind", format!("{:?}", context.trigger_kind))
                     .with_context(
@@ -251,15 +253,10 @@ where
         // Extract before moving provenance into the event struct.
         let created_by_operation_id = provenance.operation_uuid();
 
-        // Use Uuid::now_v7() instead of deterministic_event_id to ensure
-        // ts_coided (extracted from UUIDv7) >= ts_orig. The previous pattern
-        // embedded ts_orig into the UUIDv7 timestamp, which truncated to
-        // milliseconds and made ts_coided up to 999us earlier than ts_orig.
-        // (#751 F34)
         Ok(Event {
             id: Some(Id::from_uuid(Uuid::now_v7())),
             source: EventSource::new(self.node.output_event_source())?,
-            event_type: EventType::new(self.node.output_event_type())?,
+            event_type: EventType::new(resolved_event_type)?,
             payload: filtered_payload,
             ts_orig: Some(ts_orig),
             host: HostName::new(&self.host)?,

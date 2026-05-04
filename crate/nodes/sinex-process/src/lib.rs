@@ -17,6 +17,7 @@
 //! | `entity-resolver` | `--automaton entity-resolver` | [`WindowedNode`] |
 //! | `relation-extractor` | `--automaton relation-extractor` | [`ScopeReconcilerNode`] |
 //! | `entity-enricher` | `--automaton entity-enricher` | [`ScopeReconcilerNode`] |
+//! | `document-parser` | `--automaton document-parser` | [`MultiOutputTransducerNode`] |
 //!
 //! All nine [`SourceUnitDescriptor`](sinex_primitives::proof::SourceUnitDescriptor)s are
 //! registered at program load via the `register_source_unit!` macro in each submodule.
@@ -25,6 +26,7 @@ pub mod automata {
     pub mod analytics;
     pub mod canonicalizer;
     pub mod daily;
+    pub mod document_parser;
     pub mod entity_enricher;
     pub mod entity_resolver;
     pub mod health;
@@ -36,6 +38,8 @@ pub mod automata {
 pub use automata::analytics::AnalyticsAutomatonNode;
 pub use automata::canonicalizer::TerminalCommandCanonicalizerNode;
 pub use automata::daily::DailySummarizerNode;
+pub use automata::document_parser::DocumentParserNode;
+pub use automata::document_parser::DocumentParserNodeAdapter;
 pub use automata::entity_enricher::EntityEnricherNode;
 pub use automata::entity_resolver::EntityResolverNode;
 pub use automata::health::HealthAggregatorNode;
