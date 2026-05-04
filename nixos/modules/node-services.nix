@@ -1719,8 +1719,44 @@ let
             extraArgs = [ ];
           };
         };
+      entityResolver = nodesCfg.automata.entityResolver;
+      entityResolverUnit =
+        if !entityResolver.enable then { } else {
+          "sinex-entity-resolver" = mkAutomataUnit {
+            automaton = "entity-resolver";
+            binary = "entity-resolver";
+            description = "Sinex entity resolver automaton";
+            profile = entityResolver.profile;
+            env = entityResolver.env;
+            extraArgs = [ ];
+          };
+        };
+      relationExtractor = nodesCfg.automata.relationExtractor;
+      relationExtractorUnit =
+        if !relationExtractor.enable then { } else {
+          "sinex-relation-extractor" = mkAutomataUnit {
+            automaton = "relation-extractor";
+            binary = "relation-extractor";
+            description = "Sinex relation extractor automaton";
+            profile = relationExtractor.profile;
+            env = relationExtractor.env;
+            extraArgs = [ ];
+          };
+        };
+      entityEnricher = nodesCfg.automata.entityEnricher;
+      entityEnricherUnit =
+        if !entityEnricher.enable then { } else {
+          "sinex-entity-enricher" = mkAutomataUnit {
+            automaton = "entity-enricher";
+            binary = "entity-enricher";
+            description = "Sinex entity enricher automaton";
+            profile = entityEnricher.profile;
+            env = entityEnricher.env;
+            extraArgs = [ ];
+          };
+        };
     in
-    canonicalizerUnit // healthUnit // analyticsUnit // sessionUnit // hourlyUnit // dailyUnit // documentParserUnit;
+    canonicalizerUnit // healthUnit // analyticsUnit // sessionUnit // hourlyUnit // dailyUnit // documentParserUnit // entityResolverUnit // relationExtractorUnit // entityEnricherUnit;
 
   nodeservices =
     if !nodesEnabled then { units = { }; supportUnits = { }; } else
