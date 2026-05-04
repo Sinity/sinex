@@ -254,5 +254,68 @@ impl DocumentChunks {
                 .to_owned(),
         ]
     }
+
+    /// AFTER INSERT trigger on `core.events` that projects `document.parsed`
+    /// and `document.chunked` events into the relational projection tables.
+    ///
+    /// `document.parsed` → `core.documents` (upsert by `id`)
+    /// `document.chunked` → `core.document_chunks` (insert, FK to `core.documents`)
+    #[must_use]
+    pub fn create_projection_trigger_sql() -> &'static str {
+        r"
+        CREATE OR REPLACE FUNCTION core.fn_document_projection()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.event_type = 'document.parsed' THEN
+            INSERT INTO core.documents (
+              id, kind, natural_key, parsed_event_id, extraction_version,
+              chunk_count, text_byte_len, side_data, created_at, updated_at
+            ) VALUES (
+              (NEW.payload->>'document_id')::uuid,
+              NEW.payload->>'kind',
+              NEW.payload->>'natural_key',
+              NEW.id,
+              COALESCE((NEW.payload->>'extraction_version')::int, 1),
+              COALESCE((NEW.payload->>'chunk_count')::int, 0),
+              COALESCE((NEW.payload->>'text_byte_len')::bigint, 0),
+              COALESCE(NEW.payload->'side_data', '{}'::jsonb),
+              now(), now()
+            )
+            ON CONFLICT (id) DO UPDATE SET
+              parsed_event_id = EXCLUDED.parsed_event_id,
+              extraction_version = EXCLUDED.extraction_version,
+              chunk_count = EXCLUDED.chunk_count,
+              text_byte_len = EXCLUDED.text_byte_len,
+              side_data = EXCLUDED.side_data,
+              updated_at = now();
+
+          ELSIF NEW.event_type = 'document.chunked' THEN
+            INSERT INTO core.document_chunks (
+              document_id, chunk_index, text, byte_offset_start, byte_offset_end,
+              source_anchor_start, source_anchor_end, chunked_event_id
+            ) VALUES (
+              (NEW.payload->>'document_id')::uuid,
+              COALESCE((NEW.payload->>'chunk_index')::int, 0),
+              COALESCE(NEW.payload->>'text', ''),
+              COALESCE((NEW.payload->>'byte_offset_start')::bigint, 0),
+              COALESCE((NEW.payload->>'byte_offset_end')::bigint, 0),
+              (NEW.payload->>'source_anchor_start')::bigint,
+              (NEW.payload->>'source_anchor_end')::bigint,
+              NEW.id
+            )
+            ON CONFLICT (document_id, chunk_index) DO NOTHING;
+          END IF;
+
+          RETURN NEW;
+        END $$;
+
+        DROP TRIGGER IF EXISTS trg_document_projection ON core.events;
+        CREATE TRIGGER trg_document_projection
+        AFTER INSERT ON core.events
+        FOR EACH ROW
+        WHEN (NEW.event_type IN ('document.parsed', 'document.chunked'))
+        EXECUTE FUNCTION core.fn_document_projection();
+        "
+    }
 }
 

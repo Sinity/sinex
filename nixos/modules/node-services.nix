@@ -1707,8 +1707,20 @@ let
             extraArgs = [ ];
           };
         };
+      docParser = nodesCfg.automata.documentParser;
+      documentParserUnit =
+        if !docParser.enable then { } else {
+          "sinex-document-parser" = mkAutomataUnit {
+            automaton = "document-parser";
+            binary = "document-parser";
+            description = "Sinex document parser automaton";
+            profile = docParser.profile;
+            env = docParser.env;
+            extraArgs = [ ];
+          };
+        };
     in
-    canonicalizerUnit // healthUnit // analyticsUnit // sessionUnit // hourlyUnit // dailyUnit;
+    canonicalizerUnit // healthUnit // analyticsUnit // sessionUnit // hourlyUnit // dailyUnit // documentParserUnit;
 
   nodeservices =
     if !nodesEnabled then { units = { }; supportUnits = { }; } else

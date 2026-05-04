@@ -500,6 +500,7 @@ async fn create_triggers_and_functions(pool: &PgPool) -> Result<(), ApplyError> 
     execute_sql(pool, &EventAnnotations::create_updated_at_trigger_sql()).await?;
     execute_sql(pool, &EventPayloadSchemas::create_updated_at_trigger_sql()).await?;
     execute_sql(pool, &GitopsSchemaSources::create_updated_at_trigger_sql()).await?;
+    execute_sql(pool, DocumentChunks::create_projection_trigger_sql()).await?;
 
     execute_sql(pool, OPERATIONS_AND_CASCADE_SQL).await?;
     execute_sql(pool, TOMBSTONE_LIFECYCLE_SQL).await?;
