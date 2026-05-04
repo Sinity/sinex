@@ -158,11 +158,14 @@ fn resolve_database_url(database_url: Option<&str>) -> Result<String> {
 
 fn execute_start(
     config: &StackConfig,
-    _all: bool,
-    _processes: &[String],
+    all: bool,
+    processes: &[String],
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     ctx.heading("infra start");
+
+    let start_pg = all || processes.is_empty() || processes.iter().any(|p| p == "postgres");
+    let start_nats = all || processes.is_empty() || processes.iter().any(|p| p == "nats");
 
     // Check lock
     let checkout_state = CheckoutState::for_current_checkout()?;
@@ -187,13 +190,17 @@ fn execute_start(
     // NATS has zero dependency on Postgres — run them concurrently.
     std::thread::scope(|s| -> Result<()> {
         // Spawn NATS startup in background thread
-        let nats_handle = s.spawn(|| -> Result<()> {
-            stack::nats_generate_config(config, verbose)?;
-            stack::nats_start(config, verbose)
-        });
+        let nats_handle = if start_nats {
+            Some(s.spawn(|| -> Result<()> {
+                stack::nats_generate_config(config, verbose)?;
+                stack::nats_start(config, verbose)
+            }))
+        } else {
+            None
+        };
 
         // Postgres chain runs in the foreground (critical path)
-        let pg_result = (|| -> Result<()> {
+        if start_pg {
             if config.annex.enable {
                 stack::annex_init(config, verbose)?;
             }
@@ -207,27 +214,28 @@ fn execute_start(
                 stack::pg_apply_schema(config, verbose)?;
                 crate::preflight::record_schema_applied();
             }
-
-            Ok(())
-        })();
+        }
 
         // Collect NATS result
-        let nats_result = nats_handle
-            .join()
-            .map_err(|_| eyre!("NATS startup thread panicked"))?;
-
-        // Report errors from both paths
-        pg_result?;
-        nats_result?;
+        if let Some(handle) = nats_handle {
+            let nats_result = handle
+                .join()
+                .map_err(|_| eyre!("NATS startup thread panicked"))?;
+            nats_result?;
+        }
         Ok(())
     })?;
 
     let pg_port = config.postgres.port;
     let nats_port = config.nats.port;
-    Ok(CommandResult::success()
-        .with_message("Infra started")
-        .with_detail(format!("Postgres on port {pg_port}"))
-        .with_detail(format!("NATS on port {nats_port}")))
+    let mut result = CommandResult::success().with_message("Infra started");
+    if start_pg {
+        result = result.with_detail(format!("Postgres on port {pg_port}"));
+    }
+    if start_nats {
+        result = result.with_detail(format!("NATS on port {nats_port}"));
+    }
+    Ok(result)
 }
 
 fn execute_schema_apply(database_url: Option<&str>, ctx: &CommandContext) -> Result<CommandResult> {
