@@ -1422,6 +1422,42 @@ in
                   description = "Document parser automaton. Consumes `document.ingested` and `command.canonical` events, emits `document.parsed` + `document.chunked` synthesis events.";
                 };
 
+                entityResolver = mkOption {
+                  type = submodule {
+                    options = {
+                      enable = mkOption { type = bool; default = true; description = "Enable entity resolver automaton."; };
+                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+                    };
+                  };
+                  default = { };
+                  description = "Entity resolver automaton. Consumes `entity.extracted` events, emits `entity.resolved` with UUIDv5 deterministic IDs.";
+                };
+
+                relationExtractor = mkOption {
+                  type = submodule {
+                    options = {
+                      enable = mkOption { type = bool; default = true; description = "Enable relation extractor automaton."; };
+                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+                    };
+                  };
+                  default = { };
+                  description = "Relation extractor automaton. Consumes `entity.resolved`, emits `entity.related` from co-occurrence within source events.";
+                };
+
+                entityEnricher = mkOption {
+                  type = submodule {
+                    options = {
+                      enable = mkOption { type = bool; default = true; description = "Enable entity enricher automaton."; };
+                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+                    };
+                  };
+                  default = { };
+                  description = "Entity enricher automaton. Consumes `entity.resolved`, emits `entity.enriched` with temporal stats and category refinement.";
+                };
+
                 profiles = mkOption {
                   type = attrsOf (submodule {
                     options = {
@@ -2099,6 +2135,18 @@ in
               cfg.nodes.enable
               && cfg.nodes.automata.enable
               && cfg.nodes.automata.documentParser.enable;
+            entity_resolver =
+              cfg.nodes.enable
+              && cfg.nodes.automata.enable
+              && cfg.nodes.automata.entityResolver.enable;
+            relation_extractor =
+              cfg.nodes.enable
+              && cfg.nodes.automata.enable
+              && cfg.nodes.automata.relationExtractor.enable;
+            entity_enricher =
+              cfg.nodes.enable
+              && cfg.nodes.automata.enable
+              && cfg.nodes.automata.entityEnricher.enable;
           };
         expectations = {
           schema_apply = cfg.database.enable && cfg.database.autoSetup;
