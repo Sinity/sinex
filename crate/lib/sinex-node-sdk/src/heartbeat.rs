@@ -609,7 +609,7 @@ impl HeartbeatEmitter {
     ) {
         let payload = if event_type == "process.failed" {
             serde_json::to_value(ProcessFailedPayload {
-                process_name: metrics.service_name.clone(),
+                process_name: metrics.service_name.to_string(),
                 uptime_seconds: metrics.uptime_seconds,
                 errors_in_window: recent_errors_in_window,
                 last_error_message: metrics.last_error_message.clone(),
@@ -618,13 +618,13 @@ impl HeartbeatEmitter {
             .unwrap_or_else(|e| {
                 json!({
                     "_serialization_error": e.to_string(),
-                    "process_name": metrics.service_name,
+                    "process_name": metrics.service_name.to_string(),
                     "errors_in_window": recent_errors_in_window,
                 })
             })
         } else {
             serde_json::to_value(ProcessDegradedPayload {
-                process_name: metrics.service_name.clone(),
+                process_name: metrics.service_name.to_string(),
                 uptime_seconds: metrics.uptime_seconds,
                 errors_in_window: recent_errors_in_window,
                 last_error_message: metrics.last_error_message.clone(),
