@@ -171,6 +171,10 @@ pub struct FilesystemConfig {
     /// Directory names that should be excluded from recursive watch planning and historical scans
     #[serde(default = "default_ignored_directory_names")]
     pub ignored_directory_names: Vec<String>,
+
+    /// Material metadata redaction policy for path privacy.
+    #[serde(default)]
+    pub material_metadata_policy: sinex_node_sdk::MaterialMetadataPolicy,
 }
 
 fn default_max_watches() -> usize {
@@ -198,6 +202,7 @@ impl Default for FilesystemConfig {
             max_watches: DEFAULT_MAX_WATCHES,
             poll_interval_secs: DEFAULT_POLL_INTERVAL_SECS,
             ignored_directory_names: default_ignored_directory_names(),
+            material_metadata_policy: sinex_node_sdk::MaterialMetadataPolicy::default(),
         }
     }
 }

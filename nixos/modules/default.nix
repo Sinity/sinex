@@ -356,6 +356,31 @@ in
             description = "Connection pool tuning for Sinex services.";
           };
 
+          walArchiveCommand = mkOption {
+            type = nullOr str;
+            default = null;
+            example = "pg_basebackup -D /backup/sinex/$(date +%Y%m%d-%H%M) -Ft -z -P";
+            description = ''
+              Optional shell command for continuous WAL archiving and base backups.
+
+              When set, PostgreSQL's `archive_command` is configured to invoke this
+              command for each completed WAL segment, enabling point-in-time recovery.
+              A typical setup uses `pg_basebackup` for periodic full backups and this
+              setting for continuous WAL shipping.
+
+              Example with WAL-G:
+                `wal-g wal-push /var/lib/postgresql/%p`
+
+              Example with pg_basebackup (periodic, not per-WAL):
+                Set a periodic snapshot via a systemd timer instead; this option
+                enables the archive side so the operator can wire in WAL archiving.
+
+              Leave `null` (the default) when WAL archiving is not required.
+              Sinex does not mandate WAL archiving — data events are replayable
+              from source materials, so archival is a defense-in-depth measure.
+            '';
+          };
+
         };
       };
       default = { };
@@ -393,6 +418,21 @@ in
                   type = str;
                   default = "SHA256E";
                   description = "git-annex backend used for new blobs.";
+                };
+                legacyAnnexData = mkOption {
+                  type = bool;
+                  default = false;
+                  description = ''
+                    Enable legacy git-annex support. When false (default), only local
+                    BLAKE3 CAS storage is used and git-annex is not initialized or called.
+                    Set to true if you have existing git-annex blobs that need access or
+                    migration.
+                  '';
+                };
+                maxBlobSize = mkOption {
+                  type = signed;
+                  default = 104857600;
+                  description = "Maximum allowed blob size in bytes (default 100 MB). Set to 0 to disable.";
                 };
                 maintenance = mkOption {
                   type = submodule {
@@ -2223,7 +2263,7 @@ in
           }
         ];
         environment.systemPackages = mkAfter (
-          [ pkgs.dbus pkgs.git pkgs.git-annex ]
+          [ pkgs.dbus pkgs.git ] ++ optionals cfg.storage.blob.legacyAnnexData [ pkgs.git-annex ]
           ++ optionals cfg.shell.asciinema.autoRecord [ pkgs.asciinema ]
         );
 

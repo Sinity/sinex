@@ -564,16 +564,3 @@ fn truncate_str(s: &str, max: usize) -> String {
         format!("{}…", &s[..max.saturating_sub(1)])
     }
 }
-
-#[allow(dead_code)]
-fn render_package_health_row(pkg: &PackageHealth) -> [String; 5] {
-    [
-        pkg.package.clone(),
-        pkg.diagnostic_count.to_string(),
-        pkg.fixable_count.to_string(),
-        pkg.test_pass_rate
-            .map_or_else(|| "-".into(), |r| format!("{:.0}%", r * 100.0)),
-        pkg.avg_build_time_secs
-            .map_or_else(|| "-".into(), |s| format!("{s:.1}s")),
-    ]
-}

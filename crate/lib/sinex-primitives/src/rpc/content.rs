@@ -1,4 +1,4 @@
-//! Content/blob types
+//! Content/blob types — backend-neutral request/response contracts.
 
 use serde::{Deserialize, Serialize};
 
@@ -25,12 +25,12 @@ pub struct StoreBlobRequest {
 /// Response: `content.store_blob`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoreBlobResponse {
-    /// Annex key for retrieval
-    pub key: String,
+    /// Backend-neutral content key for retrieval (e.g. SINEXBLAKE3-sXXXX--hash).
+    pub content_key: String,
     /// Size in bytes
     pub size: u64,
-    /// SHA256 hash
-    pub hash: String,
+    /// BLAKE3 content hash
+    pub blake3_hash: String,
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -40,8 +40,8 @@ pub struct StoreBlobResponse {
 /// Request: `content.retrieve_blob`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetrieveBlobRequest {
-    /// Annex key
-    pub key: String,
+    /// Backend-neutral content key
+    pub content_key: String,
 }
 
 /// Response: `content.retrieve_blob`

@@ -189,17 +189,17 @@ async fn content_blob_rpc_uses_typed_request_and_response_contracts(
     let stored: StoreBlobResponse =
         serde_json::from_value(handle_store_blob(&services, store_params, &auth).await?)?;
     assert!(
-        !stored.key.is_empty(),
-        "store response must include blob key"
+        !stored.content_key.is_empty(),
+        "store response must include blob content_key"
     );
     assert_eq!(stored.size, 20);
     assert!(
-        !stored.hash.is_empty(),
-        "store response must include content hash"
+        !stored.blake3_hash.is_empty(),
+        "store response must include blake3 hash"
     );
 
     let retrieved: RetrieveBlobResponse = serde_json::from_value(
-        handle_retrieve_blob(&services, serde_json::json!({ "key": stored.key })).await?,
+        handle_retrieve_blob(&services, serde_json::json!({ "content_key": stored.content_key })).await?,
     )?;
     assert_eq!(
         retrieved.content,

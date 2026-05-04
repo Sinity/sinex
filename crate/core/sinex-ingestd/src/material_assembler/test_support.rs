@@ -72,6 +72,7 @@ impl TestAssemblerBuilder {
             root_path: repo_path,
             num_copies: None,
             large_files: None,
+            ..Default::default()
         })?);
 
         let state_dir = tempfile::tempdir()?;
@@ -118,6 +119,7 @@ pub(super) async fn build_test_content_store(
         root_path: repo_path,
         num_copies: None,
         large_files: None,
+        ..Default::default()
     })?);
     Ok((content_store, content_store_dir))
 }

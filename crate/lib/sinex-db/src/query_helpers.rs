@@ -2,7 +2,6 @@ use crate::{DbResult, DbTransaction};
 use futures::future::BoxFuture;
 use sinex_primitives::SinexError;
 use sqlx::PgPool;
-use std::time::Duration;
 use tokio::time::sleep;
 use tracing::warn;
 

@@ -665,3 +665,49 @@ fn nats_config_from_env(
 
     Ok(config)
 }
+
+/// Policy for metadata redaction based on material path classification.
+///
+/// Controls how paths in material-provenance events are redacted for
+/// display and export surfaces. See `sinex_primitives::privacy::MaterialPathClass`
+/// for the classification taxonomy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaterialMetadataPolicy {
+    /// When true, user home-prefix paths are tilde-collapsed for display/export.
+    /// Default: `true`.
+    #[serde(default = "default_true")]
+    pub redact_home_prefix: bool,
+
+    /// Per-path-class redaction rules. Each rule maps a `MaterialPathClass`
+    /// variant name (e.g. `"temporary"`, `"application_data"`) to a redaction
+    /// action: `"suppress"`, `"tilde_collapse"`, or `"passthrough"`.
+    ///
+    /// Default: empty (use built-in `classify_material_path` defaults).
+    #[serde(default)]
+    pub path_class_rules: Vec<PathClassRule>,
+}
+
+/// A single rule mapping a material path class to a redaction action.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathClassRule {
+    /// MaterialPathClass variant name in snake_case (`"temporary"`,
+    /// `"system_path"`, `"application_data"`, `"durable_identifier"`).
+    pub class: String,
+
+    /// Redaction action: `"suppress"`, `"tilde_collapse"`, or `"passthrough"`.
+    pub action: String,
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+impl Default for MaterialMetadataPolicy {
+    fn default() -> Self {
+        Self {
+            redact_home_prefix: true,
+            path_class_rules: Vec::new(),
+        }
+    }
+}
+

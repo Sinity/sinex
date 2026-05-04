@@ -23,6 +23,8 @@ async fn manager_fixture(ctx: &TestContext) -> color_eyre::Result<(ContentStoreM
         root_path: repo_utf8,
         num_copies: Some(1),
         large_files: Some("anything".to_string()),
+        legacy_annex_enabled: true,
+        ..Default::default()
     };
 
     let manager = ContentStoreManager::new(content_store_config, ctx.pool().clone(), None)?;
