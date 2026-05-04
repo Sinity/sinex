@@ -62,6 +62,7 @@ use async_nats::Subscriber;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_primitives::coordination::{CoordinationKvClient, InstanceMetadata};
+use sinex_primitives::domain::ServiceName;
 use sinex_primitives::transport;
 use sinex_primitives::utils::CoordinationPrimitive;
 use sinex_primitives::{Result, Seconds, SinexError};
@@ -957,7 +958,7 @@ impl NodeCoordination {
         target_version: NodeVersion,
         handoff_sender: mpsc::Sender<HandoffRequest>,
         handoff_drops: CoordinationPrimitive,
-        service_name: String,
+        service_name: ServiceName,
     ) where
         S: Stream<Item = async_nats::Message> + Unpin,
     {
@@ -1003,16 +1004,17 @@ impl NodeCoordination {
         reason = "Public API: callers commonly pass owned Strings"
     )]
     pub fn new(
-        service_name: String,
+        service_name: impl Into<ServiceName>,
         instance_id: String,
         nats_client: async_nats::Client,
         _runtime_state: &NodeRuntimeState,
     ) -> crate::NodeResult<Self> {
+        let service_name = service_name.into();
         let instance = NodeInstance::new(instance_id.clone(), service_name.clone())?;
 
         // Initialize KV Client
         let js = async_nats::jetstream::new(nats_client.clone());
-        let kv_client = CoordinationKvClient::new(js, service_name.clone());
+        let kv_client = CoordinationKvClient::new(js, service_name.to_string());
 
         let work_tracker = Arc::new(RwLock::new(WorkTracker::new()));
 
@@ -1040,7 +1042,7 @@ impl NodeCoordination {
             .clone();
 
         Self::new(
-            runtime.service_info().control_identity().to_string(),
+            ServiceName::new(runtime.service_info().control_identity()),
             instance_id,
             nats_client,
             runtime,

@@ -1,7 +1,9 @@
 use clap::Args;
 use console::style;
-use serde::{Deserialize, Serialize};
-use tabled::{builder::Builder, settings::Style};
+use sinex_primitives::rpc::sources::{
+    SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest, SourcesListResponse,
+    SourcesShowRequest, SourcesShowResponse, SourcesStageRequest, SourcesStageResponse,
+};
 
 use crate::Result;
 use crate::client::GatewayClient;
@@ -57,97 +59,6 @@ pub enum SourcesSubcommand {
     Coverage(CoverageCommand),
 }
 
-// ── Placeholder RPC types ──────────────────────────────────────────────
-// These will move to sinex_primitives::rpc::sources once the gateway
-// handlers are implemented (#1008).
-
-#[derive(Debug, Serialize)]
-struct StageRequest {
-    file_path: String,
-    reason: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct StageResponse {
-    material_id: String,
-    source_identifier: String,
-    total_bytes: i64,
-}
-
-#[derive(Debug, Serialize)]
-struct ListRequest {
-    status: Option<String>,
-    limit: Option<i64>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct SourceMaterialEntry {
-    id: String,
-    material_kind: String,
-    source_identifier: String,
-    status: String,
-    total_bytes: Option<i64>,
-    staged_at: Option<String>,
-    staged_by: Option<String>,
-    staged_on_host: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ListResponse {
-    materials: Vec<SourceMaterialEntry>,
-}
-
-#[derive(Debug, Serialize)]
-struct ShowRequest {
-    material_id: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[allow(dead_code)]
-struct SourceMaterialDetail {
-    id: String,
-    material_kind: String,
-    source_identifier: String,
-    status: String,
-    timing_info_type: String,
-    #[allow(dead_code)]
-    metadata: serde_json::Value,
-    staged_at: Option<String>,
-    start_time: Option<String>,
-    end_time: Option<String>,
-    staged_by: Option<String>,
-    staged_on_host: Option<String>,
-    optional_blob_id: Option<String>,
-    total_bytes: Option<i64>,
-    event_count: Option<i64>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ShowResponse {
-    material: SourceMaterialDetail,
-}
-
-#[derive(Debug, Serialize)]
-struct CoverageRequest {
-    #[allow(dead_code)]
-    limit: Option<i64>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct CoverageBucket {
-    source_identifier: String,
-    material_kind: String,
-    earliest_ts: Option<String>,
-    latest_ts: Option<String>,
-    event_count: Option<i64>,
-    material_count: Option<i64>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct CoverageResponse {
-    buckets: Vec<CoverageBucket>,
-}
-
 // ── Stage ──────────────────────────────────────────────────────────────
 
 /// Stage a file as source material
@@ -163,27 +74,26 @@ pub struct StageCommand {
 
 impl StageCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
-        let req = StageRequest {
+        let req = SourcesStageRequest {
             file_path: self.file.clone(),
-            reason: self.reason.clone(),
         };
 
         let response = client
             .call_raw_rpc("sources.stage", serde_json::to_value(&req)?)
             .await?;
-        let stage_response: StageResponse = serde_json::from_value(response)?;
+        let stage_response: SourcesStageResponse = serde_json::from_value(response)?;
 
         CommandOutput::single(stage_response, format_stage_result).display(&format)?;
         Ok(())
     }
 }
 
-fn format_stage_result(response: &StageResponse) -> String {
+fn format_stage_result(response: &SourcesStageResponse) -> String {
     format!(
         "Staged source material\n  ID: {}\n  Source: {}\n  Total bytes: {}",
         style(&response.material_id).green(),
         style(&response.source_identifier).cyan(),
-        style(response.total_bytes).yellow(),
+        style(response.total_bytes.map_or_else(|| "-".to_string(), |b| b.to_string())).yellow(),
     )
 }
 
@@ -203,22 +113,23 @@ pub struct ListCommand {
 
 impl ListCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
-        let req = ListRequest {
+        let req = SourcesListRequest {
             status: self.status.clone(),
-            limit: Some(self.limit),
         };
 
         let response = client
             .call_raw_rpc("sources.list", serde_json::to_value(&req)?)
             .await?;
-        let list_response: ListResponse = serde_json::from_value(response)?;
+        let list_response: SourcesListResponse = serde_json::from_value(response)?;
 
         CommandOutput::single(list_response, format_source_materials_table).display(&format)?;
         Ok(())
     }
 }
 
-fn format_source_materials_table(response: &ListResponse) -> String {
+fn format_source_materials_table(response: &SourcesListResponse) -> String {
+    use tabled::{builder::Builder, settings::Style};
+
     if response.materials.is_empty() {
         return "No source materials found.".to_string();
     }
@@ -237,7 +148,7 @@ fn format_source_materials_table(response: &ListResponse) -> String {
     for m in &response.materials {
         let short_id = format!("{}...", &m.id[..8.min(m.id.len())]);
         let size = m
-            .total_bytes
+            .size_bytes
             .map_or_else(|| style("-").dim().to_string(), |b| b.to_string());
         let staged_at = m
             .staged_at
@@ -275,21 +186,21 @@ pub struct ShowCommand {
 
 impl ShowCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
-        let req = ShowRequest {
+        let req = SourcesShowRequest {
             material_id: self.material_id.clone(),
         };
 
         let response = client
             .call_raw_rpc("sources.show", serde_json::to_value(&req)?)
             .await?;
-        let show_response: ShowResponse = serde_json::from_value(response)?;
+        let show_response: SourcesShowResponse = serde_json::from_value(response)?;
 
         CommandOutput::single(show_response, format_source_material_detail).display(&format)?;
         Ok(())
     }
 }
 
-fn format_source_material_detail(response: &ShowResponse) -> String {
+fn format_source_material_detail(response: &SourcesShowResponse) -> String {
     let m = &response.material;
     let mut lines = vec![
         format!("Source Material: {}", style(&m.id).green()),
@@ -350,22 +261,22 @@ pub struct CoverageCommand {
 
 impl CoverageCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
-        let req = CoverageRequest {
-            limit: Some(self.limit),
-        };
+        let req = SourcesCoverageRequest {};
 
         let response = client
             .call_raw_rpc("sources.coverage", serde_json::to_value(&req)?)
             .await?;
-        let coverage_response: CoverageResponse = serde_json::from_value(response)?;
+        let coverage_response: SourcesCoverageResponse = serde_json::from_value(response)?;
 
         CommandOutput::single(coverage_response, format_coverage_table).display(&format)?;
         Ok(())
     }
 }
 
-fn format_coverage_table(response: &CoverageResponse) -> String {
-    if response.buckets.is_empty() {
+fn format_coverage_table(response: &SourcesCoverageResponse) -> String {
+    use tabled::{builder::Builder, settings::Style};
+
+    if response.sources.is_empty() {
         return "No source material coverage data available.".to_string();
     }
 
@@ -379,7 +290,7 @@ fn format_coverage_table(response: &CoverageResponse) -> String {
         "MATERIALS",
     ]);
 
-    for bucket in &response.buckets {
+    for bucket in &response.sources {
         let earliest = bucket.earliest_ts.as_deref().unwrap_or("-");
         let latest = bucket.latest_ts.as_deref().unwrap_or("-");
         let events = bucket

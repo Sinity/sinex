@@ -10,7 +10,7 @@ use sinex_primitives::env as shared_env;
 use crate::runtime::stream::NodeRuntimeState;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_primitives::domain::NodeName;
+use sinex_primitives::domain::{NodeName, ServiceName};
 use sinex_primitives::events::payloads::process::{
     ProcessDegradedPayload, ProcessFailedPayload, ProcessStatus,
 };
@@ -50,7 +50,7 @@ fn env_usize_with_default(var: &str, default: usize) -> usize {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HeartbeatMetrics {
     /// Service name (e.g., "sinex-fs-ingestor")
-    pub service_name: String,
+    pub service_name: ServiceName,
     /// Current status: healthy, degraded, failed
     pub status: ProcessStatus,
     /// Number of events processed since last heartbeat
@@ -102,7 +102,7 @@ impl HeartbeatLogSink for StdoutHeartbeatSink {
 )]
 #[derive(Debug, Clone)]
 pub struct HeartbeatEmitter {
-    service_name: String,
+    service_name: ServiceName,
     node_name: Option<NodeName>,
     start_time: SystemTime,
     events_processed: CoordinationPrimitive,
@@ -136,7 +136,7 @@ struct CpuSample {
 impl HeartbeatEmitter {
     /// Create a new heartbeat emitter
     #[must_use]
-    pub fn new(service_name: String, interval_seconds: Seconds) -> Self {
+    pub fn new(service_name: ServiceName, interval_seconds: Seconds) -> Self {
         let version = env!("CARGO_PKG_VERSION").to_string();
         let git_hash = option_env!("GIT_HASH").unwrap_or("unknown").to_string();
         let initial_cpu_sample = Self::read_process_cpu_seconds().map(|cpu_seconds| CpuSample {
@@ -206,7 +206,7 @@ impl HeartbeatEmitter {
     #[must_use]
     pub fn from_runtime(runtime: &NodeRuntimeState, interval_seconds: Seconds) -> Self {
         let emitter = Self::new(
-            runtime.service_info().service_name().to_string(),
+            runtime.service_info().service_name().clone(),
             interval_seconds,
         )
         .with_node_name(NodeName::new(runtime.node_name()))
@@ -230,7 +230,7 @@ impl HeartbeatEmitter {
 
     /// Expose configured service name for tests and diagnostics
     #[must_use]
-    pub fn service_name(&self) -> &str {
+    pub fn service_name(&self) -> &ServiceName {
         &self.service_name
     }
 

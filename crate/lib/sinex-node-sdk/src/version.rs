@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fmt;
 use std::str::FromStr;
+use sinex_primitives::domain::ServiceName;
 use std::time::SystemTime;
 use tracing::warn;
 
@@ -147,7 +148,7 @@ pub struct NodeInstance {
     pub instance_id: String,
     pub version: NodeVersion,
     pub start_time: SystemTime,
-    pub service_name: String,
+    pub service_name: ServiceName,
     pub host_name: String,
 }
 
@@ -156,14 +157,14 @@ impl NodeInstance {
     ///
     /// # Errors
     /// Returns `SinexError::configuration` if version information is invalid
-    pub fn new(instance_id: String, service_name: String) -> crate::NodeResult<Self> {
+    pub fn new(instance_id: String, service_name: impl Into<ServiceName>) -> crate::NodeResult<Self> {
         let host_name = gethostname::gethostname().to_string_lossy().to_string();
 
         Ok(Self {
             instance_id,
             version: NodeVersion::current()?,
             start_time: SystemTime::now(),
-            service_name,
+            service_name: service_name.into(),
             host_name,
         })
     }
