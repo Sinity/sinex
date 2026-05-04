@@ -539,7 +539,7 @@ impl IngestdConfig {
             .map_err(|e| {
                 SinexError::configuration(format!("Database connection test failed: {e}"))
                     .with_operation("config.test_database_connection")
-                    .with_context("database_url", self.database_url.clone())
+                    .with_context("database_url", sinex_primitives::utils::redact_url_password_for_diagnostics(&self.database_url, sinex_primitives::utils::InvalidUrlPolicy::RedactedMarker))
             })?;
 
         pool.close().await;

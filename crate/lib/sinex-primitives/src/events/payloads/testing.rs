@@ -5,29 +5,6 @@
 
 #![cfg(any(test, feature = "testing"))]
 
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use sinex_macros::EventPayload;
-
-/// Generic test event — use when you need any event and don't care about the source.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "test", event_type = "test.event")]
-pub struct TestEventPayload {
-    pub value: String,
-}
-
-impl TestEventPayload {
-    pub fn new(value: impl Into<String>) -> Self {
-        Self {
-            value: value.into(),
-        }
-    }
-
-    #[must_use]
-    pub fn default_val() -> Self {
-        Self {
-            value: "test".into(),
-        }
-    }
-}
-
+// Currently empty — test payloads removed as unused.
+// Add test-only payloads here when test infrastructure needs
+// typed validation without depending on production payloads.

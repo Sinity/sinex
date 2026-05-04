@@ -78,6 +78,9 @@ impl TableDef for SourceMaterialRegistry {
 pub struct SourceMaterialRecord {
     pub id: Uuid,
     pub material_kind: String,
+    /// Logical source identifier, optionally carrying a material_id for
+    /// disambiguation.  Canonical parser/formatter:
+    /// `sinex_primitives::domain::SourceIdentifier`.
     pub source_identifier: String,
     pub status: String,
     pub timing_info_type: String,

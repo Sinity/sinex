@@ -56,6 +56,7 @@ pub struct MetricGaugePayload {
     /// Metric name (e.g., "`stream.fill_pct`", "`pool.active_connections`")
     pub name: String,
     /// Current gauge value
+    #[serde(deserialize_with = "crate::validation::reject_non_finite_f64")]
     pub value: f64,
     /// Labels for dimensional filtering
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -75,19 +76,22 @@ pub struct MetricHistogramPayload {
     /// Sample count in this window
     pub count: u64,
     /// Sum of all values
+    #[serde(deserialize_with = "crate::validation::reject_non_finite_f64")]
     pub sum: f64,
     /// Minimum value
+    #[serde(deserialize_with = "crate::validation::reject_non_finite_f64")]
     pub min: f64,
     /// Maximum value
+    #[serde(deserialize_with = "crate::validation::reject_non_finite_f64")]
     pub max: f64,
     /// Percentiles: p50, p90, p95, p99
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "crate::validation::reject_non_finite_optional_f64")]
     pub p50: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "crate::validation::reject_non_finite_optional_f64")]
     pub p90: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "crate::validation::reject_non_finite_optional_f64")]
     pub p95: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "crate::validation::reject_non_finite_optional_f64")]
     pub p99: Option<f64>,
     /// Labels for dimensional filtering
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -115,6 +119,7 @@ pub struct StreamStatsPayload {
     /// Consumer count
     pub consumer_count: u32,
     /// Fill percentage (0.0 - 100.0)
+    #[serde(deserialize_with = "crate::validation::reject_non_finite_f64")]
     pub fill_pct: f64,
     /// First sequence number
     pub first_seq: u64,
@@ -306,6 +311,7 @@ pub struct IngestdBatchStatsPayload {
     /// Cumulative count of events that failed schema validation
     pub validation_invalid: u64,
     /// Schema coverage percentage: events with a schema / total validated (excluding skipped)
+    #[serde(deserialize_with = "crate::validation::reject_non_finite_f64")]
     pub validation_coverage_pct: f64,
     /// Cumulative count of events whose `ts_orig` is implausibly far in the future.
     pub suspicious_future_ts_orig: u64,

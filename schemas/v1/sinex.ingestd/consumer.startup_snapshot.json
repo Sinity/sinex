@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Startup snapshot for a JetStream pull consumer.\n\nEmitted once per consumer before the ingestd pull loop begins (before READY/`sd_notify`).\nCaptures stream state and consumer configuration so operators can determine at a glance\nwhether this startup is a normal resume, a cold-start full replay, or a catch-up run.",
+  "properties": {
+    "consumer_ack_pending": {
+      "description": "Messages acknowledged but not yet confirmed by the server.",
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "consumer_existed": {
+      "description": "Whether the durable consumer already existed in JetStream before this startup.",
+      "type": "boolean"
+    },
+    "consumer_max_ack_pending": {
+      "description": "Configured `max_ack_pending` for this consumer.",
+      "format": "int64",
+      "type": "integer"
+    },
+    "consumer_max_deliver": {
+      "description": "Configured `max_deliver` (redelivery budget) for this consumer.",
+      "format": "int64",
+      "type": "integer"
+    },
+    "consumer_pending": {
+      "description": "Messages pending delivery to this consumer at startup.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "consumer_redelivered": {
+      "description": "Messages redelivered (NAK'd or timed out) at startup.",
+      "format": "uint",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "deliver_policy": {
+      "description": "Deliver policy as a string (e.g. `\"All\"`, `\"New\"`, `\"ByStartSequence\"`).",
+      "type": "string"
+    },
+    "durable_name": {
+      "description": "Durable consumer name.",
+      "type": "string"
+    },
+    "initial_replay_risk": {
+      "description": "True when this looks like a dangerous cold-start full replay\n(new consumer, DeliverPolicy::All, non-empty stream).",
+      "type": "boolean"
+    },
+    "stream_bytes": {
+      "description": "Number of bytes currently retained in the stream.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "stream_first_sequence": {
+      "description": "First sequence number retained in the stream.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "stream_last_sequence": {
+      "description": "Last sequence number retained in the stream.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "stream_max_age_secs": {
+      "description": "Stream retention limit: maximum age in seconds (0 = unlimited).",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "stream_max_bytes": {
+      "description": "Stream retention limit: maximum bytes (0 = unlimited).",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "stream_max_messages": {
+      "description": "Stream retention limit: maximum message count (0 = unlimited).",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "stream_messages": {
+      "description": "Number of messages currently retained in the stream.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "stream_name": {
+      "description": "Name of the JetStream stream being consumed.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "stream_name",
+    "durable_name",
+    "consumer_existed",
+    "deliver_policy",
+    "stream_messages",
+    "stream_bytes",
+    "stream_first_sequence",
+    "stream_last_sequence",
+    "stream_max_messages",
+    "stream_max_bytes",
+    "stream_max_age_secs",
+    "consumer_pending",
+    "consumer_ack_pending",
+    "consumer_redelivered",
+    "consumer_max_ack_pending",
+    "consumer_max_deliver",
+    "initial_replay_risk"
+  ],
+  "title": "ConsumerStartupSnapshotPayload",
+  "type": "object",
+  "x-sinex-event-type": "consumer.startup_snapshot",
+  "x-sinex-source": "sinex.ingestd",
+  "x-sinex-version": "1.0.0"
+}

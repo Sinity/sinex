@@ -5,12 +5,10 @@
 
 use crate::Timestamp;
 use crate::domain::{CommandText, HostName, RecordedPath, ShellName};
-use crate::events::enums::TerminalType;
-use crate::units::{ExitCode, Nanoseconds, ProcessId};
+use crate::units::{ExitCode, Nanoseconds};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_macros::EventPayload;
-use std::collections::HashMap;
 
 // Kitty shell integration payloads
 define_event_payload! {
@@ -24,42 +22,6 @@ define_event_payload! {
         kitty_window_id: String,
         kitty_tab_id: String,
     } => ("shell.kitty", "command.executed");
-}
-
-define_event_payload! {
-    /// Kitty command completion event.
-    pub struct KittyCommandCompletedPayload {
-        command: CommandText,
-        working_directory: RecordedPath,
-        exit_status: ExitCode,
-        duration_ms: u64,
-        shell_pid: ProcessId,
-        kitty_window_id: String,
-        kitty_tab_id: String,
-        output_lines: Option<u32>,
-        error_output: Option<String>,
-    } => ("shell.kitty", "command.completed");
-}
-
-define_event_payload! {
-    /// Kitty terminal session start.
-    pub struct KittySessionStartedPayload {
-        window_id: String,
-        tab_id: String,
-        shell_type: ShellName,
-        working_directory: RecordedPath,
-        env_vars: Option<HashMap<String, String>>,
-    } => ("terminal.kitty", "session.started");
-}
-
-define_event_payload! {
-    /// Kitty terminal session end event.
-    pub struct KittySessionEndedPayload {
-        window_id: String,
-        tab_id: String,
-        duration_seconds: u64,
-        exit_code: Option<ExitCode>,
-    } => ("terminal.kitty", "session.ended");
 }
 
 // Atuin history payloads
@@ -188,48 +150,6 @@ define_event_payload! {
     } => ("shell.history", "command.imported");
 }
 
-// Terminal monitoring events
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "terminal", event_type = "shell.terminal_monitoring_started")]
-pub struct TerminalMonitoringStartedPayload {
-    pub enabled_sources: HashMap<String, bool>,
-    pub start_time: Timestamp,
-}
-
-// Kitty terminal-specific events
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "shell.kitty", event_type = "process.changed")]
-pub struct KittyProcessChangedPayload {
-    pub kitty_window_id: String,
-    pub kitty_tab_id: String,
-    pub previous_process: Option<serde_json::Value>,
-    pub current_process: serde_json::Value,
-    pub change_timestamp: Timestamp,
-    pub working_directory: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "shell.kitty", event_type = "tab.focused")]
-pub struct KittyTabFocusedPayload {
-    pub kitty_tab_id: String,
-    pub kitty_window_id: String,
-    pub tab_title: String,
-    pub tab_index: usize,
-    pub previous_tab_id: Option<String>,
-    pub focus_timestamp: Timestamp,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "shell.kitty", event_type = "content.streamed")]
-pub struct KittyContentStreamedPayload {
-    pub kitty_window_id: String,
-    pub new_lines: Vec<String>,
-    pub line_start_offset: usize,
-    pub capture_timestamp: Timestamp,
-}
-
 // Canonical command payloads
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
@@ -250,28 +170,6 @@ pub struct CanonicalCommandPayload {
     pub environment_hash: Option<String>,
     pub source_events: Vec<String>,
     pub enrichment_history: Vec<serde_json::Value>,
-}
-
-// Scrollback capture payloads
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "shell.scrollback", event_type = "shell.output_captured")]
-pub struct ShellOutputCapturedPayload {
-    pub window_id: String,
-    pub terminal_type: TerminalType,
-    pub cwd: String,
-    pub window_title: String,
-    pub scrollback_text: Option<String>,
-    pub scrollback_chunks: Option<Vec<String>>,
-    pub content_store_path: Option<String>,
-    pub content_key: Option<String>,
-    pub scrollback_lines: usize,
-    pub scrollback_size_bytes: usize,
-    pub is_chunked: bool,
-    pub chunk_count: Option<usize>,
-    pub includes_screen: bool,
-    pub has_ansi_codes: bool,
-    pub timestamp: Timestamp,
 }
 
 impl KittyCommandExecutedPayload {
@@ -363,46 +261,3 @@ fn normalize_atuin_hostname(hostname: String) -> String {
     }
 }
 
-impl KittySessionStartedPayload {
-    /// Builder-style method for window and tab IDs
-    pub fn with_kitty_ids(
-        mut self,
-        window_id: impl Into<String>,
-        tab_id: impl Into<String>,
-    ) -> Self {
-        self.window_id = window_id.into();
-        self.tab_id = tab_id.into();
-        self
-    }
-}
-
-// Asciinema recording payloads
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "shell.asciinema", event_type = "shell.session_started")]
-pub struct AsciinemaSessionStartedPayload {
-    pub session_id: String,
-    pub terminal_type: TerminalType,
-    pub terminal_id: String,
-    pub cwd: String,
-    pub command: Option<String>,
-    pub environment: serde_json::Value,
-    pub dimensions: serde_json::Value,
-    pub start_time: Timestamp,
-    pub recording_file: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "shell.asciinema", event_type = "shell.session_ended")]
-pub struct AsciinemaSessionEndedPayload {
-    pub session_id: String,
-    pub terminal_type: TerminalType,
-    pub terminal_id: String,
-    pub end_time: Timestamp,
-    pub duration_seconds: f64,
-    pub event_count: usize,
-    pub recording_file: String,
-    pub file_size_bytes: Option<u64>,
-    pub content_store_path: Option<serde_json::Value>,
-    pub content_key: Option<serde_json::Value>,
-}

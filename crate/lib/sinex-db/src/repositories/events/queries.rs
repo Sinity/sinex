@@ -5,6 +5,7 @@ use super::persistence::{
 };
 use crate::EventRecord;
 use crate::JsonValue;
+use crate::SinexError;
 use crate::models::Event;
 use crate::repositories::common::{DbResult, db_error};
 use sinex_primitives::Timestamp;
@@ -591,31 +592,28 @@ impl EventRepository<'_> {
 
     /// Get events by multiple IDs efficiently (prevents N+1 queries).
     ///
-    /// Accepts any number of IDs. When the count exceeds 1000, the lookup is
-    /// issued in chunks of 1000 and the results are concatenated. The returned
-    /// order is stable within each chunk (most-recent `ts_coided` first) but is
-    /// NOT globally sorted across chunks; callers that need a total order should
-    /// sort the result themselves.
+    /// Accepts **at most 1000 IDs**. Callers that need larger lookups must
+    /// chunk explicitly and re-sort the concatenated results (each chunk is
+    /// ordered most-recent `ts_coided` first).
     pub async fn get_by_ids(
         &self,
         ids: &[Id<Event<JsonValue>>],
     ) -> DbResult<Vec<Event<JsonValue>>> {
-        const CHUNK_SIZE: usize = 1000;
+        const MAX_IDS: usize = 1000;
 
         if ids.is_empty() {
             return Ok(Vec::new());
         }
 
-        if ids.len() <= CHUNK_SIZE {
-            return self.get_by_ids_chunk(ids).await;
+        if ids.len() > MAX_IDS {
+            return Err(SinexError::validation(
+                "get_by_ids called with more than 1000 IDs; callers must chunk explicitly",
+            )
+            .with_context("ids_len", ids.len().to_string())
+            .into());
         }
 
-        let mut all_events = Vec::with_capacity(ids.len());
-        for chunk in ids.chunks(CHUNK_SIZE) {
-            let chunk_events = self.get_by_ids_chunk(chunk).await?;
-            all_events.extend(chunk_events);
-        }
-        Ok(all_events)
+        self.get_by_ids_chunk(ids).await
     }
 
     /// Fetch a single chunk of ≤ 1000 event IDs in one query.

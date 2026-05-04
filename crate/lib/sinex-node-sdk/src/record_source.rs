@@ -47,9 +47,16 @@ pub enum RecordSourceKind {
 }
 
 /// Runtime identity for a record source.
+///
+/// The `source_identifier` field is a logical label (e.g. `"/path/to/log"`).
+/// When a material_id is also needed, use
+/// `sinex_primitives::domain::SourceIdentifier` to produce the wire/DB encoding
+/// (`"{logical_id}#material={material_id}"`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordSourceDescriptor {
     pub kind: RecordSourceKind,
+    /// Logical identifier for this record source.  For the material-annotated
+    /// wire form see `sinex_primitives::domain::SourceIdentifier`.
     pub source_identifier: String,
 }
 
