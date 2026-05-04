@@ -1719,6 +1719,18 @@ let
             extraArgs = [ ];
           };
         };
+      tagApplier = nodesCfg.automata.tagApplier;
+      tagApplierUnit =
+        if !tagApplier.enable then { } else {
+          "sinex-tag-applier" = mkAutomataUnit {
+            automaton = "tag-applier";
+            binary = "tag-applier";
+            description = "Sinex rule-based tag applier automaton";
+            profile = tagApplier.profile;
+            env = tagApplier.env;
+            extraArgs = [ ];
+          };
+        };
       entityExtractor = nodesCfg.automata.entityExtractor;
       entityExtractorUnit =
         if !entityExtractor.enable then { } else {
@@ -1768,7 +1780,7 @@ let
           };
         };
     in
-    canonicalizerUnit // healthUnit // analyticsUnit // sessionUnit // hourlyUnit // dailyUnit // documentParserUnit // entityExtractorUnit // entityResolverUnit // relationExtractorUnit // entityEnricherUnit;
+    canonicalizerUnit // healthUnit // analyticsUnit // sessionUnit // hourlyUnit // dailyUnit // documentParserUnit // tagApplierUnit // entityExtractorUnit // entityResolverUnit // relationExtractorUnit // entityEnricherUnit;
 
   nodeservices =
     if !nodesEnabled then { units = { }; supportUnits = { }; } else

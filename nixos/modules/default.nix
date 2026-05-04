@@ -1422,6 +1422,18 @@ in
                   description = "Document parser automaton. Consumes `document.ingested` and `command.canonical` events, emits `document.parsed` + `document.chunked` synthesis events.";
                 };
 
+                tagApplier = mkOption {
+                  type = submodule {
+                    options = {
+                      enable = mkOption { type = bool; default = true; description = "Enable tag applier automaton."; };
+                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+                    };
+                  };
+                  default = { };
+                  description = "Rule-based tag automaton. Applies source, file-type, and MIME tags to events — emits `knowledge.tag_applied`.";
+                };
+
                 entityExtractor = mkOption {
                   type = submodule {
                     options = {
@@ -2147,6 +2159,10 @@ in
               cfg.nodes.enable
               && cfg.nodes.automata.enable
               && cfg.nodes.automata.documentParser.enable;
+            tag_applier =
+              cfg.nodes.enable
+              && cfg.nodes.automata.enable
+              && cfg.nodes.automata.tagApplier.enable;
             entity_extractor =
               cfg.nodes.enable
               && cfg.nodes.automata.enable

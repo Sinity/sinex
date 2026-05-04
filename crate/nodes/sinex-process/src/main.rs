@@ -22,6 +22,7 @@
 //! - `relation-extractor` — relation extractor (ScopeReconcilerNode)
 //! - `entity-enricher`    — entity enricher (ScopeReconcilerNode)
 //! - `entity-extractor`   — entity extractor (TransducerNode)
+//! - `tag-applier`       — rule-based tag applier (TransducerNode)
 //! - `document-parser`    — document parser (MultiOutputTransducerNode)
 
 #[cfg(not(target_env = "msvc"))]
@@ -34,7 +35,8 @@ static GLOBAL: MiMalloc = MiMalloc;
 use sinex_process::{
     AnalyticsAutomatonNode, DailySummarizerNode, DocumentParserNodeAdapter, EntityEnricherNode,
     EntityExtractorNode, EntityResolverNode, HealthAggregatorNode, HourlySummarizerNode,
-    RelationExtractorNode, SessionDetectorNode, TerminalCommandCanonicalizerNode,
+    RelationExtractorNode, SessionDetectorNode, TagApplierNode,
+    TerminalCommandCanonicalizerNode,
 };
 
 /// Extract `--automaton <name>` (or `SINEX_AUTOMATON`) from raw argv and return
@@ -83,7 +85,7 @@ fn extract_automaton(
     let name = automaton.unwrap_or_else(|| {
         eprintln!(
             "error: --automaton <name> is required (or set SINEX_AUTOMATON).\n\
-             Valid values: canonicalizer | analytics | health | session | hourly | daily | entity-extractor | entity-resolver | relation-extractor | entity-enricher | document-parser"
+             Valid values: canonicalizer | analytics | health | session | hourly | daily | entity-extractor | tag-applier | entity-resolver | relation-extractor | entity-enricher | document-parser"
         );
         std::process::exit(1);
     });
@@ -112,11 +114,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "entity-resolver" => run_node::<EntityResolverNode>(filtered_args).await,
         "relation-extractor" => run_node::<RelationExtractorNode>(filtered_args).await,
         "entity-enricher" => run_node::<EntityEnricherNode>(filtered_args).await,
+        "tag-applier" => run_node::<TagApplierNode>(filtered_args).await,
         "document-parser" => run_node::<DocumentParserNodeAdapter>(filtered_args).await,
         other => {
             eprintln!(
                 "error: unknown automaton '{other}'.\n\
-                 Valid values: canonicalizer | analytics | health | session | hourly | daily | entity-extractor | entity-resolver | relation-extractor | entity-enricher | document-parser"
+                 Valid values: canonicalizer | analytics | health | session | hourly | daily | entity-extractor | tag-applier | entity-resolver | relation-extractor | entity-enricher | document-parser"
             );
             std::process::exit(1);
         }

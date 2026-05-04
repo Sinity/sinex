@@ -18,6 +18,7 @@
 //! | `relation-extractor` | `--automaton relation-extractor` | [`ScopeReconcilerNode`] |
 //! | `entity-enricher` | `--automaton entity-enricher` | [`ScopeReconcilerNode`] |
 //! | `entity-extractor` | `--automaton entity-extractor` | [`TransducerNode`] |
+//! | `tag-applier` | `--automaton tag-applier` | [`TransducerNode`] |
 //! | `document-parser` | `--automaton document-parser` | [`MultiOutputTransducerNode`] |
 //!
 //! All nine [`SourceUnitDescriptor`](sinex_primitives::proof::SourceUnitDescriptor)s are
@@ -35,6 +36,7 @@ pub mod automata {
     pub mod hourly;
     pub mod relation_extractor;
     pub mod session;
+    pub mod tag_applier;
 }
 
 pub use automata::analytics::AnalyticsAutomatonNode;
@@ -49,3 +51,4 @@ pub use automata::health::HealthAggregatorNode;
 pub use automata::hourly::HourlySummarizerNode;
 pub use automata::relation_extractor::RelationExtractorNode;
 pub use automata::session::SessionDetectorNode;
+pub use automata::tag_applier::TagApplierNode;
