@@ -56,6 +56,7 @@ pub mod examples;
 #[cfg(feature = "messaging")]
 pub mod exploration;
 pub mod file_tailer;
+pub mod tags;
 #[cfg(feature = "messaging")]
 pub mod health_reporter;
 #[cfg(feature = "messaging")]
