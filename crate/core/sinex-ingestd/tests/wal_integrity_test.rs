@@ -28,6 +28,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
         root_path: repo_path,
         num_copies: None,
         large_files: None,
+        ..Default::default()
     })?);
 
     // Bootstrap streams

@@ -1,7 +1,6 @@
-use crate::DbPool;
-use sinex_primitives::error::Result;
-use sinex_primitives::temporal::{Duration, Timestamp};
+use sinex_primitives::temporal::Timestamp;
 use uuid::Uuid;
+
 #[derive(Debug, Clone)]
 pub struct CheckpointInconsistency {
     pub node_name: String,
@@ -9,6 +8,7 @@ pub struct CheckpointInconsistency {
     pub inconsistency_type: CheckpointInconsistencyType,
     pub events_potentially_missed: u64,
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CheckpointInconsistencyType {
     MissingCheckpoint,
@@ -17,6 +17,7 @@ pub enum CheckpointInconsistencyType {
     StaleCheckpoint,
     InvalidCheckpointFormat,
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckpointKind {
     None,
@@ -26,6 +27,7 @@ pub enum CheckpointKind {
     Timestamp,
     Unknown,
 }
+
 #[derive(Debug, Clone)]
 pub struct CheckpointSnapshot {
     pub node_name: String,
@@ -36,148 +38,46 @@ pub struct CheckpointSnapshot {
     pub processed_count: u64,
     pub last_activity: Timestamp,
 }
+
 impl CheckpointSnapshot {
-    fn requires_event_id(&self) -> bool {
+    pub fn requires_event_id(&self) -> bool {
         matches!(self.checkpoint_kind, CheckpointKind::Internal)
     }
-    fn supports_event_correlation(&self) -> bool {
+
+    pub fn supports_event_correlation(&self) -> bool {
         matches!(
             self.checkpoint_kind,
             CheckpointKind::Internal | CheckpointKind::Stream | CheckpointKind::None
         )
     }
 }
-pub mod checkpoint_verification {
-    use super::{CheckpointSnapshot, DbPool, analyze_node, latest_snapshot_for_node};
-    use sinex_primitives::error::Result as SinexResult;
 
-    pub async fn get_expected_automatons(pool: &DbPool) -> SinexResult<Vec<String>> {
-        let names =
-            sqlx::query_scalar!(r#"SELECT node_name FROM core.node_manifests ORDER BY node_name"#)
-                .fetch_all(pool)
-                .await?;
-        Ok(names)
+pub mod checkpoint_verification {
+    use super::{CheckpointSnapshot, latest_snapshot_for_node};
+    use crate::repositories::integrity::IntegrityRepository;
+    use crate::repositories::Repository;
+    use sinex_primitives::error::Result as SinexResult;
+    use sqlx::PgPool;
+
+    pub async fn get_expected_automatons(pool: &PgPool) -> SinexResult<Vec<String>> {
+        IntegrityRepository::new(pool)
+            .get_expected_automatons()
+            .await
     }
+
     pub async fn verify_automaton_checkpoint_consistency(
-        pool: &DbPool,
+        pool: &PgPool,
         snapshots: &[CheckpointSnapshot],
         node_name: &str,
     ) -> SinexResult<Vec<String>> {
         let snapshot = latest_snapshot_for_node(snapshots, node_name);
-        let issues = analyze_node(pool, node_name, snapshot, 1_000, 24, 24).await?;
+        let issues = IntegrityRepository::new(pool)
+            .analyze_node(node_name, snapshot, 1_000, 24, 24)
+            .await?;
         Ok(issues.into_iter().map(|issue| issue.details).collect())
     }
 }
-async fn analyze_node(
-    pool: &DbPool,
-    node_name: &str,
-    snapshot: Option<&CheckpointSnapshot>,
-    max_events: usize,
-    stale_window_hours: i64,
-    check_window_hours: i64,
-) -> Result<Vec<CheckpointInconsistency>> {
-    let mut issues = Vec::new();
-    let Some(snapshot) = snapshot else {
-        issues.push(CheckpointInconsistency {
-            node_name: node_name.to_string(),
-            details: "No checkpoint found for node".to_string(),
-            inconsistency_type: CheckpointInconsistencyType::MissingCheckpoint,
-            events_potentially_missed: 0,
-        });
-        return Ok(issues);
-    };
-    if snapshot.requires_event_id()
-        && snapshot.last_processed_id.is_none()
-        && snapshot.processed_count > 0
-    {
-        issues.push(CheckpointInconsistency {
-            node_name: node_name.to_string(),
-            details: format!(
-                "Checkpoint missing UUIDv7 reference despite processed_count={}",
-                snapshot.processed_count
-            ),
-            inconsistency_type: CheckpointInconsistencyType::InvalidCheckpointFormat,
-            events_potentially_missed: snapshot.processed_count,
-        });
-    }
-    if snapshot.supports_event_correlation()
-        && let Some(last_processed_id) = snapshot.last_processed_id
-    {
-        let exists = sqlx::query_scalar!(
-            r#"SELECT EXISTS(SELECT 1 FROM core.events WHERE id = $1::uuid)"#,
-            last_processed_id
-        )
-        .fetch_one(pool)
-        .await?
-        .unwrap_or(false);
-        if !exists {
-            issues.push(CheckpointInconsistency {
-                node_name: node_name.to_string(),
-                details: "Checkpoint references non-existent event".to_string(),
-                inconsistency_type: CheckpointInconsistencyType::MissingEventReference,
-                events_potentially_missed: 0,
-            });
-        }
-    }
-    let newer_events: i64 = if snapshot.supports_event_correlation() {
-        let window_cutoff = if check_window_hours > 0 {
-            Some(Timestamp::now() - Duration::hours(check_window_hours))
-        } else {
-            None
-        };
-        if let Some(last_processed_id) = snapshot.last_processed_id {
-            if let Some(cutoff) = window_cutoff {
-                sqlx::query_scalar!(
-                    r#"SELECT COUNT(*) as "count!" FROM core.events WHERE id > $1::uuid AND ts_orig >= $2"#,
-                    last_processed_id,
-                    cutoff.inner()
-                )
-                .fetch_one(pool)
-                .await?
-            } else {
-                sqlx::query_scalar!(
-                    r#"SELECT COUNT(*) as "count!" FROM core.events WHERE id > $1::uuid"#,
-                    last_processed_id
-                )
-                .fetch_one(pool)
-                .await?
-            }
-        } else if let Some(cutoff) = window_cutoff {
-            sqlx::query_scalar!(
-                r#"SELECT COUNT(*) as "count!" FROM core.events WHERE ts_orig >= $1"#,
-                cutoff.inner()
-            )
-            .fetch_one(pool)
-            .await?
-        } else {
-            sqlx::query_scalar!(r#"SELECT COUNT(*) as "count!" FROM core.events"#)
-                .fetch_one(pool)
-                .await?
-        }
-    } else {
-        0
-    };
-    if newer_events > 0 {
-        issues.push(CheckpointInconsistency {
-            node_name: node_name.to_string(),
-            details: format!("Checkpoint behind by {newer_events} events"),
-            inconsistency_type: CheckpointInconsistencyType::CheckpointBehindEvents,
-            events_potentially_missed: newer_events.min(max_events as i64).max(0) as u64,
-        });
-    }
-    let hours_since_last_activity = (Timestamp::now() - snapshot.last_activity).whole_hours();
-    if hours_since_last_activity >= stale_window_hours {
-        issues.push(CheckpointInconsistency {
-            node_name: node_name.to_string(),
-            details: format!(
-                "Checkpoint stale (last activity {hours_since_last_activity} hours ago)"
-            ),
-            inconsistency_type: CheckpointInconsistencyType::StaleCheckpoint,
-            events_potentially_missed: newer_events.max(0) as u64,
-        });
-    }
-    Ok(issues)
-}
+
 fn latest_snapshot_for_node<'a>(
     snapshots: &'a [CheckpointSnapshot],
     node_name: &str,

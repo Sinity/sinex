@@ -93,6 +93,8 @@ async fn test_manager_path_validation(ctx: TestContext) -> TestResult<()> {
         root_path: repo_utf8,
         num_copies: Some(1),
         large_files: Some("anything".to_string()),
+        legacy_annex_enabled: true,
+        ..Default::default()
     };
 
     let (event_tx, mut event_rx) = mpsc::channel::<Event<JsonValue>>(BLOB_EVENT_CHANNEL_CAPACITY);
@@ -138,6 +140,7 @@ async fn manager_rejects_percent_encoded_traversal(ctx: TestContext) -> TestResu
         root_path: repo_utf8,
         num_copies: None,
         large_files: None,
+        ..Default::default()
     };
 
     let _manager =

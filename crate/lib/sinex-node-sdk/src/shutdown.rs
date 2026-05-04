@@ -4,6 +4,7 @@
 //! persistence directly. This module keeps only the shared checkpoint-path and
 //! shutdown-configuration surface that the runtimes still use.
 
+#[cfg(feature = "messaging")]
 use crate::error_helpers::env_nonempty_string_optional;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -73,9 +74,13 @@ fn sanitize_node_name_for_filename(name: &str) -> String {
 /// Default checkpoint file path for a node.
 #[must_use]
 pub fn default_checkpoint_path(node_name: &str) -> PathBuf {
+    #[cfg(feature = "messaging")]
     let runtime_dir = env_nonempty_string_optional("SINEX_RUNTIME_DIR", "shutdown checkpoint path")
         .or_else(|| env_nonempty_string_optional("SINEX_WORK_DIR", "shutdown checkpoint path"))
-        .map(PathBuf::from)
+        .map(PathBuf::from);
+    #[cfg(not(feature = "messaging"))]
+    let runtime_dir: Option<PathBuf> = None;
+    let runtime_dir = runtime_dir
         .or_else(|| dirs::cache_dir().map(|dir| dir.join("sinex")))
         .unwrap_or_else(|| PathBuf::from("/tmp/sinex"));
     let safe_name = sanitize_node_name_for_filename(node_name);

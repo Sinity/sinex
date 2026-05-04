@@ -167,6 +167,10 @@ let
     wal_buffers = mkDefault "16MB";
     max_wal_size = mkDefault "2GB";
     min_wal_size = mkDefault "1GB";
+    archive_mode = if db.walArchiveCommand != null then "on" else mkDefault "off";
+    archive_command = if db.walArchiveCommand != null
+      then db.walArchiveCommand
+      else mkDefault "";
 
     # 2PC is not used by sinex (SQLx does not issue PREPARE TRANSACTION).
     # Setting this to 0 disables the feature and reclaims the shared-memory
