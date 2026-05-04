@@ -10,7 +10,7 @@
 #![allow(dead_code)] // ChaosCounterNode infrastructure ready for future chaos-through-node tests
 
 use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext};
-use sinex_node_sdk::{ErrorAction, NodeLogicError, TransducerNode};
+use sinex_node_sdk::{NodeLogicError, TransducerNode};
 use sinex_primitives::events::Event;
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::testing::event_fixture;
@@ -24,13 +24,6 @@ use xtask::sandbox::prelude::*;
 #[derive(Debug)]
 struct ChaosCounterNode {
     processed: Arc<AtomicU64>,
-    errors: Arc<AtomicU64>,
-}
-
-impl ChaosCounterNode {
-    fn new(processed: Arc<AtomicU64>, errors: Arc<AtomicU64>) -> Self {
-        Self { processed, errors }
-    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
@@ -91,10 +84,6 @@ impl TransducerNode for ChaosCounterNode {
         )))
     }
 
-    fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
-        self.errors.fetch_add(1, Ordering::SeqCst);
-        ErrorAction::Skip
-    }
 }
 
 /// Create a test event for chaos processing

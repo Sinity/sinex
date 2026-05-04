@@ -167,19 +167,8 @@ pub trait AutomatonNode: Send + Sync {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-    ) -> Result<Option<Self::Output>>;
+    ) -> Result<Option<Self::Output>>;}
 
-    /// Optional: custom error handling
-    fn handle_error(&self, error: Error) -> ErrorAction {
-        ErrorAction::SendToProcessingFailureQueue
-    }
-}
-
-enum ErrorAction {
-    Retry,
-    SendToProcessingFailureQueue,
-    Skip,
-}
 
 /// Auto-implementation of Node trait
 impl<P> Node for AutomatonNodeAdapter<P>

@@ -67,7 +67,82 @@ impl StatusCommand {
             }
         };
         signals.push(gateway_signal);
-        
+
+        // DB pool health + NATS connection status (via system.health RPC)
+        match client.health().await {
+            Ok(health) => {
+                let db_status = if health.components.database.connected {
+                    RuntimeStatusSignalStatus::Healthy
+                } else {
+                    RuntimeStatusSignalStatus::Unhealthy
+                };
+                let db_msg = {
+                    let mut parts = Vec::new();
+                    if let Some(latency) = health.components.database.latency_ms {
+                        parts.push(format!("{latency:.0}ms"));
+                    }
+                    if let Some(ref detail) = health.components.database.detail {
+                        parts.push(detail.clone());
+                    }
+                    if parts.is_empty() {
+                        None
+                    } else {
+                        Some(parts.join(", "))
+                    }
+                };
+                signals.push(RuntimeStatusSignal {
+                    name: "db".to_string(),
+                    status: db_status,
+                    source: "system.health database probe".to_string(),
+                    message: db_msg,
+                });
+
+                let nats_status = if health.components.nats.connected {
+                    RuntimeStatusSignalStatus::Healthy
+                } else {
+                    RuntimeStatusSignalStatus::Unhealthy
+                };
+                let nats_msg = {
+                    let mut parts = Vec::new();
+                    if let Some(latency) = health.components.nats.latency_ms {
+                        parts.push(format!("{latency:.0}ms"));
+                    }
+                    if let Some(ref detail) = health.components.nats.detail {
+                        parts.push(detail.clone());
+                    }
+                    if parts.is_empty() {
+                        None
+                    } else {
+                        Some(parts.join(", "))
+                    }
+                };
+                signals.push(RuntimeStatusSignal {
+                    name: "nats".to_string(),
+                    status: nats_status,
+                    source: "system.health NATS active probe".to_string(),
+                    message: nats_msg,
+                });
+            }
+            Err(e) => {
+                warnings.push(RuntimeStatusWarning {
+                    source: "system.health".to_string(),
+                    message: format!("unavailable: {e}"),
+                });
+                signals.push(RuntimeStatusSignal {
+                    name: "db".to_string(),
+                    status: RuntimeStatusSignalStatus::Unknown,
+                    source: "system.health database probe".to_string(),
+                    message: Some("health probe failed".to_string()),
+                });
+                signals.push(RuntimeStatusSignal {
+                    name: "nats".to_string(),
+                    status: RuntimeStatusSignalStatus::Unknown,
+                    source: "system.health NATS active probe".to_string(),
+                    message: Some("health probe failed".to_string()),
+                });
+            }
+        }
+
         // Nodes
         match client.list_nodes(None).await {
             Ok(nodes) => {

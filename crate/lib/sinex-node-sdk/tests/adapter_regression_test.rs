@@ -5,7 +5,7 @@ use serde_json::json;
 use sinex_node_sdk::derived_node::{
     DerivedNodeAdapter, DerivedOutput, DerivedTriggerContext, TransducerWrapper,
 };
-use sinex_node_sdk::{ErrorAction, NodeLogicError, TransducerNode};
+use sinex_node_sdk::{NodeLogicError, TransducerNode};
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::prelude::*;
 use sinex_primitives::privacy::ProcessingContext;
@@ -88,9 +88,6 @@ impl TransducerNode for DlqDerivedNode {
         Err(NodeLogicError::Processing("derived failure".to_string()))
     }
 
-    fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
-        ErrorAction::SendToProcessingFailureQueue
-    }
 }
 
 fn make_event_with_value(value: &str) -> std::result::Result<Event<JsonValue>, SinexError> {
