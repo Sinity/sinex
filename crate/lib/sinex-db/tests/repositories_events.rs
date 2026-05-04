@@ -1433,11 +1433,12 @@ async fn event_replacements_record_and_query(ctx: TestContext) -> TestResult<()>
     Ok(())
 }
 
-/// `get_by_ids` must return all events when the ID list exceeds 1000 (the per-query chunk size).
+/// `get_by_ids` must reject more than 1000 IDs.
 ///
-/// Regression test for #916: the previous implementation silently truncated to the first 1000 IDs.
+/// Regression test for #916: the previous implementation silently chunked;
+/// callers must now chunk explicitly.
 #[sinex_test]
-async fn get_by_ids_returns_all_events_beyond_chunk_boundary(
+async fn get_by_ids_rejects_more_than_1000_ids(
     ctx: TestContext,
 ) -> TestResult<()> {
     use sinex_db::repositories::source_materials::material_types;
@@ -1472,13 +1473,17 @@ async fn get_by_ids_returns_all_events_beyond_chunk_boundary(
         inserted_ids.push(inserted.id.expect("inserted event must have an id"));
     }
 
-    let fetched = ctx.pool.events().get_by_ids(&inserted_ids).await?;
+    let err = ctx
+        .pool
+        .events()
+        .get_by_ids(&inserted_ids)
+        .await
+        .expect_err("get_by_ids must reject more than 1000 IDs");
 
-    assert_eq!(
-        fetched.len(),
-        TOTAL_EVENTS,
-        "get_by_ids must return all {} events, not silently truncate to 1000",
-        TOTAL_EVENTS,
+    let msg = err.to_string();
+    assert!(
+        msg.contains("more than 1000"),
+        "error must mention the 1000-ID limit, got: {msg}"
     );
 
     Ok(())

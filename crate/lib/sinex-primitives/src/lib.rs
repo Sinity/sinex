@@ -28,6 +28,7 @@ pub mod runtime_target;
 pub mod settlement;
 pub mod source_unit;
 pub mod temporal;
+#[cfg(any(test, feature = "testing"))]
 pub mod testing;
 #[cfg(feature = "nats")]
 pub mod transport;
@@ -40,7 +41,7 @@ pub mod buffers {
 }
 
 pub mod prelude {
-    pub use crate::domain::{EventSource, EventType, HostName, RecordedPath};
+    pub use crate::domain::{EventSource, EventType, HostName, RecordedPath, SourceIdentifier};
     pub use crate::environment::SinexEnvironment;
     pub use crate::error::{Result, SinexError};
     pub use crate::events::builder::{OffsetKind, Provenance};
@@ -70,7 +71,7 @@ pub use deployment_readiness::{
     DeploymentSecrets, DeploymentSurface, DeploymentTarget, DesktopDeploymentSurface,
     DocumentDeploymentSurface, TerminalDeploymentSurface, TerminalHistorySource,
 };
-pub use domain::{EventSource, EventType, HostName, RecordedPath, SanitizedPath};
+pub use domain::{EventSource, EventType, HostName, RecordedPath, SanitizedPath, SourceIdentifier};
 pub use env::strict_env_filter_source;
 pub use environment::{SinexEnvironment, environment};
 pub use error::{Result, SinexError};

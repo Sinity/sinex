@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "event_data": {
+      "type": "string"
+    },
+    "event_type": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "event_type",
+    "event_data"
+  ],
+  "title": "HyprlandUnhandledPayload",
+  "type": "object",
+  "x-sinex-event-type": "wm.unhandled",
+  "x-sinex-source": "wm.hyprland",
+  "x-sinex-version": "1.0.0"
+}

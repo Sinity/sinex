@@ -1,9 +1,8 @@
 //! Process lifecycle event payloads
 
-use crate::Timestamp;
 use crate::domain::NodeType;
-use crate::events::enums::{DeactivationReason, ShutdownReason};
-use crate::units::{EventCount, ExitCode, ProcessId, SequenceNumber};
+use crate::events::enums::ShutdownReason;
+use crate::units::{ExitCode, ProcessId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_macros::EventPayload;
@@ -38,20 +37,6 @@ pub struct ProcessStartedPayload {
     pub pid: ProcessId,
     pub version: String,
     pub config: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex", event_type = "process.heartbeat")]
-pub struct ProcessHeartbeatPayload {
-    /// Name of the service/process emitting the heartbeat
-    pub source: String,
-    /// Sequence number of this heartbeat (increments each emission)
-    pub sequence: SequenceNumber,
-    /// Status of the process
-    pub status: ProcessStatus,
-    /// Optional metrics collected from `MetricsProviders`
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub metrics: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
@@ -101,26 +86,6 @@ pub struct AutomatonErrorPayload {
     pub context: Option<serde_json::Value>,
 }
 
-// Sensor lifecycle
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex", event_type = "sensor.activated")]
-pub struct SensorActivatedPayload {
-    pub sensor: String,
-    pub node: String,
-    pub activation_time: Timestamp,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex", event_type = "sensor.deactivated")]
-pub struct SensorDeactivatedPayload {
-    pub sensor: String,
-    pub node: String,
-    pub uptime_seconds: u64,
-    pub events_generated: EventCount,
-    pub reason: DeactivationReason,
-}
-
 // Test helpers for external tests
 #[cfg(any(test, feature = "testing"))]
 impl ProcessStartedPayload {
@@ -132,19 +97,6 @@ impl ProcessStartedPayload {
             pid: ProcessId::from(0u32),
             version: "0.0.0".into(),
             config: serde_json::json!({}),
-        }
-    }
-}
-
-#[cfg(any(test, feature = "testing"))]
-impl ProcessHeartbeatPayload {
-    #[must_use]
-    pub fn test_default() -> Self {
-        Self {
-            source: "test-process".into(),
-            sequence: SequenceNumber::from_raw(0),
-            status: ProcessStatus::Healthy,
-            metrics: None,
         }
     }
 }

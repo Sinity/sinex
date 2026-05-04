@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "High-priority warning emitted when a dangerous replay is detected at ingestd startup.\n\nA dangerous replay occurs when a durable consumer is missing (e.g. renamed, environment\ndrift, or first start after schema change) and the stream contains retained messages.\nWithout intervention, the consumer would replay the entire backlog from the beginning,\nwhich can saturate I/O and destabilise the host.\n\nThe `reject_initial_replay` guard in `ensure_pull_consumer` already blocks this from\nhappening in production; this event is the pre-guard observability counterpart, emitted\neven when the guard would have prevented the consumer from starting.",
+  "properties": {
+    "durable_name": {
+      "description": "Durable consumer name that was missing.",
+      "type": "string"
+    },
+    "reason": {
+      "description": "Human-readable explanation of why this is dangerous.",
+      "type": "string"
+    },
+    "stream_bytes": {
+      "description": "Byte volume that would be replayed.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "stream_first_sequence": {
+      "description": "First sequence that would be delivered.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "stream_messages": {
+      "description": "Number of messages that would be replayed from the beginning.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "stream_name": {
+      "description": "Name of the JetStream stream.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "stream_name",
+    "durable_name",
+    "stream_messages",
+    "stream_bytes",
+    "stream_first_sequence",
+    "reason"
+  ],
+  "title": "DangerousReplayWarningPayload",
+  "type": "object",
+  "x-sinex-event-type": "consumer.startup_replay_risk",
+  "x-sinex-source": "sinex.ingestd",
+  "x-sinex-version": "1.0.0"
+}

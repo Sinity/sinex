@@ -111,7 +111,12 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    info!(?config, "Configuration loaded");
+    info!(
+        nats_url = %config.nats.url,
+        database_pool_size = config.database_pool_size,
+        nats_stream = %config.nats_stream_name,
+        "Configuration loaded"
+    );
 
     // Create and run the service
     let mut service = IngestService::new(config).await?;

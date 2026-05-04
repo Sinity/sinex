@@ -4,6 +4,30 @@ use serde_json::Value;
 
 use crate::error::{Result, SinexError};
 
+/// Reject NaN and Infinity when deserializing f64 — PostgreSQL JSONB rejects these.
+pub fn reject_non_finite_f64<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<f64, D::Error> {
+    let value = <f64 as serde::Deserialize>::deserialize(d)?;
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom("NaN and Infinity are not supported"))
+    }
+}
+
+/// Reject NaN and Infinity in optional f64 deserialization.
+pub fn reject_non_finite_optional_f64<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Option<f64>, D::Error> {
+    match <Option<f64> as serde::Deserialize>::deserialize(d)? {
+        Some(v) if !v.is_finite() => {
+            Err(serde::de::Error::custom("NaN and Infinity are not supported"))
+        }
+        other => Ok(other),
+    }
+}
+
 const MAX_JSON_SIZE: usize = 10 * 1024 * 1024; // 10MB
 const MAX_JSON_DEPTH: usize = 32;
 const MAX_JSON_KEYS: usize = 1000;
@@ -265,23 +289,6 @@ pub fn validate_json_value(value: &Value) -> Result<()> {
     Ok(())
 }
 
-/// Deserialize JSON with validation and enhanced error handling
-pub fn deserialize_json_with_validation<T>(json_str: &str) -> Result<T>
-where
-    T: serde::de::DeserializeOwned,
-{
-    // First validate the JSON structure
-    let value = validate_json(json_str)?;
-
-    // Then deserialize with path-to-error tracking
-    let deserializer = serde_json::from_value::<T>(value);
-
-    deserializer.map_err(|e| {
-        SinexError::validation(format!("Deserialization failed: {e}"))
-            .with_context("validation_type", "json")
-    })
-}
-
 fn validate_json_structure(value: &Value, depth: usize) -> Result<()> {
     if depth > MAX_JSON_DEPTH {
         return Err(
@@ -350,64 +357,4 @@ pub fn normalize_unicode(input: &str) -> Result<String> {
     }
 
     Ok(normalized)
-}
-
-/// Check if a string contains shell metacharacters
-#[must_use]
-pub fn contains_shell_metacharacters(s: &str) -> bool {
-    const DANGEROUS_CHARS: &[char] = &[
-        ';', '|', '&', '$', '`', '(', ')', '{', '}', '<', '>', '\\', '\n', '\r', '\0', '*', '?',
-        '[', ']', '!', '~', '"', '\'',
-    ];
-
-    s.contains("$(") || s.contains("${") || s.chars().any(|c| DANGEROUS_CHARS.contains(&c))
-}
-
-/// Detect potential billion laughs pattern in JSON
-pub fn check_json_expansion(value: &Value) -> Result<()> {
-    fn estimate_expanded_size(value: &Value, depth: usize) -> Result<usize> {
-        if depth > 10 {
-            return Err(
-                SinexError::validation("Potential billion laughs attack detected")
-                    .with_context("validation_type", "json"),
-            );
-        }
-
-        match value {
-            Value::Object(map) => {
-                let mut size = 0;
-                for (k, v) in map {
-                    size += k.len();
-                    size += estimate_expanded_size(v, depth + 1)?;
-                }
-                Ok(size)
-            }
-            Value::Array(arr) => {
-                let mut size = 0;
-                for v in arr {
-                    size += estimate_expanded_size(v, depth + 1)?;
-                }
-                // Check for exponential expansion
-                if depth > 3 && arr.len() > 100 {
-                    return Err(
-                        SinexError::validation("Suspicious array expansion detected")
-                            .with_context("validation_type", "json"),
-                    );
-                }
-                Ok(size)
-            }
-            Value::String(s) => Ok(s.len()),
-            _ => Ok(8), // Number, bool, null
-        }
-    }
-
-    let estimated_size = estimate_expanded_size(value, 0)?;
-
-    // If expanded size is more than 100x the original, reject
-    if estimated_size > value.to_string().len() * 100 {
-        return Err(SinexError::validation("JSON expansion ratio too high")
-            .with_context("validation_type", "json"));
-    }
-
-    Ok(())
 }

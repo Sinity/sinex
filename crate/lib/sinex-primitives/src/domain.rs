@@ -1025,6 +1025,78 @@ define_string_type!(
     ConsumerName
 );
 
+// ─── Source identifier ───────────────────────────────────────────────────────
+
+/// Identifies a logical source within a source material, carrying an optional
+/// material_id for disambiguation. The wire/DB representation is:
+///   `{logical_id}#material={material_id}`
+///
+/// Callers should use the typed API (`new`, `from_wire`, `to_wire`) instead of
+/// inline `format!` / `split("#material=")`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceIdentifier {
+    pub logical_id: String,
+    pub material_id: Option<crate::Uuid>,
+}
+
+impl SourceIdentifier {
+    #[must_use]
+    pub fn new(logical_id: impl Into<String>, material_id: impl Into<Option<crate::Uuid>>) -> Self {
+        Self {
+            logical_id: logical_id.into(),
+            material_id: material_id.into(),
+        }
+    }
+
+    /// Parse from the wire/DB format: `"path/to/file#material=<uuid>"`
+    ///
+    /// If the string does not contain `#material=`, the entire string is treated
+    /// as the logical_id and material_id is set to `None`.
+    pub fn from_wire(s: &str) -> Result<Self, crate::SinexError> {
+        if let Some(pos) = s.find("#material=") {
+            let logical_id = s[..pos].to_string();
+            let uuid_str = &s[pos + "#material=".len()..];
+            let material_id = crate::Uuid::parse_str(uuid_str).map_err(|e| {
+                crate::SinexError::validation("Invalid material_id UUID in source identifier")
+                    .with_context("value", uuid_str)
+                    .with_std_error(&e)
+            })?;
+            Ok(Self {
+                logical_id,
+                material_id: Some(material_id),
+            })
+        } else {
+            Ok(Self {
+                logical_id: s.to_string(),
+                material_id: None,
+            })
+        }
+    }
+
+    /// Encode to the wire/DB format.
+    #[must_use]
+    pub fn to_wire(&self) -> String {
+        match &self.material_id {
+            Some(id) => format!("{}#material={}", self.logical_id, id),
+            None => self.logical_id.clone(),
+        }
+    }
+}
+
+impl fmt::Display for SourceIdentifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.to_wire())
+    }
+}
+
+impl FromStr for SourceIdentifier {
+    type Err = crate::SinexError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::from_wire(s)
+    }
+}
+
 // Path and URI types
 define_validated_string_type!(
     #[doc = "A path that has been validated and cleaned"]
@@ -1960,8 +2032,8 @@ mod sqlx_impls {
         GlobPattern, HealthStatus, HostName, InstanceId, InvalidationAction, IpAddress, JobId,
         NatsSubject, NodeId, NodeName, NodeState, NodeType, OperationStatus, ProcessingMode,
         RecordedPath, RegexPattern, RelationType, RemoteName, SanitizedPath, SchemaName,
-        SchemaVersion, ServiceName, ShellName, SyntheticTemporalPolicy, TemporalClock,
-        TemporalPrecision, TemporalSourceType, TriggerKind, UserId,
+        SchemaVersion, ServiceName, ShellName, SourceIdentifier, SyntheticTemporalPolicy,
+        TemporalClock, TemporalPrecision, TemporalSourceType, TriggerKind, UserId,
     };
 
     // Register validated string types (construction-validated)
@@ -1990,6 +2062,9 @@ mod sqlx_impls {
     impl_sqlx_for_string_type!(RelationType);
     impl_sqlx_for_string_type!(EntityTypeName);
     impl_sqlx_for_string_type!(UserId);
+
+    // Compound types that encode/decode via Display + FromStr
+    impl_sqlx_for_enum_type!(SourceIdentifier);
 
     // Register validated string types
     impl_sqlx_for_validated_string_type!(SanitizedPath);

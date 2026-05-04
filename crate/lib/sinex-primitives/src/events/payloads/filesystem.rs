@@ -41,20 +41,6 @@ pub struct FileMovedPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "fs-watcher", event_type = "dir.created")]
-pub struct DirCreatedPayload {
-    pub path: RecordedPath,
-    pub created_at: Timestamp,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "fs-watcher", event_type = "dir.deleted")]
-pub struct DirDeletedPayload {
-    pub path: RecordedPath,
-    pub deleted_at: Timestamp,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "fs-watcher", event_type = "file.discovered")]
 pub struct FileDiscoveredPayload {
     pub path: RecordedPath,

@@ -1626,11 +1626,12 @@ Reset developer state for a fresh start
 | `--db` | no | no | Drop and recreate the database (stops Postgres, destroys all data) |
 | `--nats` | no | no | Wipe NATS JetStream data (stops NATS, deletes stream data) |
 | `--blobs` | no | no | Wipe the git-annex blobstore |
-| `--preflight` | no | no | Wipe the entire .sinex/preflight/ directory (forces full preflight on next run) |
+| `--preflight` | no | no | Wipe the configured preflight state directory (forces full preflight on next run) |
 | `--contracts` | no | no | Delete contracts hash file (forces contract redeploy on next run, no data loss) |
 | `--schema` | no | no | Delete schema apply hash file (forces schema reapply on next run, no data loss) |
-| `--history` | no | no | Delete the xtask history database |
+| `--history` | no | no | Reset the xtask history database, preserving the old DB as a timestamped backup |
 | `--seed` | no | no | When used with --history: reseed the history database with synthetic data |
 | `--jobs` | no | no | Delete background job records and output files |
 | `--target` | no | no | Wipe the cargo target/ directory (forces clean recompilation) |
 | `--tls` | no | no | Regenerate TLS certificates |
+

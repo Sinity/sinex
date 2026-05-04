@@ -41,6 +41,7 @@ pub struct EntityExtractedPayload {
     /// The raw text span as it appeared in the source document.
     pub raw_name: String,
     /// Extraction confidence in [0.0, 1.0].
+    #[serde(deserialize_with = "crate::validation::reject_non_finite_f64")]
     pub confidence: f64,
 }
 
@@ -95,6 +96,7 @@ pub struct EntityRelatedPayload {
     /// Semantic type of the relationship (e.g. works_on, co_occurs_with).
     pub relation_type: RelationType,
     /// Confidence score for this relationship in [0.0, 1.0].
+    #[serde(deserialize_with = "crate::validation::reject_non_finite_f64")]
     pub confidence: f64,
 }
 
