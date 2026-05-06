@@ -5,6 +5,7 @@ use sinex_primitives::Uuid;
 use sinex_primitives::events::{Event, Provenance};
 use sinex_primitives::ids::Id;
 use sinex_primitives::query::{LineageDirection, LineageNode, LineageQuery, LineageResult};
+use std::collections::{BTreeSet, HashSet};
 use std::io::IsTerminal;
 
 use crate::Result;
@@ -232,10 +233,13 @@ fn short_uuid(id: Uuid) -> String {
 /// Render the lineage result as a Graphviz DOT graph.
 ///
 /// Material events are rendered with a light-blue fill; synthesis events with a
-/// light-yellow fill.  Edges flow from parent → child (i.e., ancestor → root →
-/// descendant).
+/// light-yellow fill. Edges use provenance directly when both endpoints are in
+/// the lineage result: material edges are dotted blue, synthesis edges are solid
+/// purple, and auxiliary source-material links are dashed gray.
 fn render_dot(result: &LineageResult) -> String {
-    let mut out = String::from("digraph provenance {\n  rankdir=TB;\n");
+    let mut out = String::from(
+        "digraph provenance {\n  rankdir=TB;\n  graph [fontname=\"Inter\"];\n  node [fontname=\"Inter\"];\n  edge [fontname=\"Inter\"];\n",
+    );
 
     // Helper: emit a node declaration.
     let node_decl = |event: &Event<JsonValue>| -> String {
@@ -255,20 +259,23 @@ fn render_dot(result: &LineageResult) -> String {
             },
         );
 
-        let label = format!(
+        let label = escape_dot_label(&format!(
             "{}\\n{}/{}\\n{}",
             id_short, event.source, event.event_type, timestamp
-        );
+        ));
 
         let (fill_color, extra) = match &event.provenance {
-            Provenance::Material { .. } => ("lightblue", ""),
-            Provenance::Synthesis { .. } => ("lightyellow", ""),
+            Provenance::Material { .. } => ("#d9ecff", ""),
+            Provenance::Synthesis { .. } => ("#fff2bf", ""),
         };
 
         format!(
-            "  \"{id_full}\" [label=\"{label}\" shape=box style=filled fillcolor={fill_color}{extra}];\n"
+            "  \"{}\" [label=\"{label}\" shape=box style=filled fillcolor=\"{fill_color}\"{extra}];\n",
+            escape_dot_id(&id_full)
         )
     };
+
+    out.push_str("  subgraph cluster_events {\n    label=\"events\";\n    color=\"#d0d7de\";\n");
 
     // Emit all node declarations.
     out.push_str(&node_decl(&result.root));
@@ -278,76 +285,225 @@ fn render_dot(result: &LineageResult) -> String {
     for node in &result.descendants {
         out.push_str(&node_decl(&node.event));
     }
+    out.push_str("  }\n");
 
-    let root_id = result
-        .root
-        .id
-        .as_ref()
-        .map_or_else(|| "unknown".to_string(), std::string::ToString::to_string);
-
-    // Ancestor edges: ancestor → root (or ancestor → child closer to root).
-    // We emit edges based on depth ordering: depth N+1 → depth N → root.
-    // For simplicity we emit each ancestor → root; the DOT layout handles depth
-    // positioning via rankdir=TB.
-    for node in &result.ancestors {
-        let anc_id = node
-            .event
-            .id
-            .as_ref()
-            .map_or_else(|| "unknown".to_string(), std::string::ToString::to_string);
-        out.push_str(&format!(
-            "  \"{anc_id}\" -> \"{root_id}\" [label=\"ancestor\"];\n"
-        ));
-    }
-
-    // Descendant edges: root → descendant.
-    for node in &result.descendants {
-        let desc_id = node
-            .event
-            .id
-            .as_ref()
-            .map_or_else(|| "unknown".to_string(), std::string::ToString::to_string);
-        out.push_str(&format!(
-            "  \"{root_id}\" -> \"{desc_id}\" [label=\"synthesis\"];\n"
-        ));
-    }
-
-    for event in std::iter::once(&result.root)
+    let events: Vec<&Event<JsonValue>> = std::iter::once(&result.root)
         .chain(result.ancestors.iter().map(|node| &node.event))
         .chain(result.descendants.iter().map(|node| &node.event))
-    {
+        .collect();
+    let event_ids: HashSet<Id<Event<JsonValue>>> =
+        events.iter().filter_map(|event| event.id).collect();
+    let mut emitted_edges = BTreeSet::new();
+    let mut emitted_material_nodes = HashSet::new();
+
+    for event in &events {
+        emit_synthesis_edges(event, &event_ids, &mut emitted_edges, &mut out);
         if let Some(material_id) = event_material_id(event) {
-            let event_id = event
-                .id
-                .as_ref()
-                .map_or_else(|| "unknown".to_string(), std::string::ToString::to_string);
+            emit_material_node(material_id, &mut emitted_material_nodes, &mut out);
+            let event_id = event_dot_id(event);
             out.push_str(&format!(
-                "  \"material:{material_id}\" [label=\"material\\n{}\" shape=note style=filled fillcolor=lightcyan];\n",
-                short_uuid(material_id)
-            ));
-            out.push_str(&format!(
-                "  \"material:{material_id}\" -> \"{event_id}\" [label=\"material\" style=dotted];\n"
+                "  \"material:{}\" -> \"{event_id}\" [label=\"material\" style=dotted color=\"#0969da\" fontcolor=\"#0969da\"];\n",
+                escape_dot_id(&material_id.to_string())
             ));
         }
     }
 
     for link in &result.material_links {
+        emit_material_node(link.from_material_id, &mut emitted_material_nodes, &mut out);
+        emit_material_node(link.to_material_id, &mut emitted_material_nodes, &mut out);
         out.push_str(&format!(
-            "  \"material:{}\" [label=\"material\\n{}\" shape=note style=filled fillcolor=lightcyan];\n",
-            link.from_material_id,
-            short_uuid(link.from_material_id)
-        ));
-        out.push_str(&format!(
-            "  \"material:{}\" [label=\"material\\n{}\" shape=note style=filled fillcolor=lightcyan];\n",
-            link.to_material_id,
-            short_uuid(link.to_material_id)
-        ));
-        out.push_str(&format!(
-            "  \"material:{}\" -> \"material:{}\" [label=\"{}\" style=dashed color=gray50];\n",
-            link.from_material_id, link.to_material_id, link.relation_type
+            "  \"material:{}\" -> \"material:{}\" [label=\"{}\" style=dashed color=\"#6e7781\" fontcolor=\"#6e7781\"];\n",
+            escape_dot_id(&link.from_material_id.to_string()),
+            escape_dot_id(&link.to_material_id.to_string()),
+            escape_dot_label(&link.relation_type)
         ));
     }
 
+    out.push_str(
+        "  subgraph cluster_legend {\n    label=\"legend\";\n    color=\"#d0d7de\";\n    \"legend:material\" [label=\"material event\" shape=box style=filled fillcolor=\"#d9ecff\"];\n    \"legend:synthesis\" [label=\"synthesis event\" shape=box style=filled fillcolor=\"#fff2bf\"];\n    \"legend:source\" [label=\"source material\" shape=note style=filled fillcolor=\"#ddf4ff\"];\n    \"legend:source\" -> \"legend:material\" [label=\"material\" style=dotted color=\"#0969da\" fontcolor=\"#0969da\"];\n    \"legend:material\" -> \"legend:synthesis\" [label=\"synthesis\" color=\"#8250df\" fontcolor=\"#8250df\"];\n  }\n",
+    );
+
     out.push('}');
     out
+}
+
+fn emit_synthesis_edges(
+    event: &Event<JsonValue>,
+    event_ids: &HashSet<Id<Event<JsonValue>>>,
+    emitted_edges: &mut BTreeSet<(String, String)>,
+    out: &mut String,
+) {
+    let Some(to_id) = event.id else {
+        return;
+    };
+    let Provenance::Synthesis {
+        source_event_ids, ..
+    } = &event.provenance
+    else {
+        return;
+    };
+
+    for from_id in source_event_ids {
+        if !event_ids.contains(from_id) {
+            continue;
+        }
+
+        let from = from_id.to_string();
+        let to = to_id.to_string();
+        if !emitted_edges.insert((from.clone(), to.clone())) {
+            continue;
+        }
+
+        out.push_str(&format!(
+            "  \"{}\" -> \"{}\" [label=\"synthesis\" color=\"#8250df\" fontcolor=\"#8250df\"];\n",
+            escape_dot_id(&from),
+            escape_dot_id(&to)
+        ));
+    }
+}
+
+fn emit_material_node(material_id: Uuid, emitted: &mut HashSet<Uuid>, out: &mut String) {
+    if !emitted.insert(material_id) {
+        return;
+    }
+
+    out.push_str(&format!(
+        "  \"material:{}\" [label=\"material\\n{}\" shape=note style=filled fillcolor=\"#ddf4ff\"];\n",
+        escape_dot_id(&material_id.to_string()),
+        escape_dot_label(&short_uuid(material_id))
+    ));
+}
+
+fn event_dot_id(event: &Event<JsonValue>) -> String {
+    escape_dot_id(
+        &event
+            .id
+            .as_ref()
+            .map_or_else(|| "unknown".to_string(), std::string::ToString::to_string),
+    )
+}
+
+fn escape_dot_id(value: &str) -> String {
+    escape_dot_label(value)
+}
+
+fn escape_dot_label(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use sinex_primitives::events::{DynamicPayload, SourceMaterial};
+    use sinex_primitives::ids::Id;
+    use sinex_primitives::query::SourceMaterialLinkInfo;
+
+    fn material_event(source: &str, event_type: &str) -> Event<JsonValue> {
+        let mut event = DynamicPayload::new(source, event_type, json!({}))
+            .from_material(Id::<SourceMaterial>::new())
+            .build()
+            .expect("material test event should build");
+        event.id = Some(Id::new());
+        event
+    }
+
+    fn synthesis_event(
+        source: &str,
+        event_type: &str,
+        parents: impl IntoIterator<Item = Id<Event<JsonValue>>>,
+    ) -> Event<JsonValue> {
+        let mut event = DynamicPayload::new(source, event_type, json!({}))
+            .from_parents(parents)
+            .expect("synthesis test event should accept non-empty parents")
+            .build()
+            .expect("synthesis test event should build");
+        event.id = Some(Id::new());
+        event
+    }
+
+    fn event_id(event: &Event<JsonValue>) -> String {
+        event
+            .id
+            .expect("test event should have an id")
+            .to_string()
+    }
+
+    #[test]
+    fn dot_renderer_uses_provenance_edges_instead_of_flattening_to_root() {
+        let ancestor = material_event("fs", "file.created");
+        let root = synthesis_event(
+            "process",
+            "document.parsed",
+            [ancestor.id.expect("ancestor id")],
+        );
+        let descendant = synthesis_event(
+            "process",
+            "document.chunked",
+            [root.id.expect("root id")],
+        );
+
+        let dot = render_dot(&LineageResult {
+            root: root.clone(),
+            ancestors: vec![LineageNode {
+                event: ancestor.clone(),
+                depth: 1,
+            }],
+            descendants: vec![LineageNode {
+                event: descendant.clone(),
+                depth: 1,
+            }],
+            material_links: Vec::new(),
+        });
+
+        let ancestor_id = event_id(&ancestor);
+        let root_id = event_id(&root);
+        let descendant_id = event_id(&descendant);
+
+        assert!(
+            dot.contains(&format!("\"{ancestor_id}\" -> \"{root_id}\"")),
+            "DOT should render the ancestor event as the root's synthesis parent"
+        );
+        assert!(
+            dot.contains(&format!("\"{root_id}\" -> \"{descendant_id}\"")),
+            "DOT should render the root event as the descendant's synthesis parent"
+        );
+        assert!(
+            dot.contains("color=\"#8250df\""),
+            "synthesis edges should be visually distinct"
+        );
+    }
+
+    #[test]
+    fn dot_renderer_includes_material_evidence_and_legend() {
+        let root = material_event("fs", "file.created");
+        let from_material_id = Id::<SourceMaterial>::new().to_uuid();
+        let to_material_id = Id::<SourceMaterial>::new().to_uuid();
+
+        let dot = render_dot(&LineageResult {
+            root,
+            ancestors: Vec::new(),
+            descendants: Vec::new(),
+            material_links: vec![SourceMaterialLinkInfo {
+                from_material_id,
+                to_material_id,
+                relation_type: "derived_from".to_string(),
+                metadata: json!({}),
+                created_at: sinex_primitives::Timestamp::now(),
+            }],
+        });
+
+        assert!(
+            dot.contains("label=\"legend\""),
+            "DOT output should explain visual edge semantics"
+        );
+        assert!(
+            dot.contains("style=dotted color=\"#0969da\""),
+            "material provenance edge should be dotted and blue"
+        );
+        assert!(
+            dot.contains("style=dashed color=\"#6e7781\""),
+            "source-material evidence link should be dashed and gray"
+        );
+    }
 }
