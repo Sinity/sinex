@@ -1,5 +1,6 @@
 use clap::Args;
 use console::style;
+use sinex_primitives::domain::SourceMaterialFormat;
 use sinex_primitives::rpc::sources::{
     SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest, SourcesListResponse,
     SourcesShowRequest, SourcesShowResponse, SourcesStageRequest, SourcesStageResponse,
@@ -70,12 +71,24 @@ pub struct StageCommand {
     /// Human-readable reason for staging
     #[arg(long)]
     reason: Option<String>,
+
+    /// Explicit file material format (jsonl, sqlite, markdown, archive, etc.)
+    #[arg(long)]
+    format: Option<SourceMaterialFormat>,
+
+    /// Operator tag to attach to the staged material. Can be repeated.
+    #[arg(long = "tag")]
+    tags: Vec<String>,
 }
 
 impl StageCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let req = SourcesStageRequest {
             file_path: self.file.clone(),
+            format: self.format,
+            timing_info_type: None,
+            reason: self.reason.clone(),
+            tags: self.tags.clone(),
         };
 
         let response = client
@@ -90,10 +103,17 @@ impl StageCommand {
 
 fn format_stage_result(response: &SourcesStageResponse) -> String {
     format!(
-        "Staged source material\n  ID: {}\n  Source: {}\n  Total bytes: {}",
+        "Staged source material\n  ID: {}\n  Source: {}\n  Format: {}\n  Timing: {}\n  Total bytes: {}",
         style(&response.material_id).green(),
         style(&response.source_identifier).cyan(),
-        style(response.total_bytes.map_or_else(|| "-".to_string(), |b| b.to_string())).yellow(),
+        style(response.contract.format.to_string()).cyan(),
+        style(response.contract.timing.to_string()).cyan(),
+        style(
+            response
+                .total_bytes
+                .map_or_else(|| "-".to_string(), |b| b.to_string())
+        )
+        .yellow(),
     )
 }
 
@@ -115,6 +135,7 @@ impl ListCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let req = SourcesListRequest {
             status: self.status.clone(),
+            limit: Some(self.limit),
         };
 
         let response = client
@@ -140,6 +161,8 @@ fn format_source_materials_table(response: &SourcesListResponse) -> String {
         "KIND",
         "SOURCE",
         "STATUS",
+        "FORMAT",
+        "TIMING",
         "SIZE",
         "STAGED AT",
         "STAGED BY",
@@ -150,20 +173,17 @@ fn format_source_materials_table(response: &SourcesListResponse) -> String {
         let size = m
             .size_bytes
             .map_or_else(|| style("-").dim().to_string(), |b| b.to_string());
-        let staged_at = m
-            .staged_at
-            .as_deref()
-            .unwrap_or("-");
-        let staged_by = m
-            .staged_by
-            .as_deref()
-            .unwrap_or("-");
+        let staged_at = m.staged_at.as_deref().unwrap_or("-");
+        let staged_by = m.staged_by.as_deref().unwrap_or("-");
 
         builder.push_record([
             short_id,
             m.material_kind.clone(),
             m.source_identifier.clone(),
             m.status.clone(),
+            m.format
+                .map_or_else(|| style("-").dim().to_string(), |format| format.to_string()),
+            m.timing_info_type.clone(),
             size,
             staged_at.to_string(),
             staged_by.to_string(),
@@ -209,13 +229,13 @@ fn format_source_material_detail(response: &SourcesShowResponse) -> String {
         format!("  Status:       {}", m.status),
         format!("  Timing:       {}", m.timing_info_type),
         format!(
-            "  Staged at:    {}",
-            m.staged_at.as_deref().unwrap_or("-")
+            "  Format:       {}",
+            m.contract
+                .as_ref()
+                .map_or_else(|| "-".to_string(), |contract| contract.format.to_string())
         ),
-        format!(
-            "  Start time:   {}",
-            m.start_time.as_deref().unwrap_or("-")
-        ),
+        format!("  Staged at:    {}", m.staged_at.as_deref().unwrap_or("-")),
+        format!("  Start time:   {}", m.start_time.as_deref().unwrap_or("-")),
         format!("  End time:     {}", m.end_time.as_deref().unwrap_or("-")),
         format!("  Staged by:    {}", m.staged_by.as_deref().unwrap_or("-")),
         format!(
@@ -237,6 +257,16 @@ fn format_source_material_detail(response: &SourcesShowResponse) -> String {
                 .map_or_else(|| "-".to_string(), |c| c.to_string())
         ),
     ];
+
+    if let Some(evidence) = &m.temporal_evidence {
+        lines.push(format!("  Timing facts: {}", evidence.ledger_entries));
+        if !evidence.source_types.is_empty() {
+            lines.push(format!(
+                "  Timing kinds: {}",
+                evidence.source_types.join(", ")
+            ));
+        }
+    }
 
     // Add metadata if present
     if !m.metadata.is_null() && m.metadata != serde_json::Value::Object(Default::default()) {

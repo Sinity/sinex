@@ -40,7 +40,10 @@ pub mod buffers {
 }
 
 pub mod prelude {
-    pub use crate::domain::{EventName, EventSource, EventType, HostName, RecordedPath, ServiceName, SourceIdentifier};
+    pub use crate::domain::{
+        EventName, EventSource, EventType, HostName, RecordedPath, ServiceName, SourceIdentifier,
+        SourceMaterialFormat, SourceMaterialTimingInfoType,
+    };
     pub use crate::environment::SinexEnvironment;
     pub use crate::error::{Result, SinexError};
     pub use crate::events::builder::{OffsetKind, Provenance};
@@ -71,7 +74,8 @@ pub use deployment_readiness::{
     DocumentDeploymentSurface, TerminalDeploymentSurface, TerminalHistorySource,
 };
 pub use domain::{
-    EventName, EventSource, EventType, HostName, RecordedPath, SanitizedPath, ServiceName, SourceIdentifier,
+    EventName, EventSource, EventType, HostName, RecordedPath, SanitizedPath, ServiceName,
+    SourceIdentifier, SourceMaterialFormat, SourceMaterialTimingInfoType,
 };
 pub use env::strict_env_filter_source;
 pub use environment::{SinexEnvironment, environment};
