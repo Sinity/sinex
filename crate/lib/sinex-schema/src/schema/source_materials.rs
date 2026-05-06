@@ -141,7 +141,7 @@ impl SourceMaterialRegistry {
                     .text()
                     .not_null()
                     .check(Expr::cust(
-                        "timing_info_type IN ('realtime', 'intrinsic', 'inferred')",
+                        "timing_info_type IN ('realtime', 'intrinsic', 'inferred', 'declared', 'atemporal', 'staged_at')",
                     )),
             )
             .col(

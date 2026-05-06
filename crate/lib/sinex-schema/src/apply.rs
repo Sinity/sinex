@@ -246,6 +246,15 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
         );
     }
 
+    if relation_exists(pool, "raw.source_material_registry").await?
+        && !source_material_registry_timing_constraint_is_current(pool).await?
+    {
+        drifts.push(
+            "stale raw.source_material_registry constraint source_material_registry_timing_info_type_check"
+                .into(),
+        );
+    }
+
     Ok(drifts)
 }
 
@@ -313,20 +322,31 @@ async fn converge_source_material_registry_constraints(pool: &PgPool) -> Result<
         return Ok(());
     }
 
-    if source_material_registry_status_constraint_is_current(pool).await? {
-        return Ok(());
+    if !source_material_registry_status_constraint_is_current(pool).await? {
+        execute_sql(
+            pool,
+            r"
+            ALTER TABLE raw.source_material_registry
+                DROP CONSTRAINT IF EXISTS source_material_registry_status_check,
+                ADD CONSTRAINT source_material_registry_status_check
+                CHECK (status IN ('sensing', 'completed', 'cancelled', 'recovered_partial', 'failed'))
+            ",
+        )
+        .await?;
     }
 
-    execute_sql(
-        pool,
-        r"
-        ALTER TABLE raw.source_material_registry
-            DROP CONSTRAINT IF EXISTS source_material_registry_status_check,
-            ADD CONSTRAINT source_material_registry_status_check
-            CHECK (status IN ('sensing', 'completed', 'cancelled', 'recovered_partial', 'failed'))
-        ",
-    )
-    .await?;
+    if !source_material_registry_timing_constraint_is_current(pool).await? {
+        execute_sql(
+            pool,
+            r"
+            ALTER TABLE raw.source_material_registry
+                DROP CONSTRAINT IF EXISTS source_material_registry_timing_info_type_check,
+                ADD CONSTRAINT source_material_registry_timing_info_type_check
+                CHECK (timing_info_type IN ('realtime', 'intrinsic', 'inferred', 'declared', 'atemporal', 'staged_at'))
+            ",
+        )
+        .await?;
+    }
 
     Ok(())
 }
@@ -359,6 +379,37 @@ fn source_material_registry_status_constraint_definition_is_current(definition: 
         && definition.contains("'cancelled'")
         && definition.contains("'recovered_partial'")
         && definition.contains("'failed'")
+}
+
+async fn source_material_registry_timing_constraint_is_current(
+    pool: &PgPool,
+) -> Result<bool, ApplyError> {
+    let definition = sqlx::query_scalar::<_, String>(
+        r"
+        SELECT pg_get_constraintdef(c.oid)
+        FROM pg_constraint c
+        JOIN pg_class r ON c.conrelid = r.oid
+        JOIN pg_namespace n ON r.relnamespace = n.oid
+        WHERE n.nspname = 'raw'
+          AND r.relname = 'source_material_registry'
+          AND c.conname = 'source_material_registry_timing_info_type_check'
+        ",
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(definition
+        .is_some_and(|def| source_material_registry_timing_constraint_definition_is_current(&def)))
+}
+
+fn source_material_registry_timing_constraint_definition_is_current(definition: &str) -> bool {
+    (definition.contains("timing_info_type IN") || definition.contains("timing_info_type = ANY"))
+        && definition.contains("'realtime'")
+        && definition.contains("'intrinsic'")
+        && definition.contains("'inferred'")
+        && definition.contains("'declared'")
+        && definition.contains("'atemporal'")
+        && definition.contains("'staged_at'")
 }
 
 async fn ensure_required_extensions(pool: &PgPool) -> Result<(), ApplyError> {

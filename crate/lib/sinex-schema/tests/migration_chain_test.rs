@@ -105,6 +105,90 @@ async fn declarative_diff_accepts_normalized_source_material_status_constraint(
 }
 
 #[sinex_test]
+async fn declarative_diff_accepts_normalized_source_material_timing_constraint(
+    ctx: TestContext,
+) -> TestResult<()> {
+    sqlx::query(
+        r"
+        ALTER TABLE raw.source_material_registry
+            DROP CONSTRAINT IF EXISTS source_material_registry_timing_info_type_check,
+            ADD CONSTRAINT source_material_registry_timing_info_type_check
+            CHECK (timing_info_type IN ('realtime', 'intrinsic', 'inferred', 'declared', 'atemporal', 'staged_at'))
+        ",
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let drift = sinex_schema::apply::diff(&ctx.pool).await?;
+    assert!(
+        !drift
+            .iter()
+            .any(|entry| entry.contains("source_material_registry_timing_info_type_check")),
+        "normalized Postgres CHECK definition must not be reported as drift: {drift:?}"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn declarative_apply_expands_source_material_timing_constraint(
+    ctx: TestContext,
+) -> TestResult<()> {
+    sqlx::query(
+        r"
+        ALTER TABLE raw.source_material_registry
+            DROP CONSTRAINT IF EXISTS source_material_registry_timing_info_type_check,
+            ADD CONSTRAINT source_material_registry_timing_info_type_check
+            CHECK (timing_info_type IN ('realtime', 'intrinsic', 'inferred'))
+        ",
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let drift = sinex_schema::apply::diff(&ctx.pool).await?;
+    assert!(
+        drift
+            .iter()
+            .any(|entry| entry.contains("source_material_registry_timing_info_type_check")),
+        "legacy timing CHECK must be reported as drift before apply(): {drift:?}"
+    );
+
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    let drift = sinex_schema::apply::diff(&ctx.pool).await?;
+    assert!(
+        !drift
+            .iter()
+            .any(|entry| entry.contains("source_material_registry_timing_info_type_check")),
+        "expanded timing CHECK must be current after apply(): {drift:?}"
+    );
+
+    for timing in ["declared", "atemporal", "staged_at"] {
+        let id = uuid::Uuid::now_v7();
+        sqlx::query(
+            r"
+            INSERT INTO raw.source_material_registry (
+                id,
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata
+            )
+            VALUES ($1::uuid, 'annex', $2, 'completed', $3, '{}'::jsonb)
+            ",
+        )
+        .bind(id)
+        .bind(format!("timing-contract-{timing}-{id}"))
+        .bind(timing)
+        .execute(&ctx.pool)
+        .await?;
+    }
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> TestResult<()> {
     let pool = &ctx.pool;
 

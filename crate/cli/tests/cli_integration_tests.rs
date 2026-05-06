@@ -32,6 +32,7 @@ mod help_tests {
             .stdout(predicate::str::contains("audit"))
             .stdout(predicate::str::contains("blob"))
             .stdout(predicate::str::contains("config"))
+            .stdout(predicate::str::contains("sources"))
             .stdout(predicate::str::contains("completions"));
         Ok(())
     }
@@ -63,6 +64,35 @@ mod help_tests {
             .stdout(predicate::str::contains("drain"))
             .stdout(predicate::str::contains("resume"))
             .stdout(predicate::str::contains("set-horizon"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_sources_help() -> TestResult<()> {
+        sinexctl()
+            .args(["sources", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(
+                "Source material inventory and staging",
+            ))
+            .stdout(predicate::str::contains("stage"))
+            .stdout(predicate::str::contains("list"))
+            .stdout(predicate::str::contains("show"))
+            .stdout(predicate::str::contains("coverage"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_sources_stage_help() -> TestResult<()> {
+        sinexctl()
+            .args(["sources", "stage", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Stage a file as source material"))
+            .stdout(predicate::str::contains("--reason"))
+            .stdout(predicate::str::contains("--format"))
+            .stdout(predicate::str::contains("--tag"));
         Ok(())
     }
 
