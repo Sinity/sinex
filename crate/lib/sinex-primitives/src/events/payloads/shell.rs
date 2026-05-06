@@ -98,6 +98,14 @@ define_event_payload! {
 // These sources emit `command.executed` events captured from live shell history
 // monitoring (as distinct from histfile imports, which emit `command.historical`).
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "terminal", event_type = "shell.terminal_monitoring_started")]
+pub struct TerminalMonitoringStartedPayload {
+    pub configured_sources: u32,
+    pub enabled_sources: u32,
+    pub start_time: Timestamp,
+}
+
 define_event_payload! {
     /// Command executed event captured from live Bash history monitoring.
     pub struct BashCommandExecutedPayload {
@@ -260,4 +268,3 @@ fn normalize_atuin_hostname(hostname: String) -> String {
         None => hostname,
     }
 }
-
