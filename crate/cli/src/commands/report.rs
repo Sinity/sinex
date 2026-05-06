@@ -82,13 +82,7 @@ impl ReportCommands {
 /// Returns (`today_midnight`, now).
 fn today_range() -> (Timestamp, Timestamp) {
     let now = OffsetDateTime::now_utc();
-    #[allow(clippy::expect_used)]
-    let midnight = Timestamp::new(
-        now.date()
-            .with_hms(0, 0, 0)
-            .expect("midnight is always valid")
-            .assume_utc(),
-    );
+    let midnight = midnight_utc(now.date());
     (midnight, Timestamp::now())
 }
 
@@ -98,43 +92,41 @@ fn yesterday_range() -> (Timestamp, Timestamp) {
     let today = now.date();
     let yesterday = today - time::Duration::days(1);
 
-    #[allow(clippy::expect_used)]
-    let today_midnight = Timestamp::new(
-        today
-            .with_hms(0, 0, 0)
-            .expect("midnight is always valid")
-            .assume_utc(),
-    );
-    #[allow(clippy::expect_used)]
-    let yesterday_midnight = Timestamp::new(
-        yesterday
-            .with_hms(0, 0, 0)
-            .expect("midnight is always valid")
-            .assume_utc(),
-    );
+    let today_midnight = midnight_utc(today);
+    let yesterday_midnight = midnight_utc(yesterday);
 
     (yesterday_midnight, today_midnight)
 }
 
+fn midnight_utc(date: time::Date) -> Timestamp {
+    // 00:00:00 is a structural invariant for every valid calendar date.
+    #[allow(clippy::expect_used)]
+    Timestamp::new(
+        date.with_hms(0, 0, 0)
+            .expect("midnight is always valid")
+            .assume_utc(),
+    )
+}
+
 fn time_range_new(start: Timestamp, end: Timestamp) -> TimeRange {
+    // Callers construct these ranges from monotonically ordered day boundaries.
+    #[allow(clippy::expect_used)]
     TimeRange::new(Some(start), Some(end)).expect("start < end by construction")
 }
 
 fn label_for_today() -> String {
     let now = OffsetDateTime::now_utc();
-    #[allow(clippy::expect_used)]
     now.date()
         .format(time::macros::format_description!("[year]-[month]-[day]"))
-        .expect("date format is always valid")
+        .unwrap_or_else(|_| now.date().to_string())
 }
 
 fn label_for_yesterday() -> String {
     let now = OffsetDateTime::now_utc();
     let yesterday = now.date() - time::Duration::days(1);
-    #[allow(clippy::expect_used)]
     yesterday
         .format(time::macros::format_description!("[year]-[month]-[day]"))
-        .expect("date format is always valid")
+        .unwrap_or_else(|_| yesterday.to_string())
 }
 
 #[derive(Debug, Clone)]
@@ -527,18 +519,10 @@ async fn collect_calendar_data(
     let mut day_entries = Vec::new();
     for i in 0..days {
         let date = start_date + time::Duration::days(i64::from(i));
-        #[allow(clippy::expect_used)]
-        let day_start =
-            Timestamp::new(date.with_hms(0, 0, 0).expect("midnight valid").assume_utc());
+        let day_start = midnight_utc(date);
         let next_date = date + time::Duration::days(1);
-        #[allow(clippy::expect_used)]
-        let day_end = Timestamp::new(
-            next_date
-                .with_hms(0, 0, 0)
-                .expect("midnight valid")
-                .assume_utc(),
-        );
-        let time_range = TimeRange::new(Some(day_start), Some(day_end)).expect("day range valid");
+        let day_end = midnight_utc(next_date);
+        let time_range = time_range_new(day_start, day_end);
 
         let count_query = EventQuery {
             time_range: Some(time_range),
@@ -622,19 +606,11 @@ async fn print_calendar(client: &GatewayClient, days: u32, offset: u32) -> Resul
 
     for i in 0..days {
         let date = start_date + time::Duration::days(i64::from(i));
-        #[allow(clippy::expect_used)]
-        let day_start =
-            Timestamp::new(date.with_hms(0, 0, 0).expect("midnight valid").assume_utc());
+        let day_start = midnight_utc(date);
         let next_date = date + time::Duration::days(1);
-        #[allow(clippy::expect_used)]
-        let day_end = Timestamp::new(
-            next_date
-                .with_hms(0, 0, 0)
-                .expect("midnight valid")
-                .assume_utc(),
-        );
+        let day_end = midnight_utc(next_date);
 
-        let time_range = TimeRange::new(Some(day_start), Some(day_end)).expect("day range valid");
+        let time_range = time_range_new(day_start, day_end);
 
         let count_query = EventQuery {
             time_range: Some(time_range),
@@ -693,9 +669,8 @@ async fn print_calendar(client: &GatewayClient, days: u32, offset: u32) -> Resul
 }
 
 fn format_date(date: time::Date) -> String {
-    #[allow(clippy::expect_used)]
     date.format(time::macros::format_description!("[year]-[month]-[day]"))
-        .expect("date format valid")
+        .unwrap_or_else(|_| date.to_string())
 }
 
 // ─── Formatting helpers ───────────────────────────────────────────────────────
@@ -746,6 +721,9 @@ fn render_bar(count: i64, max: i64, width: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    // Tests construct known-valid timestamps and parse payloads that are built
+    // in the same fixture.
+    #![allow(clippy::expect_used)]
     use super::*;
     use sinex_primitives::activity::ActivitySourceKind;
     use std::collections::BTreeMap;

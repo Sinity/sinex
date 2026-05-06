@@ -30,11 +30,10 @@ pub fn parse_time_input_with_now(input: &str, now: Timestamp) -> Result<Timestam
         input,
         time::macros::format_description!("[year]-[month]-[day]"),
     ) {
-        return Ok(Timestamp::from(
-            date.with_hms(0, 0, 0)
-                .expect("midnight is always valid")
-                .assume_utc(),
-        ));
+        let midnight = date
+            .with_hms(0, 0, 0)
+            .map_err(|error| eyre!("failed to construct midnight for {input}: {error}"))?;
+        return Ok(Timestamp::from(midnight.assume_utc()));
     }
 
     Err(eyre!(

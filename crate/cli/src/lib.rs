@@ -3,9 +3,6 @@
 //! This library provides the core logic for the `sinexctl` command-line tool.
 //! It handles RPC communication with the Sinex gateway and formatting of output.
 
-// CLI application code — allow unwrap/expect (errors surface to the user, not a library)
-#![allow(clippy::unwrap_used, clippy::expect_used)]
-
 pub mod auth;
 pub mod client;
 pub mod commands;

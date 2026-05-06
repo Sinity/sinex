@@ -1365,6 +1365,9 @@ impl GatewayClient {
 
 #[cfg(test)]
 mod tests {
+    // Tests unwrap optional windows after asserting inputs that must construct
+    // a replay range.
+    #![allow(clippy::expect_used)]
     use super::*;
     use xtask::sandbox::prelude::*;
 
