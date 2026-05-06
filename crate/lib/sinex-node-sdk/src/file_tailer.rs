@@ -41,6 +41,11 @@ pub struct AppendOnlyFilePollResult {
 #[derive(Debug)]
 pub enum TailError {
     FileNotFound(Utf8PathBuf),
+    InvalidUtf8 {
+        path: Utf8PathBuf,
+        offset_bytes: u64,
+        source: std::str::Utf8Error,
+    },
     IoError(std::io::Error),
 }
 
@@ -48,12 +53,28 @@ impl std::fmt::Display for TailError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::FileNotFound(path) => write!(f, "file not found: {path}"),
+            Self::InvalidUtf8 {
+                path,
+                offset_bytes,
+                source,
+            } => write!(
+                f,
+                "invalid UTF-8 in append-only file {path} at byte offset {offset_bytes}: {source}"
+            ),
             Self::IoError(error) => write!(f, "I/O error: {error}"),
         }
     }
 }
 
-impl std::error::Error for TailError {}
+impl std::error::Error for TailError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::InvalidUtf8 { source, .. } => Some(source),
+            Self::IoError(error) => Some(error),
+            Self::FileNotFound(_) => None,
+        }
+    }
+}
 
 impl From<std::io::Error> for TailError {
     fn from(error: std::io::Error) -> Self {
@@ -68,7 +89,7 @@ fn current_inode(metadata: &std::fs::Metadata) -> u64 {
     metadata.ino()
 }
 
-async fn read_new_segment(path: &Utf8Path, offset_bytes: u64) -> Result<String, TailError> {
+async fn read_new_segment(path: &Utf8Path, offset_bytes: u64) -> Result<Vec<u8>, TailError> {
     use std::io::SeekFrom;
 
     let mut file = fs::File::open(path).await?;
@@ -76,7 +97,7 @@ async fn read_new_segment(path: &Utf8Path, offset_bytes: u64) -> Result<String, 
 
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer).await?;
-    Ok(String::from_utf8_lossy(&buffer).to_string())
+    Ok(buffer)
 }
 
 fn detect_change(
@@ -165,19 +186,31 @@ pub async fn poll_utf8_lines(
     let mut records = Vec::new();
     let mut bytes_consumed = 0u64;
 
-    for line in new_segment.split_inclusive('\n') {
-        if !line.ends_with('\n') && new_segment.ends_with(line) {
+    for line in new_segment.split_inclusive(|byte| *byte == b'\n') {
+        if !line.ends_with(b"\n") {
             break;
         }
 
-        let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
-        bytes_consumed += line.len() as u64;
+        let mut trimmed = line.strip_suffix(b"\n").unwrap_or(line);
+        if let Some(without_cr) = trimmed.strip_suffix(b"\r") {
+            trimmed = without_cr;
+        }
+
+        let line_len = line.len() as u64;
+        bytes_consumed += line_len;
         if !trimmed.is_empty() {
+            let text = std::str::from_utf8(trimmed).map_err(|source| TailError::InvalidUtf8 {
+                path: path.to_path_buf(),
+                offset_bytes: segment_start_offset
+                    .saturating_add(bytes_consumed)
+                    .saturating_sub(line_len),
+                source,
+            })?;
             records.push(AppendOnlyFileLine {
-                text: trimmed.to_string(),
+                text: text.to_string(),
                 start_offset_bytes: segment_start_offset
                     .saturating_add(bytes_consumed)
-                    .saturating_sub(line.len() as u64),
+                    .saturating_sub(line_len),
                 end_offset_bytes: segment_start_offset.saturating_add(bytes_consumed),
             });
         }
