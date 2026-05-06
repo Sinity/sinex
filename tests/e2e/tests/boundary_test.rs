@@ -285,6 +285,7 @@ async fn test_single_event_batch(ctx: TestContext) -> TestResult<()> {
 
     assert_eq!(events.len(), 1, "Batch should contain exactly 1 event");
     assert!(events[0].id.is_some(), "Event should have an ID");
+    assert_persisted_events_match_submitted(&ctx, &events, "single event batch").await?;
 
     // Verify in database
     let count = ctx
@@ -310,6 +311,7 @@ async fn test_empty_payload_batch(ctx: TestContext) -> TestResult<()> {
     let events = ctx.publish_many(payloads).await?;
 
     assert_eq!(events.len(), 10, "Batch should contain 10 events");
+    assert_persisted_events_match_submitted(&ctx, &events, "empty payload batch").await?;
 
     // Verify all in database
     let count = ctx
@@ -339,6 +341,7 @@ async fn test_mixed_source_batch(ctx: TestContext) -> TestResult<()> {
     let events = ctx.publish_many(payloads).await?;
 
     assert_eq!(events.len(), 15, "Batch should contain 15 events");
+    assert_persisted_events_match_submitted(&ctx, &events, "mixed source batch").await?;
 
     // Verify count per source (3 events per source, 15 total)
     for source in &sources {
@@ -483,4 +486,55 @@ fn event_id_set(
         assert!(ids.insert(id), "{label} contains duplicate event id {id}");
     }
     Ok(ids)
+}
+
+async fn assert_persisted_events_match_submitted(
+    ctx: &Sandbox,
+    events: &[Event<serde_json::Value>],
+    label: &str,
+) -> TestResult<()> {
+    let ids = event_id_set(events, label)?;
+    assert_eq!(
+        ids.len(),
+        events.len(),
+        "{label} should assign one unique id per submitted event"
+    );
+
+    for event in events {
+        let id = event
+            .id
+            .ok_or_else(|| color_eyre::eyre::eyre!("{label} event missing id"))?;
+        let persisted = ctx
+            .pool()
+            .events()
+            .get_by_id(id)
+            .await?
+            .ok_or_else(|| color_eyre::eyre::eyre!("{label} event {id} was not persisted"))?;
+
+        assert_eq!(
+            persisted.source.as_str(),
+            event.source.as_str(),
+            "{label} source should roundtrip for {id}"
+        );
+        assert_eq!(
+            persisted.event_type.as_str(),
+            event.event_type.as_str(),
+            "{label} event type should roundtrip for {id}"
+        );
+        assert_eq!(
+            persisted.payload, event.payload,
+            "{label} payload should roundtrip for {id}"
+        );
+        match persisted.provenance() {
+            Provenance::Material { anchor_byte, .. } => {
+                assert_eq!(
+                    *anchor_byte, 0,
+                    "{label} should preserve the sandbox material anchor for {id}"
+                );
+            }
+            other => panic!("{label} event {id} should have material provenance, got {other:?}"),
+        }
+    }
+
+    Ok(())
 }
