@@ -17,7 +17,8 @@ main architecture descriptions.
 - [**Stream Processing Runtime**](stream_runtime.md) – Deep dive into the derived-node traits (`TransducerNode`, `WindowedNode`, `ScopeReconcilerNode`), `IngestorNode`, and their adapters.
 - [**Trait Selection**](trait-selection.md) – Decision flowchart for choosing the right node pattern.
 - [**Node Patterns**](patterns.md) – Current capture-node and derived-node runtime patterns.
-- [**Ingestion & Provenance**](provenance.md) – Rules for sensor/ingestor separation and Stage-as-You-Go patterns.
+- [**Ingestion & Provenance**](provenance.md) – Current sensor/ingestor and Stage-as-You-Go rules.
+- [**Staged Source Parser Substrate**](../../../../docs/architecture/staged-source-parser-substrate.md) – New source-unit direction: staged material, input-shape adapters, parsers, and runtime topology.
 
 ### Implementation Guides
 - [**Ingestor Startup**](ingestor_startup.md) – Three-phase lifecycle (snapshot → gap-fill → continuous), crash recovery, source-material input-shape adapters.
