@@ -51,6 +51,50 @@ pub struct HyprlandWindowTitleChangedPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "wm.hyprland", event_type = "window.urgent")]
+pub struct HyprlandWindowUrgentPayload {
+    pub window_id: String,
+    pub window_class: Option<String>,
+    pub window_title: Option<String>,
+    pub workspace_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "wm.hyprland", event_type = "window.fullscreen_changed")]
+pub struct HyprlandWindowFullscreenChangedPayload {
+    pub state: i32,
+    pub fullscreen: bool,
+    pub window_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "wm.hyprland", event_type = "window.floating_changed")]
+pub struct HyprlandWindowFloatingChangedPayload {
+    pub window_id: String,
+    pub floating: bool,
+    pub window_class: Option<String>,
+    pub window_title: Option<String>,
+    pub workspace_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "wm.hyprland", event_type = "window.minimize")]
+pub struct HyprlandWindowMinimizePayload {
+    pub window_id: String,
+    pub minimized: bool,
+    pub window_class: Option<String>,
+    pub window_title: Option<String>,
+    pub workspace_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "wm.hyprland", event_type = "screencast")]
+pub struct HyprlandScreencastPayload {
+    pub active: bool,
+    pub owner: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "wm.hyprland", event_type = "workspace.switched")]
 pub struct HyprlandWorkspaceSwitchedPayload {
     pub from_workspace_id: i32,
@@ -76,6 +120,24 @@ pub struct HyprlandMonitorFocusedPayload {
     pub workspace_id: i32,
     pub previous_monitor: Option<i32>,
     pub focused_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "wm.hyprland", event_type = "layer.opened")]
+pub struct HyprlandLayerOpenedPayload {
+    pub namespace: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "wm.hyprland", event_type = "layer.closed")]
+pub struct HyprlandLayerClosedPayload {
+    pub namespace: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "wm.hyprland", event_type = "submap.changed")]
+pub struct HyprlandSubmapChangedPayload {
+    pub submap: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
