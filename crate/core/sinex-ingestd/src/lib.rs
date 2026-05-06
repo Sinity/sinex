@@ -5,6 +5,7 @@
 
 //! Runtime entry points for the Sinex ingestion daemon.
 
+pub mod admission;
 pub mod config;
 pub mod gitops;
 pub mod jetstream_consumer;
@@ -15,6 +16,11 @@ pub mod schema_sync;
 pub mod service;
 pub mod validator;
 
+pub use admission::{
+    AdmissionBatchPlan, AdmissionDecision, AdmissionPersistResult, AdmissionRejection,
+    AdmissionRejectionKind, AdmissionService, AdmittedEvent, CandidateEvent,
+    CandidateEventMetadata,
+};
 pub use config::IngestdConfig;
 pub use jetstream_consumer::JetStreamConsumer;
 pub use material_assembler::MaterialAssembler;

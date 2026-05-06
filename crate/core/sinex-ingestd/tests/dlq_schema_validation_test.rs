@@ -40,6 +40,32 @@ async fn wait_for_dlq_count(js: &jetstream::Context, stream: &str, count: u64) -
     Ok(())
 }
 
+async fn wait_for_consumer(js: &jetstream::Context, stream: &str) -> TestResult<()> {
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = js.clone();
+            let stream = stream.to_string();
+            async move {
+                let mut s = js
+                    .get_stream(&stream)
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?;
+                Ok::<bool, SinexError>(
+                    s.info()
+                        .await
+                        .map_err(|e| SinexError::network(e.to_string()))?
+                        .state
+                        .consumer_count
+                        > 0,
+                )
+            }
+        },
+        Timeouts::STANDARD,
+    )
+    .await?;
+    Ok(())
+}
+
 #[sinex_test]
 async fn test_schema_violation_routes_to_dlq() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
@@ -109,7 +135,8 @@ async fn test_schema_violation_routes_to_dlq() -> TestResult<()> {
     )
     .with_batch_fetch_config(10, Duration::from_millis(100));
 
-    let _handle = tokio::spawn(async move { consumer.run().await });
+    let handle = tokio::spawn(async move { consumer.run().await });
+    wait_for_consumer(&js, &base_stream).await?;
 
     // 3. Publish Invalid Event
     let event_id = Uuid::now_v7();
@@ -134,5 +161,6 @@ async fn test_schema_violation_routes_to_dlq() -> TestResult<()> {
     // 4. Wait for DLQ
     wait_for_dlq_count(&js, &dlq_stream, 1).await?;
 
+    handle.abort();
     Ok(())
 }
