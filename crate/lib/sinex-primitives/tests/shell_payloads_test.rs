@@ -153,6 +153,15 @@ async fn atuin_payload_builder_rejects_invalid_hostname_after_normalization() ->
     )
     .expect_err("invalid hostname should still be rejected");
 
-    assert!(error.to_string().contains("hostname"));
+    assert!(
+        matches!(error, SinexError::Validation(_)),
+        "expected validation error, got {}",
+        error.variant_name()
+    );
+    assert_eq!(error.message(), "Atuin hostname is invalid");
+    assert!(
+        !error.sources().is_empty(),
+        "Atuin hostname wrapper should preserve HostName validation source"
+    );
     Ok(())
 }
