@@ -457,6 +457,9 @@ fn command_path(cmd: &Commands) -> String {
 
 #[cfg(test)]
 mod tests {
+    // Tests unwrap parser fixtures and runtime-target data written in the same
+    // test body.
+    #![allow(clippy::expect_used)]
     use super::*;
     use std::collections::BTreeSet;
     use xtask::sandbox::prelude::*;

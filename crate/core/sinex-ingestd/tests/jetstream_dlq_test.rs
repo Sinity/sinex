@@ -7,7 +7,7 @@ use async_nats::jetstream;
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::schema_management::NewEventSchema;
-use sinex_ingestd::validator::IngestIngestEventValidator;
+use sinex_ingestd::validator::IngestEventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_primitives::{
     Uuid,
@@ -1418,7 +1418,7 @@ async fn wait_for_dlq_messages(
 #[sinex_test]
 async fn oversized_payload_routes_to_dlq() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
-    let suffix = ctx.unique_suffix();
+    let suffix = format!("oversized-{}", Uuid::now_v7().to_string().to_lowercase());
     let hooks = TestHooks::with_validation();
     let setup =
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
@@ -1444,7 +1444,7 @@ async fn oversized_payload_routes_to_dlq() -> TestResult<()> {
 #[sinex_test]
 async fn depth_exceeded_payload_routes_to_dlq() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
-    let suffix = ctx.unique_suffix();
+    let suffix = format!("depth-{}", Uuid::now_v7().to_string().to_lowercase());
     let hooks = TestHooks::with_validation();
     let setup =
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
@@ -1470,7 +1470,7 @@ async fn depth_exceeded_payload_routes_to_dlq() -> TestResult<()> {
 #[sinex_test]
 async fn normal_payload_accepted() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
-    let suffix = ctx.unique_suffix();
+    let suffix = format!("normal-{}", Uuid::now_v7().to_string().to_lowercase());
     let hooks = TestHooks::with_validation();
     let setup =
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)

@@ -20,18 +20,20 @@ pub use blobs::{BlobRepository, StorageStats};
 // pub use checkpoints::{Checkpoint, CheckpointExt, CheckpointRecord, CheckpointRepository}; // Removed
 pub use common::{DbResult, EnhancedRepository, Repository, TableDef, TransactionSupport};
 pub use embeddings::{
-    CachedEmbeddingHit, EmbeddingModelRecord, EmbeddingRepository, HybridSearchResult,
-    SimilarityResult,
+    CacheEntry, CachedEmbeddingHit, EmbeddingModelRecord, EmbeddingRepository, EmbeddingTarget,
+    EventEmbeddingRow, HybridSearchResult, KnnSearchResult, SimilarityResult,
 };
 pub use events::{
     COPY_BATCH_THRESHOLD, EventAnnotation, EventPayloadSchema, EventRepository, EventRepositoryTx,
     ReplacementKind, ReplacementRecord, StreamBatchInsertResult, StreamBatchRow,
 };
 pub use gitops::{GitOpsRepository, GitOpsSourceRecord};
+pub use integrity::IntegrityRepository;
 pub use knowledge_graph::{
     CreateEntity, CreateEntityRelation, EntityExt, EntityRecord, EntityRelationExt,
     EntityRelationRecord, EntityType, KnowledgeGraphRepository,
 };
+pub use replay::ReplayRepository;
 pub use schema_cache::{CachedSchema, SchemaCacheRepository};
 pub use schema_management::{
     NewEventSchema, SchemaManagementRepository, SchemaStatistics, ValidationError, ValidationResult,
@@ -44,8 +46,6 @@ pub use source_materials::{
 pub use state::{
     Operation, OperationRecord, OperationStatistics, StateRepository, SystemHealthReport,
 };
-pub use integrity::IntegrityRepository;
-pub use replay::ReplayRepository;
 
 use sqlx::PgPool;
 

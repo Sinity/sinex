@@ -1,5 +1,8 @@
 use camino::Utf8PathBuf;
-use sinex_node_sdk::{AppendOnlyFileChange, AppendOnlyFileState, poll_utf8_lines};
+use sinex_node_sdk::{
+    AppendOnlyFileChange, AppendOnlyFileState, RecordReadHorizon, RecordSource, RecordSources,
+    TailError, poll_utf8_lines,
+};
 use tempfile::tempdir;
 use tokio::{fs, io::AsyncWriteExt};
 use xtask::sandbox::prelude::*;
@@ -53,6 +56,68 @@ async fn poll_preserves_partial_trailing_line(_ctx: TestContext) -> TestResult<(
     assert_eq!(
         second.state.offset_bytes,
         "echo one\necho two\necho three\n".len() as u64
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn poll_rejects_invalid_utf8_without_checkpoint(_ctx: TestContext) -> TestResult<()> {
+    let dir = tempdir()?;
+    let path = utf8_path(&dir.path().join("history.log"));
+
+    fs::write(&path, b"echo ok\nbad \xff\n").await?;
+
+    let error = poll_utf8_lines(&path, AppendOnlyFileState::default())
+        .await
+        .expect_err("append-only UTF-8 adapter must reject invalid source bytes");
+    match error {
+        TailError::InvalidUtf8 { offset_bytes, .. } => {
+            assert_eq!(offset_bytes, "echo ok\n".len() as u64);
+        }
+        other => {
+            return Err(color_eyre::eyre::eyre!(
+                "expected invalid UTF-8 error, got {other:?}"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn record_source_gap_fills_from_record_checkpoint(_ctx: TestContext) -> TestResult<()> {
+    let dir = tempdir()?;
+    let path = utf8_path(&dir.path().join("history.log"));
+
+    fs::write(&path, "one\ntwo\nthree\n").await?;
+    let source = RecordSources::append_only_utf8_file(path);
+    let initial = source.initial_checkpoint();
+    let first = source
+        .read_batch(&initial, RecordReadHorizon::Unbounded)
+        .await?;
+
+    assert_eq!(first.records.len(), 3);
+    let after_first_record = first.records[0].checkpoint_after.clone();
+
+    let gap_fill = source
+        .read_batch(&after_first_record, RecordReadHorizon::Unbounded)
+        .await?;
+    let lines: Vec<_> = gap_fill
+        .records
+        .iter()
+        .map(|item| item.record.line.as_str())
+        .collect();
+
+    assert_eq!(lines, vec!["two", "three"]);
+    assert_eq!(gap_fill.start_checkpoint, after_first_record);
+    assert_eq!(
+        gap_fill.records[0].record.start_offset_bytes,
+        "one\n".len() as u64
+    );
+    assert_eq!(
+        gap_fill.final_checkpoint.offset_bytes,
+        "one\ntwo\nthree\n".len() as u64
     );
 
     Ok(())

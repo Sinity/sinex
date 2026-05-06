@@ -340,8 +340,10 @@ fn spawn_replay_output_inserter(
             .replay
             .as_ref()
             .and_then(|replay| replay.materials.first())
-            .map_or(path, ReplayExecutionEngine::logical_source_identifier)
-            .to_string();
+            .map_or_else(
+                || path.to_string(),
+                ReplayExecutionEngine::logical_source_identifier,
+            );
         let material_id = Uuid::now_v7();
         let source_identifier = format!("{logical_source_identifier}#material={material_id}");
         sqlx::query!(

@@ -1,8 +1,6 @@
 //! Built-in privacy rule catalog.
 
-use super::{
-    Matcher, PatternRule, ProcessingContext, RuleCategory, Strategy, StructuralDetector,
-};
+use super::{Matcher, PatternRule, ProcessingContext, RuleCategory, Strategy, StructuralDetector};
 
 /// All built-in privacy rules.
 pub fn builtin_rules() -> Vec<PatternRule> {
@@ -257,10 +255,10 @@ fn secret_rules() -> Vec<PatternRule> {
             matcher: Matcher::Regex {
                 // Legacy format: sk- followed by exactly 48 alphanum chars (word boundary).
                 // Project keys: sk-proj- followed by 20+ URL-safe base64 chars.
-                // Note: sk-ant- (Anthropic) handled separately; exclude via negative lookahead
-                // is unavailable in the `regex` crate so we rely on rule ordering (anthropic
-                // rule fires first) and non-overlapping patterns.
-                pattern: r"sk-proj-[A-Za-z0-9_\-]{20,}|(?:sk-)(?!ant-)[A-Za-z0-9]{48}\b".into(),
+                // Anthropic keys contain additional hyphen-delimited segments
+                // and are handled by the dedicated rule above; the legacy
+                // OpenAI shape is plain alphanumeric after `sk-`.
+                pattern: r"sk-proj-[A-Za-z0-9_\-]{20,}|sk-[A-Za-z0-9]{48}\b".into(),
             },
             strategy: Strategy::Suppress,
             contexts: vec![],
@@ -495,8 +493,9 @@ fn infrastructure_rules() -> Vec<PatternRule> {
         // Or via env: SINEX_PRIVACY_OVERRIDES='{"user_home_path_aggressive":{"enabled":true},"user_home_path":{"enabled":false}}'
         PatternRule {
             name: "user_home_path_aggressive".into(),
-            description: "Aggressive variant: hash full home paths instead of collapsing to <HOME>/..."
-                .into(),
+            description:
+                "Aggressive variant: hash full home paths instead of collapsing to <HOME>/..."
+                    .into(),
             category: RuleCategory::Privacy,
             matcher: Matcher::Structural {
                 detector: StructuralDetector::UserHomePath,
@@ -730,7 +729,10 @@ mod tests {
     #[sinex_test]
     async fn pesel_rule_uses_hash_strategy() -> ::xtask::sandbox::TestResult<()> {
         let rules = builtin_rules();
-        let rule = rules.iter().find(|r| r.name == "pesel").expect("pesel rule");
+        let rule = rules
+            .iter()
+            .find(|r| r.name == "pesel")
+            .expect("pesel rule");
         assert!(
             matches!(rule.strategy, Strategy::Hash),
             "PESEL should use Hash strategy, got {:?}",
@@ -754,7 +756,10 @@ mod tests {
     #[sinex_test]
     async fn regon_rule_uses_hash_strategy() -> ::xtask::sandbox::TestResult<()> {
         let rules = builtin_rules();
-        let rule = rules.iter().find(|r| r.name == "regon").expect("regon rule");
+        let rule = rules
+            .iter()
+            .find(|r| r.name == "regon")
+            .expect("regon rule");
         assert!(
             matches!(rule.strategy, Strategy::Hash),
             "REGON should use Hash strategy, got {:?}",

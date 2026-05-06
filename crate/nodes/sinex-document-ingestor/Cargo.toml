@@ -53,5 +53,8 @@ features = [
     "testing",
 ]
 
+[dev-dependencies.color-eyre]
+workspace = true
+
 [lints]
 workspace = true
