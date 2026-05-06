@@ -230,6 +230,16 @@ fn extract_column_names(stmt: &TableCreateStatement) -> Vec<String> {
         .collect()
 }
 
+fn is_primary_key_nullability_error(error: &sqlx::Error) -> bool {
+    let display = error.to_string();
+    display.contains("primary key")
+        || display.contains("part of a primary key")
+        || error.as_database_error().is_some_and(|db_error| {
+            db_error.message().contains("primary key")
+                || db_error.message().contains("part of a primary key")
+        })
+}
+
 // ─── Database introspection ───────────────────────────────────────────────────
 
 async fn actual_columns(
@@ -280,12 +290,14 @@ async fn actual_primary_key_columns(
 ) -> Result<HashSet<String>, ApplyError> {
     let rows = sqlx::query_scalar::<_, String>(
         "SELECT a.attname
-         FROM pg_index i
-         JOIN pg_class c ON c.oid = i.indrelid
-         JOIN pg_namespace n ON n.oid = c.relnamespace
-         JOIN LATERAL unnest(i.indkey) AS k(attnum) ON true
-         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum
-         WHERE n.nspname = $1 AND c.relname = $2 AND i.indisprimary",
+         FROM pg_constraint con
+         JOIN pg_class rel ON rel.oid = con.conrelid
+         JOIN pg_namespace n ON n.oid = rel.relnamespace
+         JOIN unnest(con.conkey) AS cols(attnum) ON true
+         JOIN pg_attribute a ON a.attrelid = rel.oid AND a.attnum = cols.attnum
+         WHERE n.nspname = $1
+           AND rel.relname = $2
+           AND con.contype = 'p'",
     )
     .bind(schema)
     .bind(table)
@@ -435,17 +447,22 @@ async fn converge_column_nullability(
             "DROP NOT NULL"
         };
 
-        let sql = format!(
-            "ALTER TABLE {schema}.{table} ALTER COLUMN {col_name} {action}"
-        );
-        pool.execute(sql.as_str()).await.map_err(|e| {
-            ApplyError::Internal(format!(
-                "nullability convergence failed on {schema}.{table}.{col_name} \
+        let sql = format!("ALTER TABLE {schema}.{table} ALTER COLUMN {col_name} {action}");
+        let result = pool.execute(sql.as_str()).await;
+        match result {
+            Ok(_) => {}
+            Err(e) if action == "DROP NOT NULL" && is_primary_key_nullability_error(&e) => {
+                continue;
+            }
+            Err(e) => {
+                return Err(ApplyError::Internal(format!(
+                    "nullability convergence failed on {schema}.{table}.{col_name} \
                  (attempted: {action}): {e}. \
                  If SET NOT NULL failed, the column contains NULL rows that \
                  must be resolved before the schema change can be applied."
-            ))
-        })?;
+                )));
+            }
+        }
     }
 
     Ok(())
@@ -665,6 +682,10 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                 NamedConstraint {
                     name: "events_offsets_require_kind",
                     expression: "offset_kind IS NULL OR (offset_start IS NOT NULL AND offset_end IS NOT NULL)",
+                },
+                NamedConstraint {
+                    name: "events_offsets_non_negative",
+                    expression: "(offset_start IS NULL OR offset_start >= 0) AND (offset_end IS NULL OR offset_end >= 0)",
                 },
                 NamedConstraint {
                     name: "events_offset_order",

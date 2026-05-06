@@ -56,6 +56,51 @@ async fn insert_sample_material(ctx: &TestContext) -> TestResult<MaterialFixture
     Ok(MaterialFixture { id: schema_uuid })
 }
 
+async fn insert_sample_material_with_total_bytes(
+    ctx: &TestContext,
+    total_bytes: i64,
+) -> TestResult<MaterialFixture> {
+    let material = insert_sample_material(ctx).await?;
+    sqlx::query("UPDATE raw.source_material_registry SET total_bytes = $2 WHERE id = $1::uuid")
+        .bind(material.id)
+        .bind(total_bytes)
+        .execute(&ctx.pool)
+        .await?;
+    Ok(material)
+}
+
+async fn insert_material_event(
+    pool: &PgPool,
+    material_id: Uuid,
+    anchor_byte: i64,
+    offset_start: Option<i64>,
+    offset_end: Option<i64>,
+    offset_kind: Option<&str>,
+) -> Result<sqlx::postgres::PgQueryResult, sqlx::Error> {
+    sqlx::query(
+        r"
+        INSERT INTO core.events (
+            id, source, event_type, host, payload, ts_orig,
+            source_material_id, anchor_byte, offset_start, offset_end, offset_kind
+        )
+        VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8, $9, $10, $11)
+        ",
+    )
+    .bind(Uuid::now_v7())
+    .bind("test-source")
+    .bind("test-material-bounds")
+    .bind("test-host")
+    .bind(serde_json::json!({}))
+    .bind(Timestamp::now())
+    .bind(material_id)
+    .bind(anchor_byte)
+    .bind(offset_start)
+    .bind(offset_end)
+    .bind(offset_kind)
+    .execute(pool)
+    .await
+}
+
 async fn truncate_constraint_tables(pool: &PgPool) -> TestResult<()> {
     let mut tx = pool.begin().await?;
     for table in [
@@ -330,6 +375,164 @@ mod constraint_validation_tests {
         sqlx::query("TRUNCATE raw.source_material_registry CASCADE")
             .execute(pool)
             .await?;
+        finalize_constraint_context(&ctx).await?;
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn test_material_anchor_bounds_use_finalized_total_bytes() -> TestResult<()> {
+        let ctx = prepare_constraint_context().await?;
+        let pool = &ctx.pool;
+        setup_test_tables(pool).await;
+
+        let material = insert_sample_material_with_total_bytes(&ctx, 10).await?;
+
+        let eof_anchor = insert_material_event(pool, material.id, 10, None, None, None).await;
+        assert!(
+            eof_anchor.is_ok(),
+            "Should accept anchor_byte at EOF when total_bytes is known"
+        );
+
+        let beyond_eof = insert_material_event(pool, material.id, 11, None, None, None).await;
+        assert!(
+            beyond_eof.is_err(),
+            "Should reject anchor_byte beyond source material total_bytes"
+        );
+
+        finalize_constraint_context(&ctx).await?;
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn test_material_byte_span_bounds_are_half_open() -> TestResult<()> {
+        let ctx = prepare_constraint_context().await?;
+        let pool = &ctx.pool;
+        setup_test_tables(pool).await;
+
+        let material = insert_sample_material_with_total_bytes(&ctx, 10).await?;
+
+        let full_span =
+            insert_material_event(pool, material.id, 0, Some(0), Some(10), Some("byte")).await;
+        assert!(
+            full_span.is_ok(),
+            "Should accept byte span [0, total_bytes)"
+        );
+
+        let eof_empty_span =
+            insert_material_event(pool, material.id, 10, Some(10), Some(10), Some("byte")).await;
+        assert!(
+            eof_empty_span.is_ok(),
+            "Should accept zero-length byte span at EOF"
+        );
+
+        let beyond_end =
+            insert_material_event(pool, material.id, 0, Some(0), Some(11), Some("byte")).await;
+        assert!(
+            beyond_end.is_err(),
+            "Should reject byte span with offset_end beyond total_bytes"
+        );
+
+        let beyond_start =
+            insert_material_event(pool, material.id, 0, Some(11), Some(11), Some("byte")).await;
+        assert!(
+            beyond_start.is_err(),
+            "Should reject byte span with offset_start beyond total_bytes"
+        );
+
+        let logical_offsets = insert_material_event(
+            pool,
+            material.id,
+            0,
+            Some(10_000),
+            Some(10_001),
+            Some("line"),
+        )
+        .await;
+        assert!(
+            logical_offsets.is_ok(),
+            "Should not apply byte-size bounds to non-byte offset kinds"
+        );
+
+        finalize_constraint_context(&ctx).await?;
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn test_material_bounds_skip_unknown_total_bytes() -> TestResult<()> {
+        let ctx = prepare_constraint_context().await?;
+        let pool = &ctx.pool;
+        setup_test_tables(pool).await;
+
+        let material = insert_sample_material(&ctx).await?;
+
+        let unbounded = insert_material_event(
+            pool,
+            material.id,
+            1_000_000,
+            Some(1_000_000),
+            Some(1_000_001),
+            Some("byte"),
+        )
+        .await;
+        assert!(
+            unbounded.is_ok(),
+            "Should allow material offsets while total_bytes is unknown"
+        );
+
+        finalize_constraint_context(&ctx).await?;
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn test_material_finalization_rejects_existing_out_of_bounds_events() -> TestResult<()> {
+        let ctx = prepare_constraint_context().await?;
+        let pool = &ctx.pool;
+        setup_test_tables(pool).await;
+
+        let material = insert_sample_material(&ctx).await?;
+
+        let unbounded =
+            insert_material_event(pool, material.id, 11, Some(0), Some(11), Some("byte")).await;
+        assert!(
+            unbounded.is_ok(),
+            "Should allow material events before total_bytes is known"
+        );
+
+        let finalization = sqlx::query(
+            "UPDATE raw.source_material_registry SET total_bytes = $2 WHERE id = $1::uuid",
+        )
+        .bind(material.id)
+        .bind(10i64)
+        .execute(pool)
+        .await;
+        assert!(
+            finalization.is_err(),
+            "Should reject finalization that would invalidate existing byte anchors"
+        );
+
+        finalize_constraint_context(&ctx).await?;
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn test_offsets_must_be_non_negative() -> TestResult<()> {
+        let ctx = prepare_constraint_context().await?;
+        let pool = &ctx.pool;
+        setup_test_tables(pool).await;
+
+        let material = insert_sample_material_with_total_bytes(&ctx, 10).await?;
+
+        let negative_start =
+            insert_material_event(pool, material.id, 0, Some(-1), Some(1), Some("byte")).await;
+        assert!(
+            negative_start.is_err(),
+            "Should reject negative offset_start"
+        );
+
+        let negative_end =
+            insert_material_event(pool, material.id, 0, Some(-2), Some(-1), Some("byte")).await;
+        assert!(negative_end.is_err(), "Should reject negative offset_end");
+
         finalize_constraint_context(&ctx).await?;
         Ok(())
     }

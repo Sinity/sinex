@@ -148,7 +148,12 @@ impl Events {
         Table::create()
             .table((Alias::new("core"), Events::Table))
             .if_not_exists()
-            .col(ColumnDef::new(Events::Id).custom(Alias::new("UUID")).primary_key())
+            .col(
+                ColumnDef::new(Events::Id)
+                    .custom(Alias::new("UUID"))
+                    .not_null()
+                    .primary_key(),
+            )
             .col(
                 ColumnDef::new(Events::Source)
                     .text()
@@ -216,6 +221,9 @@ impl Events {
             .check(Expr::cust("(offset_start IS NULL) = (offset_end IS NULL)"))
             .check(Expr::cust(
                 "offset_kind IS NULL OR (offset_start IS NOT NULL AND offset_end IS NOT NULL)",
+            ))
+            .check(Expr::cust(
+                "(offset_start IS NULL OR offset_start >= 0) AND (offset_end IS NULL OR offset_end >= 0)",
             ))
             .check(Expr::cust(
                 "offset_start IS NULL OR offset_end IS NULL OR offset_end >= offset_start",
@@ -514,6 +522,66 @@ impl Events {
         CREATE TRIGGER trg_events_validate_payload
         BEFORE INSERT ON core.events
         FOR EACH ROW EXECUTE FUNCTION core.fn_events_validate_payload();
+        "
+    }
+
+    /// Generates the trigger enforcing material anchor and byte-span plausibility.
+    ///
+    /// `raw.source_material_registry.total_bytes` is NULL while a material is still being
+    /// captured or when its byte size is unknown. In that state the trigger deliberately
+    /// does not guess. Once total bytes are known, material events cannot claim an anchor
+    /// or byte span beyond the finalized material.
+    ///
+    /// Byte spans use the usual half-open convention: `[offset_start, offset_end)`.
+    /// That makes `offset_end = total_bytes` valid for a span ending at EOF while still
+    /// rejecting any span that points beyond the material.
+    #[must_use]
+    pub fn create_material_bounds_trigger_sql() -> &'static str {
+        r"
+        CREATE OR REPLACE FUNCTION core.fn_events_validate_material_bounds()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        DECLARE
+            material_total_bytes BIGINT;
+        BEGIN
+            IF NEW.source_material_id IS NULL THEN
+                RETURN NEW;
+            END IF;
+
+            SELECT total_bytes INTO material_total_bytes
+            FROM raw.source_material_registry
+            WHERE id = NEW.source_material_id;
+
+            -- FK validation handles missing materials, and NULL total_bytes means
+            -- the material is not yet byte-bounded.
+            IF material_total_bytes IS NULL THEN
+                RETURN NEW;
+            END IF;
+
+            IF NEW.anchor_byte IS NOT NULL AND NEW.anchor_byte > material_total_bytes THEN
+                RAISE EXCEPTION
+                    'event anchor_byte exceeds source material size (source_material_id=%, anchor_byte=%, total_bytes=%)',
+                    NEW.source_material_id, NEW.anchor_byte, material_total_bytes
+                    USING ERRCODE = 'check_violation';
+            END IF;
+
+            IF NEW.offset_kind = 'byte'
+               AND NEW.offset_start IS NOT NULL
+               AND NEW.offset_end IS NOT NULL
+               AND (NEW.offset_start > material_total_bytes OR NEW.offset_end > material_total_bytes)
+            THEN
+                RAISE EXCEPTION
+                    'event byte offsets exceed source material size (source_material_id=%, offset_start=%, offset_end=%, total_bytes=%)',
+                    NEW.source_material_id, NEW.offset_start, NEW.offset_end, material_total_bytes
+                    USING ERRCODE = 'check_violation';
+            END IF;
+
+            RETURN NEW;
+        END $$;
+
+        DROP TRIGGER IF EXISTS trg_events_validate_material_bounds ON core.events;
+        CREATE TRIGGER trg_events_validate_material_bounds
+        BEFORE INSERT ON core.events
+        FOR EACH ROW EXECUTE FUNCTION core.fn_events_validate_material_bounds();
         "
     }
 }
