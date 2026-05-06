@@ -14,6 +14,41 @@ fn prop_err(e: impl std::fmt::Display) -> TestCaseError {
     TestCaseError::Fail(e.to_string().into())
 }
 
+fn assert_built_event_matches(
+    event: &Event<JsonValue>,
+    source: &str,
+    event_type: &str,
+    payload: &JsonValue,
+) -> Result<(), TestCaseError> {
+    prop_assert!(
+        event.id.is_some(),
+        "built test event should receive a UUIDv7 id"
+    );
+    prop_assert_eq!(event.source.as_str(), source);
+    prop_assert_eq!(event.event_type.as_str(), event_type);
+    prop_assert_eq!(&event.payload, payload);
+    match event.provenance() {
+        Provenance::Material {
+            anchor_byte,
+            offset_start,
+            offset_end,
+            offset_kind,
+            ..
+        } => {
+            prop_assert_eq!(*anchor_byte, 0);
+            prop_assert_eq!(*offset_start, None);
+            prop_assert_eq!(*offset_end, None);
+            prop_assert_eq!(*offset_kind, OffsetKind::Byte);
+        }
+        other => {
+            return Err(TestCaseError::Fail(
+                format!("built test event should use material provenance, got {other:?}").into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Property test strategies for event data
 mod strategies {
     use super::*;
@@ -83,6 +118,9 @@ async fn node_event_processing_preserves_order(
 
     let published = ctx.build_test_events(payloads).map_err(prop_err)?;
     assert_eq!(published.len(), events.len());
+    for (event, (source, event_type, payload)) in published.iter().zip(events.iter()) {
+        assert_built_event_matches(event, source, event_type, payload)?;
+    }
 
     // Verify UUIDv7 ordering is preserved (UUIDv7 IDs are time-ordered)
     for i in 1..published.len() {
@@ -109,10 +147,10 @@ async fn node_manages_resources_efficiently(
 ) -> Result<(), TestCaseError> {
     let total_expected = concurrent_operations * events_per_operation;
 
-    let payloads: Vec<DynamicPayload> = (0..concurrent_operations)
+    let specs: Vec<(String, String, JsonValue)> = (0..concurrent_operations)
         .flat_map(|i| {
             (0..events_per_operation).map(move |j| {
-                DynamicPayload::new(
+                (
                     format!("concurrent-{i}"),
                     format!("test.event.{j}"),
                     json!({ "operation": i, "event": j }),
@@ -120,9 +158,18 @@ async fn node_manages_resources_efficiently(
             })
         })
         .collect();
+    let payloads: Vec<DynamicPayload> = specs
+        .iter()
+        .map(|(source, event_type, payload)| {
+            DynamicPayload::new(source.as_str(), event_type.as_str(), payload.clone())
+        })
+        .collect();
 
     let published = ctx.build_test_events(payloads).map_err(prop_err)?;
     assert_eq!(published.len(), total_expected);
+    for (event, (source, event_type, payload)) in published.iter().zip(specs.iter()) {
+        assert_built_event_matches(event, source, event_type, payload)?;
+    }
 
     Ok::<(), TestCaseError>(())
 }
@@ -182,6 +229,9 @@ async fn node_batch_processing_is_consistent(
     } else {
         ctx.build_test_events(first_payloads).map_err(prop_err)?
     };
+    for (event, (source, event_type, payload)) in first_half.iter().zip(events.iter()) {
+        assert_built_event_matches(event, source, event_type, payload)?;
+    }
 
     // Process remaining events
     let second_payloads: Vec<DynamicPayload> = events
@@ -195,6 +245,11 @@ async fn node_batch_processing_is_consistent(
     } else {
         ctx.build_test_events(second_payloads).map_err(prop_err)?
     };
+    for (event, (source, event_type, payload)) in
+        second_half.iter().zip(events.iter().skip(half_point))
+    {
+        assert_built_event_matches(event, source, event_type, payload)?;
+    }
 
     // Verify no events were lost during batch transitions
     assert_eq!(first_half.len() + second_half.len(), events.len());
@@ -221,6 +276,14 @@ async fn node_survives_processing_interruptions(
 
     let before_events = ctx.build_test_events(before_payloads).map_err(prop_err)?;
     assert_eq!(before_events.len(), events_before);
+    for (i, event) in before_events.iter().enumerate() {
+        assert_built_event_matches(
+            event,
+            "interruption_test",
+            format!("before.{i}").as_str(),
+            &json!({ "phase": "before", "index": i }),
+        )?;
+    }
 
     // Phase 2: Recovery after interruption
     let after_payloads: Vec<DynamicPayload> = (0..events_after)
@@ -235,6 +298,14 @@ async fn node_survives_processing_interruptions(
 
     let after_events = ctx.build_test_events(after_payloads).map_err(prop_err)?;
     assert_eq!(after_events.len(), events_after);
+    for (i, event) in after_events.iter().enumerate() {
+        assert_built_event_matches(
+            event,
+            "interruption_test",
+            format!("after.{i}").as_str(),
+            &json!({ "phase": "after", "index": i }),
+        )?;
+    }
 
     // Both phases should complete successfully
     let total = before_events.len() + after_events.len();
@@ -252,12 +323,12 @@ async fn node_maintains_event_ordering_under_load(
     let total_events = concurrent_sources * events_per_source;
 
     // Publish events for all sources in one batch (preserves submission order)
-    let payloads: Vec<DynamicPayload> = (0..concurrent_sources)
+    let specs: Vec<(String, String, JsonValue)> = (0..concurrent_sources)
         .flat_map(|source_id| {
             (0..events_per_source).map(move |event_id| {
-                DynamicPayload::new(
+                (
                     format!("ordering-test-{source_id}"),
-                    "ordering.test",
+                    "ordering.test".to_string(),
                     json!({
                         "source_id": source_id,
                         "event_id": event_id,
@@ -266,9 +337,18 @@ async fn node_maintains_event_ordering_under_load(
             })
         })
         .collect();
+    let payloads: Vec<DynamicPayload> = specs
+        .iter()
+        .map(|(source, event_type, payload)| {
+            DynamicPayload::new(source.as_str(), event_type.as_str(), payload.clone())
+        })
+        .collect();
 
     let published = ctx.build_test_events(payloads).map_err(prop_err)?;
     prop_assert_eq!(published.len(), total_events);
+    for (event, (source, event_type, payload)) in published.iter().zip(specs.iter()) {
+        assert_built_event_matches(event, source, event_type, payload)?;
+    }
 
     // Group events by source and verify ordering within each
     let mut events_by_source: std::collections::HashMap<String, Vec<_>> =
