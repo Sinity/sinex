@@ -1,5 +1,12 @@
 # Historical Backfill Runtime Plane
 
+Status: current deployed node-runtime proof, not the final architecture for all
+future source processing. New source work should also read
+[`staged-source-parser-substrate.md`](staged-source-parser-substrate.md). Issue
+[#1054](https://github.com/Sinity/sinex/issues/1054) decides whether staged
+local materials keep using the NodeRunner -> NATS -> ingestd path or can run
+closer to persistence through a shared parser substrate.
+
 Historical backfill is a node/runtime operation. It is not a direct database
 import and it must not bypass source-material registration, NATS batching, or
 `sinex-ingestd` persistence.

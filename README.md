@@ -31,7 +31,7 @@ WHERE c.command LIKE 'cargo test%'
 
 | Surface | Current Owner |
 |---------|---------------|
-| Capture | crate-local ingestors under `crate/nodes/` |
+| Capture | source units over staged materials, input-shape adapters, and parsers; deployed legacy ingestors under `crate/nodes/` |
 | Query / control | `sinex-gateway` + `sinexctl` |
 | Persistence | `sinex-ingestd` + PostgreSQL |
 | Derived state | automata and replay-aware node runtime |
@@ -39,6 +39,15 @@ WHERE c.command LIKE 'cargo test%'
 | Extension | `sinex-node-sdk` |
 
 ## Architecture
+
+The capture layer is being reframed from "one ingestor crate per source domain"
+to a staged-source parser substrate: source material is registered, an
+input-shape adapter enumerates records or bytes, and a parser emits
+material-provenance events. See
+[`docs/architecture/staged-source-parser-substrate.md`](docs/architecture/staged-source-parser-substrate.md).
+The diagram below shows the deployed runtime shape; #1054 owns the remaining
+decision about whether staged local parsers always cross NATS or can run closer
+to persistence.
 
 ```text
 Ingestors          Automata             Clients
