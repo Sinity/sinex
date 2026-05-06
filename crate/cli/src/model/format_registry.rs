@@ -137,6 +137,11 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     m.insert("sources show",     FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("sources coverage", FormatCapability::single_shot(TABLE_JSON_YAML));
 
+    // ── Blob ─────────────────────────────────────────────────────────────────
+    m.insert("blob sweep-orphans", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("blob fsck",          FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("blob migrate",       FormatCapability::single_shot(TABLE_JSON_YAML));
+
     // ── Lifecycle ────────────────────────────────────────────────────────────
     m.insert("lifecycle status",            FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("lifecycle archive",           FormatCapability::single_shot(TABLE_JSON_YAML));
