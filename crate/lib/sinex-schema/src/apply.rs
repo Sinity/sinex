@@ -13,8 +13,12 @@ use sqlx::{Executor, PgPool};
 
 const REQUIRED_EXTENSIONS: &[&str] = &["pg_jsonschema", "vector", "timescaledb", "pg_trgm"];
 pub const SHARED_ACCESS_ROLES: &[&str] = &["sinex_ingestd", "sinex_gateway", "sinex_readonly"];
-const EVENTS_REQUIRED_TRIGGERS: &[&str] =
-    &["trg_events_no_update", "trg_events_archive_before_delete"];
+const EVENTS_REQUIRED_TRIGGERS: &[&str] = &[
+    "trg_events_no_update",
+    "trg_events_archive_before_delete",
+    "trg_events_validate_material_bounds",
+];
+const SOURCE_MATERIAL_REQUIRED_TRIGGERS: &[&str] = &["trg_source_material_validate_event_bounds"];
 const EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_events_material_anchor",
     "ix_events_ts_orig",
@@ -141,6 +145,16 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
         for index in EVENTS_REQUIRED_INDEXES {
             if !index_exists(pool, "core", "events", index).await? {
                 drifts.push(format!("missing core.events index {index}"));
+            }
+        }
+    }
+
+    if relation_exists(pool, "raw.source_material_registry").await? {
+        for trigger in SOURCE_MATERIAL_REQUIRED_TRIGGERS {
+            if !trigger_exists(pool, "raw.source_material_registry", trigger).await? {
+                drifts.push(format!(
+                    "missing raw.source_material_registry trigger {trigger}"
+                ));
             }
         }
     }
@@ -490,6 +504,12 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
 async fn create_triggers_and_functions(pool: &PgPool) -> Result<(), ApplyError> {
     execute_sql(pool, Events::create_no_update_trigger_sql()).await?;
     execute_sql(pool, Events::create_payload_validation_trigger_sql()).await?;
+    execute_sql(pool, Events::create_material_bounds_trigger_sql()).await?;
+    execute_sql(
+        pool,
+        SourceMaterialRegistry::create_event_bounds_trigger_sql(),
+    )
+    .await?;
     execute_sql(pool, ArchivedEvents::create_archive_trigger_sql()).await?;
     execute_sql(pool, TemporalLedger::create_append_only_trigger_sql()).await?;
     execute_sql(pool, &Entities::create_updated_at_trigger_sql()).await?;
