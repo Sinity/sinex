@@ -36,8 +36,15 @@ async fn document_node_emits_events_for_targets(ctx: TestContext) -> TestResult<
     let mut scan_args = ScanArgs::default();
     scan_args.targets = vec![temp.path().to_string_lossy().into_owned()];
 
-    node.scan(Checkpoint::None, TimeHorizon::Snapshot, scan_args)
+    let report = node
+        .scan(Checkpoint::None, TimeHorizon::Snapshot, scan_args)
         .await?;
+    let expected_path = temp.path().to_string_lossy().into_owned();
+    let expected_size = std::fs::metadata(temp.path())?.len();
+    assert_eq!(report.events_processed, 1);
+    assert_eq!(report.successful_targets, vec![expected_path.clone()]);
+    assert!(report.failed_targets.is_empty());
+    assert!(report.warnings.is_empty());
 
     let event = timeout(Duration::from_secs(1), runtime.event_rx.recv())
         .await
@@ -45,23 +52,49 @@ async fn document_node_emits_events_for_targets(ctx: TestContext) -> TestResult<
         .flatten()
         .expect("document ingestor should emit a document.ingested event");
 
+    assert_eq!(event.source.as_str(), "document-ingestor");
     assert_eq!(event.event_type.as_str(), "document.ingested");
     assert!(event.payload["_source_material_id"].as_str().is_none());
-    assert!(event.payload["file_path"].as_str().is_some());
-    assert!(event.payload["source_material_id"].as_str().is_some());
+    let material_id = match event.provenance() {
+        sinex_primitives::Provenance::Material {
+            id,
+            anchor_byte,
+            offset_start,
+            offset_end,
+            offset_kind,
+        } => {
+            assert_eq!(*anchor_byte, 0);
+            assert_eq!(*offset_start, Some(0));
+            assert_eq!(*offset_end, Some(i64::try_from(expected_size)?));
+            assert_eq!(*offset_kind, sinex_primitives::OffsetKind::Byte);
+            *id
+        }
+        _ => panic!("expected material provenance"),
+    };
+    let material_id_string = material_id.to_string();
+    assert_eq!(
+        event.payload["file_path"].as_str(),
+        Some(expected_path.as_str())
+    );
+    assert_eq!(
+        event.payload["source_material_id"].as_str(),
+        Some(material_id_string.as_str())
+    );
+    assert_eq!(
+        event.payload["size_bytes"].as_u64(),
+        Some(expected_size)
+    );
+    assert_eq!(event.payload["mime_type"].as_str(), Some("text/plain"));
+    assert_eq!(event.payload["encoding"].as_str(), Some("utf-8"));
 
     // NOTE: the AcquisitionManager is JetStream-first; ingestd is the sole database writer for
     // `raw.source_material_registry`. This test runs the node directly (no ingestd), so the
     // material should not appear in the database.
-    let material_id = match event.provenance() {
-        sinex_primitives::Provenance::Material { id, .. } => *id.as_uuid(),
-        _ => panic!("expected material provenance"),
-    };
 
     let record = ctx
         .pool
         .source_materials()
-        .get_by_id(Id::from_uuid(material_id))
+        .get_by_id(Id::from_uuid(*material_id.as_uuid()))
         .await?;
     assert!(
         record.is_none(),
