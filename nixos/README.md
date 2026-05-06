@@ -702,9 +702,9 @@ systemctl show sinex-ingestd --property=Type,NotifyAccess,WatchdogUSec
 # Run full preflight check
 sudo -u sinex /run/current-system/sw/bin/sinex-preflight verify
 
-# Prove passive derived/runtime signals plus managed document scan, enabled collector surfaces,
-# and implemented historical backfill surfaces
-sinexctl --insecure verify --document-smoke --source-proof --historical-proof
+# Gather passive derived/runtime signals plus managed document scan, enabled collector surfaces,
+# and implemented historical backfill evidence
+sinexctl --insecure verify --document-smoke --source-evidence --historical-evidence
 ```
 
 **Service health endpoints:**

@@ -1828,10 +1828,11 @@ mod tests {
     #[sinex_test]
     async fn test_classify_vm_progress_line_strips_ansi_failure_prefixes()
     -> ::xtask::sandbox::TestResult<()> {
-        let line = "\u{1b}[31mvm-test > RequestedAssertionFailed: browser proof missing\u{1b}[0m";
+        let line =
+            "\u{1b}[31mvm-test > RequestedAssertionFailed: browser evidence missing\u{1b}[0m";
         assert_eq!(
             classify_vm_progress_line(line),
-            Some("RequestedAssertionFailed: browser proof missing".to_string())
+            Some("RequestedAssertionFailed: browser evidence missing".to_string())
         );
         Ok(())
     }
@@ -1866,7 +1867,7 @@ mod tests {
             25.0,
             1,
             4,
-            "RequestedAssertionFailed: browser proof missing",
+            "RequestedAssertionFailed: browser evidence missing",
         );
 
         let stored = HistoryDb::open_query(&db_path)?
@@ -1879,7 +1880,7 @@ mod tests {
         assert_eq!(stored.items_total, Some(4));
         assert_eq!(
             stored.terminal_summary.as_deref(),
-            Some("basic: RequestedAssertionFailed: browser proof missing")
+            Some("basic: RequestedAssertionFailed: browser evidence missing")
         );
         Ok(())
     }
