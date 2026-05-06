@@ -881,10 +881,10 @@
       "statement": "record-source harnesses advance checkpoints only through processed/skipped records and collect material anchors for processed records"
     },
     {
-      "id": "claim:scenario.evidence_envelope",
+      "id": "claim:scenario.metadata_surface",
       "kind": "scenario",
       "subject": "scenario:*",
-      "statement": "proof-carrying scenarios emit subject refs, claim ids, runner id, reproducer, and artifact references"
+      "statement": "scenario tests declare discoverable subject refs, catalog claim ids, assertion ids, runner id, and reproducer metadata; persisted evidence may attach that metadata when an evidence bundle is written"
     },
     {
       "id": "claim:source_material.bounded_physical_frames",
@@ -923,7 +923,7 @@
       "runner": "cargo-nextest",
       "subject": "scenario:*",
       "claims": [
-        "claim:scenario.evidence_envelope"
+        "claim:scenario.metadata_surface"
       ],
       "command": "xtask test --scenario-tag <tag>"
     },
@@ -981,23 +981,23 @@
       "subject": "runtime_unit:*",
       "claim_id": "claim:source_material.material_provenance",
       "runner_binding_id": "runner:rust.sdk.source_laws",
-      "reason": "source units are the material-provenance boundary for replay and audit"
+      "reason": "runtime units are the material-provenance boundary currently backed by source-material law scenarios"
     },
     {
-      "id": "obligation:scenario.evidence_envelope",
+      "id": "obligation:scenario.metadata_surface",
       "level": "required",
       "subject": "scenario:*",
-      "claim_id": "claim:scenario.evidence_envelope",
+      "claim_id": "claim:scenario.metadata_surface",
       "runner_binding_id": "runner:rust.nextest.scenario",
-      "reason": "scenario failures must carry enough context to avoid host forensics"
+      "reason": "scenario metadata must be discoverable and attach to persisted failure evidence without implying successful proof artifacts exist yet"
     },
     {
       "id": "obligation:source_unit.material_provenance",
-      "level": "required",
+      "level": "advisory",
       "subject": "source_unit:*",
       "claim_id": "claim:source_material.material_provenance",
       "runner_binding_id": "runner:rust.sdk.source_laws",
-      "reason": "source units are the semantic leaves that must carry replayable material provenance"
+      "reason": "source units are the semantic leaves that must carry replayable material provenance; current runner proves runtime-unit material laws, so this remains advisory until source-unit-specific pass evidence exists"
     },
     {
       "id": "obligation:source_unit.package_impact_rationale",
@@ -2381,7 +2381,8 @@
         "issue:561",
         "node-sdk:derived-node"
       ],
-      "claim_ids": [
+      "claim_ids": [],
+      "assertion_ids": [
         "lag-p99-stays-bounded-under-synthetic-burst",
         "tick-runtime-p99-stays-bounded-for-noop-transducer",
         "reservoir-evicts-on-overflow"
@@ -2413,7 +2414,8 @@
         "node-sdk:material-acquisition",
         "component:ingestd"
       ],
-      "claim_ids": [
+      "claim_ids": [],
+      "assertion_ids": [
         "restart-with-pending-material-state-recovers",
         "material-ledger-total-bytes-match-post-restart-finalization"
       ]
@@ -2443,7 +2445,8 @@
       ],
       "claim_ids": [
         "claim:record_source.cursor_and_anchor_laws"
-      ]
+      ],
+      "assertion_ids": []
     },
     {
       "subject": "scenario:source-material.resource-duplicate-finalization.v1",
@@ -2473,7 +2476,8 @@
         "issue:324",
         "node-sdk:source-material"
       ],
-      "claim_ids": [
+      "claim_ids": [],
+      "assertion_ids": [
         "duplicate-content-reuses-one-blob",
         "duplicate-finalization-has-no-redelivery-loop",
         "duplicate-finalization-profile-is-machine-readable"
@@ -2505,7 +2509,8 @@
         "issue:324",
         "node-sdk:source-material"
       ],
-      "claim_ids": [
+      "claim_ids": [],
+      "assertion_ids": [
         "tiny-record-burst-uses-single-slice-frame",
         "frame-amplification-profile-is-machine-readable",
         "material-ledger-total-bytes-matches-record-burst"
@@ -2540,7 +2545,8 @@
         "node-sdk:source-material",
         "node-sdk:content-store"
       ],
-      "claim_ids": [
+      "claim_ids": [],
+      "assertion_ids": [
         "small-material-uses-local-cas-without-git-annex-subprocess",
         "large-material-uses-git-annex-with-observed-subprocess-count",
         "storage-backend-profile-is-machine-readable"
@@ -2572,7 +2578,8 @@
         "issue:324",
         "node-sdk:source-material"
       ],
-      "claim_ids": [
+      "claim_ids": [],
+      "assertion_ids": [
         "tiny-logical-records-batched",
         "per-record-byte-anchors-preserved",
         "material-ledger-total-bytes-matches-source-frame"
@@ -2603,7 +2610,8 @@
       ],
       "claim_ids": [
         "claim:xtask.command_catalog_introspection"
-      ]
+      ],
+      "assertion_ids": []
     }
   ]
 }

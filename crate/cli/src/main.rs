@@ -195,7 +195,7 @@ enum Commands {
     /// Explain a single event: full details, provenance, payload
     Explain(ExplainCommand),
 
-    /// Verify trustworthiness invariants across the event store
+    /// Check bounded runtime evidence and optional smoke probes
     Verify(VerifyCommand),
 
     /// Show what's happening right now — dashboard view

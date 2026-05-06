@@ -3301,7 +3301,8 @@ mod tests {
                 "source-material.filesystem-zero-byte-observation-stream.v1".to_string(),
             ),
             subject_refs: vec!["https://github.com/Sinity/sinex/issues/315".to_string()],
-            claim_ids: vec![
+            claim_ids: Vec::new(),
+            assertion_ids: vec![
                 "metadata-only-filesystem-events-use-observation-stream".to_string(),
                 "zero-byte-files-do-not-create-per-path-zero-byte-materials".to_string(),
                 "observation-stream-anchors-remain-contiguous".to_string(),

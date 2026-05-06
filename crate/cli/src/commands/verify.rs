@@ -21,18 +21,18 @@ pub struct VerifyCommand {
     #[arg(long, default_value_t = false)]
     document_smoke: bool,
 
-    /// Require each enabled long-running collector surface to show recent or historical event evidence.
-    #[arg(long, default_value_t = false)]
-    source_proof: bool,
+    /// Require each enabled long-running collector surface to show bounded event evidence.
+    #[arg(long = "source-evidence", default_value_t = false)]
+    source_evidence: bool,
 
-    /// Check whether historical-import event types have been persisted.
-    #[arg(long, default_value_t = false)]
-    historical_proof: bool,
+    /// Check whether historical-import event types have persisted event evidence.
+    #[arg(long = "historical-evidence", default_value_t = false)]
+    historical_evidence: bool,
 }
 
 const DOCUMENT_INGESTOR_SOURCE: &str = "document-ingestor";
 const DOCUMENT_INGESTED_EVENT_TYPE: &str = "document.ingested";
-const SOURCE_PROOF_RECENT_WINDOW: Duration = Duration::from_hours(1);
+const SOURCE_EVIDENCE_RECENT_WINDOW: Duration = Duration::from_hours(1);
 const VERIFY_EVENT_SAMPLE_LIMIT: i64 = 25;
 
 const TERMINAL_COMMAND_SOURCES: &[&str] = &[
@@ -42,7 +42,7 @@ const TERMINAL_COMMAND_SOURCES: &[&str] = &[
     "shell.history.zsh",
     "shell.history.fish",
 ];
-const TERMINAL_PROOF_SOURCES: &[&str] = &[
+const TERMINAL_EVIDENCE_SOURCES: &[&str] = &[
     "shell.kitty",
     "shell.atuin",
     "shell.history.bash",
@@ -50,10 +50,10 @@ const TERMINAL_PROOF_SOURCES: &[&str] = &[
     "shell.history.fish",
     "shell.history",
 ];
-const BROWSER_PROOF_SOURCES: &[&str] = &["webhistory"];
-const DESKTOP_PROOF_SOURCES: &[&str] = &["desktop", "activitywatch", "clipboard", "wm.hyprland"];
-const FILESYSTEM_PROOF_SOURCES: &[&str] = &["fs-watcher"];
-const SYSTEM_PROOF_SOURCES: &[&str] = &["system", "journald", "systemd", "dbus", "udev"];
+const BROWSER_EVIDENCE_SOURCES: &[&str] = &["webhistory"];
+const DESKTOP_EVIDENCE_SOURCES: &[&str] = &["desktop", "activitywatch", "clipboard", "wm.hyprland"];
+const FILESYSTEM_EVIDENCE_SOURCES: &[&str] = &["fs-watcher"];
+const SYSTEM_EVIDENCE_SOURCES: &[&str] = &["system", "journald", "systemd", "dbus", "udev"];
 
 const PASSIVE_DERIVED_SIGNAL_CHECKS: &[PassiveSignalCheck] = &[
     PassiveSignalCheck {
@@ -168,7 +168,7 @@ impl VerifyCommand {
         )
         .await?;
         run_active_verification(self, &mut summary, client, descriptor.as_ref()).await?;
-        report_historical_proof(self, &mut summary, client, descriptor.as_ref()).await?;
+        report_historical_evidence(self, &mut summary, client, descriptor.as_ref()).await?;
 
         match format {
             OutputFormat::Table => print_verification_footer(&summary),
@@ -191,10 +191,7 @@ impl VerifyCommand {
 
 fn print_verification_header() {
     println!();
-    println!(
-        "{}",
-        style("Sinex Trustworthiness Verification").bold().cyan()
-    );
+    println!("{}", style("Sinex Runtime Evidence Check").bold().cyan());
     println!("{}", style("═".repeat(50)).dim());
     println!();
 }
@@ -305,7 +302,7 @@ async fn run_active_verification(
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> Result<()> {
     report_document_smoke(command, summary, client, descriptor).await?;
-    report_source_proof(command, summary, client, descriptor).await?;
+    report_source_evidence(command, summary, client, descriptor).await?;
     Ok(())
 }
 
@@ -325,32 +322,32 @@ async fn report_document_smoke(
     Ok(())
 }
 
-async fn report_source_proof(
+async fn report_source_evidence(
     command: &VerifyCommand,
     summary: &mut VerificationSummary,
     client: &GatewayClient,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> Result<()> {
-    if command.source_proof {
-        run_source_proof(summary, client, descriptor).await?;
+    if command.source_evidence {
+        run_source_evidence(summary, client, descriptor).await?;
     } else {
         summary.skip(
-            "Source surface proof not run — pass --source-proof to require enabled collectors to show recent or historical event evidence",
+            "Source surface evidence check not run — pass --source-evidence to require enabled collectors to show bounded event evidence",
         );
     }
     Ok(())
 }
 
-async fn report_historical_proof(
+async fn report_historical_evidence(
     command: &VerifyCommand,
     summary: &mut VerificationSummary,
     client: &GatewayClient,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> Result<()> {
-    if !command.historical_proof {
+    if !command.historical_evidence {
         return Ok(());
     }
-    run_historical_proof(summary, client, descriptor).await?;
+    run_historical_evidence(summary, client, descriptor).await?;
     Ok(())
 }
 
@@ -571,14 +568,14 @@ fn enabled_source_surfaces(
     )
 }
 
-async fn run_historical_proof(
+async fn run_historical_evidence(
     summary: &mut VerificationSummary,
     client: &GatewayClient,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> Result<()> {
     let Some(descriptor) = descriptor else {
         summary.fail(
-            "Historical proof requested, but no local deployment readiness descriptor is available",
+            "Historical evidence requested, but no local deployment readiness descriptor is available",
         );
         return Ok(());
     };
@@ -596,7 +593,7 @@ async fn run_historical_proof(
         let count = sample_events_matching(client, check.sources, check.event_type).await?;
         if count > 0 {
             summary.pass(format!(
-                "{} emitted at least {} {} events",
+                "{} has at least {} persisted {} event samples",
                 check.label, count, check.event_type
             ));
         } else {
@@ -643,7 +640,7 @@ async fn report_document_surface_check(
     .await?;
     if count > 0 {
         summary.pass(format!(
-            "Managed document surface emitted at least {count} {DOCUMENT_INGESTED_EVENT_TYPE} events"
+            "Managed document surface has at least {count} persisted {DOCUMENT_INGESTED_EVENT_TYPE} event samples"
         ));
     } else {
         summary
@@ -653,25 +650,25 @@ async fn report_document_surface_check(
     Ok(())
 }
 
-async fn run_source_proof(
+async fn run_source_evidence(
     summary: &mut VerificationSummary,
     client: &GatewayClient,
     descriptor: Option<&DeploymentReadinessDescriptor>,
 ) -> Result<()> {
     let Some(descriptor) = descriptor else {
         summary.fail(
-            "Source surface proof requested, but no local deployment readiness descriptor is available",
+            "Source surface evidence requested, but no local deployment readiness descriptor is available",
         );
         return Ok(());
     };
 
     let enabled = enabled_source_surfaces(Some(descriptor));
     if enabled.filesystem {
-        report_source_surface_proof(
+        report_source_surface_evidence(
             summary,
             client,
             "Filesystem collector",
-            FILESYSTEM_PROOF_SOURCES,
+            FILESYSTEM_EVIDENCE_SOURCES,
         )
         .await?;
     } else {
@@ -679,11 +676,11 @@ async fn run_source_proof(
     }
 
     if enabled.terminal {
-        report_source_surface_proof(
+        report_source_surface_evidence(
             summary,
             client,
             "Terminal collector",
-            TERMINAL_PROOF_SOURCES,
+            TERMINAL_EVIDENCE_SOURCES,
         )
         .await?;
     } else {
@@ -691,22 +688,37 @@ async fn run_source_proof(
     }
 
     if enabled.browser {
-        report_source_surface_proof(summary, client, "Browser collector", BROWSER_PROOF_SOURCES)
-            .await?;
+        report_source_surface_evidence(
+            summary,
+            client,
+            "Browser collector",
+            BROWSER_EVIDENCE_SOURCES,
+        )
+        .await?;
     } else {
         summary.skip("Browser collector disabled in local deployment");
     }
 
     if enabled.desktop {
-        report_source_surface_proof(summary, client, "Desktop collector", DESKTOP_PROOF_SOURCES)
-            .await?;
+        report_source_surface_evidence(
+            summary,
+            client,
+            "Desktop collector",
+            DESKTOP_EVIDENCE_SOURCES,
+        )
+        .await?;
     } else {
         summary.skip("Desktop collector disabled in local deployment");
     }
 
     if enabled.system {
-        report_source_surface_proof(summary, client, "System collector", SYSTEM_PROOF_SOURCES)
-            .await?;
+        report_source_surface_evidence(
+            summary,
+            client,
+            "System collector",
+            SYSTEM_EVIDENCE_SOURCES,
+        )
+        .await?;
     } else {
         summary.skip("System collector disabled in local deployment");
     }
@@ -714,7 +726,7 @@ async fn run_source_proof(
     Ok(())
 }
 
-async fn report_source_surface_proof(
+async fn report_source_surface_evidence(
     summary: &mut VerificationSummary,
     client: &GatewayClient,
     label: &str,
@@ -722,16 +734,16 @@ async fn report_source_surface_proof(
 ) -> Result<()> {
     let evidence =
         wait_for_source_surface_evidence(client, sources, Duration::from_secs(10)).await?;
-    let recent_window_minutes = SOURCE_PROOF_RECENT_WINDOW.as_secs() / 60;
+    let recent_window_minutes = SOURCE_EVIDENCE_RECENT_WINDOW.as_secs() / 60;
 
     if evidence.recent_sample_count > 0 {
         summary.pass(format!(
-            "{label} emitted at least {} events in the last {} minutes",
+            "{label} has at least {} events whose ts_orig falls in the last {} minutes",
             evidence.recent_sample_count, recent_window_minutes
         ));
     } else if evidence.persisted_sample_count > 0 {
         summary.warn(format!(
-            "{label} has at least {} persisted events, but none in the last {} minutes",
+            "{label} has at least {} persisted events, but none with ts_orig in the last {} minutes",
             evidence.persisted_sample_count, recent_window_minutes
         ));
     } else {
@@ -764,7 +776,7 @@ async fn report_passive_signal_check(
         sample_events_matching(client, check.output_sources, check.output_event_type).await?;
     if output_count > 0 {
         summary.pass(format!(
-            "{} emitted at least {} {} events",
+            "{} has at least {} persisted {} output samples",
             check.label, output_count, check.output_event_type
         ));
     } else {
@@ -848,7 +860,8 @@ async fn sample_recent_events_for_sources(client: &GatewayClient, sources: &[&st
         .map(EventSource::new)
         .collect::<Result<Vec<_>, _>>()?;
     let now = Timestamp::now();
-    let start = Timestamp::new(now.inner() - time::Duration::try_from(SOURCE_PROOF_RECENT_WINDOW)?);
+    let start =
+        Timestamp::new(now.inner() - time::Duration::try_from(SOURCE_EVIDENCE_RECENT_WINDOW)?);
     let query = EventQuery {
         sources: source_filters,
         time_range: Some(TimeRange::new(Some(start), Some(now))?),

@@ -195,6 +195,8 @@ pub struct ProofMetadata {
     pub subject_refs: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub claim_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assertion_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -300,6 +302,8 @@ pub struct ScenarioMetadata {
     pub subject_refs: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub claim_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assertion_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reproducer: Option<String>,
 }
@@ -317,6 +321,7 @@ impl ScenarioMetadata {
             fixtures: Vec::new(),
             subject_refs: Vec::new(),
             claim_ids: Vec::new(),
+            assertion_ids: Vec::new(),
             reproducer: None,
         }
     }
@@ -364,6 +369,16 @@ impl ScenarioMetadata {
         S: Into<String>,
     {
         self.claim_ids = claim_ids.into_iter().map(Into::into).collect();
+        self
+    }
+
+    #[must_use]
+    pub fn with_assertion_ids<I, S>(mut self, assertion_ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.assertion_ids = assertion_ids.into_iter().map(Into::into).collect();
         self
     }
 
@@ -792,6 +807,12 @@ pub fn render_human_summary(bundle: &EvidenceBundle) -> String {
         if !proof.claim_ids.is_empty() {
             lines.push(format!("  - claims: {}", proof.claim_ids.join(", ")));
         }
+        if !proof.assertion_ids.is_empty() {
+            lines.push(format!(
+                "  - assertions: {}",
+                proof.assertion_ids.join(", ")
+            ));
+        }
     }
 
     if let Some(scenario) = &bundle.evidence.scenario {
@@ -805,6 +826,15 @@ pub fn render_human_summary(bundle: &EvidenceBundle) -> String {
         }
         if !scenario.fixtures.is_empty() {
             lines.push(format!("  - fixtures: {}", scenario.fixtures.join(", ")));
+        }
+        if !scenario.claim_ids.is_empty() {
+            lines.push(format!("  - claims: {}", scenario.claim_ids.join(", ")));
+        }
+        if !scenario.assertion_ids.is_empty() {
+            lines.push(format!(
+                "  - assertions: {}",
+                scenario.assertion_ids.join(", ")
+            ));
         }
     }
 
@@ -856,6 +886,7 @@ mod tests {
             runner_id: Some("runner:test".to_string()),
             subject_refs: vec!["subject:node/terminal".to_string()],
             claim_ids: vec!["claim:material-provenance".to_string()],
+            assertion_ids: vec!["stable-anchors".to_string()],
             status: Some("failed".to_string()),
             reproducer: Some("xtask test -p xtask".to_string()),
             environment: json!({"profile": "fast"}),
@@ -871,6 +902,7 @@ mod tests {
             .with_fixtures(["postgres", "nats"])
             .with_subject_refs(["subject:node/terminal"])
             .with_claim_ids(["claim:material-provenance"])
+            .with_assertion_ids(["stable-anchors"])
             .with_reproducer("xtask test -p xtask -E 'test(name)'"),
         );
 
@@ -896,6 +928,7 @@ mod tests {
             rendered["proof"]["claim_ids"][0],
             "claim:material-provenance"
         );
+        assert_eq!(rendered["proof"]["assertion_ids"][0], "stable-anchors");
         assert_eq!(rendered["scenario"]["id"], "source-material.example");
         assert_eq!(rendered["scenario"]["category"], "source_material");
         assert_eq!(rendered["scenario"]["cost_tier"], "integration");

@@ -206,6 +206,8 @@ pub struct EvidenceEnvelope {
     pub runner_id: String,
     pub subject_refs: Vec<String>,
     pub claim_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assertion_ids: Vec<String>,
     pub status: String,
     pub reproducer: Option<String>,
     #[serde(default, skip_serializing_if = "JsonValue::is_null")]
@@ -227,6 +229,7 @@ impl EvidenceEnvelope {
             runner_id: runner_id.into(),
             subject_refs,
             claim_ids,
+            assertion_ids: Vec::new(),
             status: status.into(),
             reproducer: None,
             environment: JsonValue::Null,
@@ -472,10 +475,10 @@ inventory::submit! {
 
 inventory::submit! {
     Claim {
-        id: "claim:scenario.evidence_envelope",
+        id: "claim:scenario.metadata_surface",
         kind: ProofClaimKind::Scenario,
         subject: SubjectQuery::from_static("scenario:*"),
-        statement: "proof-carrying scenarios emit subject refs, claim ids, runner id, reproducer, and artifact references",
+        statement: "scenario tests declare discoverable subject refs, catalog claim ids, assertion ids, runner id, and reproducer metadata; persisted evidence may attach that metadata when an evidence bundle is written",
     }
 }
 
@@ -520,7 +523,7 @@ inventory::submit! {
         id: "runner:rust.nextest.scenario",
         runner: "cargo-nextest",
         subject: SubjectQuery::from_static("scenario:*"),
-        claims: &["claim:scenario.evidence_envelope"],
+        claims: &["claim:scenario.metadata_surface"],
         command: "xtask test --scenario-tag <tag>",
     }
 }
@@ -578,18 +581,18 @@ inventory::submit! {
         subject: SubjectQuery::from_static("runtime_unit:*"),
         claim_id: "claim:source_material.material_provenance",
         runner_binding_id: "runner:rust.sdk.source_laws",
-        reason: "source units are the material-provenance boundary for replay and audit",
+        reason: "runtime units are the material-provenance boundary currently backed by source-material law scenarios",
     }
 }
 
 inventory::submit! {
     ProofObligation {
         id: "obligation:source_unit.material_provenance",
-        level: ProofObligationLevel::Required,
+        level: ProofObligationLevel::Advisory,
         subject: SubjectQuery::from_static("source_unit:*"),
         claim_id: "claim:source_material.material_provenance",
         runner_binding_id: "runner:rust.sdk.source_laws",
-        reason: "source units are the semantic leaves that must carry replayable material provenance",
+        reason: "source units are the semantic leaves that must carry replayable material provenance; current runner proves runtime-unit material laws, so this remains advisory until source-unit-specific pass evidence exists",
     }
 }
 
@@ -617,12 +620,12 @@ inventory::submit! {
 
 inventory::submit! {
     ProofObligation {
-        id: "obligation:scenario.evidence_envelope",
+        id: "obligation:scenario.metadata_surface",
         level: ProofObligationLevel::Required,
         subject: SubjectQuery::from_static("scenario:*"),
-        claim_id: "claim:scenario.evidence_envelope",
+        claim_id: "claim:scenario.metadata_surface",
         runner_binding_id: "runner:rust.nextest.scenario",
-        reason: "scenario failures must carry enough context to avoid host forensics",
+        reason: "scenario metadata must be discoverable and attach to persisted failure evidence without implying successful proof artifacts exist yet",
     }
 }
 

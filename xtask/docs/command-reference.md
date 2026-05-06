@@ -1405,7 +1405,6 @@ Generate and verify repo documentation surfaces
 | `sync` | Refresh all generated repo surfaces tracked in the repo |
 | `check` | Verify that all generated repo surfaces are up to date |
 | `snapshot` | Generate a codebase snapshot for AI context (via repomix) |
-| `issue-drift` | Detect drift between GitHub issue bodies and the live workspace |
 
 ### `xtask docs build`
 
@@ -1538,20 +1537,6 @@ Generate a codebase snapshot for AI context (via repomix)
 | `--context` | no | no | U3: Inject structured xtask state (recent checks, diagnostics, jobs) into the snapshot |
 | `--project-memory` | no | no | U4: Include CLAUDE.md and .agent/includes/ (project memory) in the snapshot |
 | `--scope` | yes | no | U5: Scope to a crate or directory group (e.g., sinex-db, core, nodes, tests) |
-
-
-### `xtask docs issue-drift`
-
-Detect drift between GitHub issue bodies and the live workspace
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--limit` | yes | no | Maximum number of issues to fetch (default: 500) |
-| `--issue` | yes | no | Only report findings for the specified issue number |
-| `--duplicate-threshold` | yes | no | Minimum shingle-similarity ratio (0.0–1.0) for duplicate detection |
-| `--no-duplicates` | no | no | Skip duplicate detection (faster when corpus is large) |
 
 
 ## `xtask source-units`
