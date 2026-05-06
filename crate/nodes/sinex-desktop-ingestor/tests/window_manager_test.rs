@@ -14,9 +14,13 @@ use sinex_desktop_ingestor::{DesktopMonitorHealth, DesktopNode, DesktopState, Wi
 use sinex_node_sdk::IngestorNode;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
-    HyprlandMonitorFocusedPayload, HyprlandStateCapturedPayload, HyprlandWindowClosedPayload,
-    HyprlandWindowFocusedPayload, HyprlandWindowMovedPayload, HyprlandWindowOpenedPayload,
-    HyprlandWindowTitleChangedPayload, HyprlandWorkspaceSwitchedPayload, WindowGeometry,
+    HyprlandLayerClosedPayload, HyprlandLayerOpenedPayload, HyprlandMonitorFocusedPayload,
+    HyprlandScreencastPayload, HyprlandStateCapturedPayload, HyprlandSubmapChangedPayload,
+    HyprlandWindowClosedPayload, HyprlandWindowFloatingChangedPayload,
+    HyprlandWindowFocusedPayload, HyprlandWindowFullscreenChangedPayload,
+    HyprlandWindowMinimizePayload, HyprlandWindowMovedPayload, HyprlandWindowOpenedPayload,
+    HyprlandWindowTitleChangedPayload, HyprlandWindowUrgentPayload,
+    HyprlandWorkspaceSwitchedPayload, WindowGeometry,
 };
 use xtask::sandbox::prelude::*;
 
@@ -321,6 +325,164 @@ async fn window_title_changed_payload_event_source_and_type() -> TestResult<()> 
 
     assert_eq!(payload.event_source().as_ref(), "wm.hyprland");
     assert_eq!(payload.event_type().as_ref(), "window.title_changed");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Additional Hyprland IPC payloads: serde and trait
+// ---------------------------------------------------------------------------
+
+#[sinex_test]
+async fn layer_opened_payload_serde_roundtrip() -> TestResult<()> {
+    let original = HyprlandLayerOpenedPayload {
+        namespace: "launcher".to_string(),
+    };
+
+    let json = serde_json::to_string(&original)?;
+    let deserialized: HyprlandLayerOpenedPayload = serde_json::from_str(&json)?;
+
+    assert_eq!(deserialized.namespace, "launcher");
+    assert_eq!(deserialized.event_source().as_ref(), "wm.hyprland");
+    assert_eq!(deserialized.event_type().as_ref(), "layer.opened");
+    Ok(())
+}
+
+#[sinex_test]
+async fn layer_closed_payload_serde_roundtrip() -> TestResult<()> {
+    let original = HyprlandLayerClosedPayload {
+        namespace: "notifications".to_string(),
+    };
+
+    let json = serde_json::to_string(&original)?;
+    let deserialized: HyprlandLayerClosedPayload = serde_json::from_str(&json)?;
+
+    assert_eq!(deserialized.namespace, "notifications");
+    assert_eq!(deserialized.event_source().as_ref(), "wm.hyprland");
+    assert_eq!(deserialized.event_type().as_ref(), "layer.closed");
+    Ok(())
+}
+
+#[sinex_test]
+async fn submap_changed_payload_serde_roundtrip() -> TestResult<()> {
+    let original = HyprlandSubmapChangedPayload {
+        submap: "resize".to_string(),
+    };
+
+    let json = serde_json::to_string(&original)?;
+    let deserialized: HyprlandSubmapChangedPayload = serde_json::from_str(&json)?;
+
+    assert_eq!(deserialized.submap, "resize");
+    assert_eq!(deserialized.event_source().as_ref(), "wm.hyprland");
+    assert_eq!(deserialized.event_type().as_ref(), "submap.changed");
+    Ok(())
+}
+
+#[sinex_test]
+async fn window_urgent_payload_serde_roundtrip() -> TestResult<()> {
+    let original = HyprlandWindowUrgentPayload {
+        window_id: "0xabc".to_string(),
+        window_class: Some("kitty".to_string()),
+        window_title: Some("build failed".to_string()),
+        workspace_id: Some(3),
+    };
+
+    let json = serde_json::to_string(&original)?;
+    let deserialized: HyprlandWindowUrgentPayload = serde_json::from_str(&json)?;
+
+    assert_eq!(deserialized.window_id, "0xabc");
+    assert_eq!(deserialized.window_class.as_deref(), Some("kitty"));
+    assert_eq!(deserialized.window_title.as_deref(), Some("build failed"));
+    assert_eq!(deserialized.workspace_id, Some(3));
+    assert_eq!(deserialized.event_source().as_ref(), "wm.hyprland");
+    assert_eq!(deserialized.event_type().as_ref(), "window.urgent");
+    Ok(())
+}
+
+#[sinex_test]
+async fn window_fullscreen_changed_payload_serde_roundtrip() -> TestResult<()> {
+    let original = HyprlandWindowFullscreenChangedPayload {
+        state: 2,
+        fullscreen: true,
+        window_id: Some("0xabc".to_string()),
+    };
+
+    let json = serde_json::to_string(&original)?;
+    let deserialized: HyprlandWindowFullscreenChangedPayload = serde_json::from_str(&json)?;
+
+    assert_eq!(deserialized.state, 2);
+    assert!(deserialized.fullscreen);
+    assert_eq!(deserialized.window_id.as_deref(), Some("0xabc"));
+    assert_eq!(deserialized.event_source().as_ref(), "wm.hyprland");
+    assert_eq!(
+        deserialized.event_type().as_ref(),
+        "window.fullscreen_changed"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn window_floating_changed_payload_serde_roundtrip() -> TestResult<()> {
+    let original = HyprlandWindowFloatingChangedPayload {
+        window_id: "0xabc".to_string(),
+        floating: true,
+        window_class: Some("kitty".to_string()),
+        window_title: Some("shell".to_string()),
+        workspace_id: Some(3),
+    };
+
+    let json = serde_json::to_string(&original)?;
+    let deserialized: HyprlandWindowFloatingChangedPayload = serde_json::from_str(&json)?;
+
+    assert_eq!(deserialized.window_id, "0xabc");
+    assert!(deserialized.floating);
+    assert_eq!(deserialized.window_class.as_deref(), Some("kitty"));
+    assert_eq!(deserialized.window_title.as_deref(), Some("shell"));
+    assert_eq!(deserialized.workspace_id, Some(3));
+    assert_eq!(deserialized.event_source().as_ref(), "wm.hyprland");
+    assert_eq!(
+        deserialized.event_type().as_ref(),
+        "window.floating_changed"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn window_minimize_payload_serde_roundtrip() -> TestResult<()> {
+    let original = HyprlandWindowMinimizePayload {
+        window_id: "0xabc".to_string(),
+        minimized: true,
+        window_class: Some("kitty".to_string()),
+        window_title: None,
+        workspace_id: Some(3),
+    };
+
+    let json = serde_json::to_string(&original)?;
+    let deserialized: HyprlandWindowMinimizePayload = serde_json::from_str(&json)?;
+
+    assert_eq!(deserialized.window_id, "0xabc");
+    assert!(deserialized.minimized);
+    assert_eq!(deserialized.window_class.as_deref(), Some("kitty"));
+    assert!(deserialized.window_title.is_none());
+    assert_eq!(deserialized.workspace_id, Some(3));
+    assert_eq!(deserialized.event_source().as_ref(), "wm.hyprland");
+    assert_eq!(deserialized.event_type().as_ref(), "window.minimize");
+    Ok(())
+}
+
+#[sinex_test]
+async fn screencast_payload_serde_roundtrip() -> TestResult<()> {
+    let original = HyprlandScreencastPayload {
+        active: true,
+        owner: Some("portal".to_string()),
+    };
+
+    let json = serde_json::to_string(&original)?;
+    let deserialized: HyprlandScreencastPayload = serde_json::from_str(&json)?;
+
+    assert!(deserialized.active);
+    assert_eq!(deserialized.owner.as_deref(), Some("portal"));
+    assert_eq!(deserialized.event_source().as_ref(), "wm.hyprland");
+    assert_eq!(deserialized.event_type().as_ref(), "screencast");
     Ok(())
 }
 

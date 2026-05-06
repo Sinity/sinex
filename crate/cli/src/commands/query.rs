@@ -84,7 +84,6 @@ pub struct QueryCommand {
     /// Resume an event query from a JSON-encoded pagination cursor
     #[arg(long, value_name = "JSON")]
     cursor_json: Option<String>,
-
 }
 
 impl QueryCommand {
@@ -404,13 +403,11 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
 
     let selected_sources = prompt::optional_text(
         "Sources (comma-separated, optional)",
-        Some(
-            "Examples: shell.atuin, wm.hyprland, journald. Leave empty to search all sources.",
-        ),
+        Some("Examples: shell.atuin, wm.hyprland, journald. Leave empty to search all sources."),
     )?
-        .map(|input| parse_event_sources(&input))
-        .transpose()?
-        .unwrap_or_default();
+    .map(|input| parse_event_sources(&input))
+    .transpose()?
+    .unwrap_or_default();
 
     let selected_types = prompt::optional_text(
         "Event types (comma-separated, optional)",
@@ -547,7 +544,6 @@ fn parse_preset_time(preset: &str) -> Result<Timestamp> {
 /// Supports:
 /// - Relative: "1h", "2d", "30m", "1w"
 /// - Absolute: "2025-01-15", "2025-01-15T10:00:00Z"
-#[allow(clippy::expect_used)]
 fn parse_time(s: &str) -> Result<Timestamp> {
     parse_time_input(s)
 }
@@ -607,6 +603,9 @@ fn truncate_string(s: &str, max_len: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    // Test fixtures use proptest fallible assertions and intentionally unwrap
+    // values generated inside the same test case.
+    #![allow(clippy::unwrap_used)]
     use super::*;
     use proptest::prelude::*;
     use sinex_primitives::temporal::Duration;

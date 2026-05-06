@@ -24,7 +24,6 @@
 //!
 //! For **DB tests**: Use `ctx.pipeline().publish()` or `ctx.pipeline().publish_with_timestamp()`.
 
-
 /// Create a minimal event stub for testing when source/type don't matter.
 ///
 /// Uses `"test"` as source and `"test.stub"` as event type.
@@ -109,7 +108,10 @@ pub mod strategies {
     //! Property testing strategies for domain types.
 
     use crate::domain::{CommandText, HostName, RecordedPath, SanitizedPath, ShellName};
-    use crate::events::payloads::{FileCreatedPayload, HyprlandWindowFocusedPayload, KittyCommandExecutedPayload};
+    use crate::events::payloads::{
+        FileCreatedPayload, HyprlandWindowFocusedPayload, KittyCommandExecutedPayload,
+    };
+    use crate::testing::event_fixture;
     use crate::units::{ExitCode, Nanoseconds};
     use crate::{EventSource, EventType, Timestamp, Uuid};
     use proptest::prelude::*;
@@ -275,8 +277,8 @@ pub mod strategies {
         file_created_payload().prop_map(|payload| {
             let json = serde_json::to_value(&payload).expect("serialization should not fail");
             event_fixture(
-                crate::EventSource::from_static(<FileCreatedPayload as crate::events::EventPayload>::SOURCE),
-                crate::EventType::from_static(<FileCreatedPayload as crate::events::EventPayload>::EVENT_TYPE),
+                <FileCreatedPayload as crate::events::EventPayload>::SOURCE,
+                <FileCreatedPayload as crate::events::EventPayload>::EVENT_TYPE,
                 json,
             )
         })
@@ -289,8 +291,8 @@ pub mod strategies {
         kitty_command_executed_payload().prop_map(|payload| {
             let json = serde_json::to_value(&payload).expect("serialization should not fail");
             event_fixture(
-                crate::EventSource::from_static(<KittyCommandExecutedPayload as crate::events::EventPayload>::SOURCE),
-                crate::EventType::from_static(<KittyCommandExecutedPayload as crate::events::EventPayload>::EVENT_TYPE),
+                <KittyCommandExecutedPayload as crate::events::EventPayload>::SOURCE,
+                <KittyCommandExecutedPayload as crate::events::EventPayload>::EVENT_TYPE,
                 json,
             )
         })
@@ -303,8 +305,8 @@ pub mod strategies {
         window_focused_payload().prop_map(|payload| {
             let json = serde_json::to_value(&payload).expect("serialization should not fail");
             event_fixture(
-                crate::EventSource::from_static(<HyprlandWindowFocusedPayload as crate::events::EventPayload>::SOURCE),
-                crate::EventType::from_static(<HyprlandWindowFocusedPayload as crate::events::EventPayload>::EVENT_TYPE),
+                <HyprlandWindowFocusedPayload as crate::events::EventPayload>::SOURCE,
+                <HyprlandWindowFocusedPayload as crate::events::EventPayload>::EVENT_TYPE,
                 json,
             )
         })

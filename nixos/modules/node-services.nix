@@ -6,6 +6,7 @@ let
   systemdHardening = import ./lib/systemd-hardening.nix { inherit lib; };
   databaseRuntime = import ./lib/database-runtime.nix { inherit lib pkgs; };
   secretResolution = import ./lib/secret-resolution.nix { inherit lib; };
+  automataLib = import ./lib/automata.nix { inherit lib; };
   inherit (systemdHardening) mkHelperServiceConfig;
   inherit (databaseRuntime)
     mkDatabasePasswordExec
@@ -1634,153 +1635,22 @@ let
 
   automataServices =
     if !(nodesEnabled && nodesCfg.automata.enable) then { } else
-    let
-      canon = nodesCfg.automata.canonicalizer;
-      health = nodesCfg.automata.healthAggregator;
-      analytics = nodesCfg.automata.analyticsAutomaton;
-      session = nodesCfg.automata.sessionDetector;
-      hourly = nodesCfg.automata.hourlySummarizer;
-      daily = nodesCfg.automata.dailySummarizer;
-      canonicalizerUnit =
-        if !canon.enable then { } else {
-          "sinex-canonicalizer" = mkAutomataUnit {
-            automaton = "canonicalizer";
-            binary = "terminal-command-canonicalizer";
-            description = "Sinex canonical command synthesizer";
-            profile = canon.profile;
-            env = canon.env;
-            extraArgs = [ ];
-          };
-        };
-      healthUnit =
-        if !health.enable then { } else {
-          "sinex-health-automaton" = mkAutomataUnit {
-            automaton = "health";
-            binary = "health-automaton";
-            description = "Sinex health automaton";
-            profile = health.profile;
-            env = health.env;
-            extraArgs = [ ];
-          };
-        };
-      analyticsUnit =
-        if !analytics.enable then { } else {
-          "sinex-analytics-automaton" = mkAutomataUnit {
-            automaton = "analytics";
-            binary = "analytics-automaton";
-            description = "Sinex analytics automaton";
-            profile = analytics.profile;
-            env = analytics.env;
-            extraArgs = [ ];
-          };
-        };
-      sessionUnit =
-        if !session.enable then { } else {
-          "sinex-session-detector" = mkAutomataUnit {
-            automaton = "session";
-            binary = "session-detector";
-            description = "Sinex session detector";
-            profile = session.profile;
-            env = session.env;
-            extraArgs = [ ];
-          };
-        };
-      hourlyUnit =
-        if !hourly.enable then { } else {
-          "sinex-hourly-summarizer" = mkAutomataUnit {
-            automaton = "hourly";
-            binary = "hourly-summarizer";
-            description = "Sinex hourly activity summarizer";
-            profile = hourly.profile;
-            env = hourly.env;
-            extraArgs = [ ];
-          };
-        };
-      dailyUnit =
-        if !daily.enable then { } else {
-          "sinex-daily-summarizer" = mkAutomataUnit {
-            automaton = "daily";
-            binary = "daily-summarizer";
-            description = "Sinex daily activity summarizer";
-            profile = daily.profile;
-            env = daily.env;
-            extraArgs = [ ];
-          };
-        };
-      docParser = nodesCfg.automata.documentParser;
-      documentParserUnit =
-        if !docParser.enable then { } else {
-          "sinex-document-parser" = mkAutomataUnit {
-            automaton = "document-parser";
-            binary = "document-parser";
-            description = "Sinex document parser automaton";
-            profile = docParser.profile;
-            env = docParser.env;
-            extraArgs = [ ];
-          };
-        };
-      tagApplier = nodesCfg.automata.tagApplier;
-      tagApplierUnit =
-        if !tagApplier.enable then { } else {
-          "sinex-tag-applier" = mkAutomataUnit {
-            automaton = "tag-applier";
-            binary = "tag-applier";
-            description = "Sinex rule-based tag applier automaton";
-            profile = tagApplier.profile;
-            env = tagApplier.env;
-            extraArgs = [ ];
-          };
-        };
-      entityExtractor = nodesCfg.automata.entityExtractor;
-      entityExtractorUnit =
-        if !entityExtractor.enable then { } else {
-          "sinex-entity-extractor" = mkAutomataUnit {
-            automaton = "entity-extractor";
-            binary = "entity-extractor";
-            description = "Sinex entity extractor automaton";
-            profile = entityExtractor.profile;
-            env = entityExtractor.env;
-            extraArgs = [ ];
-          };
-        };
-      entityResolver = nodesCfg.automata.entityResolver;
-      entityResolverUnit =
-        if !entityResolver.enable then { } else {
-          "sinex-entity-resolver" = mkAutomataUnit {
-            automaton = "entity-resolver";
-            binary = "entity-resolver";
-            description = "Sinex entity resolver automaton";
-            profile = entityResolver.profile;
-            env = entityResolver.env;
-            extraArgs = [ ];
-          };
-        };
-      relationExtractor = nodesCfg.automata.relationExtractor;
-      relationExtractorUnit =
-        if !relationExtractor.enable then { } else {
-          "sinex-relation-extractor" = mkAutomataUnit {
-            automaton = "relation-extractor";
-            binary = "relation-extractor";
-            description = "Sinex relation extractor automaton";
-            profile = relationExtractor.profile;
-            env = relationExtractor.env;
-            extraArgs = [ ];
-          };
-        };
-      entityEnricher = nodesCfg.automata.entityEnricher;
-      entityEnricherUnit =
-        if !entityEnricher.enable then { } else {
-          "sinex-entity-enricher" = mkAutomataUnit {
-            automaton = "entity-enricher";
-            binary = "entity-enricher";
-            description = "Sinex entity enricher automaton";
-            profile = entityEnricher.profile;
-            env = entityEnricher.env;
-            extraArgs = [ ];
-          };
-        };
-    in
-    canonicalizerUnit // healthUnit // analyticsUnit // sessionUnit // hourlyUnit // dailyUnit // documentParserUnit // tagApplierUnit // entityExtractorUnit // entityResolverUnit // relationExtractorUnit // entityEnricherUnit;
+    concatMapAttrs
+      (
+        _: spec:
+          let
+            automatonCfg = nodesCfg.automata.${spec.optionName};
+          in
+          optionalAttrs automatonCfg.enable {
+            "${spec.serviceName}" = mkAutomataUnit {
+              inherit (spec) automaton binary description;
+              profile = automatonCfg.profile;
+              env = automatonCfg.env;
+              extraArgs = [ ];
+            };
+          }
+      )
+      (listToAttrs (map (spec: nameValuePair spec.serviceName spec) automataLib.specs));
 
   nodeservices =
     if !nodesEnabled then { units = { }; supportUnits = { }; } else

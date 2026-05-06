@@ -296,7 +296,8 @@ impl Config {
         env_option_override("SINEX_RPC_CLIENT_CERT", &mut self.client_cert);
         env_option_override("SINEX_RPC_CLIENT_KEY", &mut self.client_key);
         self.insecure = shared_env::bool_or("SINEX_RPC_INSECURE", self.insecure, "sinexctl config");
-        self.timeout = shared_env::parse_or("SINEX_RPC_TIMEOUT_SECS", self.timeout, "sinexctl config");
+        self.timeout =
+            shared_env::parse_or("SINEX_RPC_TIMEOUT_SECS", self.timeout, "sinexctl config");
         self.timeout = shared_env::parse_or("SINEX_TIMEOUT", self.timeout, "sinexctl config");
     }
 
@@ -353,6 +354,9 @@ fn env_option_override(key: &str, target: &mut Option<String>) {
 
 #[cfg(test)]
 mod tests {
+    // These tests assert that rendered TOML remains parseable; failures are
+    // test fixture failures rather than operator-path behavior.
+    #![allow(clippy::expect_used)]
     use super::*;
 
     #[test]

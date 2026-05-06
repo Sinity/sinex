@@ -535,10 +535,31 @@
     },
     {
       "source": "wm.hyprland",
+      "event_type": "layer.closed",
+      "version": "1.0.0",
+      "path": "wm.hyprland/layer.closed.json",
+      "content_hash": "2b8ad8a27678eeaaf63f843fd393e1c92b75fbaa6ac30e4f1e2d1b842f9907db"
+    },
+    {
+      "source": "wm.hyprland",
+      "event_type": "layer.opened",
+      "version": "1.0.0",
+      "path": "wm.hyprland/layer.opened.json",
+      "content_hash": "2ae040527df70901fb6e88d77c4ff6df54eaa63a12eac38e387c0c830675c186"
+    },
+    {
+      "source": "wm.hyprland",
       "event_type": "monitor.focused",
       "version": "1.0.0",
       "path": "wm.hyprland/monitor.focused.json",
       "content_hash": "ac5760bff144ffea0b6ce791519702159094cab3aeed6135265a80eb6eb4a7ad"
+    },
+    {
+      "source": "wm.hyprland",
+      "event_type": "screencast",
+      "version": "1.0.0",
+      "path": "wm.hyprland/screencast.json",
+      "content_hash": "0072e9b4c18317917213b9869c55371750f1db5e242899ccf1b46842cfae98aa"
     },
     {
       "source": "wm.hyprland",
@@ -549,6 +570,13 @@
     },
     {
       "source": "wm.hyprland",
+      "event_type": "submap.changed",
+      "version": "1.0.0",
+      "path": "wm.hyprland/submap.changed.json",
+      "content_hash": "be4c39d397883f12534cab5b960863d02b95f9884d11761429fdd81c96560364"
+    },
+    {
+      "source": "wm.hyprland",
       "event_type": "window.closed",
       "version": "1.0.0",
       "path": "wm.hyprland/window.closed.json",
@@ -556,10 +584,31 @@
     },
     {
       "source": "wm.hyprland",
+      "event_type": "window.floating_changed",
+      "version": "1.0.0",
+      "path": "wm.hyprland/window.floating_changed.json",
+      "content_hash": "47b3ce287579ce044078e3a6e66d44a9e8ce0d429a5cf58eebc5abe532c246ca"
+    },
+    {
+      "source": "wm.hyprland",
       "event_type": "window.focused",
       "version": "1.0.0",
       "path": "wm.hyprland/window.focused.json",
       "content_hash": "9b25705fd82a5f515a1e63b56424a00416b9e8615ead6f163ab4e21f5a9f43a8"
+    },
+    {
+      "source": "wm.hyprland",
+      "event_type": "window.fullscreen_changed",
+      "version": "1.0.0",
+      "path": "wm.hyprland/window.fullscreen_changed.json",
+      "content_hash": "44f1e35d7d13ae56cbd38d4c852d7f2e8efce2c8964d93b4de523dd430132a46"
+    },
+    {
+      "source": "wm.hyprland",
+      "event_type": "window.minimize",
+      "version": "1.0.0",
+      "path": "wm.hyprland/window.minimize.json",
+      "content_hash": "6bf8854a844e94679e35e06d5862a7faf02f586c70df33e9c7a7374ae231047f"
     },
     {
       "source": "wm.hyprland",
@@ -581,6 +630,13 @@
       "version": "1.0.0",
       "path": "wm.hyprland/window.title_changed.json",
       "content_hash": "cf74bf0dfa9be39a338fb50e2001719bad38c6ccd55a5a8b30857fb07ae28a6a"
+    },
+    {
+      "source": "wm.hyprland",
+      "event_type": "window.urgent",
+      "version": "1.0.0",
+      "path": "wm.hyprland/window.urgent.json",
+      "content_hash": "54f9822c0afa85486a1741700924f424a1c21e1540bff2e113d6592958166daa"
     },
     {
       "source": "wm.hyprland",

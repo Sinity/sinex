@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "window_class": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "window_id": {
+      "type": "string"
+    },
+    "window_title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "workspace_id": {
+      "format": "int32",
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "window_id"
+  ],
+  "title": "HyprlandWindowUrgentPayload",
+  "type": "object",
+  "x-sinex-event-type": "window.urgent",
+  "x-sinex-source": "wm.hyprland",
+  "x-sinex-version": "1.0.0"
+}

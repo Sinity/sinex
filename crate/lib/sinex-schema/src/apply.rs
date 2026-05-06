@@ -1,10 +1,10 @@
 use crate::schema::{
-    ArchivedEventAnnotations, ArchivedEventEmbeddings, ArchivedEvents, ArchivedTaggedItems, BinarySchemaVersion, Blobs,
-    DocumentChunks, Documents, EmbeddingCache, EmbeddingModels, Entities, EntityRelations,
-    EventAnnotations, EventClusterMembers, EventClusters, EventEmbeddings, EventPayloadSchemas,
-    EventReplacements, EventTombstones, Events, GitopsSchemaSources, NodeManifests, NodeRuns,
-    OperationsLog, SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger,
-    ValidationCache,
+    ArchivedEventAnnotations, ArchivedEventEmbeddings, ArchivedEvents, ArchivedTaggedItems,
+    BinarySchemaVersion, Blobs, DocumentChunks, Documents, EmbeddingCache, EmbeddingModels,
+    Entities, EntityRelations, EventAnnotations, EventClusterMembers, EventClusters,
+    EventEmbeddings, EventPayloadSchemas, EventReplacements, EventTombstones, Events,
+    GitopsSchemaSources, NodeManifests, NodeRuns, OperationsLog, SourceMaterialLinks,
+    SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger, ValidationCache,
 };
 use crate::schema_registry;
 use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement};
@@ -45,10 +45,7 @@ const TEMPORAL_LEDGER_REQUIRED_INDEXES: &[&str] = &[
     "ix_tl_material_offsets",
     "ix_tl_ts_and_source_type",
 ];
-const TELEMETRY_VIEW_RELATIONS: &[&str] = &[
-    "current_health",
-    "recent_activity_summary",
-];
+const TELEMETRY_VIEW_RELATIONS: &[&str] = &["current_health", "recent_activity_summary"];
 const TELEMETRY_MATERIALIZED_VIEW_RELATIONS: &[&str] = &["current_device_state"];
 const TELEMETRY_CONTINUOUS_AGGREGATES: &[&str] = &[
     "gateway_stats_1h",
@@ -506,6 +503,7 @@ async fn create_triggers_and_functions(pool: &PgPool) -> Result<(), ApplyError> 
     execute_sql(pool, TOMBSTONE_LIFECYCLE_SQL).await?;
     execute_sql(pool, JSONB_MERGE_SQL).await?;
     execute_sql(pool, EMBEDDING_INDEX_MANAGEMENT_SQL).await?;
+    execute_sql(pool, HYBRID_SEARCH_SQL).await?;
 
     Ok(())
 }
@@ -1279,6 +1277,114 @@ BEGIN
         PERFORM core.create_embedding_model_index(r.id, r.dimensions);
     END LOOP;
 END $$;
+";
+
+const HYBRID_SEARCH_SQL: &str = r"
+CREATE OR REPLACE FUNCTION core.hybrid_search(
+    p_query_text    TEXT,
+    p_query_vector  vector,
+    p_model_id      UUID,
+    p_limit         INT DEFAULT 20,
+    p_ef_search     INT DEFAULT 100,
+    p_rrf_k         FLOAT8 DEFAULT 60.0,
+    p_vector_weight FLOAT8 DEFAULT 0.7,
+    p_text_weight   FLOAT8 DEFAULT 0.3
+) RETURNS TABLE (
+    event_id        UUID,
+    rrf_score       FLOAT8,
+    vector_rank     INT,
+    text_rank       INT,
+    cosine_distance FLOAT8,
+    text_similarity FLOAT8
+) LANGUAGE plpgsql AS $$
+DECLARE
+    v_fetch_limit INT;
+BEGIN
+    IF p_limit <= 0 THEN
+        RAISE EXCEPTION 'p_limit must be positive';
+    END IF;
+    IF p_ef_search <= 0 THEN
+        RAISE EXCEPTION 'p_ef_search must be positive';
+    END IF;
+    IF p_rrf_k <= 0 THEN
+        RAISE EXCEPTION 'p_rrf_k must be positive';
+    END IF;
+
+    v_fetch_limit := p_limit * 5;
+    PERFORM set_config('hnsw.ef_search', p_ef_search::text, true);
+
+    RETURN QUERY
+    WITH vector_results AS (
+        SELECT
+            ee.event_id,
+            (ee.embedding <=> p_query_vector)::FLOAT8 AS cosine_dist,
+            ROW_NUMBER() OVER (ORDER BY ee.embedding <=> p_query_vector)::INT AS vrank
+        FROM core.event_embeddings ee
+        WHERE ee.embedding_model_id = p_model_id
+        ORDER BY ee.embedding <=> p_query_vector
+        LIMIT v_fetch_limit
+    ),
+    text_results AS (
+        SELECT
+            e.id AS event_id,
+            GREATEST(
+                CASE
+                    WHEN p_query_text = '' THEN 0.0::FLOAT8
+                    ELSE word_similarity(p_query_text, e.payload::text)::FLOAT8
+                END,
+                CASE
+                    WHEN p_query_text = '' THEN 0.0::FLOAT8
+                    ELSE ts_rank_cd(
+                        to_tsvector('simple', e.payload::text),
+                        websearch_to_tsquery('simple', p_query_text)
+                    )::FLOAT8
+                END
+            ) AS text_sim,
+            ROW_NUMBER() OVER (ORDER BY GREATEST(
+                CASE
+                    WHEN p_query_text = '' THEN 0.0::FLOAT8
+                    ELSE word_similarity(p_query_text, e.payload::text)::FLOAT8
+                END,
+                CASE
+                    WHEN p_query_text = '' THEN 0.0::FLOAT8
+                    ELSE ts_rank_cd(
+                        to_tsvector('simple', e.payload::text),
+                        websearch_to_tsquery('simple', p_query_text)
+                    )::FLOAT8
+                END
+            ) DESC, e.id ASC)::INT AS trank
+        FROM core.events e
+        WHERE e.id IN (SELECT vr.event_id FROM vector_results vr)
+           OR (
+               p_query_text <> ''
+               AND to_tsvector('simple', e.payload::text) @@ websearch_to_tsquery('simple', p_query_text)
+           )
+        LIMIT v_fetch_limit
+    ),
+    fused AS (
+        SELECT
+            COALESCE(vr.event_id, tr.event_id) AS event_id,
+            (p_vector_weight / (p_rrf_k + COALESCE(vr.vrank, v_fetch_limit + 1)))
+          + (p_text_weight  / (p_rrf_k + COALESCE(tr.trank, v_fetch_limit + 1))) AS rrf_score,
+            COALESCE(vr.vrank, v_fetch_limit + 1)::INT AS vector_rank,
+            COALESCE(tr.trank, v_fetch_limit + 1)::INT AS text_rank,
+            COALESCE(vr.cosine_dist, 1.0)::FLOAT8 AS cosine_distance,
+            COALESCE(tr.text_sim, 0.0)::FLOAT8 AS text_similarity
+        FROM vector_results vr
+        FULL OUTER JOIN text_results tr ON vr.event_id = tr.event_id
+    )
+    SELECT
+        fused.event_id,
+        fused.rrf_score,
+        fused.vector_rank,
+        fused.text_rank,
+        fused.cosine_distance,
+        fused.text_similarity
+    FROM fused
+    ORDER BY fused.rrf_score DESC, fused.event_id ASC
+    LIMIT p_limit;
+END;
+$$;
 ";
 
 const TELEMETRY_SQL: &str = r"

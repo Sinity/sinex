@@ -3,7 +3,7 @@
 use async_nats::jetstream;
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_ingestd::{JetStreamConsumer, JetStreamTopology, validator::IngestIngestEventValidator};
+use sinex_ingestd::{JetStreamConsumer, JetStreamTopology, validator::IngestEventValidator};
 use sinex_primitives::temporal;
 use std::sync::Arc;
 use std::time::Duration;

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "submap": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "submap"
+  ],
+  "title": "HyprlandSubmapChangedPayload",
+  "type": "object",
+  "x-sinex-event-type": "submap.changed",
+  "x-sinex-source": "wm.hyprland",
+  "x-sinex-version": "1.0.0"
+}

@@ -67,8 +67,34 @@
         };
       };
 
+      # pg_jsonschema is sourced from Supabase's amd64 Linux release artifact,
+      # and the NixOS VM/check surface is Linux-only. Keeping the flake system
+      # set explicit avoids evaluating unsupported Darwin outputs on every
+      # broad flake check.
+      supportedSystems = [ "x86_64-linux" ];
+
+      runtimePackageNames = [
+        "sinex-ingestd"
+        "sinex-gateway"
+        "sinexctl"
+        "sinex-fs-ingestor"
+        "sinex-terminal-ingestor"
+        "sinex-browser-ingestor"
+        "sinex-desktop-ingestor"
+        "sinex-system-ingestor"
+        "sinex-document-ingestor"
+        "sinex-process"
+        "sinex-node-sdk"
+        "xtask"
+      ];
+
+      packageOutputNames = runtimePackageNames ++ [
+        "sinex-vm-test-suite"
+        "sinex"
+      ];
+
       # System-specific outputs
-      systemOutputs = flake-utils.lib.eachDefaultSystem (
+      systemOutputs = flake-utils.lib.eachSystem supportedSystems (
         system:
         let
           # Apply pg_jsonschema overlay
@@ -191,21 +217,6 @@
               }
             );
 
-          runtimePackageNames = [
-            "sinex-ingestd"
-            "sinex-gateway"
-            "sinexctl"
-            "sinex-fs-ingestor"
-            "sinex-terminal-ingestor"
-            "sinex-browser-ingestor"
-            "sinex-desktop-ingestor"
-            "sinex-system-ingestor"
-            "sinex-document-ingestor"
-            "sinex-process"
-            "sinex-node-sdk"
-            "xtask"
-          ];
-
           runtimeCargoExtraArgs = pkgs.lib.concatMapStringsSep " " (pname: "-p ${pname}") runtimePackageNames;
 
           sinexRuntime = craneLib.buildPackage (
@@ -221,45 +232,15 @@
             }
           );
 
-          # All packages built from Cargo.toml names
-          sinexPackages = {
-            # Core services
-            sinex-ingestd = mkPackage "sinex-ingestd";
-            sinex-gateway = mkPackage "sinex-gateway";
-
-            # CLI
-            sinexctl = mkPackage "sinexctl";
-
-            # Ingestors (data capture nodes)
-            sinex-fs-ingestor = mkPackage "sinex-fs-ingestor";
-            sinex-terminal-ingestor = mkPackage "sinex-terminal-ingestor";
-            sinex-browser-ingestor = mkPackage "sinex-browser-ingestor";
-            sinex-desktop-ingestor = mkPackage "sinex-desktop-ingestor";
-            sinex-system-ingestor = mkPackage "sinex-system-ingestor";
-            sinex-document-ingestor = mkPackage "sinex-document-ingestor";
-
-            # Automata process pack (single binary hosting all six derived nodes)
-            sinex-process = mkPackage "sinex-process";
-
-            # Node SDK binaries (sinex-preflight lives here)
-            sinex-node-sdk = mkPackage "sinex-node-sdk";
-
-            # Developer tooling (used by VM concurrency tests)
-            xtask = mkPackage "xtask";
-
-            # NixOS VM test suite (Rust binary replacing Python testScript assertions)
-            sinex-vm-test-suite = mkPackage "sinex-vm-test-suite";
-
-            # Aggregated suite with all runtime binaries. Build this as one
-            # derivation so SQLx's live Postgres validation runs once for the
-            # deployed runtime instead of once per node package.
+          # All packages built from Cargo.toml names. Keep the inventory in
+          # packageOutputNames/runtimePackageNames so Nix outputs, the aggregate
+          # runtime closure, and the overlay cannot drift independently.
+          sinexPackages = pkgs.lib.genAttrs (runtimePackageNames ++ [ "sinex-vm-test-suite" ]) mkPackage // {
             sinex = sinexRuntime;
 
-            # PostgreSQL extension
             pg_jsonschema = pkgs.postgresql18Packages.pg_jsonschema;
 
-            # Default package
-            default = sinexPackages.sinex-ingestd;
+            default = sinexPackages.sinex;
           };
 
           # VM tests
@@ -534,7 +515,8 @@
 
                     export DATABASE_URL="postgresql:///sinex_dev?host=$PGHOST&user=postgres"
 
-                    if ! ${schemaApplyBootstrap}/bin/schema-apply-bootstrap; then
+                    cargo build --quiet -p sinex-schema --bin schema-apply-bootstrap
+                    if ! "$cargo_target_dir/debug/schema-apply-bootstrap"; then
                       ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -m fast stop || true
                       rm -rf "$sqlx_tmp"
                       return 1
@@ -655,11 +637,20 @@
               NATS_SERVER_BIN = "${pkgs.nats-server}/bin/nats-server";
 
               shellHook = ''
-                _sinex_path_append_unique() {
-                  case ":$PATH:" in
-                    *":$1:"*) ;;
-                    *) PATH="''${PATH:+$PATH:}$1" ;;
-                  esac
+                _sinex_path_prepend_unique() {
+                  local entry="$1"
+                  local old_ifs="$IFS"
+                  local part
+                  local rest=""
+
+                  IFS=:
+                  for part in $PATH; do
+                    [ "$part" = "$entry" ] && continue
+                    rest="''${rest:+$rest:}$part"
+                  done
+                  IFS="$old_ifs"
+
+                  PATH="$entry''${rest:+:$rest}"
                 }
                 export SINEX_DEV_ROOT="$PWD"
                 export SINEX_DEV_STATE_DIR="$PWD/${stateDir}"
@@ -671,7 +662,8 @@
                   export CARGO_TARGET_DIR="$SINEX_DEV_CACHE_ROOT/target"
                 fi
                 mkdir -p "$SINEX_DEV_CACHE_ROOT" "$CARGO_TARGET_DIR"
-                _sinex_path_append_unique "$CARGO_TARGET_DIR/debug"
+                _sinex_path_prepend_unique "$CARGO_TARGET_DIR/debug"
+                _sinex_path_prepend_unique "${xtaskCommand}/bin"
                 export PATH
                 export LD_LIBRARY_PATH="${
                   pkgs.lib.makeLibraryPath [ pkgs.dbus ]
@@ -787,202 +779,64 @@
           };
       };
 
-      nixosConfigurations = {
-        workstation = nixpkgs.lib.nixosSystem {
-          system = "x86_64-linux";
-          modules = [
-            (
-              { ... }:
-              {
-                nixpkgs.overlays = [ self.overlays.default ];
-              }
-            )
-            ./nixos/examples/workstation.nix
+      nixosConfigurations =
+        let
+          mkExampleConfig =
+            example: extraModules:
+            nixpkgs.lib.nixosSystem {
+              modules = [
+                (
+                  { ... }:
+                  {
+                    nixpkgs.hostPlatform = "x86_64-linux";
+                    nixpkgs.overlays = [ self.overlays.default ];
+                  }
+                )
+                example
+                (
+                  { lib, ... }:
+                  {
+                    boot.isContainer = true;
+                    boot.loader.grub.enable = false;
+                    fileSystems."/" = {
+                      device = "none";
+                      fsType = "tmpfs";
+                    };
+                    services.sinex.lifecycle.preflight.enable = false;
+                    services.sinex.lifecycle.updates.enable = false;
+                    services.nats.enable = lib.mkForce false;
+                    services.postgresql.enable = lib.mkForce false;
+                    system.stateVersion = "24.05";
+                  }
+                )
+              ] ++ extraModules;
+            };
+        in
+        {
+          workstation = mkExampleConfig ./nixos/examples/workstation.nix [
             (
               { lib, ... }:
               {
-                boot.isContainer = true;
-                boot.loader.grub.enable = false;
-                fileSystems."/" = {
-                  device = "none";
-                  fsType = "tmpfs";
-                };
                 nixpkgs.config.allowUnfree = true;
-                # Disable services that require secrets/real infrastructure for evaluation
-                services.sinex.lifecycle.preflight.enable = false;
-                services.sinex.lifecycle.updates.enable = false;
                 services.sinex.core.gateway.enable = lib.mkForce false;
-                services.nats.enable = lib.mkForce false;
-                services.postgresql.enable = lib.mkForce false;
-                system.stateVersion = "24.05";
               }
             )
           ];
+          monitoring = mkExampleConfig ./nixos/examples/monitoring.nix [ ];
+          devSandbox = mkExampleConfig ./nixos/examples/dev-sandbox.nix [ ];
+          headless = mkExampleConfig ./nixos/examples/headless.nix [ ];
+          remoteNode = mkExampleConfig ./nixos/examples/remote-node.nix [ ];
+          coordination = mkExampleConfig ./nixos/examples/coordination.nix [ ];
         };
-
-        monitoring = nixpkgs.lib.nixosSystem {
-          system = "x86_64-linux";
-          modules = [
-            (
-              { ... }:
-              {
-                nixpkgs.overlays = [ self.overlays.default ];
-              }
-            )
-            ./nixos/examples/monitoring.nix
-            (
-              { lib, ... }:
-              {
-                boot.isContainer = true;
-                boot.loader.grub.enable = false;
-                fileSystems."/" = {
-                  device = "none";
-                  fsType = "tmpfs";
-                };
-                services.sinex.lifecycle.preflight.enable = false;
-                services.sinex.lifecycle.updates.enable = false;
-                services.nats.enable = lib.mkForce false;
-                services.postgresql.enable = lib.mkForce false;
-                system.stateVersion = "24.05";
-              }
-            )
-          ];
-        };
-
-        devSandbox = nixpkgs.lib.nixosSystem {
-          system = "x86_64-linux";
-          modules = [
-            (
-              { ... }:
-              {
-                nixpkgs.overlays = [ self.overlays.default ];
-              }
-            )
-            ./nixos/examples/dev-sandbox.nix
-            (
-              { lib, ... }:
-              {
-                boot.isContainer = true;
-                boot.loader.grub.enable = false;
-                fileSystems."/" = {
-                  device = "none";
-                  fsType = "tmpfs";
-                };
-                services.sinex.lifecycle.preflight.enable = false;
-                services.sinex.lifecycle.updates.enable = false;
-                services.nats.enable = lib.mkForce false;
-                services.postgresql.enable = lib.mkForce false;
-                system.stateVersion = "24.05";
-              }
-            )
-          ];
-        };
-
-        headless = nixpkgs.lib.nixosSystem {
-          system = "x86_64-linux";
-          modules = [
-            (
-              { ... }:
-              {
-                nixpkgs.overlays = [ self.overlays.default ];
-              }
-            )
-            ./nixos/examples/headless.nix
-            (
-              { lib, ... }:
-              {
-                boot.isContainer = true;
-                boot.loader.grub.enable = false;
-                fileSystems."/" = {
-                  device = "none";
-                  fsType = "tmpfs";
-                };
-                services.sinex.lifecycle.preflight.enable = false;
-                services.sinex.lifecycle.updates.enable = false;
-                services.nats.enable = lib.mkForce false;
-                services.postgresql.enable = lib.mkForce false;
-                system.stateVersion = "24.05";
-              }
-            )
-          ];
-        };
-
-        remoteNode = nixpkgs.lib.nixosSystem {
-          system = "x86_64-linux";
-          modules = [
-            (
-              { ... }:
-              {
-                nixpkgs.overlays = [ self.overlays.default ];
-              }
-            )
-            ./nixos/examples/remote-node.nix
-            (
-              { lib, ... }:
-              {
-                boot.isContainer = true;
-                boot.loader.grub.enable = false;
-                fileSystems."/" = {
-                  device = "none";
-                  fsType = "tmpfs";
-                };
-                services.sinex.lifecycle.preflight.enable = false;
-                services.sinex.lifecycle.updates.enable = false;
-                services.nats.enable = lib.mkForce false;
-                services.postgresql.enable = lib.mkForce false;
-                system.stateVersion = "24.05";
-              }
-            )
-          ];
-        };
-
-        coordination = nixpkgs.lib.nixosSystem {
-          system = "x86_64-linux";
-          modules = [
-            (
-              { ... }:
-              {
-                nixpkgs.overlays = [ self.overlays.default ];
-              }
-            )
-            ./nixos/examples/coordination.nix
-            (
-              { lib, ... }:
-              {
-                boot.isContainer = true;
-                boot.loader.grub.enable = false;
-                fileSystems."/" = {
-                  device = "none";
-                  fsType = "tmpfs";
-                };
-                services.sinex.lifecycle.preflight.enable = false;
-                services.sinex.lifecycle.updates.enable = false;
-                services.nats.enable = lib.mkForce false;
-                services.postgresql.enable = lib.mkForce false;
-                system.stateVersion = "24.05";
-              }
-            )
-          ];
-        };
-      };
 
       # Unified overlay: pg_jsonschema + all sinex packages
       overlays.default = nixpkgs.lib.composeExtensions pgJsonschemaOverlay (
-        final: prev: {
-          inherit (self.packages.${final.system})
-            sinex
-            sinexctl
-            sinex-ingestd
-            sinex-gateway
-            sinex-fs-ingestor
-            sinex-terminal-ingestor
-            sinex-desktop-ingestor
-            sinex-system-ingestor
-            sinex-document-ingestor
-            sinex-process
-            sinex-node-sdk
-            ;
-        }
+        final: prev:
+          builtins.listToAttrs (
+            map
+              (name: nixpkgs.lib.nameValuePair name self.packages.${final.stdenv.hostPlatform.system}.${name})
+              packageOutputNames
+          )
       );
     };
 }
