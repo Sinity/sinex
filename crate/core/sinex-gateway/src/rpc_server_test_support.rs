@@ -52,7 +52,7 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 pub fn read_token_from_env() -> eyre::Result<Option<String>> {
-    read_token_from_env_inner()
+    Ok(read_token_from_env_inner()?)
 }
 
 pub fn rpc_server_limits_snapshot() -> eyre::Result<RpcServerLimitsSnapshot> {
@@ -69,5 +69,5 @@ pub fn rpc_server_limits_snapshot() -> eyre::Result<RpcServerLimitsSnapshot> {
 pub fn validate_jsonrpc_value(value: &Value) -> eyre::Result<()> {
     let request: JsonRpcRequest =
         serde_json::from_value(value.clone()).wrap_err("Invalid JSON-RPC request payload")?;
-    validate_jsonrpc_request(&request)
+    Ok(validate_jsonrpc_request(&request)?)
 }
