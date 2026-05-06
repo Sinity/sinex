@@ -1343,6 +1343,186 @@ impl NatsSubject {
 // Temporal Vocabulary
 // ─────────────────────────────────────────────────────────────
 
+/// Coarse material-level timing category stored on `raw.source_material_registry`.
+///
+/// Fine-grained evidence for byte ranges lives in `raw.temporal_ledger` via
+/// [`TemporalSourceType`]. This enum is the registry summary used by source
+/// staging, replay previews, and parser scheduling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceMaterialTimingInfoType {
+    /// Timestamp was observed during live capture.
+    Realtime,
+    /// Timestamp is intrinsic to the material content.
+    Intrinsic,
+    /// Timestamp is inferred from external evidence such as mtime/ctime.
+    Inferred,
+    /// Timestamp or range was explicitly declared by the operator/user.
+    Declared,
+    /// Material is intentionally not time-addressed.
+    Atemporal,
+    /// Only staging time is known.
+    StagedAt,
+}
+
+impl SourceMaterialTimingInfoType {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Realtime => "realtime",
+            Self::Intrinsic => "intrinsic",
+            Self::Inferred => "inferred",
+            Self::Declared => "declared",
+            Self::Atemporal => "atemporal",
+            Self::StagedAt => "staged_at",
+        }
+    }
+
+    #[must_use]
+    pub const fn from_temporal_source(source: TemporalSourceType) -> Self {
+        match source {
+            TemporalSourceType::RealtimeCapture => Self::Realtime,
+            TemporalSourceType::IntrinsicContent => Self::Intrinsic,
+            TemporalSourceType::InferredMtime | TemporalSourceType::InferredCtime => Self::Inferred,
+            TemporalSourceType::InferredUser => Self::Declared,
+            TemporalSourceType::StagedAt => Self::StagedAt,
+        }
+    }
+}
+
+impl fmt::Display for SourceMaterialTimingInfoType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for SourceMaterialTimingInfoType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "realtime" => Ok(Self::Realtime),
+            "intrinsic" => Ok(Self::Intrinsic),
+            "inferred" => Ok(Self::Inferred),
+            "declared" | "user_declared" | "conceptual" => Ok(Self::Declared),
+            "atemporal" => Ok(Self::Atemporal),
+            "staged_at" | "staged-at" => Ok(Self::StagedAt),
+            _ => Err(format!("unknown source-material timing info type: {s}")),
+        }
+    }
+}
+
+/// Typed source-material format vocabulary used by staged-source metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceMaterialFormat {
+    Json,
+    Jsonl,
+    Sqlite,
+    Markdown,
+    Text,
+    Csv,
+    Tsv,
+    Html,
+    Pdf,
+    Directory,
+    Repository,
+    Image,
+    Audio,
+    Video,
+    Archive,
+    Binary,
+    Unknown,
+}
+
+impl SourceMaterialFormat {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Json => "json",
+            Self::Jsonl => "jsonl",
+            Self::Sqlite => "sqlite",
+            Self::Markdown => "markdown",
+            Self::Text => "text",
+            Self::Csv => "csv",
+            Self::Tsv => "tsv",
+            Self::Html => "html",
+            Self::Pdf => "pdf",
+            Self::Directory => "directory",
+            Self::Repository => "repository",
+            Self::Image => "image",
+            Self::Audio => "audio",
+            Self::Video => "video",
+            Self::Archive => "archive",
+            Self::Binary => "binary",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    #[must_use]
+    pub fn infer_from_path(path: &str) -> Self {
+        let lower = path.to_lowercase();
+        if lower.ends_with(".tar.gz")
+            || lower.ends_with(".tar.zst")
+            || lower.ends_with(".tar.xz")
+            || lower.ends_with(".tgz")
+        {
+            return Self::Archive;
+        }
+
+        match lower.rsplit('.').next() {
+            Some("json") => Self::Json,
+            Some("jsonl" | "ndjson") => Self::Jsonl,
+            Some("sqlite" | "sqlite3" | "db") => Self::Sqlite,
+            Some("md" | "markdown" | "mdown") => Self::Markdown,
+            Some("txt" | "log") => Self::Text,
+            Some("csv") => Self::Csv,
+            Some("tsv") => Self::Tsv,
+            Some("html" | "htm") => Self::Html,
+            Some("pdf") => Self::Pdf,
+            Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "bmp") => Self::Image,
+            Some("mp3" | "flac" | "wav" | "ogg" | "m4a" | "opus") => Self::Audio,
+            Some("mp4" | "mkv" | "webm" | "mov" | "avi") => Self::Video,
+            Some("zip" | "tar" | "gz" | "xz" | "zst" | "7z" | "rar") => Self::Archive,
+            Some("bin" | "dat") => Self::Binary,
+            Some(_) | None => Self::Unknown,
+        }
+    }
+}
+
+impl fmt::Display for SourceMaterialFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for SourceMaterialFormat {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "json" => Ok(Self::Json),
+            "jsonl" | "ndjson" => Ok(Self::Jsonl),
+            "sqlite" | "sqlite3" => Ok(Self::Sqlite),
+            "markdown" | "md" => Ok(Self::Markdown),
+            "text" | "txt" => Ok(Self::Text),
+            "csv" => Ok(Self::Csv),
+            "tsv" => Ok(Self::Tsv),
+            "html" | "htm" => Ok(Self::Html),
+            "pdf" => Ok(Self::Pdf),
+            "directory" | "dir" => Ok(Self::Directory),
+            "repository" | "repo" | "git" => Ok(Self::Repository),
+            "image" => Ok(Self::Image),
+            "audio" => Ok(Self::Audio),
+            "video" => Ok(Self::Video),
+            "archive" => Ok(Self::Archive),
+            "binary" | "bin" => Ok(Self::Binary),
+            "unknown" => Ok(Self::Unknown),
+            _ => Err(format!("unknown source-material format: {s}")),
+        }
+    }
+}
+
 /// How the capture timestamp was determined for a material slice.
 ///
 /// Stored as `source_type` in `raw.temporal_ledger`. Shared between schema

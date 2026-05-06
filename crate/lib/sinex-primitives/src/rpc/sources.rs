@@ -1,6 +1,120 @@
 //! Source material RPC types for `sources.*` methods.
 
+use crate::domain::{SourceMaterialFormat, SourceMaterialTimingInfoType};
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
+
+pub const SOURCE_MATERIAL_CONTRACT_METADATA_KEY: &str = "source_material_contract";
+
+/// Versioned source-material metadata contract stored under
+/// `metadata.source_material_contract`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SourceMaterialMetadataContract {
+    pub version: u16,
+    pub format: SourceMaterialFormat,
+    pub timing: SourceMaterialTimingInfoType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<SourceOrigin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<SourceAnnotations>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub statistics: Option<SourceMaterialStatistics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<SourcePolicyEvidence>,
+}
+
+impl SourceMaterialMetadataContract {
+    pub const VERSION: u16 = 1;
+
+    #[must_use]
+    pub fn new(format: SourceMaterialFormat, timing: SourceMaterialTimingInfoType) -> Self {
+        Self {
+            version: Self::VERSION,
+            format,
+            timing,
+            origin: None,
+            annotations: None,
+            statistics: None,
+            policy: None,
+        }
+    }
+
+    #[must_use]
+    pub fn from_metadata(metadata: &JsonValue) -> Option<Self> {
+        metadata
+            .get(SOURCE_MATERIAL_CONTRACT_METADATA_KEY)
+            .and_then(|value| serde_json::from_value(value.clone()).ok())
+    }
+
+    #[must_use]
+    pub fn metadata_patch(&self) -> JsonValue {
+        let mut object = serde_json::Map::new();
+        if let Ok(value) = serde_json::to_value(self) {
+            object.insert(SOURCE_MATERIAL_CONTRACT_METADATA_KEY.to_string(), value);
+        }
+        JsonValue::Object(object)
+    }
+}
+
+/// Where the material came from before staging.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SourceOrigin {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_uri: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_mtime: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staged_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staged_on_host: Option<String>,
+}
+
+/// Operator annotations on a staged material.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SourceAnnotations {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_start_time: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_end_time: Option<String>,
+}
+
+/// Cheap material statistics known at staging/finalization time.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SourceMaterialStatistics {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_bytes: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_count: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_count: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checksum_blake3: Option<String>,
+}
+
+/// Policy/admission evidence attached to the raw material itself.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SourcePolicyEvidence {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub privacy_class: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_decision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quarantine_reason: Option<String>,
+}
+
+/// Query-time summary of temporal ledger evidence for a material.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TemporalEvidenceSummary {
+    pub ledger_entries: i64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_types: Vec<String>,
+}
 
 // ─────────────────────────────────────────────────────────────
 // sources.stage
@@ -11,6 +125,18 @@ use serde::{Deserialize, Serialize};
 pub struct SourcesStageRequest {
     /// Absolute or relative path to the file to stage
     pub file_path: String,
+    /// Optional explicit material format; otherwise inferred from the path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<SourceMaterialFormat>,
+    /// Optional coarse timing category for the staged material.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timing_info_type: Option<SourceMaterialTimingInfoType>,
+    /// Human-readable staging reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Operator tags attached to the material contract.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 /// Response: `sources.stage`
@@ -22,6 +148,7 @@ pub struct SourcesStageResponse {
     pub source_identifier: String,
     /// File size in bytes, if available
     pub total_bytes: Option<i64>,
+    pub contract: SourceMaterialMetadataContract,
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -34,6 +161,9 @@ pub struct SourcesListRequest {
     /// Optional status filter (e.g. "completed", "sensing", "failed")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    /// Maximum number of rows to return.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
 }
 
 /// Summary row for the source material list
@@ -47,6 +177,11 @@ pub struct SourceMaterialSummary {
     pub source_identifier: String,
     /// Lifecycle status
     pub status: String,
+    pub timing_info_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<SourceMaterialFormat>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_version: Option<u16>,
     /// When the material was staged
     pub staged_at: Option<String>,
     /// Who staged the material
@@ -83,6 +218,10 @@ pub struct SourceMaterialDetail {
     pub status: String,
     pub timing_info_type: String,
     pub metadata: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract: Option<SourceMaterialMetadataContract>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temporal_evidence: Option<TemporalEvidenceSummary>,
     pub staged_at: Option<String>,
     pub start_time: Option<String>,
     pub end_time: Option<String>,

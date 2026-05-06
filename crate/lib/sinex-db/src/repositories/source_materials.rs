@@ -6,7 +6,14 @@ use super::common::{DbResult, EnhancedRepository, Repository, db_error};
 use crate::schema::SourceMaterialRegistry;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
-use sinex_primitives::domain::{TemporalClock, TemporalPrecision, TemporalSourceType};
+use sinex_primitives::domain::{
+    SourceMaterialFormat, SourceMaterialTimingInfoType, TemporalClock, TemporalPrecision,
+    TemporalSourceType,
+};
+use sinex_primitives::rpc::sources::{
+    SOURCE_MATERIAL_CONTRACT_METADATA_KEY, SourceMaterialMetadataContract,
+    SourceMaterialStatistics, SourceOrigin,
+};
 use sinex_primitives::{Id, SinexError, Timestamp, events::OffsetKind};
 pub use sinex_schema::schema::records::SourceMaterialLinkRecord;
 use sinex_schema::schema::records::SourceMaterialRecord;
@@ -24,6 +31,9 @@ pub mod timing_info_types {
     pub const REALTIME: &str = "realtime";
     pub const INTRINSIC: &str = "intrinsic";
     pub const INFERRED: &str = "inferred";
+    pub const DECLARED: &str = "declared";
+    pub const ATEMPORAL: &str = "atemporal";
+    pub const STAGED_AT: &str = "staged_at";
 }
 /// Canonical statuses for source material lifecycle
 pub mod status {
@@ -61,10 +71,42 @@ const RESERVED_METADATA_KEYS: &[&str] = &[
     "retention_policy",
     "blake3",
     "total_bytes",
+    SOURCE_MATERIAL_CONTRACT_METADATA_KEY,
     "staged_by",
     "staged_on_host",
     "_meta",
 ];
+
+fn contract_for_source(
+    format: SourceMaterialFormat,
+    timing: SourceMaterialTimingInfoType,
+    source_uri: Option<&str>,
+    total_bytes: Option<i64>,
+) -> SourceMaterialMetadataContract {
+    let mut contract = SourceMaterialMetadataContract::new(format, timing);
+    contract.origin = source_uri.map(|uri| SourceOrigin {
+        source_uri: Some(uri.to_string()),
+        ..SourceOrigin::default()
+    });
+    contract.statistics = Some(SourceMaterialStatistics {
+        total_bytes,
+        ..SourceMaterialStatistics::default()
+    });
+    contract
+}
+
+fn format_for_material_type(material_type: &str, source_uri: Option<&str>) -> SourceMaterialFormat {
+    match material_type {
+        material_types::FILE => source_uri
+            .map(SourceMaterialFormat::infer_from_path)
+            .unwrap_or(SourceMaterialFormat::Unknown),
+        material_types::STREAM => SourceMaterialFormat::Jsonl,
+        material_types::BLOB_TEXT => SourceMaterialFormat::Text,
+        material_types::BLOB | material_types::BLOB_BINARY => SourceMaterialFormat::Binary,
+        material_types::CHUNK => SourceMaterialFormat::Binary,
+        _ => SourceMaterialFormat::Unknown,
+    }
+}
 
 /// Strip reserved system keys from a caller-supplied metadata object so they
 /// cannot be overwritten via `update_metadata`. Non-object values are
@@ -135,13 +177,21 @@ impl SourceMaterial {
     pub fn file(path: impl Into<String>) -> Self {
         let path_str = path.into();
         let mut material = Self::new(material_kinds::ANNEX, path_str.clone());
-        material
-            .metadata_object_mut()
-            .insert("source_uri".to_string(), JsonValue::String(path_str));
+        material.metadata_object_mut().insert(
+            "source_uri".to_string(),
+            JsonValue::String(path_str.clone()),
+        );
         material.metadata_object_mut().insert(
             "material_type".to_string(),
             JsonValue::String(material_types::FILE.to_string()),
         );
+        let contract = contract_for_source(
+            SourceMaterialFormat::infer_from_path(&path_str),
+            SourceMaterialTimingInfoType::Intrinsic,
+            Some(&path_str),
+            None,
+        );
+        material.merge_metadata(contract.metadata_patch());
         material
     }
     /// Create a stream-backed source material entry.
@@ -150,11 +200,18 @@ impl SourceMaterial {
         let mut material = Self::new(material_kinds::ANNEX, uri_str.clone());
         material
             .metadata_object_mut()
-            .insert("source_uri".to_string(), JsonValue::String(uri_str));
+            .insert("source_uri".to_string(), JsonValue::String(uri_str.clone()));
         material.metadata_object_mut().insert(
             "material_type".to_string(),
             JsonValue::String(material_types::STREAM.to_string()),
         );
+        let contract = contract_for_source(
+            SourceMaterialFormat::Jsonl,
+            SourceMaterialTimingInfoType::Realtime,
+            Some(&uri_str),
+            None,
+        );
+        material.merge_metadata(contract.metadata_patch());
         material.with_timing_info_type(timing_info_types::REALTIME)
     }
     /// Create an in-memory blob source material entry.
@@ -165,6 +222,13 @@ impl SourceMaterial {
             "material_type".to_string(),
             JsonValue::String(material_types::BLOB.to_string()),
         );
+        let contract = contract_for_source(
+            SourceMaterialFormat::Binary,
+            SourceMaterialTimingInfoType::Intrinsic,
+            Some("memory://inline"),
+            None,
+        );
+        material.merge_metadata(contract.metadata_patch());
         material
     }
     /// Create a binary blob source material entry.
@@ -172,11 +236,18 @@ impl SourceMaterial {
         let filename = filename.into();
         let mut material = Self::new(material_kinds::ANNEX, filename.clone());
         let metadata = material.metadata_object_mut();
-        metadata.insert("filename".to_string(), JsonValue::String(filename));
+        metadata.insert("filename".to_string(), JsonValue::String(filename.clone()));
         metadata.insert(
             "material_type".to_string(),
             JsonValue::String(material_types::BLOB_BINARY.to_string()),
         );
+        let contract = contract_for_source(
+            SourceMaterialFormat::Binary,
+            SourceMaterialTimingInfoType::Intrinsic,
+            Some(&filename),
+            None,
+        );
+        material.merge_metadata(contract.metadata_patch());
         material
     }
     /// Create a text blob source material entry.
@@ -185,7 +256,7 @@ impl SourceMaterial {
         let mut material = Self::new(material_kinds::ANNEX, filename.clone());
         {
             let metadata = material.metadata_object_mut();
-            metadata.insert("filename".to_string(), JsonValue::String(filename));
+            metadata.insert("filename".to_string(), JsonValue::String(filename.clone()));
             metadata.insert(
                 "material_type".to_string(),
                 JsonValue::String(material_types::BLOB_TEXT.to_string()),
@@ -195,6 +266,13 @@ impl SourceMaterial {
                 JsonValue::String("utf-8".to_string()),
             );
         }
+        let contract = contract_for_source(
+            SourceMaterialFormat::Text,
+            SourceMaterialTimingInfoType::Intrinsic,
+            Some(&filename),
+            None,
+        );
+        material.merge_metadata(contract.metadata_patch());
         material
     }
     /// Create a chunk source material (for large file processing)
@@ -202,11 +280,21 @@ impl SourceMaterial {
         let identifier = format!("chunk://{}#{}", parent_id.into(), index);
         let mut material = Self::new(material_kinds::ANNEX, identifier.clone());
         let metadata = material.metadata_object_mut();
-        metadata.insert("chunk_uri".to_string(), JsonValue::String(identifier));
+        metadata.insert(
+            "chunk_uri".to_string(),
+            JsonValue::String(identifier.clone()),
+        );
         metadata.insert(
             "material_type".to_string(),
             JsonValue::String(material_types::CHUNK.to_string()),
         );
+        let contract = contract_for_source(
+            SourceMaterialFormat::Binary,
+            SourceMaterialTimingInfoType::Intrinsic,
+            Some(&identifier),
+            None,
+        );
+        material.merge_metadata(contract.metadata_patch());
         material
     }
     /// Fluent method to set blob ID
@@ -225,6 +313,13 @@ impl SourceMaterial {
     #[must_use]
     pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
         self.merge_metadata(metadata);
+        self
+    }
+    /// Fluent method to set the versioned source-material metadata contract.
+    #[must_use]
+    pub fn with_metadata_contract(mut self, contract: SourceMaterialMetadataContract) -> Self {
+        self.timing_info_type = contract.timing.to_string();
+        self.merge_metadata(contract.metadata_patch());
         self
     }
     /// Fluent method to set content preview (stored in metadata)
@@ -402,6 +497,60 @@ impl TemporalLedgerEntry {
             precision: TemporalPrecision::Bounded,
             clock: TemporalClock::Wall,
             source_type: TemporalSourceType::StagedAt,
+        }
+    }
+
+    #[must_use]
+    pub fn intrinsic_content(
+        source_material_id: uuid::Uuid,
+        offset_end: i64,
+        ts_capture: Timestamp,
+    ) -> Self {
+        Self {
+            source_material_id,
+            offset_start: 0,
+            offset_end,
+            offset_kind: OffsetKind::Byte,
+            ts_capture,
+            precision: TemporalPrecision::Exact,
+            clock: TemporalClock::Wall,
+            source_type: TemporalSourceType::IntrinsicContent,
+        }
+    }
+
+    #[must_use]
+    pub fn inferred_mtime(
+        source_material_id: uuid::Uuid,
+        offset_end: i64,
+        ts_capture: Timestamp,
+    ) -> Self {
+        Self {
+            source_material_id,
+            offset_start: 0,
+            offset_end,
+            offset_kind: OffsetKind::Byte,
+            ts_capture,
+            precision: TemporalPrecision::Bounded,
+            clock: TemporalClock::Wall,
+            source_type: TemporalSourceType::InferredMtime,
+        }
+    }
+
+    #[must_use]
+    pub fn inferred_user(
+        source_material_id: uuid::Uuid,
+        offset_end: i64,
+        ts_capture: Timestamp,
+    ) -> Self {
+        Self {
+            source_material_id,
+            offset_start: 0,
+            offset_end,
+            offset_kind: OffsetKind::Byte,
+            ts_capture,
+            precision: TemporalPrecision::Bounded,
+            clock: TemporalClock::Wall,
+            source_type: TemporalSourceType::InferredUser,
         }
     }
 }
@@ -587,7 +736,32 @@ impl SourceMaterialRepository<'_> {
             r#"
             UPDATE raw.source_material_registry
             SET optional_blob_id = COALESCE($2::uuid, optional_blob_id),
-                metadata = core.jsonb_merge_deep(metadata, $3),
+                metadata = CASE
+                    WHEN $5::bigint IS NOT NULL
+                         AND metadata ? 'source_material_contract'
+                         AND jsonb_typeof(metadata->'source_material_contract') = 'object'
+                         AND metadata->'source_material_contract'->>'version' = '1'
+                         AND metadata->'source_material_contract'->>'format' IN (
+                            'json', 'jsonl', 'sqlite', 'markdown', 'text', 'csv',
+                            'tsv', 'html', 'pdf', 'directory', 'repository', 'image',
+                            'audio', 'video', 'archive', 'binary', 'unknown'
+                         )
+                         AND metadata->'source_material_contract'->>'timing' IN (
+                            'realtime', 'intrinsic', 'inferred', 'declared',
+                            'atemporal', 'staged_at'
+                         )
+                    THEN core.jsonb_merge_deep(
+                        core.jsonb_merge_deep(metadata, $3),
+                        jsonb_build_object(
+                            'source_material_contract',
+                            jsonb_build_object(
+                                'version', 1,
+                                'statistics', jsonb_build_object('total_bytes', $5::bigint)
+                            )
+                        )
+                    )
+                    ELSE core.jsonb_merge_deep(metadata, $3)
+                END,
                 status = $4,
                 end_time = COALESCE(end_time, NOW()),
                 total_bytes = COALESCE($5, total_bytes)
@@ -1036,6 +1210,7 @@ impl SourceMaterialRepository<'_> {
             SourceMaterial::new(material_kinds::ANNEX, source_uri.unwrap_or("in-flight"));
         material.status = status::SENSING.to_string();
         material.timing_info_type = timing_info_types::REALTIME.to_string();
+        let caller_contract = SourceMaterialMetadataContract::from_metadata(&metadata);
         material.merge_metadata(metadata);
         if let Some(uri) = source_uri {
             material
@@ -1046,6 +1221,18 @@ impl SourceMaterialRepository<'_> {
             "material_type".to_string(),
             JsonValue::String(material_type.to_string()),
         );
+        let contract_is_explicit = caller_contract.is_some();
+        if let Some(contract) = caller_contract {
+            material.timing_info_type = contract.timing.to_string();
+        } else {
+            let contract = contract_for_source(
+                format_for_material_type(material_type, source_uri),
+                SourceMaterialTimingInfoType::Realtime,
+                source_uri,
+                None,
+            );
+            material.merge_metadata(contract.metadata_patch());
+        }
         let start_time = start_time_override
             .or(material.start_time)
             .unwrap_or_else(Timestamp::now);
@@ -1080,8 +1267,30 @@ impl SourceMaterialRepository<'_> {
             )
             ON CONFLICT (source_identifier) DO UPDATE SET
                 status = EXCLUDED.status,
+                timing_info_type = CASE
+                    WHEN NOT $10::boolean
+                         AND raw.source_material_registry.metadata ? 'source_material_contract'
+                    THEN raw.source_material_registry.timing_info_type
+                    ELSE EXCLUDED.timing_info_type
+                END,
                 -- Deep merge metadata, preserving existing values
-                metadata = core.jsonb_merge_deep(raw.source_material_registry.metadata, EXCLUDED.metadata),
+                metadata = CASE
+                    WHEN NOT $10::boolean
+                         AND raw.source_material_registry.metadata ? 'source_material_contract'
+                    THEN jsonb_set(
+                        core.jsonb_merge_deep(
+                            raw.source_material_registry.metadata,
+                            EXCLUDED.metadata
+                        ),
+                        '{source_material_contract}',
+                        raw.source_material_registry.metadata->'source_material_contract',
+                        true
+                    )
+                    ELSE core.jsonb_merge_deep(
+                        raw.source_material_registry.metadata,
+                        EXCLUDED.metadata
+                    )
+                END,
                 start_time = COALESCE(EXCLUDED.start_time, raw.source_material_registry.start_time),
                 end_time = NULL,
                 -- Update staging info
@@ -1113,6 +1322,7 @@ impl SourceMaterialRepository<'_> {
             .bind(material.start_time)
             .bind(&material.staged_by)
             .bind(&material.staged_on_host)
+            .bind(contract_is_explicit)
             .fetch_one(executor)
             .await
             .map_err(|e| db_error(e, "upsert in-flight source material"))
@@ -1139,6 +1349,7 @@ impl SourceMaterialRepository<'_> {
             SourceMaterial::new(material_kinds::ANNEX, source_uri.unwrap_or("in-flight"));
         material.status = status::SENSING.to_string();
         material.timing_info_type = timing_info_types::REALTIME.to_string();
+        let caller_contract = SourceMaterialMetadataContract::from_metadata(&metadata);
         material.merge_metadata(metadata);
         if let Some(uri) = source_uri {
             material
@@ -1149,6 +1360,18 @@ impl SourceMaterialRepository<'_> {
             "material_type".to_string(),
             JsonValue::String(material_type.to_string()),
         );
+        let contract_is_explicit = caller_contract.is_some();
+        if let Some(contract) = caller_contract {
+            material.timing_info_type = contract.timing.to_string();
+        } else {
+            let contract = contract_for_source(
+                format_for_material_type(material_type, source_uri),
+                SourceMaterialTimingInfoType::Realtime,
+                source_uri,
+                None,
+            );
+            material.merge_metadata(contract.metadata_patch());
+        }
         let start_time = start_time_override
             .or(material.start_time)
             .unwrap_or_else(Timestamp::now);
@@ -1182,8 +1405,29 @@ impl SourceMaterialRepository<'_> {
                 material_kind = EXCLUDED.material_kind,
                 source_identifier = EXCLUDED.source_identifier,
                 status = EXCLUDED.status,
-                timing_info_type = EXCLUDED.timing_info_type,
-                metadata = core.jsonb_merge_deep(raw.source_material_registry.metadata, EXCLUDED.metadata),
+                timing_info_type = CASE
+                    WHEN NOT $10::boolean
+                         AND raw.source_material_registry.metadata ? 'source_material_contract'
+                    THEN raw.source_material_registry.timing_info_type
+                    ELSE EXCLUDED.timing_info_type
+                END,
+                metadata = CASE
+                    WHEN NOT $10::boolean
+                         AND raw.source_material_registry.metadata ? 'source_material_contract'
+                    THEN jsonb_set(
+                        core.jsonb_merge_deep(
+                            raw.source_material_registry.metadata,
+                            EXCLUDED.metadata
+                        ),
+                        '{source_material_contract}',
+                        raw.source_material_registry.metadata->'source_material_contract',
+                        true
+                    )
+                    ELSE core.jsonb_merge_deep(
+                        raw.source_material_registry.metadata,
+                        EXCLUDED.metadata
+                    )
+                END,
                 start_time = COALESCE(EXCLUDED.start_time, raw.source_material_registry.start_time),
                 end_time = NULL,
                 staged_by = COALESCE(EXCLUDED.staged_by, raw.source_material_registry.staged_by),
@@ -1214,6 +1458,7 @@ impl SourceMaterialRepository<'_> {
             .bind(material.start_time)
             .bind(&material.staged_by)
             .bind(&material.staged_on_host)
+            .bind(contract_is_explicit)
             .fetch_one(executor)
             .await
             .map_err(|e| db_error(e, "upsert external in-flight source material"))
