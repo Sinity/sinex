@@ -22,7 +22,7 @@
 //! before emission. Frontmatter values are redacted with
 //! `ProcessingContext::Metadata`.
 //!
-//! Ref: `docs/architecture/document-layer-v1.md`, issue #733.
+//! Ref: `docs/architecture/document-layer-v1.md`.
 
 use sinex_node_sdk::derived_node::{
     DerivedOutput, DerivedTriggerContext, InputProvenanceFilter, MultiOutputTransducerNode,
@@ -566,3 +566,37 @@ mod tests {
 /// `MultiOutputTransducerNodeAdapter`.
 pub type DocumentParserNodeAdapter =
     sinex_node_sdk::derived_node::MultiOutputTransducerNodeAdapter<DocumentParserNode>;
+
+// ── Source-unit descriptor ─────────────────────────────────────────────
+
+use sinex_primitives::proof::{
+    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
+    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
+};
+use sinex_primitives::register_source_unit;
+
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "document-parser",
+        namespace: "derived",
+        runner_pack: "process",
+        checkpoint_family: SuCheckpointFamily::AppendStream,
+        event_types: &[
+            ("document-parser", "document.parsed"),
+            ("document-parser", "document.chunked"),
+        ],
+        privacy_tier: SuPrivacyTier::Sensitive,
+        runtime_shape: SuRuntimeShape::Continuous,
+        horizons: &[SuHorizon::Continuous],
+        retention: SuRetentionPolicy::Forever,
+        proof_obligations: &[],
+        occurrence_identity: SuOccurrenceIdentity::Uuid5From(
+            "(source_unit, parent_event_id, output_event_type, chunk_index)",
+        ),
+        access_policy: "event_stream_read",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pack:process",
+        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
+    }
+}

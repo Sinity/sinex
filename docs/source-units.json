@@ -29,9 +29,9 @@
       "resource_profile": "continuous",
       "access_policy": "event_stream_read",
       "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "analytics",
+      "runner_pack": "process",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:analytics",
+      "implementation_mode": "rust_in_pack:process",
       "proof_obligations": [],
       "crate_impact": "0",
       "binary_impact": "0",
@@ -98,9 +98,9 @@
       "resource_profile": "continuous",
       "access_policy": "event_stream_read",
       "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "daily",
+      "runner_pack": "process",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:daily",
+      "implementation_mode": "rust_in_pack:process",
       "proof_obligations": [],
       "crate_impact": "0",
       "binary_impact": "0",
@@ -258,6 +258,44 @@
       "dedicated_build_rationale": null
     },
     {
+      "subject": "source_unit:document-parser",
+      "id": "document-parser",
+      "domain": "derived",
+      "role": "derived_node",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "synthesis_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(source_unit, parent_event_id, output_event_type, chunk_index)",
+      "output_event_types": [
+        {
+          "source": "document-parser",
+          "event_type": "document.parsed"
+        },
+        {
+          "source": "document-parser",
+          "event_type": "document.chunked"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "event_stream_read",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "process",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
       "subject": "source_unit:document.staging",
       "id": "document.staging",
       "domain": "document",
@@ -284,6 +322,108 @@
       "runner_pack": "document",
       "package_impact": "no_new_output",
       "implementation_mode": "rust_in_pack:document",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:entity-enricher",
+      "id": "entity-enricher",
+      "domain": "derived",
+      "role": "derived_node",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "synthesis_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(entity_id, observation_window)",
+      "output_event_types": [
+        {
+          "source": "entity-enricher",
+          "event_type": "entity.enriched"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "event_stream_read",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "process",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:entity-extractor",
+      "id": "entity-extractor",
+      "domain": "derived",
+      "role": "derived_node",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "synthesis_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(source_unit, parent_event_id, entity_type, raw_name)",
+      "output_event_types": [
+        {
+          "source": "entity-extractor",
+          "event_type": "entity.extracted"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "event_stream_read",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "process",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:entity-resolver",
+      "id": "entity-resolver",
+      "domain": "derived",
+      "role": "derived_node",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "synthesis_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(entity_type, canonical_name)",
+      "output_event_types": [
+        {
+          "source": "entity-resolver",
+          "event_type": "entity.resolved"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "event_stream_read",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "process",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
       "proof_obligations": [],
       "crate_impact": "0",
       "binary_impact": "0",
@@ -362,9 +502,9 @@
       "resource_profile": "continuous",
       "access_policy": "event_stream_read",
       "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "health",
+      "runner_pack": "process",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:health",
+      "implementation_mode": "rust_in_pack:process",
       "proof_obligations": [],
       "crate_impact": "0",
       "binary_impact": "0",
@@ -396,9 +536,43 @@
       "resource_profile": "continuous",
       "access_policy": "event_stream_read",
       "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "hourly",
+      "runner_pack": "process",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:hourly",
+      "implementation_mode": "rust_in_pack:process",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:relation-extractor",
+      "id": "relation-extractor",
+      "domain": "derived",
+      "role": "derived_node",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "synthesis_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(source_entity_id, target_entity_id, relation_type)",
+      "output_event_types": [
+        {
+          "source": "relation-extractor",
+          "event_type": "entity.related"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "event_stream_read",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "process",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
       "proof_obligations": [],
       "crate_impact": "0",
       "binary_impact": "0",
@@ -430,9 +604,9 @@
       "resource_profile": "continuous",
       "access_policy": "event_stream_read",
       "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "session",
+      "runner_pack": "process",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:session",
+      "implementation_mode": "rust_in_pack:process",
       "proof_obligations": [],
       "crate_impact": "0",
       "binary_impact": "0",
@@ -682,6 +856,40 @@
       "dedicated_build_rationale": null
     },
     {
+      "subject": "source_unit:tag-applier",
+      "id": "tag-applier",
+      "domain": "derived",
+      "role": "derived_node",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "synthesis_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(source_unit, parent_event_id, tag_name)",
+      "output_event_types": [
+        {
+          "source": "knowledge-graph",
+          "event_type": "knowledge.tag_applied"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "event_stream_read",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "process",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
       "subject": "source_unit:terminal-canonicalizer",
       "id": "terminal-canonicalizer",
       "domain": "derived",
@@ -704,9 +912,9 @@
       "resource_profile": "continuous",
       "access_policy": "event_stream_read",
       "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "terminal-canonicalizer",
+      "runner_pack": "process",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal-canonicalizer",
+      "implementation_mode": "rust_in_pack:process",
       "proof_obligations": [],
       "crate_impact": "0",
       "binary_impact": "0",
@@ -942,27 +1150,11 @@
   ],
   "runner_packs": [
     {
-      "id": "analytics",
-      "source_unit_ids": [
-        "analytics"
-      ],
-      "shared_binary": "sinex-analytics-automaton",
-      "source_unit_count": 1
-    },
-    {
       "id": "browser",
       "source_unit_ids": [
         "browser.history"
       ],
       "shared_binary": "sinex-browser-ingestor",
-      "source_unit_count": 1
-    },
-    {
-      "id": "daily",
-      "source_unit_ids": [
-        "daily-summarizer"
-      ],
-      "shared_binary": "sinex-daily-summarizer",
       "source_unit_count": 1
     },
     {
@@ -992,28 +1184,23 @@
       "source_unit_count": 1
     },
     {
-      "id": "health",
+      "id": "process",
       "source_unit_ids": [
-        "health"
+        "analytics",
+        "daily-summarizer",
+        "document-parser",
+        "entity-enricher",
+        "entity-extractor",
+        "entity-resolver",
+        "health",
+        "hourly-summarizer",
+        "relation-extractor",
+        "session-detector",
+        "tag-applier",
+        "terminal-canonicalizer"
       ],
-      "shared_binary": "sinex-health-automaton",
-      "source_unit_count": 1
-    },
-    {
-      "id": "hourly",
-      "source_unit_ids": [
-        "hourly-summarizer"
-      ],
-      "shared_binary": "sinex-hourly-summarizer",
-      "source_unit_count": 1
-    },
-    {
-      "id": "session",
-      "source_unit_ids": [
-        "session-detector"
-      ],
-      "shared_binary": "sinex-session-detector",
-      "source_unit_count": 1
+      "shared_binary": "sinex-process",
+      "source_unit_count": 12
     },
     {
       "id": "system",
@@ -1039,22 +1226,14 @@
       ],
       "shared_binary": "sinex-terminal-ingestor",
       "source_unit_count": 6
-    },
-    {
-      "id": "terminal-canonicalizer",
-      "source_unit_ids": [
-        "terminal-canonicalizer"
-      ],
-      "shared_binary": "sinex-terminal-command-canonicalizer",
-      "source_unit_count": 1
     }
   ],
   "services": [
     {
       "source_unit_id": "analytics",
       "service_name": "sinex-source@analytics",
-      "runner_pack": "analytics",
-      "binary": "sinex-analytics-automaton",
+      "runner_pack": "process",
+      "binary": "sinex-process",
       "checkpoint_identity": "analytics",
       "control_identity": "analytics",
       "host_identity": "runtime_hostname"
@@ -1071,8 +1250,8 @@
     {
       "source_unit_id": "daily-summarizer",
       "service_name": "sinex-source@daily-summarizer",
-      "runner_pack": "daily",
-      "binary": "sinex-daily-summarizer",
+      "runner_pack": "process",
+      "binary": "sinex-process",
       "checkpoint_identity": "daily-summarizer",
       "control_identity": "daily-summarizer",
       "host_identity": "runtime_hostname"
@@ -1105,12 +1284,48 @@
       "host_identity": "runtime_hostname"
     },
     {
+      "source_unit_id": "document-parser",
+      "service_name": "sinex-source@document-parser",
+      "runner_pack": "process",
+      "binary": "sinex-process",
+      "checkpoint_identity": "document-parser",
+      "control_identity": "document-parser",
+      "host_identity": "runtime_hostname"
+    },
+    {
       "source_unit_id": "document.staging",
       "service_name": "sinex-source@document.staging",
       "runner_pack": "document",
       "binary": "sinex-document-ingestor",
       "checkpoint_identity": "document.staging",
       "control_identity": "document.staging",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "entity-enricher",
+      "service_name": "sinex-source@entity-enricher",
+      "runner_pack": "process",
+      "binary": "sinex-process",
+      "checkpoint_identity": "entity-enricher",
+      "control_identity": "entity-enricher",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "entity-extractor",
+      "service_name": "sinex-source@entity-extractor",
+      "runner_pack": "process",
+      "binary": "sinex-process",
+      "checkpoint_identity": "entity-extractor",
+      "control_identity": "entity-extractor",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "entity-resolver",
+      "service_name": "sinex-source@entity-resolver",
+      "runner_pack": "process",
+      "binary": "sinex-process",
+      "checkpoint_identity": "entity-resolver",
+      "control_identity": "entity-resolver",
       "host_identity": "runtime_hostname"
     },
     {
@@ -1125,8 +1340,8 @@
     {
       "source_unit_id": "health",
       "service_name": "sinex-source@health",
-      "runner_pack": "health",
-      "binary": "sinex-health-automaton",
+      "runner_pack": "process",
+      "binary": "sinex-process",
       "checkpoint_identity": "health",
       "control_identity": "health",
       "host_identity": "runtime_hostname"
@@ -1134,17 +1349,26 @@
     {
       "source_unit_id": "hourly-summarizer",
       "service_name": "sinex-source@hourly-summarizer",
-      "runner_pack": "hourly",
-      "binary": "sinex-hourly-summarizer",
+      "runner_pack": "process",
+      "binary": "sinex-process",
       "checkpoint_identity": "hourly-summarizer",
       "control_identity": "hourly-summarizer",
       "host_identity": "runtime_hostname"
     },
     {
+      "source_unit_id": "relation-extractor",
+      "service_name": "sinex-source@relation-extractor",
+      "runner_pack": "process",
+      "binary": "sinex-process",
+      "checkpoint_identity": "relation-extractor",
+      "control_identity": "relation-extractor",
+      "host_identity": "runtime_hostname"
+    },
+    {
       "source_unit_id": "session-detector",
       "service_name": "sinex-source@session-detector",
-      "runner_pack": "session",
-      "binary": "sinex-session-detector",
+      "runner_pack": "process",
+      "binary": "sinex-process",
       "checkpoint_identity": "session-detector",
       "control_identity": "session-detector",
       "host_identity": "runtime_hostname"
@@ -1195,10 +1419,19 @@
       "host_identity": "runtime_hostname"
     },
     {
+      "source_unit_id": "tag-applier",
+      "service_name": "sinex-source@tag-applier",
+      "runner_pack": "process",
+      "binary": "sinex-process",
+      "checkpoint_identity": "tag-applier",
+      "control_identity": "tag-applier",
+      "host_identity": "runtime_hostname"
+    },
+    {
       "source_unit_id": "terminal-canonicalizer",
       "service_name": "sinex-source@terminal-canonicalizer",
-      "runner_pack": "terminal-canonicalizer",
-      "binary": "sinex-terminal-command-canonicalizer",
+      "runner_pack": "process",
+      "binary": "sinex-process",
       "checkpoint_identity": "terminal-canonicalizer",
       "control_identity": "terminal-canonicalizer",
       "host_identity": "runtime_hostname"
@@ -1259,12 +1492,12 @@
     }
   ],
   "package_impact": {
-    "total_source_units": 23,
-    "zero_crate_impact": 23,
-    "zero_binary_impact": 23,
-    "zero_nix_output_impact": 23,
-    "zero_derivation_impact": 23,
-    "zero_sqlx_validation_impact": 23,
+    "total_source_units": 29,
+    "zero_crate_impact": 29,
+    "zero_binary_impact": 29,
+    "zero_nix_output_impact": 29,
+    "zero_derivation_impact": 29,
+    "zero_sqlx_validation_impact": 29,
     "dedicated_build_rationales": []
   },
   "proof_obligations": [
