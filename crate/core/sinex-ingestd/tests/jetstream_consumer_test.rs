@@ -621,6 +621,95 @@ async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn tombstoned_event_is_acked_without_confirmation(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+
+    let setup = start_isolated_consumer(&ctx, "tombstone-admission").await?;
+    let nats_client = ctx.nats_client();
+    let event_id = Uuid::now_v7();
+    sqlx::query(
+        r#"
+        INSERT INTO core.event_tombstones (
+            id, source, event_type, ts_orig, ts_purged,
+            purge_reason, purge_operation_id, archived_at
+        )
+        VALUES (
+            $1::uuid, 'tombstone-admission', 'pipeline.event', NOW(), NOW(),
+            'jetstream tombstone admission test', $2::uuid, NOW()
+        )
+        "#,
+    )
+    .bind(event_id)
+    .bind(Uuid::now_v7())
+    .execute(&ctx.pool)
+    .await?;
+
+    publish_event(
+        &ctx.pool,
+        &nats_client,
+        &setup.namespace,
+        "tombstone-admission",
+        "pipeline.event",
+        json!({"sequence": 1}),
+        EventOverrides {
+            id: Some(event_id),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = setup.js.clone();
+            let stream_name = setup.topology.events_stream.clone();
+            let consumer_name = setup.topology.consumer_durable.clone();
+            async move {
+                let stream = js
+                    .get_stream(&stream_name)
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                let mut consumer = stream
+                    .get_consumer::<jetstream::consumer::pull::Config>(&consumer_name)
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                let info = consumer
+                    .info()
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                Ok::<bool, SinexError>(info.num_pending == 0 && info.num_ack_pending == 0)
+            }
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
+
+    assert!(
+        ctx.pool
+            .events()
+            .get_by_id(event_id.into())
+            .await?
+            .is_none(),
+        "tombstoned event must not be persisted"
+    );
+
+    let confirmation_subject = format!("{}{}", setup.topology.confirmations_prefix, event_id);
+    let stream = setup
+        .js
+        .get_stream(&setup.topology.confirmations_stream)
+        .await?;
+    assert!(
+        stream
+            .get_last_raw_message_by_subject(&confirmation_subject)
+            .await
+            .is_err(),
+        "tombstoned event must not publish a persisted confirmation"
+    );
+
+    setup.handle.abort();
+    Ok(())
+}
+
+#[sinex_test]
 async fn dlq_captures_multiple_validation_failures(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
 

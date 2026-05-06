@@ -22,29 +22,35 @@ use async_nats::jetstream::stream::DiscardPolicy;
 use async_nats::{Client as NatsClient, jetstream};
 use futures::future::{BoxFuture, join_all};
 use serde::{Deserialize, Serialize};
-use sinex_db::repositories::{COPY_BATCH_THRESHOLD, StreamBatchRow};
-use sinex_db::{DbPool, repositories::DbPoolExt};
+use sinex_db::DbPool;
+use sinex_db::repositories::COPY_BATCH_THRESHOLD;
 use sinex_node_sdk::SelfObserver;
 use sinex_node_sdk::heartbeat::HeartbeatCounterHandle;
 use sinex_node_sdk::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
 use sinex_primitives::Timestamp;
-use sinex_primitives::constants::{env_vars, limits::MAX_EVENT_PAYLOAD_BYTES};
+use sinex_primitives::constants::env_vars;
 use sinex_primitives::{
-    Id, JsonValue, Uuid,
+    JsonValue, Uuid,
     nats::{JetStreamTopology, NatsTrafficClass, insert_traffic_class_header},
     transport,
 };
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use tokio::sync::{Mutex, RwLock};
-use tokio::time::{Duration, timeout};
+use tokio::sync::RwLock;
+use tokio::time::Duration;
 use tracing::{debug, error, info, instrument, warn};
 
+#[cfg(test)]
+use crate::validator::ValidationResult;
 use crate::{
     IngestdResult, SinexError,
+    admission::{
+        AdmissionDecision, AdmissionRejection, AdmissionRejectionKind, AdmissionService,
+        AdmittedEvent,
+    },
     material_ready_set::MaterialReadySet,
-    validator::{IngestEventValidator, ValidationResult},
+    validator::IngestEventValidator,
 };
 use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::Provenance;
@@ -89,11 +95,10 @@ pub struct JetStreamConsumer {
     js: jetstream::Context,
     pool: DbPool,
     validator: Arc<RwLock<IngestEventValidator>>,
+    admission: AdmissionService,
     topology: JetStreamTopology,
     ack_wait: Duration,
     max_ack_pending: i64,
-    fail_once: Option<Arc<AtomicBool>>,
-    db_failures_remaining: Option<Arc<AtomicUsize>>,
     post_persist_fail_once: Option<Arc<AtomicBool>>,
     confirmation_failures_remaining: Option<Arc<AtomicUsize>>,
     confirmation_semaphore: Arc<tokio::sync::Semaphore>,
@@ -101,7 +106,6 @@ pub struct JetStreamConsumer {
     delivery_observer: Option<Arc<AtomicU64>>,
     stats: ConsumerStats,
     route_db_errors_to_dlq: bool,
-    recent_id_cache: Mutex<RecentIdCache>,
     batch_fetch_max_messages: usize,
     batch_fetch_timeout: Duration,
     /// Shared coordination set: when present, events whose `source_material_id` hasn't
@@ -124,8 +128,6 @@ pub struct JetStreamConsumer {
     startup_catch_up_max_concurrent: usize,
 }
 
-const DB_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
-
 /// SQLSTATE for foreign-key violation.
 const SQLSTATE_DATA_EXCEPTION_CLASS: &str = "22";
 const SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION_CLASS: &str = "23";
@@ -133,7 +135,6 @@ const SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION_CLASS: &str = "23";
 /// Error-class marker for deferred source-material FK violations.
 const ERROR_CLASS_SOURCE_MATERIAL_FK: &str = "source_material_fk_violation";
 const EVENTS_SOURCE_MATERIAL_ID_FKEY: &str = "events_source_material_id_fkey";
-const EVENTS_PAYLOAD_SCHEMA_ID_FKEY: &str = "events_payload_schema_id_fkey";
 
 fn is_source_material_fk_constraint_name(value: &str) -> bool {
     value == EVENTS_SOURCE_MATERIAL_ID_FKEY
@@ -142,28 +143,12 @@ fn is_source_material_fk_constraint_name(value: &str) -> bool {
             .is_some_and(|prefix| prefix.ends_with('_'))
 }
 
-/// Return true if the error is a FK violation on `payload_schema_id`.
-///
-/// This can happen when a schema is deleted between the validation step (which
-/// stamps the schema UUID on the event) and the INSERT. We treat it as recoverable
-/// by stripping `payload_schema_id` from the batch and retrying.
-fn is_payload_schema_fk_violation(err: &SinexError) -> bool {
-    // Per #751 F32: use SQLSTATE FK classification + constraint name from context_map,
-    // not rendered error text. The constraint name is extracted by sinex_db::db_error()
-    // and stored in the "constraint" context field from the sqlx error.
-    if !is_foreign_key_violation(err) {
-        return false;
-    }
-    err.context_map().get("constraint").is_some_and(|c| {
-        c == EVENTS_PAYLOAD_SCHEMA_ID_FKEY || c.contains(EVENTS_PAYLOAD_SCHEMA_ID_FKEY)
-    })
-}
-
 /// Hard guard for node-supplied event IDs.
 ///
 /// Ingestors and derived nodes may use `sinex_node_sdk::deterministic_event_id`
 /// for idempotent source occurrences, but ingestd still rejects every ID that is
 /// not an RFC4122 `UUIDv7` before it reaches the hypertable partition key.
+#[cfg(test)]
 fn is_uuid_v7(value: &Uuid) -> bool {
     value.get_version_num() == 7 && value.get_variant() == uuid::Variant::RFC4122
 }
@@ -195,32 +180,12 @@ fn batch_depends_only_on_source_material_fk(batch: &[&PreparedEvent]) -> bool {
     })
 }
 
-fn rows_depend_only_on_source_material_fk(batch: &[StreamBatchRow]) -> bool {
-    batch.iter().all(|row| {
-        row.source_material_id.is_some()
-            && row
-                .source_event_ids
-                .as_ref()
-                .is_none_or(std::vec::Vec::is_empty)
-            && row.payload_schema_id.is_none()
-            && row.node_run_id.is_none()
-    })
-}
-
 fn is_source_material_fk_violation_for_prepared_batch(
     err: &SinexError,
     batch: &[&PreparedEvent],
 ) -> bool {
     has_explicit_source_material_fk_marker(err)
         || (is_foreign_key_violation(err) && batch_depends_only_on_source_material_fk(batch))
-}
-
-fn is_source_material_fk_violation_for_stream_batch(
-    err: &SinexError,
-    batch: &[StreamBatchRow],
-) -> bool {
-    has_explicit_source_material_fk_marker(err)
-        || (is_foreign_key_violation(err) && rows_depend_only_on_source_material_fk(batch))
 }
 
 fn is_isolatable_batch_persistence_failure(err: &SinexError) -> bool {
@@ -239,7 +204,6 @@ fn is_isolatable_batch_persistence_failure(err: &SinexError) -> bool {
             || value.starts_with(SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION_CLASS)
     })
 }
-const RECENT_ID_CACHE_SIZE: usize = 50_000;
 const DEFAULT_BATCH_FETCH_MAX_MESSAGES: usize = 100;
 const DEFAULT_BATCH_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
 const DEFAULT_MAX_ACK_PENDING: i64 = 100;
@@ -279,44 +243,16 @@ const JETSTREAM_BOOTSTRAP_MAX_BYTES: i64 = 2_147_483_647;
 #[derive(Debug)]
 struct PersistBatchResult {
     inserted_ids: Option<Vec<Uuid>>,
+    duplicate_event_ids: Vec<Uuid>,
+    tombstoned_event_ids: Vec<Uuid>,
 }
 
-#[derive(Debug, Clone)]
-struct RecentIdCache {
-    capacity: usize,
-    order: VecDeque<Uuid>,
-    set: HashSet<Uuid>,
-}
-
-impl RecentIdCache {
-    fn new(capacity: usize) -> Self {
-        Self {
-            capacity,
-            order: VecDeque::with_capacity(capacity),
-            set: HashSet::with_capacity(capacity),
-        }
-    }
-
-    fn contains(&self, id: &Uuid) -> bool {
-        if self.capacity == 0 {
-            return false;
-        }
-        self.set.contains(id)
-    }
-
-    fn insert(&mut self, id: Uuid) {
-        if self.capacity == 0 {
-            return;
-        }
-        if self.set.insert(id) {
-            self.order.push_back(id);
-            while self.order.len() > self.capacity {
-                if let Some(evicted) = self.order.pop_front() {
-                    self.set.remove(&evicted);
-                }
-            }
-        }
-    }
+#[derive(Debug)]
+struct PersistBatchFailure {
+    error: SinexError,
+    attempted_event_ids: Vec<Uuid>,
+    duplicate_event_ids: Vec<Uuid>,
+    tombstoned_event_ids: Vec<Uuid>,
 }
 
 struct PreparedEvent {
@@ -463,6 +399,7 @@ impl JetStreamConsumer {
         }
     }
 
+    #[cfg(test)]
     fn require_inserted_ids(
         inserted_ids: Option<Vec<Uuid>>,
         attempted_rows: usize,
@@ -481,16 +418,16 @@ impl JetStreamConsumer {
         topology: JetStreamTopology,
     ) -> Self {
         let js = jetstream::new(nats_client);
+        let admission = AdmissionService::new(pool.clone(), Arc::clone(&validator));
 
         Self {
             js,
             pool,
             validator,
+            admission,
             topology,
             ack_wait: Duration::from_secs(30),
             max_ack_pending: DEFAULT_MAX_ACK_PENDING,
-            fail_once: None,
-            db_failures_remaining: None,
             post_persist_fail_once: None,
             confirmation_failures_remaining: None,
             confirmation_semaphore: Arc::new(tokio::sync::Semaphore::new(
@@ -500,7 +437,6 @@ impl JetStreamConsumer {
             delivery_observer: None,
             stats: ConsumerStats::default(),
             route_db_errors_to_dlq: false,
-            recent_id_cache: Mutex::new(RecentIdCache::new(RECENT_ID_CACHE_SIZE)),
             batch_fetch_max_messages: DEFAULT_BATCH_FETCH_MAX_MESSAGES,
             batch_fetch_timeout: DEFAULT_BATCH_FETCH_TIMEOUT,
             ready_set: None,
@@ -508,7 +444,9 @@ impl JetStreamConsumer {
             stats_log_interval: Duration::from_mins(1),
             heartbeat_handle: None,
             future_ts_skew: time::Duration::hours(1),
-            ts_orig_lower_bound: Timestamp::from_const(time::macros::datetime!(2000-01-01 00:00:00 UTC)),
+            ts_orig_lower_bound: Timestamp::from_const(
+                time::macros::datetime!(2000-01-01 00:00:00 UTC),
+            ),
             startup_catch_up_max_concurrent: 4,
         }
     }
@@ -517,6 +455,7 @@ impl JetStreamConsumer {
     #[must_use]
     pub fn with_future_ts_skew(mut self, skew: time::Duration) -> Self {
         self.future_ts_skew = skew;
+        self.admission.set_future_ts_skew(skew);
         self
     }
 
@@ -524,6 +463,7 @@ impl JetStreamConsumer {
     #[must_use]
     pub fn with_ts_orig_lower_bound(mut self, lower_bound: Timestamp) -> Self {
         self.ts_orig_lower_bound = lower_bound;
+        self.admission.set_ts_orig_lower_bound(lower_bound);
         self
     }
 
@@ -631,8 +571,10 @@ impl JetStreamConsumer {
         confirmation_failures_remaining: Option<Arc<AtomicUsize>>,
     ) -> Self {
         let mut consumer = Self::with_ack_wait(nats_client, pool, validator, topology, ack_wait);
-        consumer.fail_once = fail_once;
-        consumer.db_failures_remaining = db_failures_remaining;
+        consumer.admission = consumer
+            .admission
+            .with_test_fail_once(fail_once)
+            .with_test_db_failures(db_failures_remaining);
         consumer.processing_delay = processing_delay;
         consumer.delivery_observer = delivery_observer;
         consumer.route_db_errors_to_dlq = route_db_errors_to_dlq;
@@ -825,31 +767,41 @@ impl JetStreamConsumer {
         if let Some(ref observer) = self.observer {
             // Best-effort: if we can't query stream/consumer state, emit
             // the snapshot with zeroed fields rather than block startup.
-            let (stream_messages, stream_bytes, stream_first_seq, stream_last_seq,
-                 stream_max_msgs, stream_max_bytes, stream_max_age_secs) =
-                match self.js.get_stream(&stream_name).await {
-                    Ok(mut stream) => match stream.info().await {
-                        Ok(info) => {
-                            let s = &info.state;
-                            let c = &info.config;
-                            (s.messages, s.bytes, s.first_sequence, s.last_sequence,
-                             c.max_messages as u64, c.max_bytes as u64,
-                             c.max_age.as_secs())
-                        }
-                        Err(e) => {
-                            warn!("Failed to get stream info for startup snapshot: {e}");
-                            (0, 0, 0, 0, 0, 0, 0)
-                        }
-                    },
+            let (
+                stream_messages,
+                stream_bytes,
+                stream_first_seq,
+                stream_last_seq,
+                stream_max_msgs,
+                stream_max_bytes,
+                stream_max_age_secs,
+            ) = match self.js.get_stream(&stream_name).await {
+                Ok(mut stream) => match stream.info().await {
+                    Ok(info) => {
+                        let s = &info.state;
+                        let c = &info.config;
+                        (
+                            s.messages,
+                            s.bytes,
+                            s.first_sequence,
+                            s.last_sequence,
+                            c.max_messages as u64,
+                            c.max_bytes as u64,
+                            c.max_age.as_secs(),
+                        )
+                    }
                     Err(e) => {
-                        warn!("Failed to get stream for startup snapshot: {e}");
+                        warn!("Failed to get stream info for startup snapshot: {e}");
                         (0, 0, 0, 0, 0, 0, 0)
                     }
-                };
+                },
+                Err(e) => {
+                    warn!("Failed to get stream for startup snapshot: {e}");
+                    (0, 0, 0, 0, 0, 0, 0)
+                }
+            };
             let consumer_info = consumer.info().await.ok();
-            let consumer_existed = consumer_info
-                .as_ref()
-                .is_some_and(|ci| ci.num_pending > 0);
+            let consumer_existed = consumer_info.as_ref().is_some_and(|ci| ci.num_pending > 0);
             let deliver_policy = format!("{:?}", consumer_spec.deliver_policy);
             let initial_replay_risk = !consumer_existed
                 && matches!(
@@ -904,16 +856,14 @@ impl JetStreamConsumer {
         // Startup catch-up semaphore: limits I/O pressure while the consumer
         // works through the initial backlog. Once the consumer is caught up
         // (num_pending == 0), the semaphore is no longer used.
-        let catch_up_semaphore = (self.startup_catch_up_max_concurrent > 0)
-            .then(|| Arc::new(tokio::sync::Semaphore::new(self.startup_catch_up_max_concurrent)));
+        let catch_up_semaphore = (self.startup_catch_up_max_concurrent > 0).then(|| {
+            Arc::new(tokio::sync::Semaphore::new(
+                self.startup_catch_up_max_concurrent,
+            ))
+        });
         let mut catching_up = catch_up_semaphore.is_some();
         let mut batch_future: BoxFuture<'_, IngestdResult<()>> = Box::pin(
-            Self::process_batch_with_semaphore(
-                &self,
-                &consumer,
-                &catch_up_semaphore,
-                catching_up,
-            ),
+            Self::process_batch_with_semaphore(&self, &consumer, &catch_up_semaphore, catching_up),
         );
 
         loop {
@@ -1102,206 +1052,23 @@ impl JetStreamConsumer {
 
     #[instrument(skip(self, msg), fields(event_id, source, event_type))]
     async fn prepare_event(&self, msg: jetstream::Message) -> IngestdResult<Option<PreparedEvent>> {
-        // Reject payloads that exceed the hard size cap before allocating for parse.
-        if msg.payload.len() > MAX_EVENT_PAYLOAD_BYTES {
-            let reason = format!(
-                "Event payload too large: {} bytes (limit: {} bytes)",
-                msg.payload.len(),
-                MAX_EVENT_PAYLOAD_BYTES,
-            );
-            error!(
-                size_bytes = msg.payload.len(),
-                limit_bytes = MAX_EVENT_PAYLOAD_BYTES,
-                "Event payload exceeds maximum size; routing to DLQ"
-            );
-            self.route_validation_failure(&msg, reason).await?;
-            return Ok(None);
-        }
-
-        // Guard against pathological structure (depth, key count, array length) before
-        // deserializing into the typed Event model.  The UTF-8 check here also catches
-        // payloads that are not valid JSON strings at all.
-        let payload_str = match std::str::from_utf8(&msg.payload) {
-            Ok(s) => s,
-            Err(e) => {
-                let reason = format!("Event payload is not valid UTF-8: {e}");
-                error!("Event payload UTF-8 check failed; routing to DLQ");
-                self.route_validation_failure(&msg, reason).await?;
-                return Ok(None);
+        match self.admission.admit_bytes(&msg.payload).await? {
+            AdmissionDecision::Admitted(admitted) | AdmissionDecision::Transformed(admitted) => {
+                Ok(Some(PreparedEvent {
+                    event: admitted.event,
+                    parsed_id: admitted.event_id,
+                    message: msg,
+                }))
             }
-        };
-        if let Err(e) = sinex_primitives::validation::validate_json(payload_str) {
-            let reason = format!("Event payload failed structural validation: {e}");
-            error!("Event payload structural guard rejected payload; routing to DLQ");
-            self.route_validation_failure(&msg, reason).await?;
-            return Ok(None);
-        }
-
-        // Parse event using unified Event model.
-        // Distinguish pure JSON syntax errors from typed deserialization failures
-        // (e.g. an invalid timestamp string in a Timestamp field).
-        let event: Event<JsonValue> = match serde_json::from_slice(&msg.payload) {
-            Ok(e) => e,
-            Err(e) => {
-                let reason = if serde_json::from_slice::<serde_json::Value>(&msg.payload).is_ok() {
-                    // Valid JSON but typed fields didn't match (e.g. bad timestamp format)
-                    error!(event_id = ?msg.headers, "Invalid timestamp or field format: {}", e);
-                    format!("Invalid timestamp or field format: {e}")
-                } else {
-                    error!(event_id = ?msg.headers, "Failed to parse event: {}", e);
-                    format!("Parse error: {e}")
-                };
-                self.route_validation_failure(&msg, reason).await?;
-                return Ok(None);
-            }
-        };
-
-        if event.ts_orig.is_none() {
-            warn!(event_id = ?event.id, "Event validation failed: missing ts_orig");
-            self.route_validation_failure(&msg, "Validation failed: missing ts_orig".to_string())
-                .await?;
-            return Ok(None);
-        }
-
-        // Route implausibly-timestamped events to DLQ rather than merely warning.
-        // - Past: ts_orig predates the operator-configured lower bound.
-        // - Future: ts_orig exceeds (now + operator-configured future_ts_skew).
-        if let Some(ts_orig) = event.ts_orig {
-            let now = Timestamp::now();
-            if ts_orig < self.ts_orig_lower_bound {
-                error!(
-                    event_id = ?event.id,
-                    source = %event.source,
-                    event_type = %event.event_type,
-                    ts_orig = %ts_orig,
-                    lower_bound = %self.ts_orig_lower_bound,
-                    "Event ts_orig predates lower bound — implausibly old; routing to DLQ"
-                );
-                self.stats
-                    .suspicious_past_ts_orig
-                    .fetch_add(1, Ordering::Relaxed);
-                if let Some(ref observer) = self.observer {
-                    let _ = observer
-                        .emit_counter("suspicious_past_ts_orig_total", 1, None)
-                        .await;
-                }
-                self.route_validation_failure(
-                    &msg,
-                    format!(
-                        "ts_orig {ts_orig} predates lower bound {} (implausibly old)", self.ts_orig_lower_bound
-                    ),
-                )
-                .await?;
-                return Ok(None);
-            }
-            if ts_orig > now + self.future_ts_skew {
-                let latest_expected = now + self.future_ts_skew;
-                error!(
-                    event_id = ?event.id,
-                    source = %event.source,
-                    event_type = %event.event_type,
-                    ts_orig = %ts_orig,
-                    latest_expected = %latest_expected,
-                    skew_seconds = (ts_orig - now).whole_seconds(),
-                    "Event ts_orig is implausibly far in the future; routing to DLQ"
-                );
-                self.stats
-                    .suspicious_future_ts_orig
-                    .fetch_add(1, Ordering::Relaxed);
-                if let Some(ref observer) = self.observer {
-                    let _ = observer
-                        .emit_counter("suspicious_future_ts_orig_total", 1, None)
-                        .await;
-                }
-                self.route_validation_failure(
-                    &msg,
-                    format!(
-                        "ts_orig {ts_orig} exceeds latest expected {latest_expected} by {} seconds (implausibly future)",
-                        (ts_orig - now).whole_seconds()
-                    ),
-                )
-                .await?;
-                return Ok(None);
-            }
-        }
-
-        // Validate anchor_byte: negative values violate the DB CHECK constraint and would
-        // fail on insert anyway. Catch them here to produce a clear DLQ entry rather than
-        // a cryptic DB error. Only material-provenance events carry an anchor_byte.
-        if let Some(anchor_byte) = event.get_anchor_byte()
-            && anchor_byte < 0
-        {
-            self.stats
-                .negative_anchor_byte
-                .fetch_add(1, Ordering::Relaxed);
-            error!(
-                event_id = ?event.id,
-                source = %event.source,
-                event_type = %event.event_type,
-                anchor_byte,
-                "Event has negative anchor_byte — violates DB constraint; routing to DLQ"
-            );
-            self.route_validation_failure(
-                &msg,
-                format!("Invalid anchor_byte: {anchor_byte} (must be >= 0)"),
-            )
-            .await?;
-            return Ok(None);
-        }
-
-        // Validate event using IngestEventValidator; capture the matched schema_id for persistence.
-        let validated_schema_id = match self.validate_event(&event).await {
-            Ok(schema_id) => schema_id,
-            Err(e) => {
-                warn!(event_id = ?event.id, "Event validation failed: {}", e);
-                self.route_validation_failure(&msg, format!("Validation failed: {e}"))
+            AdmissionDecision::Rejected(rejection)
+            | AdmissionDecision::Suppressed(rejection)
+            | AdmissionDecision::QuarantineNeeded(rejection) => {
+                self.record_admission_rejection(&rejection).await;
+                self.route_validation_failure(&msg, rejection.reason)
                     .await?;
-                return Ok(None);
+                Ok(None)
             }
-        };
-
-        // Stamp the matched schema_id so it is persisted with the event row.
-        // Only overwrite if validation actually matched a schema (None means no schema / disabled).
-        let mut event = event;
-        if let Some(sid) = validated_schema_id {
-            event.payload_schema_id = Some(sid);
         }
-
-        // The ID MUST be present for events coming from Ingestors
-        let parsed_id = if let Some(id) = event.id {
-            *id.as_uuid()
-        } else {
-            error!("Event missing required ID; routing to DLQ");
-            self.route_validation_failure(&msg, "Missing event ID".to_string())
-                .await?;
-            return Ok(None);
-        };
-        if !is_uuid_v7(&parsed_id) {
-            error!(
-                event_id = %parsed_id,
-                source = %event.source,
-                event_type = %event.event_type,
-                uuid_version = parsed_id.get_version_num(),
-                uuid_variant = ?parsed_id.get_variant(),
-                "Event ID is not UUIDv7 - violates hypertable partition contract; routing to DLQ"
-            );
-            self.route_validation_failure(
-                &msg,
-                format!(
-                    "Invalid event ID: {parsed_id} is UUID version {} with variant {:?}, expected RFC4122 UUIDv7",
-                    parsed_id.get_version_num(),
-                    parsed_id.get_variant()
-                ),
-            )
-            .await?;
-            return Ok(None);
-        }
-
-        Ok(Some(PreparedEvent {
-            event,
-            parsed_id,
-            message: msg,
-        }))
     }
 
     #[tracing::instrument(skip(self, batch), fields(batch_size = batch.len()))]
@@ -1392,10 +1159,27 @@ impl JetStreamConsumer {
             let persist_result = self.persist_batch_optimized(&batch).await;
             match persist_result {
                 Ok(persisted) => {
-                    let persisted_set = persisted
+                    let inserted_set = persisted
                         .inserted_ids
                         .as_ref()
                         .map(|ids| ids.iter().copied().collect::<HashSet<_>>());
+                    let mut confirmation_ids: HashSet<Uuid> =
+                        persisted.duplicate_event_ids.iter().copied().collect();
+                    if let Some(ids) = &persisted.inserted_ids {
+                        confirmation_ids.extend(ids.iter().copied());
+                    }
+                    let tombstoned_ids: HashSet<Uuid> =
+                        persisted.tombstoned_event_ids.iter().copied().collect();
+                    let confirmation_batch: Vec<_> = batch
+                        .iter()
+                        .copied()
+                        .filter(|prepared| confirmation_ids.contains(&prepared.parsed_id))
+                        .collect();
+                    let tombstoned_batch: Vec<_> = batch
+                        .iter()
+                        .copied()
+                        .filter(|prepared| tombstoned_ids.contains(&prepared.parsed_id))
+                        .collect();
                     if let Some(fail_flag) = &self.post_persist_fail_once
                         && fail_flag.swap(false, Ordering::SeqCst)
                     {
@@ -1409,7 +1193,7 @@ impl JetStreamConsumer {
                     // instead of O(n) serial NATS round-trips per batch.
                     // A semaphore limits concurrent in-flight confirmation publishes
                     // to prevent confirmation storms from starving other NATS operations.
-                    let confirmation_futs: Vec<_> = batch
+                    let confirmation_futs: Vec<_> = confirmation_batch
                         .iter()
                         .map(|prepared| {
                             let sem = Arc::clone(&self.confirmation_semaphore);
@@ -1424,11 +1208,14 @@ impl JetStreamConsumer {
                     let confirmation_results = join_all(confirmation_futs).await;
 
                     let mut ack_messages = Vec::with_capacity(batch.len());
+                    ack_messages.extend(tombstoned_batch.iter().map(|prepared| &prepared.message));
                     let mut confirmation_durability_gaps = Vec::new();
-                    for (result, prepared) in confirmation_results.iter().zip(batch.iter()) {
+                    for (result, prepared) in
+                        confirmation_results.iter().zip(confirmation_batch.iter())
+                    {
                         match result {
                             Ok(()) => {
-                                if let Some(set) = &persisted_set
+                                if let Some(set) = &inserted_set
                                     && !set.contains(&prepared.parsed_id)
                                 {
                                     debug!(
@@ -1521,22 +1308,40 @@ impl JetStreamConsumer {
                             acked_count as usize,
                         ));
                     }
-                    info!("Processed and confirmed {} events", batch.len());
+                    info!(
+                        confirmed = confirmation_batch.len(),
+                        tombstoned = tombstoned_batch.len(),
+                        "Processed admission batch"
+                    );
                 }
-                Err(e) => {
+                Err(failure) => {
+                    self.settle_admission_skips(
+                        &batch,
+                        &failure.duplicate_event_ids,
+                        &failure.tombstoned_event_ids,
+                    )
+                    .await?;
+                    let e = failure.error;
+                    let attempted_ids: HashSet<Uuid> =
+                        failure.attempted_event_ids.iter().copied().collect();
+                    let attempted_batch: Vec<_> = batch
+                        .iter()
+                        .copied()
+                        .filter(|prepared| attempted_ids.contains(&prepared.parsed_id))
+                        .collect();
                     // Check if this is a transient FK violation (source material not yet registered).
                     // Safety net: the ready set should prevent most FK violations, but races are
                     // possible (e.g. material registered between ready-set check and DB insert).
                     let is_fk_error =
-                        is_source_material_fk_violation_for_prepared_batch(&e, &batch);
+                        is_source_material_fk_violation_for_prepared_batch(&e, &attempted_batch);
                     if is_fk_error {
                         let mut settlement_errors = Vec::new();
                         let mut deferred_count = 0_u64;
                         debug!(
-                            batch_size = batch.len(),
+                            batch_size = attempted_batch.len(),
                             "FK violation on batch - source material likely still registering"
                         );
-                        for prepared in &batch {
+                        for prepared in &attempted_batch {
                             let material_id = match &prepared.event.provenance {
                                 Provenance::Material { id, .. } => Some(*id.as_uuid()),
                                 Provenance::Synthesis { .. } => None,
@@ -1566,22 +1371,22 @@ impl JetStreamConsumer {
                     }
 
                     if is_isolatable_batch_persistence_failure(&e) {
-                        if batch.len() > 1 {
-                            let split_at = batch.len() / 2;
+                        if attempted_batch.len() > 1 {
+                            let split_at = attempted_batch.len() / 2;
                             warn!(
-                                batch_size = batch.len(),
+                                batch_size = attempted_batch.len(),
                                 split_at,
                                 batch_atomicity = BATCH_ATOMICITY_SCOPE,
                                 sqlstate = ?e.context_map().get("sqlstate"),
                                 constraint = ?e.context_map().get("constraint"),
                                 "Splitting batch to isolate non-retryable persistence failure; already-persisted sibling sub-batches remain committed"
                             );
-                            pending_batches.push(batch[split_at..].to_vec());
-                            pending_batches.push(batch[..split_at].to_vec());
+                            pending_batches.push(attempted_batch[split_at..].to_vec());
+                            pending_batches.push(attempted_batch[..split_at].to_vec());
                             continue;
                         }
 
-                        let prepared = batch[0];
+                        let prepared = attempted_batch[0];
                         warn!(
                             event_id = %prepared.parsed_id,
                             sqlstate = ?e.context_map().get("sqlstate"),
@@ -1602,7 +1407,7 @@ impl JetStreamConsumer {
 
                     error!("Failed to persist batch: {}", e);
                     let mut settlement_errors = Vec::new();
-                    for prepared in &batch {
+                    for prepared in &attempted_batch {
                         match self.should_route_terminal_persistence_failure(&prepared.message, &e)
                         {
                             Ok(true) => {
@@ -1686,7 +1491,7 @@ impl JetStreamConsumer {
                             }
                         }
                     }
-                    let failed_count = batch.len() as u64;
+                    let failed_count = attempted_batch.len() as u64;
                     self.stats
                         .events_failed
                         .fetch_add(failed_count, Ordering::Relaxed);
@@ -1716,21 +1521,172 @@ impl JetStreamConsumer {
         Ok(())
     }
 
-    /// Validate event against JSON schema.
-    ///
-    /// Returns the matched schema UUID on success (`None` when validation is disabled/no schema
-    /// registered), so the caller can stamp `payload_schema_id` on the event before persistence.
-    async fn validate_event(&self, event: &Event<JsonValue>) -> IngestdResult<Option<Uuid>> {
-        // Domain type formats (EventSource, EventType) are validated at deserialization
-        // time — if we hold them here, they're already valid.
-
-        let guard = self.validator.read().await;
-        let validation =
-            guard.validate_payload_for(&event.source, &event.event_type, &event.payload);
-        let strict_mode = guard.is_strict_mode();
-        Self::resolve_validation_result(validation, strict_mode, &event.source, &event.event_type)
+    async fn record_admission_rejection(&self, rejection: &AdmissionRejection) {
+        match rejection.kind {
+            AdmissionRejectionKind::PastTimestamp => {
+                self.stats
+                    .suspicious_past_ts_orig
+                    .fetch_add(1, Ordering::Relaxed);
+                if let Some(ref observer) = self.observer {
+                    let _ = observer
+                        .emit_counter("suspicious_past_ts_orig_total", 1, None)
+                        .await;
+                }
+            }
+            AdmissionRejectionKind::FutureTimestamp => {
+                self.stats
+                    .suspicious_future_ts_orig
+                    .fetch_add(1, Ordering::Relaxed);
+                if let Some(ref observer) = self.observer {
+                    let _ = observer
+                        .emit_counter("suspicious_future_ts_orig_total", 1, None)
+                        .await;
+                }
+            }
+            AdmissionRejectionKind::NegativeAnchor => {
+                self.stats
+                    .negative_anchor_byte
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            AdmissionRejectionKind::PayloadTooLarge
+            | AdmissionRejectionKind::InvalidUtf8
+            | AdmissionRejectionKind::StructuralJson
+            | AdmissionRejectionKind::EventDeserialization
+            | AdmissionRejectionKind::MissingTimestamp
+            | AdmissionRejectionKind::SchemaValidation
+            | AdmissionRejectionKind::CandidateMetadata
+            | AdmissionRejectionKind::PrivacyPolicy
+            | AdmissionRejectionKind::QuarantinePolicy
+            | AdmissionRejectionKind::MissingEventId
+            | AdmissionRejectionKind::InvalidEventId => {}
+        }
     }
 
+    async fn settle_admission_skips(
+        &self,
+        batch: &[&PreparedEvent],
+        duplicate_event_ids: &[Uuid],
+        tombstoned_event_ids: &[Uuid],
+    ) -> IngestdResult<()> {
+        if duplicate_event_ids.is_empty() && tombstoned_event_ids.is_empty() {
+            return Ok(());
+        }
+
+        let duplicate_ids: HashSet<Uuid> = duplicate_event_ids.iter().copied().collect();
+        let tombstoned_ids: HashSet<Uuid> = tombstoned_event_ids.iter().copied().collect();
+        let duplicate_batch: Vec<_> = batch
+            .iter()
+            .copied()
+            .filter(|prepared| duplicate_ids.contains(&prepared.parsed_id))
+            .collect();
+        let tombstoned_batch: Vec<_> = batch
+            .iter()
+            .copied()
+            .filter(|prepared| tombstoned_ids.contains(&prepared.parsed_id))
+            .collect();
+
+        let confirmation_futs: Vec<_> = duplicate_batch
+            .iter()
+            .map(|prepared| {
+                let sem = Arc::clone(&self.confirmation_semaphore);
+                let event_id = prepared.parsed_id;
+                async move {
+                    let _permit = sem.acquire().await.expect("confirmation semaphore closed");
+                    self.publish_confirmation_with_retry(&event_id).await
+                }
+            })
+            .collect();
+        let confirmation_results = join_all(confirmation_futs).await;
+
+        let mut ack_messages = Vec::with_capacity(duplicate_batch.len() + tombstoned_batch.len());
+        ack_messages.extend(tombstoned_batch.iter().map(|prepared| &prepared.message));
+        let mut confirmation_durability_gaps = Vec::new();
+        for (result, prepared) in confirmation_results.iter().zip(duplicate_batch.iter()) {
+            match result {
+                Ok(()) => {
+                    debug!(
+                        event_id = %prepared.parsed_id,
+                        "Re-published confirmation for duplicate already admitted event"
+                    );
+                    ack_messages.push(&prepared.message);
+                }
+                Err(err) => {
+                    warn!(
+                        event_id = %prepared.parsed_id,
+                        error = %err,
+                        "Failed to publish duplicate confirmation after retries"
+                    );
+                    self.stats
+                        .confirmation_failures
+                        .fetch_add(1, Ordering::Relaxed);
+                    match self.enqueue_confirmation_retry(&prepared.parsed_id).await {
+                        Ok(()) => {
+                            self.stats
+                                .confirmation_retries_enqueued
+                                .fetch_add(1, Ordering::Relaxed);
+                            ack_messages.push(&prepared.message);
+                        }
+                        Err(retry_err) => {
+                            self.stats
+                                .confirmation_retry_failures
+                                .fetch_add(1, Ordering::Relaxed);
+                            confirmation_durability_gaps.push((
+                                prepared.parsed_id,
+                                SinexError::network(
+                                    "Duplicate event could not publish a confirmation or durably enqueue its retry",
+                                )
+                                .with_context("confirmation_publish_error", err.to_string())
+                                .with_context(
+                                    "confirmation_retry_enqueue_error",
+                                    retry_err.to_string(),
+                                ),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        let ack_futs: Vec<_> = ack_messages.iter().map(|message| message.ack()).collect();
+        let ack_results = join_all(ack_futs).await;
+        for result in &ack_results {
+            if let Err(error) = result {
+                return Err(
+                    SinexError::network("Failed to ack admission-skipped messages")
+                        .with_context("batch_size", ack_messages.len().to_string())
+                        .with_source(error.to_string()),
+                );
+            }
+        }
+
+        let acked_count = ack_messages.len() as u64;
+        if acked_count > 0 {
+            self.stats
+                .events_processed
+                .fetch_add(acked_count, Ordering::Relaxed);
+            if let Some(ref handle) = self.heartbeat_handle {
+                handle.increment_events_processed(acked_count);
+            }
+        }
+
+        if !confirmation_durability_gaps.is_empty() {
+            let gap_count = confirmation_durability_gaps.len() as u64;
+            self.stats
+                .confirmation_durability_gaps
+                .fetch_add(gap_count, Ordering::Relaxed);
+            if let Some(ref handle) = self.heartbeat_handle {
+                handle.record_error("confirmation durability gap");
+            }
+            return Err(Self::confirmation_durability_gap_error(
+                confirmation_durability_gaps,
+                acked_count as usize,
+            ));
+        }
+
+        Ok(())
+    }
+
+    #[cfg(test)]
     fn resolve_validation_result(
         validation: ValidationResult,
         strict_mode: bool,
@@ -1777,152 +1733,57 @@ impl JetStreamConsumer {
     async fn persist_batch_optimized(
         &self,
         batch: &[&PreparedEvent],
-    ) -> IngestdResult<PersistBatchResult> {
+    ) -> Result<PersistBatchResult, PersistBatchFailure> {
         if batch.is_empty() {
-            return Ok(PersistBatchResult { inserted_ids: None });
+            return Ok(PersistBatchResult {
+                inserted_ids: None,
+                duplicate_event_ids: Vec::new(),
+                tombstoned_event_ids: Vec::new(),
+            });
         }
 
-        if let Some(fail_flag) = &self.fail_once
-            && fail_flag.swap(false, Ordering::SeqCst)
-        {
-            return Err(SinexError::database("forced transient failure"));
-        }
-
-        if let Some(remaining) = &self.db_failures_remaining
-            && remaining
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
-                    current.checked_sub(1)
-                })
-                .is_ok()
-        {
-            return Err(SinexError::database("forced persistent failure"));
-        }
-
-        let to_persist = self.filter_cached_batch(batch).await;
-        if to_persist.is_empty() {
-            return Ok(PersistBatchResult { inserted_ids: None });
-        }
-
-        // Filter out tombstoned events: reject re-ingestion of permanently purged events.
-        let to_persist = self.filter_tombstoned_batch(&to_persist).await?;
-        if to_persist.is_empty() {
-            return Ok(PersistBatchResult { inserted_ids: None });
-        }
-
-        let rows: Vec<StreamBatchRow> = to_persist
+        let admitted_batch: Vec<AdmittedEvent> = batch
             .iter()
-            .map(|prepared| {
-                let event = &prepared.event;
-                let (
-                    source_event_ids,
-                    source_material_id,
-                    offset_start,
-                    offset_end,
-                    offset_kind,
-                    anchor_byte,
-                ) = sinex_db::repositories::events::conversions::extract_provenance(event)?;
-
-                Ok(StreamBatchRow {
-                    id: prepared.parsed_id,
-                    source: event.source.clone(),
-                    event_type: event.event_type.clone(),
-                    ts_orig: event.ts_orig.ok_or_else(|| {
-                        SinexError::validation("validated event missing ts_orig")
-                            .with_context("event_id", prepared.parsed_id.to_string())
-                            .with_context("source", event.source.as_str().to_string())
-                            .with_context("event_type", event.event_type.as_str().to_string())
-                    })?,
-                    host: event.host.clone(),
-                    payload: event.payload.clone(),
-                    source_material_id,
-                    anchor_byte,
-                    offset_start,
-                    offset_end,
-                    offset_kind,
-                    source_event_ids,
-                    payload_schema_id: event.payload_schema_id,
-                    node_run_id: event.node_run_id,
-                    associated_blob_ids: event.associated_blob_ids.clone(),
-                    temporal_policy: event.temporal_policy.map(|p| p.to_string()),
-                    semantics_version: event.semantics_version.clone(),
-                    scope_key: event.scope_key.clone(),
-                    equivalence_key: event.equivalence_key.clone(),
-                    created_by_operation_id: event.created_by_operation_id,
-                    node_model: event.node_model.map(|m| m.to_string()),
-                })
+            .map(|prepared| AdmittedEvent {
+                event: prepared.event.clone(),
+                event_id: prepared.parsed_id,
+                metadata: None,
             })
-            .collect::<IngestdResult<Vec<_>>>()?;
+            .collect();
+        let admitted_refs: Vec<&AdmittedEvent> = admitted_batch.iter().collect();
 
-        let insert_result = timeout(
-            DB_WRITE_TIMEOUT,
-            self.pool.events().insert_stream_batch(&rows),
-        )
-        .await
-        .map_err(|_| {
-            error!(
-                batch_size = to_persist.len(),
-                timeout_seconds = DB_WRITE_TIMEOUT.as_secs(),
-                "Timed out waiting for batch insert to complete"
-            );
-            SinexError::database(format!(
-                "Persisting batch timed out after {DB_WRITE_TIMEOUT:?}"
-            ))
-        })?;
-
-        // If the INSERT failed due to a payload_schema_id FK violation (schema deleted between
-        // validation and insert), retry after stripping schema IDs. #751 F15: strip per-event,
-        // not per-batch — only clear payload_schema_id from rows that have one set, preserving
-        // the annotation for unaffected events that never referenced the deleted schema.
-        let insert_result = match insert_result {
-            Err(ref err) if is_payload_schema_fk_violation(err) => {
-                let schema_stripped_count = rows
-                    .iter()
-                    .filter(|r| r.payload_schema_id.is_some())
-                    .count();
-                warn!(
-                    batch_size = to_persist.len(),
-                    schema_stripped_count,
-                    "INSERT hit FK violation on payload_schema_id (schema deleted during validation race); retrying without schema IDs on affected rows"
-                );
-                let mut rows_without_schema: Vec<StreamBatchRow> = rows.clone();
-                // #751 F15: only strip from rows that had a payload_schema_id.
-                // Rows without one were never referencing the deleted schema and
-                // should preserve their (empty) annotation.
-                for row in &mut rows_without_schema {
-                    if row.payload_schema_id.is_some() {
-                        row.payload_schema_id = None;
-                    }
-                }
-                timeout(
-                    DB_WRITE_TIMEOUT,
-                    self.pool.events().insert_stream_batch(&rows_without_schema),
-                )
+        let plan = self
+            .admission
+            .plan_persistence_batch_refs(&admitted_refs)
+            .await
+            .map_err(|error| PersistBatchFailure {
+                error,
+                attempted_event_ids: admitted_batch.iter().map(|event| event.event_id).collect(),
+                duplicate_event_ids: Vec::new(),
+                tombstoned_event_ids: Vec::new(),
+            })?;
+        let attempted_event_ids = plan.attempted_event_ids();
+        let duplicate_event_ids = plan.cached_duplicate_event_ids.clone();
+        let tombstoned_event_ids = plan.tombstoned_event_ids.clone();
+        let result =
+            self.admission
+                .persist_plan(&plan)
                 .await
-                .map_err(|_| {
-                    SinexError::database(format!(
-                        "Persisting batch (schema-id-stripped retry) timed out after {DB_WRITE_TIMEOUT:?}"
-                    ))
-                })?
-            }
-            other => other,
-        };
-
-        let result = insert_result.map_err(|err| {
-            if is_source_material_fk_violation_for_stream_batch(&err, &rows) {
-                warn!(
-                    batch_size = to_persist.len(),
-                    "INSERT hit FK violation (source_material not yet registered); will retry"
-                );
-            } else {
-                error!("Failed to persist events batch: {}", err);
-            }
-            err
-        })?;
-
-        let inserted_ids = Self::require_inserted_ids(result.inserted_ids, to_persist.len())?;
-        self.remember_batch(batch).await;
+                .map_err(|error| PersistBatchFailure {
+                    error,
+                    attempted_event_ids: attempted_event_ids.clone(),
+                    duplicate_event_ids: duplicate_event_ids.clone(),
+                    tombstoned_event_ids: tombstoned_event_ids.clone(),
+                })?;
+        if result.tombstoned_events_rejected > 0 {
+            self.stats
+                .tombstoned_events_rejected
+                .fetch_add(result.tombstoned_events_rejected as u64, Ordering::Relaxed);
+        }
         Ok(PersistBatchResult {
-            inserted_ids: Some(inserted_ids),
+            inserted_ids: result.inserted_ids,
+            duplicate_event_ids: result.duplicate_event_ids,
+            tombstoned_event_ids: result.tombstoned_event_ids,
         })
     }
 
@@ -2063,79 +1924,6 @@ impl JetStreamConsumer {
                 );
         }
         Err(combined)
-    }
-
-    async fn filter_cached_batch<'a>(&self, batch: &[&'a PreparedEvent]) -> Vec<&'a PreparedEvent> {
-        // Clone cache snapshot then release the lock immediately — don't hold it
-        // across the entire batch scan, which would block the writer.
-        let cached_ids = {
-            let cache = self.recent_id_cache.lock().await;
-            cache.clone()
-        };
-        let mut seen = HashSet::new();
-        batch
-            .iter()
-            .filter(|event| {
-                if cached_ids.contains(&event.parsed_id) {
-                    return false;
-                }
-                seen.insert(event.parsed_id)
-            })
-            .copied()
-            .collect()
-    }
-
-    async fn remember_batch(&self, batch: &[&PreparedEvent]) {
-        let mut cache = self.recent_id_cache.lock().await;
-        for event in batch {
-            cache.insert(event.parsed_id);
-        }
-    }
-
-    /// Filter out tombstoned events from a batch.
-    ///
-    /// Queries `core.event_tombstones` for the batch's event IDs and removes
-    /// any that have been permanently purged. This prevents accidental
-    /// re-ingestion of tombstoned events.
-    async fn filter_tombstoned_batch<'a>(
-        &self,
-        batch: &[&'a PreparedEvent],
-    ) -> IngestdResult<Vec<&'a PreparedEvent>> {
-        if batch.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let ids: Vec<Id<Event>> = batch.iter().map(|p| Id::from_uuid(p.parsed_id)).collect();
-        let tombstoned_ids = self
-            .pool
-            .events()
-            .filter_tombstoned(&ids)
-            .await
-            .map_err(|e| {
-                error!("Failed to query event_tombstones during batch persistence: {e}");
-                SinexError::database("tombstone query failed")
-                    .with_context("batch_size", batch.len().to_string())
-            })?;
-
-        if tombstoned_ids.is_empty() {
-            return Ok(batch.to_vec());
-        }
-
-        let rejected_count = tombstoned_ids.len();
-        self.stats
-            .tombstoned_events_rejected
-            .fetch_add(rejected_count as u64, Ordering::Relaxed);
-
-        warn!(
-            count = rejected_count,
-            "Rejected {rejected_count} tombstoned event(s) during ingestion"
-        );
-
-        Ok(batch
-            .iter()
-            .filter(|p| !tombstoned_ids.contains(&Id::from_uuid(p.parsed_id)))
-            .copied()
-            .collect())
     }
 
     /// Publish confirmation to NATS
@@ -2583,15 +2371,21 @@ mod tests {
 
     #[sinex_test]
     async fn implausibly_old_ts_orig_default_year_2000() -> TestResult<()> {
-        let lower_bound =
-            Timestamp::from_const(time::macros::datetime!(2000-01-01 00:00:00 UTC));
-        let before_2000 =
-            Timestamp::from_const(time::macros::datetime!(1999-12-31 23:59:59 UTC));
-        let after_2000 =
-            Timestamp::from_const(time::macros::datetime!(2000-01-02 00:00:00 UTC));
-        assert!(before_2000 < lower_bound, "1999-12-31 should be before lower bound");
-        assert!(!(lower_bound < lower_bound), "2000-01-01 itself should not be flagged");
-        assert!(!(after_2000 < lower_bound), "2000-01-02 should not be flagged");
+        let lower_bound = Timestamp::from_const(time::macros::datetime!(2000-01-01 00:00:00 UTC));
+        let before_2000 = Timestamp::from_const(time::macros::datetime!(1999-12-31 23:59:59 UTC));
+        let after_2000 = Timestamp::from_const(time::macros::datetime!(2000-01-02 00:00:00 UTC));
+        assert!(
+            before_2000 < lower_bound,
+            "1999-12-31 should be before lower bound"
+        );
+        assert!(
+            !(lower_bound < lower_bound),
+            "2000-01-01 itself should not be flagged"
+        );
+        assert!(
+            !(after_2000 < lower_bound),
+            "2000-01-02 should not be flagged"
+        );
         Ok(())
     }
 
