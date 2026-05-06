@@ -10,6 +10,7 @@
 // - **Query Boundaries**: Non-existent sources, pagination, after-insert queries
 
 use serde_json::json;
+use std::collections::HashSet;
 use xtask::sandbox::prelude::*;
 
 // =============================================================================
@@ -445,18 +446,41 @@ async fn test_query_with_pagination(ctx: TestContext) -> TestResult<()> {
 
     assert_eq!(page2.len(), 5, "Second page should have exactly 5 events");
 
-    // Ensure pages have different events
-    let page1_ids: Vec<_> = page1.iter().filter_map(|e| e.id).collect();
-    let page2_ids: Vec<_> = page2.iter().filter_map(|e| e.id).collect();
-
-    let mut all_ids = page1_ids.clone();
-    all_ids.extend(&page2_ids);
-
+    let page1_ids = event_id_set(&page1, "page 1")?;
+    let page2_ids = event_id_set(&page2, "page 2")?;
+    assert!(
+        page1_ids.is_disjoint(&page2_ids),
+        "pagination pages should not overlap"
+    );
     assert_eq!(
-        all_ids.len(),
+        page1_ids.len() + page2_ids.len(),
         10,
         "Page 1 and Page 2 should have 10 unique events total"
     );
 
+    for event in page1.iter().chain(page2.iter()) {
+        assert_eq!(event.source.as_str(), source_name);
+        assert_eq!(event.event_type.as_str(), "pagination.test");
+        assert!(
+            event.payload["index"].as_i64().is_some(),
+            "paginated event should preserve numeric index payload: {:?}",
+            event.payload
+        );
+    }
+
     Ok(())
+}
+
+fn event_id_set(
+    events: &[Event<serde_json::Value>],
+    label: &str,
+) -> TestResult<HashSet<Id<Event<serde_json::Value>>>> {
+    let mut ids = HashSet::with_capacity(events.len());
+    for event in events {
+        let id = event
+            .id
+            .ok_or_else(|| color_eyre::eyre::eyre!("{label} event missing id"))?;
+        assert!(ids.insert(id), "{label} contains duplicate event id {id}");
+    }
+    Ok(ids)
 }
