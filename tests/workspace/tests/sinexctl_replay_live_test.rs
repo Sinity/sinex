@@ -135,19 +135,43 @@ async fn sinexctl_replay(url: &str, args: &[&str]) -> std::process::Output {
 
 /// Extract `operation_id` from sinexctl JSON output.
 fn extract_op_id(output: &std::process::Output) -> String {
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
-        panic!(
-            "failed to parse sinexctl JSON output: {e}\nstdout: {stdout}\nstderr: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-    });
+    let json = parse_json_stdout(output, "replay operation");
     // sinexctl outputs the operation_id at the top level or under "operation"
     json["operation_id"]
         .as_str()
         .or_else(|| json["operation"]["operation_id"].as_str())
         .unwrap_or_else(|| panic!("no operation_id in output: {json}"))
         .to_string()
+}
+
+fn parse_json_stdout(output: &std::process::Output, label: &str) -> serde_json::Value {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!(
+            "failed to parse {label} JSON output: {e}\nstdout: {stdout}\nstderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })
+}
+
+fn parse_json_lines_stdout(output: &std::process::Output, label: &str) -> Vec<serde_json::Value> {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() || trimmed == "[]" {
+        return Vec::new();
+    }
+
+    trimmed
+        .lines()
+        .map(|line| {
+            serde_json::from_str(line).unwrap_or_else(|e| {
+                panic!(
+                    "failed to parse {label} JSON line: {e}\nline: {line}\nstdout: {stdout}\nstderr: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                )
+            })
+        })
+        .collect()
 }
 
 #[sinex_test(timeout = 60)]
@@ -169,10 +193,15 @@ async fn sinexctl_replay_plan_creates_operation(ctx: TestContext) -> color_eyre:
         "sinexctl replay plan should succeed.\nstderr: {stderr}\nstdout: {stdout_str}",
     );
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let operation = parse_json_stdout(&output, "replay plan");
+    assert_eq!(operation["state"].as_str(), Some("Planning"));
+    assert_eq!(
+        operation["scope"]["node_id"].as_str(),
+        Some("test-node")
+    );
     assert!(
-        stdout.contains("operation_id") || stdout.contains("operation"),
-        "JSON output should contain operation data: {stdout}"
+        operation["operation_id"].as_str().is_some(),
+        "plan output should contain operation_id: {operation}"
     );
 
     gw.handle.abort();
@@ -202,10 +231,15 @@ async fn sinexctl_replay_preview_after_plan(ctx: TestContext) -> color_eyre::Res
         String::from_utf8_lossy(&preview_output.stderr)
     );
 
-    let stdout = String::from_utf8_lossy(&preview_output.stdout);
+    let preview = parse_json_stdout(&preview_output, "replay preview");
+    assert_eq!(
+        preview["operation"]["operation_id"].as_str(),
+        Some(op_id.as_str())
+    );
+    assert_eq!(preview["operation"]["state"].as_str(), Some("Previewed"));
     assert!(
-        stdout.contains("preview") || stdout.contains("total_events"),
-        "preview output should contain preview data: {stdout}"
+        preview["preview"]["total_events"].as_u64().is_some(),
+        "preview output should contain numeric total_events: {preview}"
     );
 
     gw.handle.abort();
@@ -234,6 +268,9 @@ async fn sinexctl_replay_approve_after_preview(ctx: TestContext) -> color_eyre::
         "sinexctl replay approve should succeed.\nstderr: {}",
         String::from_utf8_lossy(&approve_output.stderr)
     );
+    let approved = parse_json_stdout(&approve_output, "replay approve");
+    assert_eq!(approved["operation_id"].as_str(), Some(op_id.as_str()));
+    assert_eq!(approved["state"].as_str(), Some("Approved"));
 
     gw.handle.abort();
     Ok(())
@@ -273,11 +310,10 @@ async fn sinexctl_replay_cancel_with_reason(ctx: TestContext) -> color_eyre::Res
         String::from_utf8_lossy(&cancel_output.stderr)
     );
 
-    let stdout = String::from_utf8_lossy(&cancel_output.stdout);
-    assert!(
-        stdout.contains("cancel") || stdout.contains("Cancelled"),
-        "cancel output should confirm cancellation: {stdout}"
-    );
+    let cancelled = parse_json_stdout(&cancel_output, "replay cancel");
+    assert_eq!(cancelled["operation_id"].as_str(), Some(op_id.as_str()));
+    assert_eq!(cancelled["state"].as_str(), Some("Cancelled"));
+    assert_eq!(cancelled["cancelled"].as_bool(), Some(true));
 
     gw.handle.abort();
     Ok(())
@@ -304,11 +340,9 @@ async fn sinexctl_replay_status_shows_state(ctx: TestContext) -> color_eyre::Res
         String::from_utf8_lossy(&status_output.stderr)
     );
 
-    let stdout = String::from_utf8_lossy(&status_output.stdout);
-    assert!(
-        stdout.contains("state") || stdout.contains("Planning"),
-        "status output should contain state: {stdout}"
-    );
+    let status = parse_json_stdout(&status_output, "replay status");
+    assert_eq!(status["operation_id"].as_str(), Some(op_id.as_str()));
+    assert_eq!(status["state"].as_str(), Some("Planning"));
 
     gw.handle.abort();
     Ok(())
@@ -341,11 +375,14 @@ async fn sinexctl_replay_list_returns_operations(ctx: TestContext) -> color_eyre
         String::from_utf8_lossy(&list_output.stderr)
     );
 
-    let stdout = String::from_utf8_lossy(&list_output.stdout);
-    // JSON list output should contain both operations
+    let operations = parse_json_lines_stdout(&list_output, "replay list");
+    let node_ids: Vec<_> = operations
+        .iter()
+        .filter_map(|operation| operation["scope"]["node_id"].as_str())
+        .collect();
     assert!(
-        stdout.contains("node-a") && stdout.contains("node-b"),
-        "list should contain both operations: {stdout}"
+        node_ids.contains(&"node-a") && node_ids.contains(&"node-b"),
+        "list should contain both operations, got nodes {node_ids:?}"
     );
 
     gw.handle.abort();
@@ -394,22 +431,37 @@ async fn sinexctl_replay_list_filters_by_state(ctx: TestContext) -> color_eyre::
     let list_cancelled =
         sinexctl_replay(&url, &["list", "--state", "cancelled", "-f", "json"]).await;
     assert!(list_cancelled.status.success());
-    let stdout_cancelled = String::from_utf8_lossy(&list_cancelled.stdout);
 
     // List with --state planning filter
     let list_planning = sinexctl_replay(&url, &["list", "--state", "planning", "-f", "json"]).await;
     assert!(list_planning.status.success());
-    let stdout_planning = String::from_utf8_lossy(&list_planning.stdout);
 
-    // Cancelled list should not contain the planning-state operation's node
-    // Planning list should not contain the cancelled operation
+    let cancelled_ops = parse_json_lines_stdout(&list_cancelled, "replay cancelled list");
+    let planning_ops = parse_json_lines_stdout(&list_planning, "replay planning list");
+    let cancelled_nodes: Vec<_> = cancelled_ops
+        .iter()
+        .filter_map(|operation| operation["scope"]["node_id"].as_str())
+        .collect();
+    let planning_nodes: Vec<_> = planning_ops
+        .iter()
+        .filter_map(|operation| operation["scope"]["node_id"].as_str())
+        .collect();
+
     assert!(
-        !stdout_cancelled.contains("test-node-2"),
-        "cancelled filter should not include planning operations: {stdout_cancelled}"
+        cancelled_ops.iter().all(|operation| operation["state"].as_str() == Some("Cancelled")),
+        "cancelled filter should only return cancelled operations: {cancelled_ops:?}"
     );
     assert!(
-        stdout_planning.contains("test-node-2"),
-        "planning filter should include the planning operation: {stdout_planning}"
+        planning_ops.iter().all(|operation| operation["state"].as_str() == Some("Planning")),
+        "planning filter should only return planning operations: {planning_ops:?}"
+    );
+    assert!(
+        !cancelled_nodes.contains(&"test-node-2"),
+        "cancelled filter should not include planning operations: {cancelled_nodes:?}"
+    );
+    assert!(
+        planning_nodes.contains(&"test-node-2"),
+        "planning filter should include the planning operation: {planning_nodes:?}"
     );
 
     gw.handle.abort();
