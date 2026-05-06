@@ -214,6 +214,54 @@ impl SourceMaterialRegistry {
                 .to_owned(),
         ]
     }
+
+    /// Generates the trigger enforcing source-material byte-size finalization.
+    ///
+    /// Event insertion rejects out-of-bounds anchors when `total_bytes` is already
+    /// known. This companion trigger handles the reverse order: events may be
+    /// admitted while a material is still being captured (`total_bytes IS NULL`),
+    /// but finalization cannot later set a byte size that makes those existing
+    /// material events impossible.
+    #[must_use]
+    pub fn create_event_bounds_trigger_sql() -> &'static str {
+        r"
+        CREATE OR REPLACE FUNCTION raw.fn_source_material_validate_event_bounds()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            IF NEW.total_bytes IS NULL THEN
+                RETURN NEW;
+            END IF;
+
+            IF EXISTS (
+                SELECT 1
+                FROM core.events e
+                WHERE e.source_material_id = NEW.id
+                  AND (
+                    e.anchor_byte > NEW.total_bytes
+                    OR (
+                        e.offset_kind = 'byte'
+                        AND e.offset_start IS NOT NULL
+                        AND e.offset_end IS NOT NULL
+                        AND (e.offset_start > NEW.total_bytes OR e.offset_end > NEW.total_bytes)
+                    )
+                  )
+                LIMIT 1
+            ) THEN
+                RAISE EXCEPTION
+                    'source material total_bytes would invalidate existing event anchors (source_material_id=%, total_bytes=%)',
+                    NEW.id, NEW.total_bytes
+                    USING ERRCODE = 'check_violation';
+            END IF;
+
+            RETURN NEW;
+        END $$;
+
+        DROP TRIGGER IF EXISTS trg_source_material_validate_event_bounds ON raw.source_material_registry;
+        CREATE TRIGGER trg_source_material_validate_event_bounds
+        BEFORE INSERT OR UPDATE OF total_bytes ON raw.source_material_registry
+        FOR EACH ROW EXECUTE FUNCTION raw.fn_source_material_validate_event_bounds();
+        "
+    }
 }
 
 impl TableDef for SourceMaterialLinks {
