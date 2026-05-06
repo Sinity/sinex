@@ -73,6 +73,40 @@ fn arb_email() -> impl Strategy<Value = String> {
         .prop_map(|(local, domain, tld)| format!("{local}@{domain}.{tld}"))
 }
 
+fn arb_all_context_secret() -> impl Strategy<Value = String> {
+    prop_oneof![
+        "[0-9A-Z]{16}".prop_map(|suffix| format!("AKIA{suffix}")),
+        arb_github_token(),
+        "[A-Za-z0-9_\\-]{20,40}".prop_map(|suffix| format!("glpat-{suffix}")),
+        "[A-Za-z0-9]{36,48}".prop_map(|suffix| format!("npm_{suffix}")),
+        "[A-Za-z0-9]{24,48}".prop_map(|suffix| format!("sk_live_{suffix}")),
+        "[A-Za-z0-9\\-]{20,48}".prop_map(|suffix| format!("xoxb-{suffix}")),
+        (
+            "[A-Za-z0-9_\\-]{8,24}",
+            "[A-Za-z0-9_\\-]{8,24}",
+            "[A-Za-z0-9_\\-]{12,32}",
+        )
+            .prop_map(|(header, claims, sig)| format!("eyJ{header}.eyJ{claims}.{sig}")),
+        "[A-Za-z0-9_\\-]{35}".prop_map(|suffix| format!("AIza{suffix}")),
+        "[A-Za-z0-9+/=]{44,64}".prop_map(|suffix| format!("AccountKey={suffix}")),
+        "[A-Za-z0-9._~+/=\\-]{20,48}".prop_map(|token| format!("Bearer {token}")),
+        "[a-z]{3,10}".prop_map(|db| format!("postgres://user:pass@localhost/{db}")),
+        "[A-Za-z0-9]{34,48}".prop_map(|suffix| format!("hf_{suffix}")),
+        "[A-Za-z0-9]{48}".prop_map(|suffix| format!("sk-{suffix}")),
+    ]
+}
+
+fn arb_command_or_journal_secret_assignment() -> impl Strategy<Value = String> {
+    "[A-Za-z0-9_\\-]{16,48}".prop_map(|value| format!("TOKEN={value}"))
+}
+
+fn arb_command_secret_flag() -> impl Strategy<Value = String> {
+    prop_oneof![
+        "[A-Za-z0-9_\\-]{16,48}".prop_map(|value| format!("--token {value}")),
+        "[A-Za-z0-9_\\-]{16,48}".prop_map(|value| format!("--api-key={value}")),
+    ]
+}
+
 sinex_proptest! {
     fn privacy_never_panics_on_arbitrary_utf8(
         text: String in "\\PC{0,500}",
@@ -127,6 +161,68 @@ sinex_proptest! {
             !result.text.contains(&token),
             "GitHub token should be redacted in context {:?}: {}",
             context, result.text,
+        );
+        Ok(())
+    }
+}
+
+sinex_proptest! {
+    fn known_all_context_secrets_are_removed_wherever_embedded(
+        secret: String in arb_all_context_secret(),
+        prefix: String in "[a-zA-Z0-9 _./:-]{0,40}",
+        suffix: String in "[a-zA-Z0-9 _./:-]{0,40}",
+        context: ProcessingContext in arb_context()
+    ) -> Result<()> {
+        let input = format!("{prefix} {secret} {suffix}");
+        let result = engine().process(&input, context);
+
+        prop_assert!(
+            result.suppressed || !result.text.contains(&secret),
+            "secret shape should be removed in context {:?}: input={:?} output={:?}",
+            context,
+            input,
+            result.text,
+        );
+        Ok(())
+    }
+}
+
+sinex_proptest! {
+    fn command_scoped_secret_assignments_are_removed_wherever_embedded(
+        secret: String in arb_command_or_journal_secret_assignment(),
+        prefix: String in "[a-zA-Z0-9 _./:-]{0,40}",
+        suffix: String in "[a-zA-Z0-9 _./:-]{0,40}"
+    ) -> Result<()> {
+        let input = format!("{prefix} {secret} {suffix}");
+
+        for context in [ProcessingContext::Command, ProcessingContext::Journal] {
+            let result = engine().process(&input, context);
+            prop_assert!(
+                result.suppressed || !result.text.contains(&secret),
+                "command/journal secret shape should be removed in context {:?}: input={:?} output={:?}",
+                context,
+                input,
+                result.text,
+            );
+        }
+        Ok(())
+    }
+}
+
+sinex_proptest! {
+    fn command_secret_flags_are_removed_wherever_embedded(
+        secret: String in arb_command_secret_flag(),
+        prefix: String in "[a-zA-Z0-9 _./:-]{0,40}",
+        suffix: String in "[a-zA-Z0-9 _./:-]{0,40}"
+    ) -> Result<()> {
+        let input = format!("{prefix} {secret} {suffix}");
+        let result = engine().process(&input, ProcessingContext::Command);
+
+        prop_assert!(
+            result.suppressed || !result.text.contains(&secret),
+            "command secret flag should be removed: input={:?} output={:?}",
+            input,
+            result.text,
         );
         Ok(())
     }
