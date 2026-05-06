@@ -8,10 +8,14 @@ use sinex_primitives::Pagination;
 use sinex_primitives::Timestamp;
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{
-    DerivedNodeModel, EventSource, EventType, HostName, RecordedPath, SyntheticTemporalPolicy,
+    DerivedNodeModel, EventSource, EventType, HostName, RecordedPath, SourceMaterialFormat,
+    SourceMaterialTimingInfoType, SyntheticTemporalPolicy,
 };
 use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use sinex_primitives::events::{DynamicPayload, EventId, SourceMaterial};
+use sinex_primitives::rpc::sources::{
+    SourceAnnotations, SourceMaterialMetadataContract, SourceMaterialStatistics, SourceOrigin,
+};
 use xtask::sandbox::sinex_test;
 
 fn stream_batch_material_row(
@@ -709,6 +713,158 @@ async fn register_external_in_flight_uses_provided_id(ctx: TestContext) -> TestR
 }
 
 #[sinex_test]
+async fn register_material_persists_source_material_metadata_contract(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let identifier = format!("contract-material-{}.sqlite3", uuid::Uuid::now_v7());
+    let mut contract = SourceMaterialMetadataContract::new(
+        SourceMaterialFormat::Sqlite,
+        SourceMaterialTimingInfoType::Declared,
+    );
+    contract.origin = Some(SourceOrigin {
+        source_uri: Some(identifier.clone()),
+        ..SourceOrigin::default()
+    });
+    contract.annotations = Some(SourceAnnotations {
+        reason: Some("operator-staged atuin snapshot".to_string()),
+        tags: vec!["shell".to_string(), "sqlite".to_string()],
+        ..SourceAnnotations::default()
+    });
+    contract.statistics = Some(SourceMaterialStatistics {
+        total_bytes: Some(2048),
+        record_count: Some(17),
+        ..SourceMaterialStatistics::default()
+    });
+
+    let material =
+        sinex_db::repositories::SourceMaterial::file(&identifier).with_metadata_contract(contract);
+    let record = ctx
+        .pool
+        .source_materials()
+        .register_material(material)
+        .await?;
+
+    assert_eq!(record.timing_info_type, "declared");
+    let persisted = SourceMaterialMetadataContract::from_metadata(&record.metadata)
+        .expect("registered material should retain contract metadata");
+    assert_eq!(persisted.version, SourceMaterialMetadataContract::VERSION);
+    assert_eq!(persisted.format, SourceMaterialFormat::Sqlite);
+    assert_eq!(persisted.timing, SourceMaterialTimingInfoType::Declared);
+    assert_eq!(
+        persisted
+            .origin
+            .as_ref()
+            .and_then(|origin| origin.source_uri.as_deref()),
+        Some(identifier.as_str())
+    );
+    assert_eq!(
+        persisted
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.reason.as_deref()),
+        Some("operator-staged atuin snapshot")
+    );
+    assert_eq!(
+        persisted
+            .statistics
+            .as_ref()
+            .and_then(|statistics| statistics.record_count),
+        Some(17)
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn register_in_flight_preserves_explicit_source_material_metadata_contract(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let identifier = format!("in-flight-contract-{}.sqlite3", uuid::Uuid::now_v7());
+    let mut contract = SourceMaterialMetadataContract::new(
+        SourceMaterialFormat::Sqlite,
+        SourceMaterialTimingInfoType::Declared,
+    );
+    contract.origin = Some(SourceOrigin {
+        source_uri: Some(identifier.clone()),
+        ..SourceOrigin::default()
+    });
+    contract.annotations = Some(SourceAnnotations {
+        reason: Some("operator supplied an Atuin sqlite source".to_string()),
+        tags: vec!["atuin".to_string(), "shell".to_string()],
+        ..SourceAnnotations::default()
+    });
+
+    let record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            contract.metadata_patch(),
+        )
+        .await?;
+
+    assert_eq!(record.timing_info_type, "declared");
+    let persisted = SourceMaterialMetadataContract::from_metadata(&record.metadata)
+        .expect("explicit contract should survive in-flight registration");
+    assert_eq!(persisted.format, SourceMaterialFormat::Sqlite);
+    assert_eq!(persisted.timing, SourceMaterialTimingInfoType::Declared);
+    assert_eq!(
+        persisted
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.reason.as_deref()),
+        Some("operator supplied an Atuin sqlite source")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn update_metadata_preserves_source_material_metadata_contract(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let identifier = format!("update-contract-{}.sqlite3", uuid::Uuid::now_v7());
+    let contract = SourceMaterialMetadataContract::new(
+        SourceMaterialFormat::Sqlite,
+        SourceMaterialTimingInfoType::Declared,
+    );
+    let material =
+        sinex_db::repositories::SourceMaterial::file(&identifier).with_metadata_contract(contract);
+    let record = ctx
+        .pool
+        .source_materials()
+        .register_material(material)
+        .await?;
+    let material_id = Id::<sinex_db::SourceMaterialRecord>::from_uuid(record.id);
+
+    let updated = ctx
+        .pool
+        .source_materials()
+        .update_metadata(
+            material_id,
+            json!({
+                "note": "caller metadata is allowed",
+                "source_material_contract": {
+                    "version": 1,
+                    "format": "text",
+                    "timing": "realtime"
+                }
+            }),
+        )
+        .await?
+        .expect("material metadata update should return the updated record");
+
+    assert_eq!(
+        updated.metadata["note"],
+        json!("caller metadata is allowed")
+    );
+    let persisted = SourceMaterialMetadataContract::from_metadata(&updated.metadata)
+        .expect("reserved source-material contract should remain parseable");
+    assert_eq!(persisted.format, SourceMaterialFormat::Sqlite);
+    assert_eq!(persisted.timing, SourceMaterialTimingInfoType::Declared);
+    Ok(())
+}
+
+#[sinex_test]
 async fn register_external_in_flight_resets_terminal_status_to_sensing(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -748,6 +904,124 @@ async fn register_external_in_flight_resets_terminal_status_to_sensing(
 
     assert_eq!(restarted.status, "sensing");
     assert!(restarted.end_time.is_none());
+    Ok(())
+}
+
+#[sinex_test]
+async fn register_in_flight_restart_preserves_existing_contract_without_explicit_contract(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let identifier = format!(
+        "test-material-natural-key-contract-restart-{}.sqlite3",
+        uuid::Uuid::now_v7()
+    );
+    let mut contract = SourceMaterialMetadataContract::new(
+        SourceMaterialFormat::Sqlite,
+        SourceMaterialTimingInfoType::Declared,
+    );
+    contract.annotations = Some(SourceAnnotations {
+        reason: Some("first natural-key registration defines parser contract".to_string()),
+        tags: vec!["sqlite".to_string()],
+        ..SourceAnnotations::default()
+    });
+
+    ctx.pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            contract.metadata_patch(),
+        )
+        .await?;
+
+    let restarted = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            json!({"note": "restart without contract"}),
+        )
+        .await?;
+
+    assert_eq!(restarted.timing_info_type, "declared");
+    let persisted = SourceMaterialMetadataContract::from_metadata(&restarted.metadata)
+        .expect("natural-key restart without explicit contract should preserve existing contract");
+    assert_eq!(persisted.format, SourceMaterialFormat::Sqlite);
+    assert_eq!(persisted.timing, SourceMaterialTimingInfoType::Declared);
+    assert_eq!(
+        persisted
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.reason.as_deref()),
+        Some("first natural-key registration defines parser contract")
+    );
+    assert_eq!(
+        restarted.metadata["note"],
+        json!("restart without contract")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn register_external_in_flight_restart_preserves_existing_contract_without_explicit_contract(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let forced_id = uuid::Uuid::now_v7();
+    let identifier = format!("test-material-contract-restart-{forced_id}.sqlite3");
+    let mut contract = SourceMaterialMetadataContract::new(
+        SourceMaterialFormat::Sqlite,
+        SourceMaterialTimingInfoType::Declared,
+    );
+    contract.origin = Some(SourceOrigin {
+        source_uri: Some(identifier.clone()),
+        ..SourceOrigin::default()
+    });
+    contract.annotations = Some(SourceAnnotations {
+        reason: Some("first registration defines parser contract".to_string()),
+        tags: vec!["sqlite".to_string()],
+        ..SourceAnnotations::default()
+    });
+
+    ctx.pool
+        .source_materials()
+        .register_external_in_flight(
+            forced_id,
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            contract.metadata_patch(),
+            Timestamp::now(),
+        )
+        .await?;
+
+    let restarted = ctx
+        .pool
+        .source_materials()
+        .register_external_in_flight(
+            forced_id,
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            json!({"note": "restart without contract"}),
+            Timestamp::now(),
+        )
+        .await?;
+
+    assert_eq!(restarted.timing_info_type, "declared");
+    let persisted = SourceMaterialMetadataContract::from_metadata(&restarted.metadata)
+        .expect("restart without explicit contract should preserve existing contract");
+    assert_eq!(persisted.format, SourceMaterialFormat::Sqlite);
+    assert_eq!(persisted.timing, SourceMaterialTimingInfoType::Declared);
+    assert_eq!(
+        persisted
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.reason.as_deref()),
+        Some("first registration defines parser contract")
+    );
+    assert_eq!(
+        restarted.metadata["note"],
+        json!("restart without contract")
+    );
     Ok(())
 }
 
@@ -798,7 +1072,7 @@ async fn register_external_in_flight_rejects_source_identifier_aliasing(
 #[sinex_test]
 async fn finalize_in_flight_persists_total_bytes_column(ctx: TestContext) -> TestResult<()> {
     let forced_id = uuid::Uuid::now_v7();
-    let identifier = format!("test-material-total-bytes-{forced_id}");
+    let identifier = format!("test-material-total-bytes-{forced_id}.sqlite3");
     let record = ctx
         .pool
         .source_materials()
@@ -835,6 +1109,116 @@ async fn finalize_in_flight_persists_total_bytes_column(ctx: TestContext) -> Tes
     assert_eq!(persisted.metadata["file_size_bytes"], json!(123));
     assert_eq!(persisted.metadata["encoding"], json!("text/plain"));
     assert_eq!(persisted.metadata["content_preview"], json!("preview"));
+    let contract = SourceMaterialMetadataContract::from_metadata(&persisted.metadata)
+        .expect("finalized material should retain contract metadata");
+    assert_eq!(contract.format, SourceMaterialFormat::Sqlite);
+    assert_eq!(
+        contract
+            .statistics
+            .as_ref()
+            .and_then(|statistics| statistics.total_bytes),
+        Some(123)
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn finalize_in_flight_does_not_create_partial_contract_for_legacy_material(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_uuid = uuid::Uuid::now_v7();
+    let identifier = format!("legacy-material-{material_uuid}");
+    sqlx::query!(
+        r#"
+        INSERT INTO raw.source_material_registry (
+            id,
+            material_kind,
+            source_identifier,
+            status,
+            timing_info_type,
+            metadata
+        )
+        VALUES ($1::uuid, 'annex', $2, 'sensing', 'realtime', $3)
+        "#,
+        material_uuid,
+        identifier,
+        json!({"note": "legacy row without contract"})
+    )
+    .execute(&ctx.pool)
+    .await?;
+    let material_id = Id::<sinex_db::SourceMaterialRecord>::from_uuid(material_uuid);
+
+    ctx.pool
+        .source_materials()
+        .finalize_in_flight(material_id, None, None, None, Some(321))
+        .await?;
+
+    let persisted = ctx
+        .pool
+        .source_materials()
+        .get_by_id(material_id)
+        .await?
+        .expect("legacy material should remain readable after finalization");
+
+    assert_eq!(persisted.total_bytes, Some(321));
+    assert_eq!(persisted.metadata["file_size_bytes"], json!(321));
+    assert!(
+        SourceMaterialMetadataContract::from_metadata(&persisted.metadata).is_none(),
+        "legacy rows without a full contract must not receive a partial contract object"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn finalize_in_flight_does_not_enrich_malformed_contract_key(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_uuid = uuid::Uuid::now_v7();
+    let identifier = format!("malformed-contract-material-{material_uuid}");
+    sqlx::query!(
+        r#"
+        INSERT INTO raw.source_material_registry (
+            id,
+            material_kind,
+            source_identifier,
+            status,
+            timing_info_type,
+            metadata
+        )
+        VALUES ($1::uuid, 'annex', $2, 'sensing', 'realtime', $3)
+        "#,
+        material_uuid,
+        identifier,
+        json!({"source_material_contract": {"version": 1}})
+    )
+    .execute(&ctx.pool)
+    .await?;
+    let material_id = Id::<sinex_db::SourceMaterialRecord>::from_uuid(material_uuid);
+
+    ctx.pool
+        .source_materials()
+        .finalize_in_flight(material_id, None, None, None, Some(654))
+        .await?;
+
+    let persisted = ctx
+        .pool
+        .source_materials()
+        .get_by_id(material_id)
+        .await?
+        .expect("malformed-contract material should remain readable after finalization");
+
+    assert_eq!(persisted.total_bytes, Some(654));
+    assert_eq!(persisted.metadata["file_size_bytes"], json!(654));
+    assert!(
+        SourceMaterialMetadataContract::from_metadata(&persisted.metadata).is_none(),
+        "malformed contract must not be made to look valid during finalization"
+    );
+    assert!(
+        persisted.metadata["source_material_contract"]
+            .get("statistics")
+            .is_none(),
+        "finalization must not enrich a malformed contract object"
+    );
     Ok(())
 }
 
