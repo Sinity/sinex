@@ -6,7 +6,17 @@ Sinex architecture essays into a concise reference for engineers working on node
 ingestors, and automata. For operational notes and deployment expectations,
 cross-reference `README.md#architecture` and `nixos/README.md`.
 
+Status: this document preserves the deployed sensor/ingestor terminology. New
+source work should use the staged-source parser split in
+[`../../../../docs/architecture/staged-source-parser-substrate.md`](../../../../docs/architecture/staged-source-parser-substrate.md):
+stager, input-shape adapter, parser, source unit, and runtime topology.
+
 ## 1. Sensor / Ingestor Separation
+
+This split is still useful for live streams, but it is no longer the primary
+shape for every source. For staged files, directories, dumps, and local
+databases, prefer "input-shape adapter plus parser" over a new source-domain
+ingestor crate.
 
 | Layer  | Responsibility | Examples |
 |--------|----------------|----------|

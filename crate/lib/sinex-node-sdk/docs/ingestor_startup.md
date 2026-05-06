@@ -1,5 +1,12 @@
 # Ingestor Startup — The Three-Phase Lifecycle
 
+Status: current `IngestorNode` lifecycle and deployed compatibility contract.
+For new staged-source work, also read
+[`../../../../docs/architecture/staged-source-parser-substrate.md`](../../../../docs/architecture/staged-source-parser-substrate.md).
+The new direction separates source units into staging, input-shape adapters,
+parsers, and runtime topology; an `IngestorNode` crate is no longer the default
+answer for every replayable source.
+
 Every ingestor in continuous-service mode executes three mandatory phases. This contract is encoded in the `IngestorNode` trait — the three required methods map directly onto the phases.
 
 ## Phases
@@ -25,6 +32,10 @@ The checkpoint stores `blob_id` and current byte offset. On restart:
 3. The gap between crash and restart becomes auditable via `source_material_registry`.
 
 ## Source-material input shapes
+
+The table below is the existing SDK surface. In the staged-source parser
+substrate, these adapters should become shared source-unit machinery rather
+than per-domain ingestor internals.
 
 The SDK provides *output-shape* infrastructure (`AcquisitionManager` for begin→append→finalize, `StageAsYouGoContext` for emit-events-with-provenance-as-material-grows). All ingestors use these. The *input-shape* layer is newer and partial:
 
@@ -106,3 +117,4 @@ Target state: *run both lanes concurrently*, not replace row capture with snapsh
 - [`trait-selection.md`](trait-selection.md) — decision flowchart; includes `IngestorNode` selection criteria
 - [`provenance.md`](provenance.md) — sensor/ingestor separation + Stage-as-You-Go rules
 - [`stage_as_you_go.md`](stage_as_you_go.md) — real-time provenance tracking during material growth
+- [`../../../../docs/architecture/staged-source-parser-substrate.md`](../../../../docs/architecture/staged-source-parser-substrate.md) — staged material, input-shape adapter, parser, and runtime-topology split
