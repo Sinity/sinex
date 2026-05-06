@@ -716,11 +716,7 @@ async fn test_non_material_fk_violation_routes_to_dlq() -> TestResult<()> {
         || {
             let pool = ctx.pool.clone();
             async move {
-                let found = pool
-                    .events()
-                    .get_by_id(event_id.into())
-                    .await?
-                    .is_some();
+                let found = pool.events().get_by_id(event_id.into()).await?.is_some();
                 Ok::<bool, SinexError>(found)
             }
         },
@@ -733,7 +729,9 @@ async fn test_non_material_fk_violation_routes_to_dlq() -> TestResult<()> {
         .events()
         .get_by_id(event_id.into())
         .await?
-        .ok_or_else(|| SinexError::not_found("event should have been persisted after schema-id strip"))?;
+        .ok_or_else(|| {
+            SinexError::not_found("event should have been persisted after schema-id strip")
+        })?;
     assert_eq!(
         persisted.payload_schema_id, None,
         "payload_schema_id should be NULL after schema-FK strip-and-retry"
@@ -1417,7 +1415,15 @@ async fn wait_for_dlq_messages(
 /// A payload exceeding 10 MiB must be routed to the DLQ without being parsed.
 #[sinex_test]
 async fn oversized_payload_routes_to_dlq() -> TestResult<()> {
-    let ctx = TestContext::new().await?.with_nats().shared().await?;
+    let nats_config_dir = tempfile::tempdir()?;
+    let nats_config_path = nats_config_dir.path().join("nats.conf");
+    std::fs::write(&nats_config_path, "max_payload: 16MB\n")?;
+    let ctx = TestContext::new()
+        .await?
+        .with_nats()
+        .dedicated()
+        .config(EphemeralNats::builder().with_config_file(nats_config_path))
+        .await?;
     let suffix = format!("oversized-{}", Uuid::now_v7().to_string().to_lowercase());
     let hooks = TestHooks::with_validation();
     let setup =
