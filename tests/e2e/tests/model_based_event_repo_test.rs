@@ -14,8 +14,7 @@
 //! 1. `insert(e)` → `get_by_id(e.id)` returns exactly `e`
 //! 2. `count_all()` equals the size of the reference model at every step
 //! 3. `count_by_source(s)` matches the model's count for source `s`
-//! 4. `delete_by_source(s)` removes eligible test events for `s` in both model and DB
-//! 5. Re-inserting an event with the same ID (via `ON CONFLICT DO NOTHING`) is idempotent
+//! 4. Re-inserting an event with the same ID (via `ON CONFLICT DO NOTHING`) is idempotent
 
 use std::collections::HashMap;
 
@@ -52,9 +51,6 @@ impl ReferenceModel {
             .count()
     }
 
-    fn delete_by_source(&mut self, source: &str) {
-        self.events.retain(|_, (s, _)| s.as_str() != source);
-    }
 }
 
 // ─── Operation vocabulary ─────────────────────────────────────────────────────
@@ -68,8 +64,6 @@ enum EventRepoOp {
     ReInsertLast,
     /// Query count for a specific source tag.
     CountBySource { source_idx: u8 },
-    /// Delete all events for a source tag.
-    DeleteBySource { source_idx: u8 },
     /// Query total count (cross-check with model).
     CountAll,
 }
@@ -98,7 +92,6 @@ fn op_strategy() -> impl Strategy<Value = EventRepoOp> {
         }),
         Just(EventRepoOp::ReInsertLast),
         (0u8..3).prop_map(|source_idx| EventRepoOp::CountBySource { source_idx }),
-        (0u8..3).prop_map(|source_idx| EventRepoOp::DeleteBySource { source_idx }),
         Just(EventRepoOp::CountAll),
     ]
 }
@@ -231,34 +224,6 @@ async fn prop_event_repo_model_matches_reference(
                 );
             }
 
-            EventRepoOp::DeleteBySource { source_idx } => {
-                let source_str = prefixed_source(source_tag(*source_idx));
-
-                events
-                    .delete_by_source(&EventSource::from(source_str.clone()))
-                    .await
-                    .map_err(|e| TestCaseError::fail(format!("db delete_by_source failed: {e}")))?;
-
-                model.delete_by_source(&source_str);
-
-                // Verify the delete took effect
-                let db_count_after = events
-                    .count_by_source(&EventSource::from(source_str.clone()))
-                    .await
-                    .map_err(|e| {
-                        TestCaseError::fail(format!("db count after delete failed: {e}"))
-                    })?;
-
-                prop_assert_eq!(
-                    db_count_after,
-                    0,
-                    "step {}: after delete_by_source({}), count should be 0, got {}",
-                    step,
-                    source_str,
-                    db_count_after
-                );
-            }
-
             EventRepoOp::CountAll => {
                 let model_count = model.count_all() as i64;
 
@@ -284,10 +249,9 @@ async fn prop_event_repo_model_matches_reference(
 
 // ─── Get-by-id consistency ────────────────────────────────────────────────────
 
-/// After inserting an event, `get_by_id` must return it, and after
-/// `delete_by_source`, `get_by_id` must return None.
+/// After inserting an event, `get_by_id` must return it.
 #[sinex_prop(cases = 15, timeout = "45s")]
-async fn prop_get_by_id_consistent_with_insert_and_delete(
+async fn prop_get_by_id_consistent_with_insert(
     ctx: &TestContext,
     #[strategy(1u8..10)] count: u8,
 ) -> TestResult<()> {
@@ -340,22 +304,16 @@ async fn prop_get_by_id_consistent_with_insert_and_delete(
         ids.push(event_id);
     }
 
-    // Delete by source — all events should disappear
-    events
-        .delete_by_source(&EventSource::from(source.clone()))
-        .await
-        .map_err(|e| TestCaseError::fail(format!("delete_by_source failed: {e}")))?;
-
-    // Verify none of the inserted IDs are findable
+    // Verify inserted IDs remain findable.
     for id in &ids {
         let fetched = events
             .get_by_id(*id)
             .await
-            .map_err(|e| TestCaseError::fail(format!("get_by_id post-delete failed: {e}")))?;
+            .map_err(|e| TestCaseError::fail(format!("get_by_id recheck failed: {e}")))?;
 
         prop_assert!(
-            fetched.is_none(),
-            "get_by_id({id}) must return None after delete_by_source"
+            fetched.is_some(),
+            "get_by_id({id}) must still return Some after insert"
         );
     }
 

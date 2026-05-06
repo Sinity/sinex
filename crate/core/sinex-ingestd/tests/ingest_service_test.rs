@@ -491,7 +491,9 @@ async fn test_sequential_ingestion(ctx: TestContext) -> Result<()> {
                 // not error message text matching.
                 Err(ref e)
                     if attempts < 4
-                        && sinex_db::query_helpers::is_retryable_db_error(e) =>
+                        && e.downcast_ref::<sinex_primitives::SinexError>().is_some_and(
+                            sinex_db::query_helpers::is_retryable_db_error,
+                        ) =>
                 {
                     tracing::warn!(
                         attempt = attempts,

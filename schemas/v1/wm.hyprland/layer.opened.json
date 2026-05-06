@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "namespace": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "namespace"
+  ],
+  "title": "HyprlandLayerOpenedPayload",
+  "type": "object",
+  "x-sinex-event-type": "layer.opened",
+  "x-sinex-source": "wm.hyprland",
+  "x-sinex-version": "1.0.0"
+}

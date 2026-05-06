@@ -7,6 +7,7 @@ let
   systemdHardening = import ./lib/systemd-hardening.nix { inherit lib; };
   databaseRuntime = import ./lib/database-runtime.nix { inherit lib pkgs; };
   secretResolution = import ./lib/secret-resolution.nix { inherit lib; };
+  automataLib = import ./lib/automata.nix { inherit lib; };
   inherit (systemdHardening) mkHelperServiceConfig;
   inherit (databaseRuntime)
     mkDatabasePasswordExec
@@ -1532,12 +1533,6 @@ in
             description = "Coordination settings.";
           };
 
-          generatedUnits = mkOption {
-            type = listOf str;
-            default = [ ];
-            internal = true;
-            description = "Systemd units generated for node services.";
-          };
         };
       };
       default = { };
@@ -2130,56 +2125,17 @@ in
           };
         automata =
           (mkDeploymentSurface (cfg.nodes.enable && cfg.nodes.automata.enable) null)
-          // {
-            canonicalizer =
-              cfg.nodes.enable
-              && cfg.nodes.automata.enable
-              && cfg.nodes.automata.canonicalizer.enable;
-            health_aggregator =
-              cfg.nodes.enable
-              && cfg.nodes.automata.enable
-              && cfg.nodes.automata.healthAggregator.enable;
-            analytics_automaton =
-              cfg.nodes.enable
-              && cfg.nodes.automata.enable
-              && cfg.nodes.automata.analyticsAutomaton.enable;
-            session_detector =
-              cfg.nodes.enable
-              && cfg.nodes.automata.enable
-              && cfg.nodes.automata.sessionDetector.enable;
-            hourly_summarizer =
-              cfg.nodes.enable
-              && cfg.nodes.automata.enable
-              && cfg.nodes.automata.hourlySummarizer.enable;
-            daily_summarizer =
-              cfg.nodes.enable
-              && cfg.nodes.automata.enable
-              && cfg.nodes.automata.dailySummarizer.enable;
-            document_parser =
-              cfg.nodes.enable
-              && cfg.nodes.automata.enable
-              && cfg.nodes.automata.documentParser.enable;
-            tag_applier =
-              cfg.nodes.enable
-              && cfg.nodes.automata.enable
-              && cfg.nodes.automata.tagApplier.enable;
-            entity_extractor =
-              cfg.nodes.enable
-              && cfg.nodes.automata.enable
-              && cfg.nodes.automata.entityExtractor.enable;
-            entity_resolver =
-              cfg.nodes.enable
-              && cfg.nodes.automata.enable
-              && cfg.nodes.automata.entityResolver.enable;
-            relation_extractor =
-              cfg.nodes.enable
-              && cfg.nodes.automata.enable
-              && cfg.nodes.automata.relationExtractor.enable;
-            entity_enricher =
-              cfg.nodes.enable
-              && cfg.nodes.automata.enable
-              && cfg.nodes.automata.entityEnricher.enable;
-          };
+          // listToAttrs (
+            map
+              (spec:
+                nameValuePair spec.surfaceName (
+                  cfg.nodes.enable
+                  && cfg.nodes.automata.enable
+                  && cfg.nodes.automata.${spec.optionName}.enable
+                )
+              )
+              automataLib.specs
+          );
         expectations = {
           schema_apply = cfg.database.enable && cfg.database.autoSetup;
           nats_streams = cfg.enable && (cfg.core.enable || cfg.nodes.enable);

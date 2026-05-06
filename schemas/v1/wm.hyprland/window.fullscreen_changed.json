@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "fullscreen": {
+      "type": "boolean"
+    },
+    "state": {
+      "format": "int32",
+      "type": "integer"
+    },
+    "window_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "state",
+    "fullscreen"
+  ],
+  "title": "HyprlandWindowFullscreenChangedPayload",
+  "type": "object",
+  "x-sinex-event-type": "window.fullscreen_changed",
+  "x-sinex-source": "wm.hyprland",
+  "x-sinex-version": "1.0.0"
+}

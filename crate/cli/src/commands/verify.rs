@@ -1079,6 +1079,8 @@ fn result_kind(result: &EventQueryResult) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    // Tests assert path structure that is constructed by the helper under test.
+    #![allow(clippy::expect_used)]
     use super::*;
     use sinex_primitives::{
         AutomataDeploymentSurface, BrowserDeploymentSurface, DeploymentSurface,

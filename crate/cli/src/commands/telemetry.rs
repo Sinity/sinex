@@ -321,18 +321,16 @@ impl TelemetryCommands {
                 .display(&format)?;
             }
 
-            Self::IngestdValidation => {
-                match client.telemetry_ingestd_validation().await? {
-                    Some(snapshot) => {
-                        CommandOutput::single(snapshot, format_ingestd_validation_table)
-                            .display(&format)?;
-                    }
-                    None => CommandOutput::<IngestdValidationSnapshot>::empty(
-                        "No ingestd-validation data found.",
-                    )
-                    .display(&format)?,
+            Self::IngestdValidation => match client.telemetry_ingestd_validation().await? {
+                Some(snapshot) => {
+                    CommandOutput::single(snapshot, format_ingestd_validation_table)
+                        .display(&format)?;
                 }
-            }
+                None => CommandOutput::<IngestdValidationSnapshot>::empty(
+                    "No ingestd-validation data found.",
+                )
+                .display(&format)?,
+            },
         }
         Ok(())
     }
@@ -360,12 +358,10 @@ fn resolve_time_arg(s: &str) -> Result<String> {
     if let Ok(date) =
         time::Date::parse(s, time::macros::format_description!("[year]-[month]-[day]"))
     {
-        #[allow(clippy::expect_used)]
-        let ts = Timestamp::from(
-            date.with_hms(0, 0, 0)
-                .expect("midnight is always valid")
-                .assume_utc(),
-        );
+        let midnight = date
+            .with_hms(0, 0, 0)
+            .map_err(|error| color_eyre::eyre::eyre!("invalid date {s}: {error}"))?;
+        let ts = Timestamp::from(midnight.assume_utc());
         return Ok(ts.format_rfc3339());
     }
 

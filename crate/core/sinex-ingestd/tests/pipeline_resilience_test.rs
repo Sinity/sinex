@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::json;
-use sinex_ingestd::validator::IngestIngestEventValidator;
+use sinex_ingestd::validator::IngestEventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_primitives::{Uuid, temporal};
 use tokio::sync::RwLock;

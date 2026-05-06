@@ -3,23 +3,26 @@
 // Use unified SDK prelude for common types
 use sinex_db::models::Event;
 use sinex_node_sdk::prelude::*;
+use sinex_primitives::env as shared_env;
+use sinex_primitives::privacy::{self, ProcessingContext};
 use sinex_primitives::{JsonValue, temporal::Timestamp};
 use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
-use sinex_primitives::env as shared_env;
-use sinex_primitives::privacy::{self, ProcessingContext};
 
 // Window manager specific imports
 use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
+use sinex_primitives::Uuid;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
-    HyprlandMonitorFocusedPayload, HyprlandStateCapturedPayload, HyprlandUnhandledPayload,
-    HyprlandWindowClosedPayload, HyprlandWindowFocusedPayload, HyprlandWindowMovedPayload,
-    HyprlandWindowOpenedPayload, HyprlandWindowTitleChangedPayload,
+    HyprlandLayerClosedPayload, HyprlandLayerOpenedPayload, HyprlandMonitorFocusedPayload,
+    HyprlandScreencastPayload, HyprlandStateCapturedPayload, HyprlandSubmapChangedPayload,
+    HyprlandUnhandledPayload, HyprlandWindowClosedPayload, HyprlandWindowFloatingChangedPayload,
+    HyprlandWindowFocusedPayload, HyprlandWindowFullscreenChangedPayload,
+    HyprlandWindowMinimizePayload, HyprlandWindowMovedPayload, HyprlandWindowOpenedPayload,
+    HyprlandWindowTitleChangedPayload, HyprlandWindowUrgentPayload,
     HyprlandWorkspaceSwitchedPayload, WindowGeometry,
 };
-use sinex_primitives::Uuid;
 use std::{
     fmt,
     path::{Path, PathBuf},
@@ -187,6 +190,18 @@ fn parse_hyprland_numeric_id(raw: &str, context: &str) -> NodeResult<i32> {
     .with_context("id_value", raw.to_string()))
 }
 
+fn parse_hyprland_bool_state(raw: &str, context: &str) -> NodeResult<bool> {
+    match raw.trim() {
+        "0" | "false" | "False" => Ok(false),
+        "1" | "true" | "True" => Ok(true),
+        other => Err(sinex_node_sdk::SinexError::processing(format!(
+            "Failed to parse {context} '{other}' as boolean state"
+        ))
+        .with_context("state_context", context)
+        .with_context("state_value", other.to_string())),
+    }
+}
+
 fn select_hyprland_base_path(
     runtime_dir: &Path,
     explicit_signature: Option<String>,
@@ -321,6 +336,7 @@ pub struct WindowManagerWatcher {
     current_focused_window: Option<String>,
     current_workspace: Option<String>,
     current_monitor: Option<String>,
+    screencast_active: bool,
     // Stage-as-you-go integration
     stage_context: Option<StageAsYouGoContext>,
     shutdown_rx: watch::Receiver<bool>,
@@ -343,6 +359,7 @@ impl WindowManagerWatcher {
             current_focused_window: None,
             current_workspace: None,
             current_monitor: None,
+            screencast_active: false,
             stage_context: Some(stage_context),
             shutdown_rx,
             source_identifier: "desktop_window_manager".to_string(),
@@ -783,6 +800,27 @@ impl WindowManagerWatcher {
                 "focusedmon" | "focusedmonv2" => {
                     self.handle_monitor_focused(event_type, event_data).await?;
                 }
+                "openlayer" | "closelayer" => {
+                    self.handle_layer_event(event_type, event_data).await?;
+                }
+                "submap" => {
+                    self.handle_submap_changed(event_data).await?;
+                }
+                "urgent" => {
+                    self.handle_window_urgent(event_data).await?;
+                }
+                "fullscreen" => {
+                    self.handle_window_fullscreen_changed(event_data).await?;
+                }
+                "changefloatingmode" => {
+                    self.handle_window_floating_changed(event_data).await?;
+                }
+                "minimize" | "minimizewindow" => {
+                    self.handle_window_minimize(event_data).await?;
+                }
+                "screencast" => {
+                    self.handle_screencast(event_data).await?;
+                }
                 _ => {
                     debug!("Unhandled Hyprland event: {}", event_type);
                     let metadata = serde_json::json!({
@@ -833,6 +871,326 @@ impl WindowManagerWatcher {
         }
 
         Ok(())
+    }
+
+    async fn emit_typed_material_event<P>(
+        &self,
+        raw_event_type: &str,
+        event_data: &str,
+        metadata: serde_json::Value,
+        payload: P,
+        serialization_context: &str,
+    ) -> NodeResult<()>
+    where
+        P: EventPayload,
+    {
+        let material_id = self
+            .register_material(raw_event_type, metadata.clone())
+            .await?;
+        let material_payload = self.build_material_payload(raw_event_type, event_data, metadata);
+        let payload_bytes = serde_json::to_vec(&material_payload).map_err(|e| {
+            sinex_node_sdk::SinexError::processing(format!(
+                "Failed to serialize window material payload: {e}"
+            ))
+        })?;
+        let event = payload
+            .from_material(material_id)
+            .with_offset_start(0)
+            .map_err(|e| {
+                sinex_node_sdk::SinexError::processing(format!("Failed to set offset_start: {e}"))
+            })?
+            .with_offset_end(payload_bytes.len() as i64)
+            .map_err(|e| {
+                sinex_node_sdk::SinexError::processing(format!("Failed to set offset_end: {e}"))
+            })?
+            .build()
+            .map_err(|e| {
+                sinex_node_sdk::SinexError::processing(format!("Failed to build event: {e}"))
+            })?
+            .to_json_event()
+            .map_err(|e| {
+                sinex_node_sdk::SinexError::processing(format!(
+                    "Failed to serialize {serialization_context} payload: {e}"
+                ))
+            })?;
+
+        self.emit_material_event(material_id, payload_bytes, event)
+            .await
+    }
+
+    async fn handle_layer_event(&mut self, event_type: &str, data: &str) -> NodeResult<()> {
+        let namespace = data.trim();
+        if namespace.is_empty() {
+            return Err(sinex_node_sdk::SinexError::processing(format!(
+                "{event_type} event did not include a layer namespace"
+            )));
+        }
+
+        let metadata = serde_json::json!({
+            "namespace": namespace,
+        });
+
+        match event_type {
+            "openlayer" => {
+                self.emit_typed_material_event(
+                    event_type,
+                    data,
+                    metadata,
+                    HyprlandLayerOpenedPayload {
+                        namespace: namespace.to_string(),
+                    },
+                    "layer opened",
+                )
+                .await
+            }
+            "closelayer" => {
+                self.emit_typed_material_event(
+                    event_type,
+                    data,
+                    metadata,
+                    HyprlandLayerClosedPayload {
+                        namespace: namespace.to_string(),
+                    },
+                    "layer closed",
+                )
+                .await
+            }
+            _ => Err(sinex_node_sdk::SinexError::processing(format!(
+                "Unsupported Hyprland layer event type: {event_type}"
+            ))),
+        }
+    }
+
+    async fn handle_submap_changed(&mut self, data: &str) -> NodeResult<()> {
+        let submap = data.trim();
+        if submap.is_empty() {
+            return Err(sinex_node_sdk::SinexError::processing(
+                "submap event did not include a submap name".to_string(),
+            ));
+        }
+
+        let metadata = serde_json::json!({
+            "submap": submap,
+        });
+        self.emit_typed_material_event(
+            "submap",
+            data,
+            metadata,
+            HyprlandSubmapChangedPayload {
+                submap: submap.to_string(),
+            },
+            "submap changed",
+        )
+        .await
+    }
+
+    async fn handle_window_urgent(&mut self, data: &str) -> NodeResult<()> {
+        let window_address = data.trim();
+        if window_address.is_empty() {
+            return Err(sinex_node_sdk::SinexError::processing(
+                "urgent event did not include a window address".to_string(),
+            ));
+        }
+
+        let tracked = self.windows.get(window_address).cloned();
+        let window_class = tracked
+            .as_ref()
+            .map(|window| window.class.clone())
+            .filter(|class| !class.is_empty());
+        let window_title = tracked
+            .as_ref()
+            .map(|window| window.title.clone())
+            .filter(|title| !title.is_empty());
+        let workspace_id = tracked
+            .as_ref()
+            .map(|window| parse_hyprland_numeric_id(&window.workspace_id, "workspace_id"))
+            .transpose()?;
+
+        let metadata = serde_json::json!({
+            "window_id": window_address,
+            "window_class": window_class,
+            "window_title": window_title,
+            "workspace_id": workspace_id,
+            "was_tracked": tracked.is_some(),
+        });
+        self.emit_typed_material_event(
+            "urgent",
+            data,
+            metadata,
+            HyprlandWindowUrgentPayload {
+                window_id: window_address.to_string(),
+                window_class,
+                window_title,
+                workspace_id,
+            },
+            "window urgent",
+        )
+        .await?;
+
+        if let Some(window) = self.windows.get_mut(window_address) {
+            window.last_seen = SystemTime::now();
+        }
+
+        Ok(())
+    }
+
+    async fn handle_window_fullscreen_changed(&mut self, data: &str) -> NodeResult<()> {
+        let state = parse_hyprland_numeric_id(data.trim(), "fullscreen_state")?;
+        let fullscreen = state != 0;
+        let window_id = self.current_focused_window.clone();
+
+        let metadata = serde_json::json!({
+            "state": state,
+            "fullscreen": fullscreen,
+            "window_id": window_id,
+        });
+        self.emit_typed_material_event(
+            "fullscreen",
+            data,
+            metadata,
+            HyprlandWindowFullscreenChangedPayload {
+                state,
+                fullscreen,
+                window_id: window_id.clone(),
+            },
+            "window fullscreen changed",
+        )
+        .await?;
+
+        if let Some(window_id) = window_id
+            && let Some(window) = self.windows.get_mut(&window_id)
+        {
+            window.fullscreen = fullscreen;
+            window.last_seen = SystemTime::now();
+        }
+
+        Ok(())
+    }
+
+    async fn handle_window_floating_changed(&mut self, data: &str) -> NodeResult<()> {
+        let (window_address, raw_state) = data.split_once(',').ok_or_else(|| {
+            sinex_node_sdk::SinexError::processing(
+                "changefloatingmode event did not include window address and state".to_string(),
+            )
+            .with_context("event_data", data.to_string())
+        })?;
+        let window_address = window_address.trim();
+        let floating = parse_hyprland_bool_state(raw_state, "floating_state")?;
+        let (window_class, window_title, workspace_id) =
+            self.tracked_window_context(window_address)?;
+
+        let metadata = serde_json::json!({
+            "window_id": window_address,
+            "floating": floating,
+            "window_class": window_class,
+            "window_title": window_title,
+            "workspace_id": workspace_id,
+        });
+        self.emit_typed_material_event(
+            "changefloatingmode",
+            data,
+            metadata,
+            HyprlandWindowFloatingChangedPayload {
+                window_id: window_address.to_string(),
+                floating,
+                window_class,
+                window_title,
+                workspace_id,
+            },
+            "window floating changed",
+        )
+        .await?;
+
+        if let Some(window) = self.windows.get_mut(window_address) {
+            window.floating = floating;
+            window.last_seen = SystemTime::now();
+        }
+
+        Ok(())
+    }
+
+    async fn handle_window_minimize(&mut self, data: &str) -> NodeResult<()> {
+        let (window_address, raw_state) = data.split_once(',').ok_or_else(|| {
+            sinex_node_sdk::SinexError::processing(
+                "minimizewindow event did not include window address and state".to_string(),
+            )
+            .with_context("event_data", data.to_string())
+        })?;
+        let window_address = window_address.trim();
+        let minimized = parse_hyprland_bool_state(raw_state, "minimized_state")?;
+        let (window_class, window_title, workspace_id) =
+            self.tracked_window_context(window_address)?;
+
+        let metadata = serde_json::json!({
+            "window_id": window_address,
+            "minimized": minimized,
+            "window_class": window_class,
+            "window_title": window_title,
+            "workspace_id": workspace_id,
+        });
+        self.emit_typed_material_event(
+            "minimizewindow",
+            data,
+            metadata,
+            HyprlandWindowMinimizePayload {
+                window_id: window_address.to_string(),
+                minimized,
+                window_class,
+                window_title,
+                workspace_id,
+            },
+            "window minimize",
+        )
+        .await
+    }
+
+    async fn handle_screencast(&mut self, data: &str) -> NodeResult<()> {
+        let (raw_state, raw_owner) = data.split_once(',').map_or((data, ""), |parts| parts);
+        let active = parse_hyprland_bool_state(raw_state, "screencast_state")?;
+        let owner = match raw_owner.trim() {
+            "" => None,
+            owner => Some(owner.to_string()),
+        };
+
+        let metadata = serde_json::json!({
+            "active": active,
+            "owner": owner,
+        });
+        self.emit_typed_material_event(
+            "screencast",
+            data,
+            metadata,
+            HyprlandScreencastPayload { active, owner },
+            "screencast",
+        )
+        .await?;
+
+        self.screencast_active = active;
+        Ok(())
+    }
+
+    fn tracked_window_context(
+        &self,
+        window_address: &str,
+    ) -> NodeResult<(Option<String>, Option<String>, Option<i32>)> {
+        if window_address.is_empty() {
+            return Err(sinex_node_sdk::SinexError::processing(
+                "Hyprland window event did not include a window address".to_string(),
+            ));
+        }
+
+        let tracked = self.windows.get(window_address);
+        let window_class = tracked
+            .map(|window| window.class.clone())
+            .filter(|class| !class.is_empty());
+        let window_title = tracked
+            .map(|window| window.title.clone())
+            .filter(|title| !title.is_empty());
+        let workspace_id = tracked
+            .map(|window| parse_hyprland_numeric_id(&window.workspace_id, "workspace_id"))
+            .transpose()?;
+
+        Ok((window_class, window_title, workspace_id))
     }
 
     fn handle_window_title_hint(&mut self, data: &str) -> NodeResult<()> {
@@ -888,10 +1246,7 @@ impl WindowManagerWatcher {
                         address: window_address.to_string(),
                         class: String::new(),
                         title: window_title,
-                        workspace_id: self
-                            .current_workspace
-                            .clone()
-                            .unwrap_or_default(),
+                        workspace_id: self.current_workspace.clone().unwrap_or_default(),
                         last_seen: SystemTime::now(),
                         floating: false,
                         fullscreen: false,
@@ -1758,6 +2113,7 @@ impl WindowManagerWatcher {
             current_focused_window: None,
             current_workspace: None,
             current_monitor: None,
+            screencast_active: false,
             stage_context: None,
             shutdown_rx: watch::channel(false).1,
             source_identifier: "desktop_window_manager_stub".to_string(),
@@ -2026,6 +2382,227 @@ mod tests {
             .expect_err("invalid snapshot ids must fail before emitting");
 
         assert!(error.to_string().contains("current_workspace_id"));
+        Ok(())
+    }
+
+    #[sinex_test(timeout = 60)]
+    async fn openlayer_emits_layer_opened_event(ctx: TestContext) -> TestResult<()> {
+        let (stage_context, _ctx, mut event_rx) = build_stage_context(ctx).await?;
+        let mut watcher = WindowManagerWatcher::test_watcher(stage_context)?;
+
+        watcher
+            .process_hyprland_event("openlayer>>launcher")
+            .await?;
+
+        let event = timeout(Duration::from_secs(1), event_rx.recv())
+            .await?
+            .ok_or_else(|| eyre!("missing emitted event"))?;
+        assert_eq!(event.source.as_ref(), "wm.hyprland");
+        assert_eq!(event.event_type.as_ref(), "layer.opened");
+        assert_eq!(event.payload["namespace"], serde_json::json!("launcher"));
+        Ok(())
+    }
+
+    #[sinex_test(timeout = 60)]
+    async fn closelayer_emits_layer_closed_event(ctx: TestContext) -> TestResult<()> {
+        let (stage_context, _ctx, mut event_rx) = build_stage_context(ctx).await?;
+        let mut watcher = WindowManagerWatcher::test_watcher(stage_context)?;
+
+        watcher
+            .process_hyprland_event("closelayer>>notifications")
+            .await?;
+
+        let event = timeout(Duration::from_secs(1), event_rx.recv())
+            .await?
+            .ok_or_else(|| eyre!("missing emitted event"))?;
+        assert_eq!(event.source.as_ref(), "wm.hyprland");
+        assert_eq!(event.event_type.as_ref(), "layer.closed");
+        assert_eq!(
+            event.payload["namespace"],
+            serde_json::json!("notifications")
+        );
+        Ok(())
+    }
+
+    #[sinex_test(timeout = 60)]
+    async fn submap_emits_submap_changed_event(ctx: TestContext) -> TestResult<()> {
+        let (stage_context, _ctx, mut event_rx) = build_stage_context(ctx).await?;
+        let mut watcher = WindowManagerWatcher::test_watcher(stage_context)?;
+
+        watcher.process_hyprland_event("submap>>resize").await?;
+
+        let event = timeout(Duration::from_secs(1), event_rx.recv())
+            .await?
+            .ok_or_else(|| eyre!("missing emitted event"))?;
+        assert_eq!(event.source.as_ref(), "wm.hyprland");
+        assert_eq!(event.event_type.as_ref(), "submap.changed");
+        assert_eq!(event.payload["submap"], serde_json::json!("resize"));
+        Ok(())
+    }
+
+    #[sinex_test(timeout = 60)]
+    async fn urgent_emits_window_urgent_event_with_tracked_context(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let (stage_context, _ctx, mut event_rx) = build_stage_context(ctx).await?;
+        let mut watcher = WindowManagerWatcher::test_watcher(stage_context)?;
+        watcher.windows.insert(
+            "0xabc".to_string(),
+            WindowInfo {
+                address: "0xabc".to_string(),
+                class: "kitty".to_string(),
+                title: "build failed".to_string(),
+                workspace_id: "7".to_string(),
+                last_seen: SystemTime::UNIX_EPOCH,
+                floating: false,
+                fullscreen: false,
+            },
+        );
+
+        watcher.process_hyprland_event("urgent>>0xabc").await?;
+
+        let event = timeout(Duration::from_secs(1), event_rx.recv())
+            .await?
+            .ok_or_else(|| eyre!("missing emitted event"))?;
+        assert_eq!(event.source.as_ref(), "wm.hyprland");
+        assert_eq!(event.event_type.as_ref(), "window.urgent");
+        assert_eq!(event.payload["window_id"], serde_json::json!("0xabc"));
+        assert_eq!(event.payload["window_class"], serde_json::json!("kitty"));
+        assert_eq!(
+            event.payload["window_title"],
+            serde_json::json!("build failed")
+        );
+        assert_eq!(event.payload["workspace_id"], serde_json::json!(7));
+
+        let tracked = watcher.windows.get("0xabc").expect("tracked window kept");
+        assert!(tracked.last_seen > SystemTime::UNIX_EPOCH);
+        Ok(())
+    }
+
+    #[sinex_test(timeout = 60)]
+    async fn fullscreen_emits_event_and_updates_focused_window(ctx: TestContext) -> TestResult<()> {
+        let (stage_context, _ctx, mut event_rx) = build_stage_context(ctx).await?;
+        let mut watcher = WindowManagerWatcher::test_watcher(stage_context)?;
+        watcher.current_focused_window = Some("0xabc".to_string());
+        watcher.windows.insert(
+            "0xabc".to_string(),
+            WindowInfo {
+                address: "0xabc".to_string(),
+                class: "kitty".to_string(),
+                title: "shell".to_string(),
+                workspace_id: "7".to_string(),
+                last_seen: SystemTime::UNIX_EPOCH,
+                floating: false,
+                fullscreen: false,
+            },
+        );
+
+        watcher.process_hyprland_event("fullscreen>>1").await?;
+
+        let event = timeout(Duration::from_secs(1), event_rx.recv())
+            .await?
+            .ok_or_else(|| eyre!("missing emitted event"))?;
+        assert_eq!(event.event_type.as_ref(), "window.fullscreen_changed");
+        assert_eq!(event.payload["state"], serde_json::json!(1));
+        assert_eq!(event.payload["fullscreen"], serde_json::json!(true));
+        assert_eq!(event.payload["window_id"], serde_json::json!("0xabc"));
+        assert!(
+            watcher
+                .windows
+                .get("0xabc")
+                .ok_or_else(|| eyre!("missing tracked window"))?
+                .fullscreen
+        );
+        Ok(())
+    }
+
+    #[sinex_test(timeout = 60)]
+    async fn changefloatingmode_emits_event_and_updates_cache(ctx: TestContext) -> TestResult<()> {
+        let (stage_context, _ctx, mut event_rx) = build_stage_context(ctx).await?;
+        let mut watcher = WindowManagerWatcher::test_watcher(stage_context)?;
+        watcher.windows.insert(
+            "0xabc".to_string(),
+            WindowInfo {
+                address: "0xabc".to_string(),
+                class: "kitty".to_string(),
+                title: "shell".to_string(),
+                workspace_id: "7".to_string(),
+                last_seen: SystemTime::UNIX_EPOCH,
+                floating: false,
+                fullscreen: false,
+            },
+        );
+
+        watcher
+            .process_hyprland_event("changefloatingmode>>0xabc,1")
+            .await?;
+
+        let event = timeout(Duration::from_secs(1), event_rx.recv())
+            .await?
+            .ok_or_else(|| eyre!("missing emitted event"))?;
+        assert_eq!(event.event_type.as_ref(), "window.floating_changed");
+        assert_eq!(event.payload["window_id"], serde_json::json!("0xabc"));
+        assert_eq!(event.payload["floating"], serde_json::json!(true));
+        assert_eq!(event.payload["window_class"], serde_json::json!("kitty"));
+        assert_eq!(event.payload["workspace_id"], serde_json::json!(7));
+        assert!(
+            watcher
+                .windows
+                .get("0xabc")
+                .ok_or_else(|| eyre!("missing tracked window"))?
+                .floating
+        );
+        Ok(())
+    }
+
+    #[sinex_test(timeout = 60)]
+    async fn minimizewindow_emits_minimize_event(ctx: TestContext) -> TestResult<()> {
+        let (stage_context, _ctx, mut event_rx) = build_stage_context(ctx).await?;
+        let mut watcher = WindowManagerWatcher::test_watcher(stage_context)?;
+        watcher.windows.insert(
+            "0xabc".to_string(),
+            WindowInfo {
+                address: "0xabc".to_string(),
+                class: "kitty".to_string(),
+                title: "shell".to_string(),
+                workspace_id: "7".to_string(),
+                last_seen: SystemTime::UNIX_EPOCH,
+                floating: false,
+                fullscreen: false,
+            },
+        );
+
+        watcher
+            .process_hyprland_event("minimizewindow>>0xabc,1")
+            .await?;
+
+        let event = timeout(Duration::from_secs(1), event_rx.recv())
+            .await?
+            .ok_or_else(|| eyre!("missing emitted event"))?;
+        assert_eq!(event.event_type.as_ref(), "window.minimize");
+        assert_eq!(event.payload["window_id"], serde_json::json!("0xabc"));
+        assert_eq!(event.payload["minimized"], serde_json::json!(true));
+        assert_eq!(event.payload["window_class"], serde_json::json!("kitty"));
+        assert_eq!(event.payload["workspace_id"], serde_json::json!(7));
+        Ok(())
+    }
+
+    #[sinex_test(timeout = 60)]
+    async fn screencast_emits_event_and_tracks_active_state(ctx: TestContext) -> TestResult<()> {
+        let (stage_context, _ctx, mut event_rx) = build_stage_context(ctx).await?;
+        let mut watcher = WindowManagerWatcher::test_watcher(stage_context)?;
+
+        watcher
+            .process_hyprland_event("screencast>>1,portal")
+            .await?;
+
+        let event = timeout(Duration::from_secs(1), event_rx.recv())
+            .await?
+            .ok_or_else(|| eyre!("missing emitted event"))?;
+        assert_eq!(event.event_type.as_ref(), "screencast");
+        assert_eq!(event.payload["active"], serde_json::json!(true));
+        assert_eq!(event.payload["owner"], serde_json::json!("portal"));
+        assert!(watcher.screencast_active);
         Ok(())
     }
 

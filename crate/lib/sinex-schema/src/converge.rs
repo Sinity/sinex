@@ -283,7 +283,8 @@ async fn actual_primary_key_columns(
          FROM pg_index i
          JOIN pg_class c ON c.oid = i.indrelid
          JOIN pg_namespace n ON n.oid = c.relnamespace
-         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(i.indkey)
+         JOIN LATERAL unnest(i.indkey) AS k(attnum) ON true
+         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum
          WHERE n.nspname = $1 AND c.relname = $2 AND i.indisprimary",
     )
     .bind(schema)

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "active": {
+      "type": "boolean"
+    },
+    "owner": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "active"
+  ],
+  "title": "HyprlandScreencastPayload",
+  "type": "object",
+  "x-sinex-event-type": "screencast",
+  "x-sinex-source": "wm.hyprland",
+  "x-sinex-version": "1.0.0"
+}
