@@ -19,7 +19,7 @@ use sinex_node_sdk::systemd_notify;
 use sinex_node_sdk::{SelfObserver, SelfObserverConfig};
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
-use sinex_primitives::domain::{NodeName, NodeType};
+use sinex_primitives::domain::{NodeName, NodeType, ServiceName};
 use sinex_primitives::environment as sinex_environment;
 use sinex_primitives::nats::create_or_open_kv_store;
 use sinex_primitives::transport;
@@ -441,7 +441,7 @@ impl IngestService {
             // Tracks error window for Healthy/Degraded/Failed status determination.
             // Counter handle is passed to JetStreamConsumer so batch counts feed health status.
             let emitter = HeartbeatEmitter::new(
-                "sinex-ingestd".to_string(),
+                ServiceName::new("sinex-ingestd"),
                 sinex_primitives::Seconds::from_secs(60),
             )
             .with_node_name(node_name.clone())
