@@ -213,6 +213,34 @@
       "proof_obligations": []
     },
     {
+      "subject": "source_unit:document-parser",
+      "id": "document-parser",
+      "namespace": "derived",
+      "runner_pack": "process",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "document-parser",
+          "event_type": "document.parsed"
+        },
+        {
+          "source": "document-parser",
+          "event_type": "document.chunked"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(source_unit, parent_event_id, output_event_type, chunk_index)",
+      "access_policy": "event_stream_read",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "proof_obligations": []
+    },
+    {
       "subject": "source_unit:document.staging",
       "id": "document.staging",
       "namespace": "document",
@@ -235,6 +263,78 @@
       "access_policy": "configured_document_roots",
       "package_impact": "no_new_output",
       "implementation_mode": "rust_in_pack:document",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:entity-enricher",
+      "id": "entity-enricher",
+      "namespace": "derived",
+      "runner_pack": "process",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "entity-enricher",
+          "event_type": "entity.enriched"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(entity_id, observation_window)",
+      "access_policy": "event_stream_read",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:entity-extractor",
+      "id": "entity-extractor",
+      "namespace": "derived",
+      "runner_pack": "process",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "entity-extractor",
+          "event_type": "entity.extracted"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(source_unit, parent_event_id, entity_type, raw_name)",
+      "access_policy": "event_stream_read",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:entity-resolver",
+      "id": "entity-resolver",
+      "namespace": "derived",
+      "runner_pack": "process",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "entity-resolver",
+          "event_type": "entity.resolved"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(entity_type, canonical_name)",
+      "access_policy": "event_stream_read",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
       "proof_obligations": []
     },
     {
@@ -317,6 +417,30 @@
       "retention_policy": "forever",
       "checkpoint_family": "append_stream",
       "occurrence_identity": "uuid5:(source_unit, hour_bucket, parent_event_ids)",
+      "access_policy": "event_stream_read",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:relation-extractor",
+      "id": "relation-extractor",
+      "namespace": "derived",
+      "runner_pack": "process",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "relation-extractor",
+          "event_type": "entity.related"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(source_entity_id, target_entity_id, relation_type)",
       "access_policy": "event_stream_read",
       "package_impact": "no_new_output",
       "implementation_mode": "rust_in_pack:process",
@@ -534,6 +658,30 @@
       "access_policy": "udev_monitor_read",
       "package_impact": "no_new_output",
       "implementation_mode": "rust_in_pack:system",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:tag-applier",
+      "id": "tag-applier",
+      "namespace": "derived",
+      "runner_pack": "process",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "knowledge-graph",
+          "event_type": "knowledge.tag_applied"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(source_unit, parent_event_id, tag_name)",
+      "access_policy": "event_stream_read",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
       "proof_obligations": []
     },
     {
@@ -1032,32 +1180,11 @@
       "type_name": "sinex_primitives::events::payloads::automaton::ActivitySessionBoundaryPayload"
     },
     {
-      "subject": "event_payload:desktop/clipboard.historical/1.0.0",
-      "source": "desktop",
-      "event_type": "clipboard.historical",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::desktop::ClipboardHistoricalPayload"
-    },
-    {
       "subject": "event_payload:desktop/desktop.monitoring_started/1.0.0",
       "source": "desktop",
       "event_type": "desktop.monitoring_started",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::desktop::DesktopMonitoringStartedPayload"
-    },
-    {
-      "subject": "event_payload:desktop/desktop.snapshot/1.0.0",
-      "source": "desktop",
-      "event_type": "desktop.snapshot",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::desktop::DesktopSnapshotPayload"
-    },
-    {
-      "subject": "event_payload:desktop/window.wm_historical/1.0.0",
-      "source": "desktop",
-      "event_type": "window.wm_historical",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::desktop::WindowManagerHistoricalPayload"
     },
     {
       "subject": "event_payload:document-ingestor/document.ingested/1.0.0",
@@ -1100,20 +1227,6 @@
       "event_type": "entity.resolved",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::entity::EntityResolvedPayload"
-    },
-    {
-      "subject": "event_payload:fs-watcher/dir.created/1.0.0",
-      "source": "fs-watcher",
-      "event_type": "dir.created",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::filesystem::DirCreatedPayload"
-    },
-    {
-      "subject": "event_payload:fs-watcher/dir.deleted/1.0.0",
-      "source": "fs-watcher",
-      "event_type": "dir.deleted",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::filesystem::DirDeletedPayload"
     },
     {
       "subject": "event_payload:fs-watcher/dir.discovered/1.0.0",
@@ -1165,32 +1278,11 @@
       "type_name": "sinex_primitives::events::payloads::automaton::HealthAggregatedReportPayload"
     },
     {
-      "subject": "event_payload:health-aggregator/system.health_summary/1.0.0",
-      "source": "health-aggregator",
-      "event_type": "system.health_summary",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::system::SystemHealthSummaryPayload"
-    },
-    {
       "subject": "event_payload:journald/entry.written/1.0.0",
       "source": "journald",
       "event_type": "entry.written",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::system::JournalEntryWrittenPayload"
-    },
-    {
-      "subject": "event_payload:journald/log_entry.captured/1.0.0",
-      "source": "journald",
-      "event_type": "log_entry.captured",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::system::JournalEntryPayload"
-    },
-    {
-      "subject": "event_payload:journald/node.heartbeat/1.0.0",
-      "source": "journald",
-      "event_type": "node.heartbeat",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::system::NodeHeartbeatPayload"
     },
     {
       "subject": "event_payload:journald/sync.completed/1.0.0",
@@ -1200,11 +1292,53 @@
       "type_name": "sinex_primitives::events::payloads::system::JournalSyncCompletedPayload"
     },
     {
-      "subject": "event_payload:log_processor/log.line/1.0.0",
-      "source": "log_processor",
-      "event_type": "log.line",
+      "subject": "event_payload:knowledge-graph/knowledge.entity_linked/1.0.0",
+      "source": "knowledge-graph",
+      "event_type": "knowledge.entity_linked",
       "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::system::LogLinePayload"
+      "type_name": "sinex_primitives::events::payloads::knowledge::KnowledgeEntityLinkedPayload"
+    },
+    {
+      "subject": "event_payload:knowledge-graph/knowledge.entity_mention/1.0.0",
+      "source": "knowledge-graph",
+      "event_type": "knowledge.entity_mention",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::knowledge::KnowledgeEntityMentionPayload"
+    },
+    {
+      "subject": "event_payload:knowledge-graph/knowledge.entity_merged/1.0.0",
+      "source": "knowledge-graph",
+      "event_type": "knowledge.entity_merged",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::knowledge::KnowledgeEntityMergedPayload"
+    },
+    {
+      "subject": "event_payload:knowledge-graph/knowledge.entity_resolution_candidate/1.0.0",
+      "source": "knowledge-graph",
+      "event_type": "knowledge.entity_resolution_candidate",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::knowledge::KnowledgeEntityResolutionCandidatePayload"
+    },
+    {
+      "subject": "event_payload:knowledge-graph/knowledge.relation_proposed/1.0.0",
+      "source": "knowledge-graph",
+      "event_type": "knowledge.relation_proposed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::knowledge::KnowledgeRelationProposedPayload"
+    },
+    {
+      "subject": "event_payload:knowledge-graph/knowledge.tag_applied/1.0.0",
+      "source": "knowledge-graph",
+      "event_type": "knowledge.tag_applied",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::knowledge::KnowledgeTagAppliedPayload"
+    },
+    {
+      "subject": "event_payload:knowledge-graph/knowledge.tag_confirmed/1.0.0",
+      "source": "knowledge-graph",
+      "event_type": "knowledge.tag_confirmed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::knowledge::KnowledgeTagConfirmedPayload"
     },
     {
       "subject": "event_payload:relation-extractor/entity.related/1.0.0",
@@ -1212,20 +1346,6 @@
       "event_type": "entity.related",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::entity::EntityRelatedPayload"
-    },
-    {
-      "subject": "event_payload:shell.asciinema/shell.session_ended/1.0.0",
-      "source": "shell.asciinema",
-      "event_type": "shell.session_ended",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::shell::AsciinemaSessionEndedPayload"
-    },
-    {
-      "subject": "event_payload:shell.asciinema/shell.session_started/1.0.0",
-      "source": "shell.asciinema",
-      "event_type": "shell.session_started",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::shell::AsciinemaSessionStartedPayload"
     },
     {
       "subject": "event_payload:shell.atuin/command.completed/1.0.0",
@@ -1270,46 +1390,11 @@
       "type_name": "sinex_primitives::events::payloads::shell::HistoryCommandImportedPayload"
     },
     {
-      "subject": "event_payload:shell.kitty/command.completed/1.0.0",
-      "source": "shell.kitty",
-      "event_type": "command.completed",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::shell::KittyCommandCompletedPayload"
-    },
-    {
       "subject": "event_payload:shell.kitty/command.executed/1.0.0",
       "source": "shell.kitty",
       "event_type": "command.executed",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::shell::KittyCommandExecutedPayload"
-    },
-    {
-      "subject": "event_payload:shell.kitty/content.streamed/1.0.0",
-      "source": "shell.kitty",
-      "event_type": "content.streamed",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::shell::KittyContentStreamedPayload"
-    },
-    {
-      "subject": "event_payload:shell.kitty/process.changed/1.0.0",
-      "source": "shell.kitty",
-      "event_type": "process.changed",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::shell::KittyProcessChangedPayload"
-    },
-    {
-      "subject": "event_payload:shell.kitty/tab.focused/1.0.0",
-      "source": "shell.kitty",
-      "event_type": "tab.focused",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::shell::KittyTabFocusedPayload"
-    },
-    {
-      "subject": "event_payload:shell.scrollback/shell.output_captured/1.0.0",
-      "source": "shell.scrollback",
-      "event_type": "shell.output_captured",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::shell::ShellOutputCapturedPayload"
     },
     {
       "subject": "event_payload:sinex.gateway/pool.stats/1.0.0",
@@ -1431,13 +1516,6 @@
       "type_name": "sinex_primitives::events::payloads::process::ProcessFailedPayload"
     },
     {
-      "subject": "event_payload:sinex/process.heartbeat/1.0.0",
-      "source": "sinex",
-      "event_type": "process.heartbeat",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::process::ProcessHeartbeatPayload"
-    },
-    {
       "subject": "event_payload:sinex/process.shutdown/1.0.0",
       "source": "sinex",
       "event_type": "process.shutdown",
@@ -1452,32 +1530,11 @@
       "type_name": "sinex_primitives::events::payloads::process::ProcessStartedPayload"
     },
     {
-      "subject": "event_payload:sinex/sensor.activated/1.0.0",
-      "source": "sinex",
-      "event_type": "sensor.activated",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::process::SensorActivatedPayload"
-    },
-    {
-      "subject": "event_payload:sinex/sensor.deactivated/1.0.0",
-      "source": "sinex",
-      "event_type": "sensor.deactivated",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::process::SensorDeactivatedPayload"
-    },
-    {
       "subject": "event_payload:system/monitoring.started/1.0.0",
       "source": "system",
       "event_type": "monitoring.started",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::system::SystemMonitoringStartedPayload"
-    },
-    {
-      "subject": "event_payload:system/snapshot/1.0.0",
-      "source": "system",
-      "event_type": "snapshot",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::system::SystemSnapshotPayload"
     },
     {
       "subject": "event_payload:systemd/timer.triggered/1.0.0",
@@ -1515,39 +1572,11 @@
       "type_name": "sinex_primitives::events::payloads::system::SystemdUnitStoppedPayload"
     },
     {
-      "subject": "event_payload:terminal.kitty/session.ended/1.0.0",
-      "source": "terminal.kitty",
-      "event_type": "session.ended",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::shell::KittySessionEndedPayload"
-    },
-    {
-      "subject": "event_payload:terminal.kitty/session.started/1.0.0",
-      "source": "terminal.kitty",
-      "event_type": "session.started",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::shell::KittySessionStartedPayload"
-    },
-    {
       "subject": "event_payload:terminal/shell.terminal_monitoring_started/1.0.0",
       "source": "terminal",
       "event_type": "shell.terminal_monitoring_started",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::shell::TerminalMonitoringStartedPayload"
-    },
-    {
-      "subject": "event_payload:test/test.event/1.0.0",
-      "source": "test",
-      "event_type": "test.event",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::testing::TestEventPayload"
-    },
-    {
-      "subject": "event_payload:udev/device.added/1.0.0",
-      "source": "udev",
-      "event_type": "device.added",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::system::UdevDeviceAddedPayload"
     },
     {
       "subject": "event_payload:udev/device.changed/1.0.0",
@@ -1585,18 +1614,25 @@
       "type_name": "sinex_primitives::events::payloads::system::UdevDeviceOtherPayload"
     },
     {
-      "subject": "event_payload:udev/device.removed/1.0.0",
-      "source": "udev",
-      "event_type": "device.removed",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::system::UdevDeviceRemovedPayload"
-    },
-    {
       "subject": "event_payload:webhistory/page.visited/1.0.0",
       "source": "webhistory",
       "event_type": "page.visited",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::web::PageVisitedPayload"
+    },
+    {
+      "subject": "event_payload:wm.hyprland/layer.closed/1.0.0",
+      "source": "wm.hyprland",
+      "event_type": "layer.closed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::window::HyprlandLayerClosedPayload"
+    },
+    {
+      "subject": "event_payload:wm.hyprland/layer.opened/1.0.0",
+      "source": "wm.hyprland",
+      "event_type": "layer.opened",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::window::HyprlandLayerOpenedPayload"
     },
     {
       "subject": "event_payload:wm.hyprland/monitor.focused/1.0.0",
@@ -1606,11 +1642,25 @@
       "type_name": "sinex_primitives::events::payloads::window::HyprlandMonitorFocusedPayload"
     },
     {
+      "subject": "event_payload:wm.hyprland/screencast/1.0.0",
+      "source": "wm.hyprland",
+      "event_type": "screencast",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::window::HyprlandScreencastPayload"
+    },
+    {
       "subject": "event_payload:wm.hyprland/state.captured/1.0.0",
       "source": "wm.hyprland",
       "event_type": "state.captured",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::window::HyprlandStateCapturedPayload"
+    },
+    {
+      "subject": "event_payload:wm.hyprland/submap.changed/1.0.0",
+      "source": "wm.hyprland",
+      "event_type": "submap.changed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::window::HyprlandSubmapChangedPayload"
     },
     {
       "subject": "event_payload:wm.hyprland/window.closed/1.0.0",
@@ -1620,11 +1670,32 @@
       "type_name": "sinex_primitives::events::payloads::window::HyprlandWindowClosedPayload"
     },
     {
+      "subject": "event_payload:wm.hyprland/window.floating_changed/1.0.0",
+      "source": "wm.hyprland",
+      "event_type": "window.floating_changed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::window::HyprlandWindowFloatingChangedPayload"
+    },
+    {
       "subject": "event_payload:wm.hyprland/window.focused/1.0.0",
       "source": "wm.hyprland",
       "event_type": "window.focused",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::window::HyprlandWindowFocusedPayload"
+    },
+    {
+      "subject": "event_payload:wm.hyprland/window.fullscreen_changed/1.0.0",
+      "source": "wm.hyprland",
+      "event_type": "window.fullscreen_changed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::window::HyprlandWindowFullscreenChangedPayload"
+    },
+    {
+      "subject": "event_payload:wm.hyprland/window.minimize/1.0.0",
+      "source": "wm.hyprland",
+      "event_type": "window.minimize",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::window::HyprlandWindowMinimizePayload"
     },
     {
       "subject": "event_payload:wm.hyprland/window.moved/1.0.0",
@@ -1646,6 +1717,13 @@
       "event_type": "window.title_changed",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::window::HyprlandWindowTitleChangedPayload"
+    },
+    {
+      "subject": "event_payload:wm.hyprland/window.urgent/1.0.0",
+      "source": "wm.hyprland",
+      "event_type": "window.urgent",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::window::HyprlandWindowUrgentPayload"
     },
     {
       "subject": "event_payload:wm.hyprland/wm.unhandled/1.0.0",
@@ -1787,11 +1865,6 @@
       "subject": "xtask_command:docs.command-reference",
       "path": "docs.command-reference",
       "about": "Generate the exhaustive xtask public command reference from the live clap tree"
-    },
-    {
-      "subject": "xtask_command:docs.issue-drift",
-      "path": "docs.issue-drift",
-      "about": "Detect drift between GitHub issue bodies and the live workspace"
     },
     {
       "subject": "xtask_command:docs.proof-catalog",

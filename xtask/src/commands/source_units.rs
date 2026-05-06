@@ -672,6 +672,13 @@ fn static_emitter_event_pairs(
         "analytics" => &[("derived.activity-window", "activity.window.summary")][..],
         "browser.history" => &[("webhistory", "page.visited")][..],
         "daily-summarizer" => &[("derived.daily-summarizer", "activity.summary.daily")][..],
+        "document-parser" => &[
+            ("document-parser", "document.parsed"),
+            ("document-parser", "document.chunked"),
+        ][..],
+        "entity-enricher" => &[("entity-enricher", "entity.enriched")][..],
+        "entity-extractor" => &[("entity-extractor", "entity.extracted")][..],
+        "entity-resolver" => &[("entity-resolver", "entity.resolved")][..],
         "desktop.activitywatch" => &[
             ("activitywatch", "window.active"),
             ("activitywatch", "afk.changed"),
@@ -702,6 +709,7 @@ fn static_emitter_event_pairs(
         "health" => &[("health-aggregator", "health.aggregated_report")][..],
         "hourly-summarizer" => &[("derived.hourly-summarizer", "activity.summary.hourly")][..],
         "session-detector" => &[("derived.session-detector", "activity.session.boundary")][..],
+        "relation-extractor" => &[("relation-extractor", "entity.related")][..],
         "system.monitor" => &[("system", "monitoring.started")][..],
         "system.systemd" => &[
             ("systemd", "unit.started"),
@@ -738,6 +746,7 @@ fn static_emitter_event_pairs(
         | "terminal.zsh-history"
         | "terminal.fish-history" => &[("shell.history", "command.imported")][..],
         "terminal.atuin-history" => &[("shell.atuin", "command.executed")][..],
+        "tag-applier" => &[("knowledge-graph", "knowledge.tag_applied")][..],
         "terminal-canonicalizer" => &[("canonical.terminal", "command.canonical")][..],
         _ => return None,
     };
@@ -827,6 +836,14 @@ mod tests {
             "session-detector",
             "analytics",
             "health",
+            "hourly-summarizer",
+            "daily-summarizer",
+            "document-parser",
+            "entity-extractor",
+            "entity-resolver",
+            "relation-extractor",
+            "entity-enricher",
+            "tag-applier",
         ] {
             assert!(
                 source_unit_ids.contains(expected),
@@ -859,10 +876,10 @@ mod tests {
             .iter()
             .find(|unit| unit.id == "terminal-canonicalizer")
             .expect("terminal canonicalizer descriptor should be present");
-        assert_eq!(terminal_canonicalizer.runner_pack, "terminal-canonicalizer");
+        assert_eq!(terminal_canonicalizer.runner_pack, "process");
         assert_eq!(
             terminal_canonicalizer.implementation_mode,
-            "rust_in_pack:terminal-canonicalizer"
+            "rust_in_pack:process"
         );
         Ok(())
     }
@@ -976,18 +993,18 @@ mod tests {
             .expect("udev descriptor should be present")
             .clone();
         unit.output_event_types = vec![SourceUnitEventType {
-            source: "udev".to_string(),
-            event_type: "device.added".to_string(),
+            source: "systemd".to_string(),
+            event_type: "unit.started".to_string(),
         }];
 
         let validation = validate_source_units(&[unit], false);
         assert!(
             validation.invalid_output_event_pairs.is_empty(),
-            "udev device.added is a registered payload pair, so this must be caught by emitter validation"
+            "systemd unit.started is a registered payload pair, so this must be caught by emitter validation"
         );
         assert_eq!(
             validation.unbacked_output_event_pairs,
-            vec!["source_unit:system.udev:udev/device.added".to_string()]
+            vec!["source_unit:system.udev:systemd/unit.started".to_string()]
         );
         Ok(())
     }

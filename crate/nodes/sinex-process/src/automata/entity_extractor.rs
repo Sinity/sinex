@@ -25,7 +25,7 @@
 //! from the source event. The entity resolver (Stage 2) assigns deterministic
 //! UUIDv5 identities.
 //!
-//! Ref: `.agent/scratch/071-issue-331-entity-extractor-spec.md`, issue #331.
+//! Ref: `.agent/scratch/071-issue-331-entity-extractor-spec.md`.
 
 use regex::Regex;
 use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, TransducerNodeAdapter};
@@ -218,6 +218,39 @@ fn find_first_entity(text: &str) -> Option<EntityExtractedPayload> {
 // ── Type alias ──────────────────────────────────────────────────────────
 
 pub type EntityExtractorNode = TransducerNodeAdapter<EntityExtractor>;
+
+// ── Source-unit descriptor ─────────────────────────────────────────────
+
+use sinex_primitives::proof::{
+    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
+    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
+};
+use sinex_primitives::register_source_unit;
+
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "entity-extractor",
+        namespace: "derived",
+        runner_pack: "process",
+        checkpoint_family: SuCheckpointFamily::AppendStream,
+        event_types: &[
+            ("entity-extractor", "entity.extracted"),
+        ],
+        privacy_tier: SuPrivacyTier::Sensitive,
+        runtime_shape: SuRuntimeShape::Continuous,
+        horizons: &[SuHorizon::Continuous],
+        retention: SuRetentionPolicy::Forever,
+        proof_obligations: &[],
+        occurrence_identity: SuOccurrenceIdentity::Uuid5From(
+            "(source_unit, parent_event_id, entity_type, raw_name)",
+        ),
+        access_policy: "event_stream_read",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pack:process",
+        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
+    }
+}
 
 #[cfg(test)]
 mod tests {
