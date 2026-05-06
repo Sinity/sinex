@@ -7,7 +7,7 @@ use async_nats::jetstream;
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_ingestd::material_ready_set::MaterialReadySet;
-use sinex_ingestd::validator::IngestIngestEventValidator;
+use sinex_ingestd::validator::IngestEventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_primitives::{Uuid, error::SinexError, temporal};
 use sqlx::Row;

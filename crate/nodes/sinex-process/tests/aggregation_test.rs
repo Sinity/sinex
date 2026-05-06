@@ -56,6 +56,7 @@ async fn process(
                 scope_key: output.scope_key,
                 equivalence_key: output.equivalence_key,
                 aggregation: output.aggregation,
+                event_type: output.event_type,
             });
         }
     }

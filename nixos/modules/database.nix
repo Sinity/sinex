@@ -1,9 +1,8 @@
-{
-  config,
-  options,
-  lib,
-  pkgs,
-  ...
+{ config
+, options
+, lib
+, pkgs
+, ...
 }:
 
 with lib;
@@ -11,9 +10,10 @@ with lib;
 let
   cfg = config.services.sinex;
   secretResolution = import ./lib/secret-resolution.nix { inherit lib; };
+  automataLib = import ./lib/automata.nix { inherit lib; };
   inherit (secretResolution) resolveNamedSecretPath;
   db = cfg.database;
-  secretPaths = config.sinex.secrets.paths or {};
+  secretPaths = config.sinex.secrets.paths or { };
   effectiveDatabasePasswordFile = resolveNamedSecretPath secretPaths db.passwordFile [
     "sinex-local-db"
     "sinex-remote-db"
@@ -50,18 +50,7 @@ let
     if !automataEnabled then
       0
     else
-      (if cfg.nodes.automata.canonicalizer.enable then 1 else 0)
-      + (if cfg.nodes.automata.healthAggregator.enable then 1 else 0)
-      + (if cfg.nodes.automata.analyticsAutomaton.enable then 1 else 0)
-      + (if cfg.nodes.automata.sessionDetector.enable then 1 else 0)
-      + (if cfg.nodes.automata.hourlySummarizer.enable then 1 else 0)
-      + (if cfg.nodes.automata.dailySummarizer.enable then 1 else 0)
-      + (if cfg.nodes.automata.documentParser.enable then 1 else 0)
-      + (if cfg.nodes.automata.tagApplier.enable then 1 else 0)
-      + (if cfg.nodes.automata.entityExtractor.enable then 1 else 0)
-      + (if cfg.nodes.automata.entityResolver.enable then 1 else 0)
-      + (if cfg.nodes.automata.relationExtractor.enable then 1 else 0)
-      + (if cfg.nodes.automata.entityEnricher.enable then 1 else 0);
+      automataLib.countEnabled cfg.nodes.automata;
 
   coreServiceCount = (if ingestEnabled then 1 else 0) + (if gatewayEnabled then 1 else 0);
 
@@ -87,15 +76,15 @@ let
   # evaluates postgresql_18.pkgs eagerly, before overlays patch postgresql18Packages.
   pgJsonschema =
     pkgs.postgresql18Packages.pg_jsonschema or
-    postgresqlPackages.pg_jsonschema or
-    (throw ''
-      pg_jsonschema is not available for the configured PostgreSQL package.
-      You must apply the sinex flake overlay to your pkgs:
+      postgresqlPackages.pg_jsonschema or
+        (throw ''
+          pg_jsonschema is not available for the configured PostgreSQL package.
+          You must apply the sinex flake overlay to your pkgs:
 
-        nixpkgs.overlays = [ inputs.sinex.overlays.default ];
+            nixpkgs.overlays = [ inputs.sinex.overlays.default ];
 
-      Or provide services.sinex.package directly from flake outputs.
-    '');
+          Or provide services.sinex.package directly from flake outputs.
+        '');
 
   extensionPackageBuilder =
     ps:
@@ -136,11 +125,12 @@ let
             ensureClauses.login = true;
           };
 
-      sharedAccessRoles = map (name: {
-        inherit name;
-        ensureDBOwnership = false;
-        ensureClauses.login = false;
-      }) [
+      sharedAccessRoles = map
+        (name: {
+          inherit name;
+          ensureDBOwnership = false;
+          ensureClauses.login = false;
+        }) [
         "sinex_ingestd"
         "sinex_gateway"
         "sinex_readonly"
@@ -174,7 +164,8 @@ let
     max_wal_size = mkDefault "2GB";
     min_wal_size = mkDefault "1GB";
     archive_mode = if db.walArchiveCommand != null then "on" else mkDefault "off";
-    archive_command = if db.walArchiveCommand != null
+    archive_command =
+      if db.walArchiveCommand != null
       then db.walArchiveCommand
       else mkDefault "";
 
@@ -274,100 +265,100 @@ in
 
     (mkIf (db.enable && db.autoSetup) {
       systemd.services.postgresql-setup.script = lib.mkAfter ''
-        ensure_database_owner() {
-          local dbName="$1"
-          local roleName="$2"
-          echo "[sinex] ensuring database owner ''${roleName} for ''${dbName}"
-          psql -v ON_ERROR_STOP=1 \
-            --set=sinex_db_name="$dbName" \
-            --set=sinex_role_name="$roleName" \
-            postgres <<'SQL' >/dev/null
-ALTER DATABASE :"sinex_db_name" OWNER TO :"sinex_role_name";
-SQL
-        }
+                ensure_database_owner() {
+                  local dbName="$1"
+                  local roleName="$2"
+                  echo "[sinex] ensuring database owner ''${roleName} for ''${dbName}"
+                  psql -v ON_ERROR_STOP=1 \
+                    --set=sinex_db_name="$dbName" \
+                    --set=sinex_role_name="$roleName" \
+                    postgres <<'SQL' >/dev/null
+        ALTER DATABASE :"sinex_db_name" OWNER TO :"sinex_role_name";
+        SQL
+                }
 
-        extension_exists() {
-          local dbName="$1"
-          local extName="$2"
-          psql -X -v ON_ERROR_STOP=1 \
-            --set=sinex_ext_name="$extName" \
-            -d "$dbName" -At <<'SQL'
-SELECT EXISTS (
-  SELECT 1
-  FROM pg_extension
-  WHERE extname = :'sinex_ext_name'
-)::int;
-SQL
-        }
+                extension_exists() {
+                  local dbName="$1"
+                  local extName="$2"
+                  psql -X -v ON_ERROR_STOP=1 \
+                    --set=sinex_ext_name="$extName" \
+                    -d "$dbName" -At <<'SQL'
+        SELECT EXISTS (
+          SELECT 1
+          FROM pg_extension
+          WHERE extname = :'sinex_ext_name'
+        )::int;
+        SQL
+                }
 
-        create_extension() {
-          local dbName="$1"
-          local extName="$2"
-          psql -X -v ON_ERROR_STOP=1 \
-            --set=sinex_ext_name="$extName" \
-            -d "$dbName" <<'SQL' >/dev/null
-CREATE EXTENSION IF NOT EXISTS :"sinex_ext_name";
-SQL
-        }
+                create_extension() {
+                  local dbName="$1"
+                  local extName="$2"
+                  psql -X -v ON_ERROR_STOP=1 \
+                    --set=sinex_ext_name="$extName" \
+                    -d "$dbName" <<'SQL' >/dev/null
+        CREATE EXTENSION IF NOT EXISTS :"sinex_ext_name";
+        SQL
+                }
 
-        update_extension() {
-          local dbName="$1"
-          local extName="$2"
-          # TimescaleDB requires ALTER EXTENSION to be the first command in a
-          # fresh psql session after a package update. Keep every extension on
-          # this stricter path so setup behavior stays uniform.
-          psql -X -v ON_ERROR_STOP=1 \
-            --set=sinex_ext_name="$extName" \
-            -d "$dbName" <<'SQL' >/dev/null
-ALTER EXTENSION :"sinex_ext_name" UPDATE;
-SQL
-        }
+                update_extension() {
+                  local dbName="$1"
+                  local extName="$2"
+                  # TimescaleDB requires ALTER EXTENSION to be the first command in a
+                  # fresh psql session after a package update. Keep every extension on
+                  # this stricter path so setup behavior stays uniform.
+                  psql -X -v ON_ERROR_STOP=1 \
+                    --set=sinex_ext_name="$extName" \
+                    -d "$dbName" <<'SQL' >/dev/null
+        ALTER EXTENSION :"sinex_ext_name" UPDATE;
+        SQL
+                }
 
-        ensure_extension() {
-          local dbName="$1"
-          local extName="$2"
-          local exists
-          echo "[sinex] ensuring extension ''${extName} for ''${dbName}"
-          exists="$(extension_exists "$dbName" "$extName")"
-          if [ "$exists" != "1" ]; then
-            create_extension "$dbName" "$extName"
-          fi
-          update_extension "$dbName" "$extName"
-        }
+                ensure_extension() {
+                  local dbName="$1"
+                  local extName="$2"
+                  local exists
+                  echo "[sinex] ensuring extension ''${extName} for ''${dbName}"
+                  exists="$(extension_exists "$dbName" "$extName")"
+                  if [ "$exists" != "1" ]; then
+                    create_extension "$dbName" "$extName"
+                  fi
+                  update_extension "$dbName" "$extName"
+                }
 
-        for dbName in ${concatStringsSep " " (map escapeShellArg allDatabases)}; do
-          ensure_database_owner "$dbName" ${escapeShellArg db.user}
-          ensure_extension "$dbName" "timescaledb"
-          ensure_extension "$dbName" "pg_jsonschema"
-          ensure_extension "$dbName" "vector"
-          ensure_extension "$dbName" "pg_trgm"
-        done
+                for dbName in ${concatStringsSep " " (map escapeShellArg allDatabases)}; do
+                  ensure_database_owner "$dbName" ${escapeShellArg db.user}
+                  ensure_extension "$dbName" "timescaledb"
+                  ensure_extension "$dbName" "pg_jsonschema"
+                  ensure_extension "$dbName" "vector"
+                  ensure_extension "$dbName" "pg_trgm"
+                done
       '';
     })
 
     (mkIf (db.enable && db.autoSetup && effectiveDatabasePasswordFile != null) {
       systemd.services.postgresql-setup.script = lib.mkAfter ''
-        sync_role_password() {
-          local roleName="$1"
-          local passwordFile="$2"
-          local password
+                sync_role_password() {
+                  local roleName="$1"
+                  local passwordFile="$2"
+                  local password
 
-          if [ ! -r "$passwordFile" ]; then
-            echo "[sinex] password file $passwordFile is not readable" >&2
-            return 1
-          fi
+                  if [ ! -r "$passwordFile" ]; then
+                    echo "[sinex] password file $passwordFile is not readable" >&2
+                    return 1
+                  fi
 
-          password="$(tr -d '\n' < "$passwordFile")"
-          PGPASSWORD= psql \
-            -v ON_ERROR_STOP=1 \
-            --set=sinex_role="$roleName" \
-            --set=sinex_password="$password" \
-            postgres <<'SQL' >/dev/null
-ALTER ROLE :"sinex_role" WITH PASSWORD :'sinex_password';
-SQL
-        }
+                  password="$(tr -d '\n' < "$passwordFile")"
+                  PGPASSWORD= psql \
+                    -v ON_ERROR_STOP=1 \
+                    --set=sinex_role="$roleName" \
+                    --set=sinex_password="$password" \
+                    postgres <<'SQL' >/dev/null
+        ALTER ROLE :"sinex_role" WITH PASSWORD :'sinex_password';
+        SQL
+                }
 
-        sync_role_password ${escapeShellArg db.user} ${escapeShellArg effectiveDatabasePasswordFile}
+                sync_role_password ${escapeShellArg db.user} ${escapeShellArg effectiveDatabasePasswordFile}
       '';
     })
   ];

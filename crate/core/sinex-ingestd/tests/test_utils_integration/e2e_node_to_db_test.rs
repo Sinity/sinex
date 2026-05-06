@@ -1,7 +1,7 @@
 use async_nats::jetstream;
 use serde_json::json;
 use sinex_ingestd::{
-    IngestdResult, JetStreamConsumer, JetStreamTopology, validator::IngestIngestEventValidator,
+    IngestdResult, JetStreamConsumer, JetStreamTopology, validator::IngestEventValidator,
 };
 use std::sync::Arc;
 use std::time::Duration;

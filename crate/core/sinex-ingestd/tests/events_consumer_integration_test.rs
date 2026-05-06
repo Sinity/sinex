@@ -7,7 +7,7 @@ use async_nats::{Client, jetstream};
 use color_eyre::eyre::eyre;
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_ingestd::{JetStreamConsumer, JetStreamTopology, validator::IngestIngestEventValidator};
+use sinex_ingestd::{JetStreamConsumer, JetStreamTopology, validator::IngestEventValidator};
 use sinex_primitives::{Uuid, environment, temporal};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
