@@ -1,6 +1,6 @@
 //! sinex-process — consolidated automata pack.
 //!
-//! This crate hosts all nine derived-node automata in a single binary.
+//! This crate hosts all twelve derived-node automata in a single binary.
 //! The binary is dispatched by `--automaton <name>` to the appropriate
 //! [`sinex_node_sdk::node_entrypoint`] equivalent.
 //!
@@ -21,7 +21,7 @@
 //! | `tag-applier` | `--automaton tag-applier` | [`TransducerNode`] |
 //! | `document-parser` | `--automaton document-parser` | [`MultiOutputTransducerNode`] |
 //!
-//! All nine [`SourceUnitDescriptor`](sinex_primitives::proof::SourceUnitDescriptor)s are
+//! All twelve [`SourceUnitDescriptor`](sinex_primitives::proof::SourceUnitDescriptor)s are
 //! registered at program load via the `register_source_unit!` macro in each submodule.
 
 pub mod automata {

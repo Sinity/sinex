@@ -1,6 +1,6 @@
 //! sinex-process — consolidated automata binary.
 //!
-//! Hosts nine derived-node automata in a single binary. The automaton to run
+//! Hosts twelve derived-node automata in a single binary. The automaton to run
 //! is selected by the `--automaton <name>` argument (or `SINEX_AUTOMATON` env).
 //!
 //! # Usage
