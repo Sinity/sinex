@@ -6,6 +6,7 @@
 //! - Event<JsonValue> (aka `RawEvent`) for heterogeneous processing
 //! - ALL events MUST have provenance (Material or Synthesis)
 
+pub mod admission;
 pub mod builder;
 pub mod enums;
 pub mod payload;

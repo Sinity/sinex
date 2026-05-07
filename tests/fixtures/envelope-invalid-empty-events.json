@@ -1,0 +1,9 @@
+{
+  "envelope_version": "1",
+  "source_unit_id": "external-producer",
+  "parser_id": "python-parser",
+  "parser_version": "0.5.0",
+  "events": [],
+  "admitted_at": "2026-01-01T00:00:01Z",
+  "admitted_by": "external-host"
+}

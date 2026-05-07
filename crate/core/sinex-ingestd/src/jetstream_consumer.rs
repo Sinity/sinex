@@ -983,9 +983,8 @@ impl JetStreamConsumer {
                 counter.fetch_add(1, Ordering::Relaxed);
             }
 
-            if let Some(prepared) = self.prepare_event(msg).await? {
-                batch.push(prepared);
-            }
+            let prepared_events = self.prepare_events(msg).await?;
+            batch.extend(prepared_events);
         }
 
         if batch.is_empty() {
@@ -1050,25 +1049,35 @@ impl JetStreamConsumer {
         result
     }
 
-    #[instrument(skip(self, msg), fields(event_id, source, event_type))]
-    async fn prepare_event(&self, msg: jetstream::Message) -> IngestdResult<Option<PreparedEvent>> {
-        match self.admission.admit_bytes(&msg.payload).await? {
-            AdmissionDecision::Admitted(admitted) | AdmissionDecision::Transformed(admitted) => {
-                Ok(Some(PreparedEvent {
-                    event: admitted.event,
-                    parsed_id: admitted.event_id,
-                    message: msg,
-                }))
-            }
-            AdmissionDecision::Rejected(rejection)
-            | AdmissionDecision::Suppressed(rejection)
-            | AdmissionDecision::QuarantineNeeded(rejection) => {
-                self.record_admission_rejection(&rejection).await;
-                self.route_validation_failure(&msg, rejection.reason)
-                    .await?;
-                Ok(None)
+    #[instrument(skip(self, msg))]
+    async fn prepare_events(
+        &self,
+        msg: jetstream::Message,
+    ) -> IngestdResult<Vec<PreparedEvent>> {
+        let decisions = self.admission.admit_intent_bytes(&msg.payload).await?;
+        let mut prepared = Vec::with_capacity(decisions.len());
+
+        for decision in decisions {
+            match decision {
+                AdmissionDecision::Admitted(admitted)
+                | AdmissionDecision::Transformed(admitted) => {
+                    prepared.push(PreparedEvent {
+                        event: admitted.event,
+                        parsed_id: admitted.event_id,
+                        message: msg.clone(),
+                    });
+                }
+                AdmissionDecision::Rejected(rejection)
+                | AdmissionDecision::Suppressed(rejection)
+                | AdmissionDecision::QuarantineNeeded(rejection) => {
+                    self.record_admission_rejection(&rejection).await;
+                    self.route_validation_failure(&msg, rejection.reason)
+                        .await?;
+                }
             }
         }
+
+        Ok(prepared)
     }
 
     #[tracing::instrument(skip(self, batch), fields(batch_size = batch.len()))]
@@ -1558,7 +1567,9 @@ impl JetStreamConsumer {
             | AdmissionRejectionKind::PrivacyPolicy
             | AdmissionRejectionKind::QuarantinePolicy
             | AdmissionRejectionKind::MissingEventId
-            | AdmissionRejectionKind::InvalidEventId => {}
+            | AdmissionRejectionKind::InvalidEventId
+            | AdmissionRejectionKind::EnvelopeDeserialization
+            | AdmissionRejectionKind::EnvelopeValidation => {}
         }
     }
 
