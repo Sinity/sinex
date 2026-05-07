@@ -862,57 +862,47 @@ impl StateRepository<'_> {
 
     /// Update a specific node manifest heartbeat timestamp and set status to 'active'.
     ///
-    /// Returns whether a matching manifest row was updated.
+    /// Returns whether a matching run was updated.
     pub async fn update_node_heartbeat_for_version(
         &self,
         node_name: &NodeName,
-        version: &str,
+        _version: &str,
     ) -> DbResult<bool> {
+        self.update_run_heartbeat(node_name.as_ref()).await
+    }
+
+    /// Update heartbeat for the active run of a service.
+    pub async fn update_run_heartbeat(&self, service_name: &str) -> DbResult<bool> {
         let result = sqlx::query!(
-            r#"
-            UPDATE core.node_manifests
-            SET last_heartbeat_at = NOW(),
-                status = 'active'
-            WHERE node_name = $1
-              AND version = $2
-            "#,
-            node_name as &NodeName,
-            version,
+            "UPDATE core.runs SET last_heartbeat_at = NOW(), status = 'active' WHERE service_name = $1 AND status = 'running'",
+            service_name,
         )
         .execute(self.pool)
         .await
-        .map_err(|e| db_error(e, "update node heartbeat"))?;
+        .map_err(|e| db_error(e, "update run heartbeat"))?;
         Ok(result.rows_affected() > 0)
     }
 
-    /// Mark a specific node manifest as inactive.
-    ///
-    /// Returns whether a matching manifest row was updated.
+    /// Mark the active run of a service as inactive.
     pub async fn mark_node_inactive_for_version(
         &self,
         node_name: &NodeName,
-        version: &str,
+        _version: &str,
     ) -> DbResult<bool> {
         let result = sqlx::query!(
-            r#"
-            UPDATE core.node_manifests
-            SET status = 'inactive'
-            WHERE node_name = $1
-              AND version = $2
-            "#,
-            node_name as &NodeName,
-            version,
+            "UPDATE core.runs SET status = 'inactive' WHERE service_name = $1 AND status = 'running'",
+            node_name.as_ref(),
         )
         .execute(self.pool)
         .await
-        .map_err(|e| db_error(e, "mark node inactive"))?;
+        .map_err(|e| db_error(e, "mark run inactive"))?;
         Ok(result.rows_affected() > 0)
     }
 
-    /// Insert a concrete node-run row for a single process execution.
+    /// Insert a concrete run row for a single process execution.
     pub async fn start_node_run(
         &self,
-        node_manifest_id: i32,
+        _node_manifest_id: i32,
         service_name: &str,
         instance_id: &str,
         host: &str,
@@ -922,28 +912,10 @@ impl StateRepository<'_> {
         sqlx::query_as!(
             NodeRun,
             r#"
-            INSERT INTO core.source_runs (
-                node_manifest_id,
-                service_name,
-                instance_id,
-                host,
-                status,
-                last_heartbeat_at,
-                effective_config_hash,
-                effective_config
-            ) VALUES (
-                $1,
-                $2,
-                $3,
-                $4,
-                'running',
-                NOW(),
-                $5,
-                $6
-            )
+            INSERT INTO core.runs (service_name, instance_id, host, started_at, status, last_heartbeat_at, effective_config_hash, effective_config)
+            VALUES ($1, $2, $3, NOW(), 'running', NOW(), $4, $5)
             RETURNING
                 id as "id!: Id<NodeRun>",
-                node_manifest_id,
                 service_name,
                 instance_id,
                 host,
@@ -1565,7 +1537,6 @@ pub struct NodeManifest {
 #[derive(Debug, sqlx::FromRow)]
 pub struct NodeRun {
     pub id: Id<NodeRun>,
-    pub node_manifest_id: i32,
     pub service_name: String,
     pub instance_id: String,
     pub host: String,
