@@ -34,7 +34,7 @@ impl<T: Node + 'static> NodeRunner<T> {
     ) -> NodeResult<Option<Uuid>> {
         let run = pool
             .state()
-            .start_run(service_name, instance_id, host)
+            .start_run(None, service_name, instance_id, host)
             .await
             .map_err(|error| {
                 SinexError::processing(format!(

@@ -11,6 +11,7 @@ use sea_query::Alias;
 // domain of the database.
 pub mod annotations;
 pub mod blobs;
+pub mod manifests;
 pub mod documents;
 pub mod embeddings;
 pub mod entities;
@@ -24,6 +25,7 @@ pub mod temporal_ledger;
 pub use annotations::*;
 pub use blobs::*;
 pub use documents::*;
+pub use manifests::*;
 pub use embeddings::*;
 pub use entities::*;
 pub use events::*;
@@ -36,6 +38,7 @@ pub use temporal_ledger::*;
 pub mod records {
     pub use super::annotations::{EventAnnotationRecord, TagRecord};
     pub use super::blobs::BlobRecord;
+    pub use super::manifests::ManifestRecord;
     pub use super::documents::{DocumentChunkRecord, DocumentRecord};
     pub use super::embeddings::EmbeddingModelRecord;
     pub use super::entities::EntityRecord;
@@ -214,6 +217,22 @@ const ALL_TABLES: &[TableMeta] = &[
         qualified_name: "sinex_schemas.dlq_events",
         is_hypertable: false,
         has_triggers: true,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "core",
+        name: "manifests",
+        qualified_name: "core.manifests",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "core",
+        name: "runs",
+        qualified_name: "core.runs",
+        is_hypertable: false,
+        has_triggers: false,
         cleanup_protected: false,
     },
     TableMeta {
