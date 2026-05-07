@@ -9,6 +9,7 @@ use sea_query::Alias;
 
 // Define the core schema modules. Each file is responsible for a logical
 // domain of the database.
+pub mod acquisition_jobs;
 pub mod annotations;
 pub mod blobs;
 pub mod documents;
@@ -24,6 +25,7 @@ pub mod source_materials;
 pub mod temporal_ledger;
 
 // Re-export all schema definitions for easy access from apply orchestration and repositories.
+pub use acquisition_jobs::*;
 pub use annotations::*;
 pub use blobs::*;
 pub use documents::*;
@@ -49,6 +51,7 @@ pub mod records {
     pub use super::occurrences::{MaterialInterpretationRecord, OccurrenceRecord};
     pub use super::parser_registry::{ParserJobRecord, ParserRegistryRecord};
     pub use super::sinex_schemas::{EventPayloadSchemaRecord, NodeManifestRecord, NodeRunRecord};
+    pub use super::acquisition_jobs::AcquisitionJobRecord;
     pub use super::source_bindings::{
         SourceBindingRecord, SourceBindingResolutionLogRecord,
     };
@@ -386,6 +389,14 @@ const ALL_TABLES: &[TableMeta] = &[
         schema: "raw",
         name: "source_binding_resolution_log",
         qualified_name: "raw.source_binding_resolution_log",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "raw",
+        name: "acquisition_jobs",
+        qualified_name: "raw.acquisition_jobs",
         is_hypertable: false,
         has_triggers: false,
         cleanup_protected: false,

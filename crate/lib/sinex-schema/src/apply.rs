@@ -1,8 +1,8 @@
 use crate::schema::{
-    ArchivedEventAnnotations, ArchivedEventEmbeddings, ArchivedEvents, ArchivedTaggedItems,
-    BinarySchemaVersion, Blobs, DocumentChunks, Documents, EmbeddingCache, EmbeddingModels,
-    Entities, EntityRelations, EventAnnotations, EventClusterMembers, EventClusters,
-    EventEmbeddings, EventPayloadSchemas, EventReplacements, EventTombstones, Events,
+    AcquisitionJobs, ArchivedEventAnnotations, ArchivedEventEmbeddings, ArchivedEvents,
+    ArchivedTaggedItems, BinarySchemaVersion, Blobs, DocumentChunks, Documents, EmbeddingCache,
+    EmbeddingModels, Entities, EntityRelations, EventAnnotations, EventClusterMembers,
+    EventClusters, EventEmbeddings, EventPayloadSchemas, EventReplacements, EventTombstones, Events,
     GitopsSchemaSources, MaterialInterpretations, NodeManifests, NodeRuns, Occurrences,
     OperationsLog, ParserJobs, ParserRegistry, SourceBindingResolutionLog, SourceBindings,
     SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger,
@@ -475,6 +475,7 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         render_table(&ParserJobs::create_table_statement()),
         render_table(&SourceBindings::create_table_statement()),
         render_table(&SourceBindingResolutionLog::create_table_statement()),
+        render_table(&AcquisitionJobs::create_table_statement()),
     ];
 
     for sql in table_sql {
@@ -573,6 +574,7 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(render_indexes(ParserJobs::create_indexes()));
     index_sql.extend(render_indexes(SourceBindings::create_indexes()));
     index_sql.extend(render_indexes(SourceBindingResolutionLog::create_indexes()));
+    index_sql.extend(render_indexes(AcquisitionJobs::create_indexes()));
 
     for sql in index_sql {
         execute_sql(pool, &sql).await?;
