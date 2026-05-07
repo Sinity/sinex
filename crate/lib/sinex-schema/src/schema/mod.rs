@@ -15,6 +15,7 @@ pub mod documents;
 pub mod embeddings;
 pub mod entities;
 pub mod events;
+pub mod occurrences;
 pub mod operations;
 pub mod sinex_schemas;
 pub mod source_materials;
@@ -27,6 +28,7 @@ pub use documents::*;
 pub use embeddings::*;
 pub use entities::*;
 pub use events::*;
+pub use occurrences::*;
 pub use operations::*;
 pub use sinex_schemas::*;
 pub use source_materials::*;
@@ -41,6 +43,7 @@ pub mod records {
     pub use super::entities::EntityRecord;
     pub use super::events::{EventRecord, EventReplacementRecord};
     pub use super::sinex_schemas::{EventPayloadSchemaRecord, NodeManifestRecord, NodeRunRecord};
+    pub use super::occurrences::{MaterialInterpretationRecord, OccurrenceRecord};
     pub use super::source_materials::{SourceMaterialLinkRecord, SourceMaterialRecord};
     pub use super::temporal_ledger::TemporalLedgerRecord;
 }
@@ -271,6 +274,22 @@ const ALL_TABLES: &[TableMeta] = &[
         schema: "raw",
         name: "source_material_registry",
         qualified_name: "raw.source_material_registry",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "raw",
+        name: "occurrences",
+        qualified_name: "raw.occurrences",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "raw",
+        name: "material_interpretations",
+        qualified_name: "raw.material_interpretations",
         is_hypertable: false,
         has_triggers: false,
         cleanup_protected: false,

@@ -11,6 +11,9 @@ use sinex_db::DbPool;
 use sinex_db::repositories::{DbPoolExt, StreamBatchRow};
 use sinex_primitives::constants::limits::MAX_EVENT_PAYLOAD_BYTES;
 use sinex_primitives::events::Event;
+use sinex_primitives::events::admission::{
+    ACCEPTED_ENVELOPE_VERSIONS, AdmittedEventIntent,
+};
 use sinex_primitives::events::builder::Provenance;
 use sinex_primitives::{Id, JsonValue, Timestamp, Uuid};
 use std::collections::{HashSet, VecDeque};
@@ -89,6 +92,8 @@ pub enum AdmissionRejectionKind {
     InvalidUtf8,
     StructuralJson,
     EventDeserialization,
+    EnvelopeDeserialization,
+    EnvelopeValidation,
     MissingTimestamp,
     PastTimestamp,
     FutureTimestamp,
@@ -536,6 +541,97 @@ impl AdmissionService {
         };
 
         self.admit_event(event).await
+    }
+
+    /// Admit bytes that may contain an `AdmittedEventIntent` envelope.
+    ///
+    /// First attempts to deserialize as an envelope. If successful, validates
+    /// the envelope (version, required fields) and admits each event inside.
+    /// If the payload is not an envelope (missing `envelope_version` field),
+    /// falls back to the legacy single-event deserialization path.
+    pub async fn admit_intent_bytes(
+        &self,
+        payload: &[u8],
+    ) -> IngestdResult<Vec<AdmissionDecision>> {
+        if payload.len() > MAX_EVENT_PAYLOAD_BYTES {
+            return Ok(vec![AdmissionDecision::Rejected(AdmissionRejection::new(
+                AdmissionRejectionKind::PayloadTooLarge,
+                format!(
+                    "Event payload too large: {} bytes (limit: {} bytes)",
+                    payload.len(),
+                    MAX_EVENT_PAYLOAD_BYTES
+                ),
+            ))]);
+        }
+
+        let payload_str = match std::str::from_utf8(payload) {
+            Ok(value) => value,
+            Err(error) => {
+                return Ok(vec![AdmissionDecision::Rejected(AdmissionRejection::new(
+                    AdmissionRejectionKind::InvalidUtf8,
+                    format!("Event payload is not valid UTF-8: {error}"),
+                ))]);
+            }
+        };
+
+        if let Err(error) = serde_json::from_slice::<serde_json::Value>(payload) {
+            return Ok(vec![AdmissionDecision::Rejected(AdmissionRejection::new(
+                AdmissionRejectionKind::EventDeserialization,
+                format!("Parse error: {error}"),
+            ))]);
+        }
+
+        if let Err(error) = sinex_primitives::validation::validate_json(payload_str) {
+            return Ok(vec![AdmissionDecision::Rejected(AdmissionRejection::new(
+                AdmissionRejectionKind::StructuralJson,
+                format!("Event payload failed structural validation: {error}"),
+            ))]);
+        }
+
+        // Try to deserialize as an AdmittedEventIntent envelope first.
+        // Detection heuristic: presence of "envelope_version" field.
+        let is_envelope = payload_str.contains("\"envelope_version\"");
+
+        if is_envelope {
+            let intent: AdmittedEventIntent = match serde_json::from_slice(payload) {
+                Ok(intent) => intent,
+                Err(error) => {
+                    return Ok(vec![AdmissionDecision::Rejected(AdmissionRejection::new(
+                        AdmissionRejectionKind::EnvelopeDeserialization,
+                        format!("Failed to deserialize admission envelope: {error}"),
+                    ))]);
+                }
+            };
+
+            // Validate the envelope.
+            if let Err(error) = intent.validate() {
+                return Ok(vec![AdmissionDecision::Rejected(AdmissionRejection::new(
+                    AdmissionRejectionKind::EnvelopeValidation,
+                    format!("Admission envelope validation failed: {error}"),
+                ))]);
+            }
+
+            if !ACCEPTED_ENVELOPE_VERSIONS.contains(&intent.envelope_version.as_str()) {
+                return Ok(vec![AdmissionDecision::Rejected(AdmissionRejection::new(
+                    AdmissionRejectionKind::EnvelopeValidation,
+                    format!(
+                        "Envelope version {} is not accepted. Accepted versions: {:?}",
+                        intent.envelope_version, ACCEPTED_ENVELOPE_VERSIONS
+                    ),
+                ))]);
+            }
+
+            // Admit each event in the envelope.
+            let mut decisions = Vec::with_capacity(intent.events.len());
+            for event in intent.events {
+                decisions.push(self.admit_event(event).await?);
+            }
+            return Ok(decisions);
+        }
+
+        // Fall back to legacy single-event deserialization.
+        let decision = self.admit_bytes(payload).await?;
+        Ok(vec![decision])
     }
 
     pub async fn persist_batch(

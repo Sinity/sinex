@@ -276,6 +276,10 @@ impl<T: Node + 'static> NodeRunner<T> {
             {
                 cfg.batch_timeout_ms = v;
             }
+            // Set envelope identity fields from node configuration.
+            cfg.source_unit_id = source_unit_id.clone().unwrap_or_default();
+            cfg.parser_id = self.node.node_name().to_string();
+            cfg.parser_version = env!("CARGO_PKG_VERSION").to_string();
             cfg
         };
         self.event_batcher_handle = Some(spawn_event_batcher(
