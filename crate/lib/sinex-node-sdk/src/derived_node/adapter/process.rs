@@ -190,8 +190,7 @@ where
             match &result {
                 Ok(_) => reporter.record_success(),
                 Err(e) => {
-                    let sinex_error = SinexError::processing("derived node processing error")
-                        .with_source(e.to_string());
+                    let sinex_error = e.to_sinex_error();
                     reporter.record_error(&sinex_error);
 
                     // Emit automaton error telemetry before routing
@@ -233,8 +232,7 @@ where
             Err(e) => {
                 // Use FailurePolicy::settle() which maps ErrorClass
                 // to Settlement variants with backoff and retry budgets.
-                let sinex_error = SinexError::processing("derived node processing error")
-                    .with_source(e.to_string());
+                let sinex_error = e.to_sinex_error();
                 let failure_ctx = FailureContext {
                     unit_id: self.node.name().to_string(),
                     operation: RuntimeOperation::ProcessBatch,

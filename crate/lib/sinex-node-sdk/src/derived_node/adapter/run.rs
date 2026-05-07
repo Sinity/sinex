@@ -389,8 +389,7 @@ where
                         }
                     }
                     Err(e) => {
-                        let sinex_error = SinexError::processing("derived node historical replay error")
-                            .with_source(e.to_string());
+                        let sinex_error = e.to_sinex_error();
                         let failure_ctx = FailureContext {
                             unit_id: self.node.name().to_string(),
                             operation: RuntimeOperation::ProcessBatch,

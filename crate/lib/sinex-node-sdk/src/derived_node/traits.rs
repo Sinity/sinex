@@ -53,8 +53,9 @@ impl Default for DerivedNodeConfig {
 fn serialize_output<T: Serialize>(
     output: DerivedOutput<T>,
 ) -> Result<DerivedOutput<JsonValue>, NodeLogicError> {
-    let json_payload = serde_json::to_value(&output.payload)
-        .map_err(|e| NodeLogicError::Processing(format!("Failed to serialize output: {e}")))?;
+    let json_payload = serde_json::to_value(&output.payload).map_err(|e| {
+        NodeLogicError::OutputSerialization(format!("Failed to serialize output: {e}"))
+    })?;
     Ok(DerivedOutput {
         payload: json_payload,
         ts_orig: output.ts_orig,
@@ -516,7 +517,7 @@ impl<N: TransducerNode> DerivedNodeImpl for TransducerWrapper<N> {
         context: &DerivedTriggerContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
         let input: N::Input = serde_json::from_value(event.payload)
-            .map_err(|e| NodeLogicError::Processing(format!("Failed to parse input: {e}")))?;
+            .map_err(|e| NodeLogicError::InputParsing(format!("Failed to parse input: {e}")))?;
 
         self.0
             .process(state, input, context)
@@ -585,7 +586,7 @@ impl<N: WindowedNode> DerivedNodeImpl for WindowedWrapper<N> {
         context: &DerivedTriggerContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
         let input: N::Input = serde_json::from_value(event.payload)
-            .map_err(|e| NodeLogicError::Processing(format!("Failed to parse input: {e}")))?;
+            .map_err(|e| NodeLogicError::InputParsing(format!("Failed to parse input: {e}")))?;
 
         // Accumulate into window
         self.0.accumulate(state, input, context).await?;
@@ -614,14 +615,14 @@ impl<N: WindowedNode> DerivedNodeImpl for WindowedWrapper<N> {
             .into_iter()
             .map(|e| {
                 serde_json::from_value(e.payload)
-                    .map_err(|e| NodeLogicError::Processing(format!("Failed to parse input: {e}")))
+                    .map_err(|e| NodeLogicError::InputParsing(format!("Failed to parse input: {e}")))
             })
             .collect::<Result<Vec<_>, _>>()?;
 
         match self.0.recompute_window(state, inputs, context).await? {
             Some(output) => {
                 let json_payload = serde_json::to_value(&output.payload).map_err(|e| {
-                    NodeLogicError::Processing(format!("Failed to serialize output: {e}"))
+                    NodeLogicError::OutputSerialization(format!("Failed to serialize output: {e}"))
                 })?;
                 Ok(vec![DerivedOutput {
                     payload: json_payload,
@@ -691,7 +692,7 @@ where
         context: &DerivedTriggerContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
         let input: N::Input = serde_json::from_value(event.payload)
-            .map_err(|e| NodeLogicError::Processing(format!("Failed to parse input: {e}")))?;
+            .map_err(|e| NodeLogicError::InputParsing(format!("Failed to parse input: {e}")))?;
 
         let scope_keys = self.0.scope_keys(&input, context);
 
@@ -720,7 +721,7 @@ where
             .into_iter()
             .map(|e| {
                 serde_json::from_value(e.payload)
-                    .map_err(|e| NodeLogicError::Processing(format!("Failed to parse input: {e}")))
+                    .map_err(|e| NodeLogicError::InputParsing(format!("Failed to parse input: {e}")))
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -733,7 +734,7 @@ where
             .into_iter()
             .map(|output| {
                 let json_payload = serde_json::to_value(&output.payload).map_err(|e| {
-                    NodeLogicError::Processing(format!("Failed to serialize output: {e}"))
+                    NodeLogicError::OutputSerialization(format!("Failed to serialize output: {e}"))
                 })?;
                 Ok(DerivedOutput {
                     payload: json_payload,
@@ -803,7 +804,7 @@ impl<N: MultiOutputTransducerNode> DerivedNodeImpl for MultiOutputTransducerWrap
         context: &DerivedTriggerContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
         let input: N::Input = serde_json::from_value(event.payload)
-            .map_err(|e| NodeLogicError::Processing(format!("Failed to parse input: {e}")))?;
+            .map_err(|e| NodeLogicError::InputParsing(format!("Failed to parse input: {e}")))?;
 
         let outputs = self.0.process(state, input, context).await?;
         serialize_outputs(outputs)

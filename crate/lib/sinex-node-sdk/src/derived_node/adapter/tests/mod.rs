@@ -413,7 +413,7 @@
             _input: Self::Input,
             _context: &DerivedTriggerContext,
         ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
-            Err(NodeLogicError::Processing("route me to dlq".to_string()))
+            Err(NodeLogicError::InputParsing("route me to dlq".to_string()))
         }
 
     }
