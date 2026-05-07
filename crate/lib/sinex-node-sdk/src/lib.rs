@@ -74,6 +74,7 @@ pub mod node_cli;
 #[cfg(feature = "preflight")]
 pub mod preflight;
 pub mod prelude;
+pub mod parser;
 pub mod processing;
 #[cfg(feature = "messaging")]
 pub mod record_source;
