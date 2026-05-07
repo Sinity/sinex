@@ -66,6 +66,7 @@ in
     ./preflight-verification.nix
     ./kitty-shell-integration.nix
     ./node-services.nix
+    ./source-bindings.nix
   ];
 
   options.services.sinex = with types; let
