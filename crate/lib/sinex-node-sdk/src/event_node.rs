@@ -2,7 +2,11 @@
 
 use crate::{NodeResult, nats_publisher::NatsPublisher};
 use serde::{Deserialize, Serialize};
-use sinex_primitives::events::Event;
+use sinex_primitives::domain::HostName;
+use sinex_primitives::events::{
+    Event,
+    admission::AdmittedEventIntent,
+};
 use sinex_primitives::{JsonValue, Uuid};
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -61,6 +65,17 @@ pub struct EventBatcherConfig {
     pub batch_size: usize,
     /// Maximum time to wait for a batch to fill
     pub batch_timeout_ms: u64,
+    /// Source unit identifier for the admission envelope (e.g., "fs-watcher").
+    /// When set, the batcher constructs an `AdmittedEventIntent` envelope.
+    /// When empty, the batcher falls back to raw event publishing.
+    #[serde(default)]
+    pub source_unit_id: String,
+    /// Parser identifier for the admission envelope (e.g., "inotify-watcher").
+    #[serde(default)]
+    pub parser_id: String,
+    /// Parser version for the admission envelope (e.g., "1.0.0").
+    #[serde(default)]
+    pub parser_version: String,
 }
 
 impl Default for EventBatcherConfig {
@@ -68,6 +83,9 @@ impl Default for EventBatcherConfig {
         Self {
             batch_size: 100,
             batch_timeout_ms: 1000,
+            source_unit_id: String::new(),
+            parser_id: String::new(),
+            parser_version: String::new(),
         }
     }
 }
@@ -316,7 +334,10 @@ impl EventBatcher {
                 // ingestor lane.
                 EventTransport::Nats(publisher) => {
                     publisher
-                        .publish(&event, sinex_primitives::transport::Class::Critical)
+                        .publish_raw_event_batch(
+                            &[&event],
+                            sinex_primitives::transport::Class::Critical,
+                        )
                         .await
                 }
             };
@@ -412,7 +433,16 @@ impl EventBatcher {
         // with appropriate configuration.
 
         let result = match &mut self.transport {
-            EventTransport::Nats(publisher) => Self::send_batch_nats(publisher, batch).await,
+            EventTransport::Nats(publisher) => {
+                Self::send_batch_nats(
+                    publisher,
+                    batch,
+                    &self.config.source_unit_id,
+                    &self.config.parser_id,
+                    &self.config.parser_version,
+                )
+                .await
+            }
         };
 
         if result.published > 0 {
@@ -543,18 +573,67 @@ impl EventBatcher {
         Ok(())
     }
 
-    /// Send batch via NATS `JetStream`
+    /// Send batch via NATS `JetStream` using the admission envelope when identity
+    /// fields are configured. Falls back to raw event publishing (escape hatch) when
+    /// source_unit_id is empty.
     async fn send_batch_nats(
         publisher: &NatsPublisher,
         events: &mut Vec<Event<JsonValue>>,
+        source_unit_id: &str,
+        parser_id: &str,
+        parser_version: &str,
     ) -> BatchPublishResult {
+        if events.is_empty() {
+            return BatchPublishResult {
+                published: 0,
+                failed: 0,
+            };
+        }
+
+        let event_count = events.len();
+
+        // When source_unit_id is configured, use the admission envelope.
+        if !source_unit_id.is_empty() {
+            let intent = AdmittedEventIntent::new(
+                source_unit_id,
+                parser_id,
+                parser_version,
+                events.drain(..).collect(),
+                HostName::from_static("sinex-batcher"),
+            );
+
+            match publisher
+                .publish_intent(&intent, sinex_primitives::transport::Class::Critical)
+                .await
+            {
+                Ok(()) => {
+                    debug!(published = event_count, "Intent batch sent via NATS");
+                    *events = Vec::new();
+                    return BatchPublishResult {
+                        published: event_count,
+                        failed: 0,
+                    };
+                }
+                Err(e) => {
+                    error!(event_count = event_count, error = %e, "Failed to publish event intent envelope");
+                    // Put events back for retry
+                    *events = intent.events;
+                    return BatchPublishResult {
+                        published: 0,
+                        failed: event_count,
+                    };
+                }
+            }
+        }
+
+        // Escape hatch: publish raw events individually (for tests/bootstrap).
         let mut success_count = 0;
         let mut failure_count = 0;
         let mut failed_events = Vec::new();
 
         for event in events.drain(..) {
             match publisher
-                .publish(&event, sinex_primitives::transport::Class::Critical)
+                .publish_raw_event_batch(&[&event], sinex_primitives::transport::Class::Critical)
                 .await
             {
                 Ok(()) => {
@@ -571,7 +650,7 @@ impl EventBatcher {
         *events = failed_events;
 
         if failure_count == 0 {
-            debug!(published = success_count, "Batch sent via NATS");
+            debug!(published = success_count, "Batch sent via NATS (raw)");
         } else {
             error!(
                 published = success_count,

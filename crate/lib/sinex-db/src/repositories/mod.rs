@@ -9,6 +9,7 @@ pub mod events_extensions;
 pub mod gitops;
 pub mod integrity;
 pub mod knowledge_graph;
+pub mod occurrences;
 pub mod replay;
 pub mod schema_cache;
 pub mod schema_management;
@@ -32,6 +33,9 @@ pub use integrity::IntegrityRepository;
 pub use knowledge_graph::{
     CreateEntity, CreateEntityRelation, EntityExt, EntityRecord, EntityRelationExt,
     EntityRelationRecord, EntityType, KnowledgeGraphRepository,
+};
+pub use occurrences::{
+    InterpretationRepository, InterpretationRow, OccurrenceRepository, OccurrenceRow,
 };
 pub use replay::ReplayRepository;
 pub use schema_cache::{CachedSchema, SchemaCacheRepository};
@@ -69,6 +73,8 @@ pub trait DbPoolExt {
     fn schema_cache(&self) -> schema_cache::SchemaCacheRepository<'_>;
     fn replay(&self) -> replay::ReplayRepository<'_>;
     fn integrity(&self) -> integrity::IntegrityRepository<'_>;
+    fn occurrences(&self) -> occurrences::OccurrenceRepository<'_>;
+    fn interpretations(&self) -> occurrences::InterpretationRepository<'_>;
     async fn with_transaction<F, T>(&self, f: F) -> crate::DbResult<T>
     where
         F: for<'tx> AsyncFnOnce(&'tx mut crate::DbTransaction<'_>) -> crate::DbResult<T>;
@@ -117,6 +123,14 @@ impl DbPoolExt for PgPool {
 
     fn integrity(&self) -> integrity::IntegrityRepository<'_> {
         integrity::IntegrityRepository::new(self)
+    }
+
+    fn occurrences(&self) -> occurrences::OccurrenceRepository<'_> {
+        occurrences::OccurrenceRepository::new(self)
+    }
+
+    fn interpretations(&self) -> occurrences::InterpretationRepository<'_> {
+        occurrences::InterpretationRepository::new(self)
     }
 
     async fn with_transaction<F, T>(&self, f: F) -> crate::DbResult<T>

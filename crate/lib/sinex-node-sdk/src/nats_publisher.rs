@@ -6,7 +6,10 @@ use sinex_primitives::env as shared_env;
 use sinex_primitives::{
     JsonValue,
     environment::{SinexEnvironment, environment},
-    events::{Event, OffsetKind, Provenance},
+    events::{
+        Event, OffsetKind, Provenance,
+        admission::AdmittedEventIntent,
+    },
     nats::{NatsTrafficClass, insert_traffic_class_header},
     transport,
 };
@@ -282,37 +285,165 @@ impl NatsPublisher {
         Ok(())
     }
 
-    /// Publish a raw ingestor or derived-automaton event with an explicit
-    /// `transport::Class` declaration.
+    /// Publish an admitted event intent envelope to durable transport.
+    ///
+    /// This is the NORMAL path for provenance-bearing events. Producers construct
+    /// an [`AdmittedEventIntent`] to declare "I've done my admission checks" and
+    /// the envelope is serialized as a single NATS message.
     ///
     /// Both `Class::Critical` (ingestor source-bearing events) and
     /// `Class::Derived` (automaton synthesis outputs) ride the same raw-events
-    /// lane on the wire, so the `Sinex-Traffic-Class` header alone can't
-    /// distinguish them. The semantic class supplied here is also written to
-    /// the `Sinex-Transport-Class` header so downstream observability can tell
-    /// the two apart and policy/replay can branch on intent.
+    /// lane on the wire.
     ///
     /// Drain semantics: wait for in-flight ACKs (both Critical and Derived).
     /// Failure routing differs — see `transport::Class` docs.
-    pub async fn publish(&self, event: &Event, class: transport::Class) -> NodeResult<()> {
+    pub async fn publish_intent(
+        &self,
+        intent: &AdmittedEventIntent,
+        class: transport::Class,
+    ) -> NodeResult<()> {
         debug_assert!(
             matches!(
                 class,
                 transport::Class::Critical | transport::Class::Derived
             ),
-            "NatsPublisher::publish accepts Critical or Derived; got {class:?}. \
+            "NatsPublisher::publish_intent accepts Critical or Derived; got {class:?}. \
              Use publish_telemetry for Class::Telemetry. \
              Confirmation/Invalidation/Control are not raw-events publishers."
         );
-        self.publish_event_with_class(event, class, &self.semaphores.raw_event, "raw event")
-            .await
+
+        if !intent.is_version_accepted() {
+            return Err(sinex_primitives::SinexError::processing(format!(
+                "envelope version {} is not accepted by this publisher (accepted: {:?})",
+                intent.envelope_version,
+                sinex_primitives::events::admission::ACCEPTED_ENVELOPE_VERSIONS,
+            )));
+        }
+
+        let _permit = acquire_lane_permit(&self.semaphores.raw_event, "raw event intent").await?;
+
+        let payload = serde_json::to_vec(intent).map_err(sinex_primitives::SinexError::from)?;
+
+        // Use the first event's source/type for subject routing
+        let first_event = intent.events.first().ok_or_else(|| {
+            sinex_primitives::SinexError::processing(
+                "admitted event intent has no events"
+            )
+        })?;
+        let subject = self.env.nats_raw_event_subject_with_namespace(
+            self.namespace.as_deref(),
+            first_event.source.as_str(),
+            first_event.event_type.as_str(),
+        );
+
+        // Idempotency header uses a composite: first event ID + count
+        let msg_id = if let Some(first_id) = first_event.id.as_ref() {
+            format!("intent-{}-{}", first_id, intent.event_count())
+        } else {
+            format!("intent-{}-{}", sinex_primitives::Uuid::now_v7(), intent.event_count())
+        };
+
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert("Nats-Msg-Id", msg_id.as_str());
+        headers.insert("Sinex-Envelope-Version", intent.envelope_version.as_str());
+        transport::insert_transport_class_headers(&mut headers, class);
+
+        let ack_future = self
+            .publish_with_headers(subject, headers, payload, "Failed to publish event intent")
+            .await?;
+        let ack = wait_for_publish_ack(ack_future, self.publish_ack_timeout).await?;
+
+        tracing::debug!(
+            event_count = intent.event_count(),
+            envelope_version = %intent.envelope_version,
+            source_unit = %intent.source_unit_id,
+            traffic_class = class.traffic_class().as_header_value(),
+            sequence = ack.sequence,
+            stream = %ack.stream,
+            "Event intent envelope published to JetStream"
+        );
+
+        Ok(())
+    }
+
+    /// LOW-LEVEL ESCAPE HATCH: publish raw events without an admission envelope.
+    ///
+    /// ONLY for tests, fixtures, and bootstrap. Never in production producer code.
+    /// Grep for this name (`publish_raw_event_batch`) to audit call sites.
+    ///
+    /// Each event is serialized individually and published to the appropriate
+    /// NATS subject. This bypasses the `AdmittedEventIntent` envelope that normal
+    /// producers must use.
+    pub async fn publish_raw_event_batch(
+        &self,
+        events: &[&Event],
+        class: transport::Class,
+    ) -> NodeResult<()> {
+        debug_assert!(
+            matches!(
+                class,
+                transport::Class::Critical | transport::Class::Derived
+            ),
+            "publish_raw_event_batch accepts Critical or Derived; got {class:?}"
+        );
+
+        for event in events {
+            self.publish_raw_event(event, class).await?;
+        }
+        Ok(())
+    }
+
+    /// Publish a single raw event (internal helper for the escape hatch).
+    async fn publish_raw_event(
+        &self,
+        event: &Event,
+        class: transport::Class,
+    ) -> NodeResult<()> {
+        let _permit = acquire_lane_permit(&self.semaphores.raw_event, "raw event (escape hatch)").await?;
+
+        let prov = destructure_provenance(event.provenance());
+
+        let (event_id_str, payload) = build_publish_payload(
+            event,
+            prov.source_material_id,
+            prov.anchor_byte,
+            prov.offset_start,
+            prov.offset_end,
+            prov.offset_kind,
+            prov.source_event_ids,
+        )?;
+
+        let subject = self.env.nats_raw_event_subject_with_namespace(
+            self.namespace.as_deref(),
+            event.source.as_str(),
+            event.event_type.as_str(),
+        );
+
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert("Nats-Msg-Id", event_id_str.as_str());
+        transport::insert_transport_class_headers(&mut headers, class);
+
+        let ack_future = self
+            .publish_with_headers(subject, headers, payload, "Failed to publish raw event")
+            .await?;
+        let ack = wait_for_publish_ack(ack_future, self.publish_ack_timeout).await?;
+
+        tracing::debug!(
+            event_id = %event_id_str,
+            traffic_class = class.traffic_class().as_header_value(),
+            sequence = ack.sequence,
+            stream = %ack.stream,
+            "Raw event published to JetStream (escape hatch)"
+        );
+
+        Ok(())
     }
 
     /// Publish a self-observation telemetry event.
     ///
     /// `transport::Class::Telemetry` is implicit (the method name pins the
     /// semantic class); the parameter remains positional for symmetry with
-    /// `publish` and is asserted internally to catch accidental misuse.
+    /// `publish_intent` and is asserted internally to catch accidental misuse.
     /// Loss acceptable; drop with warn on failure. Drain: best-effort flush.
     pub async fn publish_telemetry(
         &self,
@@ -323,8 +454,44 @@ impl NatsPublisher {
             matches!(class, transport::Class::Telemetry),
             "publish_telemetry is exclusively for Class::Telemetry; got {class:?}"
         );
-        self.publish_event_with_class(event, class, &self.semaphores.telemetry, "telemetry event")
-            .await
+        let _permit =
+            acquire_lane_permit(&self.semaphores.telemetry, "telemetry event").await?;
+
+        let prov = destructure_provenance(event.provenance());
+
+        let (event_id_str, payload) = build_publish_payload(
+            event,
+            prov.source_material_id,
+            prov.anchor_byte,
+            prov.offset_start,
+            prov.offset_end,
+            prov.offset_kind,
+            prov.source_event_ids,
+        )?;
+
+        let subject = self.env.nats_raw_event_subject_with_namespace(
+            self.namespace.as_deref(),
+            event.source.as_str(),
+            event.event_type.as_str(),
+        );
+
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert("Nats-Msg-Id", event_id_str.as_str());
+        transport::insert_transport_class_headers(&mut headers, class);
+
+        let ack_future = self
+            .publish_with_headers(subject, headers, payload, "Failed to publish telemetry event")
+            .await?;
+        let ack = wait_for_publish_ack(ack_future, self.publish_ack_timeout).await?;
+
+        tracing::debug!(
+            event_id = %event_id_str,
+            sequence = ack.sequence,
+            stream = %ack.stream,
+            "Telemetry event published to JetStream"
+        );
+
+        Ok(())
     }
 
     /// Publish a derived-node processing failure envelope.
@@ -418,55 +585,6 @@ impl NatsPublisher {
                 "Event sent to processing-failure stream (rate-limited, logging every 100th)"
             );
         }
-
-        Ok(())
-    }
-
-    async fn publish_event_with_class(
-        &self,
-        event: &Event,
-        semantic_class: transport::Class,
-        semaphore: &Arc<Semaphore>,
-        lane_label: &'static str,
-    ) -> NodeResult<()> {
-        let _permit = acquire_lane_permit(semaphore, lane_label).await?;
-
-        let prov = destructure_provenance(event.provenance());
-
-        let (event_id_str, payload) = build_publish_payload(
-            event,
-            prov.source_material_id,
-            prov.anchor_byte,
-            prov.offset_start,
-            prov.offset_end,
-            prov.offset_kind,
-            prov.source_event_ids,
-        )?;
-
-        let subject = self.env.nats_raw_event_subject_with_namespace(
-            self.namespace.as_deref(),
-            event.source.as_str(),
-            event.event_type.as_str(),
-        );
-
-        // Add idempotency header
-        let mut headers = async_nats::HeaderMap::new();
-        headers.insert("Nats-Msg-Id", event_id_str.as_str());
-        transport::insert_transport_class_headers(&mut headers, semantic_class);
-
-        // Publish to JetStream, then wait for acknowledgment (bounded by timeout).
-        let ack_future = self
-            .publish_with_headers(subject, headers, payload, "Failed to publish event")
-            .await?;
-        let ack = wait_for_publish_ack(ack_future, self.publish_ack_timeout).await?;
-
-        tracing::debug!(
-            event_id = %event_id_str,
-            traffic_class = semantic_class.traffic_class().as_header_value(),
-            sequence = ack.sequence,
-            stream = %ack.stream,
-            "Event published to JetStream"
-        );
 
         Ok(())
     }
