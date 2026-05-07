@@ -4,8 +4,9 @@ use crate::schema::{
     Entities, EntityRelations, EventAnnotations, EventClusterMembers, EventClusters,
     EventEmbeddings, EventPayloadSchemas, EventReplacements, EventTombstones, Events,
     GitopsSchemaSources, MaterialInterpretations, NodeManifests, NodeRuns, Occurrences,
-    OperationsLog, SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags,
-    TemporalLedger, ValidationCache,
+    OperationsLog, ParserJobs, ParserRegistry, SourceBindingResolutionLog, SourceBindings,
+    SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger,
+    ValidationCache,
 };
 use crate::schema_registry;
 use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement};
@@ -470,6 +471,10 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         render_table(&DocumentChunks::create_table_statement()),
         render_table(&Occurrences::create_table_statement()),
         render_table(&MaterialInterpretations::create_table_statement()),
+        render_table(&ParserRegistry::create_table_statement()),
+        render_table(&ParserJobs::create_table_statement()),
+        render_table(&SourceBindings::create_table_statement()),
+        render_table(&SourceBindingResolutionLog::create_table_statement()),
     ];
 
     for sql in table_sql {
@@ -491,6 +496,20 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
     execute_sql(pool, &ArchivedEventAnnotations::create_table_sql()).await?;
     execute_sql(pool, &ArchivedEventEmbeddings::create_table_sql()).await?;
     execute_sql(pool, &ArchivedTaggedItems::create_table_sql()).await?;
+
+    // Occurrence identity unique index (raw SQL — COALESCE expression)
+    execute_sql(pool, &Occurrences::create_unique_index_sql()).await?;
+    // Interpretation current-partial unique index
+    execute_sql(pool, &MaterialInterpretations::create_partial_unique_index_sql()).await?;
+    // Add occurrence_id column to core.events (convergent — IF NOT EXISTS)
+    execute_sql(pool, &Events::add_occurrence_id_column_sql()).await?;
+    // Converge archived_events with the same column
+    execute_sql(
+        pool,
+        "ALTER TABLE audit.archived_events ADD COLUMN IF NOT EXISTS occurrence_id UUID",
+    )
+    .await?;
+
     Ok(())
 }
 
@@ -546,9 +565,14 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(render_indexes(Documents::create_indexes()));
     index_sql.extend(render_indexes(DocumentChunks::create_indexes()));
     index_sql.extend(render_indexes(OperationsLog::create_indexes()));
+    index_sql.extend(OperationsLog::create_gin_indexes_sql());
     index_sql.extend(render_indexes(Occurrences::create_indexes()));
     index_sql.extend(render_indexes(MaterialInterpretations::create_indexes()));
-    index_sql.extend(OperationsLog::create_gin_indexes_sql());
+    index_sql.extend(render_indexes(vec![Events::create_occurrence_id_index()]));
+    index_sql.extend(render_indexes(ParserRegistry::create_indexes()));
+    index_sql.extend(render_indexes(ParserJobs::create_indexes()));
+    index_sql.extend(render_indexes(SourceBindings::create_indexes()));
+    index_sql.extend(render_indexes(SourceBindingResolutionLog::create_indexes()));
 
     for sql in index_sql {
         execute_sql(pool, &sql).await?;

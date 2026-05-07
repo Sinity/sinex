@@ -540,6 +540,7 @@ fn format_context(ctx: &ProcessingContext) -> String {
         ProcessingContext::Notification => "notification",
         ProcessingContext::Document => "document",
         ProcessingContext::Metadata => "metadata",
+        ProcessingContext::SourceCapture => "source_capture",
     }
     .to_string()
 }
@@ -589,8 +590,9 @@ fn parse_context(s: &str) -> Result<ProcessingContext> {
         "notification" => Ok(ProcessingContext::Notification),
         "document" => Ok(ProcessingContext::Document),
         "metadata" => Ok(ProcessingContext::Metadata),
+        "source_capture" => Ok(ProcessingContext::SourceCapture),
         _ => Err(eyre!(
-            "Unknown context '{}'. Valid values: command, clipboard, window_title, journal, dbus, notification, document, metadata",
+            "Unknown context '{}'. Valid values: command, clipboard, window_title, journal, dbus, notification, document, metadata, source_capture",
             s
         )),
     }
