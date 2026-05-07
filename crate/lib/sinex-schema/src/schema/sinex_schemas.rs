@@ -151,3 +151,74 @@ impl EventPayloadSchemas {
 }
 
 // =============================================================================
+// II. RUNS (Execution Tracking)
+// =============================================================================
+
+/// **Table: `core.runs`**
+///
+/// Each row represents a single execution period of a process. A run is
+/// created on startup, updated with heartbeats, and marked ended on shutdown.
+#[derive(Iden, Copy, Clone)]
+pub enum Runs {
+    Table,
+    Id,
+    ServiceName,
+    InstanceId,
+    Host,
+    StartedAt,
+    EndedAt,
+    Status,
+    LastHeartbeatAt,
+    EffectiveConfigHash,
+    EffectiveConfig,
+}
+
+impl TableDef for Runs {
+    fn table_name() -> &'static str { "runs" }
+    fn schema_name() -> &'static str { "core" }
+    fn primary_key() -> &'static str { "id" }
+}
+
+#[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
+pub struct RunRecord {
+    pub id: Uuid,
+    pub service_name: String,
+    pub instance_id: String,
+    pub host: String,
+    pub started_at: Timestamp,
+    pub ended_at: Option<Timestamp>,
+    pub status: String,
+    pub last_heartbeat_at: Option<Timestamp>,
+    pub effective_config_hash: Option<String>,
+    pub effective_config: Option<JsonValue>,
+}
+
+impl Runs {
+    #[must_use]
+    pub fn create_table_statement() -> TableCreateStatement {
+        Table::create()
+            .table(Self::table_iden())
+            .if_not_exists()
+            .col(ColumnDef::new(Runs::Id).custom(Alias::new("UUID")).primary_key().extra("DEFAULT uuidv7()"))
+            .col(ColumnDef::new(Runs::ServiceName).text().not_null())
+            .col(ColumnDef::new(Runs::InstanceId).text().not_null())
+            .col(ColumnDef::new(Runs::Host).text().not_null())
+            .col(ColumnDef::new(Runs::StartedAt).timestamp_with_time_zone().not_null().default(Expr::current_timestamp()))
+            .col(ColumnDef::new(Runs::EndedAt).timestamp_with_time_zone())
+            .col(ColumnDef::new(Runs::Status).text().not_null().default("running"))
+            .col(ColumnDef::new(Runs::LastHeartbeatAt).timestamp_with_time_zone())
+            .col(ColumnDef::new(Runs::EffectiveConfigHash).text())
+            .col(ColumnDef::new(Runs::EffectiveConfig).json_binary())
+            .to_owned()
+    }
+
+    #[must_use]
+    pub fn create_indexes() -> Vec<IndexCreateStatement> {
+        vec![
+            Index::create().if_not_exists().name("ix_runs_service_status")
+                .table(Self::table_iden()).col(Runs::ServiceName).col(Runs::Status).to_owned(),
+            Index::create().if_not_exists().name("ix_runs_heartbeat")
+                .table(Self::table_iden()).col(Runs::LastHeartbeatAt).to_owned(),
+        ]
+    }
+}
