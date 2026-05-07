@@ -3,7 +3,6 @@ use crate::schema::{
     ArchivedTaggedItems, BinarySchemaVersion, Blobs, DocumentChunks, Documents, EmbeddingCache,
     EmbeddingModels, Entities, EntityRelations, EventAnnotations, EventClusterMembers,
     EventClusters, EventEmbeddings, EventPayloadSchemas, EventReplacements, EventTombstones, Events,
-    GitopsSchemaSources, NodeManifests, SourceRuns,
     OperationsLog,
     SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger,
     ValidationCache,
@@ -44,7 +43,6 @@ const ARCHIVED_EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_archived_events_superseded_by_event_id",
     "ix_archived_events_source_event_ids",
 ];
-const NODE_MANIFESTS_REQUIRED_INDEXES: &[&str] =
     &["idx_processors_status", "idx_processors_heartbeat"];
 const TEMPORAL_LEDGER_REQUIRED_INDEXES: &[&str] = &[
     "uk_temporal_ledger_material_offset_source_type",
@@ -169,10 +167,6 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
         }
     }
 
-    if relation_exists(pool, "core.node_manifests").await? {
-        for index in NODE_MANIFESTS_REQUIRED_INDEXES {
-            if !index_exists(pool, "core", "node_manifests", index).await? {
-                drifts.push(format!("missing core.node_manifests index {index}"));
             }
         }
     }
