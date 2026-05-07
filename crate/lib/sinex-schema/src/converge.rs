@@ -716,10 +716,10 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                 },
             ],
             foreign_keys: vec![NamedForeignKey {
-                name: "events_node_run_id_fkey",
+                name: "events_source_run_id_fkey",
                 statement_fn: Events::create_node_run_foreign_key,
             }],
-            // node_version was the predecessor to node_run_id.
+            // node_version was the predecessor to source_run_id.
             columns_to_drop: &["node_version"],
             // audit.archived_events was created with LIKE core.events INCLUDING ALL.
             // LIKE only runs at CREATE TABLE time, so new columns added to core.events

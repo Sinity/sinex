@@ -13,7 +13,7 @@ async fn event_validator_rejects_future_ts_orig() -> xtask::sandbox::TestResult<
         payload: json!({ "ok": true }),
         ts_orig: Some(Timestamp::now() + ::time::Duration::hours(2)),
         host: HostName::from_static("validator"),
-        node_run_id: None,
+        source_run_id: None,
         payload_schema_id: None,
         provenance: Provenance::from_material(Id::<SourceMaterial>::new(), 0, None, None),
         associated_blob_ids: None,

@@ -260,10 +260,10 @@ where
             payload: filtered_payload,
             ts_orig: Some(ts_orig),
             host: HostName::new(&self.host)?,
-            node_run_id: self
+            source_run_id: self
                 .runtime
                 .as_ref()
-                .and_then(NodeRuntimeState::node_run_id),
+                .and_then(NodeRuntimeState::source_run_id),
             payload_schema_id: None,
             provenance,
             associated_blob_ids: None,

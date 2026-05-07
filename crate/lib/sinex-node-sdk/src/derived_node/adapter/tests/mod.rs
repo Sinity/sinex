@@ -431,7 +431,7 @@ fn make_material_input_event(
 async fn make_runtime_state(
     ctx: &TestContext,
     node_name: &str,
-    node_run_id: Option<Uuid>,
+    source_run_id: Option<Uuid>,
 ) -> TestResult<NodeRuntimeState> {
     let kv = ctx.checkpoint_kv().await?;
     let checkpoint_manager = Arc::new(CheckpointManager::new(
@@ -464,7 +464,7 @@ async fn make_runtime_state(
             false,
             format!("instance-{}", Uuid::now_v7().simple()),
             env!("CARGO_PKG_VERSION").to_string(),
-            node_run_id,
+            source_run_id,
         ),
         handles,
         HashMap::new(),
@@ -475,7 +475,7 @@ async fn make_runtime_state(
 async fn make_runtime_state_with_db(
     ctx: &TestContext,
     node_name: &str,
-    node_run_id: Option<Uuid>,
+    source_run_id: Option<Uuid>,
 ) -> TestResult<(NodeRuntimeState, mpsc::Receiver<Event<JsonValue>>)> {
     let kv = ctx.checkpoint_kv().await?;
     let checkpoint_manager = Arc::new(CheckpointManager::new(
@@ -510,7 +510,7 @@ async fn make_runtime_state_with_db(
                 false,
                 format!("instance-{}", Uuid::now_v7().simple()),
                 env!("CARGO_PKG_VERSION").to_string(),
-                node_run_id,
+                source_run_id,
             ),
             handles,
             HashMap::new(),
@@ -524,7 +524,7 @@ async fn make_runtime_state_with_db(
 async fn make_runtime_state_with_validator(
     ctx: &TestContext,
     node_name: &str,
-    node_run_id: Option<Uuid>,
+    source_run_id: Option<Uuid>,
 ) -> TestResult<(NodeRuntimeState, mpsc::Receiver<Event<JsonValue>>, Uuid)> {
     let kv = ctx.checkpoint_kv().await?;
     let checkpoint_manager = Arc::new(CheckpointManager::new(
@@ -572,7 +572,7 @@ async fn make_runtime_state_with_validator(
                 false,
                 format!("instance-{}", Uuid::now_v7().simple()),
                 env!("CARGO_PKG_VERSION").to_string(),
-                node_run_id,
+                source_run_id,
             ),
             handles,
             HashMap::new(),

@@ -105,7 +105,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             "checkpoint_identity": runtime.checkpoint_identity(),
             "control_identity": runtime.control_identity(),
             "host": runtime.service_info().host().as_str(),
-            "run_id": runtime.node_run_id().map(|id| id.to_string()),
+            "run_id": runtime.source_run_id().map(|id| id.to_string()),
         });
         let (heartbeat_shutdown_tx, heartbeat_shutdown_rx) = tokio::sync::oneshot::channel();
         let heartbeat_handle = tokio::spawn(async move {

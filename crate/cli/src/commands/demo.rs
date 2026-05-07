@@ -163,7 +163,7 @@ impl DemoCommand {
                     offset_kind: Some("byte".to_string()),
                     source_event_ids: None,
                     payload_schema_id: None,
-                    node_run_id: None,
+                    source_run_id: None,
                     associated_blob_ids: None,
                     temporal_policy: None,
                     semantics_version: None,

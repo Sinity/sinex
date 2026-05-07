@@ -9,7 +9,6 @@ use sea_query::Alias;
 
 // Define the core schema modules. Each file is responsible for a logical
 // domain of the database.
-pub mod acquisition_jobs;
 pub mod annotations;
 pub mod blobs;
 pub mod documents;
@@ -17,14 +16,11 @@ pub mod embeddings;
 pub mod entities;
 pub mod events;
 pub mod operations;
-pub mod parser_registry;
 pub mod sinex_schemas;
-pub mod source_bindings;
 pub mod source_materials;
 pub mod temporal_ledger;
 
 // Re-export all schema definitions for easy access from apply orchestration and repositories.
-pub use acquisition_jobs::*;
 pub use annotations::*;
 pub use blobs::*;
 pub use documents::*;
@@ -32,9 +28,7 @@ pub use embeddings::*;
 pub use entities::*;
 pub use events::*;
 pub use operations::*;
-pub use parser_registry::*;
 pub use sinex_schemas::*;
-pub use source_bindings::*;
 pub use source_materials::*;
 pub use temporal_ledger::*;
 
@@ -46,12 +40,7 @@ pub mod records {
     pub use super::embeddings::EmbeddingModelRecord;
     pub use super::entities::EntityRecord;
     pub use super::events::{EventRecord, EventReplacementRecord};
-    pub use super::parser_registry::{ParserJobRecord, ParserRegistryRecord};
-    pub use super::sinex_schemas::{EventPayloadSchemaRecord, NodeManifestRecord, NodeRunRecord};
-    pub use super::acquisition_jobs::AcquisitionJobRecord;
-    pub use super::source_bindings::{
-        SourceBindingRecord, SourceBindingResolutionLogRecord,
-    };
+    pub use super::sinex_schemas::{EventPayloadSchemaRecord, NodeManifestRecord};
     pub use super::source_materials::{SourceMaterialLinkRecord, SourceMaterialRecord};
     pub use super::temporal_ledger::TemporalLedgerRecord;
 }
@@ -296,8 +285,8 @@ const ALL_TABLES: &[TableMeta] = &[
     },
     TableMeta {
         schema: "core",
-        name: "node_runs",
-        qualified_name: "core.node_runs",
+        name: "source_runs",
+        qualified_name: "core.source_runs",
         is_hypertable: false,
         has_triggers: false,
         cleanup_protected: false,

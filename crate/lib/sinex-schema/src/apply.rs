@@ -1,10 +1,10 @@
 use crate::schema::{
-    AcquisitionJobs, ArchivedEventAnnotations, ArchivedEventEmbeddings, ArchivedEvents,
+    ArchivedEventAnnotations, ArchivedEventEmbeddings, ArchivedEvents,
     ArchivedTaggedItems, BinarySchemaVersion, Blobs, DocumentChunks, Documents, EmbeddingCache,
     EmbeddingModels, Entities, EntityRelations, EventAnnotations, EventClusterMembers,
     EventClusters, EventEmbeddings, EventPayloadSchemas, EventReplacements, EventTombstones, Events,
-    GitopsSchemaSources, NodeManifests, NodeRuns,
-    OperationsLog, ParserJobs, ParserRegistry, SourceBindingResolutionLog, SourceBindings,
+    GitopsSchemaSources, NodeManifests, SourceRuns,
+    OperationsLog,
     SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger,
     ValidationCache,
 };
@@ -451,8 +451,7 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         render_table(&Tags::create_table_statement()),
         render_table(&SourceMaterialRegistry::create_table_statement()),
         render_table(&SourceMaterialLinks::create_table_statement()),
-        render_table(&NodeManifests::create_table_statement()),
-        render_table(&NodeRuns::create_table_statement()),
+        render_table(&SourceRuns::create_table_statement()),
         render_table(&Events::create_table_statement()),
         render_table(&GitopsSchemaSources::create_table_statement()),
         render_table(&ValidationCache::create_table_statement()),
@@ -469,11 +468,6 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         render_table(&EventReplacements::create_table_statement()),
         render_table(&Documents::create_table_statement()),
         render_table(&DocumentChunks::create_table_statement()),
-        render_table(&ParserRegistry::create_table_statement()),
-        render_table(&ParserJobs::create_table_statement()),
-        render_table(&SourceBindings::create_table_statement()),
-        render_table(&SourceBindingResolutionLog::create_table_statement()),
-        render_table(&AcquisitionJobs::create_table_statement()),
     ];
 
     for sql in table_sql {
@@ -544,20 +538,13 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(render_indexes(EventEmbeddings::create_indexes()));
     index_sql.extend(EventEmbeddings::create_indexes_sql());
     index_sql.extend(render_indexes(EventPayloadSchemas::create_indexes()));
-    index_sql.extend(render_indexes(NodeManifests::create_indexes()));
-    index_sql.extend(NodeManifests::create_gin_indexes_sql());
-    index_sql.extend(render_indexes(NodeRuns::create_indexes()));
+    index_sql.extend(render_indexes(SourceRuns::create_indexes()));
     index_sql.extend(render_indexes(GitopsSchemaSources::create_indexes()));
     index_sql.extend(render_indexes(EventReplacements::create_indexes()));
     index_sql.extend(render_indexes(Documents::create_indexes()));
     index_sql.extend(render_indexes(DocumentChunks::create_indexes()));
     index_sql.extend(render_indexes(OperationsLog::create_indexes()));
     index_sql.extend(OperationsLog::create_gin_indexes_sql());
-    index_sql.extend(render_indexes(ParserRegistry::create_indexes()));
-    index_sql.extend(render_indexes(ParserJobs::create_indexes()));
-    index_sql.extend(render_indexes(SourceBindings::create_indexes()));
-    index_sql.extend(render_indexes(SourceBindingResolutionLog::create_indexes()));
-    index_sql.extend(render_indexes(AcquisitionJobs::create_indexes()));
 
     for sql in index_sql {
         execute_sql(pool, &sql).await?;
@@ -622,7 +609,7 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
         ON core.events (
             (payload->>'name'),
             ((payload->'labels'->>'node')),
-            ((payload->'labels'->>'node_run_id')),
+            ((payload->'labels'->>'source_run_id')),
             id DESC
         )
         WHERE source = 'sinex' AND event_type = 'metric.gauge'
@@ -633,8 +620,8 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
         pool,
         r#"
         CREATE INDEX IF NOT EXISTS ix_events_node_run_synthesis_latest
-        ON core.events (node_run_id, id DESC)
-        WHERE node_run_id IS NOT NULL AND source_event_ids IS NOT NULL
+        ON core.events (source_run_id, id DESC)
+        WHERE source_run_id IS NOT NULL AND source_event_ids IS NOT NULL
         "#,
     )
     .await?;
@@ -1203,7 +1190,7 @@ BEGIN
         ts_orig, ts_orig_subnano,
         source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
         source_event_ids, associated_blob_ids,
-        payload_schema_id, node_run_id,
+        payload_schema_id, source_run_id,
         temporal_policy, semantics_version, scope_key, equivalence_key,
         created_by_operation_id, node_model
     )
@@ -1212,7 +1199,7 @@ BEGIN
         ae.ts_orig, ae.ts_orig_subnano,
         ae.source_material_id, ae.anchor_byte, ae.offset_start, ae.offset_end, ae.offset_kind,
         ae.source_event_ids, ae.associated_blob_ids,
-        ae.payload_schema_id, ae.node_run_id,
+        ae.payload_schema_id, ae.source_run_id,
         ae.temporal_policy, ae.semantics_version, ae.scope_key, ae.equivalence_key,
         ae.created_by_operation_id, ae.node_model
     FROM audit.archived_events ae

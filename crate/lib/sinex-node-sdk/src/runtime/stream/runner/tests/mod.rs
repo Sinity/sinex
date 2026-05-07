@@ -501,7 +501,7 @@ fn runtime_test_material_event(
         payload,
         ts_orig: Some(Timestamp::now()),
         host: HostName::from_static("runtime-test-host"),
-        node_run_id: None,
+        source_run_id: None,
         payload_schema_id: None,
         provenance: Provenance::Material {
             id: Id::<SourceMaterial>::from_uuid(Uuid::now_v7()),
@@ -557,10 +557,10 @@ async fn publish_confirmed_raw_event(
 }
 
 #[cfg(feature = "messaging")]
-async fn node_run_status(pool: &sinex_db::DbPool, node_run_id: Uuid) -> TestResult<String> {
+async fn node_run_status(pool: &sinex_db::DbPool, source_run_id: Uuid) -> TestResult<String> {
     let status =
-        sqlx::query_scalar::<_, String>("SELECT status::text FROM core.node_runs WHERE id = $1")
-            .bind(node_run_id)
+        sqlx::query_scalar::<_, String>("SELECT status::text FROM core.source_runs WHERE id = $1")
+            .bind(source_run_id)
             .fetch_one(pool)
             .await?;
     Ok(status)

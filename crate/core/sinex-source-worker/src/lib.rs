@@ -34,13 +34,11 @@
 //! The dispatch follows the exact same pattern as `sinex-process/src/main.rs`.
 
 pub mod drain;
-pub mod job_runner;
 pub mod noop;
 pub mod registry;
 pub mod runner;
 
 pub use drain::{GapEvidence, SourceWorkerDrainController};
-pub use job_runner::{JobHandler, JobOutcome, JobRunStats, ParserJobRunner};
 pub use noop::NoopSourceUnit;
 pub use registry::SourceUnitRegistry;
 pub use runner::SourceUnitRunner;
