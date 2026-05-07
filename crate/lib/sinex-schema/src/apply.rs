@@ -3,7 +3,7 @@ use crate::schema::{
     ArchivedTaggedItems, BinarySchemaVersion, Blobs, DocumentChunks, Documents, EmbeddingCache,
     EmbeddingModels, Entities, EntityRelations, EventAnnotations, EventClusterMembers,
     EventClusters, EventEmbeddings, EventPayloadSchemas, EventReplacements, EventTombstones, Events,
-    OperationsLog,
+    Manifests, OperationsLog, Runs,
     SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger,
     ValidationCache,
 };
@@ -445,7 +445,8 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         render_table(&Tags::create_table_statement()),
         render_table(&SourceMaterialRegistry::create_table_statement()),
         render_table(&SourceMaterialLinks::create_table_statement()),
-        render_table(&SourceRuns::create_table_statement()),
+        render_table(&Manifests::create_table_statement()),
+        render_table(&Runs::create_table_statement()),
         render_table(&Events::create_table_statement()),
         render_table(&GitopsSchemaSources::create_table_statement()),
         render_table(&ValidationCache::create_table_statement()),
@@ -532,7 +533,8 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(render_indexes(EventEmbeddings::create_indexes()));
     index_sql.extend(EventEmbeddings::create_indexes_sql());
     index_sql.extend(render_indexes(EventPayloadSchemas::create_indexes()));
-    index_sql.extend(render_indexes(SourceRuns::create_indexes()));
+    index_sql.extend(render_indexes(Manifests::create_indexes()));
+    index_sql.extend(render_indexes(Runs::create_indexes()));
     index_sql.extend(render_indexes(GitopsSchemaSources::create_indexes()));
     index_sql.extend(render_indexes(EventReplacements::create_indexes()));
     index_sql.extend(render_indexes(Documents::create_indexes()));

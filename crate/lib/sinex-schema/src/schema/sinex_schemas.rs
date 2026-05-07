@@ -162,6 +162,7 @@ impl EventPayloadSchemas {
 pub enum Runs {
     Table,
     Id,
+    ManifestId,
     ServiceName,
     InstanceId,
     Host,
@@ -182,6 +183,7 @@ impl TableDef for Runs {
 #[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
 pub struct RunRecord {
     pub id: Uuid,
+    pub manifest_id: Option<i32>,
     pub service_name: String,
     pub instance_id: String,
     pub host: String,
@@ -200,6 +202,7 @@ impl Runs {
             .table(Self::table_iden())
             .if_not_exists()
             .col(ColumnDef::new(Runs::Id).custom(Alias::new("UUID")).primary_key().extra("DEFAULT uuidv7()"))
+            .col(ColumnDef::new(Runs::ManifestId).integer())
             .col(ColumnDef::new(Runs::ServiceName).text().not_null())
             .col(ColumnDef::new(Runs::InstanceId).text().not_null())
             .col(ColumnDef::new(Runs::Host).text().not_null())
@@ -209,6 +212,13 @@ impl Runs {
             .col(ColumnDef::new(Runs::LastHeartbeatAt).timestamp_with_time_zone())
             .col(ColumnDef::new(Runs::EffectiveConfigHash).text())
             .col(ColumnDef::new(Runs::EffectiveConfig).json_binary())
+            .foreign_key(
+                ForeignKey::create()
+                    .name("fk_runs_manifest")
+                    .from(Self::table_iden(), Runs::ManifestId)
+                    .to(crate::schema::Manifests::table_iden(), Alias::new("id"))
+                    .on_delete(ForeignKeyAction::SetNull),
+            )
             .to_owned()
     }
 
