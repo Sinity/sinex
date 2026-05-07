@@ -19,6 +19,7 @@
 
 mod adapters;
 mod fixture;
+mod weechat;
 
 pub use adapters::{
     AppendOnlyCursor, AppendOnlyFileAdapter, AppendOnlyFileConfig, SqliteRowAdapter,
@@ -28,6 +29,7 @@ pub use fixture::{
     FixtureAssertion, FixtureExpectation, FixtureSpec, ParserFixtureHarness,
     ParserTestContext,
 };
+pub use weechat::{WeeChatLogConfig, WeeChatLogParser};
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;

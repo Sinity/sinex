@@ -112,6 +112,8 @@ impl StageCommand {
             timing_info_type: None,
             reason: self.reason.clone(),
             tags: self.tags.clone(),
+            binding_name: None,
+            with_bytes: true,
         };
 
         let response = client

@@ -1,4 +1,101 @@
 //! Source material RPC types for `sources.*` methods.
+//!
+//! # External Producer Wire Contract
+//!
+//! Non-Rust producers (Python, shell scripts, external tools) can publish
+//! [`AdmittedEventIntent`] envelopes to NATS JetStream without depending on the
+//! Rust SDK. The contract below is the minimum a producer must satisfy for
+//! ingestd to accept the payload.
+//!
+//! ## Envelope format
+//!
+//! Publish a JSON [`AdmittedEventIntent`] to the JetStream subject
+//! `{env}.sinex.events.raw.{source}.{event_type}` (typically
+//! `sinex.events.raw.{source}.{event_type}` in development).
+//!
+//! ### Required JSON shape
+//!
+//! ```json
+//! {
+//!   "envelope_version": "1",
+//!   "source_unit_id": "integration.polylogue",
+//!   "parser_id": "polylogue-bridge",
+//!   "parser_version": "0.1.0",
+//!   "events": [
+//!     {
+//!       "id": "018f9e4b-...",
+//!       "source": "integration.polylogue",
+//!       "event_type": "integration.polylogue.conversation_indexed",
+//!       "payload": { "...": "..." },
+//!       "ts_orig": "2026-05-07T20:00:00Z",
+//!       "host": "sinnix-prime",
+//!       "Material": {
+//!         "id": "018f9e4b-...",
+//!         "anchor_byte": 0,
+//!         "offset_kind": "Byte"
+//!       }
+//!     }
+//!   ],
+//!   "admitted_at": "2026-05-07T20:00:01Z",
+//!   "admitted_by": "sinnix-prime"
+//! }
+//! ```
+//!
+//! ### Field reference
+//!
+//! | Field | Type | Required | Notes |
+//! |-------|------|----------|-------|
+//! | `envelope_version` | `"1"` | yes | Must be `"1"` (only accepted version) |
+//! | `source_unit_id` | string | yes | Producer identifier, e.g. `"integration.polylogue"` |
+//! | `parser_id` | string | yes | Parser that interpreted the material, e.g. `"polylogue-bridge"` |
+//! | `parser_version` | string | yes | Semver, e.g. `"0.1.0"` |
+//! | `events` | array | yes | At least one event (see Event shape below) |
+//! | `admitted_at` | ISO 8601 | yes | When this intent was created |
+//! | `admitted_by` | string | yes | Hostname that performed admission checks |
+//!
+//! ### Event shape (each element in `events`)
+//!
+//! | Field | Type | Required | Notes |
+//! |-------|------|----------|-------|
+//! | `id` | UUIDv7 | yes | Event identifier; use deterministic UUIDv5 if replayable |
+//! | `source` | string | yes | Event source, typically matching `source_unit_id` |
+//! | `event_type` | string | yes | Dotted event type, e.g. `"integration.polylogue.conversation_indexed"` |
+//! | `payload` | JSON object | yes | Free-form event payload |
+//! | `ts_orig` | ISO 8601 | no | Real-world occurrence timestamp |
+//! | `host` | string | yes | Originating hostname |
+//! | `Material` | object | XOR * | Material provenance (external producers use a virtual material) |
+//! | `Synthesis` | object | XOR * | Synthesis provenance (derived from parent events) |
+//!
+//! For external producers emitting metadata-only events, use `Material`
+//! provenance with a deterministic UUIDv5 material ID derived from a
+//! producer-specific namespace and a stable key (e.g. the archive database
+//! path). This gives the event an occurrence identity without requiring a
+//! pre-registered source material.
+//!
+//! ### NATS headers
+//!
+//! | Header | Value | Required | Notes |
+//! |--------|-------|----------|-------|
+//! | `Nats-Msg-Id` | UUIDv7 of the first event | yes | Idempotency key for JetStream dedup |
+//! | `Sinex-Traffic-Class` | `"raw_event"` | yes | Traffic class for rate limiting |
+//!
+//! ### Subjects
+//!
+//! | Pattern | Use |
+//! |---------|-----|
+//! | `{env}.sinex.events.raw.integration.polylogue.conversation_indexed` | Conversation indexed |
+//! | `{env}.sinex.events.raw.integration.polylogue.conversation_updated` | Conversation updated |
+//! | `{env}.sinex.events.raw.analysis.lynchpin.artifact_staged` | Lynchpin artifact staged |
+//!
+//! ## Known external producer identifiers
+//!
+//! These are the `source_unit_id` / `source` values for producers that are not
+//! Rust ingestors inside the sinex workspace:
+//!
+//! | Identifier | Project | Description |
+//! |------------|---------|-------------|
+//! | `integration.polylogue` | [polylogue](https://github.com/sinity/polylogue) | AI chat archive indexer |
+//! | `analysis.lynchpin` | [lynchpin](https://github.com/sinity/sinity-lynchpin) | Analysis artifact staging |
 
 use crate::domain::{SourceMaterialFormat, SourceMaterialTimingInfoType};
 use serde::{Deserialize, Serialize};
@@ -548,4 +645,51 @@ pub struct SourcesContinuityResponse {
     pub contract_status: ContinuityContractStatus,
     /// Replayability assessment.
     pub replayability: ReplayabilityStatus,
+}
+
+// ─────────────────────────────────────────────────────────────
+// External producer and sibling-tool source presets
+// ─────────────────────────────────────────────────────────────
+
+/// Source presets for producers outside the sinex Rust workspace.
+///
+/// These are candidates for `sources.presets.list` but are defined here so the
+/// preset catalog stays discoverable from `sinex-primitives`. The gateway's
+/// `builtin_presets()` may extend its list from this function.
+///
+/// See the [external producer wire contract](self#external-producer-wire-contract)
+/// for the JSON envelope these producers use.
+#[must_use]
+pub fn external_producer_presets() -> Vec<SourcePresetDescriptor> {
+    vec![
+        // ── Lynchpin analysis artifacts ─────────────────────────
+        SourcePresetDescriptor {
+            name: "lynchpin.generated.default".into(),
+            description: "Default Lynchpin analysis artifact directory".into(),
+            source_family: "analysis".into(),
+            input_shape_kind: "directory".into(),
+            material_format_hint: None,
+            resolver_preset: None,
+        },
+    ]
+}
+
+/// Presets for source material paths that bridge external producer systems.
+///
+/// These differ from [`external_producer_presets`] in that they represent
+/// material *discovery* paths (file paths, directories) rather than event
+/// *production* identifiers.
+#[must_use]
+pub fn bridge_material_presets() -> Vec<SourcePresetDescriptor> {
+    vec![
+        // ── Polylogue chat archive ──────────────────────────────
+        SourcePresetDescriptor {
+            name: "polylogue.exports.default".into(),
+            description: "Polylogue chat archive root".into(),
+            source_family: "chat".into(),
+            input_shape_kind: "directory".into(),
+            material_format_hint: None,
+            resolver_preset: None,
+        },
+    ]
 }
