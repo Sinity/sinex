@@ -17,6 +17,10 @@ xtask test -p sinex-primitives
 xtask test --debug -E 'test(name)'
 xtask test --heavy
 
+# Targeted e2e loop; still use xtask so preflight and runtime binaries are prepared.
+# Use --test to avoid compiling every e2e test binary when working on one file.
+xtask test -p sinex-e2e-tests --test large_payload_test -E 'test(test_name)'
+
 # Proof-carrying runtime scenarios
 xtask test --list-scenarios
 xtask test --scenario-tag row_stream
@@ -29,8 +33,9 @@ xtask test -p sinex-node-sdk --scenario-tag duplicate_content
 xtask test -p sinex-node-sdk --scenario-tag storage_profile --heavy
 ```
 
-`xtask test` is the primary test entrypoint. It handles the repo's preflight and
-nextest wiring; use `xtask test --help` for the current option surface.
+`xtask test` is the primary test entrypoint. It handles the repo's preflight,
+runtime binary preparation for e2e/node-sdk tests, and nextest wiring; use
+`xtask test --help` for the current option surface.
 Scenario selectors discover `#[sinex_test(... scenario = ...)]` metadata and
 compile it down to ordinary nextest package/filter arguments. Scenario semantics
 belong in Rust tests and evidence bundles, not in product-runtime xtask commands.

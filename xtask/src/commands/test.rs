@@ -200,6 +200,10 @@ pub struct TestCommand {
     #[arg(long = "package", short = 'p')]
     pub packages: Vec<String>,
 
+    /// Run tests from specific test binary target(s) (nextest --test)
+    #[arg(long = "test", value_name = "TEST_BINARY")]
+    pub test_binaries: Vec<String>,
+
     /// Print what would happen
     #[arg(long)]
     pub dry_run: bool,
@@ -454,6 +458,9 @@ impl TestCommand {
         }
         for lane in &self.scenario_lanes {
             args.push(format!("--scenario-lane={lane}"));
+        }
+        for test_binary in &self.test_binaries {
+            args.push(format!("--test={test_binary}"));
         }
         if self.list_scenarios {
             args.push("--list-scenarios".to_string());
@@ -771,6 +778,10 @@ impl XtaskCommand for TestCommand {
                         args.push("-p".to_string());
                         args.push(p.clone());
                     }
+                    for test_binary in &self.test_binaries {
+                        args.push("--test".to_string());
+                        args.push(test_binary.clone());
+                    }
                     if let Some(threads) = self.threads {
                         args.push(format!("--threads={threads}"));
                     }
@@ -901,6 +912,9 @@ impl XtaskCommand for TestCommand {
                     cmd = cmd.args(["-p", package]);
                 }
             }
+            for test_binary in &self.test_binaries {
+                cmd = cmd.args(["--test", test_binary]);
+            }
             if let Some(filter) = &effective_filter {
                 cmd = cmd.args(["-E", filter]);
             }
@@ -953,6 +967,10 @@ impl XtaskCommand for TestCommand {
         for package in &execution_plan.runner_packages {
             runner.add_arg("-p");
             runner.add_arg(package);
+        }
+        for test_binary in &self.test_binaries {
+            runner.add_arg("--test");
+            runner.add_arg(test_binary);
         }
         if let Some(ref filter) = effective_filter {
             runner.add_arg("-E");
@@ -1273,6 +1291,25 @@ mod tests {
         assert!(
             (1..=HEAVY_TEST_THREAD_CAP).contains(&n),
             "--threads={n} is outside the expected range 1..={HEAVY_TEST_THREAD_CAP}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_semantic_invocation_args_include_nextest_test_targets()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = TestCommand {
+            test_binaries: vec!["large_payload_test".to_string()],
+            ..Default::default()
+        };
+
+        let args = command.semantic_invocation_args(&WorkloadScope::Packages(vec![
+            "sinex-e2e-tests".to_string(),
+        ]));
+
+        assert!(
+            args.contains(&"--test=large_payload_test".to_string()),
+            "test binary selector should be part of the coordination identity: {args:?}"
         );
         Ok(())
     }

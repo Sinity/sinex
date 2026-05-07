@@ -4,7 +4,8 @@ use crate::command::{CommandContext, WorkloadScope};
 use crate::process::ProcessBuilder;
 
 pub(super) const HEAVY_TEST_THREAD_CAP: usize = 4;
-const INGESTD_RUNTIME_TEST_PACKAGES: &[&str] = &["sinex-ingestd", "sinex-node-sdk"];
+const INGESTD_RUNTIME_TEST_PACKAGES: &[&str] =
+    &["sinex-e2e-tests", "sinex-ingestd", "sinex-node-sdk"];
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct RuntimeBinaryRequirement {
@@ -251,6 +252,21 @@ mod tests {
         let requirements = runtime_binary_requirements_for_plan(&plan);
         assert_eq!(requirements.len(), 1);
         assert_eq!(requirements[0].package, "sinex-ingestd");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_binary_requirements_include_ingestd_for_e2e_tests()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = NextestExecutionPlan {
+            runner_packages: vec!["sinex-e2e-tests".to_string()],
+            workload_scope: WorkloadScope::Packages(vec!["sinex-e2e-tests".to_string()]),
+        };
+
+        let requirements = runtime_binary_requirements_for_plan(&plan);
+        assert_eq!(requirements.len(), 1);
+        assert_eq!(requirements[0].package, "sinex-ingestd");
+        assert_eq!(requirements[0].binary, "sinex-ingestd");
         Ok(())
     }
 

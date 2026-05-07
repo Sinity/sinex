@@ -73,10 +73,11 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                     "xtask test",
                     "xtask test -p sinex-primitives",
                     "xtask test --debug -E 'test(name)'",
+                    "xtask test -p sinex-e2e-tests --test large_payload_test -E 'test(test_name)'",
                     "xtask test --heavy",
                 ],
                 notes: &[
-                    "Do not use bare cargo test when xtask already exposes the surface you need.",
+                    "Do not use bare cargo test or bare cargo nextest when xtask already exposes the surface you need.",
                 ],
             },
             GuideEntry {

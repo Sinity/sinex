@@ -100,6 +100,7 @@ Run the repo's primary nextest-backed test workflows
 | `--scenario-lane` | yes | no | Run tests whose sinex_test scenario metadata uses this lane |
 | `--list-scenarios` | no | no | List discovered sinex_test scenarios instead of running tests |
 | `-p, --package` | yes | no | Run tests for specific package(s) |
+| `--test` | yes | no | Run tests from specific test binary target(s) (nextest --test) |
 | `--dry-run` | no | no | Print what would happen |
 | `--skip-preflight` | no | no | Skip automatic infrastructure setup (preflight is ON by default) |
 | `--include-ignored` | no | no | Include tests marked `#[ignore]` |
