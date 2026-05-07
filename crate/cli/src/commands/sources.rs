@@ -6,12 +6,17 @@ use sinex_primitives::rpc::sources::{
     SourcesShowRequest, SourcesShowResponse, SourcesStageRequest, SourcesStageResponse,
 };
 
+use sinex_primitives::rpc::sources::{
+    SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest, SourcesArchiveResponse,
+    SourcesContinuityRequest, SourcesContinuityResponse,
+};
+
 use crate::Result;
 use crate::client::GatewayClient;
 use crate::fmt::CommandOutput;
 use crate::model::OutputFormat;
 
-/// Source material inventory and staging
+/// Source material inventory, lifecycle, and diagnostics
 #[derive(Debug, Args)]
 #[command(after_help = "\
 EXAMPLES:
@@ -26,6 +31,15 @@ EXAMPLES:
 
     # Show temporal coverage
     sinexctl sources coverage
+
+    # Annotate a material with notes and tags
+    sinexctl sources annotate <uuid> --notes \"Re-staged after replay\"
+
+    # Archive a material (dry-run preview first)
+    sinexctl sources archive <uuid> --dry-run
+
+    # Check temporal continuity for a source
+    sinexctl sources continuity --source /path/to/history.db
 ")]
 pub struct SourcesCommand {
     #[command(subcommand)]
@@ -44,6 +58,9 @@ impl SourcesCommand {
             SourcesSubcommand::List(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::Show(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::Coverage(cmd) => cmd.execute(client, format).await,
+            SourcesSubcommand::Annotate(cmd) => cmd.execute(client, format).await,
+            SourcesSubcommand::Archive(cmd) => cmd.execute(client, format).await,
+            SourcesSubcommand::Continuity(cmd) => cmd.execute(client, format).await,
         }
     }
 }
@@ -58,6 +75,12 @@ pub enum SourcesSubcommand {
     Show(ShowCommand),
     /// Show temporal coverage of source materials
     Coverage(CoverageCommand),
+    /// Annotate a source material with notes and tags
+    Annotate(AnnotateCommand),
+    /// Archive a staged source material (dry-run with --dry-run)
+    Archive(ArchiveCommand),
+    /// Diagnose temporal continuity and replayability for a source
+    Continuity(ContinuityCommand),
 }
 
 // ── Stage ──────────────────────────────────────────────────────────────
@@ -343,4 +366,243 @@ fn format_coverage_table(response: &SourcesCoverageResponse) -> String {
     let mut table = builder.build();
     table.with(Style::rounded());
     table.to_string()
+}
+
+// ── Annotate ───────────────────────────────────────────────────────────
+
+/// Annotate a source material with notes and tags
+#[derive(Debug, Args)]
+pub struct AnnotateCommand {
+    /// Source material UUID
+    material_id: String,
+
+    /// Free-form notes to attach to the material
+    #[arg(long)]
+    notes: Option<String>,
+
+    /// Tags to add (can be repeated; duplicates are ignored)
+    #[arg(long = "tag")]
+    tags: Vec<String>,
+
+    /// Override declared start time (ISO8601)
+    #[arg(long)]
+    declared_start_time: Option<String>,
+
+    /// Override declared end time (ISO8601)
+    #[arg(long)]
+    declared_end_time: Option<String>,
+}
+
+impl AnnotateCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let req = SourcesAnnotateRequest {
+            material_id: self.material_id.clone(),
+            notes: self.notes.clone(),
+            tags: self.tags.clone(),
+            declared_start_time: self.declared_start_time.clone(),
+            declared_end_time: self.declared_end_time.clone(),
+        };
+
+        let response = client
+            .call_raw_rpc("sources.annotate", serde_json::to_value(&req)?)
+            .await?;
+        let annotate_response: SourcesAnnotateResponse = serde_json::from_value(response)?;
+
+        CommandOutput::single(annotate_response, format_annotate_result).display(&format)?;
+        Ok(())
+    }
+}
+
+fn format_annotate_result(response: &SourcesAnnotateResponse) -> String {
+    let mut lines = vec![format!(
+        "Annotated source material: {}",
+        style(&response.material_id).green()
+    )];
+    if let Some(reason) = &response.annotations.reason {
+        lines.push(format!("  Notes: {}", style(reason).cyan()));
+    }
+    if !response.annotations.tags.is_empty() {
+        lines.push(format!(
+            "  Tags:  {}",
+            style(response.annotations.tags.join(", ")).yellow()
+        ));
+    }
+    if let Some(start) = &response.annotations.declared_start_time {
+        lines.push(format!("  Start: {}", style(start).cyan()));
+    }
+    if let Some(end) = &response.annotations.declared_end_time {
+        lines.push(format!("  End:   {}", style(end).cyan()));
+    }
+    lines.join("\n")
+}
+
+// ── Archive ────────────────────────────────────────────────────────────
+
+/// Archive a staged source material
+#[derive(Debug, Args)]
+pub struct ArchiveCommand {
+    /// Source material UUID to archive
+    material_id: String,
+
+    /// Preview cascade without executing (dry-run)
+    #[arg(long)]
+    dry_run: bool,
+
+    /// Reason for archival (audit)
+    #[arg(long)]
+    reason: Option<String>,
+}
+
+impl ArchiveCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let req = SourcesArchiveRequest {
+            material_id: self.material_id.clone(),
+            dry_run: self.dry_run,
+            reason: self.reason.clone(),
+        };
+
+        let response = client
+            .call_raw_rpc("sources.archive", serde_json::to_value(&req)?)
+            .await?;
+        let archive_response: SourcesArchiveResponse = serde_json::from_value(response)?;
+
+        CommandOutput::single(archive_response, format_archive_result).display(&format)?;
+        Ok(())
+    }
+}
+
+fn format_archive_result(response: &SourcesArchiveResponse) -> String {
+    let mut lines = vec![format!(
+        "{} archive for material {}",
+        if response.dry_run {
+            "Dry-run"
+        } else {
+            "Executed"
+        },
+        style(&response.material_id).green()
+    )];
+    lines.push(format!(
+        "  Cascade count: {}",
+        style(response.cascade_count).yellow()
+    ));
+    if let Some(op_id) = &response.operation_id {
+        lines.push(format!(
+            "  Operation ID:  {}",
+            style(op_id).cyan()
+        ));
+    }
+    if let Some(preview) = &response.preview {
+        lines.push(format!(
+            "  Preview:       {}",
+            style(serde_json::to_string_pretty(preview).unwrap_or_else(|_| "-".to_string()))
+                .dim()
+        ));
+    }
+    lines.join("\n")
+}
+
+// ── Continuity ─────────────────────────────────────────────────────────
+
+/// Diagnose temporal continuity and replayability for a source
+#[derive(Debug, Args)]
+pub struct ContinuityCommand {
+    /// Source identifier (file path, URI, or source name)
+    #[arg(long)]
+    source: String,
+
+    /// Optional material kind filter (e.g. "file", "sqlite_db")
+    #[arg(long)]
+    kind: Option<String>,
+}
+
+impl ContinuityCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let req = SourcesContinuityRequest {
+            source_identifier: self.source.clone(),
+            material_kind: self.kind.clone(),
+        };
+
+        let response = client
+            .call_raw_rpc("sources.continuity", serde_json::to_value(&req)?)
+            .await?;
+        let continuity_response: SourcesContinuityResponse = serde_json::from_value(response)?;
+
+        CommandOutput::single(continuity_response, format_continuity_result).display(&format)?;
+        Ok(())
+    }
+}
+
+fn format_continuity_result(response: &SourcesContinuityResponse) -> String {
+    let mut lines = vec![format!(
+        "Continuity diagnostics for: {}",
+        style(&response.source_identifier).green().bold()
+    )];
+
+    // Coverage gaps
+    if response.coverage_gaps.is_empty() {
+        lines.push("  No temporal gaps detected.".to_string());
+    } else {
+        lines.push(format!(
+            "  {} temporal gap(s) detected:",
+            style(response.coverage_gaps.len()).yellow()
+        ));
+        for gap in &response.coverage_gaps {
+            let start = gap.gap_start.as_deref().unwrap_or("-");
+            let end = gap.gap_end.as_deref().unwrap_or("-");
+            let dur = gap
+                .gap_duration_seconds
+                .map_or_else(|| "-".to_string(), |d| format!("{d}s"));
+            lines.push(format!(
+                "    {} -> {} (duration: {}) [{}]",
+                style(start).dim(),
+                style(end).dim(),
+                style(dur).yellow(),
+                gap.gap_type
+            ));
+        }
+    }
+
+    // Contract status
+    let cs = &response.contract_status;
+    lines.push(format!(
+        "  Coverage contract: {}",
+        if cs.has_coverage_contract {
+            style("present").green()
+        } else {
+            style("absent").yellow()
+        }
+    ));
+    if let Some(pct) = cs.actual_coverage_percent {
+        lines.push(format!("  Coverage:          {pct:.1}%"));
+    }
+    if !cs.breaches.is_empty() {
+        lines.push("  Breaches:".to_string());
+        for breach in &cs.breaches {
+            lines.push(format!("    - {}", style(breach).red()));
+        }
+    }
+
+    // Replayability
+    let rp = &response.replayability;
+    lines.push(format!(
+        "  Replayable:        {}",
+        if rp.replayable {
+            style("yes").green()
+        } else {
+            style("no").red()
+        }
+    ));
+    if let Some(reason) = &rp.reason {
+        lines.push(format!("  Reason:            {}", style(reason).yellow()));
+    }
+    lines.push(format!(
+        "  Materials staged:  {}",
+        style(rp.material_count).cyan()
+    ));
+    lines.push(format!(
+        "  Events reference:  {}",
+        style(rp.events_count).cyan()
+    ));
+
+    lines.join("\n")
 }

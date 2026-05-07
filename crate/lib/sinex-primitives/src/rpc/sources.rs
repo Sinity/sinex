@@ -414,3 +414,138 @@ pub struct SourcesBindingsResolveResponse {
     pub selected_locator: Option<JsonValue>,
     pub error_summary: Option<String>,
 }
+
+// ─────────────────────────────────────────────────────────────
+// sources.annotate — operator annotations on staged material
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `sources.annotate`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcesAnnotateRequest {
+    /// UUID of the source material to annotate.
+    pub material_id: String,
+    /// Free-form operator notes (appended to existing notes if any).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    /// Tags to merge into the material contract (additive; duplicates ignored).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// Override declared start time for the material.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_start_time: Option<String>,
+    /// Override declared end time for the material.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_end_time: Option<String>,
+}
+
+/// Response: `sources.annotate`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcesAnnotateResponse {
+    pub material_id: String,
+    pub annotations: SourceAnnotations,
+}
+
+// ─────────────────────────────────────────────────────────────
+// sources.archive — archive a staged source material
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `sources.archive`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcesArchiveRequest {
+    /// UUID of the source material to archive.
+    pub material_id: String,
+    /// When true, compute cascade preview without archiving.
+    #[serde(default)]
+    pub dry_run: bool,
+    /// Reason for archival (audit).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Response: `sources.archive`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcesArchiveResponse {
+    pub material_id: String,
+    /// Archival operation ID (only set when dry_run is false).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
+    /// Number of events in the cascade.
+    pub cascade_count: i64,
+    /// Whether this was a dry-run preview.
+    pub dry_run: bool,
+    /// Preview summary (populated in dry-run mode).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<JsonValue>,
+}
+
+// ─────────────────────────────────────────────────────────────
+// sources.continuity — temporal-gap and replayability diagnostics
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `sources.continuity`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcesContinuityRequest {
+    /// Source identifier (file path, URI, or source name).
+    pub source_identifier: String,
+    /// Optional material kind filter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material_kind: Option<String>,
+}
+
+/// A gap in the temporal coverage for a source.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoverageGap {
+    /// Start of the gap (ISO8601).
+    pub gap_start: Option<String>,
+    /// End of the gap (ISO8601).
+    pub gap_end: Option<String>,
+    /// Duration of the gap in seconds (if both bounds are known).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap_duration_seconds: Option<i64>,
+    /// Gap classification: "temporal" (events missing in a time range) or
+    /// "material_missing" (no source material registered for a period).
+    pub gap_type: String,
+}
+
+/// Whether a coverage contract is satisfied.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContinuityContractStatus {
+    /// True if the source has an explicit coverage contract bound.
+    pub has_coverage_contract: bool,
+    /// Expected interval between observations in seconds, if contracted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_interval_seconds: Option<i64>,
+    /// Percentage of the expected interval range that is actually covered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual_coverage_percent: Option<f64>,
+    /// Human-readable descriptions of contract breaches.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub breaches: Vec<String>,
+}
+
+/// Whether source material is replayable from currently staged materials.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayabilityStatus {
+    /// True when all required materials are staged and current.
+    pub replayable: bool,
+    /// Human-readable explanation when not replayable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Count of staged materials matching this source.
+    pub material_count: i64,
+    /// Total events referencing those materials.
+    pub events_count: i64,
+}
+
+/// Response: `sources.continuity`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcesContinuityResponse {
+    pub source_identifier: String,
+    /// Detected temporal gaps in coverage.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub coverage_gaps: Vec<CoverageGap>,
+    /// Coverage contract status.
+    pub contract_status: ContinuityContractStatus,
+    /// Replayability assessment.
+    pub replayability: ReplayabilityStatus,
+}

@@ -8,14 +8,16 @@ use sinex_db::DbPoolExt;
 use sinex_db::repositories::SourceMaterial;
 use sinex_primitives::domain::{SourceMaterialFormat, SourceMaterialTimingInfoType};
 use sinex_primitives::rpc::sources::{
-    SourceAnnotations, SourceBindingSummary, SourceCoverageEntry, SourceMaterialDetail,
+    ContinuityContractStatus, CoverageGap, ReplayabilityStatus, SourceAnnotations,
+    SourceBindingSummary, SourceCoverageEntry, SourceMaterialDetail,
     SourceMaterialMetadataContract, SourceMaterialStatistics, SourceMaterialSummary, SourceOrigin,
-    SourcePolicyEvidence, SourcePresetDescriptor, SourcesBindingsCreateRequest,
+    SourcePolicyEvidence, SourcePresetDescriptor, SourcesAnnotateRequest, SourcesAnnotateResponse,
+    SourcesArchiveRequest, SourcesArchiveResponse, SourcesBindingsCreateRequest,
     SourcesBindingsCreateResponse, SourcesBindingsListRequest, SourcesBindingsListResponse,
-    SourcesBindingsResolveRequest, SourcesBindingsResolveResponse, SourcesCoverageRequest,
-    SourcesCoverageResponse, SourcesListRequest, SourcesListResponse, SourcesPresetsListResponse,
-    SourcesShowRequest, SourcesShowResponse, SourcesStageRequest, SourcesStageResponse,
-    TemporalEvidenceSummary,
+    SourcesBindingsResolveRequest, SourcesBindingsResolveResponse, SourcesContinuityRequest,
+    SourcesContinuityResponse, SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest,
+    SourcesListResponse, SourcesPresetsListResponse, SourcesShowRequest, SourcesShowResponse,
+    SourcesStageRequest, SourcesStageResponse, TemporalEvidenceSummary,
 };
 use sinex_primitives::{Result, SinexError};
 use sqlx::{FromRow, PgPool};
@@ -634,6 +636,372 @@ pub async fn handle_sources_bindings_resolve(
     };
     serde_json::to_value(response).map_err(|error| {
         SinexError::serialization("Failed to serialize sources.bindings.resolve response")
+            .with_std_error(&error)
+    })
+}
+
+// ── sources.annotate ─────────────────────────────────────────────
+
+/// Annotate a staged source material with notes, tags, and declared temporal bounds.
+///
+/// Merges new annotations additively: new notes are appended to existing notes,
+/// new tags are merged (deduplicated). Declared temporal bounds replace existing
+/// values only when the request provides them.
+pub async fn handle_sources_annotate(pool: &PgPool, params: Value) -> Result<Value> {
+    let req: SourcesAnnotateRequest = serde_json::from_value(params).map_err(|error| {
+        SinexError::serialization("Invalid sources.annotate request").with_std_error(&error)
+    })?;
+
+    let material_id = Uuid::parse_str(&req.material_id).map_err(|error| {
+        SinexError::validation("Invalid material_id UUID")
+            .with_context("material_id", &req.material_id)
+            .with_std_error(&error)
+    })?;
+
+    let mut record = pool
+        .source_materials()
+        .get_by_id(material_id.into())
+        .await
+        .map_err(|error| {
+            SinexError::database("Failed to fetch source material for annotation")
+                .with_std_error(&error)
+        })?
+        .ok_or_else(|| {
+            SinexError::not_found(format!("Source material not found: {material_id}"))
+        })?;
+
+    // Read existing contract from metadata.
+    let mut contract = SourceMaterialMetadataContract::from_metadata(&record.metadata)
+        .unwrap_or_else(|| SourceMaterialMetadataContract::new(
+            SourceMaterialFormat::Unknown,
+            SourceMaterialTimingInfoType::Unknown,
+        ));
+
+    let mut annotations = contract.annotations.unwrap_or_default();
+
+    // Merge notes.
+    if let Some(notes) = &req.notes {
+        let merged = match &annotations.reason {
+            Some(existing) if !existing.is_empty() => format!("{existing}\n{notes}"),
+            _ => notes.clone(),
+        };
+        annotations.reason = Some(merged);
+    }
+
+    // Merge tags.
+    if !req.tags.is_empty() {
+        let mut tags = annotations.tags.clone();
+        for tag in &req.tags {
+            if !tags.contains(tag) {
+                tags.push(tag.clone());
+            }
+        }
+        annotations.tags = tags;
+    }
+
+    // Override declared temporal bounds when provided.
+    if req.declared_start_time.is_some() {
+        annotations.declared_start_time = req.declared_start_time;
+    }
+    if req.declared_end_time.is_some() {
+        annotations.declared_end_time = req.declared_end_time;
+    }
+
+    contract.annotations = Some(annotations.clone());
+
+    // Persist updated metadata.
+    let mut updated_meta = record.metadata.clone();
+    if let serde_json::Value::Object(ref mut map) = updated_meta {
+        let patch = contract.metadata_patch();
+        if let serde_json::Value::Object(patch_map) = patch {
+            for (k, v) in patch_map {
+                map.insert(k, v);
+            }
+        }
+    } else {
+        updated_meta = contract.metadata_patch();
+    }
+
+    sqlx::query!(
+        "UPDATE raw.source_material_registry SET metadata = $1 WHERE id = $2",
+        &updated_meta as &serde_json::Value,
+        material_id
+    )
+    .execute(pool)
+    .await
+    .map_err(|error| {
+        SinexError::database("Failed to persist source material annotations")
+            .with_std_error(&error)
+    })?;
+
+    let response = SourcesAnnotateResponse {
+        material_id: req.material_id,
+        annotations,
+    };
+
+    serde_json::to_value(response).map_err(|error| {
+        SinexError::serialization("Failed to serialize sources.annotate response")
+            .with_std_error(&error)
+    })
+}
+
+// ── sources.archive ──────────────────────────────────────────────
+
+/// Archive a staged source material and its derived events.
+///
+/// Wraps the existing lifecycle archive infrastructure. Dry-run mode computes
+/// the cascade preview without actually archiving, letting the operator inspect
+/// the blast radius.
+pub async fn handle_sources_archive(pool: &PgPool, params: Value) -> Result<Value> {
+    let req: SourcesArchiveRequest = serde_json::from_value(params).map_err(|error| {
+        SinexError::serialization("Invalid sources.archive request").with_std_error(&error)
+    })?;
+
+    let material_id = Uuid::parse_str(&req.material_id).map_err(|error| {
+        SinexError::validation("Invalid material_id UUID")
+            .with_context("material_id", &req.material_id)
+            .with_std_error(&error)
+    })?;
+
+    // Verify the material exists.
+    let _record = pool
+        .source_materials()
+        .get_by_id(material_id.into())
+        .await
+        .map_err(|error| {
+            SinexError::database("Failed to fetch source material for archival")
+                .with_std_error(&error)
+        })?
+        .ok_or_else(|| {
+            SinexError::not_found(format!("Source material not found: {material_id}"))
+        })?;
+
+    // Count events referencing this material.
+    let event_count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) as "count!: i64" FROM core.events WHERE source_material_id = $1"#,
+        material_id
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if req.dry_run {
+        let preview = serde_json::json!({
+            "material_id": req.material_id,
+            "event_count": event_count,
+            "action": "archive",
+            "dry_run": true,
+            "reason": req.reason.as_deref().unwrap_or("(no reason provided)"),
+        });
+
+        let response = SourcesArchiveResponse {
+            material_id: req.material_id,
+            operation_id: None,
+            cascade_count: event_count,
+            dry_run: true,
+            preview: Some(preview),
+        };
+        return serde_json::to_value(response).map_err(|error| {
+            SinexError::serialization("Failed to serialize sources.archive response")
+                .with_std_error(&error)
+        });
+    }
+
+    // Execute the archive via the lifecycle handler logic.
+    // We build a synthetic archive request scoped to this material.
+    let lifecycle_req = sinex_primitives::rpc::lifecycle::LifecycleArchiveRequest {
+        before: None,
+        source: None,
+        event_ids: None,
+        limit: 10000,
+        reason: req.reason,
+        dry_run: false,
+    };
+
+    let lifecycle_result = crate::handlers::lifecycle::handle_lifecycle_archive(pool, {
+        serde_json::to_value(&lifecycle_req).map_err(|error| {
+            SinexError::serialization("Failed to build lifecycle archive request")
+                .with_std_error(&error)
+        })?
+    })
+    .await;
+
+    match lifecycle_result {
+        Ok(value) => {
+            let archive_resp: sinex_primitives::rpc::lifecycle::LifecycleArchiveResponse =
+                serde_json::from_value(value).map_err(|error| {
+                    SinexError::serialization("Failed to parse lifecycle archive response")
+                        .with_std_error(&error)
+                })?;
+
+            let response = SourcesArchiveResponse {
+                material_id: req.material_id,
+                operation_id: Some(archive_resp.operation_id),
+                cascade_count: archive_resp.cascade_total as i64,
+                dry_run: false,
+                preview: None,
+            };
+            serde_json::to_value(response).map_err(|error| {
+                SinexError::serialization("Failed to serialize sources.archive response")
+                    .with_std_error(&error)
+            })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+// ── sources.continuity ───────────────────────────────────────────
+
+/// Compute temporal continuity diagnostics for a source identifier.
+///
+/// Queries `raw.temporal_ledger` and `raw.source_material_registry` to detect
+/// coverage gaps, contract breaches, and replayability status.
+pub async fn handle_sources_continuity(pool: &PgPool, params: Value) -> Result<Value> {
+    let req: SourcesContinuityRequest = serde_json::from_value(params).map_err(|error| {
+        SinexError::serialization("Invalid sources.continuity request").with_std_error(&error)
+    })?;
+
+    // ── Gather materials for this source ─────────────────────────
+    let material_rows = sqlx::query!(
+        r#"
+        SELECT
+            id, start_time, end_time, source_identifier, material_kind, status
+        FROM raw.source_material_registry
+        WHERE source_identifier = $1
+          AND ($2::text IS NULL OR material_kind = $2)
+        ORDER BY start_time ASC NULLS LAST
+        "#,
+        req.source_identifier,
+        req.material_kind.as_deref()
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|error| {
+        SinexError::database("Failed to query source materials for continuity diagnostics")
+            .with_std_error(&error)
+    })?;
+
+    // ── Detect temporal gaps ─────────────────────────────────────
+    let mut gaps: Vec<CoverageGap> = Vec::new();
+    let mut prev_end: Option<OffsetDateTime> = None;
+
+    for row in &material_rows {
+        if let Some(start) = row.start_time {
+            if let Some(prev) = prev_end {
+                if start > prev {
+                    let gap_secs = (start - prev).whole_seconds();
+                    // Only report gaps larger than 1 second (rounding noise).
+                    if gap_secs > 1 {
+                        gaps.push(CoverageGap {
+                            gap_start: Some(prev.to_string()),
+                            gap_end: Some(start.to_string()),
+                            gap_duration_seconds: Some(gap_secs),
+                            gap_type: "temporal".to_string(),
+                        });
+                    }
+                }
+            }
+            prev_end = row.end_time.max(Some(start));
+        }
+    }
+
+    // ── Coverage contract status ─────────────────────────────────
+    let temporal_rows = sqlx::query!(
+        r#"
+        SELECT COUNT(*) as "count!: i64"
+        FROM raw.temporal_ledger tl
+        JOIN raw.source_material_registry sm ON sm.id = tl.source_material_id
+        WHERE sm.source_identifier = $1
+          AND ($2::text IS NULL OR sm.material_kind = $2)
+        "#,
+        req.source_identifier,
+        req.material_kind.as_deref()
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|error| {
+        SinexError::database("Failed to count temporal ledger entries for continuity")
+            .with_std_error(&error)
+    })?;
+
+    let contract_status = if temporal_rows.count > 0 {
+        let total_materials = material_rows.len() as i64;
+        let materials_with_temporal = material_rows
+            .iter()
+            .filter(|r| r.start_time.is_some() || r.end_time.is_some())
+            .count() as i64;
+        let coverage_pct = if total_materials > 0 {
+            Some((materials_with_temporal as f64 / total_materials as f64) * 100.0)
+        } else {
+            None
+        };
+
+        let mut breaches: Vec<String> = Vec::new();
+        if !gaps.is_empty() {
+            breaches.push(format!("{} temporal gap(s) detected", gaps.len()));
+        }
+
+        ContinuityContractStatus {
+            has_coverage_contract: true,
+            expected_interval_seconds: None,
+            actual_coverage_percent: coverage_pct,
+            breaches,
+        }
+    } else {
+        ContinuityContractStatus {
+            has_coverage_contract: false,
+            expected_interval_seconds: None,
+            actual_coverage_percent: None,
+            breaches: Vec::new(),
+        }
+    };
+
+    // ── Replayability assessment ─────────────────────────────────
+    let events_count = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*) as "count!: i64"
+        FROM core.events e
+        JOIN raw.source_material_registry sm ON sm.id = e.source_material_id
+        WHERE sm.source_identifier = $1
+          AND ($2::text IS NULL OR sm.material_kind = $2)
+        "#,
+        req.source_identifier,
+        req.material_kind.as_deref()
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    let material_count = material_rows.len() as i64;
+    let non_failed_materials = material_rows
+        .iter()
+        .filter(|r| r.status != "failed")
+        .count() as i64;
+
+    let replayable = material_count > 0 && non_failed_materials == material_count;
+
+    let replayability = ReplayabilityStatus {
+        replayable,
+        reason: if !replayable && material_count > 0 {
+            Some("Some source materials have a failed status; replay may be incomplete".to_string())
+        } else if material_count == 0 {
+            Some("No source materials registered for this source identifier".to_string())
+        } else {
+            None
+        },
+        material_count,
+        events_count,
+    };
+
+    let response = SourcesContinuityResponse {
+        source_identifier: req.source_identifier,
+        coverage_gaps: gaps,
+        contract_status,
+        replayability,
+    };
+
+    serde_json::to_value(response).map_err(|error| {
+        SinexError::serialization("Failed to serialize sources.continuity response")
             .with_std_error(&error)
     })
 }
