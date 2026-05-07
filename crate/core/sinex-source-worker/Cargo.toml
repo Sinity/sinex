@@ -66,6 +66,9 @@ workspace = true
 [dependencies.async-nats]
 workspace = true
 
+[dependencies.sinex-db]
+path = "../../lib/sinex-db"
+
 [dependencies.sinex-node-sdk]
 path = "../../lib/sinex-node-sdk"
 
