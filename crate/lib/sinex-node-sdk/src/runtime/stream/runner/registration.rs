@@ -29,41 +29,19 @@ impl<T: Node + 'static> NodeRunner<T> {
         service_name: &str,
         instance_id: &str,
         host: &str,
-        version: &str,
-        raw_config: &HashMap<String, serde_json::Value>,
+        _version: &str,
+        _raw_config: &HashMap<String, serde_json::Value>,
     ) -> NodeResult<Option<Uuid>> {
-        let node_name = NodeName::new(self.node.node_name());
-        // NodeType is now re-exported from sinex_primitives::domain — no conversion needed.
-        let node_type = self.node.node_type();
-        let manifest = pool
+        let run = pool
             .state()
-            .register_node(&node_name, node_type, version, None)
+            .start_run(service_name, instance_id, host)
             .await
             .map_err(|error| {
                 SinexError::processing(format!(
-                    "Failed to register node manifest for {}: {error}",
-                    self.node.node_name()
+                    "Failed to start run for {service_name}/{instance_id}: {error}"
                 ))
             })?;
-        let (config_hash, effective_config) = Self::effective_config(raw_config)?;
-        let node_run = pool
-            .state()
-            .start_node_run(
-                manifest.id,
-                service_name,
-                instance_id,
-                host,
-                config_hash.as_deref(),
-                effective_config.as_ref(),
-            )
-            .await
-            .map_err(|error| {
-                SinexError::processing(format!(
-                    "Failed to register node run for {}: {error}",
-                    self.node.node_name()
-                ))
-            })?;
-        Ok(Some(node_run.id.to_uuid()))
+        Ok(Some(run.id.to_uuid()))
     }
 
     pub(super) async fn update_registered_run_status(
