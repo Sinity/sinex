@@ -36,7 +36,7 @@ fn stream_batch_material_row(
         offset_kind: None,
         source_event_ids: None,
         payload_schema_id: None,
-        node_run_id: None,
+        source_run_id: None,
         associated_blob_ids: None,
         temporal_policy: None,
         semantics_version: None,
@@ -156,7 +156,7 @@ async fn filter_tombstoned_accepts_typed_event_ids(ctx: TestContext) -> TestResu
 }
 
 #[sinex_test]
-async fn events_repository_rejects_unknown_node_run_id(ctx: TestContext) -> TestResult<()> {
+async fn events_repository_rejects_unknown_source_run_id(ctx: TestContext) -> TestResult<()> {
     let material_record = ctx
         .pool
         .source_materials()
@@ -176,14 +176,14 @@ async fn events_repository_rejects_unknown_node_run_id(ctx: TestContext) -> Test
         .with_provenance(Provenance::from_material(material_id, 0, None, None))
         .build()
         .expect("valid provenance")
-        .with_node_run_id(Uuid::now_v7());
+        .with_source_run_id(Uuid::now_v7());
 
     let error = ctx
         .pool
         .events()
         .insert(event)
         .await
-        .expect_err("unknown node_run_id must be rejected");
+        .expect_err("unknown source_run_id must be rejected");
     let message = error.to_string();
     let normalized_message = message.to_lowercase();
     assert!(
@@ -303,7 +303,7 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
             offset_kind,
             source_event_ids: None,
             payload_schema_id: None,
-            node_run_id: None,
+            source_run_id: None,
             associated_blob_ids: None,
             temporal_policy: None,
             semantics_version: None,
@@ -423,8 +423,8 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
             i
         );
         assert!(
-            event.node_run_id.is_none(),
-            "node_run_id should be None at index {}",
+            event.source_run_id.is_none(),
+            "source_run_id should be None at index {}",
             i
         );
         assert!(
@@ -611,7 +611,7 @@ async fn stream_batch_insert_rejects_self_referential_synthesis_rows(
         offset_kind: None,
         source_event_ids: Some(vec![EventId::from_uuid(event_id)]),
         payload_schema_id: None,
-        node_run_id: None,
+        source_run_id: None,
         associated_blob_ids: None,
         temporal_policy: None,
         semantics_version: None,
@@ -658,7 +658,7 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
             offset_kind: None,
             source_event_ids: Some(vec![EventId::from_uuid(second_id)]),
             payload_schema_id: None,
-            node_run_id: None,
+            source_run_id: None,
             associated_blob_ids: None,
             temporal_policy: None,
             semantics_version: None,
@@ -681,7 +681,7 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
             offset_kind: None,
             source_event_ids: Some(vec![EventId::from_uuid(first_id)]),
             payload_schema_id: None,
-            node_run_id: None,
+            source_run_id: None,
             associated_blob_ids: None,
             temporal_policy: None,
             semantics_version: None,

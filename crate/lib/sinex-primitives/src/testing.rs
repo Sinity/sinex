@@ -84,7 +84,7 @@ pub fn event_fixture(
         ts_orig: Some(Timestamp::now()),
         host: HostName::new(gethostname::gethostname().to_string_lossy().to_string())
             .unwrap_or_else(|_| HostName::from_static("unknown-host")),
-        node_run_id: Some(Uuid::now_v7()),
+        source_run_id: Some(Uuid::now_v7()),
         payload_schema_id: None,
         provenance: Provenance::Material {
             id: Id::<SourceMaterial>::from_uuid(material_id),

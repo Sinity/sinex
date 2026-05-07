@@ -32,7 +32,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             base_service_info.dry_run(),
             base_service_info.instance_id().to_string(),
             base_service_info.version().to_string(),
-            base_service_info.node_run_id(),
+            base_service_info.source_run_id(),
         );
 
         let (replay_handles, emitted_counter, forwarder_handle) =

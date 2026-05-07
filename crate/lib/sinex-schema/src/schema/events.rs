@@ -6,7 +6,7 @@
 //! core architectural invariants related to events and their provenance.
 
 use crate::primitives::{Timestamp, Uuid};
-use crate::schema::{EventPayloadSchemas, NodeRuns, SourceMaterialRegistry, TableDef};
+use crate::schema::{EventPayloadSchemas, SourceMaterialRegistry, SourceRuns, TableDef};
 use sea_query::{
     Alias, ColumnDef, ColumnType, ConditionalStatement, Expr, ForeignKey, ForeignKeyAction,
     ForeignKeyCreateStatement, Iden, Index, IndexCreateStatement, IndexOrder, IntoIden, Table,
@@ -132,7 +132,7 @@ pub struct EventRecord {
 
     // Metadata
     pub payload_schema_id: Option<Uuid>,
-    pub node_run_id: Option<Uuid>,
+    pub source_run_id: Option<Uuid>,
 
     // Synthetic event metadata (nullable — only set for derived/synthesized events)
     pub temporal_policy: Option<String>,
@@ -256,16 +256,16 @@ impl Events {
             .to_owned()
     }
 
-    /// Generates the named foreign key for `events.node_run_id`.
+    /// Generates the named foreign key for `events.source_run_id`.
     ///
     /// Fresh databases receive this during `CREATE TABLE`; existing databases
     /// converge the same named constraint via the schema convergence engine.
     #[must_use]
     pub fn create_node_run_foreign_key() -> ForeignKeyCreateStatement {
         ForeignKey::create()
-            .name("events_node_run_id_fkey")
+            .name("events_source_run_id_fkey")
             .from(Self::table_iden(), Events::NodeRunId)
-            .to(NodeRuns::table_iden(), Alias::new("id"))
+            .to(SourceRuns::table_iden(), Alias::new("id"))
             .to_owned()
     }
 

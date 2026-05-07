@@ -160,9 +160,9 @@ async fn test_runner_registers_node_run_when_database_is_available(
         .await?;
 
     let runtime = runner.runtime_state().expect("runtime state should exist");
-    let node_run_id = runtime
-        .node_run_id()
-        .expect("db-backed runner should register node_run_id");
+    let source_run_id = runtime
+        .source_run_id()
+        .expect("db-backed runner should register source_run_id");
 
     let manifest = sqlx::query!(
         r#"
@@ -184,10 +184,10 @@ async fn test_runner_registers_node_run_when_database_is_available(
             status,
             effective_config_hash,
             effective_config
-        FROM core.node_runs
+        FROM core.source_runs
         WHERE id = $1::uuid
         "#,
-        node_run_id,
+        source_run_id,
     )
     .fetch_one(ctx.pool())
     .await?;
@@ -230,10 +230,10 @@ async fn test_run_service_marks_registered_node_run_stopped(ctx: TestContext) ->
         )
         .await?;
 
-    let node_run_id = runner
+    let source_run_id = runner
         .runtime_state()
-        .and_then(|runtime| runtime.node_run_id())
-        .expect("db-backed runner should register node_run_id");
+        .and_then(|runtime| runtime.source_run_id())
+        .expect("db-backed runner should register source_run_id");
 
     runner.run_service().await?;
 
@@ -242,10 +242,10 @@ async fn test_run_service_marks_registered_node_run_stopped(ctx: TestContext) ->
         SELECT
             status,
             ended_at as "ended_at: sinex_primitives::temporal::Timestamp"
-        FROM core.node_runs
+        FROM core.source_runs
         WHERE id = $1::uuid
         "#,
-        node_run_id,
+        source_run_id,
     )
     .fetch_one(ctx.pool())
     .await?;

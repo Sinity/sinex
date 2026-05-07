@@ -120,7 +120,7 @@ impl EventRecordExt for EventRecord {
             host: self.host.into(),
             payload: self.payload,
             ts_orig: Some(ts_orig),
-            node_run_id: self.node_run_id,
+            source_run_id: self.source_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance,
             associated_blob_ids: self
@@ -213,7 +213,7 @@ mod tests {
             source_event_ids: None,
             associated_blob_ids: None,
             payload_schema_id: None,
-            node_run_id: None,
+            source_run_id: None,
             temporal_policy: None,
             semantics_version: None,
             scope_key: None,

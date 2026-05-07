@@ -924,7 +924,7 @@ impl StateRepository<'_> {
         sqlx::query_as!(
             NodeRun,
             r#"
-            INSERT INTO core.node_runs (
+            INSERT INTO core.source_runs (
                 node_manifest_id,
                 service_name,
                 instance_id,
@@ -969,16 +969,16 @@ impl StateRepository<'_> {
     }
 
     /// Refresh the heartbeat timestamp for a node run and keep it in `running`.
-    pub async fn update_node_run_heartbeat(&self, node_run_id: Id<NodeRun>) -> DbResult<bool> {
+    pub async fn update_node_run_heartbeat(&self, source_run_id: Id<NodeRun>) -> DbResult<bool> {
         let result = sqlx::query!(
             r#"
-            UPDATE core.node_runs
+            UPDATE core.source_runs
             SET last_heartbeat_at = NOW(),
                 status = 'running'
             WHERE id = $1::uuid
               AND status = 'running'
             "#,
-            node_run_id.as_uuid(),
+            source_run_id.as_uuid(),
         )
         .execute(self.pool)
         .await
@@ -989,7 +989,7 @@ impl StateRepository<'_> {
     /// Mark a node run as terminal or transitional.
     pub async fn update_node_run_status(
         &self,
-        node_run_id: Id<NodeRun>,
+        source_run_id: Id<NodeRun>,
         status: NodeState,
     ) -> DbResult<bool> {
         let ended_at = matches!(status, NodeState::Failed | NodeState::Stopped)
@@ -1002,7 +1002,7 @@ impl StateRepository<'_> {
         // also transiently make it appear live to the presence query.
         let result = sqlx::query!(
             r#"
-            UPDATE core.node_runs
+            UPDATE core.source_runs
             SET status = $2,
                 last_heartbeat_at = NOW(),
                 ended_at = CASE
@@ -1012,7 +1012,7 @@ impl StateRepository<'_> {
             WHERE id = $1::uuid
               AND status NOT IN ('failed', 'stopped')
             "#,
-            node_run_id.as_uuid(),
+            source_run_id.as_uuid(),
             status.to_string(),
             ended_at,
         )
@@ -1040,13 +1040,13 @@ impl StateRepository<'_> {
                     nm.description,
                     nr.service_name,
                     nr.instance_id,
-                    nr.id as node_run_id,
+                    nr.id as source_run_id,
                     nr.host,
                     nr.status,
                     nr.last_heartbeat_at,
                     nr.started_at,
                     'run'::text as heartbeat_source
-                FROM core.node_runs nr
+                FROM core.source_runs nr
                 JOIN core.node_manifests nm ON nm.id = nr.node_manifest_id
                 WHERE nr.status = 'running'
                   AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8)
@@ -1058,7 +1058,7 @@ impl StateRepository<'_> {
                 description,
                 service_name,
                 instance_id,
-                node_run_id as "node_run_id: uuid::Uuid",
+                source_run_id as "source_run_id: uuid::Uuid",
                 host,
                 live_nodes.status as "status!",
                 last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp",
@@ -1072,7 +1072,7 @@ impl StateRepository<'_> {
                     description,
                     service_name,
                     instance_id,
-                    node_run_id,
+                    source_run_id,
                     host,
                     status,
                     last_heartbeat_at,
@@ -1089,7 +1089,7 @@ impl StateRepository<'_> {
                     nm.description,
                     NULL::text as service_name,
                     NULL::text as instance_id,
-                    NULL::uuid as node_run_id,
+                    NULL::uuid as source_run_id,
                     NULL::text as host,
                     nm.status,
                     nm.last_heartbeat_at,
@@ -1137,7 +1137,7 @@ impl StateRepository<'_> {
                     nm.node_name,
                     COUNT(*)::bigint AS active_run_count,
                     MAX(nr.last_heartbeat_at) AS latest_heartbeat_at
-                FROM core.node_runs nr
+                FROM core.source_runs nr
                 JOIN core.node_manifests nm ON nm.id = nr.node_manifest_id
                 WHERE nr.status = 'running'
                   AND nr.last_heartbeat_at IS NOT NULL
@@ -1166,7 +1166,7 @@ impl StateRepository<'_> {
                 UNION
 
                 SELECT DISTINCT nm.node_name
-                FROM core.node_runs nr
+                FROM core.source_runs nr
                 JOIN core.node_manifests nm ON nm.id = nr.node_manifest_id
             ),
             node_status AS (
@@ -1205,7 +1205,7 @@ impl StateRepository<'_> {
     /// List operator-facing status for registered automata.
     ///
     /// The durable base is the node registry (`node_manifests` + latest
-    /// `node_runs`). Derived-node-specific runtime details come from SDK
+    /// `source_runs`). Derived-node-specific runtime details come from SDK
     /// self-observation events in `core.events`, keyed by node/run labels.
     pub async fn list_automata_status(
         &self,
@@ -1234,7 +1234,7 @@ impl StateRepository<'_> {
                 ) as "live!",
                 nr.service_name,
                 nr.instance_id,
-                nr.id as "node_run_id: uuid::Uuid",
+                nr.id as "source_run_id: uuid::Uuid",
                 nr.host,
                 nr.status as run_status,
                 nr.started_at as "started_at: sinex_primitives::temporal::Timestamp",
@@ -1265,7 +1265,7 @@ impl StateRepository<'_> {
                     nr.status,
                     nr.started_at,
                     nr.last_heartbeat_at
-                FROM core.node_runs nr
+                FROM core.source_runs nr
                 WHERE nr.node_manifest_id = nm.id
                 -- Prefer an active (running/draining/paused) run over a more-recently-started
                 -- terminal run, so a restarted node doesn't immediately appear as failed/stopped.
@@ -1282,7 +1282,7 @@ impl StateRepository<'_> {
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.events_processed.run'
                   AND e.payload->'labels'->>'node' = nm.node_name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'node_run_id' = nr.id::text)
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
             ) processed ON true
@@ -1297,7 +1297,7 @@ impl StateRepository<'_> {
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.checkpoint.revision'
                   AND e.payload->'labels'->>'node' = nm.node_name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'node_run_id' = nr.id::text)
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
             ) checkpoint ON true
@@ -1310,7 +1310,7 @@ impl StateRepository<'_> {
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.invalidations.pending'
                   AND e.payload->'labels'->>'node' = nm.node_name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'node_run_id' = nr.id::text)
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
             ) pending ON true
@@ -1322,7 +1322,7 @@ impl StateRepository<'_> {
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.error_rate_5m'
                   AND e.payload->'labels'->>'node' = nm.node_name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'node_run_id' = nr.id::text)
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
             ) error_rate ON true
@@ -1334,7 +1334,7 @@ impl StateRepository<'_> {
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.event_lag_p50_ms'
                   AND e.payload->'labels'->>'node' = nm.node_name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'node_run_id' = nr.id::text)
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
             ) lag_p50 ON true
@@ -1346,7 +1346,7 @@ impl StateRepository<'_> {
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.event_lag_p99_ms'
                   AND e.payload->'labels'->>'node' = nm.node_name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'node_run_id' = nr.id::text)
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
             ) lag_p99 ON true
@@ -1358,7 +1358,7 @@ impl StateRepository<'_> {
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.tick_runtime_p99_ms'
                   AND e.payload->'labels'->>'node' = nm.node_name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'node_run_id' = nr.id::text)
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
             ) tick_p99 ON true
@@ -1370,7 +1370,7 @@ impl StateRepository<'_> {
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.throughput_eps'
                   AND e.payload->'labels'->>'node' = nm.node_name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'node_run_id' = nr.id::text)
+                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
             ) throughput ON true
@@ -1384,7 +1384,7 @@ impl StateRepository<'_> {
                         AS last_replay_at
                 FROM core.events e
                 WHERE nr.id IS NOT NULL
-                  AND e.node_run_id = nr.id
+                  AND e.source_run_id = nr.id
                   AND e.source_event_ids IS NOT NULL
             ) outputs ON true
             WHERE nm.node_type = 'automaton'
@@ -1588,7 +1588,7 @@ pub struct LiveNodePresence {
     pub description: Option<String>,
     pub service_name: Option<String>,
     pub instance_id: Option<String>,
-    pub node_run_id: Option<Uuid>,
+    pub source_run_id: Option<Uuid>,
     pub host: Option<String>,
     pub status: String,
     pub last_heartbeat_at: Option<Timestamp>,
@@ -1616,7 +1616,7 @@ pub struct AutomataStatusRow {
     pub live: bool,
     pub service_name: Option<String>,
     pub instance_id: Option<String>,
-    pub node_run_id: Option<Uuid>,
+    pub source_run_id: Option<Uuid>,
     pub host: Option<String>,
     pub run_status: Option<String>,
     pub started_at: Option<Timestamp>,

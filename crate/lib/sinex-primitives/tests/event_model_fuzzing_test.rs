@@ -466,7 +466,7 @@ sinex_proptest! {
         let _ = event.host.as_str();
         let _ = &event.payload;
         let _ = event.ts_orig;
-        let _ = event.node_run_id;
+        let _ = event.source_run_id;
         let _ = event.payload_schema_id;
         TestCaseResult::Ok(())
     }

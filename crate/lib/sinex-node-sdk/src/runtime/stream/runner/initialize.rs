@@ -146,7 +146,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         };
 
         #[cfg(feature = "db")]
-        let node_run_id = if let Some(pool) = db_pool.as_ref() {
+        let source_run_id = if let Some(pool) = db_pool.as_ref() {
             self.register_runtime_identity(
                 pool,
                 &service_name,
@@ -160,7 +160,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             None
         };
         #[cfg(not(feature = "db"))]
-        let node_run_id = None;
+        let source_run_id = None;
 
         let mut event_emitter = {
             #[cfg(feature = "messaging")]
@@ -174,8 +174,8 @@ impl<T: Node + 'static> NodeRunner<T> {
             EventEmitter::new(event_sender_raw, dry_run)
         };
 
-        if let Some(node_run_id) = node_run_id {
-            event_emitter = event_emitter.with_default_node_run_id(node_run_id);
+        if let Some(source_run_id) = source_run_id {
+            event_emitter = event_emitter.with_default_source_run_id(source_run_id);
         }
 
         // No LeaseManager passed to handles
@@ -221,7 +221,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             dry_run,
             instance_id,
             version,
-            node_run_id,
+            source_run_id,
         );
         let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir).unwrap_or_else(|_| {
             Utf8PathBuf::from_path_buf(sinex_primitives::environment::environment().temp_dir())

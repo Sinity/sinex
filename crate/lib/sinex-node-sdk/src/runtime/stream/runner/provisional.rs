@@ -59,7 +59,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             host: String,
             #[serde(rename = "payload")]
             event_payload: JsonValue,
-            node_run_id: Option<String>,
+            source_run_id: Option<String>,
             payload_schema_id: Option<String>,
             associated_blob_ids: Option<Vec<String>>,
             source_material_id: Option<String>,
@@ -132,10 +132,10 @@ impl<T: Node + 'static> NodeRunner<T> {
             }
             None => None,
         };
-        let node_run_id = published
-            .node_run_id
+        let source_run_id = published
+            .source_run_id
             .as_deref()
-            .map(|value| Self::parse_uuid(value, "node_run_id"))
+            .map(|value| Self::parse_uuid(value, "source_run_id"))
             .transpose()?;
 
         Ok(Event {
@@ -148,7 +148,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                 SinexError::processing("Invalid host in provisional event payload")
                     .with_source(error)
             })?,
-            node_run_id,
+            source_run_id,
             payload_schema_id,
             provenance,
             associated_blob_ids,

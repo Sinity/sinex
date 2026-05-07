@@ -3,7 +3,7 @@
 //! This module defines the tables within the `sinex_schemas` and `core` namespaces
 //! that are responsible for managing the system's "meta-layer". This includes:
 //! - Data contracts for event payloads (`event_payload_schemas`).
-//! - Manifests for the nodes that interpret data (`node_manifests`).
+//! - Manifests for the nodes that interpret data (`source_manifests`).
 //! - Sources for discovering schemas via `GitOps` (`gitops_schema_sources` - aspirational, see docs).
 //! - Caching for validation results (`validation_cache`).
 
@@ -154,7 +154,7 @@ impl EventPayloadSchemas {
 // II. PROCESSOR MANIFESTS
 // =============================================================================
 
-/// **Table: `core.node_manifests`**
+/// **Table: `core.source_manifests`**
 ///
 /// A registry for the *immutable definition* of all nodes (ingestors, automata,
 /// agents). This table provides a durable record of each node's version and,
@@ -183,7 +183,7 @@ pub enum NodeManifests {
 
 impl TableDef for NodeManifests {
     fn table_name() -> &'static str {
-        "node_manifests"
+        "source_manifests"
     }
     fn schema_name() -> &'static str {
         "core"
@@ -287,7 +287,7 @@ impl NodeManifests {
     #[must_use]
     pub fn create_gin_indexes_sql() -> Vec<String> {
         vec![format!(
-            "CREATE INDEX IF NOT EXISTS ix_node_manifests_consumes_event_types \
+            "CREATE INDEX IF NOT EXISTS ix_source_manifests_consumes_event_types \
              ON {}.{} USING GIN ({})",
             Self::schema_name(),
             Self::table_name(),
@@ -300,27 +300,27 @@ impl NodeManifests {
 // II-B. NODE RUNS (Session/Run Identity)
 // =============================================================================
 
-/// **Table: `core.node_runs`**
+/// **Table: `core.source_runs`**
 ///
 /// Each row represents a single execution session of a node process. A run is
 /// created when a node starts, updated with heartbeats during operation, and
 /// marked with an `ended_at` timestamp on graceful shutdown.
 ///
-/// Events reference their producing run via `node_run_id`, replacing the old
+/// Events reference their producing run via `source_run_id`, replacing the old
 /// `node_version` string. This gives every event a durable link to:
-/// - The exact manifest (code version + config schema) via `node_manifest_id`
+/// - The exact manifest (code version + config schema) via `source_unit_id`
 /// - The runtime context (host, instance, config hash) via the run row itself
 ///
 /// ### Design decisions
 ///
 /// - UUID primary key (`UUIDv7`) for global uniqueness and temporal ordering.
-/// - `node_manifest_id` is a required FK to `core.node_manifests` — every run
+/// - `source_unit_id` is a required FK to `core.source_manifests` — every run
 ///   must be associated with a registered manifest.
 /// - `effective_config_hash` enables detecting config drift across runs of the
 ///   same manifest version.
 /// - `status` uses `NodeState` enum values from sinex-primitives domain types.
 #[derive(Iden, Copy, Clone)]
-pub enum NodeRuns {
+pub enum SourceRuns {
     Table,
     Id,
     NodeManifestId,
@@ -335,9 +335,9 @@ pub enum NodeRuns {
     EffectiveConfig,
 }
 
-impl TableDef for NodeRuns {
+impl TableDef for SourceRuns {
     fn table_name() -> &'static str {
-        "node_runs"
+        "source_runs"
     }
     fn schema_name() -> &'static str {
         "core"
@@ -348,9 +348,9 @@ impl TableDef for NodeRuns {
 }
 
 #[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
-pub struct NodeRunRecord {
+pub struct SourceRunRecord {
     pub id: Uuid,
-    pub node_manifest_id: i32,
+    pub source_unit_id: i32,
     pub service_name: String,
     pub instance_id: String,
     pub host: String,
@@ -362,35 +362,35 @@ pub struct NodeRunRecord {
     pub effective_config: Option<JsonValue>,
 }
 
-impl NodeRuns {
+impl SourceRuns {
     #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::table_iden())
             .if_not_exists()
             .col(
-                ColumnDef::new(NodeRuns::Id)
+                ColumnDef::new(SourceRuns::Id)
                     .custom(Alias::new("UUID"))
                     .primary_key()
                     .extra("DEFAULT uuidv7()"),
             )
             .col(
-                ColumnDef::new(NodeRuns::NodeManifestId)
+                ColumnDef::new(SourceRuns::NodeManifestId)
                     .integer()
                     .not_null(),
             )
-            .col(ColumnDef::new(NodeRuns::ServiceName).text().not_null())
-            .col(ColumnDef::new(NodeRuns::InstanceId).text().not_null())
-            .col(ColumnDef::new(NodeRuns::Host).text().not_null())
+            .col(ColumnDef::new(SourceRuns::ServiceName).text().not_null())
+            .col(ColumnDef::new(SourceRuns::InstanceId).text().not_null())
+            .col(ColumnDef::new(SourceRuns::Host).text().not_null())
             .col(
-                ColumnDef::new(NodeRuns::StartedAt)
+                ColumnDef::new(SourceRuns::StartedAt)
                     .timestamp_with_time_zone()
                     .not_null()
                     .default(Expr::current_timestamp()),
             )
-            .col(ColumnDef::new(NodeRuns::EndedAt).timestamp_with_time_zone())
+            .col(ColumnDef::new(SourceRuns::EndedAt).timestamp_with_time_zone())
             .col(
-                ColumnDef::new(NodeRuns::Status)
+                ColumnDef::new(SourceRuns::Status)
                     .text()
                     .not_null()
                     .default("running")
@@ -398,12 +398,12 @@ impl NodeRuns {
                         "status IN ('running', 'draining', 'paused', 'failed', 'stopped')",
                     )),
             )
-            .col(ColumnDef::new(NodeRuns::LastHeartbeatAt).timestamp_with_time_zone())
-            .col(ColumnDef::new(NodeRuns::EffectiveConfigHash).text())
-            .col(ColumnDef::new(NodeRuns::EffectiveConfig).json_binary())
+            .col(ColumnDef::new(SourceRuns::LastHeartbeatAt).timestamp_with_time_zone())
+            .col(ColumnDef::new(SourceRuns::EffectiveConfigHash).text())
+            .col(ColumnDef::new(SourceRuns::EffectiveConfig).json_binary())
             .foreign_key(
                 ForeignKey::create()
-                    .from(Self::table_iden(), NodeRuns::NodeManifestId)
+                    .from(Self::table_iden(), SourceRuns::NodeManifestId)
                     .to(NodeManifests::table_iden(), Alias::new("id"))
                     .on_delete(ForeignKeyAction::Restrict),
             )
@@ -416,24 +416,24 @@ impl NodeRuns {
             // Find active runs for a given service
             Index::create()
                 .if_not_exists()
-                .name("ix_node_runs_service_status")
+                .name("ix_source_runs_service_status")
                 .table(Self::table_iden())
-                .col(NodeRuns::ServiceName)
-                .col(NodeRuns::Status)
+                .col(SourceRuns::ServiceName)
+                .col(SourceRuns::Status)
                 .to_owned(),
             // Find runs by manifest
             Index::create()
                 .if_not_exists()
-                .name("ix_node_runs_manifest")
+                .name("ix_source_runs_manifest")
                 .table(Self::table_iden())
-                .col(NodeRuns::NodeManifestId)
+                .col(SourceRuns::NodeManifestId)
                 .to_owned(),
             // Heartbeat staleness queries
             Index::create()
                 .if_not_exists()
-                .name("ix_node_runs_heartbeat")
+                .name("ix_source_runs_heartbeat")
                 .table(Self::table_iden())
-                .col(NodeRuns::LastHeartbeatAt)
+                .col(SourceRuns::LastHeartbeatAt)
                 .cond_where(Expr::cust("status = 'running'"))
                 .to_owned(),
         ]
