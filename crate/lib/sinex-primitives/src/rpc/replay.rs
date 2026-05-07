@@ -57,6 +57,14 @@ impl ReplayState {
 /// Scope defining what to replay
 ///
 /// Mirrors `sinex_db::replay::state_machine::ReplayScope`
+///
+/// ## Compatibility
+///
+/// The four staged-source fields (`source_unit_id`, `source_material_id`,
+/// `parser_id`, `parser_version`) are optional and backward-compatible:
+/// existing `node_id`-only scopes continue to work as before. A scope that
+/// specifies any staged-source field implies the replay planner should queue
+/// parser jobs for the matching materials rather than scanning a live ingestor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayScope {
     /// Node ID to replay
@@ -70,6 +78,32 @@ pub struct ReplayScope {
     /// Additional filters as JSON
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub filters: HashMap<String, Value>,
+    /// ── Staged-source architecture extension (#1060) ────────────
+    /// Replay only material registered by this source unit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_unit_id: Option<String>,
+    /// Replay only this specific source material (UUIDv7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_material_id: Option<String>,
+    /// Queue parser jobs from this parser profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parser_id: Option<String>,
+    /// Constrain parser version (resolves latest matching if omitted).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parser_version: Option<String>,
+}
+
+impl ReplayScope {
+    /// Returns `true` when the scope references the staged-source architecture
+    /// (source units, materials, or parsers). Replay planning uses this to
+    /// decide between live-ingestor scanning and parser-queue replay.
+    #[must_use]
+    pub fn is_staged_source_scope(&self) -> bool {
+        self.source_unit_id.is_some()
+            || self.source_material_id.is_some()
+            || self.parser_id.is_some()
+            || self.parser_version.is_some()
+    }
 }
 
 /// Checkpoint for resumable execution
