@@ -61,7 +61,9 @@ pub use coordination::{
 pub use node_registry::{handle_nodes_health, handle_nodes_list_active};
 pub use pkm::{handle_create_entities, handle_create_note, handle_link_entities};
 pub use sources::{
-    handle_sources_coverage, handle_sources_list, handle_sources_show, handle_sources_stage,
+    handle_sources_bindings_create, handle_sources_bindings_list, handle_sources_bindings_resolve,
+    handle_sources_coverage, handle_sources_list, handle_sources_presets_list, handle_sources_show,
+    handle_sources_stage,
 };
 pub use system::{handle_system_health, handle_system_ping, handle_system_version};
 pub use telemetry::{

@@ -303,6 +303,12 @@ impl SourceMaterial {
         self.optional_blob_id = Some(blob_id);
         self
     }
+    /// Fluent method to set an optional blob ID.
+    #[must_use]
+    pub fn with_optional_blob_id(mut self, blob_id: Option<Id<crate::Blob>>) -> Self {
+        self.optional_blob_id = blob_id;
+        self
+    }
     /// Fluent method to set encoding (stored in metadata)
     pub fn with_encoding(mut self, encoding: impl Into<String>) -> Self {
         self.metadata_object_mut()
