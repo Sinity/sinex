@@ -1,7 +1,7 @@
 //! Database-backed node identity registration helpers for `NodeRunner<T>`.
 //!
 //! These methods are only compiled with the `db` feature and update the
-//! `core.node_manifests` / `core.node_runs` tables to expose the running node
+//! `core.node_manifests` / `core.source_runs` tables to expose the running node
 //! identity to operators and downstream automation.
 
 #[cfg(feature = "db")]
@@ -71,19 +71,19 @@ impl<T: Node + 'static> NodeRunner<T> {
         service_info: &ServiceInfo,
         status: NodeState,
     ) {
-        let Some(node_run_id) = service_info.node_run_id() else {
+        let Some(source_run_id) = service_info.source_run_id() else {
             return;
         };
-        let node_run_id = Id::<sinex_db::repositories::state::NodeRun>::from_uuid(node_run_id);
+        let source_run_id = Id::<sinex_db::repositories::state::NodeRun>::from_uuid(source_run_id);
         if let Err(error) = pool
             .state()
-            .update_node_run_status(node_run_id, status)
+            .update_node_run_status(source_run_id, status)
             .await
         {
             warn!(
                 node = %service_info.node_name(),
                 service = %service_info.service_name(),
-                node_run_id = %node_run_id,
+                source_run_id = %source_run_id,
                 target_status = %status,
                 error = %error,
                 "Failed to persist node run terminal status"

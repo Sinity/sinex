@@ -83,8 +83,8 @@ impl NodeRuntimeState {
     }
 
     #[must_use]
-    pub fn node_run_id(&self) -> Option<Uuid> {
-        self.service_info.node_run_id()
+    pub fn source_run_id(&self) -> Option<Uuid> {
+        self.service_info.source_run_id()
     }
 
     #[must_use]

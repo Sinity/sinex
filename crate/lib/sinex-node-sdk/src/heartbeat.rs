@@ -117,7 +117,7 @@ pub struct HeartbeatEmitter {
     last_emitted_status: Arc<parking_lot::Mutex<ProcessStatus>>,
     /// Sliding window for error tracking (last 5 minutes).
     error_window: Arc<parking_lot::Mutex<Vec<Instant>>>,
-    node_run_id: Option<Uuid>,
+    source_run_id: Option<Uuid>,
     /// Counter for rate-limiting persistence failure warn! logs (every 100th).
     persistence_warn_count: Arc<AtomicU64>,
     /// Optional database pool for persisting heartbeat status to `core.node_manifests`.
@@ -160,7 +160,7 @@ impl HeartbeatEmitter {
             log_sink: Arc::new(StdoutHeartbeatSink),
             last_emitted_status: Arc::new(parking_lot::Mutex::new(ProcessStatus::Healthy)),
             error_window: Arc::new(parking_lot::Mutex::new(Vec::new())),
-            node_run_id: None,
+            source_run_id: None,
             persistence_warn_count: Arc::new(AtomicU64::new(0)),
             #[cfg(feature = "db")]
             db_pool: None,
@@ -186,8 +186,8 @@ impl HeartbeatEmitter {
     }
 
     #[must_use]
-    pub fn with_node_run_id(mut self, node_run_id: Uuid) -> Self {
-        self.node_run_id = Some(node_run_id);
+    pub fn with_source_run_id(mut self, source_run_id: Uuid) -> Self {
+        self.source_run_id = Some(source_run_id);
         self
     }
 
@@ -212,8 +212,8 @@ impl HeartbeatEmitter {
         .with_node_name(NodeName::new(runtime.node_name()))
         .with_version(runtime.version().to_string());
 
-        let emitter = if let Some(node_run_id) = runtime.node_run_id() {
-            emitter.with_node_run_id(node_run_id)
+        let emitter = if let Some(source_run_id) = runtime.source_run_id() {
+            emitter.with_source_run_id(source_run_id)
         } else {
             emitter
         };
@@ -425,7 +425,7 @@ impl HeartbeatEmitter {
             let log_persistence_warn = warn_skipped % 100 == 0;
 
             use sinex_db::DbPoolExt;
-            if self.node_name.is_none() && self.node_run_id.is_none() {
+            if self.node_name.is_none() && self.source_run_id.is_none() {
                 if log_persistence_warn {
                     warn!(
                         service = %metrics.service_name,
@@ -472,23 +472,23 @@ impl HeartbeatEmitter {
                 }
             }
 
-            if let Some(node_run_id) = self.node_run_id {
-                let typed_node_run_id =
-                    Id::<sinex_db::repositories::state::NodeRun>::from_uuid(node_run_id);
+            if let Some(source_run_id) = self.source_run_id {
+                let typed_source_run_id =
+                    Id::<sinex_db::repositories::state::NodeRun>::from_uuid(source_run_id);
                 match pool
                     .state()
-                    .update_node_run_heartbeat(typed_node_run_id)
+                    .update_node_run_heartbeat(typed_source_run_id)
                     .await
                 {
                     Ok(true) => {}
                     Ok(false) => {
                         self.record_error(&format!(
-                            "Heartbeat did not persist because the node run row is missing for {node_run_id}"
+                            "Heartbeat did not persist because the node run row is missing for {source_run_id}"
                         ));
                         if log_persistence_warn {
                             warn!(
                                 service = %metrics.service_name,
-                                node_run_id = %node_run_id,
+                                source_run_id = %source_run_id,
                                 skipped = warn_skipped,
                                 "Heartbeat did not persist because the node run row is missing (rate-limited)"
                             );
@@ -501,7 +501,7 @@ impl HeartbeatEmitter {
                         if log_persistence_warn {
                             warn!(
                                 service = %metrics.service_name,
-                                node_run_id = %node_run_id,
+                                source_run_id = %source_run_id,
                                 error = %e,
                                 skipped = warn_skipped,
                                 "Failed to persist node run heartbeat to database (rate-limited)"

@@ -781,7 +781,7 @@ mod tests {
                 payload: serde_json::to_value(&payload)?,
                 ts_orig: Some(end),
                 host: sinex_primitives::events::builder::get_hostname(),
-                node_run_id: None,
+                source_run_id: None,
                 payload_schema_id: None,
                 provenance: sinex_primitives::events::Provenance::Material {
                     id: Id::new(),

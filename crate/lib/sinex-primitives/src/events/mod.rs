@@ -58,9 +58,9 @@ pub struct Event<T = JsonValue> {
     pub host: HostName,
 
     /// UUID of the node run (session) that created this event.
-    /// References `core.node_runs.id`.
+    /// References `core.source_runs.id`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub node_run_id: Option<Uuid>,
+    pub source_run_id: Option<Uuid>,
 
     /// Schema ID for payload validation
     pub payload_schema_id: Option<Uuid>,
@@ -127,9 +127,9 @@ impl<T> Event<T> {
         self
     }
 
-    /// Set the node run ID (references `core.node_runs`)
-    pub fn with_node_run_id(mut self, run_id: Uuid) -> Self {
-        self.node_run_id = Some(run_id);
+    /// Set the node run ID (references `core.source_runs`)
+    pub fn with_source_run_id(mut self, run_id: Uuid) -> Self {
+        self.source_run_id = Some(run_id);
         self
     }
 
@@ -195,7 +195,7 @@ impl<T: Serialize> Event<T> {
             payload: serde_json::to_value(self.payload)?,
             ts_orig: self.ts_orig,
             host: self.host,
-            node_run_id: self.node_run_id,
+            source_run_id: self.source_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance: self.provenance,
             associated_blob_ids: self.associated_blob_ids,
@@ -223,7 +223,7 @@ impl Event<JsonValue> {
             payload: serde_json::from_value(self.payload.clone())?,
             ts_orig: self.ts_orig,
             host: self.host.clone(),
-            node_run_id: self.node_run_id,
+            source_run_id: self.source_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance: self.provenance.clone(),
             associated_blob_ids: self.associated_blob_ids.clone(),
@@ -253,7 +253,7 @@ impl Event<JsonValue> {
             payload,
             ts_orig: Some(Timestamp::now()),
             host: builder::get_hostname(),
-            node_run_id: None,
+            source_run_id: None,
             payload_schema_id: None,
             provenance,
             associated_blob_ids: None,

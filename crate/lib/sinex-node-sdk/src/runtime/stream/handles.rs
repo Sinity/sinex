@@ -120,7 +120,7 @@ pub struct ServiceInfo {
     dry_run: bool,
     instance_id: String,
     version: String,
-    node_run_id: Option<Uuid>,
+    source_run_id: Option<Uuid>,
 }
 
 impl ServiceInfo {
@@ -133,7 +133,7 @@ impl ServiceInfo {
         dry_run: bool,
         instance_id: String,
         version: String,
-        node_run_id: Option<Uuid>,
+        source_run_id: Option<Uuid>,
     ) -> Self {
         Self {
             service_name: service_name.into(),
@@ -145,7 +145,7 @@ impl ServiceInfo {
             dry_run,
             instance_id,
             version,
-            node_run_id,
+            source_run_id,
         }
     }
 
@@ -161,7 +161,7 @@ impl ServiceInfo {
         dry_run: bool,
         instance_id: String,
         version: String,
-        node_run_id: Option<Uuid>,
+        source_run_id: Option<Uuid>,
     ) -> Self {
         Self {
             service_name: service_name.into(),
@@ -173,7 +173,7 @@ impl ServiceInfo {
             dry_run,
             instance_id,
             version,
-            node_run_id,
+            source_run_id,
         }
     }
 
@@ -237,8 +237,8 @@ impl ServiceInfo {
     }
 
     #[must_use]
-    pub fn node_run_id(&self) -> Option<Uuid> {
-        self.node_run_id
+    pub fn source_run_id(&self) -> Option<Uuid> {
+        self.source_run_id
     }
 }
 
@@ -247,7 +247,7 @@ impl ServiceInfo {
 pub struct EventEmitter {
     sender: Arc<EventSender>,
     dry_run: bool,
-    default_node_run_id: Option<Uuid>,
+    default_source_run_id: Option<Uuid>,
     default_created_by_operation_id: Option<Uuid>,
     #[cfg(feature = "messaging")]
     validator: Option<Arc<crate::schema_validator::NodeSchemaValidator>>,
@@ -259,7 +259,7 @@ impl EventEmitter {
         Self {
             sender: Arc::new(sender),
             dry_run,
-            default_node_run_id: None,
+            default_source_run_id: None,
             default_created_by_operation_id: None,
             #[cfg(feature = "messaging")]
             validator: None,
@@ -277,7 +277,7 @@ impl EventEmitter {
         Self {
             sender: Arc::new(sender),
             dry_run,
-            default_node_run_id: None,
+            default_source_run_id: None,
             default_created_by_operation_id: None,
             validator: Some(validator),
         }
@@ -294,8 +294,8 @@ impl EventEmitter {
     }
 
     #[must_use]
-    pub fn with_default_node_run_id(mut self, node_run_id: Uuid) -> Self {
-        self.default_node_run_id = Some(node_run_id);
+    pub fn with_default_source_run_id(mut self, source_run_id: Uuid) -> Self {
+        self.default_source_run_id = Some(source_run_id);
         self
     }
 
@@ -311,7 +311,7 @@ impl EventEmitter {
         Self {
             sender: Arc::new(sender),
             dry_run: self.dry_run,
-            default_node_run_id: self.default_node_run_id,
+            default_source_run_id: self.default_source_run_id,
             default_created_by_operation_id: self.default_created_by_operation_id,
             #[cfg(feature = "messaging")]
             validator: self.validator.clone(),
@@ -323,8 +323,8 @@ impl EventEmitter {
             event.id = Some(Id::new());
         }
 
-        if event.node_run_id.is_none() {
-            event.node_run_id = self.default_node_run_id;
+        if event.source_run_id.is_none() {
+            event.source_run_id = self.default_source_run_id;
         }
 
         if event.created_by_operation_id.is_none() {
@@ -397,7 +397,7 @@ mod tests {
             payload: serde_json::json!({"ok": true}),
             ts_orig: Some(Timestamp::now()),
             host: HostName::from_static("runtime-test-host"),
-            node_run_id: None,
+            source_run_id: None,
             payload_schema_id: None,
             provenance: Provenance::Material {
                 id: Id::from_uuid(Uuid::now_v7()),
@@ -453,7 +453,7 @@ mod tests {
             payload: serde_json::json!({"ok": true}),
             ts_orig: Some(Timestamp::now()),
             host: HostName::from_static("runtime-test-host"),
-            node_run_id: None,
+            source_run_id: None,
             payload_schema_id: Some(explicit_schema_id),
             provenance: Provenance::Material {
                 id: Id::from_uuid(Uuid::now_v7()),
@@ -492,7 +492,7 @@ mod tests {
             payload: serde_json::json!({"ok": true}),
             ts_orig: Some(Timestamp::now()),
             host: HostName::from_static("runtime-test-host"),
-            node_run_id: None,
+            source_run_id: None,
             payload_schema_id: None,
             provenance: Provenance::Material {
                 id: Id::from_uuid(Uuid::now_v7()),
@@ -533,7 +533,7 @@ mod tests {
             payload: serde_json::json!({"ok": true}),
             ts_orig: Some(Timestamp::now()),
             host: HostName::from_static("runtime-test-host"),
-            node_run_id: None,
+            source_run_id: None,
             payload_schema_id: None,
             provenance: Provenance::Material {
                 id: Id::from_uuid(Uuid::now_v7()),

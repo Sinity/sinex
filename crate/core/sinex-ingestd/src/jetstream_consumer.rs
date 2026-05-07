@@ -176,7 +176,7 @@ fn batch_depends_only_on_source_material_fk(batch: &[&PreparedEvent]) -> bool {
     batch.iter().all(|prepared| {
         matches!(prepared.event.provenance, Provenance::Material { .. })
             && prepared.event.payload_schema_id.is_none()
-            && prepared.event.node_run_id.is_none()
+            && prepared.event.source_run_id.is_none()
     })
 }
 

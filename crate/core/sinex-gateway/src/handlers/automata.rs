@@ -34,7 +34,7 @@ pub async fn handle_automata_status(pool: &PgPool, params: Value) -> Result<Valu
             live: row.live,
             service_name: row.service_name,
             instance_id: row.instance_id,
-            node_run_id: row.node_run_id,
+            source_run_id: row.source_run_id,
             host: row.host,
             run_status: row.run_status,
             started_at: row.started_at,

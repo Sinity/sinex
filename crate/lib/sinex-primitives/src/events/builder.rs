@@ -22,7 +22,7 @@ pub struct EventBuilder<T, P> {
     pub(crate) payload: T,
     pub(crate) timestamp: Option<Timestamp>,
     pub(crate) hostname: Option<crate::domain::HostName>,
-    pub(crate) node_run_id: Option<Uuid>,
+    pub(crate) source_run_id: Option<Uuid>,
     pub(crate) payload_schema_id: Option<Uuid>,
     pub(crate) provenance_data: Option<Provenance>,
     pub(crate) associated_blob_ids: Option<Vec<Uuid>>,
@@ -44,7 +44,7 @@ impl<T> EventBuilder<T, NoProvenance> {
             payload,
             timestamp: None,
             hostname: None,
-            node_run_id: None,
+            source_run_id: None,
             payload_schema_id: None,
             provenance_data: None,
             associated_blob_ids: None,
@@ -60,9 +60,9 @@ impl<T> EventBuilder<T, NoProvenance> {
         self
     }
 
-    /// Set the node run ID (references `core.node_runs`)
-    pub fn node_run_id(mut self, run_id: Uuid) -> Self {
-        self.node_run_id = Some(run_id);
+    /// Set the node run ID (references `core.source_runs`)
+    pub fn source_run_id(mut self, run_id: Uuid) -> Self {
+        self.source_run_id = Some(run_id);
         self
     }
 
@@ -89,7 +89,7 @@ impl<T> EventBuilder<T, NoProvenance> {
             payload: self.payload,
             timestamp: self.timestamp,
             hostname: self.hostname,
-            node_run_id: self.node_run_id,
+            source_run_id: self.source_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance_data: Some(provenance),
             associated_blob_ids: self.associated_blob_ids,
@@ -222,7 +222,7 @@ impl<T> EventBuilder<T, HasProvenance> {
             payload: self.payload,
             ts_orig: self.timestamp.or_else(|| Some(Timestamp::now())),
             host: self.hostname.unwrap_or_else(get_hostname),
-            node_run_id: self.node_run_id,
+            source_run_id: self.source_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance,
             associated_blob_ids: self.associated_blob_ids,
