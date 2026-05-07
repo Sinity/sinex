@@ -16,7 +16,6 @@ pub mod documents;
 pub mod embeddings;
 pub mod entities;
 pub mod events;
-pub mod occurrences;
 pub mod operations;
 pub mod parser_registry;
 pub mod sinex_schemas;
@@ -32,7 +31,6 @@ pub use documents::*;
 pub use embeddings::*;
 pub use entities::*;
 pub use events::*;
-pub use occurrences::*;
 pub use operations::*;
 pub use parser_registry::*;
 pub use sinex_schemas::*;
@@ -48,7 +46,6 @@ pub mod records {
     pub use super::embeddings::EmbeddingModelRecord;
     pub use super::entities::EntityRecord;
     pub use super::events::{EventRecord, EventReplacementRecord};
-    pub use super::occurrences::{MaterialInterpretationRecord, OccurrenceRecord};
     pub use super::parser_registry::{ParserJobRecord, ParserRegistryRecord};
     pub use super::sinex_schemas::{EventPayloadSchemaRecord, NodeManifestRecord, NodeRunRecord};
     pub use super::acquisition_jobs::AcquisitionJobRecord;
@@ -341,22 +338,6 @@ const ALL_TABLES: &[TableMeta] = &[
         schema: "core",
         name: "document_chunks",
         qualified_name: "core.document_chunks",
-        is_hypertable: false,
-        has_triggers: false,
-        cleanup_protected: false,
-    },
-    TableMeta {
-        schema: "raw",
-        name: "occurrences",
-        qualified_name: "raw.occurrences",
-        is_hypertable: false,
-        has_triggers: false,
-        cleanup_protected: false,
-    },
-    TableMeta {
-        schema: "raw",
-        name: "material_interpretations",
-        qualified_name: "raw.material_interpretations",
         is_hypertable: false,
         has_triggers: false,
         cleanup_protected: false,

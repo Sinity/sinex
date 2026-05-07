@@ -264,6 +264,10 @@ impl MockGatewayClient {
                     time_window: None,
                     material_filter: None,
                     filters: HashMap::new(),
+                    source_unit_id: None,
+                    source_material_id: None,
+                    parser_id: None,
+                    parser_version: None,
                 },
                 preview_summary: None,
                 checkpoint: ReplayCheckpoint {

@@ -10,13 +10,14 @@ pub mod events_extensions;
 pub mod gitops;
 pub mod integrity;
 pub mod knowledge_graph;
-pub mod occurrence;
 pub mod parser_jobs;
 pub mod replay;
 pub mod schema_cache;
 pub mod schema_management;
 pub mod source_bindings;
 pub mod source_materials;
+#[path = "occurrences.rs"]
+pub mod occurrence;
 pub mod state;
 
 // Re-export main types
@@ -38,7 +39,6 @@ pub use knowledge_graph::{
     CreateEntity, CreateEntityRelation, EntityExt, EntityRecord, EntityRelationExt,
     EntityRelationRecord, EntityType, KnowledgeGraphRepository,
 };
-pub use occurrence::{MaterialInterpretationRepository, OccurrenceRepository};
 pub use parser_jobs::{ParserJobRepository, ParserJobRow};
 pub use replay::ReplayRepository;
 pub use schema_cache::{CachedSchema, SchemaCacheRepository};
@@ -83,7 +83,7 @@ pub trait DbPoolExt {
     fn replay(&self) -> replay::ReplayRepository<'_>;
     fn integrity(&self) -> integrity::IntegrityRepository<'_>;
     fn occurrences(&self) -> occurrence::OccurrenceRepository<'_>;
-    fn material_interpretations(&self) -> occurrence::MaterialInterpretationRepository<'_>;
+    fn material_interpretations(&self) -> occurrence::InterpretationRepository<'_>;
     async fn with_transaction<F, T>(&self, f: F) -> crate::DbResult<T>
     where
         F: for<'tx> AsyncFnOnce(&'tx mut crate::DbTransaction<'_>) -> crate::DbResult<T>;
@@ -150,8 +150,8 @@ impl DbPoolExt for PgPool {
         occurrence::OccurrenceRepository::new(self)
     }
 
-    fn material_interpretations(&self) -> occurrence::MaterialInterpretationRepository<'_> {
-        occurrence::MaterialInterpretationRepository::new(self)
+    fn material_interpretations(&self) -> occurrence::InterpretationRepository<'_> {
+        occurrence::InterpretationRepository::new(self)
     }
 
     async fn with_transaction<F, T>(&self, f: F) -> crate::DbResult<T>
