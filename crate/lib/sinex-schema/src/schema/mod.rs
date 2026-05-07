@@ -17,7 +17,9 @@ pub mod entities;
 pub mod events;
 pub mod occurrences;
 pub mod operations;
+pub mod parser_registry;
 pub mod sinex_schemas;
+pub mod source_bindings;
 pub mod source_materials;
 pub mod temporal_ledger;
 
@@ -30,7 +32,9 @@ pub use entities::*;
 pub use events::*;
 pub use occurrences::*;
 pub use operations::*;
+pub use parser_registry::*;
 pub use sinex_schemas::*;
+pub use source_bindings::*;
 pub use source_materials::*;
 pub use temporal_ledger::*;
 
@@ -42,8 +46,12 @@ pub mod records {
     pub use super::embeddings::EmbeddingModelRecord;
     pub use super::entities::EntityRecord;
     pub use super::events::{EventRecord, EventReplacementRecord};
-    pub use super::sinex_schemas::{EventPayloadSchemaRecord, NodeManifestRecord, NodeRunRecord};
     pub use super::occurrences::{MaterialInterpretationRecord, OccurrenceRecord};
+    pub use super::parser_registry::{ParserJobRecord, ParserRegistryRecord};
+    pub use super::sinex_schemas::{EventPayloadSchemaRecord, NodeManifestRecord, NodeRunRecord};
+    pub use super::source_bindings::{
+        SourceBindingRecord, SourceBindingResolutionLogRecord,
+    };
     pub use super::source_materials::{SourceMaterialLinkRecord, SourceMaterialRecord};
     pub use super::temporal_ledger::TemporalLedgerRecord;
 }
@@ -280,22 +288,6 @@ const ALL_TABLES: &[TableMeta] = &[
     },
     TableMeta {
         schema: "raw",
-        name: "occurrences",
-        qualified_name: "raw.occurrences",
-        is_hypertable: false,
-        has_triggers: false,
-        cleanup_protected: false,
-    },
-    TableMeta {
-        schema: "raw",
-        name: "material_interpretations",
-        qualified_name: "raw.material_interpretations",
-        is_hypertable: false,
-        has_triggers: false,
-        cleanup_protected: false,
-    },
-    TableMeta {
-        schema: "raw",
         name: "source_material_links",
         qualified_name: "raw.source_material_links",
         is_hypertable: false,
@@ -346,6 +338,54 @@ const ALL_TABLES: &[TableMeta] = &[
         schema: "core",
         name: "document_chunks",
         qualified_name: "core.document_chunks",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "raw",
+        name: "occurrences",
+        qualified_name: "raw.occurrences",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "raw",
+        name: "material_interpretations",
+        qualified_name: "raw.material_interpretations",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "raw",
+        name: "parser_registry",
+        qualified_name: "raw.parser_registry",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "raw",
+        name: "parser_jobs",
+        qualified_name: "raw.parser_jobs",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "raw",
+        name: "source_bindings",
+        qualified_name: "raw.source_bindings",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "raw",
+        name: "source_binding_resolution_log",
+        qualified_name: "raw.source_binding_resolution_log",
         is_hypertable: false,
         has_triggers: false,
         cleanup_protected: false,

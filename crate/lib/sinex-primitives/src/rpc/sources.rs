@@ -137,6 +137,16 @@ pub struct SourcesStageRequest {
     /// Operator tags attached to the material contract.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    /// Optional binding name — if provided, the binding's privacy policy is applied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding_name: Option<String>,
+    /// Whether to store raw bytes in the content store (default: true).
+    #[serde(default = "default_with_bytes")]
+    pub with_bytes: bool,
+}
+
+fn default_with_bytes() -> bool {
+    true
 }
 
 /// Response: `sources.stage`
@@ -148,6 +158,12 @@ pub struct SourcesStageResponse {
     pub source_identifier: String,
     /// File size in bytes, if available
     pub total_bytes: Option<i64>,
+    /// Content-store blob ID, if bytes were stored
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blob_id: Option<String>,
+    /// BLAKE3 checksum of the stored bytes, if bytes were stored
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checksum_blake3: Option<String>,
     pub contract: SourceMaterialMetadataContract,
 }
 
@@ -262,4 +278,139 @@ pub struct SourceCoverageEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourcesCoverageResponse {
     pub sources: Vec<SourceCoverageEntry>,
+}
+
+// ─────────────────────────────────────────────────────────────
+// sources.presets.list
+// ─────────────────────────────────────────────────────────────
+
+/// A built-in resolver preset.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcePresetDescriptor {
+    /// Preset identifier (e.g. "atuin.default", "zsh.default").
+    pub name: String,
+    /// Human-readable label.
+    pub description: String,
+    /// Source family (e.g. "terminal", "browser", "desktop").
+    pub source_family: String,
+    /// Expected input shape kind.
+    pub input_shape_kind: String,
+    /// Format hint for the material.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material_format_hint: Option<String>,
+    /// Default resolver preset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolver_preset: Option<String>,
+}
+
+/// Response: `sources.presets.list`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcesPresetsListResponse {
+    pub presets: Vec<SourcePresetDescriptor>,
+}
+
+// ─────────────────────────────────────────────────────────────
+// sources.bindings.list
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `sources.bindings.list`
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SourcesBindingsListRequest {
+    /// Optional source family filter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_family: Option<String>,
+    /// Include disabled bindings.
+    #[serde(default)]
+    pub include_disabled: bool,
+}
+
+/// Summary row for a source binding.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceBindingSummary {
+    pub id: String,
+    pub name: String,
+    pub source_family: String,
+    pub binding_mode: String,
+    pub input_shape_kind: String,
+    pub enabled: bool,
+    pub status: String,
+    pub last_error: Option<String>,
+    pub created_at: Option<String>,
+}
+
+/// Response: `sources.bindings.list`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcesBindingsListResponse {
+    pub bindings: Vec<SourceBindingSummary>,
+}
+
+// ─────────────────────────────────────────────────────────────
+// sources.bindings.create
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `sources.bindings.create`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcesBindingsCreateRequest {
+    /// Unique binding name.
+    pub name: String,
+    /// Source family (e.g. "terminal", "browser").
+    pub source_family: String,
+    /// Binding mode: stage_only, stage_then_parse, live_capture, external_producer.
+    pub binding_mode: String,
+    /// Expected input shape kind.
+    pub input_shape_kind: String,
+    /// Resolver preset name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolver_preset: Option<String>,
+    /// Locator JSON (path, URL, etc.).
+    #[serde(default)]
+    pub locator: JsonValue,
+    /// Format hint for the material.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material_format_hint: Option<String>,
+    /// Privacy policy ID.
+    #[serde(default = "default_privacy_policy_id")]
+    pub privacy_policy_id: String,
+    /// Raw material policy JSON.
+    #[serde(default)]
+    pub raw_material_policy: JsonValue,
+    /// Whether the binding is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_privacy_policy_id() -> String {
+    "allowed_plaintext".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Response: `sources.bindings.create`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcesBindingsCreateResponse {
+    pub id: String,
+    pub name: String,
+}
+
+// ─────────────────────────────────────────────────────────────
+// sources.bindings.resolve
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `sources.bindings.resolve`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcesBindingsResolveRequest {
+    /// Name of the binding to resolve.
+    pub binding_name: String,
+}
+
+/// Response: `sources.bindings.resolve`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcesBindingsResolveResponse {
+    pub binding_name: String,
+    pub resolved: bool,
+    pub candidate_count: i32,
+    pub selected_locator: Option<JsonValue>,
+    pub error_summary: Option<String>,
 }

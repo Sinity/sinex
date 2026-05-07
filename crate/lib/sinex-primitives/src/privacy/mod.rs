@@ -68,7 +68,7 @@ pub fn process_json(
 ///
 /// Different contexts activate different rule subsets and have different
 /// false-positive tolerances.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProcessingContext {
     /// Shell commands, command-line arguments.
@@ -87,6 +87,10 @@ pub enum ProcessingContext {
     Document,
     /// Structured metadata fields (hostnames, PIDs, paths).
     Metadata,
+    /// Raw source material capture — file content before any parser runs.
+    /// Applied at the staging boundary to classify and filter source bytes
+    /// before they enter durable storage.
+    SourceCapture,
 }
 
 // ─── Strategy ────────────────────────────────────────────────
@@ -426,6 +430,77 @@ fn home_suffix(path: &str) -> Option<&str> {
 /// (starts with a hidden directory, i.e. `.local/`, `.config/`, `.cache/`, etc.).
 fn is_application_data_suffix(suffix: &str) -> bool {
     suffix.starts_with('.') || suffix.is_empty()
+}
+
+// ─── Material capture class ──────────────────────────────────
+
+/// Classification that determines how raw source-material bytes are handled
+/// at the staging boundary.
+///
+/// Canonical values live in `sinex-schema::schema::source_bindings::material_capture_class`.
+/// This enum provides the type-safe Rust representation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MaterialCaptureClass {
+    /// Raw bytes may be stored as plaintext in the content store.
+    AllowedPlaintext,
+    /// Only metadata is stored; raw bytes are discarded after classification.
+    MetadataOnly,
+    /// Raw bytes are encrypted before content-store persistence.
+    EncryptedMaterial,
+    /// Bytes stored in a restricted directory; not parsed until approved.
+    LocalQuarantine,
+    /// Material is rejected entirely — nothing stored.
+    Suppressed,
+    /// Requires one-shot operator confirmation before staging.
+    ExplicitImport,
+}
+
+impl MaterialCaptureClass {
+    /// Convert from the canonical string representation.
+    #[must_use]
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "allowed_plaintext" => Some(Self::AllowedPlaintext),
+            "metadata_only" => Some(Self::MetadataOnly),
+            "encrypted_material" => Some(Self::EncryptedMaterial),
+            "local_quarantine" => Some(Self::LocalQuarantine),
+            "suppressed" => Some(Self::Suppressed),
+            "explicit_import" => Some(Self::ExplicitImport),
+            _ => None,
+        }
+    }
+
+    /// Return the canonical string representation.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::AllowedPlaintext => "allowed_plaintext",
+            Self::MetadataOnly => "metadata_only",
+            Self::EncryptedMaterial => "encrypted_material",
+            Self::LocalQuarantine => "local_quarantine",
+            Self::Suppressed => "suppressed",
+            Self::ExplicitImport => "explicit_import",
+        }
+    }
+
+    /// Whether bytes content may be stored (in any form).
+    #[must_use]
+    pub fn allows_byte_storage(&self) -> bool {
+        matches!(self, Self::AllowedPlaintext | Self::EncryptedMaterial | Self::LocalQuarantine)
+    }
+
+    /// Whether the material is rejected entirely (nothing stored).
+    #[must_use]
+    pub fn is_rejected(&self) -> bool {
+        matches!(self, Self::Suppressed)
+    }
+
+    /// Whether operator confirmation is required.
+    #[must_use]
+    pub fn requires_confirmation(&self) -> bool {
+        matches!(self, Self::ExplicitImport)
+    }
 }
 
 // ─── Error ───────────────────────────────────────────────────

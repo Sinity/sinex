@@ -96,6 +96,11 @@ pub const SOURCES_STAGE: &str = "sources.stage";
 pub const SOURCES_LIST: &str = "sources.list";
 pub const SOURCES_SHOW: &str = "sources.show";
 pub const SOURCES_COVERAGE: &str = "sources.coverage";
+pub const SOURCES_PRESETS_LIST: &str = "sources.presets.list";
+pub const SOURCES_BINDINGS_LIST: &str = "sources.bindings.list";
+pub const SOURCES_BINDINGS_CREATE: &str = "sources.bindings.create";
+pub const SOURCES_BINDINGS_UPDATE: &str = "sources.bindings.update";
+pub const SOURCES_BINDINGS_RESOLVE: &str = "sources.bindings.resolve";
 
 // Tombstone (two-step)
 pub const LIFECYCLE_TOMBSTONE_CREATE: &str = "lifecycle.tombstone.create";
