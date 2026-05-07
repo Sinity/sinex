@@ -23,7 +23,7 @@ async fn insert_material_event(
 async fn insert_metric_gauge(
     ctx: &TestContext,
     node_name: &str,
-    node_run_id: sinex_primitives::Uuid,
+    source_run_id: sinex_primitives::Uuid,
     name: &str,
     value: f64,
     labels: serde_json::Value,
@@ -31,7 +31,7 @@ async fn insert_metric_gauge(
     let mut labels = labels.as_object().cloned().unwrap_or_default();
     labels.insert("node".to_string(), json!(node_name));
     labels.insert("node_model".to_string(), json!("transducer"));
-    labels.insert("node_run_id".to_string(), json!(node_run_id.to_string()));
+    labels.insert("source_run_id".to_string(), json!(source_run_id.to_string()));
 
     insert_material_event(
         ctx,
@@ -119,7 +119,7 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
         insert_material_event(&ctx, "test.input", "test.input", json!({ "command": "ls" })).await?;
     let parent_id = parent.id.expect("inserted parent must have id");
     let output = DynamicPayload::new("test.output", "test.output", json!({ "canonical": "ls" }))
-        .node_run_id(run.id.to_uuid())
+        .source_run_id(run.id.to_uuid())
         .from_parents(vec![parent_id])?
         .build()?;
     pool.events().insert(output).await?;
@@ -142,7 +142,7 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
     assert_eq!(status["node_name"].as_str(), Some("canonicalizer-test"));
     assert_eq!(status["version"].as_str(), Some("1.0.0-test"));
     assert_eq!(status["live"].as_bool(), Some(true));
-    assert_eq!(status["node_run_id"].as_str(), Some(run_id.as_str()));
+    assert_eq!(status["source_run_id"].as_str(), Some(run_id.as_str()));
     assert_eq!(status["events_processed_current_run"].as_i64(), Some(42));
     assert_eq!(status["pending_invalidation_count"].as_i64(), Some(3));
     assert_eq!(status["checkpoint_kind"].as_str(), Some("internal"));
@@ -202,7 +202,7 @@ async fn automata_status_handles_live_run_without_metric_events(
 
     assert_eq!(status["node_name"].as_str(), Some("session-detector-test"));
     assert_eq!(status["live"].as_bool(), Some(true));
-    assert_eq!(status["node_run_id"].as_str(), Some(run_id.as_str()));
+    assert_eq!(status["source_run_id"].as_str(), Some(run_id.as_str()));
     assert!(status["events_processed_current_run"].is_null());
     assert!(status["pending_invalidation_count"].is_null());
     assert!(status["checkpoint_kind"].is_null());

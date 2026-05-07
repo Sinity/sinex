@@ -1,6 +1,5 @@
 #![doc = include_str!("../../docs/db_repositories.md")]
 //! See `docs/db_repositories.md` for the repository architecture overview.
-pub mod acquisition_jobs;
 pub mod blobs;
 // pub mod checkpoints; // Removed
 pub mod common;
@@ -10,16 +9,13 @@ pub mod events_extensions;
 pub mod gitops;
 pub mod integrity;
 pub mod knowledge_graph;
-pub mod parser_jobs;
 pub mod replay;
 pub mod schema_cache;
 pub mod schema_management;
-pub mod source_bindings;
 pub mod source_materials;
 pub mod state;
 
 // Re-export main types
-pub use acquisition_jobs::{AcquisitionJobRepository, AcquisitionJobRow};
 pub use blobs::{BlobRepository, StorageStats};
 // pub use checkpoints::{Checkpoint, CheckpointExt, CheckpointRecord, CheckpointRepository}; // Removed
 pub use common::{DbResult, EnhancedRepository, Repository, TableDef, TransactionSupport};
@@ -37,14 +33,10 @@ pub use knowledge_graph::{
     CreateEntity, CreateEntityRelation, EntityExt, EntityRecord, EntityRelationExt,
     EntityRelationRecord, EntityType, KnowledgeGraphRepository,
 };
-pub use parser_jobs::{ParserJobRepository, ParserJobRow};
 pub use replay::ReplayRepository;
 pub use schema_cache::{CachedSchema, SchemaCacheRepository};
 pub use schema_management::{
     NewEventSchema, SchemaManagementRepository, SchemaStatistics, ValidationError, ValidationResult,
-};
-pub use source_bindings::{
-    SourceBindingResolutionLogRow, SourceBindingRepository, SourceBindingRow,
 };
 pub use source_materials::{
     SourceMaterial, SourceMaterialExt, SourceMaterialLink, SourceMaterialLinkRecord,
@@ -66,11 +58,8 @@ use sqlx::PgPool;
 /// let schema = pool.schemas().get_active_schema(source, event_type).await?;
 /// ```
 pub trait DbPoolExt {
-    fn acquisition_jobs(&self) -> acquisition_jobs::AcquisitionJobRepository<'_>;
     fn blobs(&self) -> blobs::BlobRepository;
     fn embeddings(&self) -> embeddings::EmbeddingRepository<'_>;
-    fn parser_jobs(&self) -> parser_jobs::ParserJobRepository<'_>;
-    fn source_bindings(&self) -> source_bindings::SourceBindingRepository<'_>;
     fn events(&self) -> events::EventRepository<'_>;
     fn gitops(&self) -> gitops::GitOpsRepository<'_>;
     fn source_materials(&self) -> source_materials::SourceMaterialRepository<'_>;
@@ -86,24 +75,12 @@ pub trait DbPoolExt {
 }
 
 impl DbPoolExt for PgPool {
-    fn acquisition_jobs(&self) -> acquisition_jobs::AcquisitionJobRepository<'_> {
-        acquisition_jobs::AcquisitionJobRepository::new(self)
-    }
-
     fn blobs(&self) -> blobs::BlobRepository {
         blobs::BlobRepository::new(self.clone())
     }
 
     fn embeddings(&self) -> embeddings::EmbeddingRepository<'_> {
         embeddings::EmbeddingRepository::new(self)
-    }
-
-    fn parser_jobs(&self) -> parser_jobs::ParserJobRepository<'_> {
-        parser_jobs::ParserJobRepository::new(self)
-    }
-
-    fn source_bindings(&self) -> source_bindings::SourceBindingRepository<'_> {
-        source_bindings::SourceBindingRepository::new(self)
     }
 
     fn events(&self) -> events::EventRepository<'_> {

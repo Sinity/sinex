@@ -110,7 +110,7 @@ async fn heartbeat_emitter_records_missing_db_heartbeat_rows(ctx: TestContext) -
         Seconds::from_secs(30),
     )
     .with_node_name(NodeName::new("missing-heartbeat-rows"))
-    .with_node_run_id(Uuid::now_v7())
+    .with_source_run_id(Uuid::now_v7())
     .with_db_pool(pool.clone());
 
     emitter.emit_heartbeat(None).await;

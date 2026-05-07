@@ -484,8 +484,8 @@ impl ToPostgresCopy for Event<JsonValue> {
         writer.field(Events::SourceEventIds, source_event_ids_str.as_deref())?;
         writer.field(Events::PayloadSchemaId, payload_schema_id.as_deref())?;
         {
-            let node_run_id_str = self.node_run_id.map(|id| id.to_string());
-            writer.field(Events::NodeRunId, node_run_id_str.as_deref())?;
+            let source_run_id_str = self.source_run_id.map(|id| id.to_string());
+            writer.field(Events::NodeRunId, source_run_id_str.as_deref())?;
         }
         writer.field(
             Events::AssociatedBlobIds,
@@ -566,8 +566,8 @@ impl ToPostgresCopy for StreamBatchRow {
         writer.field(Events::SourceEventIds, source_event_ids_str.as_deref())?;
         writer.field(Events::PayloadSchemaId, payload_schema_id_str.as_deref())?;
         {
-            let node_run_id_str = self.node_run_id.map(|id| id.to_string());
-            writer.field(Events::NodeRunId, node_run_id_str.as_deref())?;
+            let source_run_id_str = self.source_run_id.map(|id| id.to_string());
+            writer.field(Events::NodeRunId, source_run_id_str.as_deref())?;
         }
         writer.field(
             Events::AssociatedBlobIds,
@@ -667,7 +667,7 @@ mod tests {
             offset_kind: None,
             source_event_ids: None,
             payload_schema_id: None,
-            node_run_id: None,
+            source_run_id: None,
             associated_blob_ids: None,
             temporal_policy: None,
             semantics_version: None,
@@ -750,7 +750,7 @@ mod tests {
             payload: json!({"ok": true}),
             ts_orig: None,
             host: sinex_primitives::domain::HostName::from_static("localhost"),
-            node_run_id: None,
+            source_run_id: None,
             payload_schema_id: None,
             provenance: crate::Provenance::Material {
                 id: Id::new(),

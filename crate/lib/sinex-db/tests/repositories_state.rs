@@ -459,7 +459,7 @@ async fn node_manifest_heartbeat_updates_only_requested_version(
     assert_eq!(live_nodes.len(), 1);
     assert_eq!(live_nodes[0].node_name, node_name);
     assert_eq!(live_nodes[0].version, "2.0.0");
-    assert!(live_nodes[0].node_run_id.is_none());
+    assert!(live_nodes[0].source_run_id.is_none());
     assert_eq!(live_nodes[0].heartbeat_source, "manifest");
 
     let health = repo.get_node_health(Duration::from_mins(2)).await?;
@@ -571,7 +571,7 @@ async fn node_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Test
             ended_at as "ended_at: sinex_primitives::temporal::Timestamp",
             effective_config_hash,
             effective_config
-        FROM core.node_runs
+        FROM core.source_runs
         WHERE id = $1::uuid
         "#,
         run.id.as_uuid()
@@ -629,7 +629,7 @@ async fn node_run_heartbeat_does_not_revive_terminal_runs(ctx: TestContext) -> T
         SELECT
             status,
             ended_at as "ended_at: sinex_primitives::temporal::Timestamp"
-        FROM core.node_runs
+        FROM core.source_runs
         WHERE id = $1::uuid
         "#,
         run.id.as_uuid()

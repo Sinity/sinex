@@ -32,7 +32,7 @@ macro_rules! event_select_columns {
          source_event_ids::uuid[] as source_event_ids, \
          associated_blob_ids::uuid[] as associated_blob_ids, \
          payload_schema_id::uuid as payload_schema_id, \
-         node_run_id::uuid as node_run_id, \
+         source_run_id::uuid as source_run_id, \
          temporal_policy, \
          semantics_version, \
          scope_key, \
@@ -94,7 +94,7 @@ mod tests {
         "source_event_ids",
         "associated_blob_ids",
         "payload_schema_id",
-        "node_run_id",
+        "source_run_id",
         "temporal_policy",
         "semantics_version",
         "scope_key",

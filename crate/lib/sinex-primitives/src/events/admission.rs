@@ -357,7 +357,7 @@ mod tests {
             payload: serde_json::json!({"key": "value"}),
             ts_orig: Some(Timestamp::now()),
             host: crate::domain::HostName::from_static("test-host"),
-            node_run_id: None,
+            source_run_id: None,
             payload_schema_id: None,
             provenance,
             associated_blob_ids: None,

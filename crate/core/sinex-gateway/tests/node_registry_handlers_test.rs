@@ -52,7 +52,7 @@ async fn list_active_uses_manifest_fallback_without_run(ctx: TestContext) -> Tes
 
     assert_eq!(node["heartbeat_source"].as_str(), Some("manifest"));
     assert_eq!(node["status"].as_str(), Some("active"));
-    assert!(node["node_run_id"].is_null());
+    assert!(node["source_run_id"].is_null());
     assert!(node["service_name"].is_null());
 
     Ok(())
@@ -83,7 +83,7 @@ async fn list_active_surfaces_run_identity_when_available(ctx: TestContext) -> T
 
     assert_eq!(node["heartbeat_source"].as_str(), Some("run"));
     assert_eq!(node["status"].as_str(), Some("running"));
-    assert_eq!(node["node_run_id"].as_str(), Some(run_id.as_str()));
+    assert_eq!(node["source_run_id"].as_str(), Some(run_id.as_str()));
     assert_eq!(node["service_name"].as_str(), Some("sinex-run-backed-node"));
     assert_eq!(node["host"].as_str(), Some("test-host"));
     assert!(

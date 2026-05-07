@@ -61,12 +61,12 @@ async fn process_batch_halts_after_three_consecutive_checkpoint_save_failures(
 }
 
 #[sinex_test]
-async fn derived_outputs_propagate_runtime_node_run_id(ctx: TestContext) -> TestResult<()> {
+async fn derived_outputs_propagate_runtime_source_run_id(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let node_run_id = Uuid::now_v7();
+    let source_run_id = Uuid::now_v7();
     let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(EmittingDerivedNode));
     adapter.runtime =
-        Some(make_runtime_state(&ctx, "derived-adapter-emitting-test", Some(node_run_id)).await?);
+        Some(make_runtime_state(&ctx, "derived-adapter-emitting-test", Some(source_run_id)).await?);
 
     let outputs = adapter.process_one(make_input_event("emit")?).await?;
     let output = outputs
@@ -74,7 +74,7 @@ async fn derived_outputs_propagate_runtime_node_run_id(ctx: TestContext) -> Test
         .next()
         .expect("emitting node should produce one output event");
 
-    assert_eq!(output.node_run_id, Some(node_run_id));
+    assert_eq!(output.source_run_id, Some(source_run_id));
     Ok(())
 }
 

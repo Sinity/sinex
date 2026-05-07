@@ -23,12 +23,12 @@ where
         let mut labels = HashMap::new();
         labels.insert("node".to_string(), self.node.name().to_string());
         labels.insert("node_model".to_string(), self.node.node_model().to_string());
-        if let Some(node_run_id) = self
+        if let Some(source_run_id) = self
             .runtime
             .as_ref()
-            .and_then(NodeRuntimeState::node_run_id)
+            .and_then(NodeRuntimeState::source_run_id)
         {
-            labels.insert("node_run_id".to_string(), node_run_id.to_string());
+            labels.insert("source_run_id".to_string(), source_run_id.to_string());
         }
         labels
     }
