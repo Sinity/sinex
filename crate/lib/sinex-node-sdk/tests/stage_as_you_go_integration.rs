@@ -237,7 +237,6 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     let node_batch_config = EventBatcherConfig {
         batch_size: 1,
         batch_timeout_ms: 100,
-        bypass_admission_for_fixtures: true,
         ..Default::default()
     };
     let batcher_handle = spawn_event_batcher(

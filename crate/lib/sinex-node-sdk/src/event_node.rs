@@ -75,10 +75,6 @@ pub struct EventBatcherConfig {
     /// Parser version for the admission envelope (e.g., "1.0.0").
     #[serde(default)]
     pub parser_version: String,
-    /// TEST-ONLY: bypass the admission envelope and publish raw events directly.
-    /// Must be false in production. Grep for this field name to audit.
-    #[serde(default)]
-    pub bypass_admission_for_fixtures: bool,
 }
 
 impl Default for EventBatcherConfig {
@@ -89,7 +85,6 @@ impl Default for EventBatcherConfig {
             source_unit_id: String::new(),
             parser_id: String::new(),
             parser_version: String::new(),
-            bypass_admission_for_fixtures: false,
         }
     }
 }
@@ -444,7 +439,6 @@ impl EventBatcher {
                     &self.config.source_unit_id,
                     &self.config.parser_id,
                     &self.config.parser_version,
-                    self.config.bypass_admission_for_fixtures,
                 )
                 .await
             }
@@ -578,15 +572,12 @@ impl EventBatcher {
         Ok(())
     }
 
-    /// Send batch via NATS using the admission envelope. The raw-event escape
-    /// hatch is gated behind `bypass_admission_for_fixtures`.
     async fn send_batch_nats(
         publisher: &NatsPublisher,
         events: &mut Vec<Event<JsonValue>>,
         source_unit_id: &str,
         parser_id: &str,
         parser_version: &str,
-        bypass_admission_for_fixtures: bool,
     ) -> BatchPublishResult {
         if events.is_empty() {
             return BatchPublishResult {
@@ -597,77 +588,34 @@ impl EventBatcher {
 
         let event_count = events.len();
 
-        // Production path: use the admission envelope.
-        // The raw-event escape hatch is gated behind bypass_admission_for_fixtures.
-        if !bypass_admission_for_fixtures {
-            let intent = AdmittedEventIntent::new(
-                source_unit_id,
-                parser_id,
-                parser_version,
-                events.drain(..).collect(),
-                HostName::from_static("sinex-batcher"),
-            );
+        let intent = AdmittedEventIntent::new(
+            if source_unit_id.is_empty() { "unknown" } else { source_unit_id },
+            parser_id,
+            parser_version,
+            events.drain(..).collect(),
+            HostName::from_static("sinex-batcher"),
+        );
 
-            match publisher
-                .publish_intent(&intent, sinex_primitives::transport::Class::Critical)
-                .await
-            {
-                Ok(()) => {
-                    debug!(published = event_count, "Intent batch sent via NATS");
-                    *events = Vec::new();
-                    return BatchPublishResult {
-                        published: event_count,
-                        failed: 0,
-                    };
-                }
-                Err(e) => {
-                    error!(event_count = event_count, error = %e, "Failed to publish event intent envelope");
-                    // Put events back for retry
-                    *events = intent.events;
-                    return BatchPublishResult {
-                        published: 0,
-                        failed: event_count,
-                    };
+        match publisher
+            .publish_intent(&intent, sinex_primitives::transport::Class::Critical)
+            .await
+        {
+            Ok(()) => {
+                debug!(published = event_count, "Intent batch sent via NATS");
+                *events = Vec::new();
+                BatchPublishResult {
+                    published: event_count,
+                    failed: 0,
                 }
             }
-        }
-
-        // Escape hatch: publish raw events individually (for tests/bootstrap).
-        let mut success_count = 0;
-        let mut failure_count = 0;
-        let mut failed_events = Vec::new();
-
-        for event in events.drain(..) {
-            match publisher
-                .publish_raw_event_batch(&[&event], sinex_primitives::transport::Class::Critical)
-                .await
-            {
-                Ok(()) => {
-                    success_count += 1;
-                }
-                Err(e) => {
-                    error!(event_id = ?event.id, error = %e, "Failed to publish event");
-                    failure_count += 1;
-                    failed_events.push(event);
+            Err(e) => {
+                error!(event_count = event_count, error = %e, "Failed to publish event intent envelope");
+                *events = intent.events;
+                BatchPublishResult {
+                    published: 0,
+                    failed: event_count,
                 }
             }
-        }
-
-        *events = failed_events;
-
-        if failure_count == 0 {
-            debug!(published = success_count, "Batch sent via NATS (raw)");
-        } else {
-            error!(
-                published = success_count,
-                failed = failure_count,
-                "Batch processing failed"
-            );
-        }
-
-        BatchPublishResult {
-            published: success_count,
-            failed: failure_count,
         }
     }
 }

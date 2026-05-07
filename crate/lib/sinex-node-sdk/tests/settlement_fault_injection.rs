@@ -549,8 +549,15 @@ async fn settlement_opens_circuit_breaker_when_nats_down_runtime(
     .from_material(sinex_primitives::Id::new())
     .build()?;
 
+    let intent = sinex_primitives::events::admission::AdmittedEventIntent::new(
+        "test",
+        "test",
+        "0.1.0",
+        vec![event],
+        sinex_primitives::domain::HostName::from_static("test"),
+    );
     let publish_err = publisher
-        .publish_raw_event_batch(&[&event], sinex_primitives::transport::Class::Critical)
+        .publish_intent(&intent, sinex_primitives::transport::Class::Critical)
         .await
         .expect_err("publish must fail after NATS is shut down");
 
