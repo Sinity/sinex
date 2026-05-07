@@ -1363,6 +1363,8 @@ pub enum SourceMaterialTimingInfoType {
     Atemporal,
     /// Only staging time is known.
     StagedAt,
+    /// Timing information is unknown or not yet determined.
+    Unknown,
 }
 
 impl SourceMaterialTimingInfoType {
@@ -1375,6 +1377,7 @@ impl SourceMaterialTimingInfoType {
             Self::Declared => "declared",
             Self::Atemporal => "atemporal",
             Self::StagedAt => "staged_at",
+            Self::Unknown => "unknown",
         }
     }
 
@@ -1407,6 +1410,7 @@ impl FromStr for SourceMaterialTimingInfoType {
             "declared" | "user_declared" | "conceptual" => Ok(Self::Declared),
             "atemporal" => Ok(Self::Atemporal),
             "staged_at" | "staged-at" => Ok(Self::StagedAt),
+            "unknown" | "" => Ok(Self::Unknown),
             _ => Err(format!("unknown source-material timing info type: {s}")),
         }
     }

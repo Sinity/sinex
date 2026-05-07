@@ -394,6 +394,9 @@ fn command_path(cmd: &Commands) -> String {
                 SourcesSubcommand::List(_) => "sources list".to_string(),
                 SourcesSubcommand::Show(_) => "sources show".to_string(),
                 SourcesSubcommand::Coverage(_) => "sources coverage".to_string(),
+                SourcesSubcommand::Annotate(_) => "sources annotate".to_string(),
+                SourcesSubcommand::Archive(_) => "sources archive".to_string(),
+                SourcesSubcommand::Continuity(_) => "sources continuity".to_string(),
             }
         }
         Commands::Lifecycle { cmd } => match cmd {
