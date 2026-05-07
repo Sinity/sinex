@@ -10,6 +10,7 @@
 // - **Query Boundaries**: Non-existent sources, pagination, after-insert queries
 
 use serde_json::json;
+use std::collections::HashSet;
 use xtask::sandbox::prelude::*;
 
 // =============================================================================
@@ -284,6 +285,7 @@ async fn test_single_event_batch(ctx: TestContext) -> TestResult<()> {
 
     assert_eq!(events.len(), 1, "Batch should contain exactly 1 event");
     assert!(events[0].id.is_some(), "Event should have an ID");
+    assert_persisted_events_match_submitted(&ctx, &events, "single event batch").await?;
 
     // Verify in database
     let count = ctx
@@ -309,6 +311,7 @@ async fn test_empty_payload_batch(ctx: TestContext) -> TestResult<()> {
     let events = ctx.publish_many(payloads).await?;
 
     assert_eq!(events.len(), 10, "Batch should contain 10 events");
+    assert_persisted_events_match_submitted(&ctx, &events, "empty payload batch").await?;
 
     // Verify all in database
     let count = ctx
@@ -338,6 +341,7 @@ async fn test_mixed_source_batch(ctx: TestContext) -> TestResult<()> {
     let events = ctx.publish_many(payloads).await?;
 
     assert_eq!(events.len(), 15, "Batch should contain 15 events");
+    assert_persisted_events_match_submitted(&ctx, &events, "mixed source batch").await?;
 
     // Verify count per source (3 events per source, 15 total)
     for source in &sources {
@@ -445,18 +449,92 @@ async fn test_query_with_pagination(ctx: TestContext) -> TestResult<()> {
 
     assert_eq!(page2.len(), 5, "Second page should have exactly 5 events");
 
-    // Ensure pages have different events
-    let page1_ids: Vec<_> = page1.iter().filter_map(|e| e.id).collect();
-    let page2_ids: Vec<_> = page2.iter().filter_map(|e| e.id).collect();
-
-    let mut all_ids = page1_ids.clone();
-    all_ids.extend(&page2_ids);
-
+    let page1_ids = event_id_set(&page1, "page 1")?;
+    let page2_ids = event_id_set(&page2, "page 2")?;
+    assert!(
+        page1_ids.is_disjoint(&page2_ids),
+        "pagination pages should not overlap"
+    );
     assert_eq!(
-        all_ids.len(),
+        page1_ids.len() + page2_ids.len(),
         10,
         "Page 1 and Page 2 should have 10 unique events total"
     );
+
+    for event in page1.iter().chain(page2.iter()) {
+        assert_eq!(event.source.as_str(), source_name);
+        assert_eq!(event.event_type.as_str(), "pagination.test");
+        assert!(
+            event.payload["index"].as_i64().is_some(),
+            "paginated event should preserve numeric index payload: {:?}",
+            event.payload
+        );
+    }
+
+    Ok(())
+}
+
+fn event_id_set(
+    events: &[Event<serde_json::Value>],
+    label: &str,
+) -> TestResult<HashSet<Id<Event<serde_json::Value>>>> {
+    let mut ids = HashSet::with_capacity(events.len());
+    for event in events {
+        let id = event
+            .id
+            .ok_or_else(|| color_eyre::eyre::eyre!("{label} event missing id"))?;
+        assert!(ids.insert(id), "{label} contains duplicate event id {id}");
+    }
+    Ok(ids)
+}
+
+async fn assert_persisted_events_match_submitted(
+    ctx: &Sandbox,
+    events: &[Event<serde_json::Value>],
+    label: &str,
+) -> TestResult<()> {
+    let ids = event_id_set(events, label)?;
+    assert_eq!(
+        ids.len(),
+        events.len(),
+        "{label} should assign one unique id per submitted event"
+    );
+
+    for event in events {
+        let id = event
+            .id
+            .ok_or_else(|| color_eyre::eyre::eyre!("{label} event missing id"))?;
+        let persisted = ctx
+            .pool()
+            .events()
+            .get_by_id(id)
+            .await?
+            .ok_or_else(|| color_eyre::eyre::eyre!("{label} event {id} was not persisted"))?;
+
+        assert_eq!(
+            persisted.source.as_str(),
+            event.source.as_str(),
+            "{label} source should roundtrip for {id}"
+        );
+        assert_eq!(
+            persisted.event_type.as_str(),
+            event.event_type.as_str(),
+            "{label} event type should roundtrip for {id}"
+        );
+        assert_eq!(
+            persisted.payload, event.payload,
+            "{label} payload should roundtrip for {id}"
+        );
+        match persisted.provenance() {
+            Provenance::Material { anchor_byte, .. } => {
+                assert_eq!(
+                    *anchor_byte, 0,
+                    "{label} should preserve the sandbox material anchor for {id}"
+                );
+            }
+            other => panic!("{label} event {id} should have material provenance, got {other:?}"),
+        }
+    }
 
     Ok(())
 }

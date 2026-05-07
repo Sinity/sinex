@@ -587,13 +587,13 @@ pub async fn verify_performance_baseline() -> NodeResult<(VerificationStatus, Va
 
 #[cfg(test)]
 mod tests {
-    use xtask::sandbox::{sinex_test, TestResult};
     use super::{EVENTS_ACCESS_PROBE_SQL, test_schema_access};
     use crate::preflight::{
         PREFLIGHT_MAX_PARALLEL_WORKERS_PER_GATHER, configure_preflight_database_session,
     };
     use serde_json::Value;
     use xtask::sandbox::prelude::*;
+    use xtask::sandbox::{TestResult, sinex_test};
 
     #[sinex_test]
     async fn event_access_probe_is_metadata_only() -> TestResult<()> {

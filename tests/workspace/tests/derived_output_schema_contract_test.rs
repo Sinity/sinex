@@ -3,10 +3,8 @@
 use sinex_node_sdk::{ScopeReconcilerNode, TransducerNode, WindowedNode};
 use sinex_primitives::events::schema_registry::get_all_payloads;
 use sinex_process::automata::{
-    analytics::AnalyticsAutomaton,
-    health::HealthAggregator,
-    session::SessionDetector,
-    canonicalizer::TerminalCommandCanonicalizer,
+    analytics::AnalyticsAutomaton, canonicalizer::TerminalCommandCanonicalizer,
+    health::HealthAggregator, session::SessionDetector,
 };
 use xtask::sandbox::prelude::*;
 

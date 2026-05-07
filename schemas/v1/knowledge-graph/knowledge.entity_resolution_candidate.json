@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Emitted by the entity resolver when it finds a candidate match that\nneeds operator confirmation before merging.",
+  "properties": {
+    "candidate_entity_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "existing_entity_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "match_confidence": {
+      "format": "double",
+      "type": "number"
+    },
+    "match_reason": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "existing_entity_id",
+    "candidate_entity_id",
+    "match_confidence",
+    "match_reason"
+  ],
+  "title": "KnowledgeEntityResolutionCandidatePayload",
+  "type": "object",
+  "x-sinex-event-type": "knowledge.entity_resolution_candidate",
+  "x-sinex-source": "knowledge-graph",
+  "x-sinex-version": "1.0.0"
+}

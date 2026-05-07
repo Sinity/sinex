@@ -329,7 +329,7 @@ impl Default for JournalConfig {
         Self {
             follow: true,
             import_hours: 24,
-            units: vec![],      // Empty = capture all units (excluding sinex-* self-units by default)
+            units: vec![], // Empty = capture all units (excluding sinex-* self-units by default)
             exclude_units: default_journal_exclude_units(),
             priorities: vec![], // Empty = capture all priorities
             include_kernel: true,

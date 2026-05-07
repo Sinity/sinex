@@ -5,13 +5,11 @@
 //! business logic (state transitions, validation, meta-JSON manipulation).
 
 use super::common::Repository;
-use crate::replay::state_machine::{
-    MetaJson, ReplayScope, ReplayState,
-};
+use crate::replay::state_machine::{MetaJson, ReplayScope, ReplayState};
 use serde_json::Value as JsonValue;
+use sinex_primitives::Timestamp;
 use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::error::{Result, SinexError};
-use sinex_primitives::Timestamp;
 use sinex_primitives::utils::ResourceGuard;
 use sqlx::postgres::types::PgRange;
 use sqlx::{PgPool, Postgres, QueryBuilder, Row, Transaction};
@@ -406,10 +404,7 @@ impl<'a> ReplayRepository<'a> {
     }
 
     /// Get the top 5 event types for a scope (for preview display).
-    pub async fn get_top_event_types(
-        &self,
-        scope: &ReplayScope,
-    ) -> Result<Vec<EventTypeCountRow>> {
+    pub async fn get_top_event_types(&self, scope: &ReplayScope) -> Result<Vec<EventTypeCountRow>> {
         let window = resolve_time_window(scope);
         let mut qb = build_filter_query(
             scope,
@@ -422,10 +417,7 @@ impl<'a> ReplayRepository<'a> {
     }
 
     /// Count distinct source materials for a material-filtered scope.
-    pub async fn count_distinct_materials(
-        &self,
-        scope: &ReplayScope,
-    ) -> Result<i64> {
+    pub async fn count_distinct_materials(&self, scope: &ReplayScope) -> Result<i64> {
         let window = resolve_time_window(scope);
         let mut qb = build_filter_query(
             scope,
@@ -499,10 +491,7 @@ impl<'a> ReplayRepository<'a> {
 
     /// Find IDs of operations stuck in executing/cancelling/committing state
     /// whose `started_at` is older than the given threshold (in seconds).
-    pub async fn find_stale_executing(
-        &self,
-        threshold_secs: f64,
-    ) -> Result<Vec<Uuid>> {
+    pub async fn find_stale_executing(&self, threshold_secs: f64) -> Result<Vec<Uuid>> {
         let rows = sqlx::query!(
             r#"
             SELECT id::uuid AS "id!"
@@ -573,9 +562,7 @@ impl<'a> ReplayRepository<'a> {
     // ── Begin transaction helpers ────────────────────────────────────────
 
     /// Begin a new transaction on the pool.
-    pub async fn begin(
-        &self,
-    ) -> Result<Transaction<'_, Postgres>> {
+    pub async fn begin(&self) -> Result<Transaction<'_, Postgres>> {
         self.pool
             .begin()
             .await
@@ -583,10 +570,7 @@ impl<'a> ReplayRepository<'a> {
     }
 
     /// Begin a new transaction on a pooled connection, with a contextual error message.
-    pub async fn begin_context(
-        &self,
-        context: &str,
-    ) -> Result<Transaction<'_, Postgres>> {
+    pub async fn begin_context(&self, context: &str) -> Result<Transaction<'_, Postgres>> {
         self.pool
             .begin()
             .await

@@ -286,7 +286,8 @@ impl IngestService {
             }
 
             if config.strict_validation {
-                IngestEventValidator::load_schemas_from_db_strict(pool, config.validate_schemas).await
+                IngestEventValidator::load_schemas_from_db_strict(pool, config.validate_schemas)
+                    .await
             } else {
                 IngestEventValidator::load_schemas_from_db(pool, config.validate_schemas).await
             }
@@ -804,12 +805,10 @@ impl IngestService {
         let fetch_max = self.config.consumer_fetch_max_messages.max(1);
         let max_ack_pending = self.config.consumer_max_ack_pending;
         let stats_log_interval = Duration::from_secs(self.config.stats_log_interval_secs);
-        let future_ts_skew =
-            time::Duration::seconds(self.config.ts_orig_future_skew_secs as i64);
-        let ts_orig_lower_bound = Timestamp::from_unix_timestamp(
-            self.config.ts_orig_lower_bound_unix,
-        )
-        .expect("default ts_orig_lower_bound_unix must produce valid timestamp");
+        let future_ts_skew = time::Duration::seconds(self.config.ts_orig_future_skew_secs as i64);
+        let ts_orig_lower_bound =
+            Timestamp::from_unix_timestamp(self.config.ts_orig_lower_bound_unix)
+                .expect("default ts_orig_lower_bound_unix must produce valid timestamp");
 
         let heartbeat_handle = self.heartbeat_counter_handle.clone();
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();

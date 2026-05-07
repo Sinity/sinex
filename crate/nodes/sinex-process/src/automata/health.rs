@@ -568,12 +568,12 @@ fn parse_health_status_field(
 
 // --- Source-unit descriptor (issue #690 / #734) ---
 
-use sinex_primitives::register_source_unit;
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
     RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
 };
+use sinex_primitives::register_source_unit;
 
 // Health is a ScopeReconciler over component scopes. State per-component is
 // reconciled and reported as `health.aggregated_report`.

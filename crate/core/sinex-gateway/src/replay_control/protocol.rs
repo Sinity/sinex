@@ -5,7 +5,7 @@
 //! the same protocol.
 
 use serde::{Deserialize, Serialize};
-use sinex_db::replay::state_machine::{ReplayOperation, ReplayState, ReplayScope};
+use sinex_db::replay::state_machine::{ReplayOperation, ReplayScope, ReplayState};
 use sinex_primitives::{SinexError, Uuid};
 
 #[derive(Debug, Serialize, Deserialize)]

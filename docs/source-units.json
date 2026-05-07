@@ -1503,11 +1503,11 @@
   "proof_obligations": [
     {
       "id": "obligation:source_unit.material_provenance",
-      "level": "required",
+      "level": "advisory",
       "subject": "source_unit:*",
       "claim_id": "claim:source_material.material_provenance",
       "runner_binding_id": "runner:rust.sdk.source_laws",
-      "reason": "source units are the semantic leaves that must carry replayable material provenance"
+      "reason": "source units are the semantic leaves that must carry replayable material provenance; current runner proves runtime-unit material laws, so this remains advisory until source-unit-specific pass evidence exists"
     },
     {
       "id": "obligation:source_unit.package_impact_rationale",

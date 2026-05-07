@@ -38,9 +38,9 @@
 //! - Historical checkpoint queries are limited to prevent memory issues
 
 use crate::{NodeResult, SinexError, runtime::stream::Checkpoint};
-use sinex_primitives::env as shared_env;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use sinex_primitives::env as shared_env;
 use sinex_primitives::temporal::Timestamp;
 use std::convert::TryInto;
 use tracing::{debug, info, warn};

@@ -9,7 +9,7 @@ use async_nats::Client;
 use async_nats::connection::State as NatsState;
 use color_eyre::eyre::{Context, Result, eyre};
 use parking_lot::Mutex;
-use sinex_db::replay::state_machine::{ReplayOperation, ReplayState, ReplayScope};
+use sinex_db::replay::state_machine::{ReplayOperation, ReplayScope, ReplayState};
 use sinex_primitives::Uuid;
 use sinex_primitives::environment::SinexEnvironment;
 use std::sync::Arc;

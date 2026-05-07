@@ -5,15 +5,15 @@
 //! discovered scenario annotations. Runtime semantics stay in Rust tests and
 //! SDK descriptors; this module only projects them into one inspectable graph.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use color_eyre::eyre::Result;
 use serde::Serialize;
 use sinex_primitives::events::schema_registry::get_all_payloads;
 use sinex_primitives::proof::{
-    self, Claim, Exemption, Horizon, OccurrenceIdentity,
-    PROOF_CATALOG_SCHEMA_VERSION, PrivacyTier, ProofObligation, RetentionPolicy, RunnerBinding,
-    RuntimeShape, RuntimeUnitDescriptor,
+    self, Claim, Exemption, Horizon, OccurrenceIdentity, PROOF_CATALOG_SCHEMA_VERSION, PrivacyTier,
+    ProofObligation, RetentionPolicy, RunnerBinding, RuntimeShape, RuntimeUnitDescriptor,
 };
 
 use crate::command_catalog::{CommandInfo, collect_command_catalog};
@@ -88,6 +88,31 @@ pub struct ScenarioSubject {
     pub fixtures: Vec<String>,
     pub subject_refs: Vec<String>,
     pub claim_ids: Vec<String>,
+    pub assertion_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ProofCatalogValidation {
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+impl ProofCatalogValidation {
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        self.errors.is_empty()
+    }
+
+    pub fn into_result(self) -> Result<Self> {
+        if self.is_valid() {
+            Ok(self)
+        } else {
+            color_eyre::eyre::bail!(
+                "proof catalog semantic validation failed:\n{}",
+                self.errors.join("\n")
+            )
+        }
+    }
 }
 
 pub fn build_proof_catalog(workspace_root: &Path) -> Result<ProofCatalog> {
@@ -133,6 +158,261 @@ pub fn render_proof_catalog_json(catalog: &ProofCatalog) -> Result<String> {
     let mut rendered = serde_json::to_string_pretty(catalog)?;
     rendered.push('\n');
     Ok(rendered)
+}
+
+#[must_use]
+pub fn validate_proof_catalog(catalog: &ProofCatalog) -> ProofCatalogValidation {
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+
+    check_unique(
+        &mut errors,
+        "claim id",
+        catalog.claims.iter().map(|claim| claim.id),
+    );
+    check_unique(
+        &mut errors,
+        "runner binding id",
+        catalog.runner_bindings.iter().map(|binding| binding.id),
+    );
+    check_unique(
+        &mut errors,
+        "proof obligation id",
+        catalog.obligations.iter().map(|obligation| obligation.id),
+    );
+    check_unique(
+        &mut errors,
+        "proof exemption id",
+        catalog.exemptions.iter().map(|exemption| exemption.id),
+    );
+    check_unique(
+        &mut errors,
+        "runtime unit subject",
+        catalog
+            .runtime_units
+            .iter()
+            .map(|unit| unit.subject.as_str()),
+    );
+    check_unique(
+        &mut errors,
+        "source unit subject",
+        catalog
+            .source_units
+            .iter()
+            .map(|unit| unit.subject.as_str()),
+    );
+    check_unique(
+        &mut errors,
+        "event payload subject",
+        catalog
+            .event_payloads
+            .iter()
+            .map(|payload| payload.subject.as_str()),
+    );
+    check_unique(
+        &mut errors,
+        "xtask command subject",
+        catalog
+            .xtask_commands
+            .iter()
+            .map(|command| command.subject.as_str()),
+    );
+    check_unique(
+        &mut errors,
+        "scenario id",
+        catalog
+            .scenarios
+            .iter()
+            .map(|scenario| scenario.id.as_str()),
+    );
+
+    let claim_ids = catalog
+        .claims
+        .iter()
+        .map(|claim| claim.id)
+        .collect::<BTreeSet<_>>();
+    let runner_bindings = catalog
+        .runner_bindings
+        .iter()
+        .map(|binding| (binding.id, binding))
+        .collect::<BTreeMap<_, _>>();
+    let obligations = catalog
+        .obligations
+        .iter()
+        .map(|obligation| (obligation.id, obligation))
+        .collect::<BTreeMap<_, _>>();
+    let xtask_commands = catalog
+        .xtask_commands
+        .iter()
+        .map(|command| command.subject.as_str())
+        .collect::<BTreeSet<_>>();
+
+    for binding in &catalog.runner_bindings {
+        for claim_id in binding.claims {
+            if !claim_ids.contains(claim_id) {
+                errors.push(format!(
+                    "{} references unknown catalog claim {claim_id}",
+                    binding.id
+                ));
+            }
+        }
+        if let Some(command_subject) = xtask_command_subject_for_runner(binding.command)
+            && !xtask_commands.contains(command_subject.as_str())
+        {
+            errors.push(format!(
+                "{} references undocumented xtask command `{}` ({command_subject})",
+                binding.id, binding.command
+            ));
+        }
+    }
+
+    let claims_by_id = catalog
+        .claims
+        .iter()
+        .map(|claim| (claim.id, claim))
+        .collect::<BTreeMap<_, _>>();
+    for obligation in &catalog.obligations {
+        let claim = claims_by_id.get(obligation.claim_id);
+        let binding = runner_bindings.get(obligation.runner_binding_id);
+        if claim.is_none() {
+            errors.push(format!(
+                "{} references unknown claim {}",
+                obligation.id, obligation.claim_id
+            ));
+        }
+        let Some(binding) = binding else {
+            errors.push(format!(
+                "{} references unknown runner binding {}",
+                obligation.id, obligation.runner_binding_id
+            ));
+            continue;
+        };
+        if !binding
+            .claims
+            .iter()
+            .any(|claim| *claim == obligation.claim_id)
+        {
+            errors.push(format!(
+                "{} uses runner {} which does not list claim {}",
+                obligation.id, binding.id, obligation.claim_id
+            ));
+        }
+        if matches!(obligation.level, proof::ProofObligationLevel::Required)
+            && binding.subject != obligation.subject
+        {
+            errors.push(format!(
+                "{} is required for subject `{}` but runner {} is declared for `{}`",
+                obligation.id,
+                obligation.subject.as_str(),
+                binding.id,
+                binding.subject.as_str()
+            ));
+        }
+        if let Some(claim) = claim
+            && matches!(obligation.level, proof::ProofObligationLevel::Required)
+            && claim.subject != obligation.subject
+        {
+            errors.push(format!(
+                "{} is required for subject `{}` but claim {} is declared for `{}`",
+                obligation.id,
+                obligation.subject.as_str(),
+                claim.id,
+                claim.subject.as_str()
+            ));
+        }
+    }
+
+    for unit in &catalog.source_units {
+        for obligation_id in &unit.proof_obligations {
+            if !obligations.contains_key(obligation_id.as_str()) {
+                errors.push(format!(
+                    "{} references unknown proof obligation {obligation_id}",
+                    unit.subject
+                ));
+            }
+        }
+    }
+
+    for exemption in &catalog.exemptions {
+        if !obligations.contains_key(exemption.obligation_id) {
+            errors.push(format!(
+                "{} references unknown proof obligation {}",
+                exemption.id, exemption.obligation_id
+            ));
+        }
+    }
+
+    for scenario in &catalog.scenarios {
+        if scenario.subject_refs.is_empty() {
+            errors.push(format!("scenario:{} has no subject refs", scenario.id));
+        }
+        if scenario.claim_ids.is_empty() && scenario.assertion_ids.is_empty() {
+            errors.push(format!(
+                "scenario:{} has neither catalog claim ids nor assertion ids",
+                scenario.id
+            ));
+        }
+        for claim_id in &scenario.claim_ids {
+            if !claim_ids.contains(claim_id.as_str()) {
+                errors.push(format!(
+                    "scenario:{} references unknown catalog claim {claim_id}",
+                    scenario.id
+                ));
+            }
+        }
+    }
+
+    let required_subjects = catalog
+        .obligations
+        .iter()
+        .filter(|obligation| matches!(obligation.level, proof::ProofObligationLevel::Required))
+        .map(|obligation| obligation.subject.as_str())
+        .collect::<BTreeSet<_>>();
+    for subject in required_subjects {
+        if !catalog
+            .runner_bindings
+            .iter()
+            .any(|binding| binding.subject.as_str() == subject)
+        {
+            warnings.push(format!(
+                "required proof subject `{subject}` has no runner binding"
+            ));
+        }
+    }
+
+    ProofCatalogValidation { errors, warnings }
+}
+
+fn check_unique<'a>(errors: &mut Vec<String>, label: &str, values: impl Iterator<Item = &'a str>) {
+    let mut seen = BTreeSet::new();
+    let mut duplicates = BTreeSet::new();
+    for value in values {
+        if !seen.insert(value) {
+            duplicates.insert(value);
+        }
+    }
+    for duplicate in duplicates {
+        errors.push(format!("duplicate {label}: {duplicate}"));
+    }
+}
+
+fn xtask_command_subject_for_runner(command: &str) -> Option<String> {
+    let mut parts = command.split_whitespace();
+    if parts.next()? != "xtask" {
+        return None;
+    }
+    let mut path = Vec::new();
+    for part in parts {
+        if part.starts_with('-') || part.starts_with('<') {
+            break;
+        }
+        path.push(part);
+    }
+    if path.is_empty() {
+        None
+    } else {
+        Some(format!("xtask_command:{}", path.join(".")))
+    }
 }
 
 fn collect_event_payload_subjects() -> Vec<EventPayloadSubject> {
@@ -291,6 +571,7 @@ fn scenario_subject(entry: ScenarioCatalogEntry) -> ScenarioSubject {
         fixtures: entry.fixtures,
         subject_refs: entry.subject_refs,
         claim_ids: entry.claim_ids,
+        assertion_ids: entry.assertion_ids,
     }
 }
 
@@ -351,6 +632,20 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn proof_catalog_semantic_validation_passes_live_catalog() -> TestResult<()> {
+        let workspace = crate::sandbox::orchestrator::find_workspace_root()?;
+        let catalog = build_proof_catalog(&workspace)?;
+        let validation = validate_proof_catalog(&catalog);
+
+        assert!(
+            validation.errors.is_empty(),
+            "proof catalog validation errors: {:?}",
+            validation.errors
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn proof_catalog_json_is_stable_object_shape() -> TestResult<()> {
         let workspace = crate::sandbox::orchestrator::find_workspace_root()?;
         let catalog = build_proof_catalog(&workspace)?;
@@ -363,6 +658,38 @@ mod tests {
         assert!(json["event_payloads"].is_array());
         assert!(json["xtask_commands"].is_array());
         assert!(json["scenarios"].is_array());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn proof_catalog_validation_rejects_dangling_catalog_claims() -> TestResult<()> {
+        let workspace = crate::sandbox::orchestrator::find_workspace_root()?;
+        let mut catalog = build_proof_catalog(&workspace)?;
+        catalog.scenarios.push(ScenarioSubject {
+            subject: "scenario:demo".to_string(),
+            id: "demo".to_string(),
+            test_name: "demo_test".to_string(),
+            package: Some("xtask".to_string()),
+            path: "xtask/src/demo.rs".to_string(),
+            category: "command_contract".to_string(),
+            lane: "fast".to_string(),
+            cost_tier: "fast".to_string(),
+            tags: Vec::new(),
+            fixtures: Vec::new(),
+            subject_refs: vec!["xtask_command:test".to_string()],
+            claim_ids: vec!["claim:missing".to_string()],
+            assertion_ids: Vec::new(),
+        });
+
+        let validation = validate_proof_catalog(&catalog);
+        assert!(
+            validation
+                .errors
+                .iter()
+                .any(|error| error.contains("claim:missing")),
+            "expected dangling claim validation error, got {:?}",
+            validation.errors
+        );
         Ok(())
     }
 }

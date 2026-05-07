@@ -3,10 +3,10 @@
 //! Carved out of `adapter/mod.rs` as part of #697. Pure mechanical move; the
 //! methods, control flow, and instrumentation are unchanged.
 
-use super::{DerivedNodeAdapter, INVALIDATION_QUERY_PAGE_SIZE};
 #[cfg(feature = "messaging")]
 use super::log_self_observation_failure;
 use super::stale_output_ids_or_fail_scope;
+use super::{DerivedNodeAdapter, INVALIDATION_QUERY_PAGE_SIZE};
 
 use crate::derived_node::context::DerivedTriggerContext;
 use crate::derived_node::invalidation::DerivedScopeInvalidation;
@@ -67,7 +67,9 @@ where
             runtime.db_pool().clone()
         };
 
-        let operation_id = invalidation.operation_id.map(Id::<OperationMarker>::from_uuid);
+        let operation_id = invalidation
+            .operation_id
+            .map(Id::<OperationMarker>::from_uuid);
         let operation_uuid = invalidation
             .operation_id
             .unwrap_or_else(|| *Id::<OperationMarker>::new().as_uuid());
@@ -621,4 +623,3 @@ where
         }
     }
 }
-

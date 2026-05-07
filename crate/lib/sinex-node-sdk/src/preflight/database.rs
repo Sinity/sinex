@@ -655,8 +655,8 @@ fn redact_password(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use xtask::sandbox::{sinex_test, TestResult};
     use super::{discover_schema_sources, validate_schema_source};
+    use xtask::sandbox::{TestResult, sinex_test};
 
     #[sinex_test]
     async fn schema_source_manifest_is_embedded() -> TestResult<()> {

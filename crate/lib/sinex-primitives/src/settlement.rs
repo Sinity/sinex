@@ -17,9 +17,7 @@ pub enum EventSettlement {
         progress: ProgressProposal,
     },
     /// Event data was invalid — route to processing-failure.
-    DataFailed {
-        failure: ProcessingFailureIntent,
-    },
+    DataFailed { failure: ProcessingFailureIntent },
     /// Transient failure — retry with backoff, finite budget.
     Retry {
         reason: SinexError,
@@ -27,13 +25,9 @@ pub enum EventSettlement {
         budget: RetryBudget,
     },
     /// Park the input; do not advance progress. Resume when dependency recovers.
-    Park {
-        reason: ParkReason,
-    },
+    Park { reason: ParkReason },
     /// Permanently fatal — halt the runtime unit.
-    Halt {
-        reason: HaltReason,
-    },
+    Halt { reason: HaltReason },
 }
 
 /// Policy for events beyond the failed one in a batch.
@@ -129,7 +123,9 @@ impl Receipt {
             Self::JetStreamAccepted { .. }
             | Self::NatsKvRevision { .. }
             | Self::InputAcked { .. } => DurabilityDomain::Remote,
-            Self::LocalSegmentFsynced { .. } | Self::QuarantineStored { .. } => DurabilityDomain::Local,
+            Self::LocalSegmentFsynced { .. } | Self::QuarantineStored { .. } => {
+                DurabilityDomain::Local
+            }
         }
     }
 }
@@ -281,11 +277,22 @@ pub trait FailurePolicy: Send + Sync {
 pub enum Settlement {
     Commit,
     SendToProcessingFailure,
-    Retry { backoff: Backoff, budget: RetryBudget },
-    Park { reason: ParkReason },
-    Quarantine { reason: String },
-    HaltNode { reason: HaltReason },
-    DrainRuntimeUnit { reason: String },
+    Retry {
+        backoff: Backoff,
+        budget: RetryBudget,
+    },
+    Park {
+        reason: ParkReason,
+    },
+    Quarantine {
+        reason: String,
+    },
+    HaltNode {
+        reason: HaltReason,
+    },
+    DrainRuntimeUnit {
+        reason: String,
+    },
 }
 
 /// Backoff strategy.

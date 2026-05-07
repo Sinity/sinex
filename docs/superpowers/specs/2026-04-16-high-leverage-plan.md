@@ -116,12 +116,12 @@
 | 5.2 | DLQ consolidation: define exactly two surfaces (NATS raw-ingest DLQ + DB processing DLQ) | sinex-ingestd + sinex-node-sdk | 4h | Clear failure routing |
 | 5.3 | Circuit breaker for NATS publish: back off on persistent failures | sinex-node-sdk | 3h | Prevents cascade failure |
 | 5.4 | Batch poison pill isolation: bisect-retry in ingestd (exists in HistoricalImporter, not ingestd) | sinex-ingestd | 4h | One bad event doesn't kill 1000 |
-| 5.5 | `sinexctl verify`: trustworthiness invariants check (provenance XOR, anchor bounds, schema consistency) | sinexctl | 4h | Operator confidence |
+| 5.5 | Dedicated invariant checks for provenance XOR, anchor bounds, and schema consistency; current `sinexctl verify` is only a bounded runtime-evidence check | sinexctl | 4h | Operator confidence |
 | 5.6 | Grafana dashboard provisioning: NixOS module for pre-built dashboard | nixos modules | 3h | Visual monitoring |
 
 **Total: ~22h, partially parallelizable**
 
-**Verification:** `sinexctl verify` passes; operator CAs have data; DLQ has clear routing documentation
+**Verification:** bounded runtime evidence passes; dedicated invariant checks pass once implemented; operator CAs have data; DLQ has clear routing documentation
 
 ---
 

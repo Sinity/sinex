@@ -34,6 +34,7 @@ struct ScenarioAttr {
     fixtures: Vec<String>,
     subject_refs: Vec<String>,
     claim_ids: Vec<String>,
+    assertion_ids: Vec<String>,
     reproducer: Option<String>,
 }
 
@@ -76,6 +77,7 @@ struct PartialScenarioAttr {
     fixtures: Vec<String>,
     subject_refs: Vec<String>,
     claim_ids: Vec<String>,
+    assertion_ids: Vec<String>,
     reproducer: Option<String>,
 }
 
@@ -89,6 +91,7 @@ impl PartialScenarioAttr {
             || !self.fixtures.is_empty()
             || !self.subject_refs.is_empty()
             || !self.claim_ids.is_empty()
+            || !self.assertion_ids.is_empty()
             || self.reproducer.is_some()
     }
 
@@ -123,6 +126,7 @@ impl PartialScenarioAttr {
             fixtures: self.fixtures,
             subject_refs: self.subject_refs,
             claim_ids: self.claim_ids,
+            assertion_ids: self.assertion_ids,
             reproducer: self.reproducer,
         }))
     }
@@ -286,13 +290,21 @@ fn apply_scenario_name_value(
     } else if path.is_ident("subjects") {
         scenario.subject_refs = parse_csv_lit(lit, "subjects")?;
     } else if path.is_ident("claims") {
-        scenario.claim_ids = parse_csv_lit(lit, "claims")?;
+        let (claim_ids, assertion_ids) = split_claims_and_assertions(parse_csv_lit(lit, "claims")?);
+        scenario.claim_ids = claim_ids;
+        scenario.assertion_ids = assertion_ids;
     } else if path.is_ident("reproducer") {
         scenario.reproducer = Some(parse_string_lit(lit, "reproducer")?);
     } else {
         return Ok(false);
     }
     Ok(true)
+}
+
+fn split_claims_and_assertions(claims: Vec<String>) -> (Vec<String>, Vec<String>) {
+    claims
+        .into_iter()
+        .partition(|claim| claim.trim().starts_with("claim:"))
 }
 
 fn lit_from_expr<'a>(expr: &'a Expr, field_name: &str) -> Result<&'a Lit, Error> {
@@ -1267,6 +1279,14 @@ fn scenario_cost_tier_tokens(cost_tier: ScenarioCostTier) -> proc_macro2::TokenS
     }
 }
 
+fn string_vec_tokens(values: &[String]) -> proc_macro2::TokenStream {
+    if values.is_empty() {
+        quote!(::std::vec::Vec::<::std::string::String>::new())
+    } else {
+        quote!(::std::vec![#(::std::string::String::from(#values)),*])
+    }
+}
+
 fn scenario_setup_tokens(scenario: Option<&ScenarioAttr>) -> proc_macro2::TokenStream {
     let Some(scenario) = scenario else {
         return quote! {};
@@ -1275,10 +1295,14 @@ fn scenario_setup_tokens(scenario: Option<&ScenarioAttr>) -> proc_macro2::TokenS
     let category = scenario_category_tokens(scenario.category);
     let lane = scenario_lane_tokens(scenario.lane);
     let cost_tier = scenario.cost_tier.map(scenario_cost_tier_tokens);
-    let tags = &scenario.tags;
-    let fixtures = &scenario.fixtures;
-    let subject_refs = &scenario.subject_refs;
-    let claim_ids = &scenario.claim_ids;
+    let tags = string_vec_tokens(&scenario.tags);
+    let fixtures = string_vec_tokens(&scenario.fixtures);
+    let subject_refs = string_vec_tokens(&scenario.subject_refs);
+    let proof_subject_refs = subject_refs.clone();
+    let claim_ids = string_vec_tokens(&scenario.claim_ids);
+    let proof_claim_ids = claim_ids.clone();
+    let assertion_ids = string_vec_tokens(&scenario.assertion_ids);
+    let proof_assertion_ids = assertion_ids.clone();
     let proof_reproducer = scenario
         .reproducer
         .as_ref()
@@ -1294,18 +1318,20 @@ fn scenario_setup_tokens(scenario: Option<&ScenarioAttr>) -> proc_macro2::TokenS
         ctx.set_scenario_metadata(
             ::xtask::sandbox::ScenarioMetadata::new(#id, #category, #lane)
                 #cost_tier
-                .with_tags(::std::vec![#(::std::string::String::from(#tags)),*])
-                .with_fixtures(::std::vec![#(::std::string::String::from(#fixtures)),*])
-                .with_subject_refs(::std::vec![#(::std::string::String::from(#subject_refs)),*])
-                .with_claim_ids(::std::vec![#(::std::string::String::from(#claim_ids)),*])
+                .with_tags(#tags)
+                .with_fixtures(#fixtures)
+                .with_subject_refs(#subject_refs)
+                .with_claim_ids(#claim_ids)
+                .with_assertion_ids(#assertion_ids)
                 #reproducer
         );
         ctx.set_proof_metadata(::xtask::sandbox::ProofMetadata {
             runner_id: ::std::option::Option::Some(
                 ::std::string::String::from("runner:rust.nextest.scenario")
             ),
-            subject_refs: ::std::vec![#(::std::string::String::from(#subject_refs)),*],
-            claim_ids: ::std::vec![#(::std::string::String::from(#claim_ids)),*],
+            subject_refs: #proof_subject_refs,
+            claim_ids: #proof_claim_ids,
+            assertion_ids: #proof_assertion_ids,
             status: ::std::option::Option::None,
             reproducer: #proof_reproducer,
             environment: ::xtask::sandbox::prelude::JsonValue::Null,
@@ -1965,7 +1991,7 @@ mod tests {
             tags = "source_material,row_stream,anchors",
             fixtures = "postgres,nats,ingestd",
             subjects = "issue:315,node:terminal",
-            claims = "batched-records,stable-anchors",
+            claims = "claim:source_material.material_provenance,batched-records,stable-anchors",
             reproducer = "xtask test -p sinex-node-sdk -E 'test(name)'"
         ));
 
@@ -1977,7 +2003,14 @@ mod tests {
         assert_eq!(scenario.tags, ["source_material", "row_stream", "anchors"]);
         assert_eq!(scenario.fixtures, ["postgres", "nats", "ingestd"]);
         assert_eq!(scenario.subject_refs, ["issue:315", "node:terminal"]);
-        assert_eq!(scenario.claim_ids, ["batched-records", "stable-anchors"]);
+        assert_eq!(
+            scenario.claim_ids,
+            ["claim:source_material.material_provenance"]
+        );
+        assert_eq!(
+            scenario.assertion_ids,
+            ["batched-records", "stable-anchors"]
+        );
         assert_eq!(
             scenario.reproducer.as_deref(),
             Some("xtask test -p sinex-node-sdk -E 'test(name)'")
@@ -2058,7 +2091,8 @@ mod tests {
             tags: vec!["runtime".to_string(), "restart".to_string()],
             fixtures: vec!["nats".to_string()],
             subject_refs: vec!["issue:324".to_string()],
-            claim_ids: vec!["restart-recovers".to_string()],
+            claim_ids: Vec::new(),
+            assertion_ids: vec!["restart-recovers".to_string()],
             reproducer: Some("xtask test --scenario-tag restart --heavy".to_string()),
         };
         let test_attrs = test_attrs_for_config(&[], Some(&scenario));

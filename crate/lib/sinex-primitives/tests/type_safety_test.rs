@@ -24,17 +24,12 @@ struct TestCheckpoint;
 // =============================================================================
 
 #[sinex_test]
-async fn test_generic_id_type_isolation(ctx: TestContext) -> Result<()> {
-    // Create IDs of different types
+async fn test_generic_id_uuid_roundtrip_preserves_phantom_type(ctx: TestContext) -> Result<()> {
     let event_id = Id::<Event>::new();
     let checkpoint_id = Id::<TestCheckpoint>::new();
 
-    // Verify they have different types at compile time
-    // (the following would fail to compile if uncommented)
-    // let _type_error: Id<Event> = checkpoint_id; // Compilation error
-    // let _type_error: Id<TestCheckpoint> = event_id; // Compilation error
-
-    // Both should convert to/from UUIDv7 correctly
+    // Compile-fail type isolation is covered by id_type_system_test.rs.
+    // This runtime test only covers roundtripping through the raw UUID form.
     let event_uuid: Uuid = event_id.into();
     let checkpoint_uuid: Uuid = checkpoint_id.into();
 

@@ -10,7 +10,7 @@
 //! Compiler diagnostics are captured and stored in the history database for
 //! later analysis via `xtask history diagnostics`.
 
-use color_eyre::eyre::{Result, WrapErr, eyre};
+use color_eyre::eyre::{Result, eyre};
 
 use crate::cargo_diagnostics::{DiagnosticSummary, estimate_package_count};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, WorkloadScope, XtaskCommand};
@@ -604,13 +604,9 @@ impl XtaskCommand for CheckCommand {
             );
         }
 
-        // R3: Predictive prefetch — if check→test transition probability > 70%,
-        // spawn `cargo test --no-run` in the background so the test binary is already
-        // compiled when the developer types `xtask test`.
-        //
-        // Only interactive human runs may trigger this. JSON/compact/silent
-        // executions should remain observational and deterministic instead of
-        // consulting ambient workstation history to start helper subprocesses.
+        // R3: Predictive prefetch is allowed to inspect history, but it must
+        // not spawn raw cargo outside xtask's planner/history/target handling.
+        // Until planner-owned prefetch exists, this remains a narrated hint.
         if result.is_success() && ctx.allows_ambient_optimizations() {
             trigger_compilation_prefetch(ctx);
         }
@@ -643,11 +639,12 @@ fn resolve_fixable_diagnostic_count(ctx: &CommandContext) -> (Option<usize>, Opt
     }
 }
 
-/// R3: Spawn `cargo test --no-run` in the background when the check→test transition
-/// probability exceeds 70% in recent history within a 5-minute window.
+/// R3: Surface a prefetch opportunity when the check→test transition probability
+/// exceeds 70% in recent history within a 5-minute window.
 ///
-/// This pre-warms the test binary compilation so `xtask test` starts faster.
-/// Spawn failures are surfaced as warnings because this remains a pure optimization.
+/// This intentionally does not spawn raw cargo. Compilation prefetch must be
+/// implemented by xtask's planner/scheduler so it inherits target-dir, history,
+/// supersession, and background-job semantics.
 fn trigger_compilation_prefetch(ctx: &crate::command::CommandContext) {
     let probability = ctx
         .with_history_db(|db| db.get_transition_probability("check", "test", 5, 20))
@@ -657,32 +654,15 @@ fn trigger_compilation_prefetch(ctx: &crate::command::CommandContext) {
         tracing::info!(
             target: "xtask::coordinator",
             probability = probability,
-            "R3: pre-compiling tests ({probability:.0}% of recent check runs are followed by test)"
+            "R3: test prefetch opportunity detected"
         );
         if ctx.is_human() {
-            eprintln!("  ⚡ Pre-compiling tests ({probability:.0}% chance you'll run them next)");
-        }
-        if let Err(error) = spawn_compilation_prefetch_with("cargo") {
-            tracing::warn!(
-                target: "xtask::coordinator",
-                error = %error,
-                "R3: failed to spawn test pre-compilation"
+            eprintln!(
+                "  ℹ Test prefetch opportunity ({probability:.0}% chance you'll run tests next); \
+                 deferred until xtask planner-owned prefetch exists"
             );
-            if ctx.is_human() {
-                eprintln!("  ⚠ Failed to start test pre-compilation: {error:#}");
-            }
         }
     }
-}
-
-fn spawn_compilation_prefetch_with(program: &str) -> Result<()> {
-    std::process::Command::new(program)
-        .args(["test", "--no-run", "--workspace"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map(|_| ())
-        .wrap_err("failed to spawn `cargo test --no-run --workspace` prefetch")
 }
 
 fn ensure_nix_tool_ready_with(check_tool: impl FnOnce(&str) -> Result<ToolInfo>) -> Result<()> {
@@ -1092,18 +1072,6 @@ mod tests {
         let rendered = format!("{error:#}");
         assert!(rendered.contains("failed readiness probe"));
         assert!(rendered.contains("failed to run `nix --version`"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_spawn_compilation_prefetch_surfaces_spawn_failure()
-    -> ::xtask::sandbox::TestResult<()> {
-        let error = spawn_compilation_prefetch_with("nonexistent-cargo-xyz-12345")
-            .expect_err("missing cargo should fail");
-        assert!(
-            format!("{error:#}")
-                .contains("failed to spawn `cargo test --no-run --workspace` prefetch")
-        );
         Ok(())
     }
 }

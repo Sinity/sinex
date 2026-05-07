@@ -7,7 +7,6 @@
 //! - Error recovery and resilience
 //! - Graceful shutdown and cleanup
 
-use sinex_primitives::domain::ServiceName;
 use camino::Utf8PathBuf;
 use sinex_node_sdk::{
     checkpoint::{CheckpointManager, CheckpointState},
@@ -17,6 +16,7 @@ use sinex_node_sdk::{
 };
 use sinex_primitives::Seconds;
 use sinex_primitives::SinexError;
+use sinex_primitives::domain::ServiceName;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::utils::wait_helpers::RetryConfig;
 use std::collections::HashMap;

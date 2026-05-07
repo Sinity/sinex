@@ -31,7 +31,7 @@ fn seed_failed_vm_job(state_dir: &std::path::Path) -> ::xtask::sandbox::TestResu
     let stderr_path = state_dir.join("vm-job.stderr.log");
     fs::write(
         &stdout_path,
-        "vm-test > RequestedAssertionFailed: browser proof missing\n",
+        "vm-test > RequestedAssertionFailed: browser evidence missing\n",
     )?;
     fs::write(&stderr_path, "")?;
 
@@ -53,7 +53,7 @@ fn seed_failed_vm_job(state_dir: &std::path::Path) -> ::xtask::sandbox::TestResu
         None,
         None,
         Some("none"),
-        Some("basic: RequestedAssertionFailed: browser proof missing"),
+        Some("basic: RequestedAssertionFailed: browser evidence missing"),
     )?;
     db.finish_invocation(invocation_id, InvocationStatus::Failed, Some(1), 12.5)?;
     db.finish_background_job(
@@ -268,7 +268,7 @@ async fn test_jobs_status_human_surfaces_failed_vm_summary() -> ::xtask::sandbox
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("Progress: basic: RequestedAssertionFailed: browser proof missing"),
+        stdout.contains("Progress: basic: RequestedAssertionFailed: browser evidence missing"),
         "jobs status should surface the stored VM failure summary.\nstdout:\n{stdout}"
     );
     Ok(())
@@ -303,17 +303,17 @@ async fn test_jobs_output_json_surfaces_failed_vm_progress_summary()
     assert_eq!(json["data"]["exit_code"], 1);
     assert_eq!(
         json["data"]["progress_summary"],
-        "basic: RequestedAssertionFailed: browser proof missing"
+        "basic: RequestedAssertionFailed: browser evidence missing"
     );
     assert_eq!(
         json["data"]["progress"]["terminal_summary"],
-        "basic: RequestedAssertionFailed: browser proof missing"
+        "basic: RequestedAssertionFailed: browser evidence missing"
     );
     assert!(
         json["data"]["content"]
             .as_str()
             .unwrap_or_default()
-            .contains("RequestedAssertionFailed: browser proof missing"),
+            .contains("RequestedAssertionFailed: browser evidence missing"),
         "jobs output should keep the full VM stdout content"
     );
     Ok(())
@@ -339,7 +339,7 @@ async fn test_jobs_output_human_prints_failed_vm_summary_footer() -> ::xtask::sa
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Summary: basic: RequestedAssertionFailed: browser proof missing"),
+        stderr.contains("Summary: basic: RequestedAssertionFailed: browser evidence missing"),
         "jobs output should print the stored VM failure summary footer.\nstderr:\n{stderr}"
     );
     Ok(())

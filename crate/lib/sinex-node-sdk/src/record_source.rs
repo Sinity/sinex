@@ -985,11 +985,7 @@ impl<'a> SqliteSnapshotLinker<'a> {
     }
 
     #[must_use]
-    pub fn with_retry(
-        mut self,
-        max_attempts: usize,
-        retry_delay: std::time::Duration,
-    ) -> Self {
+    pub fn with_retry(mut self, max_attempts: usize, retry_delay: std::time::Duration) -> Self {
         self.retry_config = sinex_primitives::utils::wait_helpers::RetryConfig {
             max_attempts: max_attempts.max(1) as u32,
             initial_delay: retry_delay,

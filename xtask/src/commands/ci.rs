@@ -59,6 +59,9 @@ pub enum CiSubcommand {
     Workspace {
         #[arg(long)]
         target_dir: Option<PathBuf>,
+        /// Validate the embedded workspace test invocations without running them.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Schema-only pipeline (apply, check-ready)
     SchemaOnly {
@@ -116,9 +119,10 @@ impl XtaskCommand for CiCommand {
                 };
                 execute_postgres(&args, ctx)
             }
-            CiSubcommand::Workspace { target_dir } => {
-                execute_workspace(target_dir.as_deref(), ctx).await
-            }
+            CiSubcommand::Workspace {
+                target_dir,
+                dry_run,
+            } => execute_workspace(target_dir.as_deref(), *dry_run, ctx).await,
             CiSubcommand::SchemaOnly { target_dir } => {
                 execute_schema_only(target_dir.as_deref(), ctx).await
             }
@@ -223,9 +227,14 @@ fn check_command_for_ci() -> crate::commands::check::CheckCommand {
 
 async fn execute_workspace(
     target_dir: Option<&std::path::Path>,
+    dry_run: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     ctx.heading("ci workspace");
+
+    if dry_run {
+        return execute_workspace_dry_run(ctx);
+    }
 
     // Run schema setup first
     let stage = ctx.start_stage("schema_setup");
@@ -312,6 +321,32 @@ async fn execute_workspace(
         .with_detail("Workspace clean: ✓")
         .with_detail("E2E tests: ✓")
         .with_detail("Full test suite: ✓")
+        .with_duration(ctx.elapsed()))
+}
+
+fn execute_workspace_dry_run(ctx: &CommandContext) -> Result<CommandResult> {
+    if ctx.is_human() {
+        println!("Validating ci workspace embedded xtask invocations...");
+    }
+
+    ProcessBuilder::new("xtask")
+        .args(["test", "--dry-run", "--fail-fast", "-p", "sinex-e2e-tests"])
+        .run_ok()?;
+    ProcessBuilder::new("xtask")
+        .args([
+            "test",
+            "--dry-run",
+            "--all",
+            "--prime",
+            "--exclude",
+            "sinex-e2e-tests",
+        ])
+        .run_ok()?;
+
+    Ok(CommandResult::success()
+        .with_message("ci workspace dry-run passed")
+        .with_detail("E2E test invocation accepted")
+        .with_detail("Full test invocation accepted")
         .with_duration(ctx.elapsed()))
 }
 

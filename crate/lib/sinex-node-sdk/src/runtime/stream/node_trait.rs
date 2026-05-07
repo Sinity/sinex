@@ -1,13 +1,13 @@
 //! The unified `Node` trait that ingestors and automata implement.
 
 use super::{
-    Checkpoint, NodeCapabilities, NodeType, NodeInitContext, ProcessingStats, ScanArgs,
+    Checkpoint, NodeCapabilities, NodeInitContext, NodeType, ProcessingStats, ScanArgs,
     ScanEstimate, ScanReport, TimeHorizon,
 };
 use crate::{NodeResult, SinexError};
 use serde::Deserialize;
-use sinex_primitives::events::Event;
 use sinex_primitives::JsonValue;
+use sinex_primitives::events::Event;
 use tracing::info;
 
 /// Unified trait for all stream nodes (ingestors and automata).

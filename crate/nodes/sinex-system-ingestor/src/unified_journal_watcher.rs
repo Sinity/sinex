@@ -1226,7 +1226,10 @@ impl UnifiedJournalWatcher {
             .iter()
             .map(|u| format!("--exclude-unit={u}"))
             .collect();
-        let exclude_refs: Vec<&str> = exclude_args.iter().map(std::string::String::as_str).collect();
+        let exclude_refs: Vec<&str> = exclude_args
+            .iter()
+            .map(std::string::String::as_str)
+            .collect();
         args.extend(exclude_refs);
 
         // Add priority filter

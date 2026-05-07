@@ -6,8 +6,8 @@ use crate::{
 use camino::Utf8PathBuf;
 #[cfg(feature = "db")]
 use sinex_db::DbPool as PgPool;
-use sinex_primitives::events::Event;
 use sinex_primitives::domain::ServiceName;
+use sinex_primitives::events::Event;
 use sinex_primitives::{HostName, Id, JsonValue, Uuid};
 use std::path::PathBuf;
 use std::sync::Arc;

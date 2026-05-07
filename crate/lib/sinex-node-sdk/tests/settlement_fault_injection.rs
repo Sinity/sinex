@@ -93,7 +93,7 @@ async fn settlement_halts_on_checkpoint_cas_failure(ctx: TestContext) -> TestRes
         metadata: None,
     };
     state_b.processed_count = 99; // distinct content so the idempotent re-create
-                                  // path does not absorb this as a no-op.
+    // path does not absorb this as a no-op.
     state_b.revision = stale_revision_for_b;
 
     let err = mgr_b
@@ -139,7 +139,11 @@ fn settlement_blocks_checkpoint_advance_on_output_failure() {
     let infra_err = SinexError::network("simulated jetstream publish ack timeout");
     let infra_settlement = policy.settle(
         &infra_err,
-        &ctx_for(RuntimeOperation::OutputEmission, RuntimePhase::EmitEffect, 1),
+        &ctx_for(
+            RuntimeOperation::OutputEmission,
+            RuntimePhase::EmitEffect,
+            1,
+        ),
     );
     let advances_under_retry = matches!(infra_settlement, Settlement::Commit);
     assert!(
@@ -204,7 +208,11 @@ fn settlement_routes_poison_event_to_dlq_exactly_once() {
     let bad = SinexError::validation("poison event: schema violation");
     let settlement = policy.settle(
         &bad,
-        &ctx_for(RuntimeOperation::ProcessBatch, RuntimePhase::ProcessInput, 1),
+        &ctx_for(
+            RuntimeOperation::ProcessBatch,
+            RuntimePhase::ProcessInput,
+            1,
+        ),
     );
     assert!(
         matches!(settlement, Settlement::SendToProcessingFailure),
@@ -402,13 +410,9 @@ async fn settlement_quarantines_and_halts_when_dlq_unavailable_runtime(
         Some(ctx.pipeline_namespace().prefix().to_string()),
     );
 
-    let event = DynamicPayload::new(
-        "test",
-        "test.event",
-        serde_json::json!({"smoke": true}),
-    )
-    .from_material(Id::new())
-    .build()?;
+    let event = DynamicPayload::new("test", "test.event", serde_json::json!({"smoke": true}))
+        .from_material(Id::new())
+        .build()?;
 
     let publish_err = publisher
         .publish_processing_failure(
@@ -567,7 +571,11 @@ async fn settlement_opens_circuit_breaker_when_nats_down_runtime(
     // First attempt: circuit closed, should retry.
     let early = policy.settle(
         &publish_err,
-        &ctx_for(RuntimeOperation::OutputEmission, RuntimePhase::EmitEffect, 1),
+        &ctx_for(
+            RuntimeOperation::OutputEmission,
+            RuntimePhase::EmitEffect,
+            1,
+        ),
     );
     assert!(
         matches!(early, Settlement::Retry { .. }),
@@ -577,7 +585,11 @@ async fn settlement_opens_circuit_breaker_when_nats_down_runtime(
     // Past retry budget threshold: circuit opens, policy parks.
     let exhausted = policy.settle(
         &publish_err,
-        &ctx_for(RuntimeOperation::OutputEmission, RuntimePhase::EmitEffect, 11),
+        &ctx_for(
+            RuntimeOperation::OutputEmission,
+            RuntimePhase::EmitEffect,
+            11,
+        ),
     );
     match exhausted {
         Settlement::Park {
@@ -599,7 +611,11 @@ fn settlement_opens_circuit_breaker_when_nats_down() {
     // Early attempts: classify as TransientInfra → Retry (circuit closed).
     let early = policy.settle(
         &nats_down,
-        &ctx_for(RuntimeOperation::OutputEmission, RuntimePhase::EmitEffect, 1),
+        &ctx_for(
+            RuntimeOperation::OutputEmission,
+            RuntimePhase::EmitEffect,
+            1,
+        ),
     );
     assert!(
         matches!(early, Settlement::Retry { .. }),
@@ -610,7 +626,11 @@ fn settlement_opens_circuit_breaker_when_nats_down() {
     // policy parks rather than continuing to hammer the dead transport.
     let exhausted = policy.settle(
         &nats_down,
-        &ctx_for(RuntimeOperation::OutputEmission, RuntimePhase::EmitEffect, 11),
+        &ctx_for(
+            RuntimeOperation::OutputEmission,
+            RuntimePhase::EmitEffect,
+            11,
+        ),
     );
     assert!(
         matches!(

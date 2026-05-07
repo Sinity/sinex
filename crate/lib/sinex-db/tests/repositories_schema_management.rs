@@ -365,12 +365,14 @@ async fn sync_schema_bundle_reactivates_inactive_matching_row(
     repo.deprecate_schema(&registered.id).await?;
 
     let sync_result = repo
-        .sync_schema_bundle([sinex_primitives::events::schema_registry::SchemaBundleEntry::new(
-            schema.source.to_string(),
-            schema.event_type.to_string(),
-            schema.schema_version.clone(),
-            schema.schema_content.clone(),
-        )?])
+        .sync_schema_bundle([
+            sinex_primitives::events::schema_registry::SchemaBundleEntry::new(
+                schema.source.to_string(),
+                schema.event_type.to_string(),
+                schema.schema_version.clone(),
+                schema.schema_content.clone(),
+            )?,
+        ])
         .await?;
 
     assert_eq!(sync_result.created, 0);
@@ -417,17 +419,14 @@ async fn sync_schema_bundle_converges_same_version_content_drift(
             "required": ["modern"]
         }),
     };
-    let discovered_entry =
-        sinex_primitives::events::schema_registry::SchemaBundleEntry::new(
-            discovered.source.to_string(),
-            discovered.event_type.to_string(),
-            discovered.schema_version.clone(),
-            discovered.schema_content.clone(),
-        )?;
+    let discovered_entry = sinex_primitives::events::schema_registry::SchemaBundleEntry::new(
+        discovered.source.to_string(),
+        discovered.event_type.to_string(),
+        discovered.schema_version.clone(),
+        discovered.schema_content.clone(),
+    )?;
 
-    let sync_result = repo
-        .sync_schema_bundle([discovered_entry.clone()])
-        .await?;
+    let sync_result = repo.sync_schema_bundle([discovered_entry.clone()]).await?;
 
     assert_eq!(sync_result.created, 0);
     assert_eq!(sync_result.updated, 1);

@@ -65,8 +65,7 @@ pub async fn sweep_orphans_detailed(
     apply: bool,
 ) -> NodeResult<(BlobGcReport, Vec<UnusedContentEntry>)> {
     if !content_store.config.legacy_annex_enabled {
-        let (cas_report, _) =
-            super::cas_fsck::check_cas(pool, content_store, apply).await?;
+        let (cas_report, _) = super::cas_fsck::check_cas(pool, content_store, apply).await?;
         let report = BlobGcReport {
             total_unused: cas_report.orphaned,
             db_backed: cas_report.referenced,

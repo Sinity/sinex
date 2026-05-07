@@ -509,7 +509,11 @@ async fn test_text_search_cursor_stable_at_equal_score_boundary(
         panic!("Expected Events result for page 1")
     };
 
-    assert_eq!(page1_events.len(), 2, "page 1 should return exactly 2 events");
+    assert_eq!(
+        page1_events.len(),
+        2,
+        "page 1 should return exactly 2 events"
+    );
     assert!(
         next_cursor.is_some(),
         "next_cursor must be set when there are more results"

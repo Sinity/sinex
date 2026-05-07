@@ -18,9 +18,9 @@ sinexctl replay list --token "$SINEX_RPC_TOKEN"
 # Inspect derived-node/automata runtime health and checkpoint position
 sinexctl automata --token "$SINEX_RPC_TOKEN"
 
-# Run trust verification, including passive derived-signal checks, managed
-# document-scan smoke, collector-surface evidence, and historical-backfill proof
-sinexctl verify --document-smoke --source-proof --historical-proof --token "$SINEX_RPC_TOKEN"
+# Run runtime evidence checks, including passive derived-signal checks, managed
+# document-scan smoke, collector-surface evidence, and historical-backfill evidence
+sinexctl verify --document-smoke --source-evidence --historical-evidence --token "$SINEX_RPC_TOKEN"
 
 # Inspect DLQ state
 sinexctl dlq list --token "$SINEX_RPC_TOKEN"
@@ -31,7 +31,7 @@ sinexctl dlq list --token "$SINEX_RPC_TOKEN"
 - `gateway`: connectivity/version checks
 - `core`: system health
 - `query`: event search and filtering
-- `verify`: trust/proof checks for pipeline, gateway reachability, automata deployment smoke, managed document-scan smoke, enabled long-running collector surfaces (with recent-vs-historical evidence), locally declared deployment surfaces, and historical backfill
+- `verify`: bounded runtime evidence checks for pipeline activity, gateway reachability, passive derived outputs, managed document-scan smoke, enabled long-running collector surfaces, locally declared deployment surfaces, and historical backfill
 - `node`: list/status/drain/resume/horizon
 - `automata`: derived-node runtime health, checkpoints, replay/output recency, and SDK telemetry
 - `replay`: plan/submit/watch/list

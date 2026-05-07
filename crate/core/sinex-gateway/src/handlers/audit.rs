@@ -9,8 +9,8 @@ use sinex_db::DbPoolExt;
 use sinex_db::repositories::state::Operation as DbOperation;
 use sinex_primitives::domain::DataTier;
 use sinex_primitives::events::Event;
-use sinex_primitives::rpc::lifecycle::LifecycleOperationSummary;
 use sinex_primitives::events::builder::OperationMarker;
+use sinex_primitives::rpc::lifecycle::LifecycleOperationSummary;
 use sinex_primitives::{Id, SinexError, Timestamp};
 use sqlx::PgPool;
 use std::str::FromStr;
@@ -73,7 +73,10 @@ fn explicit_lifecycle_summary(
     Ok(Some(summary))
 }
 
-fn parse_affected_event_tier(operation_id: &Id<OperationMarker>, tier: &str) -> Result<Option<DataTier>> {
+fn parse_affected_event_tier(
+    operation_id: &Id<OperationMarker>,
+    tier: &str,
+) -> Result<Option<DataTier>> {
     DataTier::from_str(tier).map(Some).map_err(|error| {
         SinexError::invalid_state(format!(
             "operation {operation_id} returned invalid affected-event tier '{tier}'"

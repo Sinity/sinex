@@ -4,9 +4,7 @@
 //! that were previously free functions in `crate::integrity`.
 
 use super::common::Repository;
-use crate::integrity::{
-    CheckpointInconsistency, CheckpointInconsistencyType, CheckpointSnapshot,
-};
+use crate::integrity::{CheckpointInconsistency, CheckpointInconsistencyType, CheckpointSnapshot};
 use sinex_primitives::error::Result as SinexResult;
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sqlx::PgPool;
@@ -86,9 +84,11 @@ impl<'a> IntegrityRepository<'a> {
 
     /// Count total events in `core.events`.
     pub async fn count_total_events(&self) -> SinexResult<i64> {
-        Ok(sqlx::query_scalar!(r#"SELECT COUNT(*) as "count!" FROM core.events"#)
-            .fetch_one(self.pool)
-            .await?)
+        Ok(
+            sqlx::query_scalar!(r#"SELECT COUNT(*) as "count!" FROM core.events"#)
+                .fetch_one(self.pool)
+                .await?,
+        )
     }
 
     /// Analyze a single node for checkpoint consistency issues.
@@ -169,8 +169,7 @@ impl<'a> IntegrityRepository<'a> {
             });
         }
 
-        let hours_since_last_activity =
-            (Timestamp::now() - snapshot.last_activity).whole_hours();
+        let hours_since_last_activity = (Timestamp::now() - snapshot.last_activity).whole_hours();
         if hours_since_last_activity >= stale_window_hours {
             issues.push(CheckpointInconsistency {
                 node_name: node_name.to_string(),

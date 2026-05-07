@@ -145,11 +145,15 @@ async fn assert_no_additional_slice_payload(
     }
 }
 
-fn source_material_proof(runner_id: &str, claim_ids: &[&str], reproducer: &str) -> ProofMetadata {
+fn source_material_proof(
+    runner_id: &str,
+    assertion_ids: &[&str],
+    reproducer: &str,
+) -> ProofMetadata {
     source_material_proof_with_subjects(
         runner_id,
         &["https://github.com/Sinity/sinex/issues/315"],
-        claim_ids,
+        assertion_ids,
         reproducer,
     )
 }
@@ -157,7 +161,7 @@ fn source_material_proof(runner_id: &str, claim_ids: &[&str], reproducer: &str) 
 fn source_material_proof_with_subjects(
     runner_id: &str,
     subject_refs: &[&str],
-    claim_ids: &[&str],
+    assertion_ids: &[&str],
     reproducer: &str,
 ) -> ProofMetadata {
     ProofMetadata {
@@ -166,7 +170,11 @@ fn source_material_proof_with_subjects(
             .iter()
             .map(|subject| (*subject).to_string())
             .collect(),
-        claim_ids: claim_ids.iter().map(|claim| (*claim).to_string()).collect(),
+        claim_ids: Vec::new(),
+        assertion_ids: assertion_ids
+            .iter()
+            .map(|assertion| (*assertion).to_string())
+            .collect(),
         status: Some("asserted_by_test".to_string()),
         reproducer: Some(reproducer.to_string()),
         environment: serde_json::json!({

@@ -5,8 +5,8 @@
 
 use super::DerivedNodeAdapter;
 
-use crate::derived_node::traits::{DerivedNodeImpl, InputProvenanceFilter};
 use crate::SinexError;
+use crate::derived_node::traits::{DerivedNodeImpl, InputProvenanceFilter};
 
 use sinex_primitives::events::Event;
 use sinex_primitives::{EventType, JsonValue};

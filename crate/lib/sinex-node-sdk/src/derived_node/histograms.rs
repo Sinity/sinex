@@ -96,7 +96,9 @@ impl LatencyWindow {
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         // Nearest-rank: index = ceil(q * n) - 1, clamped to [0, n-1].
         let n = sorted.len();
-        let idx = ((q * n as f64).ceil() as usize).saturating_sub(1).min(n - 1);
+        let idx = ((q * n as f64).ceil() as usize)
+            .saturating_sub(1)
+            .min(n - 1);
         Some(sorted[idx])
     }
 }
@@ -158,7 +160,7 @@ impl ThroughputWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{sinex_test, TestResult};
+    use xtask::sandbox::{TestResult, sinex_test};
 
     #[sinex_test]
     async fn latency_window_percentile_on_uniform_distribution() -> TestResult<()> {

@@ -1,4 +1,5 @@
-#[allow(unused_imports)] use super::*;
+#[allow(unused_imports)]
+use super::*;
 #[sinex_test]
 async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().dedicated().await?;
@@ -351,9 +352,7 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
 }
 
 #[sinex_test]
-async fn replay_replacement_recording_follows_operation_outputs(
-    ctx: TestContext,
-) -> Result<()> {
+async fn replay_replacement_recording_follows_operation_outputs(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let engine = ReplayExecutionEngine::new(replay.clone(), ctx.nats_client());
@@ -430,9 +429,7 @@ async fn replay_replacement_recording_follows_operation_outputs(
 }
 
 #[sinex_test]
-async fn replay_replacement_recording_skips_unmatched_old_events(
-    ctx: TestContext,
-) -> Result<()> {
+async fn replay_replacement_recording_skips_unmatched_old_events(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let engine = ReplayExecutionEngine::new(replay.clone(), ctx.nats_client());
@@ -503,4 +500,3 @@ async fn replay_replacement_recording_skips_unmatched_old_events(
 
     Ok(())
 }
-

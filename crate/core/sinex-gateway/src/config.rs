@@ -502,8 +502,8 @@ impl GatewayConfig {
             .or(self.rpc_token.take());
         self.rpc_token_file =
             shared_env::strict_var("SINEX_RPC_TOKEN_FILE")?.or(self.rpc_token_file.take());
-        self.admin_token_file =
-            shared_env::strict_var("SINEX_GATEWAY_ADMIN_TOKEN_FILE")?.or(self.admin_token_file.take());
+        self.admin_token_file = shared_env::strict_var("SINEX_GATEWAY_ADMIN_TOKEN_FILE")?
+            .or(self.admin_token_file.take());
         self.nats.url = env_string_override("SINEX_NATS_URL", self.nats.url.clone())?;
         self.nats.name = shared_env::strict_var("SINEX_NATS_NAME")?.or(self.nats.name.take());
         self.nats.require_tls = env_bool_override("SINEX_NATS_REQUIRE_TLS", self.nats.require_tls)?;

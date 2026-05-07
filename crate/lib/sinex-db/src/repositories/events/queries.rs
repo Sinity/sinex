@@ -621,7 +621,11 @@ impl EventRepository<'_> {
         &self,
         ids: &[Id<Event<JsonValue>>],
     ) -> DbResult<Vec<Event<JsonValue>>> {
-        debug_assert!(ids.len() <= 1000, "get_by_ids_chunk called with {} ids", ids.len());
+        debug_assert!(
+            ids.len() <= 1000,
+            "get_by_ids_chunk called with {} ids",
+            ids.len()
+        );
 
         let uuids: Vec<uuid::Uuid> = ids.iter().map(sinex_primitives::Id::to_uuid).collect();
 

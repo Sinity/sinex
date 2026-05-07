@@ -1148,13 +1148,13 @@ mod tests {
             rate_per_sec: None,
             eta_confidence: Some("none".to_string()),
             terminal_summary: Some(
-                "basic: RequestedAssertionFailed: browser proof missing".to_string(),
+                "basic: RequestedAssertionFailed: browser evidence missing".to_string(),
             ),
         };
 
         assert_eq!(
             progress_brief(Some(&progress)),
-            "basic: RequestedAssertionFailed: browser proof missing"
+            "basic: RequestedAssertionFailed: browser evidence missing"
         );
         Ok(())
     }

@@ -172,12 +172,12 @@ fn normalize_url_host(raw: &str) -> String {
 
 // ── Source-unit descriptor (issue #690 / #734) ──────────────────────────────
 
-use sinex_primitives::register_source_unit;
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
     RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
 };
+use sinex_primitives::register_source_unit;
 
 register_source_unit! {
     SourceUnitDescriptor {

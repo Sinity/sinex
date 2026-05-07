@@ -1,4 +1,3 @@
-use sinex_process::automata::daily::{DailySummarizer, DailySummaryState};
 use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext};
 use sinex_node_sdk::{NodeLogicError, WindowedNode};
 use sinex_primitives::activity::ActivitySourceKind;
@@ -9,6 +8,7 @@ use sinex_primitives::events::payloads::{
 use sinex_primitives::events::{Event, EventPayload};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue};
+use sinex_process::automata::daily::{DailySummarizer, DailySummaryState};
 use xtask::sandbox::prelude::*;
 
 fn make_context(ts_orig: Timestamp) -> DerivedTriggerContext {

@@ -563,9 +563,9 @@ async fn generate_verification_report(
 
 #[cfg(test)]
 mod tests {
-    use xtask::sandbox::{sinex_test, TestResult};
     use super::exit_code_for_status;
     use sinex_node_sdk::preflight::VerificationStatus;
+    use xtask::sandbox::{TestResult, sinex_test};
 
     #[sinex_test]
     async fn pass_status_exits_successfully() -> TestResult<()> {

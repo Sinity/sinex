@@ -17,8 +17,7 @@ use sinex_node_sdk::{
         TimeHorizon,
     },
     stage_as_you_go::StageAsYouGoContext,
-    stage_material_from_file,
-    tags,
+    stage_material_from_file, tags,
 };
 use sinex_node_sdk::{ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState};
 use sinex_primitives::temporal::Timestamp;
@@ -28,7 +27,7 @@ use sinex_primitives::{
     domain::SanitizedPath,
     events::{
         EventId, EventPayload,
-        payloads::{document::DocumentIngestedPayload, KnowledgeTagAppliedPayload},
+        payloads::{KnowledgeTagAppliedPayload, document::DocumentIngestedPayload},
     },
     privacy::{self, ProcessingContext},
 };
@@ -631,8 +630,7 @@ impl DocumentNode {
             let tag_event = tag_payload
                 .from_parents([EventId::from_uuid(document_event_uuid)])
                 .map_err(|e| {
-                    SinexError::processing("Failed to set auto-tag event provenance")
-                        .with_source(e)
+                    SinexError::processing("Failed to set auto-tag event provenance").with_source(e)
                 })?
                 .build()
                 .map_err(|e| {
@@ -960,12 +958,12 @@ mod tests {
 
 // --- Source-unit descriptor (issue #690 / #734) ---
 
-use sinex_primitives::register_source_unit;
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
     RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
 };
+use sinex_primitives::register_source_unit;
 
 // The document ingestor stages files as raw source material and emits a
 // `document.ingested` event per file. Until the parser/chunker train (#733)

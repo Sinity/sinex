@@ -35,8 +35,7 @@ static GLOBAL: MiMalloc = MiMalloc;
 use sinex_process::{
     AnalyticsAutomatonNode, DailySummarizerNode, DocumentParserNodeAdapter, EntityEnricherNode,
     EntityExtractorNode, EntityResolverNode, HealthAggregatorNode, HourlySummarizerNode,
-    RelationExtractorNode, SessionDetectorNode, TagApplierNode,
-    TerminalCommandCanonicalizerNode,
+    RelationExtractorNode, SessionDetectorNode, TagApplierNode, TerminalCommandCanonicalizerNode,
 };
 
 /// Extract `--automaton <name>` (or `SINEX_AUTOMATON`) from raw argv and return
@@ -44,11 +43,11 @@ use sinex_process::{
 ///
 /// The NodeCli parser does not know about `--automaton`, so we strip it before
 /// forwarding the remaining args to it.
-fn extract_automaton(
-    args: Vec<std::ffi::OsString>,
-) -> (String, Vec<std::ffi::OsString>) {
+fn extract_automaton(args: Vec<std::ffi::OsString>) -> (String, Vec<std::ffi::OsString>) {
     // Check env first.
-    let env_val = std::env::var("SINEX_AUTOMATON").ok().filter(|v| !v.trim().is_empty());
+    let env_val = std::env::var("SINEX_AUTOMATON")
+        .ok()
+        .filter(|v| !v.trim().is_empty());
 
     let mut automaton: Option<String> = env_val;
     let mut filtered: Vec<std::ffi::OsString> = Vec::with_capacity(args.len());
@@ -126,9 +125,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-async fn run_node<T>(
-    args: Vec<std::ffi::OsString>,
-) -> Result<(), Box<dyn std::error::Error>>
+async fn run_node<T>(args: Vec<std::ffi::OsString>) -> Result<(), Box<dyn std::error::Error>>
 where
     T: sinex_node_sdk::runtime::stream::Node
         + sinex_node_sdk::ExplorationProvider

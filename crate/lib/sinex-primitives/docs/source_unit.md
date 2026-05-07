@@ -99,13 +99,19 @@ A new ingestor must not merge until:
 
 1. Its `SourceUnitDescriptor` is filled in (every field, no defaults).
 2. The declared `event_types` resolve to live `EventPayload` constants.
-3. The declared `proof_obligations` resolve to scenarios in the proof
-   catalog.
-4. Those scenarios pass.
+3. The declared `proof_obligations` resolve to known proof-catalog
+   obligations.
+4. Any `required` obligation has a runner binding and a checkable command.
+5. Scenario metadata separates catalog-backed `claim:*` IDs from free-form
+   assertion IDs.
+6. Passing evidence is required only where a concrete runner/check has been
+   wired; advisory/deferred obligations are visible backlog, not a promotion
+   gate.
 
-Cross-reference enforcement is the job of the `xtask issue-drift` /
-`xtask docs` tooling layer (issue #694, separate PR). The descriptor
-itself is the source of truth.
+Cross-reference enforcement is the job of `xtask docs proof-catalog --check`
+and `xtask docs check`. The descriptor itself is the source of truth for the
+source-unit contract, while the generated proof catalog is the cross-reference
+surface that prevents proof obligations from becoming unchecked prose.
 
 ## Status of acceptance criteria
 
@@ -114,7 +120,9 @@ proven case. The remaining acceptance criteria from #690 are tracked as
 explicit follow-ups:
 
 - *Cross-reference verification (xtask warnings on missing
-  descriptors):* deferred to the issue-drift detector work (#694).
+  descriptors):* superseded by the proof-catalog/source-unit validation
+  work (#1129/#1099); this belongs in live checks, not a phantom
+  issue-drift command.
 - *Backfill remaining ingestors:* mechanical follow-up; one PR per
   ingestor crate.
 - *CLAUDE.md / CONTRIBUTING references the descriptor as the promotion
