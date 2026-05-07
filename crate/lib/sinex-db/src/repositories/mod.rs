@@ -11,6 +11,7 @@ pub mod gitops;
 pub mod integrity;
 pub mod knowledge_graph;
 pub mod occurrence;
+pub mod parser_jobs;
 pub mod replay;
 pub mod schema_cache;
 pub mod schema_management;
@@ -38,6 +39,7 @@ pub use knowledge_graph::{
     EntityRelationRecord, EntityType, KnowledgeGraphRepository,
 };
 pub use occurrence::{MaterialInterpretationRepository, OccurrenceRepository};
+pub use parser_jobs::{ParserJobRepository, ParserJobRow};
 pub use replay::ReplayRepository;
 pub use schema_cache::{CachedSchema, SchemaCacheRepository};
 pub use schema_management::{
@@ -69,6 +71,7 @@ pub trait DbPoolExt {
     fn acquisition_jobs(&self) -> acquisition_jobs::AcquisitionJobRepository<'_>;
     fn blobs(&self) -> blobs::BlobRepository;
     fn embeddings(&self) -> embeddings::EmbeddingRepository<'_>;
+    fn parser_jobs(&self) -> parser_jobs::ParserJobRepository<'_>;
     fn source_bindings(&self) -> source_bindings::SourceBindingRepository<'_>;
     fn events(&self) -> events::EventRepository<'_>;
     fn gitops(&self) -> gitops::GitOpsRepository<'_>;
@@ -97,6 +100,10 @@ impl DbPoolExt for PgPool {
 
     fn embeddings(&self) -> embeddings::EmbeddingRepository<'_> {
         embeddings::EmbeddingRepository::new(self)
+    }
+
+    fn parser_jobs(&self) -> parser_jobs::ParserJobRepository<'_> {
+        parser_jobs::ParserJobRepository::new(self)
     }
 
     fn source_bindings(&self) -> source_bindings::SourceBindingRepository<'_> {
