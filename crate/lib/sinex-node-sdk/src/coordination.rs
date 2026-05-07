@@ -239,7 +239,10 @@ mod tests {
         let coordination =
             NodeCoordination::from_runtime(&harness.runtime, "source-unit-instance".to_string())?;
 
-        assert_eq!(coordination.instance.service_name.as_str(), "terminal.atuin-history");
+        assert_eq!(
+            coordination.instance.service_name.as_str(),
+            "terminal.atuin-history"
+        );
 
         coordination
             .kv_client

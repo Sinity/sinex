@@ -366,14 +366,25 @@ fn is_temporary_path(path: &str) -> bool {
 
 fn is_system_path(path: &str) -> bool {
     const SYSTEM_PREFIXES: &[&str] = &[
-        "/etc/", "/run/", "/nix/", "/proc/", "/sys/", "/usr/", "/lib/",
-        "/lib64/", "/bin/", "/sbin/", "/var/", "/boot/", "/opt/", "/srv/",
+        "/etc/", "/run/", "/nix/", "/proc/", "/sys/", "/usr/", "/lib/", "/lib64/", "/bin/",
+        "/sbin/", "/var/", "/boot/", "/opt/", "/srv/",
     ];
     SYSTEM_PREFIXES.iter().any(|p| path.starts_with(p))
         || matches!(
             path,
-            "/etc" | "/run" | "/nix" | "/proc" | "/sys" | "/usr" | "/lib"
-                | "/lib64" | "/bin" | "/sbin" | "/var" | "/boot" | "/opt"
+            "/etc"
+                | "/run"
+                | "/nix"
+                | "/proc"
+                | "/sys"
+                | "/usr"
+                | "/lib"
+                | "/lib64"
+                | "/bin"
+                | "/sbin"
+                | "/var"
+                | "/boot"
+                | "/opt"
                 | "/srv"
         )
 }
@@ -442,14 +453,14 @@ impl From<PrivacyError> for crate::error::SinexError {
     fn from(err: PrivacyError) -> Self {
         match err {
             PrivacyError::Config(inner) => {
-                crate::error::SinexError::from(inner)
-                    .with_context("privacy_component", "config")
+                crate::error::SinexError::from(inner).with_context("privacy_component", "config")
             }
-            PrivacyError::InvalidPattern { ref rule, ref source } => {
-                crate::error::SinexError::configuration("invalid regex pattern in privacy rule")
-                    .with_context("rule", rule)
-                    .with_source(source)
-            }
+            PrivacyError::InvalidPattern {
+                ref rule,
+                ref source,
+            } => crate::error::SinexError::configuration("invalid regex pattern in privacy rule")
+                .with_context("rule", rule)
+                .with_source(source),
             PrivacyError::EncryptionFailed(ref msg) => {
                 crate::error::SinexError::processing("privacy encryption failed")
                     .with_context("detail", msg)

@@ -18,7 +18,9 @@ pub async fn synchronize_schemas(pool: &PgPool) -> IngestdResult<SchemaSyncResul
     let schema_bundle = generate_schema_bundle()
         .map_err(|error| error.with_context("operation", "generate_schema_bundle"))?;
     let repo = SchemaManagementRepository::new(pool);
-    let result = repo.sync_schema_bundle(schema_bundle.into_entries()).await?;
+    let result = repo
+        .sync_schema_bundle(schema_bundle.into_entries())
+        .await?;
 
     info!(?result, "Schema synchronization completed");
     Ok(result)

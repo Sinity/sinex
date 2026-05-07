@@ -62,10 +62,7 @@ impl PressureMonitor {
         let avg10_segment = some_segment
             .split_whitespace()
             .find(|token| token.starts_with("avg10="))?;
-        avg10_segment
-            .strip_prefix("avg10=")?
-            .parse::<f64>()
-            .ok()
+        avg10_segment.strip_prefix("avg10=")?.parse::<f64>().ok()
     }
 
     /// Read `/proc/pressure/io` and return `true` if the `some avg10`
@@ -122,13 +119,12 @@ impl PressureMonitor {
     fn read_proc_pressure(resource: &str) -> Result<f64, std::io::Error> {
         let path = format!("/proc/pressure/{resource}");
         let content = std::fs::read_to_string(&path)?;
-        Self::parse_psi_avg10(&content)
-            .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("unable to parse avg10 from {path}: {content}"),
-                )
-            })
+        Self::parse_psi_avg10(&content).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unable to parse avg10 from {path}: {content}"),
+            )
+        })
     }
 }
 
@@ -178,16 +174,14 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn parse_psi_avg10_returns_none_for_malformed_line()
-    -> xtask::sandbox::TestResult<()> {
+    async fn parse_psi_avg10_returns_none_for_malformed_line() -> xtask::sandbox::TestResult<()> {
         assert!(PressureMonitor::parse_psi_avg10("garbage").is_none());
         assert!(PressureMonitor::parse_psi_avg10("").is_none());
         Ok(())
     }
 
     #[sinex_test]
-    async fn pressure_monitor_below_threshold_does_not_backoff()
-    -> xtask::sandbox::TestResult<()> {
+    async fn pressure_monitor_below_threshold_does_not_backoff() -> xtask::sandbox::TestResult<()> {
         let monitor = PressureMonitor::new(99.0, 99.0);
         // On non-Linux or systems with actual low pressure, this should be false.
         assert!(!monitor.should_backoff());

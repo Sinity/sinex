@@ -9,11 +9,11 @@ use sinex_primitives::Uuid;
 use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::events::Event;
+use sinex_primitives::events::builder::OperationMarker;
 use sinex_primitives::rpc::audit::{
     AuditGetRequest, AuditGetResponse, AuditTrail, OperationRecord,
 };
 use sinex_primitives::rpc::lifecycle::LifecycleOperationSummary;
-use sinex_primitives::events::builder::OperationMarker;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]

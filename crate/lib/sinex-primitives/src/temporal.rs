@@ -43,7 +43,7 @@ pub fn parse_duration(s: &str) -> Option<Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{sinex_test, TestResult};
+    use xtask::sandbox::{TestResult, sinex_test};
 
     #[sinex_test]
     async fn parse_duration_accepts_legacy_compact_units() -> TestResult<()> {

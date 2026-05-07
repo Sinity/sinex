@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Emitted when two entities are deduplicated/merged. The source entity is\nabsorbed into the target; its `is_merged` flag is set in `core.entities`.",
+  "properties": {
+    "absorbed_entity_id": {
+      "description": "The entity being absorbed.",
+      "format": "uuid",
+      "type": "string"
+    },
+    "merge_strategy": {
+      "description": "Merge strategy used.",
+      "type": "string"
+    },
+    "survivor_entity_id": {
+      "description": "The surviving entity.",
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "survivor_entity_id",
+    "absorbed_entity_id",
+    "merge_strategy"
+  ],
+  "title": "KnowledgeEntityMergedPayload",
+  "type": "object",
+  "x-sinex-event-type": "knowledge.entity_merged",
+  "x-sinex-source": "knowledge-graph",
+  "x-sinex-version": "1.0.0"
+}

@@ -37,8 +37,7 @@ async fn detects_dropped_default_on_existing_column(ctx: TestContext) -> TestRes
     let matched: Vec<_> = drifts
         .iter()
         .filter(|d| {
-            d.category == DriftCategory::ColumnDefault
-                && d.location == "core.events.ts_persisted"
+            d.category == DriftCategory::ColumnDefault && d.location == "core.events.ts_persisted"
         })
         .collect();
 
@@ -75,8 +74,7 @@ async fn detects_replaced_default_on_existing_column(ctx: TestContext) -> TestRe
     let matched: Vec<_> = drifts
         .iter()
         .filter(|d| {
-            d.category == DriftCategory::ColumnDefault
-                && d.location == "core.events.ts_persisted"
+            d.category == DriftCategory::ColumnDefault && d.location == "core.events.ts_persisted"
         })
         .collect();
 
@@ -95,19 +93,15 @@ async fn detects_replaced_default_on_existing_column(ctx: TestContext) -> TestRe
     // `check_strict_returns_empty_after_apply` test, which runs in the same
     // sandbox DB pool.  DDL mutations persist across the pool's data-cleaning
     // pass, so we must undo the structural change explicitly here.
-    sqlx::query(
-        "ALTER TABLE core.events ALTER COLUMN ts_persisted SET DEFAULT CURRENT_TIMESTAMP",
-    )
-    .execute(&ctx.pool)
-    .await?;
+    sqlx::query("ALTER TABLE core.events ALTER COLUMN ts_persisted SET DEFAULT CURRENT_TIMESTAMP")
+        .execute(&ctx.pool)
+        .await?;
 
     Ok(())
 }
 
 #[sinex_test]
-async fn detects_manual_edit_to_trigger_function_body(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn detects_manual_edit_to_trigger_function_body(ctx: TestContext) -> TestResult<()> {
     sinex_schema::apply::apply(&ctx.pool).await?;
 
     // Replace `core.expand_cascade` with a stub that drops the
@@ -131,10 +125,7 @@ async fn detects_manual_edit_to_trigger_function_body(
     let drifts = check_strict(&ctx.pool).await?;
     let matched: Vec<_> = drifts
         .iter()
-        .filter(|d| {
-            d.category == DriftCategory::TriggerBody
-                && d.location == "core.expand_cascade"
-        })
+        .filter(|d| d.category == DriftCategory::TriggerBody && d.location == "core.expand_cascade")
         .collect();
 
     assert_eq!(
@@ -356,8 +347,7 @@ async fn detects_orphan_column_in_convergible_table(ctx: TestContext) -> TestRes
     let matched: Vec<_> = drifts
         .iter()
         .filter(|d| {
-            d.category == DriftCategory::OrphanColumn
-                && d.location == "core.blobs.orphan_test_col"
+            d.category == DriftCategory::OrphanColumn && d.location == "core.blobs.orphan_test_col"
         })
         .collect();
 
@@ -387,18 +377,15 @@ async fn pending_drop_suppresses_orphan_report(ctx: TestContext) -> TestResult<(
     //
     // We re-add the column to simulate a DB that hasn't had `columns_to_drop`
     // applied yet.
-    sqlx::query(
-        "ALTER TABLE core.events ADD COLUMN IF NOT EXISTS node_version TEXT",
-    )
-    .execute(&ctx.pool)
-    .await?;
+    sqlx::query("ALTER TABLE core.events ADD COLUMN IF NOT EXISTS node_version TEXT")
+        .execute(&ctx.pool)
+        .await?;
 
     let drifts = check_strict(&ctx.pool).await?;
     let false_positives: Vec<_> = drifts
         .iter()
         .filter(|d| {
-            d.category == DriftCategory::OrphanColumn
-                && d.location == "core.events.node_version"
+            d.category == DriftCategory::OrphanColumn && d.location == "core.events.node_version"
         })
         .collect();
 
@@ -413,18 +400,14 @@ async fn pending_drop_suppresses_orphan_report(ctx: TestContext) -> TestResult<(
 // ─── Nullability convergence tests (#939) ────────────────────────────────────
 
 #[sinex_test]
-async fn nullability_convergence_sets_not_null_on_empty_table(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn nullability_convergence_sets_not_null_on_empty_table(ctx: TestContext) -> TestResult<()> {
     sinex_schema::apply::apply(&ctx.pool).await?;
 
     // Drop NOT NULL on core.blobs.original_filename (a NOT NULL column) to
     // simulate a production drift where an operator dropped the constraint.
-    sqlx::query(
-        "ALTER TABLE core.blobs ALTER COLUMN original_filename DROP NOT NULL",
-    )
-    .execute(&ctx.pool)
-    .await?;
+    sqlx::query("ALTER TABLE core.blobs ALTER COLUMN original_filename DROP NOT NULL")
+        .execute(&ctx.pool)
+        .await?;
 
     // Verify the column is now nullable in the live DB.
     let is_nullable: String = sqlx::query_scalar(
@@ -500,11 +483,9 @@ async fn nullability_convergence_fails_loudly_on_null_rows(ctx: TestContext) -> 
     //   1. Drop NOT NULL on core.blobs.original_filename.
     //   2. Insert a blob row with original_filename = NULL.
     //   3. Re-run apply — SET NOT NULL must fail with a clear error.
-    sqlx::query(
-        "ALTER TABLE core.blobs ALTER COLUMN original_filename DROP NOT NULL",
-    )
-    .execute(&ctx.pool)
-    .await?;
+    sqlx::query("ALTER TABLE core.blobs ALTER COLUMN original_filename DROP NOT NULL")
+        .execute(&ctx.pool)
+        .await?;
 
     // Insert a blob row with a NULL original_filename to block SET NOT NULL.
     sqlx::query(
@@ -544,20 +525,16 @@ async fn column_rename_is_idempotent(ctx: TestContext) -> TestResult<()> {
     sinex_schema::apply::apply(&ctx.pool).await?;
 
     // Add a test column to core.blobs to rename.
-    sqlx::query(
-        "ALTER TABLE core.blobs ADD COLUMN IF NOT EXISTS rename_test_old TEXT",
-    )
-    .execute(&ctx.pool)
-    .await?;
+    sqlx::query("ALTER TABLE core.blobs ADD COLUMN IF NOT EXISTS rename_test_old TEXT")
+        .execute(&ctx.pool)
+        .await?;
 
     // Directly call converge_column_renames via the public converge API
     // by applying a rename through the helper path.
     // We use a raw SQL rename to simulate what converge_column_renames would do.
-    sqlx::query(
-        "ALTER TABLE core.blobs RENAME COLUMN rename_test_old TO rename_test_new",
-    )
-    .execute(&ctx.pool)
-    .await?;
+    sqlx::query("ALTER TABLE core.blobs RENAME COLUMN rename_test_old TO rename_test_new")
+        .execute(&ctx.pool)
+        .await?;
 
     // Verify the rename landed.
     let col_exists: bool = sqlx::query_scalar(

@@ -60,7 +60,7 @@ pub use persistence::{
 
 #[cfg(test)]
 mod tests {
-    use xtask::sandbox::{sinex_test, TestResult};
+    use xtask::sandbox::{TestResult, sinex_test};
     // event_select_columns! is available in scope from the parent module
 
     /// Number of physical columns in `core.events` (24 columns).

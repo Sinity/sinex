@@ -30,6 +30,7 @@ pub(crate) struct ScenarioCatalogEntry {
     pub(crate) fixtures: Vec<String>,
     pub(crate) subject_refs: Vec<String>,
     pub(crate) claim_ids: Vec<String>,
+    pub(crate) assertion_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, PartialEq, Eq)]
@@ -102,6 +103,7 @@ pub(super) fn select_scenarios(
                 entry.tags.iter().any(|candidate| candidate == tag)
                     || entry.id == *tag
                     || entry.claim_ids.iter().any(|claim| claim == tag)
+                    || entry.assertion_ids.iter().any(|assertion| assertion == tag)
             })
         })
         .filter(|entry| {
@@ -226,6 +228,7 @@ fn extract_scenario_catalog_entries(
                 fixtures: values.fixtures,
                 subject_refs: values.subject_refs,
                 claim_ids: values.claim_ids,
+                assertion_ids: values.assertion_ids,
             });
         }
         offset = attr_end + 1;
@@ -243,6 +246,7 @@ struct ParsedScenarioAttrs {
     fixtures: Vec<String>,
     subject_refs: Vec<String>,
     claim_ids: Vec<String>,
+    assertion_ids: Vec<String>,
 }
 
 fn parse_scenario_attr_values(attr_text: &str) -> Option<ParsedScenarioAttrs> {
@@ -253,6 +257,8 @@ fn parse_scenario_attr_values(attr_text: &str) -> Option<ParsedScenarioAttrs> {
     let cost_tier = values
         .get("cost_tier")
         .map_or_else(|| lane.clone(), |value| value.trim().to_ascii_lowercase());
+    let (claim_ids, assertion_ids) =
+        split_claims_and_assertions(values.get("claims").map_or("", String::as_str));
     Some(ParsedScenarioAttrs {
         id,
         category,
@@ -261,8 +267,22 @@ fn parse_scenario_attr_values(attr_text: &str) -> Option<ParsedScenarioAttrs> {
         tags: split_csv(values.get("tags").map_or("", String::as_str)),
         fixtures: split_csv(values.get("fixtures").map_or("", String::as_str)),
         subject_refs: split_csv(values.get("subjects").map_or("", String::as_str)),
-        claim_ids: split_csv(values.get("claims").map_or("", String::as_str)),
+        claim_ids,
+        assertion_ids,
     })
+}
+
+fn split_claims_and_assertions(value: &str) -> (Vec<String>, Vec<String>) {
+    let mut claim_ids = Vec::new();
+    let mut assertion_ids = Vec::new();
+    for item in split_csv(value) {
+        if item.starts_with("claim:") {
+            claim_ids.push(item);
+        } else {
+            assertion_ids.push(item);
+        }
+    }
+    (claim_ids, assertion_ids)
 }
 
 fn split_csv(value: &str) -> Vec<String> {
@@ -439,7 +459,8 @@ async fn runtime_restart_scenario(ctx: TestContext) -> Result<()> {
         assert_eq!(entry.tags, ["runtime", "restart", "recovery"]);
         assert_eq!(entry.fixtures, ["postgres", "nats", "ingestd"]);
         assert_eq!(entry.subject_refs, ["issue:324", "node:runtime"]);
-        assert_eq!(entry.claim_ids, ["restart-recovers", "ledger-complete"]);
+        assert!(entry.claim_ids.is_empty());
+        assert_eq!(entry.assertion_ids, ["restart-recovers", "ledger-complete"]);
         Ok(())
     }
 
@@ -458,7 +479,8 @@ async fn runtime_restart_scenario(ctx: TestContext) -> Result<()> {
                 tags: vec!["source_material".to_string(), "row_stream".to_string()],
                 fixtures: vec!["postgres".to_string()],
                 subject_refs: vec!["issue:315".to_string()],
-                claim_ids: vec!["stable-anchors".to_string()],
+                claim_ids: Vec::new(),
+                assertion_ids: vec!["stable-anchors".to_string()],
             },
             ScenarioCatalogEntry {
                 id: "runtime.restart.v1".to_string(),
@@ -471,7 +493,8 @@ async fn runtime_restart_scenario(ctx: TestContext) -> Result<()> {
                 tags: vec!["runtime".to_string(), "restart".to_string()],
                 fixtures: vec!["nats".to_string()],
                 subject_refs: vec!["issue:324".to_string()],
-                claim_ids: vec!["restart-recovers".to_string()],
+                claim_ids: Vec::new(),
+                assertion_ids: vec!["restart-recovers".to_string()],
             },
         ];
 

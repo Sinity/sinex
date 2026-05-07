@@ -103,11 +103,12 @@ where
         let checkpoint_state = checkpoint_mgr.load_checkpoint().await?;
         match checkpoint_state.data {
             Some(data) => {
-                let mut persisted: PersistedState<N::State> = crate::checkpoint::decode_checkpoint_data(
-                    data,
-                    "derived checkpoint state",
-                    self.node.name(),
-                )?;
+                let mut persisted: PersistedState<N::State> =
+                    crate::checkpoint::decode_checkpoint_data(
+                        data,
+                        "derived checkpoint state",
+                        self.node.name(),
+                    )?;
                 restore_resume_position(&mut persisted, &checkpoint_state.checkpoint);
                 info!(
                     node = %self.node.name(),

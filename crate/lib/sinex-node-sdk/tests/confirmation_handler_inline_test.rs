@@ -20,8 +20,20 @@ async fn test_confirmation_buffer_add_and_confirm() -> TestResult<()> {
     assert!(buffer.add_provisional(event.clone()).await);
     assert_eq!(buffer.len().await, 1);
 
-    let confirmed = buffer.confirm(event_id).await;
-    assert!(confirmed.is_some());
+    let confirmed = buffer
+        .confirm(event_id)
+        .await
+        .expect("confirmation should return the provisional event");
+    assert_eq!(confirmed.event_id, event.event_id);
+    assert_eq!(confirmed.source, event.source);
+    assert_eq!(confirmed.event_type, event.event_type);
+    assert_eq!(confirmed.payload, event.payload);
+    assert_eq!(confirmed.ts_orig, event.ts_orig);
+    assert_eq!(confirmed.received_at, event.received_at);
+    assert!(
+        buffer.confirm(event_id).await.is_none(),
+        "confirmation removes the provisional event after the first match"
+    );
     assert_eq!(buffer.len().await, 0);
     Ok(())
 }

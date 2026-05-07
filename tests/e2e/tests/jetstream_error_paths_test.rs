@@ -7,14 +7,30 @@ use std::time::Duration;
 
 #[sinex_test]
 async fn test_nats_connect_failure(_ctx: TestContext) -> TestResult<()> {
-    // This test verifies that attempting to connect to a non-existent NATS server
-    // produces a clear error. We skip this test as it requires explicit non-existent server setup.
-    // The integration with ctx.with_nats() already validates successful connections.
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+    let addr = listener.local_addr()?;
+    drop(listener);
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        async_nats::connect(addr.to_string()),
+    )
+    .await;
+
+    match result {
+        Ok(Ok(_client)) => bail!("unexpectedly connected to unavailable NATS endpoint {addr}"),
+        Ok(Err(error)) => assert!(
+            !error.to_string().trim().is_empty(),
+            "connection failure should carry an error message"
+        ),
+        Err(_elapsed) => bail!("connection attempt to unavailable NATS endpoint {addr} timed out"),
+    }
+
     Ok(())
 }
 
 #[sinex_test]
-async fn test_publish_fails_when_nats_stopped(ctx: TestContext) -> TestResult<()> {
+async fn test_publish_to_unmatched_subject_is_rejected(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let js = ctx.jetstream().await?;
 
@@ -39,9 +55,6 @@ async fn test_publish_fails_when_nats_stopped(ctx: TestContext) -> TestResult<()
     let info = stream.info().await?;
     assert!(info.state.messages > 0);
 
-    // Note: We can't easily test "publish after NATS stopped" without actually
-    // stopping the NATS server, which would break other tests. Instead, we verify
-    // that publishing to a non-existent subject (no matching stream) produces an error
     let invalid_subject = "no_stream.subject".to_string();
 
     // js.publish().await returns PublishAckFuture (first await sends to NATS).

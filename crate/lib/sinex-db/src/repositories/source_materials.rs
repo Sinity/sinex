@@ -415,7 +415,10 @@ impl SourceMaterialLink {
 }
 
 /// Recursively merge `incoming` into `target`, with incoming values winning on conflict.
-fn merge_json_objects(target: &mut JsonMap<String, JsonValue>, incoming: JsonMap<String, JsonValue>) {
+fn merge_json_objects(
+    target: &mut JsonMap<String, JsonValue>,
+    incoming: JsonMap<String, JsonValue>,
+) {
     for (key, incoming_val) in incoming {
         match (target.get_mut(&key), incoming_val) {
             (Some(JsonValue::Object(existing_obj)), JsonValue::Object(incoming_obj)) => {

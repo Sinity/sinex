@@ -254,11 +254,11 @@ pub fn read_file_lines(file: &DiscoveredFile) -> Result<Vec<String>, std::io::Er
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{sinex_test, TestResult};
     use std::io::Write;
     use std::thread::sleep;
     use std::time::Duration;
     use tempfile::TempDir;
+    use xtask::sandbox::{TestResult, sinex_test};
 
     fn create_test_file(dir: &std::path::Path, name: &str, content: &str) {
         let path = dir.join(name);

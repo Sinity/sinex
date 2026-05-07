@@ -831,10 +831,9 @@ impl SystemNode {
             spawn_forwarder("system.udev.device", rx, emitter, Some(Arc::clone(&health)));
         let mut watcher = self.factory.create_udev_watcher(true).await?;
         let watcher_material = material.clone();
-        let task =
-            spawn_watcher_with_panic_catch("udev", Some(Arc::clone(&health)), async move {
-                watcher.start_streaming(tx, watcher_material).await
-            });
+        let task = spawn_watcher_with_panic_catch("udev", Some(Arc::clone(&health)), async move {
+            watcher.start_streaming(tx, watcher_material).await
+        });
         let mut handle = handle;
         handle.start(task, Some(forwarder))?;
         Ok(handle)

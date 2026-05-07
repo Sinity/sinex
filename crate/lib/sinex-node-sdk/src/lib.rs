@@ -56,7 +56,6 @@ pub mod examples;
 #[cfg(feature = "messaging")]
 pub mod exploration;
 pub mod file_tailer;
-pub mod tags;
 #[cfg(feature = "messaging")]
 pub mod health_reporter;
 #[cfg(feature = "messaging")]
@@ -78,26 +77,27 @@ pub mod prelude;
 pub mod processing;
 #[cfg(feature = "messaging")]
 pub mod record_source;
+pub mod tags;
 #[cfg(feature = "messaging")]
 pub mod runtime {
     pub mod stream;
 }
+pub mod pressure;
 #[cfg(feature = "messaging")]
 pub mod schema_validator;
 #[cfg(feature = "messaging")]
 pub mod self_observation;
 pub mod service_runtime;
 pub mod shutdown;
-pub mod pressure;
 pub mod source_material;
 pub mod sqlite_source;
 #[cfg(feature = "messaging")]
 pub mod stage_as_you_go;
 #[cfg(feature = "messaging")]
+pub mod supervised_watcher;
+#[cfg(feature = "messaging")]
 pub mod systemd_notify;
 pub mod version;
-#[cfg(feature = "messaging")]
-pub mod supervised_watcher;
 #[cfg(feature = "messaging")]
 pub mod watcher_handle;
 
@@ -119,7 +119,9 @@ pub use checkpoint::{
     CheckpointCleanupConfig, CheckpointCleanupResult, CheckpointManager, CheckpointState,
     cleanup_stale_checkpoints, spawn_checkpoint_cleanup_task,
 };
-pub use config::{AutomatonConfig, EventSourceConfig, MaterialMetadataPolicy, NodeConfig, PathClassRule};
+pub use config::{
+    AutomatonConfig, EventSourceConfig, MaterialMetadataPolicy, NodeConfig, PathClassRule,
+};
 pub use confirmation_handler::{
     ConfirmationBuffer, ConfirmedEventHandler, EventConfirmation, ProcessingModel,
     ProvisionalEvent, ProvisionalEventHandler,
@@ -130,9 +132,9 @@ pub use coordination::{HandoffRequest, InstanceMode, NodeCoordination};
 pub use derived_node::{
     DerivedAggregationMeta, DerivedNodeAdapter, DerivedNodeConfig, DerivedOutput,
     DerivedScopeInvalidation, DerivedTriggerContext, INVALIDATION_SUBJECT, InputProvenanceFilter,
-    MultiOutputTransducerNode, MultiOutputTransducerNodeAdapter, MultiOutputTransducerWrapper, ScopeReconcilerNode,
-    ScopeReconcilerNodeAdapter, ScopeReconcilerWrapper, TransducerNode, TransducerNodeAdapter,
-    TransducerWrapper, WindowedNode, WindowedNodeAdapter, WindowedWrapper,
+    MultiOutputTransducerNode, MultiOutputTransducerNodeAdapter, MultiOutputTransducerWrapper,
+    ScopeReconcilerNode, ScopeReconcilerNodeAdapter, ScopeReconcilerWrapper, TransducerNode,
+    TransducerNodeAdapter, TransducerWrapper, WindowedNode, WindowedNodeAdapter, WindowedWrapper,
 };
 #[cfg(feature = "messaging")]
 pub use dlq_retry::{DlqRetryConfig, DlqRetryHandler, DlqRetryResult, DlqStats};
@@ -199,12 +201,12 @@ pub use sqlite_source::{
     max_row_id_for_query, read_rows_after, read_rows_with_params,
 };
 #[cfg(feature = "messaging")]
-pub use systemd_notify::{notify_ready, notify_stopping, spawn_watchdog, stop_watchdog};
-pub use version::{NodeInstance, NodeVersion};
-#[cfg(feature = "messaging")]
 pub use supervised_watcher::{
     SupervisedWatcherConfig, spawn_supervised_watcher, spawn_watcher_with_panic_catch,
 };
+#[cfg(feature = "messaging")]
+pub use systemd_notify::{notify_ready, notify_stopping, spawn_watchdog, stop_watchdog};
+pub use version::{NodeInstance, NodeVersion};
 #[cfg(feature = "messaging")]
 pub use watcher_handle::{WatcherHandle, WatcherHealth, WatcherState};
 

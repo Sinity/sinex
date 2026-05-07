@@ -4,7 +4,9 @@ use crate::command_catalog::collect_command_catalog;
 use crate::command_docs::{render_command_guide, render_command_reference};
 use crate::config::{ast_grep_catalog_path, ast_grep_rules_dir};
 use crate::process::ProcessBuilder;
-use crate::proof_catalog::{build_proof_catalog, render_proof_catalog_json};
+use crate::proof_catalog::{
+    build_proof_catalog, render_proof_catalog_json, validate_proof_catalog,
+};
 use color_eyre::eyre::{Context, Result};
 use serde::Deserialize;
 use sinex_primitives::events::schema_registry::{
@@ -150,7 +152,6 @@ pub enum DocsSubcommand {
 
     /// Generate a codebase snapshot for AI context (via repomix)
     Snapshot(SnapshotCommand),
-
 }
 
 /// Generate and verify repo documentation surfaces.
@@ -649,6 +650,7 @@ fn generated_surfaces(workspace: &std::path::Path) -> Result<Vec<GeneratedSurfac
 
 fn generated_proof_catalog_surface(workspace: &std::path::Path) -> Result<GeneratedSurface> {
     let catalog = build_proof_catalog(workspace)?;
+    validate_proof_catalog(&catalog).into_result()?;
     Ok(GeneratedSurface {
         label: "proof catalog",
         path: workspace.join("docs/proof-catalog.json"),
@@ -853,9 +855,12 @@ fn populate_schema_bundle_entry(
     root: &std::path::Path,
     entry: &PayloadSchemaBundleEntry,
 ) -> Result<()> {
-    let major = entry
-        .major_version()
-        .with_context(|| format!("invalid schema version for {}/{}", entry.source, entry.event_type))?;
+    let major = entry.major_version().with_context(|| {
+        format!(
+            "invalid schema version for {}/{}",
+            entry.source, entry.event_type
+        )
+    })?;
     let path_key = (major, entry.source.clone(), entry.event_type.clone());
     if let Some(existing_version) = seen_paths.insert(path_key, entry.version.clone())
         && existing_version != entry.version

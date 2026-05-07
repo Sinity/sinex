@@ -1,4 +1,5 @@
-#[allow(unused_imports)] use super::*;
+#[allow(unused_imports)]
+use super::*;
 #[sinex_test]
 async fn replay_execution_surfaces_operation_state_corruption_after_failure(
     ctx: TestContext,
@@ -188,9 +189,7 @@ async fn replay_execution_surfaces_cancellation_bookkeeping_corruption(
     let err = execute_task
         .await
         .map_err(|e| eyre!("execute task failed: {e}"))?
-        .expect_err(
-            "corrupt replay metadata should surface as cancellation bookkeeping failure",
-        );
+        .expect_err("corrupt replay metadata should surface as cancellation bookkeeping failure");
     assert!(
         err.to_string()
             .contains("failed to finalize replay execution bookkeeping"),
@@ -209,13 +208,11 @@ async fn replay_execution_surfaces_cancellation_bookkeeping_corruption(
     Ok(())
 }
 
-
 #[sinex_test]
 async fn replay_list_rejects_missing_operations_payload(_ctx: TestContext) -> Result<()> {
-    let err = ReplayControlClient::require_operations(ReplayControlResponse::success(
-        None, None, None,
-    ))
-    .expect_err("list responses without operations must be rejected");
+    let err =
+        ReplayControlClient::require_operations(ReplayControlResponse::success(None, None, None))
+            .expect_err("list responses without operations must be rejected");
     assert!(
         err.to_string()
             .contains("Replay control response missing operations")

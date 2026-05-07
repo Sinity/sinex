@@ -606,7 +606,7 @@ pub fn get_hostname() -> HostName {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{sinex_test, TestResult};
+    use xtask::sandbox::{TestResult, sinex_test};
 
     // Inline because these exercise private host-identity resolution helpers directly.
     #[sinex_test]
@@ -626,7 +626,8 @@ mod tests {
 
     // Inline because these exercise private host-identity resolution helpers directly.
     #[sinex_test]
-    async fn resolve_host_identity_derives_deterministic_fallback_from_invalid_inputs() -> TestResult<()> {
+    async fn resolve_host_identity_derives_deterministic_fallback_from_invalid_inputs()
+    -> TestResult<()> {
         let host = resolve_host_identity(Some("bad machine id"), Some("bad host"));
         assert_eq!(host.as_str(), "host-887759893f18d0bb");
         Ok(())
@@ -634,7 +635,8 @@ mod tests {
 
     // Inline because these exercise private host-identity resolution helpers directly.
     #[sinex_test]
-    async fn resolve_host_identity_uses_unknown_host_only_when_no_identity_material_exists() -> TestResult<()> {
+    async fn resolve_host_identity_uses_unknown_host_only_when_no_identity_material_exists()
+    -> TestResult<()> {
         let host = resolve_host_identity(None, Some("   "));
         assert_eq!(host.as_str(), "unknown-host");
         Ok(())

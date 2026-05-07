@@ -718,8 +718,8 @@ pub type Result<T> = std::result::Result<T, SinexError>;
 
 #[cfg(test)]
 mod retryability_tests {
-    use xtask::sandbox::{sinex_test, TestResult};
     use super::{ErrorClass, ErrorDetails, SinexError};
+    use xtask::sandbox::{TestResult, sinex_test};
 
     fn details() -> ErrorDetails {
         ErrorDetails::new("test")

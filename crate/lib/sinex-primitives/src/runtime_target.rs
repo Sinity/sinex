@@ -324,12 +324,12 @@ fn default_runtime_target_name() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{sinex_test, TestResult};
     use crate::{
         DeploymentDatabaseRuntime, DeploymentGatewayRuntime, DeploymentNatsRuntime,
         DeploymentReadinessMode, DeploymentSecrets, DeploymentTarget,
     };
     use std::env;
+    use xtask::sandbox::{TestResult, sinex_test};
 
     #[sinex_test]
     async fn configured_path_treats_empty_override_as_disabled() -> TestResult<()> {

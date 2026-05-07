@@ -18,12 +18,12 @@ pub use unified_node::{
     ClipboardStatus, DesktopMonitorHealth, DesktopNode, DesktopState, WindowManagerStatus,
 };
 
-use sinex_primitives::register_source_unit;
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
     RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
 };
+use sinex_primitives::register_source_unit;
 
 // Source-unit descriptors (issue #690 / #734). Desktop is one runner pack, but
 // operators should see the logical capture leaves it hosts.

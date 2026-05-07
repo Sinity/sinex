@@ -314,9 +314,11 @@ impl EventBatcher {
                 // Replay re-emits provenance-bearing events from the local
                 // recovery spool — declared as Critical for the original
                 // ingestor lane.
-                EventTransport::Nats(publisher) => publisher
-                    .publish(&event, sinex_primitives::transport::Class::Critical)
-                    .await,
+                EventTransport::Nats(publisher) => {
+                    publisher
+                        .publish(&event, sinex_primitives::transport::Class::Critical)
+                        .await
+                }
             };
 
             if let Err(error) = publish_result {
@@ -471,7 +473,9 @@ impl EventBatcher {
         events: &[Event<JsonValue>],
         recovery_spool_path: &Path,
     ) -> NodeResult<()> {
-        let parent_dir = recovery_spool_path.parent().unwrap_or_else(|| Path::new("."));
+        let parent_dir = recovery_spool_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."));
         tokio::fs::create_dir_all(parent_dir).await?;
         let temp_path = parent_dir.join(format!(
             ".sinex_event_recovery_spool.{}.tmp",
@@ -514,7 +518,9 @@ impl EventBatcher {
         lines: &[String],
         recovery_spool_path: &Path,
     ) -> NodeResult<()> {
-        let parent_dir = recovery_spool_path.parent().unwrap_or_else(|| Path::new("."));
+        let parent_dir = recovery_spool_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."));
         tokio::fs::create_dir_all(parent_dir).await?;
         let temp_path = parent_dir.join(format!(
             ".sinex_event_recovery_spool.{}.tmp",
@@ -666,8 +672,7 @@ mod tests {
         .build()
         .expect("infallible: test provenance set");
         let result =
-            EventBatcher::store_recovery_spool_events_at_path(&[event], &recovery_spool_path)
-                .await;
+            EventBatcher::store_recovery_spool_events_at_path(&[event], &recovery_spool_path).await;
 
         fs::set_permissions(temp_dir.path(), original_permissions)?;
         assert!(result.is_err());
@@ -715,8 +720,7 @@ mod tests {
         );
         let mut subscription = ctx.nats_client().subscribe(subject).await?;
 
-        EventBatcher::store_recovery_spool_events_at_path(&[event], &recovery_spool_path)
-            .await?;
+        EventBatcher::store_recovery_spool_events_at_path(&[event], &recovery_spool_path).await?;
 
         let (_sender, receiver) = mpsc::channel(1);
         let (_shutdown_tx, shutdown_rx) = oneshot::channel();

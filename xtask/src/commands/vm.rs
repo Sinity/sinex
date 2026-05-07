@@ -1652,14 +1652,9 @@ mod tests {
         let temp = tempfile::tempdir()?;
         init_git_repo(temp.path())?;
 
-        let new_crate = temp
-            .path()
-            .join("crate/nodes/sinex-process/Cargo.toml");
+        let new_crate = temp.path().join("crate/nodes/sinex-process/Cargo.toml");
         std::fs::create_dir_all(new_crate.parent().expect("new crate parent"))?;
-        std::fs::write(
-            &new_crate,
-            "[package]\nname = \"sinex-process\"\n",
-        )?;
+        std::fs::write(&new_crate, "[package]\nname = \"sinex-process\"\n")?;
 
         let mut input = prepare_vm_flake_input(temp.path())?;
         let staged_root = input
@@ -1828,10 +1823,11 @@ mod tests {
     #[sinex_test]
     async fn test_classify_vm_progress_line_strips_ansi_failure_prefixes()
     -> ::xtask::sandbox::TestResult<()> {
-        let line = "\u{1b}[31mvm-test > RequestedAssertionFailed: browser proof missing\u{1b}[0m";
+        let line =
+            "\u{1b}[31mvm-test > RequestedAssertionFailed: browser evidence missing\u{1b}[0m";
         assert_eq!(
             classify_vm_progress_line(line),
-            Some("RequestedAssertionFailed: browser proof missing".to_string())
+            Some("RequestedAssertionFailed: browser evidence missing".to_string())
         );
         Ok(())
     }
@@ -1866,7 +1862,7 @@ mod tests {
             25.0,
             1,
             4,
-            "RequestedAssertionFailed: browser proof missing",
+            "RequestedAssertionFailed: browser evidence missing",
         );
 
         let stored = HistoryDb::open_query(&db_path)?
@@ -1879,7 +1875,7 @@ mod tests {
         assert_eq!(stored.items_total, Some(4));
         assert_eq!(
             stored.terminal_summary.as_deref(),
-            Some("basic: RequestedAssertionFailed: browser proof missing")
+            Some("basic: RequestedAssertionFailed: browser evidence missing")
         );
         Ok(())
     }

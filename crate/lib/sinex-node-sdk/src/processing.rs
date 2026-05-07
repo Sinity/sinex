@@ -19,17 +19,26 @@ pub enum NodeLogicError {
     OutputSerialization(String),
 }
 
+impl NodeLogicError {
+    /// Convert a node-logic failure into the structured Sinex error class that
+    /// settlement should use. This intentionally preserves the distinction
+    /// between transient processing failures and data-shaped input/output
+    /// failures.
+    pub fn to_sinex_error(&self) -> SinexError {
+        match self {
+            Self::Processing(msg) => SinexError::processing(msg.clone()),
+            Self::Serialization(error) => SinexError::serialization("node serialization error")
+                .with_std_error(error as &(dyn std::error::Error + 'static)),
+            Self::InputParsing(msg) => SinexError::validation(msg.clone()),
+            Self::OutputSerialization(msg) => SinexError::serialization(msg.clone()),
+        }
+        .with_source(self.to_string())
+    }
+}
+
 impl From<NodeLogicError> for SinexError {
     fn from(err: NodeLogicError) -> Self {
-        match &err {
-            NodeLogicError::Processing(msg) => SinexError::processing(msg),
-            NodeLogicError::Serialization(error) => {
-                SinexError::serialization("node serialization error")
-                    .with_std_error(error as &(dyn std::error::Error + 'static))
-            }
-            NodeLogicError::InputParsing(msg) => SinexError::validation(msg),
-            NodeLogicError::OutputSerialization(msg) => SinexError::serialization(msg),
-        }
+        err.to_sinex_error()
     }
 }
 

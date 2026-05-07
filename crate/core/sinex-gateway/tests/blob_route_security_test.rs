@@ -199,7 +199,11 @@ async fn content_blob_rpc_uses_typed_request_and_response_contracts(
     );
 
     let retrieved: RetrieveBlobResponse = serde_json::from_value(
-        handle_retrieve_blob(&services, serde_json::json!({ "content_key": stored.content_key })).await?,
+        handle_retrieve_blob(
+            &services,
+            serde_json::json!({ "content_key": stored.content_key }),
+        )
+        .await?,
     )?;
     assert_eq!(
         retrieved.content,

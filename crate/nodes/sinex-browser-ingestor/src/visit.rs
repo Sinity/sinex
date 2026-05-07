@@ -374,8 +374,8 @@ pub fn build_material_bytes(payload: &Map<String, Value>) -> NodeResult<Vec<u8>>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{sinex_test, TestResult};
     use serde_json::json;
+    use xtask::sandbox::{TestResult, sinex_test};
 
     #[sinex_test]
     async fn normalize_url_strips_tracking_params() -> TestResult<()> {

@@ -432,5 +432,4 @@ impl<T: Node + 'static> NodeRunner<T> {
         self.command_listener_shutdown = Some(shutdown_tx);
         self.command_listener_handle = Some(handle);
     }
-
 }

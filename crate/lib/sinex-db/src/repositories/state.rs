@@ -1923,7 +1923,10 @@ impl StateRepository<'_> {
             return Ok(0);
         }
 
-        let ids: Vec<Uuid> = event_ids.iter().map(|event_id| *event_id.as_uuid()).collect();
+        let ids: Vec<Uuid> = event_ids
+            .iter()
+            .map(|event_id| *event_id.as_uuid())
+            .collect();
         sqlx::query_scalar!(
             r#"SELECT COUNT(*)::bigint as "count!" FROM audit.archived_events WHERE id = ANY($1::uuid[])"#,
             &ids

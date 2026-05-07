@@ -16,11 +16,11 @@ pub mod unified_node;
 
 pub use unified_node::{HistorySourceConfig, TerminalConfig, TerminalNode, TerminalState};
 
-use sinex_primitives::register_source_unit;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitDescriptor,
 };
+use sinex_primitives::register_source_unit;
 
 // Source-unit declaration & promotion contract (issue #690).
 //

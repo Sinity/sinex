@@ -5,14 +5,14 @@
 //! This module provides the standardized CLI interface for all node binaries
 //! implementing the service/scan/explore subcommand pattern.
 
-use sinex_primitives::domain::ServiceName;
-use sinex_primitives::env as shared_env;
 use crate::event_node::EventTransport;
 pub use crate::exploration::{ExplorationProvider, ExportFormat, SourceState};
 use crate::runtime::stream::{Checkpoint, NodeRunner, NodeType, TimeHorizon};
 use crate::{NodeResult, SinexError};
 use clap::{Parser, Subcommand};
 use sinex_primitives::SanitizedPath;
+use sinex_primitives::domain::ServiceName;
+use sinex_primitives::env as shared_env;
 use sinex_primitives::temporal::Timestamp;
 
 // Re-export common activity/history types used by exploration flows.
@@ -440,7 +440,8 @@ fn edge_mode_enabled(database_url_supplied: bool) -> bool {
 }
 
 fn default_service_name(args: &NodeCli) -> ServiceName {
-    let name = args.service_name
+    let name = args
+        .service_name
         .clone()
         .or_else(|| {
             args.source_unit
@@ -1007,8 +1008,8 @@ mod tests {
     use crate::runtime::stream::Checkpoint;
     use sinex_primitives::SanitizedPath;
     use std::str::FromStr;
-    use xtask::sandbox::{sinex_test, TestResult};
     use xtask::sandbox::sinex_serial_test;
+    use xtask::sandbox::{TestResult, sinex_test};
 
     #[sinex_test]
     async fn export_result_surfaces_failure_with_path_context() -> TestResult<()> {
@@ -1124,7 +1125,10 @@ mod tests {
         let mut cli = test_cli_with_database_url(None);
         cli.source_unit = Some("terminal.atuin-history".to_string());
 
-        assert_eq!(default_service_name(&cli).as_str(), "sinex-terminal.atuin-history");
+        assert_eq!(
+            default_service_name(&cli).as_str(),
+            "sinex-terminal.atuin-history"
+        );
         Ok(())
     }
 

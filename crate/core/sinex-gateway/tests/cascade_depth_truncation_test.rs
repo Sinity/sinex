@@ -117,7 +117,8 @@ async fn expand_cascade_raises_when_chain_exceeds_max_depth(
     let mut repo = EventRepositoryTx::new(&mut tx);
     let session_id = format!("trunc_{}", &Uuid::now_v7().simple().to_string()[..12]);
     let table_name = repo.prepare_cascade_session(&session_id, false).await?;
-    repo.populate_cascade_roots(&table_name, &chain[..1]).await?;
+    repo.populate_cascade_roots(&table_name, &chain[..1])
+        .await?;
 
     // Chain is length 8 (depths 0..7). max_depth=4 means the cascade
     // would truncate at depth 4 with descendants still pending; this MUST
@@ -150,7 +151,8 @@ async fn expand_cascade_succeeds_when_chain_fits_within_limit(
     let mut repo = EventRepositoryTx::new(&mut tx);
     let session_id = format!("complete_{}", &Uuid::now_v7().simple().to_string()[..12]);
     let table_name = repo.prepare_cascade_session(&session_id, false).await?;
-    repo.populate_cascade_roots(&table_name, &chain[..1]).await?;
+    repo.populate_cascade_roots(&table_name, &chain[..1])
+        .await?;
 
     // Chain is length 6 (depths 0..5). max_depth=10 leaves headroom; the
     // cascade should expand fully and return without error.

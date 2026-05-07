@@ -5,9 +5,9 @@ use petgraph::graphmap::DiGraphMap;
 use serde::{Deserialize, Serialize};
 use sinex_db::query_helpers::db_error;
 use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
+use sinex_primitives::SinexError;
 use sinex_primitives::constants::replay::DEFAULT_CASCADE_MAX_DEPTH;
 use sinex_primitives::env as shared_env;
-use sinex_primitives::SinexError;
 use sqlx::PgPool;
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
@@ -111,7 +111,11 @@ impl CascadeAnalyzerConfig {
         Self {
             batch_size: env_var_usize("SINEX_CASCADE_BATCH_SIZE", DEFAULT_CASCADE_BATCH_SIZE),
             max_depth: env_var_usize("SINEX_CASCADE_MAX_DEPTH", DEFAULT_CASCADE_MAX_DEPTH),
-            include_weak_dependencies: shared_env::bool_or("SINEX_CASCADE_INCLUDE_WEAK", false, "cascade analyzer"),
+            include_weak_dependencies: shared_env::bool_or(
+                "SINEX_CASCADE_INCLUDE_WEAK",
+                false,
+                "cascade analyzer",
+            ),
             memory_limit_bytes: Some(env_var_usize(
                 "SINEX_CASCADE_MEMORY_LIMIT_BYTES",
                 DEFAULT_CASCADE_MEMORY_LIMIT,

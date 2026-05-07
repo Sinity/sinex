@@ -12,7 +12,9 @@ pub fn reject_non_finite_f64<'de, D: serde::Deserializer<'de>>(
     if value.is_finite() {
         Ok(value)
     } else {
-        Err(serde::de::Error::custom("NaN and Infinity are not supported"))
+        Err(serde::de::Error::custom(
+            "NaN and Infinity are not supported",
+        ))
     }
 }
 
@@ -21,9 +23,9 @@ pub fn reject_non_finite_optional_f64<'de, D: serde::Deserializer<'de>>(
     d: D,
 ) -> std::result::Result<Option<f64>, D::Error> {
     match <Option<f64> as serde::Deserialize>::deserialize(d)? {
-        Some(v) if !v.is_finite() => {
-            Err(serde::de::Error::custom("NaN and Infinity are not supported"))
-        }
+        Some(v) if !v.is_finite() => Err(serde::de::Error::custom(
+            "NaN and Infinity are not supported",
+        )),
         other => Ok(other),
     }
 }

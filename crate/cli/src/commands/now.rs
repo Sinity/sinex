@@ -111,7 +111,11 @@ fn render_table(snapshot: &NowSnapshot) {
     println!("  Gateway:  {gateway_icon} {gateway_status}");
     if !snapshot.health.degradation_reasons.is_empty() {
         for reason in &snapshot.health.degradation_reasons {
-            println!("            {} {}", style("!").yellow(), style(reason).yellow());
+            println!(
+                "            {} {}",
+                style("!").yellow(),
+                style(reason).yellow()
+            );
         }
     }
 
@@ -124,15 +128,7 @@ fn render_table(snapshot: &NowSnapshot) {
     println!(
         "  Automata: {} registered, {} live",
         style(snapshot.automata.automata.len()).bold(),
-        style(
-            snapshot
-                .automata
-                .automata
-                .iter()
-                .filter(|a| a.live)
-                .count()
-        )
-        .bold()
+        style(snapshot.automata.automata.iter().filter(|a| a.live).count()).bold()
     );
 
     // ── Recent activity ─────────────────────────────────────────
@@ -226,10 +222,7 @@ fn render_table(snapshot: &NowSnapshot) {
             "  {:<30} {:<12} {:<10}  {}",
             "NAME", "LIVE", "STATUS", "EVENTS"
         );
-        println!(
-            "  {:-<30} {:-<12} {:-<10}  {:-<8}",
-            "", "", "", ""
-        );
+        println!("  {:-<30} {:-<12} {:-<10}  {:-<8}", "", "", "", "");
 
         for automaton in &snapshot.automata.automata {
             let live = if automaton.live {

@@ -9,17 +9,17 @@ use crate::derived_node::context::DerivedTriggerContext;
 use crate::derived_node::traits::DerivedNodeImpl;
 use crate::{NodeResult, SinexError};
 
+use sinex_primitives::JsonValue;
 use sinex_primitives::events::Event;
+#[cfg(feature = "db")]
+use sinex_primitives::query::{EventQuery, EventQueryResult, QueryResultEvent};
 use sinex_primitives::settlement::{
     DefaultFailurePolicy, FailureContext, FailurePolicy, RuntimeOperation, RuntimePhase, Settlement,
 };
-use sinex_primitives::JsonValue;
-#[cfg(feature = "db")]
-use sinex_primitives::query::{EventQuery, EventQueryResult, QueryResultEvent};
 
-use tracing::{error, warn};
 #[cfg(feature = "db")]
 use tracing::info;
+use tracing::{error, warn};
 
 impl<N> DerivedNodeAdapter<N>
 where
@@ -116,11 +116,11 @@ where
                 SinexError::processing(
                     "failed to send derived-node event to processing-failure stream",
                 )
-                    .with_context("node", self.node.name())
-                    .with_context("event_type", event.event_type.as_ref())
-                    .with_context("source", event.source.as_ref())
-                    .with_context("reason", error.to_string())
-                    .with_std_error(&failure_err)
+                .with_context("node", self.node.name())
+                .with_context("event_type", event.event_type.as_ref())
+                .with_context("source", event.source.as_ref())
+                .with_context("reason", error.to_string())
+                .with_std_error(&failure_err)
             })
     }
 
@@ -190,8 +190,7 @@ where
             match &result {
                 Ok(_) => reporter.record_success(),
                 Err(e) => {
-                    let sinex_error = SinexError::processing("derived node processing error")
-                        .with_source(e.to_string());
+                    let sinex_error = e.to_sinex_error();
                     reporter.record_error(&sinex_error);
 
                     // Emit automaton error telemetry before routing
@@ -202,8 +201,9 @@ where
                             "error_class".to_string(),
                             format!("{:?}", sinex_error.error_class()),
                         );
-                        if let Err(obs_err) =
-                            observer.emit_counter("automaton.error", 1, Some(labels)).await
+                        if let Err(obs_err) = observer
+                            .emit_counter("automaton.error", 1, Some(labels))
+                            .await
                         {
                             warn!(
                                 node = %self.node.name(),
@@ -233,8 +233,7 @@ where
             Err(e) => {
                 // Use FailurePolicy::settle() which maps ErrorClass
                 // to Settlement variants with backoff and retry budgets.
-                let sinex_error = SinexError::processing("derived node processing error")
-                    .with_source(e.to_string());
+                let sinex_error = e.to_sinex_error();
                 let failure_ctx = FailureContext {
                     unit_id: self.node.name().to_string(),
                     operation: RuntimeOperation::ProcessBatch,

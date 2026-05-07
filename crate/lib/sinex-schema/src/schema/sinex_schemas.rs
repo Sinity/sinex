@@ -661,9 +661,15 @@ pub enum BinarySchemaVersion {
 }
 
 impl TableDef for BinarySchemaVersion {
-    fn table_name() -> &'static str { "binary_schema_version" }
-    fn schema_name() -> &'static str { "sinex_schemas" }
-    fn primary_key() -> &'static str { "id" }
+    fn table_name() -> &'static str {
+        "binary_schema_version"
+    }
+    fn schema_name() -> &'static str {
+        "sinex_schemas"
+    }
+    fn primary_key() -> &'static str {
+        "id"
+    }
 }
 
 impl BinarySchemaVersion {
@@ -672,11 +678,23 @@ impl BinarySchemaVersion {
         Table::create()
             .table(Self::table_iden())
             .if_not_exists()
-            .col(ColumnDef::new(BinarySchemaVersion::Id).integer().not_null()
-                .check(Expr::cust("id = 1")))
-            .col(ColumnDef::new(BinarySchemaVersion::Version).text().not_null())
-            .col(ColumnDef::new(BinarySchemaVersion::UpdatedAt).timestamp_with_time_zone()
-                .not_null().default(Expr::current_timestamp()))
+            .col(
+                ColumnDef::new(BinarySchemaVersion::Id)
+                    .integer()
+                    .not_null()
+                    .check(Expr::cust("id = 1")),
+            )
+            .col(
+                ColumnDef::new(BinarySchemaVersion::Version)
+                    .text()
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(BinarySchemaVersion::UpdatedAt)
+                    .timestamp_with_time_zone()
+                    .not_null()
+                    .default(Expr::current_timestamp()),
+            )
             .primary_key(Index::create().col(BinarySchemaVersion::Id))
             .to_owned()
     }

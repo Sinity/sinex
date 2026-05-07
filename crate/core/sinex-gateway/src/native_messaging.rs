@@ -1,11 +1,11 @@
 #![doc = include_str!("../docs/native_messaging.md")]
 
 use crate::config::GatewayConfig;
-use sinex_primitives::env as shared_env;
 use color_eyre::eyre::{Context, Result, bail, eyre};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_primitives::SinexError;
+use sinex_primitives::env as shared_env;
 use std::collections::HashSet;
 use std::io::{self};
 use std::sync::Arc;

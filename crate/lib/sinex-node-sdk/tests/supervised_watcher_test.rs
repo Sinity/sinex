@@ -27,7 +27,10 @@ use xtask::sandbox::sinex_test;
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn make_shutdown() -> (tokio::sync::watch::Sender<bool>, tokio::sync::watch::Receiver<bool>) {
+fn make_shutdown() -> (
+    tokio::sync::watch::Sender<bool>,
+    tokio::sync::watch::Receiver<bool>,
+) {
     tokio::sync::watch::channel(false)
 }
 
@@ -51,16 +54,17 @@ async fn panic_catch_error_updates_health_tracker() -> Result<(), Box<dyn std::e
     let health = make_health();
     let health_clone = Arc::clone(&health);
 
-    let handle = spawn_watcher_with_panic_catch(
-        "err-watcher",
-        Some(health_clone),
-        async { Err(SinexError::processing("injected error")) },
-    );
+    let handle = spawn_watcher_with_panic_catch("err-watcher", Some(health_clone), async {
+        Err(SinexError::processing("injected error"))
+    });
     tokio::time::timeout(std::time::Duration::from_secs(5), handle).await??;
 
     let last_error = health.read().last_error.clone();
     assert!(
-        last_error.as_deref().unwrap_or("").contains("injected error"),
+        last_error
+            .as_deref()
+            .unwrap_or("")
+            .contains("injected error"),
         "health tracker should record the error; got: {last_error:?}"
     );
     Ok(())
@@ -94,8 +98,8 @@ async fn panic_catch_panic_updates_health_tracker() -> Result<(), Box<dyn std::e
 }
 
 #[sinex_test]
-async fn panic_catch_no_health_tracker_does_not_panic_supervisor(
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn panic_catch_no_health_tracker_does_not_panic_supervisor()
+-> Result<(), Box<dyn std::error::Error>> {
     // Supervisor must not panic even when there is no health tracker and the watcher panics.
     let handle = spawn_watcher_with_panic_catch("no-health-panic", None, async {
         panic!("deliberate panic with no health tracker");
@@ -111,8 +115,8 @@ async fn panic_catch_no_health_tracker_does_not_panic_supervisor(
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-async fn supervised_pre_signaled_shutdown_never_calls_factory(
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn supervised_pre_signaled_shutdown_never_calls_factory()
+-> Result<(), Box<dyn std::error::Error>> {
     let (shutdown_tx, shutdown_rx) = make_shutdown();
     let _ = shutdown_tx.send(true);
 
@@ -140,8 +144,8 @@ async fn supervised_pre_signaled_shutdown_never_calls_factory(
 }
 
 #[sinex_test]
-async fn supervised_shutdown_during_backoff_exits_quickly(
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn supervised_shutdown_during_backoff_exits_quickly() -> Result<(), Box<dyn std::error::Error>>
+{
     let (shutdown_tx, shutdown_rx) = make_shutdown();
 
     let handle = spawn_supervised_watcher(
@@ -174,7 +178,10 @@ async fn supervised_error_updates_health_tracker() -> Result<(), Box<dyn std::er
         "health-err",
         shutdown_rx,
         Some(health_clone),
-        SupervisedWatcherConfig { restart_on_failure: true, max_restarts: 0 },
+        SupervisedWatcherConfig {
+            restart_on_failure: true,
+            max_restarts: 0,
+        },
         move || {
             let count = Arc::clone(&call_count_clone);
             async move {
@@ -203,8 +210,7 @@ async fn supervised_error_updates_health_tracker() -> Result<(), Box<dyn std::er
 }
 
 #[sinex_test]
-async fn supervised_panic_is_caught_and_health_updated() -> Result<(), Box<dyn std::error::Error>>
-{
+async fn supervised_panic_is_caught_and_health_updated() -> Result<(), Box<dyn std::error::Error>> {
     let (shutdown_tx, shutdown_rx) = make_shutdown();
 
     let health = make_health();
@@ -217,7 +223,10 @@ async fn supervised_panic_is_caught_and_health_updated() -> Result<(), Box<dyn s
         "panic-restart",
         shutdown_rx,
         Some(health_clone),
-        SupervisedWatcherConfig { restart_on_failure: true, max_restarts: 0 },
+        SupervisedWatcherConfig {
+            restart_on_failure: true,
+            max_restarts: 0,
+        },
         move || {
             let count = Arc::clone(&call_count_clone);
             async move {
@@ -266,7 +275,10 @@ async fn supervised_max_restarts_causes_exit() -> Result<(), Box<dyn std::error:
         "max-restart",
         shutdown_rx,
         None,
-        SupervisedWatcherConfig { restart_on_failure: true, max_restarts: 3 },
+        SupervisedWatcherConfig {
+            restart_on_failure: true,
+            max_restarts: 3,
+        },
         move || {
             let count = Arc::clone(&call_count_clone);
             async move {
@@ -291,8 +303,7 @@ async fn supervised_max_restarts_causes_exit() -> Result<(), Box<dyn std::error:
 }
 
 #[sinex_test]
-async fn supervised_log_only_exits_after_first_failure() -> Result<(), Box<dyn std::error::Error>>
-{
+async fn supervised_log_only_exits_after_first_failure() -> Result<(), Box<dyn std::error::Error>> {
     let (_shutdown_tx, shutdown_rx) = make_shutdown();
 
     let called = Arc::new(AtomicBool::new(false));
@@ -310,6 +321,9 @@ async fn supervised_log_only_exits_after_first_failure() -> Result<(), Box<dyn s
     );
 
     tokio::time::timeout(std::time::Duration::from_secs(5), handle).await??;
-    assert!(called.load(Ordering::SeqCst), "factory should have been called once");
+    assert!(
+        called.load(Ordering::SeqCst),
+        "factory should have been called once"
+    );
     Ok(())
 }

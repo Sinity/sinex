@@ -84,22 +84,22 @@ It follows the scenario registry in `tests/e2e/nixos-vm/default.nix`.
 
 - `xtask test vm --validate` is the cheap way to keep the scenario tree honest
   when you touch scenario files or shared VM helper modules.
-- `basic` is the fast proof that gateway ingress, automata, and the managed
+- `basic` is the fast evidence check that gateway ingress, automata, and the managed
   document scan surface all function on a booted VM.
-- `node-matrix` is the deployment-honesty proof: every long-running
+- `node-matrix` is the deployment-honesty evidence check: every long-running
   node/automaton unit and terminal runner-pack source unit must start,
   target-user terminal/browser history bridges and the desktop runtime bridge
   must be reachable by the `sinex` service user, the managed document surface
   must actually ingest,
-  `sinexctl verify --document-smoke --source-proof --historical-proof`
+  `sinexctl verify --document-smoke --source-evidence --historical-evidence`
   must pass on the booted VM, and managed service restarts must leave no failed
   `sinex-*` units. When a `sinex-*` unit is failed, the scenario captures recent
   journald logs under `/tmp/sinex-vm-failure-logs`.
 - `multi-source` is the broad runtime exercise scenario; it now drives the
   managed document scan surface alongside filesystem, terminal, desktop,
   system, and automata traffic, then proves those enabled collector surfaces
-  and implemented historical backfill surfaces through `sinexctl verify --source-proof --historical-proof`.
-  The collector proof distinguishes recent emission from merely historical
+  and implemented historical backfill surfaces through `sinexctl verify --source-evidence --historical-evidence`.
+  The collector evidence check distinguishes recent `ts_orig` samples from merely historical
   persisted evidence so stale rows cannot masquerade as a live surface.
 - `xtask test vm` gives `basic`, `node-matrix`, and `multi-source` the extended
   60-minute timeout budget because they build and boot the widened full-runtime

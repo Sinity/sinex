@@ -47,10 +47,7 @@ fn test_core_services_active(runner: &mut TestRunner) {
         if !ingestd_ok {
             failures.push("sinex-ingestd");
         }
-        runner.fail(
-            name,
-            &format!("inactive services: {}", failures.join(", ")),
-        );
+        runner.fail(name, &format!("inactive services: {}", failures.join(", ")));
     }
 }
 

@@ -182,12 +182,12 @@ pub type SessionDetectorNode = WindowedNodeAdapter<SessionDetector>;
 
 // --- Source-unit descriptor (issue #690 / #734) ---
 
-use sinex_primitives::register_source_unit;
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
     RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
 };
+use sinex_primitives::register_source_unit;
 
 // Session detector consumes activity-window summaries and emits session
 // boundary events when the inactivity gap closes the current window.

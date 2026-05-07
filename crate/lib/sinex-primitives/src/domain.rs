@@ -2115,9 +2115,7 @@ impl std::str::FromStr for BlobVerificationStatus {
 /// Storage backend for the content-addressed store.
 ///
 /// Distinguishes local BLAKE3 CAS from legacy backend digests.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, JsonSchema,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum StorageBackend {
     /// Local BLAKE3 content-addressed store (`sinex-cas/` prefix layout).

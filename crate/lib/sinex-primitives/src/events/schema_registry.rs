@@ -243,9 +243,7 @@ pub fn generate_all_schemas() -> Result<HashMap<(String, String, String), Value>
     Ok(schemas)
 }
 
-fn generate_schema_bundle_from_payloads<'a, I>(
-    payloads: I,
-) -> Result<SchemaBundle>
+fn generate_schema_bundle_from_payloads<'a, I>(payloads: I) -> Result<SchemaBundle>
 where
     I: IntoIterator<Item = &'a PayloadInfo>,
 {

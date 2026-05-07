@@ -25,11 +25,10 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 pub use sinex_db::replay::state_machine::ReplayScope;
 use sinex_db::replay::state_machine::ReplayStateMachine;
-use sinex_primitives::environment::environment;
 use sinex_primitives::Timestamp;
+use sinex_primitives::environment::environment;
 use std::sync::Arc;
 use std::time::Duration;
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayControlError {
@@ -85,6 +84,3 @@ pub async fn spawn_replay_control(
         health,
     ))
 }
-
-
-

@@ -5,7 +5,7 @@ use sinex_primitives::domain::{EventSource, EventType, HostName};
 use sinex_primitives::events::builder::{OffsetKind, Provenance};
 use sinex_primitives::events::{Event, SourceMaterial};
 use sinex_primitives::query::{PathOp, PayloadFilter, SubscriptionFilter};
-use sinex_primitives::{Id, Timestamp};
+use sinex_primitives::{Id, SinexError, Timestamp};
 use xtask::sandbox::sinex_test;
 
 /// Build a test event with the given source, type, host, and payload.
@@ -426,12 +426,7 @@ async fn validate_rejects_payload_text_search() -> ::xtask::sandbox::TestResult<
     let error = filter
         .validate()
         .expect_err("text search should be rejected for SSE filters");
-    assert!(
-        error
-            .to_string()
-            .contains("does not support payload text search"),
-        "unexpected validation error: {error}"
-    );
+    assert_payload_text_search_rejected(&error);
     Ok(())
 }
 
@@ -453,6 +448,25 @@ async fn validate_rejects_nested_payload_text_search() -> ::xtask::sandbox::Test
         ..Default::default()
     };
 
-    assert!(filter.validate().is_err());
+    let error = filter
+        .validate()
+        .expect_err("nested text search should be rejected for SSE filters");
+    assert_payload_text_search_rejected(&error);
     Ok(())
+}
+
+fn assert_payload_text_search_rejected(error: &SinexError) {
+    assert!(
+        matches!(error, SinexError::Validation(_)),
+        "expected validation error, got {}",
+        error.variant_name()
+    );
+    assert_eq!(
+        error.message(),
+        "SubscriptionFilter does not support payload text search"
+    );
+    assert_eq!(
+        error.context_map().get("reason").map(String::as_str),
+        Some("events.stream uses in-memory matching, not PostgreSQL full-text search")
+    );
 }

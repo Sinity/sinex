@@ -1,28 +1,37 @@
 # CI Policy
 
-## Required Checks Per PR Type
+GitHub-hosted workflows are manual-only in this repository. Local `xtask`
+verification recorded in the PR is the default review gate unless a workflow is
+deliberately invoked with `workflow_dispatch`.
+
+## Required Local Checks Per PR Type
 
 All PRs must pass the following before merge:
 
 ### Every PR
 
 - **`xtask check --full`** — Compile + lint (clippy, rustfmt, forbidden patterns,
-  AST-grep structural rules). Equivalent to the `check (full)` CI lane.
-- **`xtask test`** — Default nextest test loop: unit, integration, property-based,
-  and scenario-tagged tests. Equivalent to the `test (postgres, workspace)`
-  CI lane.
+  AST-grep structural rules).
+- **`xtask test`** — Default affected-package nextest loop for ordinary local
+  iteration. Use the workspace gate below when the PR needs CI-parity breadth.
 - **`xtask docs check`** — Generated docs drift detection (CLAUDE.md transclusions,
-  schema bundle, command reference). Equivalent to the `docs (check)` CI lane.
+  schema bundle, command reference).
 - **`xtask ci compat --base master`** — Schema compatibility check against the
-  default branch. Equivalent to the `schema (compat)` CI lane.
+  default branch.
+
+### Broad / Phase-Boundary Gate
+
+- **`xtask ci postgres -- xtask ci workspace`** — CI-parity local workspace lane.
+  This applies schema, checks contract tables, runs dependency/lint validation,
+  enforces workspace cleanliness, runs e2e tests first, then runs the rest of
+  the workspace with e2e excluded.
 
 ### PRs Touching Database Schema
 
 - **`xtask ci postgres -- xtask ci schema-only`** — Full schema bootstrap and
-  apply cycle. Equivalent to the `schema (bootstrap)` CI lane.
-- **`xtask ci postgres -- xtask ci workspace`** — Postgres-backed workspace
-  lane (schema apply, contract tables, dependency/lint validation, workspace
-  cleanliness, package test surfaces).
+  apply cycle.
+- **`xtask ci postgres -- xtask ci workspace`** — Run this broad gate before
+  merge when schema edits affect runtime behavior or generated contracts.
 
 ### PRs Touching NixOS / Deployment
 
@@ -31,7 +40,8 @@ All PRs must pass the following before merge:
 
 ## Merge Criteria
 
-1. All required CI lanes green.
+1. All required local gates pass, or the equivalent manual GitHub workflow is
+   green when deliberately invoked.
 2. PR template filled out: Summary, Problem, Solution, Verification.
 3. Acceptance Criteria Drift section completed (mark each AC as satisfied,
    deferred, or misframed).
@@ -54,16 +64,16 @@ All PRs must pass the following before merge:
 
 ## CI Lane Summary
 
-| Lane | Trigger | Approximate Runtime |
+| Lane | When To Run | Approximate Runtime |
 |------|---------|-------------------|
-| `check (full)` | Every push | ~3-5 min |
-| `test (postgres, workspace)` | Every push | ~8-12 min |
-| `docs (check)` | Every push | ~30 sec |
-| `schema (compat)` | Every push | ~1 min |
-| `schema (bootstrap)` | Schema changes | ~2 min |
-| `test (heavy)` | Manual | ~15-30 min |
-| `test (vm smoke)` | Manual | ~5-10 min |
-| `test (vm integration)` | Manual | ~15-30 min |
+| `check (full)` | Local before merge; manual workflow if requested | ~3-5 min |
+| `test (postgres, workspace)` | Local broad/phase gate; manual workflow if requested | ~8-12 min |
+| `docs (check)` | Local before merge when generated surfaces may drift | ~30 sec |
+| `schema (compat)` | Local before merge when schema/payload contracts change | ~1 min |
+| `schema (bootstrap)` | Local for schema changes; manual workflow if requested | ~2 min |
+| `test (heavy)` | Local/manual for heavy-risk surfaces | ~15-30 min |
+| `test (vm smoke)` | Local/manual for NixOS/deployment changes | ~5-10 min |
+| `test (vm integration)` | Local/manual for restart/replay/cascade changes | ~15-30 min |
 
 ## Skipping CI
 

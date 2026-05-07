@@ -14,7 +14,6 @@ mod state_io;
 use super::traits::{DerivedNodeConfig, DerivedNodeImpl};
 
 use crate::checkpoint::CheckpointManager;
-use sinex_primitives::env as shared_env;
 use crate::processing::PersistedState;
 use crate::runtime::stream::{
     Checkpoint, EventEmitter, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType,
@@ -22,6 +21,7 @@ use crate::runtime::stream::{
 };
 use crate::shutdown::ShutdownConfig;
 use crate::{NodeResult, SinexError};
+use sinex_primitives::env as shared_env;
 
 use sinex_primitives::events::Event;
 use sinex_primitives::non_empty::NonEmptyVec;

@@ -5,22 +5,22 @@
 //! file navigable; further role splits inside this module are tracked as
 //! follow-up work.
 
+#[cfg(feature = "messaging")]
+use super::control_protocol::{ControlCommandKind, NodeDrainComplete, control_command_kind};
+use super::control_protocol::{
+    MAX_CONTROL_MESSAGE_BYTES, encode_control_message, ensure_control_payload_fits,
+};
+use super::listener::{
+    CONFIRMED_EVENT_CHANNEL_CAPACITY, LISTENER_RETRY_DELAY, LISTENER_STARTUP_GRACE_PERIOD,
+    RunnerConfirmedEventHandler, TASK_SHUTDOWN_GRACE_PERIOD, create_checkpoint_kv,
+    maybe_start_schema_listener, run_resubscribing_listener,
+};
 use super::{
     Checkpoint, ContinuousStart, EventEmitter, EventSender, EventStream, MaterialReplayContext,
     Node, NodeCapabilities, NodeHandles, NodeInitContext, NodeRuntimeState, NodeScanAck,
     NodeScanCommand, NodeScanProgress, NodeType, ProcessingStats, ResolvedReplayMaterial,
     RunnerLifecycle, RuntimeDrainController, ScanArgs, ScanEstimate, ScanReport,
     SchemaBroadcastCache, SchemaBroadcastEntry, ServiceInfo, TimeHorizon,
-};
-use super::control_protocol::{
-    ensure_control_payload_fits, encode_control_message, MAX_CONTROL_MESSAGE_BYTES,
-};
-#[cfg(feature = "messaging")]
-use super::control_protocol::{ControlCommandKind, NodeDrainComplete, control_command_kind};
-use super::listener::{
-    CONFIRMED_EVENT_CHANNEL_CAPACITY, LISTENER_RETRY_DELAY, LISTENER_STARTUP_GRACE_PERIOD,
-    RunnerConfirmedEventHandler, TASK_SHUTDOWN_GRACE_PERIOD, create_checkpoint_kv,
-    maybe_start_schema_listener, run_resubscribing_listener,
 };
 use crate::{
     NodeResult, SinexError,
@@ -110,26 +110,20 @@ struct FailedDispatchedScanOutcome {
     events_emitted: u64,
 }
 
-mod shutdown_helpers;
-mod control_messages;
-mod registration;
-mod construct;
-mod initialize;
-mod service;
+mod automaton_runtime;
+mod batch;
 mod command_listener;
+mod construct;
+mod control_messages;
 mod dispatch;
 mod ingestor_startup;
-mod automaton_runtime;
+mod initialize;
 mod provisional;
-mod batch;
+mod registration;
+mod service;
+mod shutdown_helpers;
 
 impl<T: Node + 'static> NodeRunner<T> {
-
-
-
-
-
-
     /// Get node capabilities
     pub fn get_capabilities(&self) -> NodeCapabilities {
         self.node.capabilities()
@@ -144,9 +138,8 @@ impl<T: Node + 'static> NodeRunner<T> {
     ) -> NodeResult<ScanEstimate> {
         self.node.estimate_scan_scope(from, until, args).await
     }
-
 }
 
+mod shutdown;
 #[cfg(test)]
 mod tests;
-mod shutdown;

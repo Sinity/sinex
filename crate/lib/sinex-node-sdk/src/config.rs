@@ -40,8 +40,8 @@ use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::ServiceName;
 use sinex_primitives::{
-    env as shared_env, environment::environment, units::Seconds,
-    utils::wait_helpers::RetryConfig, validation::validate_path,
+    env as shared_env, environment::environment, units::Seconds, utils::wait_helpers::RetryConfig,
+    validation::validate_path,
 };
 use std::collections::HashMap;
 use std::time::Duration;
@@ -94,7 +94,10 @@ impl From<ConfigError> for sinex_primitives::error::SinexError {
 pub struct NodeConfig {
     /// Service name (used for logging and identification)
     #[builder(into)]
-    #[validate(custom(function = "validate_service_name", message = "Service name cannot be empty"))]
+    #[validate(custom(
+        function = "validate_service_name",
+        message = "Service name cannot be empty"
+    ))]
     pub service_name: ServiceName,
 
     /// Log level
@@ -273,8 +276,7 @@ impl NodeConfig {
             ),
             multiplier: service_or_global_env_parse(&env_prefix, "RETRY_MULTIPLIER")?
                 .unwrap_or(2.0),
-            jitter: service_or_global_env_bool(&env_prefix, "RETRY_JITTER")?
-                .unwrap_or(true),
+            jitter: service_or_global_env_bool(&env_prefix, "RETRY_JITTER")?.unwrap_or(true),
             publish_ack_timeout: std::time::Duration::from_millis(
                 service_or_global_env_parse::<u64>(&env_prefix, "PUBLISH_ACK_TIMEOUT_MS")?
                     .unwrap_or(10000),
@@ -719,4 +721,3 @@ impl Default for MaterialMetadataPolicy {
         }
     }
 }
-

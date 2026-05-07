@@ -451,8 +451,7 @@ pub fn find_ssns(input: &str) -> Vec<(usize, usize)> {
 /// not preceded or followed by a digit (word-boundary is unreliable for
 /// pure-digit patterns, so we check adjacent bytes manually after matching).
 #[allow(clippy::expect_used)] // Compile-time constant regex
-static PESEL_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\d{11}").expect("pesel regex"));
+static PESEL_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\d{11}").expect("pesel regex"));
 
 /// PESEL checksum validation.
 ///
@@ -485,8 +484,14 @@ pub fn find_pesels(input: &str) -> Vec<(usize, usize)> {
         .filter(|m| {
             // Reject if adjacent character is also a digit (embedded in longer number).
             let before_ok = m.start() == 0
-                || !input.as_bytes().get(m.start() - 1).is_some_and(u8::is_ascii_digit);
-            let after_ok = !input.as_bytes().get(m.end()).is_some_and(u8::is_ascii_digit);
+                || !input
+                    .as_bytes()
+                    .get(m.start() - 1)
+                    .is_some_and(u8::is_ascii_digit);
+            let after_ok = !input
+                .as_bytes()
+                .get(m.end())
+                .is_some_and(u8::is_ascii_digit);
             before_ok && after_ok && is_valid_pesel(m.as_str())
         })
         .map(|m| (m.start(), m.end()))
@@ -556,9 +561,8 @@ pub fn find_nips(input: &str) -> Vec<(usize, usize)> {
 /// Pre-filter regex for Polish REGON business registry numbers.
 /// 9-digit (sole trader / small business) or 14-digit (branch) forms.
 #[allow(clippy::expect_used)] // Compile-time constant regex
-static REGON_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\b\d{14}\b|\b\d{9}\b").expect("regon regex")
-});
+static REGON_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b\d{14}\b|\b\d{9}\b").expect("regon regex"));
 
 /// REGON-9 checksum: weights `[8,9,2,3,4,5,6,7]` on first 8 digits,
 /// sum mod 11 (10 → 0) == 9th digit.

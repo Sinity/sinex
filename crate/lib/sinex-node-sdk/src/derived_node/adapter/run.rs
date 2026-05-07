@@ -7,12 +7,12 @@ use super::{DerivedNodeAdapter, historical_resume_position, recv_invalidation};
 
 use crate::derived_node::context::DerivedTriggerContext;
 use crate::derived_node::traits::DerivedNodeImpl;
+use crate::runtime::stream::{Checkpoint, NodeRuntimeState, ScanArgs, ScanReport};
+use crate::{NodeResult, SinexError};
 use sinex_primitives::env as shared_env;
 use sinex_primitives::settlement::{
     DefaultFailurePolicy, FailureContext, FailurePolicy, RuntimeOperation, RuntimePhase, Settlement,
 };
-use crate::runtime::stream::{Checkpoint, NodeRuntimeState, ScanArgs, ScanReport};
-use crate::{NodeResult, SinexError};
 
 use sinex_primitives::Id;
 use sinex_primitives::events::builder::OperationMarker;
@@ -26,10 +26,7 @@ impl<N> DerivedNodeAdapter<N>
 where
     N: DerivedNodeImpl,
 {
-    pub(super) async fn run_continuous(
-        &mut self,
-        _from: Checkpoint,
-    ) -> NodeResult<ScanReport> {
+    pub(super) async fn run_continuous(&mut self, _from: Checkpoint) -> NodeResult<ScanReport> {
         let start = Instant::now();
         let node_name = self.node.name().to_string();
         let mut invalidations_processed: u64 = 0;
@@ -73,27 +70,25 @@ where
                             ..Default::default()
                         };
                         match stream.create_consumer(config).await {
-                            Ok(consumer) => {
-                                match consumer.messages().await {
-                                    Ok(messages) => {
-                                        info!(
-                                            node = %node_name,
-                                            stream = %stream_name,
-                                            queue_group = %queue_group,
-                                            "Subscribed to invalidation signals via JetStream push consumer"
-                                        );
-                                        Some(messages)
-                                    }
-                                    Err(e) => {
-                                        warn!(
-                                            node = %node_name,
-                                            error = %e,
-                                            "Failed to start invalidation consumer message stream"
-                                        );
-                                        None
-                                    }
+                            Ok(consumer) => match consumer.messages().await {
+                                Ok(messages) => {
+                                    info!(
+                                        node = %node_name,
+                                        stream = %stream_name,
+                                        queue_group = %queue_group,
+                                        "Subscribed to invalidation signals via JetStream push consumer"
+                                    );
+                                    Some(messages)
                                 }
-                            }
+                                Err(e) => {
+                                    warn!(
+                                        node = %node_name,
+                                        error = %e,
+                                        "Failed to start invalidation consumer message stream"
+                                    );
+                                    None
+                                }
+                            },
                             Err(e) => {
                                 warn!(
                                     node = %node_name,
@@ -389,8 +384,7 @@ where
                         }
                     }
                     Err(e) => {
-                        let sinex_error = SinexError::processing("derived node historical replay error")
-                            .with_source(e.to_string());
+                        let sinex_error = e.to_sinex_error();
                         let failure_ctx = FailureContext {
                             unit_id: self.node.name().to_string(),
                             operation: RuntimeOperation::ProcessBatch,

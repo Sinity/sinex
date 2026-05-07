@@ -203,10 +203,7 @@ async fn admin_full_lifecycle(ctx: TestContext) -> TestResult<()> {
     let list_resp = gw
         .rpc_envelope(methods::REPLAY_LIST_OPERATIONS, json!({}))
         .await?;
-    assert!(
-        has_result(&list_resp),
-        "Admin list failed: {list_resp}"
-    );
+    assert!(has_result(&list_resp), "Admin list failed: {list_resp}");
 
     let create_resp = gw
         .rpc_envelope(methods::REPLAY_CREATE_OPERATION, test_scope_params())

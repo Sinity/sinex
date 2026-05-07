@@ -141,11 +141,10 @@ async fn run_service_drain_persists_ingestor_checkpoint_and_updates_status(
 
     release_exit.notify_one();
 
-    let drain_complete =
-        tokio::time::timeout(Duration::from_secs(3), drain_complete_sub.next())
-            .await
-            .map_err(|_| color_eyre::eyre::eyre!("drain_complete was not published"))?
-            .ok_or_else(|| color_eyre::eyre::eyre!("drain_complete subscription closed"))?;
+    let drain_complete = tokio::time::timeout(Duration::from_secs(3), drain_complete_sub.next())
+        .await
+        .map_err(|_| color_eyre::eyre::eyre!("drain_complete was not published"))?
+        .ok_or_else(|| color_eyre::eyre::eyre!("drain_complete subscription closed"))?;
     let payload: NodeDrainComplete = serde_json::from_slice(&drain_complete.payload)?;
     assert_eq!(payload.node_name, control_identity);
     assert_eq!(
@@ -205,10 +204,9 @@ async fn finish_replay_forwarder_surfaces_forwarder_error() -> TestResult<()> {
         ))
     });
 
-    let outcome =
-        NodeRunner::<RuntimeTestNode>::finish_replay_forwarder(handle, emitted_counter)
-            .await
-            .expect_err("forwarder failures must fail the dispatched scan honestly");
+    let outcome = NodeRunner::<RuntimeTestNode>::finish_replay_forwarder(handle, emitted_counter)
+        .await
+        .expect_err("forwarder failures must fail the dispatched scan honestly");
 
     assert_eq!(outcome.events_emitted, 7);
     assert!(
@@ -228,10 +226,9 @@ async fn finish_replay_forwarder_surfaces_join_error() -> TestResult<()> {
         panic!("forwarder panic");
     });
 
-    let outcome =
-        NodeRunner::<RuntimeTestNode>::finish_replay_forwarder(handle, emitted_counter)
-            .await
-            .expect_err("forwarder panics must fail the dispatched scan honestly");
+    let outcome = NodeRunner::<RuntimeTestNode>::finish_replay_forwarder(handle, emitted_counter)
+        .await
+        .expect_err("forwarder panics must fail the dispatched scan honestly");
 
     assert_eq!(outcome.events_emitted, 3);
     assert!(
@@ -331,15 +328,12 @@ async fn ingestor_startup_skips_gap_fill_when_only_snapshot_created_checkpoint(
 }
 
 #[sinex_test]
-async fn ingestor_startup_gap_fill_uses_preexisting_checkpoint(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn ingestor_startup_gap_fill_uses_preexisting_checkpoint(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let preexisting_checkpoint =
         Checkpoint::timestamp(Timestamp::now() - time::Duration::minutes(15), None);
     let snapshot_checkpoint = Checkpoint::timestamp(Timestamp::now(), None);
-    let node =
-        StartupSequenceTestNode::new(preexisting_checkpoint.clone(), snapshot_checkpoint);
+    let node = StartupSequenceTestNode::new(preexisting_checkpoint.clone(), snapshot_checkpoint);
     let scans = node.scans.clone();
     let mut runner = NodeRunner::new(node);
     let work_dir = tempdir()?;
@@ -375,8 +369,7 @@ async fn ingestor_startup_gap_fill_uses_preexisting_checkpoint(
 
 #[cfg(feature = "messaging")]
 #[sinex_test]
-async fn resolve_provisionals_to_events_surfaces_invalid_payload_without_db() -> TestResult<()>
-{
+async fn resolve_provisionals_to_events_surfaces_invalid_payload_without_db() -> TestResult<()> {
     let provisional = ProvisionalEvent {
         event_id: EventId::from(Uuid::now_v7()),
         source: EventSource::new("runtime-test-source")?,
@@ -394,8 +387,7 @@ async fn resolve_provisionals_to_events_surfaces_invalid_payload_without_db() ->
     };
 
     let Err(error) =
-        NodeRunner::<RuntimeTestNode>::resolve_provisionals_to_events(&[provisional], &None)
-            .await
+        NodeRunner::<RuntimeTestNode>::resolve_provisionals_to_events(&[provisional], &None).await
     else {
         return Err(color_eyre::eyre::eyre!(
             "invalid provisional payloads must fail honestly when no db pool is available"
@@ -481,8 +473,7 @@ async fn process_batch_with_dlq_fallback_propagates_checkpoint_errors(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
-    let transport =
-        EventTransport::Nats(Arc::new(crate::NatsPublisher::new(ctx.nats_client())));
+    let transport = EventTransport::Nats(Arc::new(crate::NatsPublisher::new(ctx.nats_client())));
     let mut node = CheckpointErrorBatchNode;
     let event = Event {
         id: Some(EventId::from(Uuid::now_v7())),
@@ -537,8 +528,7 @@ async fn process_batch_with_dlq_fallback_fails_when_dlq_route_fails(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
-    let transport =
-        EventTransport::Nats(Arc::new(crate::NatsPublisher::new(ctx.nats_client())));
+    let transport = EventTransport::Nats(Arc::new(crate::NatsPublisher::new(ctx.nats_client())));
     let mut node = FailingBatchNode;
     let event = Event {
         id: Some(EventId::from(Uuid::now_v7())),
@@ -574,7 +564,9 @@ async fn process_batch_with_dlq_fallback_fails_when_dlq_route_fails(
     .expect_err("failed DLQ routing must stop checkpoint advancement");
 
     let message = format!("{error:#}");
-    assert!(message.contains("failed to route failed automaton event to processing-failure stream"));
+    assert!(
+        message.contains("failed to route failed automaton event to processing-failure stream")
+    );
     assert!(message.contains("batch processing boom"));
     assert!(message.contains("runtime-failing-batch-node"));
     Ok(())
