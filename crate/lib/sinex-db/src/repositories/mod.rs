@@ -1,5 +1,6 @@
 #![doc = include_str!("../../docs/db_repositories.md")]
 //! See `docs/db_repositories.md` for the repository architecture overview.
+pub mod acquisition_jobs;
 pub mod blobs;
 // pub mod checkpoints; // Removed
 pub mod common;
@@ -18,6 +19,7 @@ pub mod source_materials;
 pub mod state;
 
 // Re-export main types
+pub use acquisition_jobs::{AcquisitionJobRepository, AcquisitionJobRow};
 pub use blobs::{BlobRepository, StorageStats};
 // pub use checkpoints::{Checkpoint, CheckpointExt, CheckpointRecord, CheckpointRepository}; // Removed
 pub use common::{DbResult, EnhancedRepository, Repository, TableDef, TransactionSupport};
@@ -64,6 +66,7 @@ use sqlx::PgPool;
 /// let schema = pool.schemas().get_active_schema(source, event_type).await?;
 /// ```
 pub trait DbPoolExt {
+    fn acquisition_jobs(&self) -> acquisition_jobs::AcquisitionJobRepository<'_>;
     fn blobs(&self) -> blobs::BlobRepository;
     fn embeddings(&self) -> embeddings::EmbeddingRepository<'_>;
     fn source_bindings(&self) -> source_bindings::SourceBindingRepository<'_>;
@@ -84,6 +87,10 @@ pub trait DbPoolExt {
 }
 
 impl DbPoolExt for PgPool {
+    fn acquisition_jobs(&self) -> acquisition_jobs::AcquisitionJobRepository<'_> {
+        acquisition_jobs::AcquisitionJobRepository::new(self)
+    }
+
     fn blobs(&self) -> blobs::BlobRepository {
         blobs::BlobRepository::new(self.clone())
     }

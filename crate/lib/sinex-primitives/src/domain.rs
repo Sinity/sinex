@@ -2315,13 +2315,14 @@ impl From<String> for RecordedPath {
 #[cfg(feature = "sqlx")]
 mod sqlx_impls {
     use super::{
-        BlobVerificationStatus, BranchName, CommandText, CommitHash, ConsumerGroup, ConsumerName,
-        ContentKey, DataTier, DerivedNodeModel, EntityTypeName, EventSource, EventType,
-        GlobPattern, HealthStatus, HostName, InstanceId, InvalidationAction, IpAddress, JobId,
-        NatsSubject, NodeId, NodeName, NodeState, NodeType, OperationStatus, ProcessingMode,
-        RecordedPath, RegexPattern, RelationType, RemoteName, SanitizedPath, SchemaName,
-        SchemaVersion, ServiceName, ShellName, SourceIdentifier, SyntheticTemporalPolicy,
-        TemporalClock, TemporalPrecision, TemporalSourceType, TriggerKind, UserId,
+        AcquisitionJobStatus, AcquisitionMode, BlobVerificationStatus, BranchName, CommandText,
+        CommitHash, ConsumerGroup, ConsumerName, ContentKey, DataTier, DerivedNodeModel,
+        EntityTypeName, EventSource, EventType, GlobPattern, HealthStatus, HostName, InstanceId,
+        InvalidationAction, IpAddress, JobId, NatsSubject, NodeId, NodeName, NodeState, NodeType,
+        OperationStatus, ProcessingMode, RecordedPath, RegexPattern, RelationType, RemoteName,
+        SanitizedPath, SchemaName, SchemaVersion, ServiceName, ShellName, SourceIdentifier,
+        SyntheticTemporalPolicy, TemporalClock, TemporalPrecision, TemporalSourceType, TriggerKind,
+        UserId,
     };
 
     // Register validated string types (construction-validated)
@@ -2377,6 +2378,10 @@ mod sqlx_impls {
     impl_sqlx_for_enum_type!(ProcessingMode);
     impl_sqlx_for_enum_type!(TriggerKind);
     impl_sqlx_for_enum_type!(InvalidationAction);
+
+    // Acquisition job enums
+    impl_sqlx_for_enum_type!(AcquisitionMode);
+    impl_sqlx_for_enum_type!(AcquisitionJobStatus);
 }
 
 impl ContentKey {
@@ -2510,6 +2515,122 @@ impl std::fmt::Display for ServiceKind {
             Self::Automaton => write!(f, "automaton"),
             Self::Gateway => write!(f, "gateway"),
             Self::Collector => write!(f, "collector"),
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Acquisition Job Types
+// ─────────────────────────────────────────────────────────────
+
+/// How source material is acquired.
+///
+/// Stored as `acquisition_mode` on `raw.acquisition_jobs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AcquisitionMode {
+    /// One-shot acquisition of a static file, archive, or known path.
+    OneShot,
+    /// Periodic scan of a directory or configured root.
+    PeriodicScan,
+    /// Continuous directory watch (inotify / fanotify).
+    WatchDirectory,
+    /// Append-only file tailing (JSONL, log).
+    AppendTail,
+    /// SQLite database snapshot or row-stream extraction.
+    SqliteSnapshot,
+    /// Git repository snapshot.
+    RepositorySnapshot,
+}
+
+impl AcquisitionMode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OneShot => "one_shot",
+            Self::PeriodicScan => "periodic_scan",
+            Self::WatchDirectory => "watch_directory",
+            Self::AppendTail => "append_tail",
+            Self::SqliteSnapshot => "sqlite_snapshot",
+            Self::RepositorySnapshot => "repository_snapshot",
+        }
+    }
+}
+
+impl fmt::Display for AcquisitionMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for AcquisitionMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "one_shot" => Ok(Self::OneShot),
+            "periodic_scan" => Ok(Self::PeriodicScan),
+            "watch_directory" => Ok(Self::WatchDirectory),
+            "append_tail" => Ok(Self::AppendTail),
+            "sqlite_snapshot" => Ok(Self::SqliteSnapshot),
+            "repository_snapshot" => Ok(Self::RepositorySnapshot),
+            _ => Err(format!("unknown acquisition mode: {s}")),
+        }
+    }
+}
+
+/// Lifecycle status of an acquisition job.
+///
+/// Stored as `status` on `raw.acquisition_jobs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AcquisitionJobStatus {
+    /// Job is declared but not yet started.
+    Pending,
+    /// Job is actively running.
+    Running,
+    /// Job completed successfully.
+    Completed,
+    /// Job failed permanently.
+    Failed,
+    /// Job was cancelled before completion.
+    Cancelled,
+    /// Job was gracefully drained (watch/periodic modes).
+    Drained,
+}
+
+impl AcquisitionJobStatus {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::Drained => "drained",
+        }
+    }
+}
+
+impl fmt::Display for AcquisitionJobStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for AcquisitionJobStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(Self::Pending),
+            "running" => Ok(Self::Running),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            "drained" => Ok(Self::Drained),
+            _ => Err(format!("unknown acquisition job status: {s}")),
         }
     }
 }
