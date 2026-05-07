@@ -21,8 +21,12 @@ module assertions and VM harness.
 
 ```bash
 xtask test -p sinex-e2e-tests
-xtask test -p sinex-e2e-tests --test large_payload_test -E 'test(test_name)'
+xtask test -p sinex-e2e-tests -E 'test(test_batch_large_payloads)'
 ```
+
+For simple `test(name)` filters, xtask infers the owning e2e test binary and
+passes the matching nextest `--test` target internally. Use explicit `--test
+<binary>` only when the filter is too complex to infer.
 
 For the exported NixOS VM checks, use:
 

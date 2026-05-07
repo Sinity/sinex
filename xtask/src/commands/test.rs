@@ -411,6 +411,18 @@ pub struct VmArgs {
 }
 
 impl TestCommand {
+    fn effective_test_binaries(&self, filter: Option<&str>) -> Result<Vec<String>> {
+        if !self.test_binaries.is_empty() {
+            return Ok(normalize_packages(&self.test_binaries));
+        }
+
+        let Some(filter) = filter else {
+            return Ok(Vec::new());
+        };
+
+        affected::infer_test_binaries_for_test_filter(filter)
+    }
+
     fn requests_non_fast_scenario_lane(&self) -> bool {
         self.scenario_lanes
             .iter()
@@ -429,7 +441,11 @@ impl TestCommand {
         })
     }
 
-    fn semantic_invocation_args(&self, scope: &WorkloadScope) -> Vec<String> {
+    fn semantic_invocation_args(
+        &self,
+        scope: &WorkloadScope,
+        test_binaries: &[String],
+    ) -> Vec<String> {
         let mut args = Vec::new();
 
         if self.debug {
@@ -459,7 +475,7 @@ impl TestCommand {
         for lane in &self.scenario_lanes {
             args.push(format!("--scenario-lane={lane}"));
         }
-        for test_binary in &self.test_binaries {
+        for test_binary in test_binaries {
             args.push(format!("--test={test_binary}"));
         }
         if self.list_scenarios {
@@ -798,8 +814,12 @@ impl XtaskCommand for TestCommand {
 
                     let execution_plan =
                         self.resolve_execution_plan(None, self.filter.as_deref(), &[])?;
-                    let coordination_args =
-                        self.semantic_invocation_args(&execution_plan.workload_scope);
+                    let effective_test_binaries =
+                        self.effective_test_binaries(self.filter.as_deref())?;
+                    let coordination_args = self.semantic_invocation_args(
+                        &execution_plan.workload_scope,
+                        &effective_test_binaries,
+                    );
                     return crate::coordinator::coordinate_and_spawn_with_scope(
                         "test",
                         &args,
@@ -892,13 +912,15 @@ impl XtaskCommand for TestCommand {
         }
         let effective_filter =
             merge_nextest_filters(self.filter.as_deref(), scenario_selection.filter.as_deref());
+        let effective_test_binaries = self.effective_test_binaries(effective_filter.as_deref())?;
         let execution_plan = self.resolve_execution_plan(
             Some(ctx),
             effective_filter.as_deref(),
             &scenario_selection.packages,
         )?;
         let workload_scope = execution_plan.workload_scope.clone();
-        let coordination_args = self.semantic_invocation_args(&workload_scope);
+        let coordination_args =
+            self.semantic_invocation_args(&workload_scope, &effective_test_binaries);
         ctx.record_coordination_fingerprint("test", &coordination_args);
         ctx.record_invocation_args(&coordination_args);
 
@@ -912,7 +934,7 @@ impl XtaskCommand for TestCommand {
                     cmd = cmd.args(["-p", package]);
                 }
             }
-            for test_binary in &self.test_binaries {
+            for test_binary in &effective_test_binaries {
                 cmd = cmd.args(["--test", test_binary]);
             }
             if let Some(filter) = &effective_filter {
@@ -968,7 +990,7 @@ impl XtaskCommand for TestCommand {
             runner.add_arg("-p");
             runner.add_arg(package);
         }
-        for test_binary in &self.test_binaries {
+        for test_binary in &effective_test_binaries {
             runner.add_arg("--test");
             runner.add_arg(test_binary);
         }
@@ -1271,7 +1293,7 @@ mod tests {
             ..Default::default()
         };
 
-        let args = command.semantic_invocation_args(&WorkloadScope::Workspace);
+        let args = command.semantic_invocation_args(&WorkloadScope::Workspace, &[]);
         assert!(args.contains(&"--heavy".to_string()));
 
         // The thread cap is min(available_parallelism, HEAVY_TEST_THREAD_CAP).
@@ -1298,14 +1320,12 @@ mod tests {
     #[sinex_test]
     async fn test_semantic_invocation_args_include_nextest_test_targets()
     -> ::xtask::sandbox::TestResult<()> {
-        let command = TestCommand {
-            test_binaries: vec!["large_payload_test".to_string()],
-            ..Default::default()
-        };
+        let command = TestCommand::default();
 
-        let args = command.semantic_invocation_args(&WorkloadScope::Packages(vec![
-            "sinex-e2e-tests".to_string(),
-        ]));
+        let args = command.semantic_invocation_args(
+            &WorkloadScope::Packages(vec!["sinex-e2e-tests".to_string()]),
+            &["large_payload_test".to_string()],
+        );
 
         assert!(
             args.contains(&"--test=large_payload_test".to_string()),

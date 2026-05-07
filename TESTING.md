@@ -17,9 +17,8 @@ xtask test -p sinex-primitives
 xtask test --debug -E 'test(name)'
 xtask test --heavy
 
-# Targeted e2e loop; still use xtask so preflight and runtime binaries are prepared.
-# Use --test to avoid compiling every e2e test binary when working on one file.
-xtask test -p sinex-e2e-tests --test large_payload_test -E 'test(test_name)'
+# Targeted e2e loop; simple test(name) filters infer the test binary automatically.
+xtask test -p sinex-e2e-tests -E 'test(test_batch_large_payloads)'
 
 # Proof-carrying runtime scenarios
 xtask test --list-scenarios
