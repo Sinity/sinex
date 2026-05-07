@@ -2352,6 +2352,36 @@
       "about": "Run exported NixOS VM flake checks"
     },
     {
+      "subject": "xtask_command:verify",
+      "path": "verify",
+      "about": "Verify phase plans and performance contracts"
+    },
+    {
+      "subject": "xtask_command:verify.all",
+      "path": "verify.all",
+      "about": "Run perf only"
+    },
+    {
+      "subject": "xtask_command:verify.compare",
+      "path": "verify.compare",
+      "about": "Compare two perf reports"
+    },
+    {
+      "subject": "xtask_command:verify.perf",
+      "path": "verify.perf",
+      "about": "Run perf sweeps and enforce contract budgets"
+    },
+    {
+      "subject": "xtask_command:verify.plan",
+      "path": "verify.plan",
+      "about": "Inspect and validate the phase verification manifest"
+    },
+    {
+      "subject": "xtask_command:verify.report",
+      "path": "verify.report",
+      "about": "Print summary from a perf report JSON"
+    },
+    {
       "subject": "xtask_command:work",
       "path": "work",
       "about": "Execute the minimum workflow sequence to reach a target state"

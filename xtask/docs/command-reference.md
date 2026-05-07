@@ -38,6 +38,7 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `doctor` | Probe developer-environment health and deployment readiness |
 | `privacy` | Run privacy-engine catalog, test, key, and config utilities |
 | `schema` | Schema verification command group |
+| `verify` | Verify phase plans and performance contracts |
 | `docs` | Generate and verify repo documentation surfaces |
 | `source-units` | Source-unit manifest operations |
 | `exercise` | Full surface area validation for xtask commands |
@@ -100,6 +101,7 @@ Run the repo's primary nextest-backed test workflows
 | `--scenario-lane` | yes | no | Run tests whose sinex_test scenario metadata uses this lane |
 | `--list-scenarios` | no | no | List discovered sinex_test scenarios instead of running tests |
 | `-p, --package` | yes | no | Run tests for specific package(s) |
+| `--exclude` | yes | no | Exclude workspace package(s) from --all/workspace test runs |
 | `--test` | yes | no | Run tests from specific test binary target(s) (nextest --test) |
 | `--dry-run` | no | no | Print what would happen |
 | `--skip-preflight` | no | no | Skip automatic infrastructure setup (preflight is ON by default) |
@@ -1385,6 +1387,91 @@ Detect strict schema drift that declarative apply does not reconcile
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `--database-url` | yes | no | Database URL to inspect. Defaults to DATABASE_URL |
+
+
+## `xtask verify`
+
+Verify phase plans and performance contracts
+
+**Subcommands**
+
+| Command | Purpose |
+|---|---|
+| `plan` | Inspect and validate the phase verification manifest |
+| `perf` | Run perf sweeps and enforce contract budgets |
+| `report` | Print summary from a perf report JSON |
+| `compare` | Compare two perf reports |
+| `all` | Run perf only |
+
+### `xtask verify plan`
+
+Inspect and validate the phase verification manifest
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--phase` | yes | no | Select one phase by id |
+| `--all` | no | no | Show all phases |
+| `--check` | no | no | Validate the manifest contract and exit |
+| `--manifest` | yes | no | Manifest path |
+
+
+### `xtask verify perf`
+
+Run perf sweeps and enforce contract budgets
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--profile` | yes | no | Nextest profile |
+| `--runs` | yes | no | Runs per thread scenario |
+| `--threads` | yes | no | Thread scenarios |
+| `--target` | yes | no | Target package list (comma-delimited) or `workspace` |
+| `--contracts` | yes | no | Contract file path |
+| `--output-dir` | yes | no | Output directory for verify artifacts |
+| `--history-db` | yes | no | History DB path for benchmark series |
+
+
+### `xtask verify report`
+
+Print summary from a perf report JSON
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--report` | yes | no | Report file path (defaults to latest pointer) |
+
+
+### `xtask verify compare`
+
+Compare two perf reports
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--current` | yes | yes |  |
+| `--previous` | yes | yes |  |
+
+
+### `xtask verify all`
+
+Run perf only
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--profile` | yes | no |  |
+| `--runs` | yes | no |  |
+| `--threads` | yes | no |  |
+| `--target` | yes | no |  |
+| `--contracts` | yes | no |  |
+| `--output-dir` | yes | no |  |
+| `--history-db` | yes | no |  |
 
 
 ## `xtask docs`

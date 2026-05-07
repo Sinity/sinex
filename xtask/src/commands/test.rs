@@ -200,6 +200,10 @@ pub struct TestCommand {
     #[arg(long = "package", short = 'p')]
     pub packages: Vec<String>,
 
+    /// Exclude workspace package(s) from --all/workspace test runs.
+    #[arg(long = "exclude", value_name = "PACKAGE")]
+    pub exclude_packages: Vec<String>,
+
     /// Run tests from specific test binary target(s) (nextest --test)
     #[arg(long = "test", value_name = "TEST_BINARY")]
     pub test_binaries: Vec<String>,
@@ -478,6 +482,9 @@ impl TestCommand {
         for test_binary in test_binaries {
             args.push(format!("--test={test_binary}"));
         }
+        for package in normalize_packages(&self.exclude_packages) {
+            args.push(format!("--exclude={package}"));
+        }
         if self.list_scenarios {
             args.push("--list-scenarios".to_string());
         }
@@ -502,6 +509,7 @@ impl TestCommand {
         scenario_packages: &[String],
     ) -> Result<NextestExecutionPlan> {
         let explicit_packages = normalize_packages(&self.packages);
+        let requested_excludes = normalize_packages(&self.exclude_packages);
         let inferred_packages = if self.all {
             Vec::new()
         } else if !scenario_packages.is_empty() && explicit_packages.is_empty() {
@@ -560,11 +568,23 @@ impl TestCommand {
                 None
             };
 
-        Ok(resolve_nextest_execution_plan(
+        let execution_plan = resolve_nextest_execution_plan(
             &explicit_packages,
             inferred_packages,
             affected_packages,
-        ))
+            &self.exclude_packages,
+        );
+
+        if !requested_excludes.is_empty()
+            && !matches!(execution_plan.workload_scope, WorkloadScope::Workspace)
+        {
+            return Err(color_eyre::eyre::eyre!(
+                "`xtask test --exclude` is only valid for --all/workspace test runs; \
+                 use explicit -p package selection for scoped test runs"
+            ));
+        }
+
+        Ok(execution_plan)
     }
 
     fn has_scenario_filter(&self) -> bool {
@@ -794,6 +814,10 @@ impl XtaskCommand for TestCommand {
                         args.push("-p".to_string());
                         args.push(p.clone());
                     }
+                    for p in &self.exclude_packages {
+                        args.push("--exclude".to_string());
+                        args.push(p.clone());
+                    }
                     for test_binary in &self.test_binaries {
                         args.push("--test".to_string());
                         args.push(test_binary.clone());
@@ -844,7 +868,46 @@ impl XtaskCommand for TestCommand {
         }
 
         if self.dry_run {
-            return Ok(CommandResult::success().with_detail("dry-run passed"));
+            let scenario_selection = self.resolve_scenario_selection(ctx)?;
+            if self.list_scenarios {
+                return render_scenario_catalog(ctx, &scenario_selection.entries);
+            }
+            let effective_filter =
+                merge_nextest_filters(self.filter.as_deref(), scenario_selection.filter.as_deref());
+            let effective_test_binaries =
+                self.effective_test_binaries(effective_filter.as_deref())?;
+            let execution_plan = self.resolve_execution_plan(
+                Some(ctx),
+                effective_filter.as_deref(),
+                &scenario_selection.packages,
+            )?;
+            let workload_scope = execution_plan.workload_scope.clone();
+            let coordination_args =
+                self.semantic_invocation_args(&workload_scope, &effective_test_binaries);
+            ctx.record_coordination_fingerprint("test", &coordination_args);
+            ctx.record_invocation_args(&coordination_args);
+
+            if ctx.is_human() {
+                println!("Dry run: nextest plan resolved");
+                println!("  scope: {}", workload_scope.encode_marker());
+                if !execution_plan.excluded_packages.is_empty() {
+                    println!(
+                        "  excluded: {}",
+                        execution_plan.excluded_packages.join(", ")
+                    );
+                }
+            }
+            return Ok(CommandResult::success()
+                .with_message("test dry-run passed")
+                .with_detail(format!("scope={}", workload_scope.encode_marker()))
+                .with_data(serde_json::json!({
+                    "scope": workload_scope.encode_marker(),
+                    "runner_packages": execution_plan.runner_packages,
+                    "excluded_packages": execution_plan.excluded_packages,
+                    "test_binaries": effective_test_binaries,
+                    "filter": effective_filter,
+                }))
+                .with_duration(ctx.elapsed()));
         }
 
         let disk_space_status = check_disk_space_gb(2);
@@ -929,6 +992,9 @@ impl XtaskCommand for TestCommand {
             let mut cmd = ProcessBuilder::cargo().args(["nextest", "list"]);
             if execution_plan.runner_packages.is_empty() {
                 cmd = cmd.arg("--workspace");
+                for package in &execution_plan.excluded_packages {
+                    cmd = cmd.args(["--exclude", package]);
+                }
             } else {
                 for package in &execution_plan.runner_packages {
                     cmd = cmd.args(["-p", package]);
@@ -988,6 +1054,10 @@ impl XtaskCommand for TestCommand {
 
         for package in &execution_plan.runner_packages {
             runner.add_arg("-p");
+            runner.add_arg(package);
+        }
+        for package in &execution_plan.excluded_packages {
+            runner.add_arg("--exclude");
             runner.add_arg(package);
         }
         for test_binary in &effective_test_binaries {
@@ -1330,6 +1400,22 @@ mod tests {
         assert!(
             args.contains(&"--test=large_payload_test".to_string()),
             "test binary selector should be part of the coordination identity: {args:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_semantic_invocation_args_include_package_excludes()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = TestCommand {
+            exclude_packages: vec!["sinex-e2e-tests".to_string()],
+            ..Default::default()
+        };
+
+        let args = command.semantic_invocation_args(&WorkloadScope::Workspace, &[]);
+        assert!(
+            args.contains(&"--exclude=sinex-e2e-tests".to_string()),
+            "package excludes must be part of coordination identity: {args:?}"
         );
         Ok(())
     }

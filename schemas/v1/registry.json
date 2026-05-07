@@ -268,6 +268,55 @@
       "content_hash": "0f3373655a8df0365e69f1ffd189352fc39ff1cebfb603c3afff75a307f1ca40"
     },
     {
+      "source": "knowledge-graph",
+      "event_type": "knowledge.entity_linked",
+      "version": "1.0.0",
+      "path": "knowledge-graph/knowledge.entity_linked.json",
+      "content_hash": "9380f0856f44358049a55de534863353afb6807e03a3a0ae468c86efc002da8d"
+    },
+    {
+      "source": "knowledge-graph",
+      "event_type": "knowledge.entity_mention",
+      "version": "1.0.0",
+      "path": "knowledge-graph/knowledge.entity_mention.json",
+      "content_hash": "5f48839701faeb11b3ee0cef855921f37e54af5a125e106a084e72161c8a50a6"
+    },
+    {
+      "source": "knowledge-graph",
+      "event_type": "knowledge.entity_merged",
+      "version": "1.0.0",
+      "path": "knowledge-graph/knowledge.entity_merged.json",
+      "content_hash": "16237b1c7a85e888cb8fda0fd0a521c8a48f827ad190b8a6f39cf48a27e26207"
+    },
+    {
+      "source": "knowledge-graph",
+      "event_type": "knowledge.entity_resolution_candidate",
+      "version": "1.0.0",
+      "path": "knowledge-graph/knowledge.entity_resolution_candidate.json",
+      "content_hash": "b8cc6f9dd5acc76e2025961aba78b7dce48a60afa1dc0130d03cba693136eec9"
+    },
+    {
+      "source": "knowledge-graph",
+      "event_type": "knowledge.relation_proposed",
+      "version": "1.0.0",
+      "path": "knowledge-graph/knowledge.relation_proposed.json",
+      "content_hash": "7e63dd403ebf8c912bd4674000423aab3c792178e2cc37cb9f22f223ddc036bd"
+    },
+    {
+      "source": "knowledge-graph",
+      "event_type": "knowledge.tag_applied",
+      "version": "1.0.0",
+      "path": "knowledge-graph/knowledge.tag_applied.json",
+      "content_hash": "50fc904e5d5f4aa4ff5d7d7b358dc8290b9bbfbb311d57a8edd57da3a4ed75c4"
+    },
+    {
+      "source": "knowledge-graph",
+      "event_type": "knowledge.tag_confirmed",
+      "version": "1.0.0",
+      "path": "knowledge-graph/knowledge.tag_confirmed.json",
+      "content_hash": "e9d66b34b5b4bb00dd0e97050964829c25c419eb99f385982cea28205b93d807"
+    },
+    {
       "source": "relation-extractor",
       "event_type": "entity.related",
       "version": "1.0.0",
@@ -492,6 +541,13 @@
       "content_hash": "60e4890314d4dbb90200b0dd5be5e9863f262ae75fb42eece7fac0a2d8201f35"
     },
     {
+      "source": "terminal",
+      "event_type": "shell.terminal_monitoring_started",
+      "version": "1.0.0",
+      "path": "terminal/shell.terminal_monitoring_started.json",
+      "content_hash": "99a0b877c1fae9d24a254ec9771c2b272ded66a4b26cfc966267d51cea58098c"
+    },
+    {
       "source": "udev",
       "event_type": "device.changed",
       "version": "1.0.0",
@@ -559,7 +615,7 @@
       "event_type": "screencast",
       "version": "1.0.0",
       "path": "wm.hyprland/screencast.json",
-      "content_hash": "0072e9b4c18317917213b9869c55371750f1db5e242899ccf1b46842cfae98aa"
+      "content_hash": "dbb18b20f123666823aa9c9968be4f38cd95a0d8afa8803cc5a75f903a7c4d7b"
     },
     {
       "source": "wm.hyprland",
@@ -587,7 +643,7 @@
       "event_type": "window.floating_changed",
       "version": "1.0.0",
       "path": "wm.hyprland/window.floating_changed.json",
-      "content_hash": "47b3ce287579ce044078e3a6e66d44a9e8ce0d429a5cf58eebc5abe532c246ca"
+      "content_hash": "da8d245c395470abd6d217233c5e985b5bf1beeae385da11e018b94e1ccece3d"
     },
     {
       "source": "wm.hyprland",
@@ -601,14 +657,14 @@
       "event_type": "window.fullscreen_changed",
       "version": "1.0.0",
       "path": "wm.hyprland/window.fullscreen_changed.json",
-      "content_hash": "44f1e35d7d13ae56cbd38d4c852d7f2e8efce2c8964d93b4de523dd430132a46"
+      "content_hash": "3fc600298b5d25bdd5388a5e0d340b63af6f7000f4ca2f802145e8d81f0e9d97"
     },
     {
       "source": "wm.hyprland",
       "event_type": "window.minimize",
       "version": "1.0.0",
       "path": "wm.hyprland/window.minimize.json",
-      "content_hash": "6bf8854a844e94679e35e06d5862a7faf02f586c70df33e9c7a7374ae231047f"
+      "content_hash": "87296d82eadfd336e8048d0187507319f2e5e267cc451f6e33503d1fb9405cbe"
     },
     {
       "source": "wm.hyprland",

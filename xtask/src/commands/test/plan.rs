@@ -16,6 +16,7 @@ pub(super) struct RuntimeBinaryRequirement {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct NextestExecutionPlan {
     pub(super) runner_packages: Vec<String>,
+    pub(super) excluded_packages: Vec<String>,
     pub(super) workload_scope: WorkloadScope,
 }
 
@@ -38,11 +39,13 @@ pub(super) fn resolve_nextest_execution_plan(
     explicit_packages: &[String],
     inferred_packages: Vec<String>,
     affected_packages: Option<Vec<String>>,
+    excluded_packages: &[String],
 ) -> NextestExecutionPlan {
     let explicit_packages = normalize_packages(explicit_packages);
     if !explicit_packages.is_empty() {
         return NextestExecutionPlan {
             runner_packages: explicit_packages.clone(),
+            excluded_packages: Vec::new(),
             workload_scope: WorkloadScope::Packages(explicit_packages),
         };
     }
@@ -51,6 +54,7 @@ pub(super) fn resolve_nextest_execution_plan(
     if !inferred_packages.is_empty() {
         return NextestExecutionPlan {
             runner_packages: inferred_packages.clone(),
+            excluded_packages: Vec::new(),
             workload_scope: WorkloadScope::Packages(inferred_packages),
         };
     }
@@ -60,6 +64,7 @@ pub(super) fn resolve_nextest_execution_plan(
         if !affected_packages.is_empty() {
             return NextestExecutionPlan {
                 runner_packages: affected_packages.clone(),
+                excluded_packages: Vec::new(),
                 workload_scope: WorkloadScope::Affected(affected_packages),
             };
         }
@@ -67,6 +72,7 @@ pub(super) fn resolve_nextest_execution_plan(
 
     NextestExecutionPlan {
         runner_packages: Vec::new(),
+        excluded_packages: normalize_packages(excluded_packages),
         workload_scope: WorkloadScope::Workspace,
     }
 }
@@ -157,12 +163,14 @@ mod tests {
             &["sinex-db".into(), "xtask".into()],
             vec!["sinex-gateway".into()],
             Some(vec!["sinex-e2e-tests".into()]),
+            &[],
         );
 
         assert_eq!(
             plan,
             NextestExecutionPlan {
                 runner_packages: vec!["sinex-db".into(), "xtask".into()],
+                excluded_packages: Vec::new(),
                 workload_scope: WorkloadScope::Packages(vec!["sinex-db".into(), "xtask".into()]),
             }
         );
@@ -176,12 +184,14 @@ mod tests {
             &[],
             vec!["sinex-gateway".into()],
             Some(vec!["xtask".into(), "sinex-db".into(), "xtask".into()]),
+            &[],
         );
 
         assert_eq!(
             plan,
             NextestExecutionPlan {
                 runner_packages: vec!["sinex-gateway".into()],
+                excluded_packages: Vec::new(),
                 workload_scope: WorkloadScope::Packages(vec!["sinex-gateway".into()]),
             }
         );
@@ -195,12 +205,14 @@ mod tests {
             &[],
             Vec::new(),
             Some(vec!["xtask".into(), "sinex-db".into(), "xtask".into()]),
+            &[],
         );
 
         assert_eq!(
             plan,
             NextestExecutionPlan {
                 runner_packages: vec!["sinex-db".into(), "xtask".into()],
+                excluded_packages: Vec::new(),
                 workload_scope: WorkloadScope::Affected(vec!["sinex-db".into(), "xtask".into()]),
             }
         );
@@ -214,13 +226,36 @@ mod tests {
             &[],
             vec!["sinex-e2e-tests".into(), "sinex-e2e-tests".into()],
             None,
+            &[],
         );
 
         assert_eq!(
             plan,
             NextestExecutionPlan {
                 runner_packages: vec!["sinex-e2e-tests".into()],
+                excluded_packages: Vec::new(),
                 workload_scope: WorkloadScope::Packages(vec!["sinex-e2e-tests".into()]),
+            }
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_resolve_nextest_execution_plan_carries_workspace_excludes()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = resolve_nextest_execution_plan(
+            &[],
+            Vec::new(),
+            None,
+            &["sinex-e2e-tests".into(), "sinex-e2e-tests".into()],
+        );
+
+        assert_eq!(
+            plan,
+            NextestExecutionPlan {
+                runner_packages: Vec::new(),
+                excluded_packages: vec!["sinex-e2e-tests".into()],
+                workload_scope: WorkloadScope::Workspace,
             }
         );
         Ok(())
@@ -231,6 +266,7 @@ mod tests {
     -> ::xtask::sandbox::TestResult<()> {
         let plan = NextestExecutionPlan {
             runner_packages: Vec::new(),
+            excluded_packages: Vec::new(),
             workload_scope: WorkloadScope::Workspace,
         };
 
@@ -246,6 +282,7 @@ mod tests {
     -> ::xtask::sandbox::TestResult<()> {
         let plan = NextestExecutionPlan {
             runner_packages: vec!["sinex-node-sdk".to_string()],
+            excluded_packages: Vec::new(),
             workload_scope: WorkloadScope::Packages(vec!["sinex-node-sdk".to_string()]),
         };
 
@@ -260,6 +297,7 @@ mod tests {
     -> ::xtask::sandbox::TestResult<()> {
         let plan = NextestExecutionPlan {
             runner_packages: vec!["sinex-e2e-tests".to_string()],
+            excluded_packages: Vec::new(),
             workload_scope: WorkloadScope::Packages(vec!["sinex-e2e-tests".to_string()]),
         };
 
@@ -275,6 +313,7 @@ mod tests {
     -> ::xtask::sandbox::TestResult<()> {
         let plan = NextestExecutionPlan {
             runner_packages: vec!["xtask".to_string()],
+            excluded_packages: Vec::new(),
             workload_scope: WorkloadScope::Packages(vec!["xtask".to_string()]),
         };
 

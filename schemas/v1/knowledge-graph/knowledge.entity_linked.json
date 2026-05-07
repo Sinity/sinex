@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Emitted when a resolved entity is linked to a specific document or event,\nestablishing a durable association for retrieval.",
+  "properties": {
+    "entity_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "link_kind": {
+      "type": "string"
+    },
+    "target_event_id": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "entity_id",
+    "target_event_id",
+    "link_kind"
+  ],
+  "title": "KnowledgeEntityLinkedPayload",
+  "type": "object",
+  "x-sinex-event-type": "knowledge.entity_linked",
+  "x-sinex-source": "knowledge-graph",
+  "x-sinex-version": "1.0.0"
+}
