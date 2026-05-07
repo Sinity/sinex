@@ -68,7 +68,6 @@ use std::collections::{HashMap, HashSet};
 use crate::apply::ApplyError;
 use crate::schema::{
     Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations, EventAnnotations,
-    EventEmbeddings, EventPayloadSchemas, Events, NodeManifests, OperationsLog, TableMeta,
     TaggedItems, Tags,
 };
 use sea_query::{
@@ -737,31 +736,6 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
             }),
         },
         ConvergibleTable {
-            meta: find_meta("core.node_manifests")?,
-            statement_fn: NodeManifests::create_table_statement,
-            column_renames: &[],
-            pending_drop: &[],
-            named_constraints: vec![
-                NamedConstraint {
-                    name: "node_manifests_node_name_bounds",
-                    expression: "length(node_name) BETWEEN 1 AND 128",
-                },
-                NamedConstraint {
-                    name: "node_manifests_version_bounds",
-                    expression: "length(version) BETWEEN 1 AND 64",
-                },
-                // pg_jsonschema validation: config_schema must be a JSON
-                // object (i.e. shaped like a JSON Schema document) when set.
-                NamedConstraint {
-                    name: "node_manifests_config_schema_object",
-                    expression: "config_schema IS NULL OR jsonb_matches_schema('{\"type\": \"object\"}'::json, config_schema)",
-                },
-            ],
-            foreign_keys: vec![],
-            columns_to_drop: &[],
-            mirror: None,
-        },
-        ConvergibleTable {
             meta: find_meta("sinex_schemas.event_payload_schemas")?,
             statement_fn: EventPayloadSchemas::create_table_statement,
             column_renames: &[],
@@ -1145,7 +1119,6 @@ mod tests {
         // convergence, named-constraint idempotency, and FK management.
         assert_eq!(tables.len(), 13);
         assert_eq!(tables[0].meta.qualified_name, "core.events");
-        assert_eq!(tables[1].meta.qualified_name, "core.node_manifests");
         Ok(())
     }
 }
