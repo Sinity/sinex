@@ -19,6 +19,7 @@ pub mod ids;
 #[cfg(feature = "nats")]
 pub mod nats;
 pub mod non_empty;
+pub mod parser;
 pub mod primitives;
 pub mod privacy;
 pub mod proof;
