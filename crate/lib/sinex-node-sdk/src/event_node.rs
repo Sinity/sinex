@@ -66,8 +66,7 @@ pub struct EventBatcherConfig {
     /// Maximum time to wait for a batch to fill
     pub batch_timeout_ms: u64,
     /// Source unit identifier for the admission envelope (e.g., "fs-watcher").
-    /// When set, the batcher constructs an `AdmittedEventIntent` envelope.
-    /// When empty, the batcher falls back to raw event publishing.
+    /// Required for production use — the batcher constructs an `AdmittedEventIntent`.
     #[serde(default)]
     pub source_unit_id: String,
     /// Parser identifier for the admission envelope (e.g., "inotify-watcher").
@@ -76,6 +75,10 @@ pub struct EventBatcherConfig {
     /// Parser version for the admission envelope (e.g., "1.0.0").
     #[serde(default)]
     pub parser_version: String,
+    /// TEST-ONLY: bypass the admission envelope and publish raw events directly.
+    /// Must be false in production. Grep for this field name to audit.
+    #[serde(default)]
+    pub bypass_admission_for_fixtures: bool,
 }
 
 impl Default for EventBatcherConfig {
@@ -86,6 +89,7 @@ impl Default for EventBatcherConfig {
             source_unit_id: String::new(),
             parser_id: String::new(),
             parser_version: String::new(),
+            bypass_admission_for_fixtures: false,
         }
     }
 }
@@ -440,6 +444,7 @@ impl EventBatcher {
                     &self.config.source_unit_id,
                     &self.config.parser_id,
                     &self.config.parser_version,
+                    self.config.bypass_admission_for_fixtures,
                 )
                 .await
             }
@@ -573,15 +578,15 @@ impl EventBatcher {
         Ok(())
     }
 
-    /// Send batch via NATS `JetStream` using the admission envelope when identity
-    /// fields are configured. Falls back to raw event publishing (escape hatch) when
-    /// source_unit_id is empty.
+    /// Send batch via NATS using the admission envelope. The raw-event escape
+    /// hatch is gated behind `bypass_admission_for_fixtures`.
     async fn send_batch_nats(
         publisher: &NatsPublisher,
         events: &mut Vec<Event<JsonValue>>,
         source_unit_id: &str,
         parser_id: &str,
         parser_version: &str,
+        bypass_admission_for_fixtures: bool,
     ) -> BatchPublishResult {
         if events.is_empty() {
             return BatchPublishResult {
@@ -592,8 +597,9 @@ impl EventBatcher {
 
         let event_count = events.len();
 
-        // When source_unit_id is configured, use the admission envelope.
-        if !source_unit_id.is_empty() {
+        // Production path: use the admission envelope.
+        // The raw-event escape hatch is gated behind bypass_admission_for_fixtures.
+        if !bypass_admission_for_fixtures {
             let intent = AdmittedEventIntent::new(
                 source_unit_id,
                 parser_id,

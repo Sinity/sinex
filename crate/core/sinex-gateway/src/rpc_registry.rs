@@ -395,8 +395,9 @@ fn build_registry_impl() -> RpcRegistry {
         handle_replay_create_operation, handle_replay_execute_operation,
         handle_replay_list_operations, handle_replay_operation_status,
         handle_replay_preview_operation, handle_replay_submit_operation, handle_retrieve_blob,
-        handle_shadow_create, handle_shadow_delete, handle_shadow_list, handle_sources_bindings_create,
-        handle_sources_bindings_list, handle_sources_bindings_resolve, handle_sources_coverage,
+        handle_shadow_create, handle_shadow_delete, handle_shadow_list, handle_sources_annotate,
+        handle_sources_archive, handle_sources_bindings_create, handle_sources_bindings_list,
+        handle_sources_bindings_resolve, handle_sources_continuity, handle_sources_coverage,
         handle_sources_list, handle_sources_presets_list, handle_sources_show,
         handle_sources_stage, handle_store_blob,
         handle_system_health, handle_system_ping, handle_system_version,
@@ -548,6 +549,11 @@ fn build_registry_impl() -> RpcRegistry {
             Role::ReadOnly,
             boxed!(handle_sources_coverage),
         )
+        .pool_rpc(
+            methods::SOURCES_CONTINUITY,
+            Role::ReadOnly,
+            boxed!(handle_sources_continuity),
+        )
         // Source presets and bindings (ReadOnly)
         .register(
             methods::SOURCES_PRESETS_LIST,
@@ -697,6 +703,12 @@ fn build_registry_impl() -> RpcRegistry {
             Role::Write,
             boxed!(handle_sources_bindings_resolve),
         )
+        // Source annotation (Write — modifies metadata)
+        .pool_rpc(
+            methods::SOURCES_ANNOTATE,
+            Role::Write,
+            boxed!(handle_sources_annotate),
+        )
         // Node operations (Write - affects system but not destructive)
         .nats_auth_rpc(
             methods::NODES_DRAIN,
@@ -772,6 +784,12 @@ fn build_registry_impl() -> RpcRegistry {
             methods::LIFECYCLE_ARCHIVE,
             Role::Admin,
             boxed!(handle_lifecycle_archive, 3),
+        )
+        // Source material archival (Admin — archives material + cascade)
+        .pool_rpc(
+            methods::SOURCES_ARCHIVE,
+            Role::Admin,
+            boxed!(handle_sources_archive),
         )
         .pool_auth_rpc(
             methods::LIFECYCLE_RESTORE,
