@@ -272,7 +272,7 @@ impl ParserJobs {
                     .text()
                     .not_null()
                     .check(Expr::cust(
-                        "status IN ('queued','leased','running','waiting_material','completed','failed_retryable','failed_permanent','cancelled')",
+                        "status IN ('queued','leased','running','waiting_material','waiting_confirmation','retry_wait','completed','completed_with_caveats','failed_retryable','failed_permanent','cancelled','blocked_by_policy','superseded')",
                     )),
             )
             .col(ColumnDef::new(ParserJobs::Cursor).json_binary())
