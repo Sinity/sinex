@@ -395,8 +395,10 @@ fn build_registry_impl() -> RpcRegistry {
         handle_replay_create_operation, handle_replay_execute_operation,
         handle_replay_list_operations, handle_replay_operation_status,
         handle_replay_preview_operation, handle_replay_submit_operation, handle_retrieve_blob,
-        handle_shadow_create, handle_shadow_delete, handle_shadow_list, handle_sources_coverage,
-        handle_sources_list, handle_sources_show, handle_sources_stage, handle_store_blob,
+        handle_shadow_create, handle_shadow_delete, handle_shadow_list, handle_sources_bindings_create,
+        handle_sources_bindings_list, handle_sources_bindings_resolve, handle_sources_coverage,
+        handle_sources_list, handle_sources_presets_list, handle_sources_show,
+        handle_sources_stage, handle_store_blob,
         handle_system_health, handle_system_ping, handle_system_version,
         handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
         handle_telemetry_current_device_state, handle_telemetry_current_health,
@@ -546,6 +548,19 @@ fn build_registry_impl() -> RpcRegistry {
             Role::ReadOnly,
             boxed!(handle_sources_coverage),
         )
+        // Source presets and bindings (ReadOnly)
+        .register(
+            methods::SOURCES_PRESETS_LIST,
+            Role::ReadOnly,
+            |params, services, auth| {
+                Box::pin(async move { handle_sources_presets_list(params, services, auth).await })
+            },
+        )
+        .pool_rpc(
+            methods::SOURCES_BINDINGS_LIST,
+            Role::ReadOnly,
+            boxed!(handle_sources_bindings_list),
+        )
         // Telemetry read models (ReadOnly)
         .pool_rpc(
             methods::TELEMETRY_CURRENT_HEALTH,
@@ -663,11 +678,24 @@ fn build_registry_impl() -> RpcRegistry {
                 Box::pin(async move { handle_retrieve_blob(services, params).await })
             },
         )
-        // Source material staging (Write — registers new materials)
-        .pool_rpc(
+        // Source material staging (Write — registers new materials, uses services)
+        .register(
             methods::SOURCES_STAGE,
             Role::Write,
-            boxed!(handle_sources_stage),
+            |params, services, auth| {
+                Box::pin(async move { handle_sources_stage(params, services, auth).await })
+            },
+        )
+        // Source binding management (Write)
+        .pool_rpc(
+            methods::SOURCES_BINDINGS_CREATE,
+            Role::Write,
+            boxed!(handle_sources_bindings_create),
+        )
+        .pool_rpc(
+            methods::SOURCES_BINDINGS_RESOLVE,
+            Role::Write,
+            boxed!(handle_sources_bindings_resolve),
         )
         // Node operations (Write - affects system but not destructive)
         .nats_auth_rpc(

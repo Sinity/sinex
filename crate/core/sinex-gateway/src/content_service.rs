@@ -30,6 +30,12 @@ impl ContentService {
         &self.pool
     }
 
+    /// Get a reference to the content-store manager.
+    #[must_use]
+    pub fn content_store(&self) -> &Arc<ContentStoreManager> {
+        &self.content_store
+    }
+
     async fn record_operation(
         &self,
         operation_type: &str,
