@@ -1937,6 +1937,121 @@ pub enum OperationStatus {
     Pending,
 }
 
+/// Shared operation-run lifecycle status for parser jobs, acquisition jobs,
+/// replay operations, and lifecycle workflows.
+///
+/// This is the canonical fine-grained status vocabulary used by
+/// `raw.parser_jobs.status`, `raw.acquisition_jobs.status`,
+/// `audit.replay_operations.status`, and future lifecycle tables.
+/// Each variant maps to a stable string representation stored in the
+/// database CHECK constraint.
+///
+/// The [`OperationStatus`] enum above is a coarser result-oriented
+/// vocabulary used by `core.operations_log.result_status`. Keep the
+/// two enums distinct — one describes the run lifecycle, the other
+/// describes the terminal result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationRunStatus {
+    /// Job is declared but not yet claimed by a worker.
+    Queued,
+    /// A worker has claimed a lease but not yet started processing.
+    Leased,
+    /// Job is actively executing.
+    Running,
+    /// Job is blocked waiting for source material to be ready.
+    WaitingMaterial,
+    /// Job is blocked waiting for downstream confirmations.
+    WaitingConfirmation,
+    /// Job failed transiently and is waiting to retry.
+    RetryWait,
+    /// Job completed successfully.
+    Completed,
+    /// Job completed but with non-fatal warnings or partial results.
+    CompletedWithCaveats,
+    /// Job failed with a transient error and can be retried.
+    FailedRetryable,
+    /// Job failed with a permanent error and should not be retried.
+    FailedPermanent,
+    /// Job was cancelled before completion.
+    Cancelled,
+    /// Job is blocked by a policy rule (e.g., rate limit, privacy hold).
+    BlockedByPolicy,
+    /// Job was superseded by a newer job for the same material+parser.
+    Superseded,
+}
+
+impl OperationRunStatus {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Leased => "leased",
+            Self::Running => "running",
+            Self::WaitingMaterial => "waiting_material",
+            Self::WaitingConfirmation => "waiting_confirmation",
+            Self::RetryWait => "retry_wait",
+            Self::Completed => "completed",
+            Self::CompletedWithCaveats => "completed_with_caveats",
+            Self::FailedRetryable => "failed_retryable",
+            Self::FailedPermanent => "failed_permanent",
+            Self::Cancelled => "cancelled",
+            Self::BlockedByPolicy => "blocked_by_policy",
+            Self::Superseded => "superseded",
+        }
+    }
+
+    /// Whether this status represents a terminal state (no further
+    /// transitions expected).
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Completed
+                | Self::CompletedWithCaveats
+                | Self::FailedPermanent
+                | Self::Cancelled
+                | Self::Superseded
+        )
+    }
+
+    /// Whether this status represents an active/in-flight state where
+    /// a worker holds the job.
+    #[must_use]
+    pub const fn is_active(self) -> bool {
+        matches!(self, Self::Leased | Self::Running | Self::RetryWait)
+    }
+}
+
+impl fmt::Display for OperationRunStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for OperationRunStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "queued" => Ok(Self::Queued),
+            "leased" => Ok(Self::Leased),
+            "running" => Ok(Self::Running),
+            "waiting_material" => Ok(Self::WaitingMaterial),
+            "waiting_confirmation" => Ok(Self::WaitingConfirmation),
+            "retry_wait" => Ok(Self::RetryWait),
+            "completed" => Ok(Self::Completed),
+            "completed_with_caveats" => Ok(Self::CompletedWithCaveats),
+            "failed_retryable" => Ok(Self::FailedRetryable),
+            "failed_permanent" => Ok(Self::FailedPermanent),
+            "cancelled" => Ok(Self::Cancelled),
+            "blocked_by_policy" => Ok(Self::BlockedByPolicy),
+            "superseded" => Ok(Self::Superseded),
+            _ => Err(format!("unknown operation run status: {s}")),
+        }
+    }
+}
+
 impl std::fmt::Display for OperationStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -2319,10 +2434,10 @@ mod sqlx_impls {
         CommitHash, ConsumerGroup, ConsumerName, ContentKey, DataTier, DerivedNodeModel,
         EntityTypeName, EventSource, EventType, GlobPattern, HealthStatus, HostName, InstanceId,
         InvalidationAction, IpAddress, JobId, NatsSubject, NodeId, NodeName, NodeState, NodeType,
-        OperationStatus, ProcessingMode, RecordedPath, RegexPattern, RelationType, RemoteName,
-        SanitizedPath, SchemaName, SchemaVersion, ServiceName, ShellName, SourceIdentifier,
-        SyntheticTemporalPolicy, TemporalClock, TemporalPrecision, TemporalSourceType, TriggerKind,
-        UserId,
+        OperationRunStatus, OperationStatus, ProcessingMode, RecordedPath, RegexPattern,
+        RelationType, RemoteName, SanitizedPath, SchemaName, SchemaVersion, ServiceName,
+        ShellName, SourceIdentifier, SyntheticTemporalPolicy, TemporalClock, TemporalPrecision,
+        TemporalSourceType, TriggerKind, UserId,
     };
 
     // Register validated string types (construction-validated)
@@ -2382,6 +2497,9 @@ mod sqlx_impls {
     // Acquisition job enums
     impl_sqlx_for_enum_type!(AcquisitionMode);
     impl_sqlx_for_enum_type!(AcquisitionJobStatus);
+
+    // Operation run status
+    impl_sqlx_for_enum_type!(OperationRunStatus);
 }
 
 impl ContentKey {
