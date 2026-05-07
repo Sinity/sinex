@@ -16,8 +16,6 @@ pub mod schema_cache;
 pub mod schema_management;
 pub mod source_bindings;
 pub mod source_materials;
-#[path = "occurrences.rs"]
-pub mod occurrence;
 pub mod state;
 
 // Re-export main types
@@ -82,8 +80,6 @@ pub trait DbPoolExt {
     fn schema_cache(&self) -> schema_cache::SchemaCacheRepository<'_>;
     fn replay(&self) -> replay::ReplayRepository<'_>;
     fn integrity(&self) -> integrity::IntegrityRepository<'_>;
-    fn occurrences(&self) -> occurrence::OccurrenceRepository<'_>;
-    fn material_interpretations(&self) -> occurrence::InterpretationRepository<'_>;
     async fn with_transaction<F, T>(&self, f: F) -> crate::DbResult<T>
     where
         F: for<'tx> AsyncFnOnce(&'tx mut crate::DbTransaction<'_>) -> crate::DbResult<T>;
@@ -144,14 +140,6 @@ impl DbPoolExt for PgPool {
 
     fn integrity(&self) -> integrity::IntegrityRepository<'_> {
         integrity::IntegrityRepository::new(self)
-    }
-
-    fn occurrences(&self) -> occurrence::OccurrenceRepository<'_> {
-        occurrence::OccurrenceRepository::new(self)
-    }
-
-    fn material_interpretations(&self) -> occurrence::InterpretationRepository<'_> {
-        occurrence::InterpretationRepository::new(self)
     }
 
     async fn with_transaction<F, T>(&self, f: F) -> crate::DbResult<T>
