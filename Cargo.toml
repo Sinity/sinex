@@ -12,6 +12,7 @@ members = [
   # Core runtime crates
   "crate/core/sinex-ingestd",
   "crate/core/sinex-gateway",
+  "crate/core/sinex-source-worker",
 
   # Ingestor crates (event sources)
   "crate/nodes/sinex-terminal-ingestor",

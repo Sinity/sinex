@@ -5947,6 +5947,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-source-worker"
+version = "0.4.2"
+dependencies = [
+ "async-nats",
+ "camino",
+ "clap",
+ "console-subscriber",
+ "human-panic",
+ "mimalloc",
+ "serde",
+ "serde_json",
+ "sinex-node-sdk",
+ "sinex-primitives",
+ "sqlx",
+ "time",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "xtask",
+]
+
+[[package]]
 name = "sinex-system-ingestor"
 version = "0.4.2"
 dependencies = [
