@@ -768,10 +768,33 @@ impl StateRepository<'_> {
 
     // ========== Node Manifests ==========
 
+    /// Register a manifest row (idempotent by name + version). Returns the manifest id.
+    pub async fn register_manifest(
+        &self,
+        name: &str,
+        manifest_type: &str,
+        version: &str,
+        commit_hash: Option<&str>,
+        parent_manifest_id: Option<i32>,
+        description: Option<&str>,
+    ) -> DbResult<i32> {
+        let row = sqlx::query!(
+            r#"INSERT INTO core.manifests (name, manifest_type, version, commit_hash, parent_manifest_id, description)
+               VALUES ($1, $2, $3, $4, $5, $6)
+               ON CONFLICT (name, version) DO UPDATE SET manifest_type = EXCLUDED.manifest_type
+               RETURNING id"#,
+            name, manifest_type, version, commit_hash, parent_manifest_id, description,
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "register manifest"))?;
+        Ok(row.id)
+    }
+
     /// Start a run for a process. Creates a new row in `core.runs` and returns it.
-    /// If a run is already active for this service, it is returned instead.
     pub async fn start_run(
         &self,
+        manifest_id: Option<i32>,
         service_name: &str,
         instance_id: &str,
         host: &str,
@@ -779,11 +802,12 @@ impl StateRepository<'_> {
         sqlx::query_as!(
             NodeRun,
             r#"
-            INSERT INTO core.runs (service_name, instance_id, host, started_at, status)
-            VALUES ($1, $2, $3, now(), 'running')
+            INSERT INTO core.runs (manifest_id, service_name, instance_id, host, started_at, status)
+            VALUES ($1, $2, $3, $4, now(), 'running')
             ON CONFLICT DO NOTHING
             RETURNING
                 id as "id: _",
+                manifest_id,
                 service_name,
                 instance_id,
                 host,
@@ -794,6 +818,7 @@ impl StateRepository<'_> {
                 effective_config_hash,
                 effective_config as "effective_config: _"
             "#,
+            manifest_id,
             service_name,
             instance_id,
             host,
@@ -902,7 +927,7 @@ impl StateRepository<'_> {
     /// Insert a concrete run row for a single process execution.
     pub async fn start_node_run(
         &self,
-        _node_manifest_id: i32,
+        manifest_id: Option<i32>,
         service_name: &str,
         instance_id: &str,
         host: &str,
@@ -912,10 +937,11 @@ impl StateRepository<'_> {
         sqlx::query_as!(
             NodeRun,
             r#"
-            INSERT INTO core.runs (service_name, instance_id, host, started_at, status, last_heartbeat_at, effective_config_hash, effective_config)
-            VALUES ($1, $2, $3, NOW(), 'running', NOW(), $4, $5)
+            INSERT INTO core.runs (manifest_id, service_name, instance_id, host, started_at, status, last_heartbeat_at, effective_config_hash, effective_config)
+            VALUES ($1, $2, $3, $4, NOW(), 'running', NOW(), $5, $6)
             RETURNING
                 id as "id!: Id<NodeRun>",
+                manifest_id,
                 service_name,
                 instance_id,
                 host,
@@ -1537,6 +1563,7 @@ pub struct NodeManifest {
 #[derive(Debug, sqlx::FromRow)]
 pub struct NodeRun {
     pub id: Id<NodeRun>,
+    pub manifest_id: Option<i32>,
     pub service_name: String,
     pub instance_id: String,
     pub host: String,
