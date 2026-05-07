@@ -768,45 +768,43 @@ impl StateRepository<'_> {
 
     // ========== Node Manifests ==========
 
-    /// Register a node in the manifest
-    pub async fn register_node(
+    /// Start a run for a process. Creates a new row in `core.runs` and returns it.
+    /// If a run is already active for this service, it is returned instead.
+    pub async fn start_run(
         &self,
-        node_name: &NodeName,
-        node_type: NodeType,
-        version: &str,
-        description: Option<&str>,
-    ) -> DbResult<NodeManifest> {
+        service_name: &str,
+        instance_id: &str,
+        host: &str,
+    ) -> DbResult<NodeRun> {
         sqlx::query_as!(
-            NodeManifest,
+            NodeRun,
             r#"
-            INSERT INTO core.node_manifests (
-                node_name, version, node_type, description
-            ) VALUES (
-                $1, $2, $3, $4
-            )
-            ON CONFLICT (node_name, version) DO UPDATE
-            SET node_type = EXCLUDED.node_type,
-                description = EXCLUDED.description,
-                status = 'active'
+            INSERT INTO core.runs (service_name, instance_id, host, started_at, status)
+            VALUES ($1, $2, $3, now(), 'running')
+            ON CONFLICT DO NOTHING
             RETURNING
-                id,
-                node_name,
-                node_type,
-                version,
-                description,
-                anchor_rule_version,
-                config_schema,
-                created_at as "created_at!: sinex_primitives::temporal::Timestamp",
+                id as "id: _",
+                service_name,
+                instance_id,
+                host,
+                started_at as "started_at: _",
+                ended_at as "ended_at: _",
                 status,
-                last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
+                last_heartbeat_at as "last_heartbeat_at: _",
+                effective_config_hash,
+                effective_config as "effective_config: _"
             "#,
-            node_name.as_ref(),
-            version,
-            node_type.to_string(),
-            description
+            service_name,
+            instance_id,
+            host,
         )
-        .fetch_one(self.pool)
-        .await
+        .fetch_optional(self.pool)
+        .await?
+        .ok_or_else(|| crate::repositories::common::db_error(
+            sqlx::Error::RowNotFound,
+            "start_run: ON CONFLICT DO NOTHING returned no row"
+        ))
+    }
         .map_err(|e| db_error(e, "register node"))
     }
 

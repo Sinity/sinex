@@ -404,38 +404,12 @@ impl IngestService {
             }
         }
 
-        // Register ingestd in node_manifests and start periodic heartbeat
+        // Register a run for ingestd and start periodic heartbeat
         if let Some(ref pool) = self.db_pool {
-            let node_name = NodeName::new("sinex-ingestd");
-            // Register or update node manifest (idempotent via ON CONFLICT)
-            match pool
-                .state()
-                .register_node(
-                    &node_name,
-                    NodeType::Service,
-                    env!("CARGO_PKG_VERSION"),
-                    Some("Ingestion daemon - central hub for event ingestion"),
-                )
-                .await
-            {
-                Ok(_) => info!("Registered ingestd in node_manifests"),
-                Err(e) => {
-                    // May fail if already registered (unique constraint) - update heartbeat instead
-                    debug!("Node registration failed (may already exist): {e}");
-                    if let Err(update_error) = pool
-                        .state()
-                        .update_node_heartbeat_for_version(&node_name, env!("CARGO_PKG_VERSION"))
-                        .await
-                    {
-                        warn!(
-                            node = %node_name,
-                            version = env!("CARGO_PKG_VERSION"),
-                            register_error = %e,
-                            heartbeat_error = %update_error,
-                            "Failed to recover ingestd node manifest registration by updating heartbeat"
-                        );
-                    }
-                }
+            let host = hostname();
+            match pool.state().start_run("sinex-ingestd", "default", &host).await {
+                Ok(_) => info!("Started ingestd run"),
+                Err(e) => warn!(%e, "Failed to start ingestd run"),
             }
 
             // Emit health-aware heartbeats on a fixed cadence.
