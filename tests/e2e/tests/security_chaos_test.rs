@@ -146,8 +146,7 @@ async fn validator_rejects_null_byte_in_payload_string(ctx: TestContext) -> Test
                         .await
                         .map(|v| v.len())
                         .unwrap_or(0);
-                    let previous =
-                        prev.swap(count, std::sync::atomic::Ordering::SeqCst);
+                    let previous = prev.swap(count, std::sync::atomic::Ordering::SeqCst);
                     // Stable when two consecutive polls return the same count.
                     Ok::<bool, SinexError>(previous == count)
                 }

@@ -6,11 +6,11 @@
 //! by the health aggregator automaton.
 
 use crate::error_helpers::elapsed_seconds_with_warning;
-use sinex_primitives::env as shared_env;
 use crate::runtime::stream::NodeRuntimeState;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_primitives::domain::{NodeName, ServiceName};
+use sinex_primitives::env as shared_env;
 use sinex_primitives::events::payloads::process::{
     ProcessDegradedPayload, ProcessFailedPayload, ProcessStatus,
 };

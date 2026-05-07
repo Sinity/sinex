@@ -1,8 +1,8 @@
 //! NATS `JetStream` event publisher
 
 use crate::NodeResult;
-use sinex_primitives::env as shared_env;
 use serde::Serialize;
+use sinex_primitives::env as shared_env;
 use sinex_primitives::{
     JsonValue,
     environment::{SinexEnvironment, environment},

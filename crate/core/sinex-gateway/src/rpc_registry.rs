@@ -435,7 +435,11 @@ fn build_registry_impl() -> RpcRegistry {
             },
         )
         // Composable event query methods (ReadOnly)
-        .pool_rpc(methods::EVENTS_QUERY, Role::ReadOnly, boxed!(handle_events_query))
+        .pool_rpc(
+            methods::EVENTS_QUERY,
+            Role::ReadOnly,
+            boxed!(handle_events_query),
+        )
         .pool_rpc(
             methods::EVENTS_LINEAGE,
             Role::ReadOnly,
@@ -460,7 +464,11 @@ fn build_registry_impl() -> RpcRegistry {
         // Audit trail methods (ReadOnly)
         .pool_rpc(methods::AUDIT_GET, Role::ReadOnly, boxed!(handle_audit_get))
         // Operations log read methods (ReadOnly)
-        .pool_auth_rpc(methods::OPS_LIST, Role::ReadOnly, boxed!(handle_ops_list, 3))
+        .pool_auth_rpc(
+            methods::OPS_LIST,
+            Role::ReadOnly,
+            boxed!(handle_ops_list, 3),
+        )
         .pool_auth_rpc(methods::OPS_GET, Role::ReadOnly, boxed!(handle_ops_get, 3))
         // Lifecycle status (ReadOnly)
         .pool_rpc(
@@ -469,14 +477,26 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_lifecycle_status),
         )
         // DLQ read methods (ReadOnly)
-        .register(methods::DLQ_LIST, Role::ReadOnly, |params, services, _auth| {
-            Box::pin(async move { handle_dlq_list(services, params).await })
-        })
-        .register(methods::DLQ_PEEK, Role::ReadOnly, |params, services, _auth| {
-            Box::pin(async move { handle_dlq_peek(services, params).await })
-        })
+        .register(
+            methods::DLQ_LIST,
+            Role::ReadOnly,
+            |params, services, _auth| {
+                Box::pin(async move { handle_dlq_list(services, params).await })
+            },
+        )
+        .register(
+            methods::DLQ_PEEK,
+            Role::ReadOnly,
+            |params, services, _auth| {
+                Box::pin(async move { handle_dlq_peek(services, params).await })
+            },
+        )
         // Node listing (ReadOnly)
-        .nats_rpc(methods::NODES_LIST, Role::ReadOnly, boxed!(handle_nodes_list, 3))
+        .nats_rpc(
+            methods::NODES_LIST,
+            Role::ReadOnly,
+            boxed!(handle_nodes_list, 3),
+        )
         // Replay status/list (ReadOnly)
         .replay_rpc(
             methods::REPLAY_OPERATION_STATUS,
@@ -494,7 +514,11 @@ fn build_registry_impl() -> RpcRegistry {
             Role::ReadOnly,
             boxed!(handle_nodes_list_active),
         )
-        .pool_rpc(methods::NODES_HEALTH, Role::ReadOnly, boxed!(handle_nodes_health))
+        .pool_rpc(
+            methods::NODES_HEALTH,
+            Role::ReadOnly,
+            boxed!(handle_nodes_health),
+        )
         .pool_rpc(
             methods::AUTOMATA_STATUS,
             Role::ReadOnly,
@@ -597,9 +621,15 @@ fn build_registry_impl() -> RpcRegistry {
         // Write methods (requires Write or Admin role)
         // ─────────────────────────────────────────────────────────────
         // PKM methods (Write)
-        .register(methods::PKM_CREATE_NOTE, Role::Write, |params, services, auth| {
-            Box::pin(async move { handle_create_note(services.pkm.as_ref(), params, auth).await })
-        })
+        .register(
+            methods::PKM_CREATE_NOTE,
+            Role::Write,
+            |params, services, auth| {
+                Box::pin(
+                    async move { handle_create_note(services.pkm.as_ref(), params, auth).await },
+                )
+            },
+        )
         .register(
             methods::PKM_CREATE_ENTITIES,
             Role::Write,
@@ -640,8 +670,16 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_sources_stage),
         )
         // Node operations (Write - affects system but not destructive)
-        .nats_auth_rpc(methods::NODES_DRAIN, Role::Write, boxed!(handle_nodes_drain, 4))
-        .nats_auth_rpc(methods::NODES_RESUME, Role::Write, boxed!(handle_nodes_resume, 4))
+        .nats_auth_rpc(
+            methods::NODES_DRAIN,
+            Role::Write,
+            boxed!(handle_nodes_drain, 4),
+        )
+        .nats_auth_rpc(
+            methods::NODES_RESUME,
+            Role::Write,
+            boxed!(handle_nodes_resume, 4),
+        )
         .nats_auth_rpc(
             methods::NODES_SET_HORIZON,
             Role::Write,
@@ -685,14 +723,22 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_replay_cancel_operation, 3),
         )
         // DLQ mutation methods (Admin)
-        .register(methods::DLQ_REQUEUE, Role::Admin, |params, services, auth| {
-            Box::pin(async move { handle_dlq_requeue(services, params, auth).await })
-        })
+        .register(
+            methods::DLQ_REQUEUE,
+            Role::Admin,
+            |params, services, auth| {
+                Box::pin(async move { handle_dlq_requeue(services, params, auth).await })
+            },
+        )
         .register(methods::DLQ_PURGE, Role::Admin, |params, services, auth| {
             Box::pin(async move { handle_dlq_purge(services, params, auth).await })
         })
         // Operations cancel (Admin)
-        .pool_auth_rpc(methods::OPS_CANCEL, Role::Admin, boxed!(handle_ops_cancel, 3))
+        .pool_auth_rpc(
+            methods::OPS_CANCEL,
+            Role::Admin,
+            boxed!(handle_ops_cancel, 3),
+        )
         // Data lifecycle mutations (Admin - DESTRUCTIVE)
         .pool_auth_rpc(
             methods::LIFECYCLE_ARCHIVE,
@@ -752,13 +798,25 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_gitops_trigger_sync),
         )
         // Shadow consumer mutations (Admin)
-        .register(methods::SHADOW_CREATE, Role::Admin, |params, services, _auth| {
-            Box::pin(async move { handle_shadow_create(services, params).await })
-        })
-        .register(methods::SHADOW_LIST, Role::ReadOnly, |params, services, _auth| {
-            Box::pin(async move { handle_shadow_list(services, params).await })
-        })
-        .register(methods::SHADOW_DELETE, Role::Admin, |params, services, auth| {
-            Box::pin(async move { handle_shadow_delete(services, params, auth).await })
-        })
+        .register(
+            methods::SHADOW_CREATE,
+            Role::Admin,
+            |params, services, _auth| {
+                Box::pin(async move { handle_shadow_create(services, params).await })
+            },
+        )
+        .register(
+            methods::SHADOW_LIST,
+            Role::ReadOnly,
+            |params, services, _auth| {
+                Box::pin(async move { handle_shadow_list(services, params).await })
+            },
+        )
+        .register(
+            methods::SHADOW_DELETE,
+            Role::Admin,
+            |params, services, auth| {
+                Box::pin(async move { handle_shadow_delete(services, params, auth).await })
+            },
+        )
 }

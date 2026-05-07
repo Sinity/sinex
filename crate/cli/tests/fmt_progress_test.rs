@@ -19,4 +19,3 @@ async fn test_with_spinner_result_failure() -> TestResult<()> {
     assert!(result.is_err());
     Ok(())
 }
-

@@ -6,10 +6,10 @@
 
 use semver::Version;
 use serde::{Deserialize, Serialize};
+use sinex_primitives::domain::ServiceName;
 use std::cmp::Ordering;
 use std::fmt;
 use std::str::FromStr;
-use sinex_primitives::domain::ServiceName;
 use std::time::SystemTime;
 use tracing::warn;
 
@@ -157,7 +157,10 @@ impl NodeInstance {
     ///
     /// # Errors
     /// Returns `SinexError::configuration` if version information is invalid
-    pub fn new(instance_id: String, service_name: impl Into<ServiceName>) -> crate::NodeResult<Self> {
+    pub fn new(
+        instance_id: String,
+        service_name: impl Into<ServiceName>,
+    ) -> crate::NodeResult<Self> {
         let host_name = gethostname::gethostname().to_string_lossy().to_string();
 
         Ok(Self {
@@ -247,7 +250,6 @@ pub fn node_commit_hash() -> String {
         commit.to_string()
     }
 }
-
 
 /// Get git branch name
 #[must_use]

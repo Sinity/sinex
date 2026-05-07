@@ -65,7 +65,9 @@ async fn test_format_yaml_pins_field_layout() -> TestResult<()> {
 
     let rendered = format_yaml(&item).expect("format_yaml must succeed");
     assert!(
-        rendered.contains("id: '1'") || rendered.contains("id: \"1\"") || rendered.contains("id: 1"),
+        rendered.contains("id: '1'")
+            || rendered.contains("id: \"1\"")
+            || rendered.contains("id: 1"),
         "expected `id` field in YAML output, got {rendered:?}"
     );
     assert!(

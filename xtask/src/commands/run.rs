@@ -436,8 +436,15 @@ const AUTOMATON_TARGETS: &[&str] = &[
 
 fn lookup_binary(
     name: &str,
-) -> Option<&'static (&'static str, &'static str, &'static str, Option<&'static str>)> {
-    BINARIES.iter().find(|(candidate, _, _, _)| *candidate == name)
+) -> Option<&'static (
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+)> {
+    BINARIES
+        .iter()
+        .find(|(candidate, _, _, _)| *candidate == name)
 }
 
 pub(crate) fn list_run_targets() -> Vec<String> {
@@ -783,15 +790,12 @@ impl RunCommand {
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         // Find binary info
-        let (_, package, binary, automaton) =
-            BINARIES
-                .iter()
-                .find(|(n, _, _, _)| *n == name)
-                .ok_or_else(|| {
-                    eyre!(
-                        "Unknown binary '{name}'. Use 'xtask run list' to see available binaries."
-                    )
-                })?;
+        let (_, package, binary, automaton) = BINARIES
+            .iter()
+            .find(|(n, _, _, _)| *n == name)
+            .ok_or_else(|| {
+                eyre!("Unknown binary '{name}'. Use 'xtask run list' to see available binaries.")
+            })?;
 
         // Ensure infrastructure is ready (binaries need DB + NATS)
         preflight::ensure_ready(ctx)?;
@@ -1553,7 +1557,11 @@ mod tests {
     async fn test_runtime_cli_args_prepend_automaton_for_sinex_process()
     -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(
-            runtime_cli_args("sinex-process", "analytics-automaton-123", Some("analytics")),
+            runtime_cli_args(
+                "sinex-process",
+                "analytics-automaton-123",
+                Some("analytics")
+            ),
             vec![
                 "--automaton".to_string(),
                 "analytics".to_string(),

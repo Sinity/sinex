@@ -10,7 +10,7 @@
 
 use super::context::DerivedTriggerContext;
 use super::output::DerivedOutput;
-use crate::processing::{NodeLogicError};
+use crate::processing::NodeLogicError;
 
 use serde::{Serialize, de::DeserializeOwned};
 use sinex_primitives::JsonValue;
@@ -404,9 +404,7 @@ pub trait MultiOutputTransducerNode: Send + Sync + 'static {
         state: &mut Self::State,
         input: Self::Input,
         context: &DerivedTriggerContext,
-    ) -> impl std::future::Future<
-        Output = Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError>,
-    > + Send;
+    ) -> impl std::future::Future<Output = Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError>> + Send;
     fn on_initialize(
         &mut self,
         _state: &Self::State,
@@ -614,8 +612,9 @@ impl<N: WindowedNode> DerivedNodeImpl for WindowedWrapper<N> {
         let inputs: Vec<N::Input> = working_set
             .into_iter()
             .map(|e| {
-                serde_json::from_value(e.payload)
-                    .map_err(|e| NodeLogicError::InputParsing(format!("Failed to parse input: {e}")))
+                serde_json::from_value(e.payload).map_err(|e| {
+                    NodeLogicError::InputParsing(format!("Failed to parse input: {e}"))
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -720,8 +719,9 @@ where
         let inputs: Vec<N::Input> = working_set
             .into_iter()
             .map(|e| {
-                serde_json::from_value(e.payload)
-                    .map_err(|e| NodeLogicError::InputParsing(format!("Failed to parse input: {e}")))
+                serde_json::from_value(e.payload).map_err(|e| {
+                    NodeLogicError::InputParsing(format!("Failed to parse input: {e}"))
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
 

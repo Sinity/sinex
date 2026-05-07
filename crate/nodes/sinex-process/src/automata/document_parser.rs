@@ -104,7 +104,6 @@ impl MultiOutputTransducerNode for DocumentParserNode {
             _ => Ok(Vec::new()),
         }
     }
-
 }
 
 // ── Processing ──────────────────────────────────────────────────────────
@@ -117,10 +116,7 @@ impl DocumentParserNode {
         input: JsonValue,
         context: &DerivedTriggerContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
-        let file_path = input["file_path"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string();
+        let file_path = input["file_path"].as_str().unwrap_or("unknown").to_string();
 
         // Read file content. In production the parser runs as the sinex service
         // user and may not have access to the original file path. The long-term
@@ -133,9 +129,7 @@ impl DocumentParserNode {
         let content = match std::fs::read_to_string(&file_path) {
             Ok(c) => c,
             Err(e) => {
-                let material_id = input["source_material_id"]
-                    .as_str()
-                    .unwrap_or("unknown");
+                let material_id = input["source_material_id"].as_str().unwrap_or("unknown");
                 tracing::warn!(
                     file_path = %file_path,
                     source_material_id = %material_id,
@@ -185,7 +179,9 @@ impl DocumentParserNode {
         }
 
         let parent_event_id = context.trigger_uuid();
-        let ts_orig = context.ts_orig.unwrap_or_else(sinex_primitives::Timestamp::now);
+        let ts_orig = context
+            .ts_orig
+            .unwrap_or_else(sinex_primitives::Timestamp::now);
         let mut outputs = Vec::with_capacity(1 + raw_chunks.len());
 
         // Emit document.parsed
@@ -200,12 +196,8 @@ impl DocumentParserNode {
         }))
         .map_err(|e| NodeLogicError::Processing(format!("serialize document.parsed: {e}")))?;
 
-        let parsed_output = DerivedOutput::transduced(
-            parsed_payload,
-            ts_orig,
-            parent_event_id,
-        )
-        .with_event_type("document.parsed");
+        let parsed_output = DerivedOutput::transduced(parsed_payload, ts_orig, parent_event_id)
+            .with_event_type("document.parsed");
 
         outputs.push(parsed_output);
 
@@ -238,12 +230,8 @@ impl DocumentParserNode {
             }))
             .map_err(|e| NodeLogicError::Processing(format!("serialize document.chunked: {e}")))?;
 
-            let chunk_output = DerivedOutput::transduced(
-                chunk_payload,
-                ts_orig,
-                parent_event_id,
-            )
-            .with_event_type("document.chunked");
+            let chunk_output = DerivedOutput::transduced(chunk_payload, ts_orig, parent_event_id)
+                .with_event_type("document.chunked");
 
             outputs.push(chunk_output);
             byte_offset += chunk_len;
@@ -284,7 +272,9 @@ impl DocumentParserNode {
         let raw_chunks: Vec<String> = line_group_split(stdout);
         let chunk_count = raw_chunks.len() as u32;
         let total_bytes: u64 = raw_chunks.iter().map(|c| c.len() as u64).sum();
-        let ts_orig = context.ts_orig.unwrap_or_else(sinex_primitives::Timestamp::now);
+        let ts_orig = context
+            .ts_orig
+            .unwrap_or_else(sinex_primitives::Timestamp::now);
 
         let mut side_data = serde_json::Map::new();
         side_data.insert("command".into(), JsonValue::String(command.to_string()));
@@ -441,9 +431,7 @@ fn paragraph_split(text: &str) -> Vec<String> {
                     let search_end = end.min(chunk.len());
                     match chunk[search_end.saturating_sub(100)..search_end]
                         .rfind(". ")
-                        .or_else(|| {
-                            chunk[search_end.saturating_sub(100)..search_end].rfind('\n')
-                        })
+                        .or_else(|| chunk[search_end.saturating_sub(100)..search_end].rfind('\n'))
                     {
                         Some(local) => &chunk[pos..search_end.saturating_sub(100) + local + 1],
                         None => &chunk[pos..end],
@@ -483,7 +471,7 @@ fn redact_chunk_text(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{sinex_test, TestResult};
+    use xtask::sandbox::{TestResult, sinex_test};
 
     #[sinex_test]
     async fn test_frontmatter_extraction() -> TestResult<()> {

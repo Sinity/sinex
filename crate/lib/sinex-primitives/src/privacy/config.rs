@@ -420,11 +420,9 @@ impl From<PrivacyConfigError> for crate::error::SinexError {
                     .with_source(source)
             }
             PrivacyConfigError::InvalidEnv { var, reason } => {
-                crate::error::SinexError::configuration(
-                    "invalid privacy environment override",
-                )
-                .with_context("var", var)
-                .with_context("reason", reason)
+                crate::error::SinexError::configuration("invalid privacy environment override")
+                    .with_context("var", var)
+                    .with_context("reason", reason)
             }
         }
     }

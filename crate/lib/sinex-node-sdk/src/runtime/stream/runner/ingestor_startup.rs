@@ -99,5 +99,4 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         Ok(())
     }
-
 }

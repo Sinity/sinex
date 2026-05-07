@@ -3,12 +3,12 @@ use clap::{Parser, Subcommand};
 use color_eyre::eyre::{WrapErr, eyre};
 use serde::Serialize;
 use sinex_db::create_pool;
-use sinex_primitives::Uuid;
 use sinex_node_sdk::content_store::{
-    CasFsckReport, CasFileStatus, ContentStoreConfig, MaterialContentStore, UnusedContentEntry,
+    CasFileStatus, CasFsckReport, ContentStoreConfig, MaterialContentStore, UnusedContentEntry,
     cas_fsck::check_cas,
     gc::{BlobGcReport, sweep_orphans_detailed},
 };
+use sinex_primitives::Uuid;
 
 use crate::Result;
 use crate::fmt::{CommandOutput, format_bytes};
@@ -416,8 +416,7 @@ impl BlobMigrateCommand {
                     continue;
                 }
                 Ok(path) => {
-                    let blake3_hash = match MaterialContentStore::compute_blake3_hash(&path).await
-                    {
+                    let blake3_hash = match MaterialContentStore::compute_blake3_hash(&path).await {
                         Ok(h) => h,
                         Err(e) => {
                             tracing::warn!(
@@ -430,9 +429,7 @@ impl BlobMigrateCommand {
                         }
                     };
                     if self.apply {
-                        let cas_target = content_store
-                            .store_file(&path)
-                            .await;
+                        let cas_target = content_store.store_file(&path).await;
                         match cas_target {
                             Ok(cas_key) => {
                                 let update_result = sqlx::query(
@@ -502,24 +499,24 @@ impl BlobMigrateCommand {
 fn format_blob_migrate_summary(summary: &BlobMigrateSummary) -> String {
     let mut output = String::new();
     output.push_str("Blob Migration\n");
-    output.push_str(&format!("  Content Store: {}\n", summary.content_store_path));
-    output.push_str(&format!("  Mode: {}\n", summary.mode));
     output.push_str(&format!(
-        "  From: {}  To: {}\n",
-        summary.from, summary.to
+        "  Content Store: {}\n",
+        summary.content_store_path
     ));
+    output.push_str(&format!("  Mode: {}\n", summary.mode));
+    output.push_str(&format!("  From: {}  To: {}\n", summary.from, summary.to));
     output.push_str(&format!(
         "  Total annex blobs: {}\n",
         summary.total_annex_blobs
     ));
-    output.push_str(&format!("  Already migrated: {}\n", summary.already_migrated));
+    output.push_str(&format!(
+        "  Already migrated: {}\n",
+        summary.already_migrated
+    ));
     output.push_str(&format!("  Migrated (this run): {}\n", summary.migrated));
     output.push_str(&format!("  Failed: {}\n", summary.failed));
     for m in &summary.migrated_keys {
-        output.push_str(&format!(
-            "    {} -> {}\n",
-            m.annex_key, m.cas_key
-        ));
+        output.push_str(&format!("    {} -> {}\n", m.annex_key, m.cas_key));
     }
     output
 }

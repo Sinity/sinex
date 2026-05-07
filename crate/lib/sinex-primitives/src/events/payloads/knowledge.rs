@@ -8,8 +8,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_macros::EventPayload;
 
-use crate::domain::EntityTypeName;
 use crate::Uuid;
+use crate::domain::EntityTypeName;
 
 // ── Entity mention ─────────────────────────────────────────────────────
 

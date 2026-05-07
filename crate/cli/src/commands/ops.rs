@@ -107,9 +107,7 @@ impl OpsCommands {
                 CommandOutput::list(operations, "No operations found.", format_ops_list_table)
                     .display(&format)?;
             }
-            Self::Get {
-                operation_id,
-            } => {
+            Self::Get { operation_id } => {
                 let operation = client.ops_get(operation_id).await?;
                 CommandOutput::single(operation, format_ops_get_table).display(&format)?;
             }

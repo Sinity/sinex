@@ -50,7 +50,6 @@ impl ReferenceModel {
             .filter(|(s, _)| s.as_str() == source)
             .count()
     }
-
 }
 
 // ─── Operation vocabulary ─────────────────────────────────────────────────────

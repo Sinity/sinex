@@ -325,12 +325,7 @@ impl EventValidator {
             host: HostName::from_static("validator"),
             node_run_id: None,
             payload_schema_id: None,
-            provenance: Provenance::from_material(
-                Id::<SourceMaterial>::new(),
-                0,
-                None,
-                None,
-            ),
+            provenance: Provenance::from_material(Id::<SourceMaterial>::new(), 0, None, None),
             associated_blob_ids: None,
             temporal_policy: None,
             semantics_version: None,

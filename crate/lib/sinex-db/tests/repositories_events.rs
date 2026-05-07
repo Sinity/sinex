@@ -260,16 +260,16 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
 
     // Diverse payloads to exercise COPY escape serialization.
     let payloads = vec![
-        json!({"text": "hello\tworld"}),                              // literal tab
-        json!({"text": "line1\nline2"}),                               // literal newline
-        json!({"text": "back\\slash"}),                                // literal backslash
-        json!({"text": "tab\n\t and \\backslash"}),                    // mixed escape chars
-        json!({"text": "unicode: \u{00e9} \u{2603} \u{1f600}"}),      // e-acute, snowman, emoji
-        json!({"text": "CJK: \u{4e2d}\u{6587}"}),                     // Chinese characters
-        json!({"text": "\t\r\n\\\"\'"}),                               // all special COPY chars
-        json!({"key": null}),                                          // null JSON value
-        json!({"text": "", "empty": null}),                            // empty string + null
-        json!({"text": "a".repeat(500), "count": 42}),                 // larger payload
+        json!({"text": "hello\tworld"}),            // literal tab
+        json!({"text": "line1\nline2"}),            // literal newline
+        json!({"text": "back\\slash"}),             // literal backslash
+        json!({"text": "tab\n\t and \\backslash"}), // mixed escape chars
+        json!({"text": "unicode: \u{00e9} \u{2603} \u{1f600}"}), // e-acute, snowman, emoji
+        json!({"text": "CJK: \u{4e2d}\u{6587}"}),   // Chinese characters
+        json!({"text": "\t\r\n\\\"\'"}),            // all special COPY chars
+        json!({"key": null}),                       // null JSON value
+        json!({"text": "", "empty": null}),         // empty string + null
+        json!({"text": "a".repeat(500), "count": 42}), // larger payload
         json!({"nested": {"deep": {"array": [1,2,3]}, "tab": "\t"}}), // nested with tab
     ];
 
@@ -337,12 +337,30 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
             .await?
             .unwrap_or_else(|| panic!("event {} (id={}) must exist in DB", i, row.id));
 
-        assert_eq!(event.id.unwrap().to_uuid(), row.id, "id mismatch at index {}", i);
+        assert_eq!(
+            event.id.unwrap().to_uuid(),
+            row.id,
+            "id mismatch at index {}",
+            i
+        );
         assert_eq!(event.source, row.source, "source mismatch at index {}", i);
-        assert_eq!(event.event_type, row.event_type, "event_type mismatch at index {}", i);
+        assert_eq!(
+            event.event_type, row.event_type,
+            "event_type mismatch at index {}",
+            i
+        );
         assert_eq!(event.host, row.host, "host mismatch at index {}", i);
-        assert_eq!(event.payload, row.payload, "payload mismatch at index {}", i);
-        assert_eq!(event.ts_orig, Some(row.ts_orig), "ts_orig mismatch at index {}", i);
+        assert_eq!(
+            event.payload, row.payload,
+            "payload mismatch at index {}",
+            i
+        );
+        assert_eq!(
+            event.ts_orig,
+            Some(row.ts_orig),
+            "ts_orig mismatch at index {}",
+            i
+        );
 
         // Verify material provenance fields.
         let prov = event.provenance();
@@ -367,14 +385,12 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
                     i
                 );
                 assert_eq!(
-                    *offset_start,
-                    row.offset_start,
+                    *offset_start, row.offset_start,
                     "offset_start mismatch at index {}",
                     i
                 );
                 assert_eq!(
-                    *offset_end,
-                    row.offset_end,
+                    *offset_end, row.offset_end,
                     "offset_end mismatch at index {}",
                     i
                 );
@@ -1768,9 +1784,7 @@ async fn event_replacements_record_and_query(ctx: TestContext) -> TestResult<()>
 /// Regression test for #916: the previous implementation silently chunked;
 /// callers must now chunk explicitly.
 #[sinex_test]
-async fn get_by_ids_rejects_more_than_1000_ids(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn get_by_ids_rejects_more_than_1000_ids(ctx: TestContext) -> TestResult<()> {
     use sinex_db::repositories::source_materials::material_types;
 
     const TOTAL_EVENTS: usize = 1050; // exceeds the 1000-per-chunk boundary
@@ -1791,12 +1805,7 @@ async fn get_by_ids_rejects_more_than_1000_ids(
         let payload =
             KittyCommandExecutedPayload::test_default(format!("echo get-by-ids-chunk-{i}"));
         let event = Event::builder(payload)
-            .with_provenance(Provenance::from_material(
-                material_id,
-                i as i64,
-                None,
-                None,
-            ))
+            .with_provenance(Provenance::from_material(material_id, i as i64, None, None))
             .build()
             .expect("valid provenance");
         let inserted = ctx.pool.events().insert(event).await?;

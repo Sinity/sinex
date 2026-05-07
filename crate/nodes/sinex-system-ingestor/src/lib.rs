@@ -109,12 +109,12 @@ impl Default for SystemConfig {
     }
 }
 
-use sinex_primitives::register_source_unit;
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
     RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
 };
+use sinex_primitives::register_source_unit;
 
 // Source-unit descriptors (issue #690 / #734). The system ingestor is one
 // runner pack, but its logical source units have different cursors and access

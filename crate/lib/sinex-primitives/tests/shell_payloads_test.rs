@@ -1,7 +1,7 @@
 use serde_json::Value;
+use sinex_primitives::SinexError;
 use sinex_primitives::domain::RecordedPath;
 use sinex_primitives::events::payloads::shell::AtuinCommandExecutedPayload;
-use sinex_primitives::SinexError;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -28,8 +28,8 @@ async fn atuin_payload_builder_happy_path() -> TestResult<()> {
     let payload = AtuinCommandExecutedPayload::from_raw_history(
         "ls -la",
         RecordedPath::from("/home/user"),
-        0,           // successful exit
-        1_000_000,   // 1ms duration
+        0,         // successful exit
+        1_000_000, // 1ms duration
         "hist-id-1",
         "sess-id-1",
         1_700_000_000_000_000_000,
@@ -109,7 +109,10 @@ async fn atuin_payload_builder_large_valid_timestamp_and_duration() -> TestResul
         .get("ts_end_orig")
         .expect("ts_end_orig should be present");
 
-    assert_ne!(ts_start, ts_end, "ts_end_orig must differ from ts_start_orig for nonzero duration");
+    assert_ne!(
+        ts_start, ts_end,
+        "ts_end_orig must differ from ts_start_orig for nonzero duration"
+    );
     assert_eq!(
         payload.get("duration_ns").and_then(Value::as_i64),
         Some(big_duration_ns),

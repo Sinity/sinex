@@ -274,7 +274,9 @@ async fn sinexctl_dlq_list_command_reports_entries(ctx: TestContext) -> color_ey
     let response = parse_json_stdout(&output, "dlq list");
     assert_eq!(response["total_messages"].as_u64(), Some(2));
     assert!(
-        response["total_bytes"].as_u64().is_some_and(|bytes| bytes > 0),
+        response["total_bytes"]
+            .as_u64()
+            .is_some_and(|bytes| bytes > 0),
         "DLQ list should report stored bytes: {response}"
     );
     assert_eq!(response["first_seq"].as_u64(), Some(1));

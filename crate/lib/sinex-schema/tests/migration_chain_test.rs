@@ -314,7 +314,8 @@ async fn declarative_diff_detects_polluted_telemetry_view_kind(ctx: TestContext)
     let drift = sinex_schema::apply::diff(&ctx.pool).await?;
     assert!(
         drift.iter().any(|entry| {
-            entry.contains("command_frequency_hourly") && entry.contains("continuous aggregate registration")
+            entry.contains("command_frequency_hourly")
+                && entry.contains("continuous aggregate registration")
         }),
         "diff must report command_frequency_hourly CAGG registration drift, got: {drift:?}"
     );

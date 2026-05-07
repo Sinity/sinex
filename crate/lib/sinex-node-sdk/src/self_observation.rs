@@ -32,14 +32,14 @@
 
 use crate::acquisition_manager::{AcquisitionManager, RotationPolicy};
 use crate::error_helpers::env_nonempty_string_optional;
-use sinex_primitives::env as shared_env;
 use crate::{BufferedRecordMaterializer, NatsPublisher, deterministic_material_event_id};
 use async_nats::Client as NatsClient;
+use sinex_primitives::env as shared_env;
 use sinex_primitives::events::payloads::{
     AssemblyStatsPayload, ConsumerStartupSnapshotPayload, GatewayRequestStatsPayload,
     HealthStatusPayload, IngestdBatchStatsPayload, MetricCounterPayload, MetricGaugePayload,
-    MetricHistogramPayload, NodeProcessingStatsPayload, PoolStatsPayload,
-    RateLimitExceededPayload, ReplayStatsPayload, StreamStatsPayload,
+    MetricHistogramPayload, NodeProcessingStatsPayload, PoolStatsPayload, RateLimitExceededPayload,
+    ReplayStatsPayload, StreamStatsPayload,
 };
 use sinex_primitives::events::{Event, Provenance, SourceMaterial};
 use sinex_primitives::{Id, JsonValue, SinexError, Timestamp};
@@ -740,8 +740,7 @@ impl From<SelfObservationError> for SinexError {
     fn from(err: SelfObservationError) -> Self {
         match err {
             SelfObservationError::Build(inner) => {
-                SinexError::processing("failed to build self-observation event")
-                    .with_source(&inner)
+                SinexError::processing("failed to build self-observation event").with_source(&inner)
             }
             SelfObservationError::Serialization(ref msg) => {
                 SinexError::serialization("failed to serialize self-observation event")

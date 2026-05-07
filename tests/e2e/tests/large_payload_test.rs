@@ -190,8 +190,7 @@ async fn test_batch_large_payloads(ctx: TestContext) -> TestResult<()> {
 
         let payload = &persisted.payload;
         assert_eq!(
-            payload,
-            &event.payload,
+            payload, &event.payload,
             "Persisted payload for batch event {idx} should match submitted payload"
         );
         assert_eq!(

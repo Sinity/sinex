@@ -265,9 +265,9 @@ const fn default_descriptor_version() -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use xtask::sandbox::{sinex_test, TestResult};
     use super::DeploymentReadinessDescriptor;
     use std::env;
+    use xtask::sandbox::{TestResult, sinex_test};
 
     #[sinex_test]
     async fn configured_path_treats_empty_override_as_disabled() -> TestResult<()> {

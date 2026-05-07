@@ -80,10 +80,7 @@ async fn document_node_emits_events_for_targets(ctx: TestContext) -> TestResult<
         event.payload["source_material_id"].as_str(),
         Some(material_id_string.as_str())
     );
-    assert_eq!(
-        event.payload["size_bytes"].as_u64(),
-        Some(expected_size)
-    );
+    assert_eq!(event.payload["size_bytes"].as_u64(), Some(expected_size));
     assert_eq!(event.payload["mime_type"].as_str(), Some("text/plain"));
     assert_eq!(event.payload["encoding"].as_str(), Some("utf-8"));
 

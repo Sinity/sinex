@@ -47,7 +47,7 @@ pub fn redact_url_password_for_diagnostics(url: &str, invalid_policy: InvalidUrl
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{sinex_test, TestResult};
+    use xtask::sandbox::{TestResult, sinex_test};
 
     #[sinex_test]
     async fn display_redaction_strips_username_and_password() -> TestResult<()> {

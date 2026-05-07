@@ -251,7 +251,7 @@ impl std::fmt::Debug for MaterialReadySet {
 
 #[cfg(test)]
 mod tests {
-    use xtask::sandbox::{sinex_test, TestResult};
+    use xtask::sandbox::{TestResult, sinex_test};
     // Inline because testing TTL eviction cleanly needs access to the internal policy constructor.
     use super::*;
 

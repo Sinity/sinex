@@ -117,8 +117,8 @@ pub async fn handle_nodes_list_active(pool: &PgPool, params: Value) -> Result<Va
 
     let nodes = live_nodes
         .into_iter()
-        .filter_map(|node| {
-            match NodeHeartbeatSource::parse(&node.heartbeat_source) {
+        .filter_map(
+            |node| match NodeHeartbeatSource::parse(&node.heartbeat_source) {
                 Ok(heartbeat_source) => Some(NodeInfo {
                     node_name: node.node_name,
                     node_type: node.node_type,
@@ -142,8 +142,8 @@ pub async fn handle_nodes_list_active(pool: &PgPool, params: Value) -> Result<Va
                     );
                     None
                 }
-            }
-        })
+            },
+        )
         .collect::<Vec<_>>();
 
     let response = NodesListActiveResponse { nodes };

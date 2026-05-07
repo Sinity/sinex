@@ -89,7 +89,11 @@ impl Documents {
                     .not_null(),
             )
             .col(ColumnDef::new(Documents::ChunkCount).integer().not_null())
-            .col(ColumnDef::new(Documents::TextByteLen).big_integer().not_null())
+            .col(
+                ColumnDef::new(Documents::TextByteLen)
+                    .big_integer()
+                    .not_null(),
+            )
             .col(
                 ColumnDef::new(Documents::SideData)
                     .json_binary()
@@ -208,14 +212,8 @@ impl DocumentChunks {
                     .big_integer()
                     .not_null(),
             )
-            .col(
-                ColumnDef::new(DocumentChunks::SourceAnchorStart)
-                    .big_integer(),
-            )
-            .col(
-                ColumnDef::new(DocumentChunks::SourceAnchorEnd)
-                    .big_integer(),
-            )
+            .col(ColumnDef::new(DocumentChunks::SourceAnchorStart).big_integer())
+            .col(ColumnDef::new(DocumentChunks::SourceAnchorEnd).big_integer())
             .col(
                 ColumnDef::new(DocumentChunks::ChunkedEventId)
                     .custom(Alias::new("UUID"))
@@ -318,4 +316,3 @@ impl DocumentChunks {
         "
     }
 }
-

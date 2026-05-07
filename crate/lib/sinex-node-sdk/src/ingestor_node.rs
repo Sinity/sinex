@@ -12,7 +12,6 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::checkpoint::{CheckpointManager, CheckpointState, decode_checkpoint_data};
-use sinex_primitives::env as shared_env;
 use crate::runtime::stream::{
     Checkpoint, ContinuousStart, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState,
     NodeType, RuntimeDrainController, ScanArgs, ScanReport, TimeHorizon,
@@ -23,6 +22,7 @@ use crate::{
     exploration::{ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState},
 };
 use sinex_primitives::SanitizedPath;
+use sinex_primitives::env as shared_env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::watch;
@@ -463,38 +463,38 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
             use crate::health_reporter::{HealthReporter, HealthThresholds};
             use crate::self_observation::{SelfObserver, SelfObserverConfig};
 
-                let health_enabled = shared_env::bool_or(
-                    "SINEX_HEALTH_MONITORING_ENABLED",
-                    true,
-                    "ingestor node health monitoring",
-                );
+            let health_enabled = shared_env::bool_or(
+                "SINEX_HEALTH_MONITORING_ENABLED",
+                true,
+                "ingestor node health monitoring",
+            );
 
-                if health_enabled {
-                    let config = SelfObserverConfig {
-                        component: self.ingestor.name().to_string(),
-                        namespace: None,
-                        enabled: true,
-                        min_emission_interval: std::time::Duration::from_secs(1),
-                    };
+            if health_enabled {
+                let config = SelfObserverConfig {
+                    component: self.ingestor.name().to_string(),
+                    namespace: None,
+                    enabled: true,
+                    min_emission_interval: std::time::Duration::from_secs(1),
+                };
 
-                    let observer = Arc::new(SelfObserver::new(nats_client, config));
-                    let thresholds = HealthThresholds::from_env().unwrap_or_else(|error| {
-                        warn!(
-                            node = %self.ingestor.name(),
-                            error = %error,
-                            "Invalid health monitoring threshold override; using defaults"
-                        );
-                        HealthThresholds::default()
-                    });
+                let observer = Arc::new(SelfObserver::new(nats_client, config));
+                let thresholds = HealthThresholds::from_env().unwrap_or_else(|error| {
+                    warn!(
+                        node = %self.ingestor.name(),
+                        error = %error,
+                        "Invalid health monitoring threshold override; using defaults"
+                    );
+                    HealthThresholds::default()
+                });
 
-                    self.health_reporter = Some(Arc::new(HealthReporter::new(
-                        self.ingestor.name().to_string(),
-                        Arc::clone(&observer),
-                        thresholds,
-                    )));
-                    self.self_observer = Some(observer);
+                self.health_reporter = Some(Arc::new(HealthReporter::new(
+                    self.ingestor.name().to_string(),
+                    Arc::clone(&observer),
+                    thresholds,
+                )));
+                self.self_observer = Some(observer);
 
-                    info!(node = %self.ingestor.name(), "Health monitoring auto-enabled");
+                info!(node = %self.ingestor.name(), "Health monitoring auto-enabled");
             }
         }
 

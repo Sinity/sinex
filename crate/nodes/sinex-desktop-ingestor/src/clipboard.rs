@@ -3,18 +3,18 @@
 // Use unified SDK prelude for common types
 use sinex_node_sdk::error_helpers::path_utils;
 use sinex_node_sdk::prelude::*;
-use sinex_primitives::{JsonValue, temporal::Timestamp};
-use std::collections::VecDeque;
-use std::time::Duration;
-use tokio::{process::Command, time::interval};
-use tracing::{debug, error, info, warn};
 use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use sinex_primitives::Seconds;
 use sinex_primitives::Uuid;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{ClipboardCopiedPayload, ClipboardSelectedPayload};
 use sinex_primitives::privacy::{self, ProcessingContext};
+use sinex_primitives::{JsonValue, temporal::Timestamp};
+use std::collections::VecDeque;
+use std::time::Duration;
 use tokio::sync::watch;
+use tokio::{process::Command, time::interval};
+use tracing::{debug, error, info, warn};
 
 // Clipboard-specific imports
 use arboard::{Clipboard, GetExtLinux, LinuxClipboardKind};

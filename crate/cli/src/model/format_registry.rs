@@ -52,8 +52,14 @@ impl FormatCapability {
     }
 }
 
-const TABLE_JSON_YAML: &[OutputFormat] = &[OutputFormat::Table, OutputFormat::Json, OutputFormat::Yaml];
-const TABLE_JSON_YAML_DOT: &[OutputFormat] = &[OutputFormat::Table, OutputFormat::Json, OutputFormat::Yaml, OutputFormat::Dot];
+const TABLE_JSON_YAML: &[OutputFormat] =
+    &[OutputFormat::Table, OutputFormat::Json, OutputFormat::Yaml];
+const TABLE_JSON_YAML_DOT: &[OutputFormat] = &[
+    OutputFormat::Table,
+    OutputFormat::Json,
+    OutputFormat::Yaml,
+    OutputFormat::Dot,
+];
 const TABLE_ONLY: &[OutputFormat] = &[OutputFormat::Table];
 const NONE: &[OutputFormat] = &[];
 
@@ -70,32 +76,74 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     let mut m = HashMap::new();
 
     // ── Gateway ──────────────────────────────────────────────────────────────
-    m.insert("gateway ping",    FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("gateway version", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "gateway ping",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "gateway version",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
 
     // ── Core ─────────────────────────────────────────────────────────────────
-    m.insert("core health", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "core health",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
 
     // ── Node ─────────────────────────────────────────────────────────────────
-    m.insert("node list",        FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("node status",      FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("node drain",       FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("node resume",      FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("node set-horizon", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("node list", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "node status",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert("node drain", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "node resume",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "node set-horizon",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
 
     // ── Automata ──────────────────────────────────────────────────────────────
     m.insert("automata", FormatCapability::single_shot(TABLE_JSON_YAML));
 
     // ── Replay ───────────────────────────────────────────────────────────────
-    m.insert("replay plan",    FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("replay preview", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("replay approve", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("replay execute", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("replay submit",  FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("replay cancel",  FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("replay status",  FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("replay list",    FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("replay run",     FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "replay plan",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "replay preview",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "replay approve",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "replay execute",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "replay submit",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "replay cancel",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "replay status",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "replay list",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert("replay run", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "replay watch",
         FormatCapability::streaming(TABLE_JSON_YAML)
@@ -123,70 +171,181 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
 
     // ── Ops ───────────────────────────────────────────────────────────────────
-    m.insert("ops start",  FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("ops list",   FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("ops get",    FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("ops start", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("ops list", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("ops get", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("ops cancel", FormatCapability::single_shot(TABLE_JSON_YAML));
 
     // ── Audit ────────────────────────────────────────────────────────────────
     m.insert("audit", FormatCapability::single_shot(TABLE_JSON_YAML));
 
     // ── Sources ──────────────────────────────────────────────────────────────
-    m.insert("sources stage",    FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("sources list",     FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("sources show",     FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("sources coverage", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "sources stage",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "sources list",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "sources show",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "sources coverage",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
 
     // ── Blob ─────────────────────────────────────────────────────────────────
-    m.insert("blob sweep-orphans", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("blob fsck",          FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("blob migrate",       FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "blob sweep-orphans",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert("blob fsck", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "blob migrate",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
 
     // ── Lifecycle ────────────────────────────────────────────────────────────
-    m.insert("lifecycle status",            FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("lifecycle archive",           FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("lifecycle restore",           FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("lifecycle tombstone create",  FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("lifecycle tombstone approve", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("lifecycle tombstone preview", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("lifecycle tombstone cancel",  FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("lifecycle tombstone list",    FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("lifecycle tombstone status",  FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "lifecycle status",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "lifecycle archive",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "lifecycle restore",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "lifecycle tombstone create",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "lifecycle tombstone approve",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "lifecycle tombstone preview",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "lifecycle tombstone cancel",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "lifecycle tombstone list",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "lifecycle tombstone status",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
 
     // ── GitOps ───────────────────────────────────────────────────────────────
-    m.insert("git-ops list",   FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("git-ops create", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("git-ops delete", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("git-ops sync",   FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "git-ops list",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "git-ops create",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "git-ops delete",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "git-ops sync",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
 
     // ── Telemetry ────────────────────────────────────────────────────────────
-    m.insert("telemetry window-focus",        FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("telemetry command-frequency",   FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("telemetry file-activity",       FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("telemetry recent-activity",     FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("telemetry system-state",        FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("telemetry node-stats",          FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("telemetry stream-stats",        FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("telemetry gateway-stats",       FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("telemetry assembly-stats",      FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("telemetry metric-counters",     FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("telemetry current-device-state", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("telemetry current-health",       FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("telemetry ingestd-batch-stats", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("telemetry ingestd-validation",  FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "telemetry window-focus",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "telemetry command-frequency",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "telemetry file-activity",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "telemetry recent-activity",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "telemetry system-state",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "telemetry node-stats",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "telemetry stream-stats",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "telemetry gateway-stats",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "telemetry assembly-stats",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "telemetry metric-counters",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "telemetry current-device-state",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "telemetry current-health",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "telemetry ingestd-batch-stats",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "telemetry ingestd-validation",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
 
     // ── Report ───────────────────────────────────────────────────────────────
-    m.insert("report today",     FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("report yesterday", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("report calendar",   FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "report today",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "report yesterday",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "report calendar",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
 
     // ── Blob ─────────────────────────────────────────────────────────────────
-    m.insert("blob sweep-orphans", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "blob sweep-orphans",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
 
     // ── Shortcuts ────────────────────────────────────────────────────────────
-    m.insert("status",  FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("recent",  FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("errors",  FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("status", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("recent", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("errors", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "watch",
         FormatCapability::streaming(TABLE_JSON_YAML)
@@ -194,7 +353,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
     m.insert("context", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("explain", FormatCapability::single_shot(TABLE_JSON_YAML));
-    m.insert("verify",  FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("verify", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "now",
         FormatCapability::single_shot(TABLE_JSON_YAML)
@@ -210,12 +369,21 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
 
     // ── Config ───────────────────────────────────────────────────────────────
-    m.insert("config init", FormatCapability::single_shot(TABLE_ONLY)
-        .with_note("interactive wizard; --format is not applicable"));
-    m.insert("config show", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
+        "config init",
+        FormatCapability::single_shot(TABLE_ONLY)
+            .with_note("interactive wizard; --format is not applicable"),
+    );
+    m.insert(
+        "config show",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
     m.insert("config path", FormatCapability::single_shot(TABLE_ONLY));
-    m.insert("config edit", FormatCapability::single_shot(TABLE_ONLY)
-        .with_note("opens $EDITOR; --format is not applicable"));
+    m.insert(
+        "config edit",
+        FormatCapability::single_shot(TABLE_ONLY)
+            .with_note("opens $EDITOR; --format is not applicable"),
+    );
 
     // ── Demo ─────────────────────────────────────────────────────────────────
     m.insert(
@@ -357,7 +525,10 @@ mod tests {
         assert!(result.is_err(), "completions should reject json");
         let msg = result.unwrap_err();
         assert!(msg.contains("completions"), "error should name the command");
-        assert!(msg.contains("none"), "error should say no formats supported");
+        assert!(
+            msg.contains("none"),
+            "error should say no formats supported"
+        );
     }
 
     #[test]
@@ -373,7 +544,9 @@ mod tests {
         let result = validate_format("nonexistent command", OutputFormat::Json);
         assert!(result.is_err(), "unknown commands should fail closed");
         assert!(
-            result.unwrap_err().contains("missing from the output-format registry"),
+            result
+                .unwrap_err()
+                .contains("missing from the output-format registry"),
             "error should explain the missing registry entry"
         );
     }
@@ -382,8 +555,17 @@ mod tests {
     fn registry_covers_key_commands() {
         let reg = build();
         let required = [
-            "query", "trace", "watch", "status", "recent", "errors", "automata",
-            "node list", "replay plan", "replay watch", "dlq list",
+            "query",
+            "trace",
+            "watch",
+            "status",
+            "recent",
+            "errors",
+            "automata",
+            "node list",
+            "replay plan",
+            "replay watch",
+            "dlq list",
         ];
         for cmd in required {
             assert!(reg.contains_key(cmd), "registry is missing `{cmd}`");
@@ -394,6 +576,9 @@ mod tests {
     fn streaming_commands_are_marked() {
         let reg = build();
         assert!(reg["watch"].streaming, "`watch` must be marked streaming");
-        assert!(reg["replay watch"].streaming, "`replay watch` must be marked streaming");
+        assert!(
+            reg["replay watch"].streaming,
+            "`replay watch` must be marked streaming"
+        );
     }
 }

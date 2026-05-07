@@ -96,7 +96,10 @@ async fn test_multiple_events_same_material(ctx: TestContext) -> TestResult<()> 
             "all events should have the same event type"
         );
         assert_eq!(persisted.payload["sequence"], serde_json::json!(i));
-        assert_eq!(persisted.payload["event"], serde_json::json!("shared material"));
+        assert_eq!(
+            persisted.payload["event"],
+            serde_json::json!("shared material")
+        );
         assert_material_provenance(&persisted, material_id, i as i64);
     }
 
@@ -136,9 +139,7 @@ fn assert_material_provenance(
 ) {
     match event.provenance() {
         Provenance::Material {
-            id,
-            anchor_byte,
-            ..
+            id, anchor_byte, ..
         } => {
             assert_eq!(*id, expected_material_id);
             assert_eq!(*anchor_byte, expected_anchor_byte);

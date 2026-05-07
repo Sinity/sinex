@@ -24,10 +24,10 @@
 //! that triggered them, not to a resolved entity.
 //!
 use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, TransducerNodeAdapter};
+use sinex_node_sdk::tags;
 use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, TransducerNode};
 use sinex_primitives::events::payloads::KnowledgeTagAppliedPayload;
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_node_sdk::tags;
 
 #[derive(Debug, Clone, Default)]
 pub struct TagApplier;
@@ -85,10 +85,7 @@ impl TransducerNode for TagApplier {
     }
 }
 
-fn evaluate_rules(
-    input: &serde_json::Value,
-    context: &DerivedTriggerContext,
-) -> Vec<String> {
+fn evaluate_rules(input: &serde_json::Value, context: &DerivedTriggerContext) -> Vec<String> {
     let mut tags = Vec::new();
 
     let event_type = context.event_type.as_str();
@@ -106,7 +103,11 @@ fn evaluate_rules(
     }
 
     // File extension rules
-    if let Some(path) = input.get("path").or_else(|| input.get("file_path")).and_then(|v| v.as_str()) {
+    if let Some(path) = input
+        .get("path")
+        .or_else(|| input.get("file_path"))
+        .and_then(|v| v.as_str())
+    {
         if let Some(ext) = path.rsplit('.').next() {
             let file_type_tag = match ext {
                 "rs" => Some("rust"),
@@ -178,7 +179,7 @@ register_source_unit! {
 mod tests {
     use super::*;
     use serde_json::json;
-    use xtask::sandbox::{sinex_test, TestResult};
+    use xtask::sandbox::{TestResult, sinex_test};
 
     #[sinex_test]
     async fn test_source_based_tagging() -> TestResult<()> {

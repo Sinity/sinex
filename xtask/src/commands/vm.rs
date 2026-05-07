@@ -1652,14 +1652,9 @@ mod tests {
         let temp = tempfile::tempdir()?;
         init_git_repo(temp.path())?;
 
-        let new_crate = temp
-            .path()
-            .join("crate/nodes/sinex-process/Cargo.toml");
+        let new_crate = temp.path().join("crate/nodes/sinex-process/Cargo.toml");
         std::fs::create_dir_all(new_crate.parent().expect("new crate parent"))?;
-        std::fs::write(
-            &new_crate,
-            "[package]\nname = \"sinex-process\"\n",
-        )?;
+        std::fs::write(&new_crate, "[package]\nname = \"sinex-process\"\n")?;
 
         let mut input = prepare_vm_flake_input(temp.path())?;
         let staged_root = input

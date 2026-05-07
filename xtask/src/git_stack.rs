@@ -1705,9 +1705,12 @@ fn collapse_loose_end_key(path: &str) -> Option<String> {
 
 fn resolve_repo_root(explicit: Option<&Path>) -> Result<PathBuf> {
     if let Some(explicit) = explicit {
-        return explicit
-            .canonicalize()
-            .with_context(|| format!("failed to canonicalize explicit repo root '{}'", explicit.display()));
+        return explicit.canonicalize().with_context(|| {
+            format!(
+                "failed to canonicalize explicit repo root '{}'",
+                explicit.display()
+            )
+        });
     }
 
     let cwd = std::env::current_dir().context("failed to determine current directory")?;
@@ -1766,9 +1769,12 @@ fn resolve_output_dir(
         // inside the repo root.  An explicit --output-dir pointing outside the
         // repo (e.g. `/`, `~`) combined with --force would otherwise destroy
         // arbitrary filesystem content.
-        let canonical_output = output_dir
-            .canonicalize()
-            .with_context(|| format!("failed to canonicalize output dir '{}'", output_dir.display()))?;
+        let canonical_output = output_dir.canonicalize().with_context(|| {
+            format!(
+                "failed to canonicalize output dir '{}'",
+                output_dir.display()
+            )
+        })?;
         if !canonical_output.starts_with(repo_root) {
             bail!(
                 "refusing to remove output directory {} because it is outside the repository root {}; \

@@ -195,10 +195,7 @@ async fn sinexctl_replay_plan_creates_operation(ctx: TestContext) -> color_eyre:
 
     let operation = parse_json_stdout(&output, "replay plan");
     assert_eq!(operation["state"].as_str(), Some("Planning"));
-    assert_eq!(
-        operation["scope"]["node_id"].as_str(),
-        Some("test-node")
-    );
+    assert_eq!(operation["scope"]["node_id"].as_str(), Some("test-node"));
     assert!(
         operation["operation_id"].as_str().is_some(),
         "plan output should contain operation_id: {operation}"
@@ -448,11 +445,15 @@ async fn sinexctl_replay_list_filters_by_state(ctx: TestContext) -> color_eyre::
         .collect();
 
     assert!(
-        cancelled_ops.iter().all(|operation| operation["state"].as_str() == Some("Cancelled")),
+        cancelled_ops
+            .iter()
+            .all(|operation| operation["state"].as_str() == Some("Cancelled")),
         "cancelled filter should only return cancelled operations: {cancelled_ops:?}"
     );
     assert!(
-        planning_ops.iter().all(|operation| operation["state"].as_str() == Some("Planning")),
+        planning_ops
+            .iter()
+            .all(|operation| operation["state"].as_str() == Some("Planning")),
         "planning filter should only return planning operations: {planning_ops:?}"
     );
     assert!(

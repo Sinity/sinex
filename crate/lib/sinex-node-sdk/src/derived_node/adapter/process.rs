@@ -9,17 +9,17 @@ use crate::derived_node::context::DerivedTriggerContext;
 use crate::derived_node::traits::DerivedNodeImpl;
 use crate::{NodeResult, SinexError};
 
+use sinex_primitives::JsonValue;
 use sinex_primitives::events::Event;
+#[cfg(feature = "db")]
+use sinex_primitives::query::{EventQuery, EventQueryResult, QueryResultEvent};
 use sinex_primitives::settlement::{
     DefaultFailurePolicy, FailureContext, FailurePolicy, RuntimeOperation, RuntimePhase, Settlement,
 };
-use sinex_primitives::JsonValue;
-#[cfg(feature = "db")]
-use sinex_primitives::query::{EventQuery, EventQueryResult, QueryResultEvent};
 
-use tracing::{error, warn};
 #[cfg(feature = "db")]
 use tracing::info;
+use tracing::{error, warn};
 
 impl<N> DerivedNodeAdapter<N>
 where
@@ -116,11 +116,11 @@ where
                 SinexError::processing(
                     "failed to send derived-node event to processing-failure stream",
                 )
-                    .with_context("node", self.node.name())
-                    .with_context("event_type", event.event_type.as_ref())
-                    .with_context("source", event.source.as_ref())
-                    .with_context("reason", error.to_string())
-                    .with_std_error(&failure_err)
+                .with_context("node", self.node.name())
+                .with_context("event_type", event.event_type.as_ref())
+                .with_context("source", event.source.as_ref())
+                .with_context("reason", error.to_string())
+                .with_std_error(&failure_err)
             })
     }
 
@@ -201,8 +201,9 @@ where
                             "error_class".to_string(),
                             format!("{:?}", sinex_error.error_class()),
                         );
-                        if let Err(obs_err) =
-                            observer.emit_counter("automaton.error", 1, Some(labels)).await
+                        if let Err(obs_err) = observer
+                            .emit_counter("automaton.error", 1, Some(labels))
+                            .await
                         {
                             warn!(
                                 node = %self.node.name(),

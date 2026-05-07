@@ -349,25 +349,32 @@ impl IngestdConfig {
             strict_env_validated_path("SINEX_INGESTD_GITOPS_WORK_DIR", "gitops work directory")?;
         let skip_schema_sync = shared_env::strict_flag("SINEX_SKIP_SCHEMA_SYNC")?.unwrap_or(false);
         let validate_schemas = shared_env::strict_flag("SINEX_VALIDATE_SCHEMAS")?.unwrap_or(true);
-        let strict_validation = shared_env::strict_flag("SINEX_INGESTD_STRICT_VALIDATION")?.unwrap_or(false);
-        let gitops_enabled = shared_env::strict_flag("SINEX_INGESTD_GITOPS_ENABLED")?.unwrap_or(false);
+        let strict_validation =
+            shared_env::strict_flag("SINEX_INGESTD_STRICT_VALIDATION")?.unwrap_or(false);
+        let gitops_enabled =
+            shared_env::strict_flag("SINEX_INGESTD_GITOPS_ENABLED")?.unwrap_or(false);
         let consumer_fetch_max_messages_env =
             shared_env::strict_parsed("SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES")?;
-        let consumer_fetch_timeout_ms_env = shared_env::strict_parsed("SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS")?;
-        let consumer_max_ack_pending_env = shared_env::strict_parsed("SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING")?;
+        let consumer_fetch_timeout_ms_env =
+            shared_env::strict_parsed("SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS")?;
+        let consumer_max_ack_pending_env =
+            shared_env::strict_parsed("SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING")?;
         let material_slices_max_ack_pending_env =
             shared_env::strict_parsed("SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING")?;
         let schema_reload_interval_secs: u64 =
             shared_env::strict_parsed("SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS")?
                 .unwrap_or_else(default_schema_reload_interval_secs);
-        let stats_log_interval_secs: u64 = shared_env::strict_parsed("SINEX_INGESTD_STATS_LOG_INTERVAL_SECS")?
-            .unwrap_or_else(default_stats_log_interval_secs);
+        let stats_log_interval_secs: u64 =
+            shared_env::strict_parsed("SINEX_INGESTD_STATS_LOG_INTERVAL_SECS")?
+                .unwrap_or_else(default_stats_log_interval_secs);
         let blob_gc_interval_secs: Option<u64> =
             shared_env::strict_parsed("SINEX_INGESTD_BLOB_GC_INTERVAL_SECS")?;
-        let pool_acquire_timeout_secs: u64 = shared_env::strict_parsed("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS")?
-            .unwrap_or_else(default_pool_acquire_timeout_secs);
-        let pool_idle_timeout_secs: u64 = shared_env::strict_parsed("SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS")?
-            .unwrap_or_else(default_pool_idle_timeout_secs);
+        let pool_acquire_timeout_secs: u64 =
+            shared_env::strict_parsed("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS")?
+                .unwrap_or_else(default_pool_acquire_timeout_secs);
+        let pool_idle_timeout_secs: u64 =
+            shared_env::strict_parsed("SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS")?
+                .unwrap_or_else(default_pool_idle_timeout_secs);
         let ts_orig_future_skew_secs: u64 =
             shared_env::strict_parsed("SINEX_INGESTD_TS_ORIG_FUTURE_SKEW_SECS")?
                 .unwrap_or_else(default_ts_orig_future_skew_secs);
@@ -384,7 +391,8 @@ impl IngestdConfig {
 
         let db_url = match database_url {
             Some(url) => url,
-            None => shared_env::strict_var("DATABASE_URL")?.unwrap_or_else(default_database_url_fallback),
+            None => shared_env::strict_var("DATABASE_URL")?
+                .unwrap_or_else(default_database_url_fallback),
         };
         let mut config = Self::default();
         config.database_url = db_url;
@@ -588,7 +596,13 @@ impl IngestdConfig {
             .map_err(|e| {
                 SinexError::configuration(format!("Database connection test failed: {e}"))
                     .with_operation("config.test_database_connection")
-                    .with_context("database_url", sinex_primitives::utils::redact_url_password_for_diagnostics(&self.database_url, sinex_primitives::utils::InvalidUrlPolicy::RedactedMarker))
+                    .with_context(
+                        "database_url",
+                        sinex_primitives::utils::redact_url_password_for_diagnostics(
+                            &self.database_url,
+                            sinex_primitives::utils::InvalidUrlPolicy::RedactedMarker,
+                        ),
+                    )
             })?;
 
         pool.close().await;

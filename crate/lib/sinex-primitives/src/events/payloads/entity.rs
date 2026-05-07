@@ -15,9 +15,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_macros::EventPayload;
 
-use crate::domain::{EntityTypeName, RelationType};
 use crate::Timestamp;
 use crate::Uuid;
+use crate::domain::{EntityTypeName, RelationType};
 
 // ============================================================================
 // Stage 1: Entity Extraction
