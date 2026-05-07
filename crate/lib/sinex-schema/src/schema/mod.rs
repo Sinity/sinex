@@ -40,7 +40,6 @@ pub mod records {
     pub use super::embeddings::EmbeddingModelRecord;
     pub use super::entities::EntityRecord;
     pub use super::events::{EventRecord, EventReplacementRecord};
-    pub use super::sinex_schemas::{EventPayloadSchemaRecord, NodeManifestRecord};
     pub use super::source_materials::{SourceMaterialLinkRecord, SourceMaterialRecord};
     pub use super::temporal_ledger::TemporalLedgerRecord;
 }
@@ -181,8 +180,6 @@ const ALL_TABLES: &[TableMeta] = &[
     },
     TableMeta {
         schema: "core",
-        name: "node_manifests",
-        qualified_name: "core.node_manifests",
         is_hypertable: false,
         has_triggers: false,
         cleanup_protected: false,
