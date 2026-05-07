@@ -9,10 +9,11 @@ pub mod events_extensions;
 pub mod gitops;
 pub mod integrity;
 pub mod knowledge_graph;
-pub mod occurrences;
+pub mod occurrence;
 pub mod replay;
 pub mod schema_cache;
 pub mod schema_management;
+pub mod source_bindings;
 pub mod source_materials;
 pub mod state;
 
@@ -34,13 +35,14 @@ pub use knowledge_graph::{
     CreateEntity, CreateEntityRelation, EntityExt, EntityRecord, EntityRelationExt,
     EntityRelationRecord, EntityType, KnowledgeGraphRepository,
 };
-pub use occurrences::{
-    InterpretationRepository, InterpretationRow, OccurrenceRepository, OccurrenceRow,
-};
+pub use occurrence::{MaterialInterpretationRepository, OccurrenceRepository};
 pub use replay::ReplayRepository;
 pub use schema_cache::{CachedSchema, SchemaCacheRepository};
 pub use schema_management::{
     NewEventSchema, SchemaManagementRepository, SchemaStatistics, ValidationError, ValidationResult,
+};
+pub use source_bindings::{
+    SourceBindingResolutionLogRow, SourceBindingRepository, SourceBindingRow,
 };
 pub use source_materials::{
     SourceMaterial, SourceMaterialExt, SourceMaterialLink, SourceMaterialLinkRecord,
@@ -64,6 +66,7 @@ use sqlx::PgPool;
 pub trait DbPoolExt {
     fn blobs(&self) -> blobs::BlobRepository;
     fn embeddings(&self) -> embeddings::EmbeddingRepository<'_>;
+    fn source_bindings(&self) -> source_bindings::SourceBindingRepository<'_>;
     fn events(&self) -> events::EventRepository<'_>;
     fn gitops(&self) -> gitops::GitOpsRepository<'_>;
     fn source_materials(&self) -> source_materials::SourceMaterialRepository<'_>;
@@ -73,8 +76,8 @@ pub trait DbPoolExt {
     fn schema_cache(&self) -> schema_cache::SchemaCacheRepository<'_>;
     fn replay(&self) -> replay::ReplayRepository<'_>;
     fn integrity(&self) -> integrity::IntegrityRepository<'_>;
-    fn occurrences(&self) -> occurrences::OccurrenceRepository<'_>;
-    fn interpretations(&self) -> occurrences::InterpretationRepository<'_>;
+    fn occurrences(&self) -> occurrence::OccurrenceRepository<'_>;
+    fn material_interpretations(&self) -> occurrence::MaterialInterpretationRepository<'_>;
     async fn with_transaction<F, T>(&self, f: F) -> crate::DbResult<T>
     where
         F: for<'tx> AsyncFnOnce(&'tx mut crate::DbTransaction<'_>) -> crate::DbResult<T>;
@@ -87,6 +90,10 @@ impl DbPoolExt for PgPool {
 
     fn embeddings(&self) -> embeddings::EmbeddingRepository<'_> {
         embeddings::EmbeddingRepository::new(self)
+    }
+
+    fn source_bindings(&self) -> source_bindings::SourceBindingRepository<'_> {
+        source_bindings::SourceBindingRepository::new(self)
     }
 
     fn events(&self) -> events::EventRepository<'_> {
@@ -125,12 +132,12 @@ impl DbPoolExt for PgPool {
         integrity::IntegrityRepository::new(self)
     }
 
-    fn occurrences(&self) -> occurrences::OccurrenceRepository<'_> {
-        occurrences::OccurrenceRepository::new(self)
+    fn occurrences(&self) -> occurrence::OccurrenceRepository<'_> {
+        occurrence::OccurrenceRepository::new(self)
     }
 
-    fn interpretations(&self) -> occurrences::InterpretationRepository<'_> {
-        occurrences::InterpretationRepository::new(self)
+    fn material_interpretations(&self) -> occurrence::MaterialInterpretationRepository<'_> {
+        occurrence::MaterialInterpretationRepository::new(self)
     }
 
     async fn with_transaction<F, T>(&self, f: F) -> crate::DbResult<T>
