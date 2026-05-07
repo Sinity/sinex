@@ -315,7 +315,8 @@ impl ContentStoreManager {
         if max_size > 0 && file_metadata.len() as usize > max_size {
             return Err(SinexError::blob_storage(format!(
                 "blob size {} exceeds limit {max_size} for {:?}",
-                file_metadata.len(), validated_path
+                file_metadata.len(),
+                validated_path
             )));
         }
 
@@ -769,7 +770,6 @@ impl ContentStoreManager {
 
 #[cfg(test)]
 mod tests {
-    use xtask::sandbox::{sinex_test, TestResult};
     use super::{
         attach_verification_status_update_error, content_hash_is_backend_digest,
         material_name_for_blob, require_ingest_filename, verification_status_persist_error,
@@ -778,6 +778,7 @@ mod tests {
     use camino::Utf8Path;
     use sinex_db::models::Blob;
     use sinex_primitives::domain::BlobVerificationStatus;
+    use xtask::sandbox::{TestResult, sinex_test};
 
     // Inline because these cover private blob verification error helpers only.
     #[sinex_test]

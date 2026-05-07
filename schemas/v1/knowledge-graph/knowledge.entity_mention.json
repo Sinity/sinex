@@ -1,0 +1,33 @@
+{
+  "$defs": {
+    "EntityTypeName": {
+      "description": "The type of an entity (e.g., `person`, `project`, `document`)",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Emitted when an entity is mentioned in a parsed document or event payload.\nThese are raw signals before resolution — the entity resolver consumes them.",
+  "properties": {
+    "guessed_type": {
+      "$ref": "#/$defs/EntityTypeName",
+      "description": "Guessed entity type before resolution."
+    },
+    "raw_text": {
+      "description": "Raw text span as it appeared in the source.",
+      "type": "string"
+    },
+    "source_context": {
+      "description": "Source position context (field name, byte offset, etc.)."
+    }
+  },
+  "required": [
+    "raw_text",
+    "guessed_type",
+    "source_context"
+  ],
+  "title": "KnowledgeEntityMentionPayload",
+  "type": "object",
+  "x-sinex-event-type": "knowledge.entity_mention",
+  "x-sinex-source": "knowledge-graph",
+  "x-sinex-version": "1.0.0"
+}

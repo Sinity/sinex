@@ -140,6 +140,17 @@ pub fn infer_packages_for_test_filter(filter: &str) -> Result<Vec<String>> {
     infer_packages_for_test_filter_in(&repo_root, filter)
 }
 
+/// Infer nextest integration-test binary targets from a simple test-name filter.
+///
+/// This is intentionally conservative. It only returns targets for tests found
+/// in integration-test files (`*/tests/*.rs`). If any matched test lives in an
+/// inline/unit-test module, the returned set omits it and the caller should run
+/// without adding `--test` unless all intended matches are covered.
+pub fn infer_test_binaries_for_test_filter(filter: &str) -> Result<Vec<String>> {
+    let repo_root = crate::config::workspace_root();
+    infer_test_binaries_for_test_filter_in(&repo_root, filter)
+}
+
 fn infer_packages_for_test_filter_in(repo_root: &Path, filter: &str) -> Result<Vec<String>> {
     let Some(test_names) = extract_simple_test_name_terms(filter) else {
         return Ok(Vec::new());
@@ -163,6 +174,43 @@ fn infer_packages_for_test_filter_in(repo_root: &Path, filter: &str) -> Result<V
     let mut packages: Vec<String> = packages.into_iter().collect();
     packages.sort();
     Ok(packages)
+}
+
+fn infer_test_binaries_for_test_filter_in(repo_root: &Path, filter: &str) -> Result<Vec<String>> {
+    let Some(test_names) = extract_simple_test_name_terms(filter) else {
+        return Ok(Vec::new());
+    };
+
+    let mut binaries = HashSet::new();
+    let mut covered_test_names = HashSet::new();
+    for relative_path in candidate_rust_paths(repo_root)? {
+        let full_path = repo_root.join(&relative_path);
+        let content = fs::read_to_string(&full_path)
+            .wrap_err_with(|| format!("failed to read {}", full_path.display()))?;
+
+        let matched_test_names: Vec<&String> = test_names
+            .iter()
+            .filter(|test_name| content_mentions_test_name(&content, test_name))
+            .collect();
+
+        if !matched_test_names.is_empty()
+            && let Some(binary) = test_binary_for_path(&relative_path)
+        {
+            covered_test_names.extend(matched_test_names.into_iter().cloned());
+            binaries.insert(binary);
+        }
+    }
+
+    if test_names
+        .iter()
+        .any(|test_name| !covered_test_names.contains(test_name))
+    {
+        return Ok(Vec::new());
+    }
+
+    let mut binaries: Vec<String> = binaries.into_iter().collect();
+    binaries.sort();
+    Ok(binaries)
 }
 
 /// Get list of changed files from git.
@@ -312,6 +360,34 @@ pub(crate) fn package_for_path(path: &str) -> Option<String> {
 
     // Workspace-level files (Cargo.toml, Cargo.lock, .config/) are handled
     // upstream in affected_packages() as workspace-wide changes.
+    None
+}
+
+fn test_binary_for_path(path: &str) -> Option<String> {
+    let parts: Vec<&str> = path.split('/').collect();
+    if parts.len() < 3 || parts.last().copied() == Some("mod.rs") {
+        return None;
+    }
+
+    let file_name = parts.last()?;
+    let stem = file_name.strip_suffix(".rs")?;
+
+    // Workspace integration-test crates: tests/e2e/tests/foo.rs and
+    // tests/workspace/tests/foo.rs compile to nextest target `foo`.
+    if parts.len() >= 4 && parts[0] == "tests" && parts[2] == "tests" {
+        return Some(stem.to_string());
+    }
+
+    // Crate-local integration tests: crate/<category>/<crate>/tests/foo.rs.
+    if parts.len() >= 5 && parts[0] == "crate" && parts[3] == "tests" {
+        return Some(stem.to_string());
+    }
+
+    // xtask integration tests: xtask/tests/foo.rs.
+    if parts.len() >= 3 && parts[0] == "xtask" && parts[1] == "tests" {
+        return Some(stem.to_string());
+    }
+
     None
 }
 
@@ -649,6 +725,58 @@ mod tests {
                 "xtask".to_string(),
             ]
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_infer_test_binaries_for_test_filter_maps_integration_tests() -> TestResult<()> {
+        let repo = tempfile::tempdir()?;
+        let large_payload = repo.path().join("tests/e2e/tests/large_payload_test.rs");
+        let workspace_test = repo.path().join("tests/workspace/tests/smoke.rs");
+        fs::create_dir_all(large_payload.parent().expect("large payload parent"))?;
+        fs::create_dir_all(workspace_test.parent().expect("workspace parent"))?;
+        fs::write(
+            &large_payload,
+            "#[sinex_test]\nasync fn test_batch_large_payloads() {}\n",
+        )?;
+        fs::write(
+            &workspace_test,
+            "#[sinex_test]\nasync fn workspace_smoke_test() {}\n",
+        )?;
+
+        let inferred = infer_test_binaries_for_test_filter_in(
+            repo.path(),
+            "test(test_batch_large_payloads) | test(workspace_smoke_test)",
+        )?;
+        assert_eq!(
+            inferred,
+            vec!["large_payload_test".to_string(), "smoke".to_string()]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_infer_test_binaries_for_test_filter_requires_complete_coverage() -> TestResult<()>
+    {
+        let repo = tempfile::tempdir()?;
+        let large_payload = repo.path().join("tests/e2e/tests/large_payload_test.rs");
+        let inline_test = repo.path().join("xtask/src/inline_tests.rs");
+        fs::create_dir_all(large_payload.parent().expect("large payload parent"))?;
+        fs::create_dir_all(inline_test.parent().expect("inline parent"))?;
+        fs::write(
+            &large_payload,
+            "#[sinex_test]\nasync fn test_batch_large_payloads() {}\n",
+        )?;
+        fs::write(
+            &inline_test,
+            "#[sinex_test]\nasync fn inline_unit_test() {}\n",
+        )?;
+
+        let inferred = infer_test_binaries_for_test_filter_in(
+            repo.path(),
+            "test(test_batch_large_payloads) | test(inline_unit_test)",
+        )?;
+        assert!(inferred.is_empty());
         Ok(())
     }
 

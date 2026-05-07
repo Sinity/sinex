@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Emitted when a tag is applied to an entity, either by rule-based\nautomaton or by operator confirmation.",
+  "properties": {
+    "entity_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "tag_name": {
+      "type": "string"
+    },
+    "tag_source": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "entity_id",
+    "tag_name",
+    "tag_source"
+  ],
+  "title": "KnowledgeTagAppliedPayload",
+  "type": "object",
+  "x-sinex-event-type": "knowledge.tag_applied",
+  "x-sinex-source": "knowledge-graph",
+  "x-sinex-version": "1.0.0"
+}

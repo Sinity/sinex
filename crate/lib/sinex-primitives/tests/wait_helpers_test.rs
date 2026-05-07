@@ -18,8 +18,11 @@ async fn wait_for_condition_preserves_last_error_context() -> TestResult<()> {
     .await
     .expect_err("repeated condition failures must time out with their last error attached");
 
-    assert!(error.to_string().contains("wait helper test timeout"));
-    assert!(format!("{error:?}").contains("synthetic wait failure"));
+    assert_timeout_with_source(
+        &error,
+        "wait helper test timeout after 1 seconds",
+        "synthetic wait failure",
+    );
     Ok(())
 }
 
@@ -38,12 +41,11 @@ async fn wait_for_condition_adaptive_preserves_last_error_context() -> TestResul
     .await
     .expect_err("adaptive wait timeouts must retain the last condition failure");
 
-    assert!(
-        error
-            .to_string()
-            .contains("adaptive wait helper test timeout")
+    assert_timeout_with_source(
+        &error,
+        "adaptive wait helper test timeout after 1 seconds (adaptive backoff)",
+        "synthetic adaptive wait failure",
     );
-    assert!(format!("{error:?}").contains("synthetic adaptive wait failure"));
     Ok(())
 }
 
@@ -60,4 +62,21 @@ async fn wait_for_condition_adaptive_rechecks_at_timeout_boundary() -> TestResul
     .expect("adaptive wait should perform a final check at the timeout boundary");
 
     Ok(())
+}
+
+fn assert_timeout_with_source(error: &SinexError, expected_message: &str, source_fragment: &str) {
+    assert!(
+        matches!(error, SinexError::Timeout(_)),
+        "expected timeout error, got {}",
+        error.variant_name()
+    );
+    assert_eq!(error.message(), expected_message);
+    assert!(
+        error
+            .sources()
+            .iter()
+            .any(|source| source.contains(source_fragment)),
+        "timeout should preserve source containing `{source_fragment}`; sources: {:?}",
+        error.sources()
+    );
 }

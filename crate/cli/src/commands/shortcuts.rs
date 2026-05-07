@@ -1,5 +1,6 @@
 use crate::fmt::{format_json, format_yaml};
 use crate::model::OutputFormat;
+use crate::parse::parse_duration;
 use clap::Args;
 use color_eyre::Result;
 use console::style;
@@ -9,7 +10,6 @@ use sinex_primitives::query::{
     EventQuery, EventQueryResult, PayloadFilter, SortDirection, SubscriptionFilter, TimeRange,
 };
 use sinex_primitives::temporal::Timestamp;
-use crate::parse::parse_duration;
 use sinex_primitives::{RuntimeTargetDescriptor, RuntimeTargetKind};
 
 use crate::client::{GatewayClient, gateway::SseClientMessage};
@@ -33,18 +33,22 @@ impl StatusCommand {
         runtime_target: Option<&RuntimeTargetDescriptor>,
         format: OutputFormat,
     ) -> Result<()> {
+        use sinex_primitives::{
+            RuntimeStatusSignal, RuntimeStatusSignalStatus, RuntimeStatusSnapshot,
+            RuntimeStatusWarning,
+        };
 
-        use sinex_primitives::{RuntimeStatusSnapshot, RuntimeStatusSignal, RuntimeStatusSignalStatus, RuntimeStatusWarning};
-        
-        let target = runtime_target.cloned().unwrap_or_else(|| RuntimeTargetDescriptor {
-            name: "unknown".to_string(),
-            kind: RuntimeTargetKind::Unknown,
-            ..Default::default()
-        });
-        
+        let target = runtime_target
+            .cloned()
+            .unwrap_or_else(|| RuntimeTargetDescriptor {
+                name: "unknown".to_string(),
+                kind: RuntimeTargetKind::Unknown,
+                ..Default::default()
+            });
+
         let mut signals = Vec::new();
         let mut warnings = Vec::new();
-        
+
         // Gateway connectivity
         let gateway_signal = match client.version().await {
             Ok(version) => RuntimeStatusSignal {
@@ -182,7 +186,7 @@ impl StatusCommand {
                 });
             }
         }
-        
+
         // DLQ
         match client.dlq_list().await {
             Ok(stats) => {
@@ -211,13 +215,13 @@ impl StatusCommand {
                 });
             }
         }
-        
+
         let snapshot = RuntimeStatusSnapshot {
             target,
             signals,
             warnings,
         };
-        
+
         match format {
             OutputFormat::Json | OutputFormat::Dot => {
                 println!("{}", serde_json::to_string_pretty(&snapshot)?);
@@ -228,7 +232,7 @@ impl StatusCommand {
             OutputFormat::Table => {
                 println!("{}", style("System Status").bold().cyan());
                 println!("{}", style("═".repeat(50)).dim());
-                
+
                 println!(
                     "Target:  {} {}",
                     style("●").cyan(),
@@ -248,7 +252,7 @@ impl StatusCommand {
                         style(format!("descriptor: {}", path.display())).dim()
                     );
                 }
-                
+
                 for signal in &snapshot.signals {
                     let color = match signal.status {
                         RuntimeStatusSignalStatus::Healthy => style("●").green(),
@@ -258,18 +262,18 @@ impl StatusCommand {
                         RuntimeStatusSignalStatus::Skipped => style("●").dim(),
                         RuntimeStatusSignalStatus::Stale => style("●").yellow(),
                     };
-                    
-                    let name = format!("{:width$}", signal.name, width=8);
+
+                    let name = format!("{:width$}", signal.name, width = 8);
                     let message = signal.message.as_deref().unwrap_or("");
                     println!("{}: {} {}", name, color, message);
                 }
-                
+
                 for warning in &snapshot.warnings {
                     println!("Warning [{}]: {}", warning.source, warning.message);
                 }
             }
         }
-        
+
         Ok(())
     }
 }
@@ -644,13 +648,11 @@ impl WatchCommand {
                 Ok(SseClientMessage::Error { code, message }) => {
                     match format {
                         OutputFormat::Json | OutputFormat::Dot => {
-                            let line =
-                                json!({ "kind": "error", "code": code, "message": message });
+                            let line = json!({ "kind": "error", "code": code, "message": message });
                             println!("{}", serde_json::to_string(&line)?);
                         }
                         OutputFormat::Yaml => {
-                            let doc =
-                                json!({ "kind": "error", "code": code, "message": message });
+                            let doc = json!({ "kind": "error", "code": code, "message": message });
                             println!("---");
                             print!("{}", format_yaml(&doc)?);
                         }
@@ -689,4 +691,3 @@ impl WatchCommand {
         Ok(())
     }
 }
-

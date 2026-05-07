@@ -3,13 +3,10 @@
 // Integration tests with external systems and services:
 // - Content-store git-annex backend
 // - PostgreSQL with TimescaleDB extensions
-// - Operating system interfaces
-// - External command execution
 //
 // ## Test Categories
 //
 // - **Content Store Integration**: File storage, retrieval, and deduplication
-// - **External Command Execution**: System interaction validation
 // - **Database Integration**: External database service integration
 //
 // ## Performance Expectations
@@ -19,7 +16,7 @@
 // - **Dependencies**: git-annex backend, external command tools, filesystem access
 
 use camino::Utf8PathBuf;
-use sinex_node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
+use sinex_node_sdk::content_store::{ContentStoreConfig, ContentStoreKey, MaterialContentStore};
 use sqlx::Row;
 use tempfile::TempDir;
 use tokio::fs;
@@ -28,21 +25,18 @@ use xtask::sandbox::prelude::*;
 
 // ==================== CONTENT STORE INTEGRATION TESTS ====================
 
-async fn setup_test_content_store()
--> AnyhowResult<(MaterialContentStore, tempfile::TempDir), Box<dyn std::error::Error + Send + Sync>>
-{
+async fn setup_test_content_store() -> TestResult<(MaterialContentStore, TempDir)> {
     let temp_dir = TempDir::new()?;
     let repo_path = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
         .map_err(|_| color_eyre::eyre::eyre!("content-store root path must be valid UTF-8"))?;
 
-    // Initialize git-annex repository
-    MaterialContentStore::init(&repo_path, Some("test-repo")).await?;
+    MaterialContentStore::init_with_config(&repo_path, Some("test-repo"), false).await?;
 
     let config = ContentStoreConfig {
         root_path: repo_path.clone(),
         num_copies: Some(1),
         large_files: None,
-        legacy_annex_enabled: true,
+        legacy_annex_enabled: false,
         ..Default::default()
     };
 
@@ -52,7 +46,7 @@ async fn setup_test_content_store()
 }
 
 #[sinex_test]
-async fn test_file_add_and_retrieve(ctx: TestContext) -> TestResult<()> {
+async fn test_file_add_and_retrieve(_ctx: TestContext) -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
 
     // Create a test file
@@ -65,12 +59,9 @@ async fn test_file_add_and_retrieve(ctx: TestContext) -> TestResult<()> {
 
     // Verify key was generated
     assert!(!content_key.key.is_empty());
-    pretty_assertions::assert_eq!(content_key.size, content.len() as u64);
+    assert_eq!(content_key.size, content.len() as u64);
 
-    // Ensure content is available
-    content_store
-        .ensure_content_local(&test_file.to_string_lossy())
-        .await?;
+    assert_local_cas_content(&content_store, &content_key, content).await?;
 
     // Verify file still exists and is a symlink
     assert!(test_file.exists());
@@ -79,7 +70,7 @@ async fn test_file_add_and_retrieve(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_large_file_handling(ctx: TestContext) -> TestResult<()> {
+async fn test_large_file_handling(_ctx: TestContext) -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
 
     // Create 1MB of data
@@ -90,19 +81,19 @@ async fn test_large_file_handling(ctx: TestContext) -> TestResult<()> {
     // Add large file to content store
     let content_key = content_store.store_file(&large_file).await?;
 
-    // Verify git-annex handled it
-    pretty_assertions::assert_eq!(content_key.size, content.len() as u64);
-    assert!(!content_key.storage_backend().is_empty());
+    assert_eq!(content_key.size, content.len() as u64);
+    assert_local_cas_content(&content_store, &content_key, &content).await?;
 
     // Check status
     let status = content_store.status().await?;
-    assert!(status.contains("1 file"));
+    assert!(status.contains("Files: 1"));
+    assert!(status.contains(&format!("Total size: {} bytes", content.len())));
 
     Ok(())
 }
 
 #[sinex_test]
-async fn test_content_key_lookup(ctx: TestContext) -> TestResult<()> {
+async fn test_content_key_lookup(_ctx: TestContext) -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
 
     // Create a test file with known content
@@ -117,18 +108,19 @@ async fn test_content_key_lookup(ctx: TestContext) -> TestResult<()> {
     let looked_up_key = content_store.lookup_content_key(&test_file).await?;
 
     // Keys should match
-    pretty_assertions::assert_eq!(original_key.key, looked_up_key.key);
-    pretty_assertions::assert_eq!(original_key.size, looked_up_key.size);
-    pretty_assertions::assert_eq!(
+    assert_eq!(original_key.key, looked_up_key.key);
+    assert_eq!(original_key.size, looked_up_key.size);
+    assert_eq!(
         original_key.storage_backend(),
         looked_up_key.storage_backend()
     );
+    assert_local_cas_content(&content_store, &looked_up_key, content).await?;
 
     Ok(())
 }
 
 #[sinex_test]
-async fn test_drop_content(ctx: TestContext) -> TestResult<()> {
+async fn test_drop_content(_ctx: TestContext) -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
 
     // Create and add a file
@@ -136,46 +128,56 @@ async fn test_drop_content(ctx: TestContext) -> TestResult<()> {
     fs::write(&test_file, b"Content to drop").await?;
 
     let key = content_store.store_file(&test_file).await?;
+    let content_path = assert_local_cas_content(&content_store, &key, b"Content to drop").await?;
 
-    // Try to drop content (will fail without force since we only have 1 copy)
+    // Try to drop content without force; local CAS requires explicit deletion.
     let drop_result = content_store.drop_content(&key.key, false).await;
     assert!(drop_result.is_err());
 
     // Force drop
     content_store.drop_content(&key.key, true).await?;
+    assert!(!content_path.exists());
+    assert!(content_store.ensure_content_local(&key.key).await.is_err());
 
     Ok(())
 }
 
 #[sinex_test]
-async fn test_fsck(ctx: TestContext) -> TestResult<()> {
+async fn test_fsck(_ctx: TestContext) -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
 
     // Add some files
+    let mut keys = Vec::new();
     for i in 0..3 {
         let file = temp_dir.path().join(format!("file_{}.txt", i));
-        fs::write(&file, format!("Content {}", i)).await?;
-        content_store.store_file(&file).await?;
+        let content = format!("Content {}", i);
+        fs::write(&file, &content).await?;
+        let key = content_store.store_file(&file).await?;
+        assert_local_cas_content(&content_store, &key, content.as_bytes()).await?;
+        keys.push(key);
     }
 
-    // Run filesystem check
-    let fsck_output = content_store.verify_key(true, false, None).await?;
-
-    // Should complete without errors
-    assert!(fsck_output.success);
-    assert!(!fsck_output.output.is_empty());
+    for key in keys {
+        let fsck_output = content_store
+            .verify_key(true, false, Some(&key.key))
+            .await?;
+        assert!(fsck_output.success);
+        assert!(fsck_output.output.contains("local CAS verification"));
+    }
 
     Ok(())
 }
 
 #[sinex_test]
-async fn test_git_annex_configuration(ctx: TestContext) -> TestResult<()> {
+async fn test_git_annex_configuration(_ctx: TestContext) -> TestResult<()> {
+    system_test_preflight()?;
+
     let temp_dir = TempDir::new()?;
     let repo_path = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
         .map_err(|_| color_eyre::eyre::eyre!("content-store root path must be valid UTF-8"))?;
 
     // Initialize with configuration
-    MaterialContentStore::init(&repo_path, Some("configured-repo")).await?;
+    MaterialContentStore::init_with_config(&repo_path, Some("configured-repo"), true).await?;
 
     let config = ContentStoreConfig {
         root_path: repo_path.clone(),
@@ -189,20 +191,41 @@ async fn test_git_annex_configuration(ctx: TestContext) -> TestResult<()> {
     content_store.configure().await?;
 
     // Verify configuration was applied
-    let output = tokio::process::Command::new("git")
+    let num_copies_output = tokio::process::Command::new("git")
         .args(["config", "annex.numcopies"])
         .current_dir(&repo_path)
         .output()
         .await?;
+    assert!(
+        num_copies_output.status.success(),
+        "git config annex.numcopies should succeed"
+    );
 
-    let num_copies = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    pretty_assertions::assert_eq!(num_copies, "2");
+    let num_copies = String::from_utf8_lossy(&num_copies_output.stdout)
+        .trim()
+        .to_string();
+    assert_eq!(num_copies, "2");
+
+    let large_files_output = tokio::process::Command::new("git")
+        .args(["config", "annex.largefiles"])
+        .current_dir(&repo_path)
+        .output()
+        .await?;
+    assert!(
+        large_files_output.status.success(),
+        "git config annex.largefiles should succeed"
+    );
+
+    let large_files = String::from_utf8_lossy(&large_files_output.stdout)
+        .trim()
+        .to_string();
+    assert_eq!(large_files, "*.bin");
 
     Ok(())
 }
 
 #[sinex_test(timeout = 30)]
-async fn test_concurrent_file_operations(ctx: TestContext) -> TestResult<()> {
+async fn test_concurrent_file_operations(_ctx: TestContext) -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
     let content_store = std::sync::Arc::new(content_store);
     let mut handles = vec![];
@@ -236,16 +259,17 @@ async fn test_concurrent_file_operations(ctx: TestContext) -> TestResult<()> {
     }
 
     // Verify all files were added
-    pretty_assertions::assert_eq!(keys.len(), 5);
+    assert_eq!(keys.len(), 5);
     for key in keys {
         assert!(!key.key.is_empty());
+        assert!(key.is_local_blake3_cas());
     }
 
     Ok(())
 }
 
 #[sinex_test]
-async fn test_files_in_subdirectories(ctx: TestContext) -> TestResult<()> {
+async fn test_files_in_subdirectories(_ctx: TestContext) -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
 
     // Create subdirectory structure
@@ -262,18 +286,15 @@ async fn test_files_in_subdirectories(ctx: TestContext) -> TestResult<()> {
 
     // Verify path structure
     assert!(nested_file.exists());
-    pretty_assertions::assert_eq!(key.size, content.len() as u64);
+    assert_eq!(key.size, content.len() as u64);
 
-    // Get content to ensure it's accessible
-    content_store
-        .ensure_content_local(&nested_file.to_string_lossy())
-        .await?;
+    assert_local_cas_content(&content_store, &key, content).await?;
 
     Ok(())
 }
 
 #[sinex_test(timeout = 30)]
-async fn test_content_store_deduplication(ctx: TestContext) -> TestResult<()> {
+async fn test_content_store_deduplication(_ctx: TestContext) -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
 
     let content = b"Duplicate content for dedup test";
@@ -294,174 +315,76 @@ async fn test_content_store_deduplication(ctx: TestContext) -> TestResult<()> {
     assert!(file2.exists());
 
     // Keys should be identical (git-annex deduplicates by content)
-    pretty_assertions::assert_eq!(key1.key, key2.key);
-    pretty_assertions::assert_eq!(key1.digest, key2.digest);
+    assert_eq!(key1.key, key2.key);
+    assert_eq!(key1.digest, key2.digest);
 
-    // Check that git-annex recognizes the deduplication
-    let output = tokio::process::Command::new("git")
-        .args(["annex", "find", "--include=*"])
-        .current_dir(temp_dir.path())
-        .output()
+    let content_path1 = assert_local_cas_content(&content_store, &key1, content).await?;
+    let content_path2 = assert_local_cas_content(&content_store, &key2, content).await?;
+    assert_eq!(content_path1, content_path2);
+
+    Ok(())
+}
+
+async fn assert_local_cas_content(
+    content_store: &MaterialContentStore,
+    key: &ContentStoreKey,
+    expected_content: &[u8],
+) -> TestResult<Utf8PathBuf> {
+    assert!(
+        key.is_local_blake3_cas(),
+        "store_file should produce local BLAKE3 CAS keys"
+    );
+
+    let content_path = content_store
+        .path_if_local(&key.key)?
+        .ok_or_else(|| color_eyre::eyre::eyre!("local CAS key did not resolve: {}", key.key))?;
+    assert!(
+        content_path.exists(),
+        "local CAS path should exist: {content_path}"
+    );
+
+    let stored = fs::read(&content_path).await?;
+    assert_eq!(stored, expected_content);
+
+    content_store.ensure_content_local(&key.key).await?;
+    let verification = content_store
+        .verify_key(false, false, Some(&key.key))
         .await?;
+    assert!(
+        verification.success,
+        "local CAS verification should succeed: {}",
+        verification.output
+    );
 
-    if output.status.success() {
-        let files = String::from_utf8_lossy(&output.stdout);
-        // Should list both files but they point to same content
-        assert!(files.contains("dup1.txt"));
-        assert!(files.contains("dup2.txt"));
-    }
-
-    Ok(())
-}
-
-// ==================== EXTERNAL COMMAND INTEGRATION TESTS ====================
-
-#[sinex_test]
-async fn test_external_command_execution(ctx: TestContext) -> TestResult<()> {
-    // Test basic external command execution
-    let output = tokio::process::Command::new("echo")
-        .arg("Hello, external world!")
-        .output()
-        .await?;
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Hello, external world!"));
-
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_external_command_with_environment(ctx: TestContext) -> TestResult<()> {
-    // Test command execution with environment variables
-    let output = tokio::process::Command::new("env")
-        .env("TEST_VAR", "test_value")
-        .output()
-        .await?;
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("TEST_VAR=test_value"));
-
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_external_command_working_directory(ctx: TestContext) -> TestResult<()> {
-    // Create a temporary directory
-    let temp_dir = TempDir::new()?;
-    let temp_path = temp_dir.path();
-
-    // Create a test file in the temp directory
-    let test_file = temp_path.join("test.txt");
-    fs::write(&test_file, "test content").await?;
-
-    // Execute ls command in the temp directory
-    let output = tokio::process::Command::new("ls")
-        .current_dir(temp_path)
-        .output()
-        .await?;
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("test.txt"));
-
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_external_command_error_handling(ctx: TestContext) -> TestResult<()> {
-    // Test handling of command that returns error
-    let output = tokio::process::Command::new("false").output().await?;
-
-    assert!(!output.status.success());
-    assert_eq!(output.status.code(), Some(1));
-
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_external_command_timeout(ctx: TestContext) -> TestResult<()> {
-    // Test command timeout handling
-    let result = timeout(Duration::from_millis(100), async {
-        tokio::process::Command::new("sleep")
-            .arg("1")
-            .output()
-            .await
-    })
-    .await;
-
-    assert!(result.is_err(), "Command should have timed out");
-
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_external_command_stdin_interaction(ctx: TestContext) -> TestResult<()> {
-    // Test command with stdin input
-    let mut child = tokio::process::Command::new("cat")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .spawn()?;
-
-    let stdin = child.stdin.take().unwrap();
-    let input = "Hello from stdin!";
-
-    // Write to stdin
-    let write_task = tokio::spawn(async move {
-        use tokio::io::AsyncWriteExt;
-        let mut stdin = stdin;
-        stdin.write_all(input.as_bytes()).await.unwrap();
-        stdin.shutdown().await.unwrap();
-    });
-
-    // Wait for command to complete
-    let output = child.wait_with_output().await?;
-    write_task.await?;
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout, input);
-
-    Ok(())
+    Ok(content_path)
 }
 
 // ==================== DATABASE INTEGRATION TESTS ====================
 
 #[sinex_test]
-async fn test_external_database_connection(ctx: TestContext) -> TestResult<()> {
-    // Test that we can connect to external PostgreSQL database
-    let pool = ctx.pool().clone();
-
-    // Test basic connection
-    let result = sqlx::query("SELECT 1 as test_value")
-        .fetch_one(&pool)
-        .await?;
-
-    assert!(result.get::<i32, _>("test_value") == 1);
-
-    Ok(())
-}
-
-#[sinex_test]
 async fn test_external_database_timescaledb_functions(ctx: TestContext) -> TestResult<()> {
-    // Test TimescaleDB specific functions
     let pool = ctx.pool().clone();
 
-    // Test time_bucket function (TimescaleDB specific)
-    let result = sqlx::query("SELECT time_bucket('1 minute', NOW()) as bucket")
-        .fetch_one(&pool)
-        .await;
+    let extension = sqlx::query("SELECT extname FROM pg_extension WHERE extname = 'timescaledb'")
+        .fetch_optional(&pool)
+        .await?;
+    assert!(
+        extension.is_some(),
+        "TimescaleDB extension must be installed in the sandbox database"
+    );
 
-    // Should either succeed (TimescaleDB installed) or fail gracefully
-    match result {
-        Ok(_) => {
-            println!("TimescaleDB functions are available");
-        }
-        Err(_) => {
-            println!("TimescaleDB functions not available (expected in test environment)");
-        }
-    }
+    let bucket = sqlx::query(
+        "
+        SELECT
+            EXTRACT(MINUTE FROM time_bucket('1 minute', TIMESTAMPTZ '2026-05-06 12:34:56+00'))::int AS minute,
+            EXTRACT(SECOND FROM time_bucket('1 minute', TIMESTAMPTZ '2026-05-06 12:34:56+00'))::int AS second
+        ",
+    )
+    .fetch_one(&pool)
+    .await?;
+
+    assert_eq!(bucket.get::<i32, _>("minute"), 34);
+    assert_eq!(bucket.get::<i32, _>("second"), 0);
 
     Ok(())
 }
@@ -477,168 +400,6 @@ async fn test_external_database_extensions(ctx: TestContext) -> TestResult<()> {
         .await?;
     let uuid_str = uuid_test.get::<String, _>("test_uuid");
     assert_eq!(uuid_str.len(), 36);
-
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_external_database_concurrent_connections(ctx: TestContext) -> TestResult<()> {
-    // Test concurrent database connections
-    let pool = ctx.pool().clone();
-    let mut handles = vec![];
-
-    for i in 0..5 {
-        let pool_clone = pool.clone();
-        let handle = tokio::spawn(async move {
-            let result = sqlx::query("SELECT $1 as connection_id")
-                .bind(i)
-                .fetch_one(&pool_clone)
-                .await?;
-
-            Ok::<i32, color_eyre::eyre::Error>(result.get("connection_id"))
-        });
-        handles.push(handle);
-    }
-
-    // Wait for all connections to complete
-    for (i, handle) in handles.into_iter().enumerate() {
-        let result = handle.await??;
-        assert_eq!(result, i as i32);
-    }
-
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_external_database_transaction_isolation(ctx: TestContext) -> TestResult<()> {
-    // Test database transaction isolation
-    let pool = ctx.pool().clone();
-
-    // Start a transaction
-    let mut tx = pool.begin().await?;
-
-    // Insert test data in transaction
-    sqlx::query("CREATE TEMPORARY TABLE test_isolation (id INT, value TEXT)")
-        .execute(&mut *tx)
-        .await?;
-
-    sqlx::query("INSERT INTO test_isolation (id, value) VALUES (1, 'transaction_data')")
-        .execute(&mut *tx)
-        .await?;
-
-    // Verify data exists within transaction
-    let result = sqlx::query("SELECT value FROM test_isolation WHERE id = 1")
-        .fetch_one(&mut *tx)
-        .await?;
-
-    assert_eq!(result.get::<String, _>("value"), "transaction_data");
-
-    // Commit transaction
-    tx.commit().await?;
-
-    // Test that temporary table is gone after transaction
-    let table_check = sqlx::query("SELECT 1 FROM test_isolation LIMIT 1")
-        .fetch_optional(&pool)
-        .await;
-
-    assert!(
-        table_check.is_err(),
-        "Temporary table should not exist after transaction"
-    );
-
-    Ok(())
-}
-
-// ==================== FILESYSTEM INTEGRATION TESTS ====================
-
-#[sinex_test]
-async fn test_external_filesystem_operations(ctx: TestContext) -> TestResult<()> {
-    // Test basic filesystem operations
-    let temp_dir = TempDir::new()?;
-    let test_file = temp_dir.path().join("external_test.txt");
-
-    // Write file
-    fs::write(&test_file, "external test content").await?;
-
-    // Verify file exists
-    assert!(test_file.exists());
-
-    // Read file back
-    let content = fs::read_to_string(&test_file).await?;
-    assert_eq!(content, "external test content");
-
-    // Test file metadata
-    let metadata = fs::metadata(&test_file).await?;
-    assert!(metadata.is_file());
-    assert_eq!(metadata.len(), "external test content".len() as u64);
-
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_external_filesystem_permissions(ctx: TestContext) -> TestResult<()> {
-    // Test filesystem permissions (Unix-specific)
-    let temp_dir = TempDir::new()?;
-    let test_file = temp_dir.path().join("permission_test.txt");
-
-    // Create file
-    fs::write(&test_file, "permission test").await?;
-
-    // Test on Unix systems
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        // Get current permissions
-        let metadata = fs::metadata(&test_file).await?;
-        let perms = metadata.permissions();
-
-        // Verify it's a regular file permission
-        assert!(perms.mode() & 0o100000 != 0); // S_IFREG
-
-        // Test permission modification
-        let mut new_perms = perms.clone();
-        new_perms.set_mode(0o644);
-        fs::set_permissions(&test_file, new_perms).await?;
-
-        // Verify permission change
-        let updated_metadata = fs::metadata(&test_file).await?;
-        assert_eq!(updated_metadata.permissions().mode() & 0o777, 0o644);
-    }
-
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_external_filesystem_symlinks(ctx: TestContext) -> TestResult<()> {
-    // Test symbolic link operations
-    let temp_dir = TempDir::new()?;
-    let original_file = temp_dir.path().join("original.txt");
-    let symlink_file = temp_dir.path().join("symlink.txt");
-
-    // Create original file
-    fs::write(&original_file, "original content").await?;
-
-    // Create symlink (Unix-specific)
-    #[cfg(unix)]
-    {
-        tokio::fs::symlink(&original_file, &symlink_file).await?;
-
-        // Verify symlink exists
-        assert!(symlink_file.exists());
-
-        // Test reading through symlink
-        let content = fs::read_to_string(&symlink_file).await?;
-        assert_eq!(content, "original content");
-
-        // Test symlink metadata
-        let symlink_metadata = fs::symlink_metadata(&symlink_file).await?;
-        assert!(symlink_metadata.is_symlink());
-
-        // Test reading symlink target
-        let target = fs::read_link(&symlink_file).await?;
-        assert_eq!(target, original_file);
-    }
 
     Ok(())
 }

@@ -1,10 +1,10 @@
+use crate::parse::parse_duration;
 use clap::Args;
 use color_eyre::Result;
 use console::style;
 use serde_json::json;
 use sinex_primitives::query::{EventQuery, EventQueryResult, SortDirection, TimeRange};
 use sinex_primitives::temporal::{Duration, Timestamp};
-use crate::parse::parse_duration;
 use std::collections::HashMap;
 
 use crate::client::GatewayClient;
@@ -227,8 +227,18 @@ fn build_detail(result_event: &sinex_primitives::query::QueryResultEvent) -> Str
     if let Some(obj) = payload.as_object() {
         // Priority order of fields to use as the summary
         for key in &[
-            "command_string", "window_title", "unit_name", "process_name",
-            "command", "path", "title", "app_name", "unit", "message", "url", "name",
+            "command_string",
+            "window_title",
+            "unit_name",
+            "process_name",
+            "command",
+            "path",
+            "title",
+            "app_name",
+            "unit",
+            "message",
+            "url",
+            "name",
         ] {
             if let Some(val) = obj.get(*key).and_then(|v| v.as_str()) {
                 let event_type = result_event.event.event_type.as_str();
@@ -266,4 +276,3 @@ fn truncate(s: &str, max: usize) -> String {
         format!("{}...", &s[..end])
     }
 }
-

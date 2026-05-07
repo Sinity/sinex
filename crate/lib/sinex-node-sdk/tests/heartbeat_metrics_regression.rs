@@ -29,8 +29,10 @@ fn emitter_with_sink(service: &str) -> (HeartbeatEmitter, Arc<RecordingSink>) {
 
 #[sinex_test]
 async fn heartbeat_metrics_capture_real_cpu_usage() -> color_eyre::Result<()> {
-    let emitter =
-        HeartbeatEmitter::new(ServiceName::new("test-heartbeat-service"), Seconds::from_secs(1));
+    let emitter = HeartbeatEmitter::new(
+        ServiceName::new("test-heartbeat-service"),
+        Seconds::from_secs(1),
+    );
 
     // Generate some CPU activity so any real implementation would register usage.
     let mut accumulator: u64 = 0;
@@ -51,8 +53,10 @@ async fn heartbeat_metrics_capture_real_cpu_usage() -> color_eyre::Result<()> {
 
 #[sinex_test]
 async fn heartbeat_status_transitions_on_error_volume() -> color_eyre::Result<()> {
-    let emitter =
-        HeartbeatEmitter::new(ServiceName::new("test-heartbeat-service"), Seconds::from_secs(1));
+    let emitter = HeartbeatEmitter::new(
+        ServiceName::new("test-heartbeat-service"),
+        Seconds::from_secs(1),
+    );
 
     for _ in 0..60 {
         emitter.record_error("simulated failure");
@@ -71,7 +75,10 @@ async fn heartbeat_status_transitions_on_error_volume() -> color_eyre::Result<()
 
 #[sinex_test]
 async fn heartbeat_status_transitions_at_exact_thresholds() -> color_eyre::Result<()> {
-    let degraded = HeartbeatEmitter::new(ServiceName::new("threshold-degraded"), Seconds::from_secs(1));
+    let degraded = HeartbeatEmitter::new(
+        ServiceName::new("threshold-degraded"),
+        Seconds::from_secs(1),
+    );
     for _ in 0..10 {
         degraded.record_error("threshold failure");
     }

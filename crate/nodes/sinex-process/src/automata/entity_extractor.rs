@@ -37,19 +37,16 @@ use std::sync::LazyLock;
 
 // ── Pattern catalog ────────────────────────────────────────────────────
 
-static URL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new("https?://[^\\s<>\"{}|\\\\^`\\[\\]]+").expect("compile URL regex")
-});
+static URL_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new("https?://[^\\s<>\"{}|\\\\^`\\[\\]]+").expect("compile URL regex"));
 
 static FILE_PATH_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new("(?:/~?|[./]?)(?:[\\w.-]+/)+[\\w.-]+(?:\\.\\w+)?").expect("compile file path regex")
 });
 
 static COMMAND_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        "\\b(git|nix|cargo|docker|kubectl|ssh|curl|wget|systemctl|journalctl)\\b",
-    )
-    .expect("compile command regex")
+    Regex::new("\\b(git|nix|cargo|docker|kubectl|ssh|curl|wget|systemctl|journalctl)\\b")
+        .expect("compile command regex")
 });
 
 static EMAIL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
@@ -103,9 +100,10 @@ impl TransducerNode for EntityExtractor {
         // the event stream bounded. The resolver and downstream stages
         // handle deduplication and enrichment.
         if let Some(entity) = find_first_entity(&text) {
-            let ts_orig = context.ts_orig.unwrap_or_else(sinex_primitives::Timestamp::now);
-            let output =
-                DerivedOutput::transduced(entity, ts_orig, context.trigger_uuid());
+            let ts_orig = context
+                .ts_orig
+                .unwrap_or_else(sinex_primitives::Timestamp::now);
+            let output = DerivedOutput::transduced(entity, ts_orig, context.trigger_uuid());
             Ok(Some(output))
         } else {
             Ok(None)
@@ -138,8 +136,7 @@ fn extract_text_fields(value: &serde_json::Value) -> String {
                     // Skip known non-text fields.
                     if matches!(
                         key.as_str(),
-                        "id"
-                            | "document_id"
+                        "id" | "document_id"
                             | "event_id"
                             | "source_material_id"
                             | "ts_orig"
@@ -255,8 +252,8 @@ register_source_unit! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{sinex_test, TestResult};
     use serde_json::json;
+    use xtask::sandbox::{TestResult, sinex_test};
 
     #[sinex_test]
     async fn test_url_extraction() -> TestResult<()> {

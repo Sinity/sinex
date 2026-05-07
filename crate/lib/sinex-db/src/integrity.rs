@@ -54,8 +54,8 @@ impl CheckpointSnapshot {
 
 pub mod checkpoint_verification {
     use super::{CheckpointSnapshot, latest_snapshot_for_node};
-    use crate::repositories::integrity::IntegrityRepository;
     use crate::repositories::Repository;
+    use crate::repositories::integrity::IntegrityRepository;
     use sinex_primitives::error::Result as SinexResult;
     use sqlx::PgPool;
 

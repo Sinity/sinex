@@ -983,8 +983,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn source_unit_validation_rejects_registered_but_unbacked_system_pairs()
-    -> TestResult<()> {
+    async fn source_unit_validation_rejects_registered_but_unbacked_system_pairs() -> TestResult<()>
+    {
         let manifest = build_source_unit_manifest();
         let mut unit = manifest
             .source_units

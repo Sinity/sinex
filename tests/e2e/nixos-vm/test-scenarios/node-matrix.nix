@@ -272,7 +272,7 @@ SQL
             machine.succeed(f"su -s /bin/sh -c 'test -r {path}' sinex")
         machine.succeed("su -s /bin/sh -c 'test -x /run/user/1000' sinex")
 
-    with subtest("Runtime proof for deployable surfaces"):
+    with subtest("Runtime evidence for deployable surfaces"):
         machine.succeed("su - test -c 'echo node-matrix > /var/lib/sinex/watched/node-matrix.txt'")
         machine.succeed("su - test -c 'echo node_matrix_cmd >> /home/test/.zsh_history'")
         machine.succeed("su - test -c 'echo node_matrix_bash >> /home/test/.bash_history'")
@@ -295,7 +295,7 @@ SQL
             timeout=60,
         )
         machine.wait_until_succeeds(
-            "sinexctl --insecure verify --document-smoke --source-proof --historical-proof",
+            "sinexctl --insecure verify --document-smoke --source-evidence --historical-evidence",
             timeout=120,
         )
         assert_no_failed_sinex_units()

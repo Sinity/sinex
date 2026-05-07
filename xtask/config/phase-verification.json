@@ -1,0 +1,153 @@
+{
+  "version": 1,
+  "phases": [
+    {
+      "id": "0",
+      "title": "Freeze bus-first architecture and execution contracts",
+      "issues": [1054, 1126, 1128, 1146],
+      "required_checks": [
+        "git diff --check",
+        "xtask verify plan --check"
+      ],
+      "boundary_checks": [
+        "xtask docs check"
+      ],
+      "impact_gates": [
+        {
+          "impact": "xtask planner or command-surface changes",
+          "commands": [
+            "xtask test -p xtask"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "1",
+      "title": "Collapse ingestion runtime into one source-worker host",
+      "issues": [1054, 1055, 1127, 1147],
+      "required_checks": [
+        "xtask check -p sinex-node-sdk",
+        "xtask check -p sinex-terminal-ingestor",
+        "xtask test -p sinex-node-sdk"
+      ],
+      "boundary_checks": [
+        "xtask ci workspace --dry-run"
+      ],
+      "impact_gates": [
+        {
+          "impact": "workspace test lane",
+          "commands": [
+            "xtask test --dry-run --all --prime --exclude sinex-e2e-tests"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "2",
+      "title": "Define source-unit, staging, parser, and checkpoint contracts",
+      "issues": [1011, 1056, 1057, 1061],
+      "required_checks": [
+        "xtask check -p sinex-primitives",
+        "xtask check -p sinex-node-sdk",
+        "xtask test -p sinex-primitives",
+        "xtask test -p sinex-node-sdk"
+      ],
+      "boundary_checks": [
+        "xtask docs check"
+      ],
+      "impact_gates": [
+        {
+          "impact": "schema or source-material persistence",
+          "commands": [
+            "xtask ci postgres -- xtask ci schema-only"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "3",
+      "title": "Move first sources onto parser substrate",
+      "issues": [1058, 1059, 1060, 1082],
+      "required_checks": [
+        "xtask check -p sinex-terminal-ingestor",
+        "xtask test -p sinex-terminal-ingestor",
+        "xtask test -p sinex-node-sdk"
+      ],
+      "boundary_checks": [
+        "xtask test --dry-run --fail-fast -p sinex-e2e-tests"
+      ],
+      "impact_gates": [
+        {
+          "impact": "new parser fixture corpus",
+          "commands": [
+            "xtask test --scenario-category source_material"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "4",
+      "title": "Reframe event taxonomy and source metadata",
+      "issues": [744, 1062],
+      "required_checks": [
+        "xtask check -p sinex-primitives",
+        "xtask test -p sinex-primitives",
+        "xtask docs check"
+      ],
+      "boundary_checks": [
+        "xtask ci compat --base master"
+      ],
+      "impact_gates": [
+        {
+          "impact": "database schema changes",
+          "commands": [
+            "xtask ci postgres -- xtask ci schema-only"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "5",
+      "title": "Unify local daemon and API/control boundary",
+      "issues": [1054, 1063, 1083, 1084],
+      "required_checks": [
+        "xtask check -p sinex-ingestd",
+        "xtask check -p sinex-gateway",
+        "xtask test -p sinex-ingestd",
+        "xtask test -p sinex-gateway"
+      ],
+      "boundary_checks": [
+        "xtask test vm --category smoke"
+      ],
+      "impact_gates": [
+        {
+          "impact": "NixOS module or service topology changes",
+          "commands": [
+            "xtask check --nix",
+            "xtask test vm --category smoke"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "6",
+      "title": "Broaden real source coverage after foundations settle",
+      "issues": [1064, 1065, 1066, 1067],
+      "required_checks": [
+        "xtask check -p sinex-primitives",
+        "xtask test --scenario-category source_material"
+      ],
+      "boundary_checks": [
+        "xtask docs check"
+      ],
+      "impact_gates": [
+        {
+          "impact": "new source touches privacy-sensitive payloads",
+          "commands": [
+            "xtask check --forbidden"
+          ]
+        }
+      ]
+    }
+  ]
+}

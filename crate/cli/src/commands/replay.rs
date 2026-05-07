@@ -289,11 +289,7 @@ impl ReplayCommands {
                 execute_watch(client, operation_id, *interval, &format).await?;
             }
 
-            Self::List {
-                state,
-                node,
-                limit,
-            } => {
+            Self::List { state, node, limit } => {
                 let operations = client
                     .replay_list_filtered(state.map(Into::into), node.as_deref(), Some(*limit))
                     .await?;

@@ -322,12 +322,12 @@ pub type AnalyticsAutomatonNode = WindowedNodeAdapter<AnalyticsAutomaton>;
 
 // --- Source-unit descriptor (issue #690 / #734) ---
 
-use sinex_primitives::register_source_unit;
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
     RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
 };
+use sinex_primitives::register_source_unit;
 
 // Analytics is a derived source: it consumes trusted-activity inputs and
 // emits `activity.window.summary` rollups. Its checkpoint is the consumer

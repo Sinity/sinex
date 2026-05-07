@@ -68,8 +68,8 @@ use std::collections::{HashMap, HashSet};
 use crate::apply::ApplyError;
 use crate::schema::{
     Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations, EventAnnotations,
-    EventEmbeddings, EventPayloadSchemas, Events, NodeManifests, OperationsLog, TableMeta, Tags,
-    TaggedItems,
+    EventEmbeddings, EventPayloadSchemas, Events, NodeManifests, OperationsLog, TableMeta,
+    TaggedItems, Tags,
 };
 use sea_query::{
     Alias, ColumnDef, ColumnSpec, ForeignKeyCreateStatement, PostgresQueryBuilder, Table,
@@ -497,9 +497,8 @@ async fn converge_column_renames(
 
     for (old_name, new_name) in renames {
         if existing.contains(*old_name) {
-            let sql = format!(
-                "ALTER TABLE {schema}.{table} RENAME COLUMN {old_name} TO {new_name}"
-            );
+            let sql =
+                format!("ALTER TABLE {schema}.{table} RENAME COLUMN {old_name} TO {new_name}");
             pool.execute(sql.as_str()).await?;
         }
         // If old_name is absent, the rename was already applied — skip silently.
@@ -798,12 +797,10 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
             statement_fn: Blobs::create_table_statement,
             column_renames: &[],
             pending_drop: &[],
-            named_constraints: vec![
-                NamedConstraint {
-                    name: "blobs_verification_status_valid",
-                    expression: "verification_status IS NULL OR verification_status IN ('pending', 'verified', 'corrupted')",
-                },
-            ],
+            named_constraints: vec![NamedConstraint {
+                name: "blobs_verification_status_valid",
+                expression: "verification_status IS NULL OR verification_status IN ('pending', 'verified', 'corrupted')",
+            }],
             foreign_keys: vec![],
             columns_to_drop: &[],
             mirror: None,
@@ -813,12 +810,10 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
             statement_fn: Tags::create_table_statement,
             column_renames: &[],
             pending_drop: &[],
-            named_constraints: vec![
-                NamedConstraint {
-                    name: "tags_name_bounds",
-                    expression: "length(name) BETWEEN 1 AND 256",
-                },
-            ],
+            named_constraints: vec![NamedConstraint {
+                name: "tags_name_bounds",
+                expression: "length(name) BETWEEN 1 AND 256",
+            }],
             foreign_keys: vec![],
             columns_to_drop: &[],
             mirror: None,
@@ -838,12 +833,10 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
             statement_fn: EventAnnotations::create_table_statement,
             column_renames: &[],
             pending_drop: &[],
-            named_constraints: vec![
-                NamedConstraint {
-                    name: "event_annotations_annotation_type_non_empty",
-                    expression: "length(BTRIM(annotation_type, E' \\t\\n\\r\\v\\f')) > 0",
-                },
-            ],
+            named_constraints: vec![NamedConstraint {
+                name: "event_annotations_annotation_type_non_empty",
+                expression: "length(BTRIM(annotation_type, E' \\t\\n\\r\\v\\f')) > 0",
+            }],
             foreign_keys: vec![],
             columns_to_drop: &[],
             mirror: None,
@@ -895,12 +888,10 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
             statement_fn: EmbeddingModels::create_table_statement,
             column_renames: &[],
             pending_drop: &[],
-            named_constraints: vec![
-                NamedConstraint {
-                    name: "embedding_models_provider_non_empty",
-                    expression: "length(BTRIM(provider, E' \\t\\n\\r\\v\\f')) > 0",
-                },
-            ],
+            named_constraints: vec![NamedConstraint {
+                name: "embedding_models_provider_non_empty",
+                expression: "length(BTRIM(provider, E' \\t\\n\\r\\v\\f')) > 0",
+            }],
             foreign_keys: vec![],
             columns_to_drop: &[],
             mirror: None,
@@ -994,24 +985,13 @@ pub async fn converge_tables(pool: &PgPool, tables: &[ConvergibleTable]) -> Resu
         if primary_exists {
             // Renames must run before add_missing_columns so that a renamed
             // column doesn't get re-added under the old name.
-            converge_column_renames(
-                pool,
-                ct.meta.schema,
-                ct.meta.name,
-                ct.column_renames,
-            )
-            .await?;
+            converge_column_renames(pool, ct.meta.schema, ct.meta.name, ct.column_renames).await?;
             add_missing_columns(pool, ct.meta.schema, ct.meta.name, &primary_cols).await?;
             drop_legacy_columns(pool, ct.meta.schema, ct.meta.name, ct.columns_to_drop).await?;
             // Nullability convergence runs after add_missing_columns so newly
             // added columns are visible before we try to set constraints.
-            converge_column_nullability(
-                pool,
-                ct.meta.schema,
-                ct.meta.name,
-                &primary_nullability,
-            )
-            .await?;
+            converge_column_nullability(pool, ct.meta.schema, ct.meta.name, &primary_nullability)
+                .await?;
             converge_named_constraints(pool, ct.meta.schema, ct.meta.name, &ct.named_constraints)
                 .await?;
             converge_named_foreign_keys(pool, ct.meta.schema, ct.meta.name, &declared_foreign_keys)
@@ -1039,9 +1019,7 @@ pub async fn converge_tables(pool: &PgPool, tables: &[ConvergibleTable]) -> Resu
 ///
 /// Used by `strict_diff::check_orphan_columns` to detect columns that exist in
 /// the live database but are absent from the source declaration.
-pub fn declared_columns_for(
-    ct: &ConvergibleTable,
-) -> (Vec<String>, &[&'static str]) {
+pub fn declared_columns_for(ct: &ConvergibleTable) -> (Vec<String>, &[&'static str]) {
     let stmt = (ct.statement_fn)();
     let names = extract_column_names(&stmt);
     (names, ct.pending_drop)
@@ -1097,8 +1075,16 @@ pub async fn report_column_gaps(
                 continue; // Primary-key nullability is implied by PostgreSQL.
             }
             if *declared_not_null != live_not_null {
-                let declared_str = if *declared_not_null { "NOT NULL" } else { "nullable" };
-                let live_str = if live_not_null { "NOT NULL" } else { "nullable" };
+                let declared_str = if *declared_not_null {
+                    "NOT NULL"
+                } else {
+                    "nullable"
+                };
+                let live_str = if live_not_null {
+                    "NOT NULL"
+                } else {
+                    "nullable"
+                };
                 gaps.push(format!(
                     "nullability mismatch {qname}.{col_name}: declared {declared_str}, live {live_str}"
                 ));

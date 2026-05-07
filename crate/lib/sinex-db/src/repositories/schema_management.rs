@@ -9,9 +9,7 @@ use crate::{DbResult, Event, JsonValue};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{EventSource, EventType, SchemaVersion};
 use sinex_primitives::error::SinexError;
-use sinex_primitives::events::schema_registry::{
-    SchemaBundleEntry, calculate_schema_content_hash,
-};
+use sinex_primitives::events::schema_registry::{SchemaBundleEntry, calculate_schema_content_hash};
 use sinex_primitives::{Id, Timestamp};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -931,7 +929,9 @@ struct SchemaCandidate {
 }
 
 impl SchemaCandidate {
-    fn from_bundle_entry(entry: SchemaBundleEntry) -> Result<Self, sinex_primitives::error::SinexError> {
+    fn from_bundle_entry(
+        entry: SchemaBundleEntry,
+    ) -> Result<Self, sinex_primitives::error::SinexError> {
         let schema = NewEventSchema {
             source: EventSource::new(entry.source)?,
             event_type: EventType::new(entry.event_type)?,

@@ -85,9 +85,8 @@ impl TransducerNode for DlqDerivedNode {
         _input: Self::Input,
         _context: &DerivedTriggerContext,
     ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
-        Err(NodeLogicError::Processing("derived failure".to_string()))
+        Err(NodeLogicError::InputParsing("derived failure".to_string()))
     }
-
 }
 
 fn make_event_with_value(value: &str) -> std::result::Result<Event<JsonValue>, SinexError> {
@@ -112,7 +111,24 @@ async fn derived_adapter_rejects_missing_trigger_id() -> TestResult<()> {
         .process_one(event)
         .await
         .expect_err("missing id must fail");
-    assert!(format!("{err}").contains("missing an id"));
+    assert!(
+        matches!(err, SinexError::Validation(_)),
+        "expected validation error, got {}",
+        err.variant_name()
+    );
+    assert_eq!(err.message(), "derived-node trigger event is missing an id");
+    assert_eq!(
+        err.context_map().get("processing_mode").map(String::as_str),
+        Some("live")
+    );
+    assert_eq!(
+        err.context_map().get("source").map(String::as_str),
+        Some("test.source")
+    );
+    assert_eq!(
+        err.context_map().get("event_type").map(String::as_str),
+        Some("test.input")
+    );
     Ok(())
 }
 
@@ -135,7 +151,31 @@ async fn derived_adapter_errors_when_dlq_transport_is_missing() -> TestResult<()
         .process_one(make_event()?)
         .await
         .expect_err("missing transport must fail");
-    assert!(!format!("{err}").is_empty());
+    assert!(
+        matches!(err, SinexError::Lifecycle(_)),
+        "expected lifecycle error, got {}",
+        err.variant_name()
+    );
+    assert_eq!(
+        err.message(),
+        "derived-node requested processing-failure routing but no transport runtime is available"
+    );
+    assert_eq!(
+        err.context_map().get("node").map(String::as_str),
+        Some("adapter-regression-derived-dlq")
+    );
+    assert_eq!(
+        err.context_map().get("source").map(String::as_str),
+        Some("test.source")
+    );
+    assert_eq!(
+        err.context_map().get("event_type").map(String::as_str),
+        Some("test.input")
+    );
+    assert_eq!(
+        err.context_map().get("reason").map(String::as_str),
+        Some("Input parsing error: derived failure")
+    );
     Ok(())
 }
 

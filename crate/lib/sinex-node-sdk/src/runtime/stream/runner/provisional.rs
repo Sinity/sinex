@@ -231,5 +231,4 @@ impl<T: Node + 'static> NodeRunner<T> {
         .with_context("event_id", event_id.to_string())
         .with_source(error)
     }
-
 }

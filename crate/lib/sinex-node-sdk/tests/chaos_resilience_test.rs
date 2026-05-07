@@ -83,7 +83,6 @@ impl TransducerNode for ChaosCounterNode {
             context.trigger_uuid(),
         )))
     }
-
 }
 
 /// Create a test event for chaos processing

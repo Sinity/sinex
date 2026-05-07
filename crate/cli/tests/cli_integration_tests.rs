@@ -190,19 +190,21 @@ mod help_tests {
     }
 
     #[sinex_test]
-    async fn test_verify_help_exposes_proof_flags() -> TestResult<()> {
+    async fn test_verify_help_exposes_evidence_flags() -> TestResult<()> {
         sinexctl()
             .args(["verify", "--help"])
             .assert()
             .success()
             .stdout(predicate::str::contains(
-                "Verify trustworthiness invariants",
+                "Check bounded runtime evidence and optional smoke probes",
             ))
             .stdout(predicate::str::contains("--gateway-smoke").not())
             .stdout(predicate::str::contains("--automata-smoke").not())
             .stdout(predicate::str::contains("--document-smoke"))
-            .stdout(predicate::str::contains("--source-proof"))
-            .stdout(predicate::str::contains("--historical-proof"));
+            .stdout(predicate::str::contains("--source-evidence"))
+            .stdout(predicate::str::contains("--historical-evidence"))
+            .stdout(predicate::str::contains("--source-proof").not())
+            .stdout(predicate::str::contains("--historical-proof").not());
         Ok(())
     }
 }

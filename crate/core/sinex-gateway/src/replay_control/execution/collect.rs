@@ -307,15 +307,11 @@ impl ReplayExecutionEngine {
                 let table_name = repo_tx
                     .prepare_cascade_session(&session_id, false)
                     .await
-                    .map_err(|e| {
-                        e.with_context("operation", "prepare replay cascade session")
-                    })?;
+                    .map_err(|e| e.with_context("operation", "prepare replay cascade session"))?;
                 repo_tx
                     .populate_cascade_roots(&table_name, root_ids)
                     .await
-                    .map_err(|e| {
-                        e.with_context("operation", "populate replay cascade roots")
-                    })?;
+                    .map_err(|e| e.with_context("operation", "populate replay cascade roots"))?;
                 repo_tx
                     .expand_cascade(
                         &table_name,
@@ -330,9 +326,7 @@ impl ReplayExecutionEngine {
                 let cascade_ids: Vec<Uuid> = repo_tx
                     .get_event_dependencies(&table_name)
                     .await
-                    .map_err(|e| {
-                        e.with_context("operation", "read replay cascade members")
-                    })?
+                    .map_err(|e| e.with_context("operation", "read replay cascade members"))?
                     .into_iter()
                     .map(|(event_id, _)| event_id)
                     .collect();
@@ -340,9 +334,7 @@ impl ReplayExecutionEngine {
                 repo_tx
                     .cleanup_cascade_session(&table_name)
                     .await
-                    .map_err(|e| {
-                        e.with_context("operation", "cleanup replay cascade session")
-                    })?;
+                    .map_err(|e| e.with_context("operation", "cleanup replay cascade session"))?;
 
                 Ok(cascade_ids)
             })

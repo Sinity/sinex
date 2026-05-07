@@ -161,6 +161,7 @@ async fn test_batch_large_payloads(ctx: TestContext) -> TestResult<()> {
 
     // Publish all payloads in batch
     let published_events = ctx.publish_many(payloads).await?;
+    let repo = ctx.pool().events();
 
     // Verify all events were published
     assert_eq!(
@@ -171,10 +172,27 @@ async fn test_batch_large_payloads(ctx: TestContext) -> TestResult<()> {
 
     // Verify each payload's key fields
     for (idx, event) in published_events.iter().enumerate() {
-        let event_id = event.id.expect("Published event should have an ID");
-        assert!(!event_id.as_uuid().to_string().is_empty());
+        let event_id = event.id.ok_or_else(|| {
+            color_eyre::eyre::eyre!("published batch event {idx} is missing an id")
+        })?;
+        let persisted = repo
+            .get_by_id(event_id)
+            .await?
+            .ok_or_else(|| color_eyre::eyre::eyre!("event {event_id} was not persisted"))?;
 
-        let payload = &event.payload;
+        assert_eq!(persisted.id, Some(event_id));
+        assert_eq!(persisted.source.as_str(), "batch-large-test");
+        assert_eq!(persisted.event_type.as_str(), "payload.batch_large");
+        assert!(
+            matches!(&persisted.provenance, Provenance::Material { .. }),
+            "batch event should persist material provenance"
+        );
+
+        let payload = &persisted.payload;
+        assert_eq!(
+            payload, &event.payload,
+            "Persisted payload for batch event {idx} should match submitted payload"
+        );
         assert_eq!(
             payload["batch_id"].as_u64(),
             Some(idx as u64),

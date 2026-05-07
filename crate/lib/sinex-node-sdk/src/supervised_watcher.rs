@@ -136,8 +136,7 @@ where
                     "Watcher task panicked"
                 );
                 if let Some(tracker) = &health_tracker {
-                    tracker.write().last_error =
-                        Some(format!("watcher panicked: {panic_msg}"));
+                    tracker.write().last_error = Some(format!("watcher panicked: {panic_msg}"));
                 }
             }
         }
@@ -184,9 +183,7 @@ where
             }
 
             // Wrap the future in panic catching.
-            let outcome = std::panic::AssertUnwindSafe(factory())
-                .catch_unwind()
-                .await;
+            let outcome = std::panic::AssertUnwindSafe(factory()).catch_unwind().await;
 
             match outcome {
                 // Clean exit — watcher finished normally.
@@ -224,8 +221,7 @@ where
                         "Watcher task panicked"
                     );
                     if let Some(tracker) = &health_tracker {
-                        tracker.write().last_error =
-                            Some(format!("watcher panicked: {panic_msg}"));
+                        tracker.write().last_error = Some(format!("watcher panicked: {panic_msg}"));
                     }
                 }
             }

@@ -7,11 +7,12 @@ use crate::output::Status;
 use color_eyre::eyre::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// Verify phase plans and performance contracts.
 #[derive(Debug, Clone, clap::Args)]
 pub struct VerifyCommand {
     #[command(subcommand)]
@@ -20,6 +21,21 @@ pub struct VerifyCommand {
 
 #[derive(Debug, Clone, clap::Subcommand)]
 pub enum VerifySubcommand {
+    /// Inspect and validate the phase verification manifest.
+    Plan {
+        /// Select one phase by id.
+        #[arg(long)]
+        phase: Option<String>,
+        /// Show all phases.
+        #[arg(long)]
+        all: bool,
+        /// Validate the manifest contract and exit.
+        #[arg(long)]
+        check: bool,
+        /// Manifest path.
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+    },
     /// Run perf sweeps and enforce contract budgets.
     Perf {
         /// Nextest profile.
@@ -136,6 +152,30 @@ struct PerfLatestPointer {
     run_id: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PhaseVerificationManifest {
+    version: u32,
+    phases: Vec<PhaseVerificationPhase>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PhaseVerificationPhase {
+    id: String,
+    title: String,
+    issues: Vec<u64>,
+    required_checks: Vec<String>,
+    #[serde(default)]
+    boundary_checks: Vec<String>,
+    #[serde(default)]
+    impact_gates: Vec<PhaseImpactGate>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PhaseImpactGate {
+    impact: String,
+    commands: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 struct PerfContractsFile {
     #[serde(default)]
@@ -181,6 +221,12 @@ impl XtaskCommand for VerifyCommand {
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
+            VerifySubcommand::Plan {
+                phase,
+                all,
+                check,
+                manifest,
+            } => execute_phase_plan(phase.clone(), *all, *check, manifest.clone(), ctx),
             VerifySubcommand::Perf {
                 profile,
                 runs,
@@ -237,6 +283,203 @@ impl XtaskCommand for VerifyCommand {
             history_access: crate::command::HistoryAccessMode::ReadWrite,
         }
     }
+}
+
+fn default_phase_manifest_path() -> PathBuf {
+    workspace_root().join("xtask/config/phase-verification.json")
+}
+
+fn execute_phase_plan(
+    phase: Option<String>,
+    all: bool,
+    check: bool,
+    manifest_path: Option<PathBuf>,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let path = manifest_path.unwrap_or_else(default_phase_manifest_path);
+    let manifest = load_phase_manifest(&path)?;
+    validate_phase_manifest(&manifest)?;
+
+    let selected_phases: Vec<PhaseVerificationPhase> = if let Some(phase_id) = phase {
+        let selected: Vec<_> = manifest
+            .phases
+            .iter()
+            .filter(|phase| phase.id == phase_id)
+            .cloned()
+            .collect();
+        if selected.is_empty() {
+            bail!("phase `{phase_id}` does not exist in {}", path.display());
+        }
+        selected
+    } else {
+        manifest.phases.clone()
+    };
+
+    if ctx.is_human() {
+        if check {
+            println!("Phase verification manifest is valid: {}", path.display());
+        } else {
+            let render_all = all || selected_phases.len() > 1;
+            if render_all {
+                println!("Phase verification manifest: {}", path.display());
+            }
+            for phase in &selected_phases {
+                println!("{} — {}", phase.id, phase.title);
+                println!("  issues: {}", render_issues(&phase.issues));
+                println!("  required:");
+                for command in &phase.required_checks {
+                    println!("    - {command}");
+                }
+                if !phase.boundary_checks.is_empty() {
+                    println!("  boundary:");
+                    for command in &phase.boundary_checks {
+                        println!("    - {command}");
+                    }
+                }
+                if !phase.impact_gates.is_empty() {
+                    println!("  impact:");
+                    for gate in &phase.impact_gates {
+                        println!("    {}:", gate.impact);
+                        for command in &gate.commands {
+                            println!("      - {command}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(CommandResult::success()
+        .with_message("Phase verification plan loaded")
+        .with_detail(format!("manifest={}", path.display()))
+        .with_detail(format!("phases={}", selected_phases.len()))
+        .with_data(serde_json::json!({
+            "manifest": path,
+            "version": manifest.version,
+            "checked": check,
+            "phases": selected_phases,
+        }))
+        .with_duration(ctx.elapsed()))
+}
+
+fn render_issues(issues: &[u64]) -> String {
+    issues
+        .iter()
+        .map(|issue| format!("#{issue}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn load_phase_manifest(path: &Path) -> Result<PhaseVerificationManifest> {
+    let data = fs::read_to_string(path).with_context(|| {
+        format!(
+            "failed to read phase verification manifest {}",
+            path.display()
+        )
+    })?;
+    serde_json::from_str(&data).with_context(|| {
+        format!(
+            "failed to parse phase verification manifest {}",
+            path.display()
+        )
+    })
+}
+
+fn validate_phase_manifest(manifest: &PhaseVerificationManifest) -> Result<()> {
+    if manifest.version != 1 {
+        bail!(
+            "unsupported phase verification manifest version {}; expected 1",
+            manifest.version
+        );
+    }
+    if manifest.phases.is_empty() {
+        bail!("phase verification manifest must define at least one phase");
+    }
+
+    let mut ids = BTreeSet::new();
+    for phase in &manifest.phases {
+        if phase.id.trim().is_empty() {
+            bail!("phase id must not be empty");
+        }
+        if !ids.insert(phase.id.as_str()) {
+            bail!("duplicate phase id `{}`", phase.id);
+        }
+        if phase.title.trim().is_empty() {
+            bail!("phase `{}` must have a title", phase.id);
+        }
+        if phase.issues.is_empty() {
+            bail!("phase `{}` must reference at least one issue", phase.id);
+        }
+        if phase.required_checks.is_empty() {
+            bail!(
+                "phase `{}` must define at least one required check",
+                phase.id
+            );
+        }
+        for command in &phase.required_checks {
+            validate_supported_phase_command(command)?;
+        }
+        for command in &phase.boundary_checks {
+            validate_supported_phase_command(command)?;
+        }
+        for gate in &phase.impact_gates {
+            if gate.impact.trim().is_empty() {
+                bail!("phase `{}` has an impact gate with an empty name", phase.id);
+            }
+            if gate.commands.is_empty() {
+                bail!(
+                    "phase `{}` impact gate `{}` must define at least one command",
+                    phase.id,
+                    gate.impact
+                );
+            }
+            for command in &gate.commands {
+                validate_supported_phase_command(command)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_supported_phase_command(command: &str) -> Result<()> {
+    let tokens: Vec<_> = command.split_whitespace().collect();
+    let Some(program) = tokens.first().copied() else {
+        bail!("phase verification command must not be empty");
+    };
+
+    match program {
+        "xtask" => validate_xtask_phase_command(&tokens[1..], command),
+        "git" => validate_git_phase_command(&tokens[1..], command),
+        _ => bail!("unsupported phase verification command `{command}`; use xtask or git surfaces"),
+    }
+}
+
+fn validate_xtask_phase_command(tokens: &[&str], command: &str) -> Result<()> {
+    let Some(root) = tokens.first().copied() else {
+        bail!("xtask phase verification command is missing a subcommand: `{command}`");
+    };
+
+    const SUPPORTED_ROOTS: &[&str] = &["check", "test", "docs", "ci", "verify"];
+    if !SUPPORTED_ROOTS.contains(&root) {
+        bail!("unsupported xtask phase verification root `{root}` in `{command}`");
+    }
+
+    if let Some(pos) = tokens.iter().position(|token| *token == "--") {
+        let nested = tokens[pos + 1..].join(" ");
+        if !nested.is_empty() {
+            validate_supported_phase_command(&nested)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_git_phase_command(tokens: &[&str], command: &str) -> Result<()> {
+    if tokens == ["diff", "--check"] {
+        return Ok(());
+    }
+    bail!("unsupported git phase verification command `{command}`")
 }
 
 pub fn execute_perf(args: PerfArgs, ctx: &CommandContext) -> Result<CommandResult> {
@@ -793,6 +1036,68 @@ mod tests {
         assert!(rendered.contains("verify_perf_overall_pass 1"));
         assert!(rendered.contains("verify_perf_scenario_pass{scenario=\"t=12\"} 1"));
         assert!(rendered.contains("verify_perf_median_ms{scenario=\"t=12\"} 100.000000"));
+        Ok(())
+    }
+
+    fn valid_phase_manifest() -> PhaseVerificationManifest {
+        PhaseVerificationManifest {
+            version: 1,
+            phases: vec![PhaseVerificationPhase {
+                id: "1".to_string(),
+                title: "Source worker foundation".to_string(),
+                issues: vec![1054, 1128],
+                required_checks: vec![
+                    "git diff --check".to_string(),
+                    "xtask test --dry-run --all --exclude sinex-e2e-tests".to_string(),
+                ],
+                boundary_checks: vec!["xtask ci postgres -- xtask ci schema-only".to_string()],
+                impact_gates: vec![PhaseImpactGate {
+                    impact: "schema".to_string(),
+                    commands: vec!["xtask docs check".to_string()],
+                }],
+            }],
+        }
+    }
+
+    #[sinex_test]
+    async fn phase_manifest_validation_accepts_supported_commands()
+    -> ::xtask::sandbox::TestResult<()> {
+        validate_phase_manifest(&valid_phase_manifest())?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn phase_manifest_validation_rejects_duplicate_phase_ids()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut manifest = valid_phase_manifest();
+        manifest.phases.push(manifest.phases[0].clone());
+
+        let error = validate_phase_manifest(&manifest).expect_err("duplicate id must fail");
+        assert!(format!("{error:#}").contains("duplicate phase id"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn phase_manifest_validation_rejects_empty_required_checks()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut manifest = valid_phase_manifest();
+        manifest.phases[0].required_checks.clear();
+
+        let error = validate_phase_manifest(&manifest).expect_err("empty checks must fail");
+        assert!(format!("{error:#}").contains("must define at least one required check"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn phase_manifest_validation_rejects_unsupported_commands()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut manifest = valid_phase_manifest();
+        manifest.phases[0]
+            .required_checks
+            .push("python -m pytest".to_string());
+
+        let error = validate_phase_manifest(&manifest).expect_err("unsupported command must fail");
+        assert!(format!("{error:#}").contains("unsupported phase verification command"));
         Ok(())
     }
 }

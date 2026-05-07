@@ -6,10 +6,10 @@
 //! and reused as defense-in-depth checks on both sides of the NATS bus.
 
 use crate::cascade_analyzer::{CascadeAnalyzerConfig, Severity, StreamingCascadeAnalyzer};
-use sinex_primitives::env as shared_env;
 use color_eyre::eyre::{Result, eyre};
 use sinex_db::replay::state_machine::{ReplayOperation, ReplayState};
 use sinex_primitives::Uuid;
+use sinex_primitives::env as shared_env;
 use std::collections::HashSet;
 use tracing::warn;
 

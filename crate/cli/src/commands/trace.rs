@@ -423,10 +423,7 @@ mod tests {
     }
 
     fn event_id(event: &Event<JsonValue>) -> String {
-        event
-            .id
-            .expect("test event should have an id")
-            .to_string()
+        event.id.expect("test event should have an id").to_string()
     }
 
     #[test]
@@ -437,11 +434,8 @@ mod tests {
             "document.parsed",
             [ancestor.id.expect("ancestor id")],
         );
-        let descendant = synthesis_event(
-            "process",
-            "document.chunked",
-            [root.id.expect("root id")],
-        );
+        let descendant =
+            synthesis_event("process", "document.chunked", [root.id.expect("root id")]);
 
         let dot = render_dot(&LineageResult {
             root: root.clone(),

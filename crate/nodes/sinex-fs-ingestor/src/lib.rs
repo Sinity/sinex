@@ -8,11 +8,11 @@ pub mod unified_node;
 // Re-export the unified node as the primary interface
 pub use unified_node::{FilesystemConfig, FilesystemNode, FilesystemState};
 
-use sinex_primitives::register_source_unit;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitDescriptor,
 };
+use sinex_primitives::register_source_unit;
 
 // Source-unit descriptor (issue #690 / #734). The fs ingestor observes inotify
 // on watched roots and emits typed file events. Continuous path is an

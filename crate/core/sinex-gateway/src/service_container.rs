@@ -8,8 +8,8 @@ use sinex_db::pkm::PkmService;
 use sinex_db::replay::state_machine::ReplayStateMachine;
 use sinex_node_sdk::content_store::{ContentStoreConfig, ContentStoreManager};
 use sinex_primitives::{
-    coordination::CoordinationKvClient, environment as sinex_environment, error::SinexError,
-    Result as SinexResult,
+    Result as SinexResult, coordination::CoordinationKvClient, environment as sinex_environment,
+    error::SinexError,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -458,16 +458,15 @@ async fn connect_replay_control_with_backoff(
 
 async fn verify_binary_schema_version(pool: &sqlx::PgPool) -> Result<(), SinexError> {
     use sinex_primitives::EXPECTED_BINARY_SCHEMA_VERSION;
-    let db_version: Option<String> = sqlx::query_scalar(
-        "SELECT version FROM sinex_schemas.binary_schema_version WHERE id = 1",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| {
-        SinexError::database("Failed to query binary_schema_version")
-            .with_operation("gateway.verify_binary_schema_version")
-            .with_source(e.to_string())
-    })?;
+    let db_version: Option<String> =
+        sqlx::query_scalar("SELECT version FROM sinex_schemas.binary_schema_version WHERE id = 1")
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| {
+                SinexError::database("Failed to query binary_schema_version")
+                    .with_operation("gateway.verify_binary_schema_version")
+                    .with_source(e.to_string())
+            })?;
     match db_version {
         Some(v) if v == EXPECTED_BINARY_SCHEMA_VERSION => {
             info!(version = %v, "Binary schema version verified");

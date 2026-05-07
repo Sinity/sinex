@@ -301,9 +301,9 @@ fn extension(path: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{sinex_test, TestResult};
     use camino::Utf8PathBuf;
     use sinex_node_sdk::ImportedFileFingerprint;
+    use xtask::sandbox::{TestResult, sinex_test};
 
     fn test_file(path: &str, change_kind: ImportFileChangeKind) -> DiscoveredFile {
         DiscoveredFile {

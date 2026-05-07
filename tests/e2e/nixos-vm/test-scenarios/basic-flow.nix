@@ -63,10 +63,10 @@ pkgs.testers.nixosTest {
         "${sinexVmTestSuite}/bin/run-suite --category smoke"
       )
 
-    with subtest("Deployment proof via sinexctl verify"):
+    with subtest("Deployment evidence via sinexctl verify"):
       machine.succeed("su - test -c 'echo basic-flow > /var/lib/sinex/watched/basic-flow.txt'")
       machine.succeed(
-        "sinexctl --insecure verify --document-smoke --source-proof"
+        "sinexctl --insecure verify --document-smoke --source-evidence"
       )
   '';
 }

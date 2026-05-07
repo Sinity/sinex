@@ -73,10 +73,12 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                     "xtask test",
                     "xtask test -p sinex-primitives",
                     "xtask test --debug -E 'test(name)'",
+                    "xtask test -p sinex-e2e-tests -E 'test(test_batch_large_payloads)'",
                     "xtask test --heavy",
                 ],
                 notes: &[
-                    "Do not use bare cargo test when xtask already exposes the surface you need.",
+                    "Simple test(name) filters infer matching integration-test binaries automatically; use --test only when inference is too ambiguous.",
+                    "Do not use bare cargo test or bare cargo nextest when xtask already exposes the surface you need.",
                 ],
             },
             GuideEntry {
@@ -303,20 +305,6 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                     "xtask docs snapshot --scope sinex-db",
                 ],
                 notes: &[],
-            },
-            GuideEntry {
-                path: "docs issue-drift",
-                fallback_summary: "Detect drift between GitHub issue bodies and the live workspace",
-                when: "you want to find stale issue references — dropped crates, removed commands, closed umbrella children, or candidate-duplicate issues",
-                examples: &[
-                    "xtask docs issue-drift",
-                    "xtask docs issue-drift --format json",
-                    "xtask docs issue-drift --issue 480",
-                    "xtask docs issue-drift --no-duplicates",
-                ],
-                notes: &[
-                    "Read-only — never modifies issues. Requires `gh` CLI authenticated to the repo.",
-                ],
             },
         ],
     },

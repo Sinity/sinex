@@ -194,10 +194,7 @@ async fn check_column_defaults(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyE
         .fetch_optional(pool)
         .await?;
 
-        let location = format!(
-            "{}.{}.{}",
-            declared.schema, declared.table, declared.column
-        );
+        let location = format!("{}.{}.{}", declared.schema, declared.table, declared.column);
 
         match observed {
             None => {
@@ -254,9 +251,7 @@ const DECLARED_FUNCTION_BODIES: &[DeclaredFunctionBody] = &[
     },
 ];
 
-async fn check_trigger_function_bodies(
-    pool: &PgPool,
-) -> Result<Vec<StrictDrift>, ApplyError> {
+async fn check_trigger_function_bodies(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyError> {
     let mut drifts = Vec::new();
     for declared in DECLARED_FUNCTION_BODIES {
         let observed: Option<String> = sqlx::query_scalar(
@@ -299,10 +294,7 @@ async fn check_trigger_function_bodies(
             drifts.push(StrictDrift {
                 category: DriftCategory::TriggerBody,
                 location,
-                declared_summary: format!(
-                    "must contain markers {:?}",
-                    declared.expected_markers
-                ),
+                declared_summary: format!("must contain markers {:?}", declared.expected_markers),
                 observed_summary: format!("body missing markers {missing:?}"),
             });
         }
@@ -390,10 +382,7 @@ async fn check_inline_check_exprs(pool: &PgPool) -> Result<Vec<StrictDrift>, App
         .fetch_all(pool)
         .await?;
 
-        let location = format!(
-            "{}.{}::{}",
-            declared.schema, declared.table, declared.label
-        );
+        let location = format!("{}.{}::{}", declared.schema, declared.table, declared.label);
 
         let any_match = definitions.iter().any(|def| {
             declared
@@ -496,7 +485,10 @@ async fn check_foreign_key_actions(pool: &PgPool) -> Result<Vec<StrictDrift>, Ap
         .fetch_all(pool)
         .await?;
 
-        let location = format!("{}.{} {}", declared.schema, declared.table, declared.fk_marker);
+        let location = format!(
+            "{}.{} {}",
+            declared.schema, declared.table, declared.fk_marker
+        );
 
         let Some(matching) = definitions
             .iter()
@@ -725,15 +717,15 @@ mod tests {
         // in operator-friendly output. Pin it so a refactor of the enum
         // names doesn't silently break consumer formatting.
         assert_eq!(format!("{}", DriftCategory::TriggerBody), "trigger_body");
-        assert_eq!(format!("{}", DriftCategory::ColumnDefault), "column_default");
+        assert_eq!(
+            format!("{}", DriftCategory::ColumnDefault),
+            "column_default"
+        );
         assert_eq!(
             format!("{}", DriftCategory::ForeignKeyAction),
             "foreign_key_action"
         );
-        assert_eq!(
-            format!("{}", DriftCategory::OrphanColumn),
-            "orphan_column"
-        );
+        assert_eq!(format!("{}", DriftCategory::OrphanColumn), "orphan_column");
     }
 
     #[test]

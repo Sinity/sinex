@@ -3,11 +3,11 @@
 //! Carved out of `adapter/mod.rs` as part of #697. Pure mechanical move; the
 //! methods, control flow, and instrumentation are unchanged.
 
+#[cfg(feature = "messaging")]
+use super::log_self_observation_failure;
 use super::{
     DERIVED_OUTPUT_PARENT_HARD_LIMIT, DERIVED_OUTPUT_PARENT_WARN_THRESHOLD, DerivedNodeAdapter,
 };
-#[cfg(feature = "messaging")]
-use super::log_self_observation_failure;
 
 use crate::derived_node::context::DerivedTriggerContext;
 use crate::derived_node::output::DerivedOutput;

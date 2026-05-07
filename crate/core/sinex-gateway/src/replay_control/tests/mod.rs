@@ -1,25 +1,25 @@
-use super::*;
 use super::execution::{ExpectedReplayOutputs, ReplayExecutionEngine};
 use super::server::ReplayControlServer;
 use super::validation::run_safety_analysis;
+use super::*;
 use async_nats::Client;
 use color_eyre::eyre::eyre;
 use futures::StreamExt;
+use serde_json::json;
+use sinex_db::DbPool;
 use sinex_db::replay::state_machine::ReplayState;
+use sinex_db::repositories::DbPoolExt;
+use sinex_db::repositories::state::Operation;
 use sinex_node_sdk::derived_node::invalidation::INVALIDATION_SUBJECT;
+use sinex_node_sdk::runtime::stream::ScanReport;
 use sinex_node_sdk::runtime::stream::{
     Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ResolvedReplayMaterial,
 };
 use sinex_primitives::environment::{SinexEnvironment, environment};
-use std::collections::HashMap;
-use std::sync::atomic::AtomicUsize;
-use serde_json::json;
-use sinex_db::DbPool;
-use sinex_db::repositories::DbPoolExt;
-use sinex_db::repositories::state::Operation;
-use sinex_node_sdk::runtime::stream::ScanReport;
 use sinex_primitives::events::{EventPayload, payloads::filesystem::FileCreatedPayload};
 use sinex_primitives::{DynamicPayload, Id, Uuid};
+use std::collections::HashMap;
+use std::sync::atomic::AtomicUsize;
 use tokio::time::sleep;
 use xtask::sandbox::{EnvGuard, sinex_test};
 
@@ -627,8 +627,7 @@ async fn replay_preview_surfaces_safety_analysis_failure(ctx: TestContext) -> Re
     Ok(())
 }
 
-
-mod execution_outcome;
-mod execution_failures;
 mod abort;
 mod bookkeeping;
+mod execution_failures;
+mod execution_outcome;

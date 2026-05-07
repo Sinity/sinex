@@ -1,10 +1,10 @@
-use crate::repositories::replay::ReplayRepository;
 use crate::repositories::DbPoolExt;
+use crate::repositories::replay::ReplayRepository;
 use serde::{Deserialize, Serialize};
+use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{NodeName, ReplayOutcome};
 use sinex_primitives::error::{Result, SinexError};
 use sinex_primitives::temporal;
-use sinex_primitives::Timestamp;
 use sqlx::postgres::types::PgRange;
 use sqlx::{PgPool, Postgres, Transaction};
 use std::collections::{HashMap, HashSet};
@@ -360,10 +360,7 @@ impl ReplayStateMachine {
         repo.acquire_creation_guard(&mut tx, &scope.node_id).await?;
 
         // Idempotency guard: reject if an active operation exists for this node.
-        if let Some(existing_id) = repo
-            .check_active_operation(&mut tx, &scope.node_id)
-            .await?
-        {
+        if let Some(existing_id) = repo.check_active_operation(&mut tx, &scope.node_id).await? {
             return Err(SinexError::invalid_state(
                 "A replay operation for this node is already active",
             )
@@ -440,11 +437,9 @@ impl ReplayStateMachine {
         let meta = decode_meta_json(Some(
             meta_val
                 .ok_or_else(|| {
-                    SinexError::processing(
-                        "Replay operation is missing preview_summary metadata",
-                    )
-                    .with_operation("load_replay_operation")
-                    .with_id("operation_id", operation_id.to_string())
+                    SinexError::processing("Replay operation is missing preview_summary metadata")
+                        .with_operation("load_replay_operation")
+                        .with_id("operation_id", operation_id.to_string())
                 })?
                 .clone(),
         ))?;
@@ -987,9 +982,8 @@ impl ReplayStateMachine {
     pub async fn acquire_execution_lock(
         &self,
         operation_id: Uuid,
-    ) -> Result<Option<
-        sinex_primitives::utils::ResourceGuard<crate::advisory_lock::AdvisoryLock>,
-    >> {
+    ) -> Result<Option<sinex_primitives::utils::ResourceGuard<crate::advisory_lock::AdvisoryLock>>>
+    {
         self.repo().try_acquire_execution_lock(operation_id).await
     }
 
@@ -1037,16 +1031,12 @@ impl ReplayStateMachine {
 
         let mut recovered = 0usize;
         for operation_id in stale_ids {
-            let mut tx = self
-                .pool
-                .begin()
-                .await
-                .map_err(|e| {
-                    SinexError::database("Failed to begin recovery transaction")
-                        .with_source(e.to_string())
-                        .with_id("operation_id", operation_id.to_string())
-                        .with_operation("recover_stale_executing")
-                })?;
+            let mut tx = self.pool.begin().await.map_err(|e| {
+                SinexError::database("Failed to begin recovery transaction")
+                    .with_source(e.to_string())
+                    .with_id("operation_id", operation_id.to_string())
+                    .with_operation("recover_stale_executing")
+            })?;
 
             let existing = match repo.fetch_meta_for_update(&mut tx, operation_id).await {
                 Ok(v) => v,
@@ -1107,15 +1097,8 @@ impl ReplayStateMachine {
             })?;
             let duration_ms = meta_duration_ms(&meta);
 
-            repo.update_operation_meta(
-                &mut tx,
-                operation_id,
-                meta_json,
-                status,
-                msg,
-                duration_ms,
-            )
-            .await?;
+            repo.update_operation_meta(&mut tx, operation_id, meta_json, status, msg, duration_ms)
+                .await?;
 
             tx.commit().await.map_err(|e| {
                 SinexError::database("Failed to commit recovery transaction")

@@ -1,7 +1,7 @@
-use sinex_primitives::domain::ServiceName;
 use sinex_db::DbPoolExt;
 use sinex_node_sdk::emit_heartbeat;
 use sinex_node_sdk::heartbeat::HeartbeatEmitter;
+use sinex_primitives::domain::ServiceName;
 use sinex_primitives::{
     Seconds, Uuid,
     domain::{NodeName, NodeType},
@@ -105,11 +105,13 @@ async fn heartbeat_emitter_persists_manifest_heartbeat(ctx: TestContext) -> Test
 #[sinex_test]
 async fn heartbeat_emitter_records_missing_db_heartbeat_rows(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
-    let emitter =
-        HeartbeatEmitter::new(ServiceName::new("missing-heartbeat-rows"), Seconds::from_secs(30))
-            .with_node_name(NodeName::new("missing-heartbeat-rows"))
-            .with_node_run_id(Uuid::now_v7())
-            .with_db_pool(pool.clone());
+    let emitter = HeartbeatEmitter::new(
+        ServiceName::new("missing-heartbeat-rows"),
+        Seconds::from_secs(30),
+    )
+    .with_node_name(NodeName::new("missing-heartbeat-rows"))
+    .with_node_run_id(Uuid::now_v7())
+    .with_db_pool(pool.clone());
 
     emitter.emit_heartbeat(None).await;
 

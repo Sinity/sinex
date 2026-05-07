@@ -155,11 +155,7 @@ where
                 .emit_gauge("derived.event_lag_p50_ms", p50, Some(labels.clone()))
                 .await
             {
-                log_self_observation_failure(
-                    self.node.name(),
-                    "derived.event_lag_p50_ms",
-                    &error,
-                );
+                log_self_observation_failure(self.node.name(), "derived.event_lag_p50_ms", &error);
             }
         }
         if let Some(p99) = self.lag_window.percentile(0.99) {
@@ -167,11 +163,7 @@ where
                 .emit_gauge("derived.event_lag_p99_ms", p99, Some(labels.clone()))
                 .await
             {
-                log_self_observation_failure(
-                    self.node.name(),
-                    "derived.event_lag_p99_ms",
-                    &error,
-                );
+                log_self_observation_failure(self.node.name(), "derived.event_lag_p99_ms", &error);
             }
         }
         if let Some(p99) = self.runtime_window.percentile(0.99) {
@@ -248,11 +240,7 @@ where
                 )
                 .await
             {
-                log_self_observation_failure(
-                    self.node.name(),
-                    "derived.batch_runtime_ms",
-                    &error,
-                );
+                log_self_observation_failure(self.node.name(), "derived.batch_runtime_ms", &error);
             }
         }
     }

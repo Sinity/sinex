@@ -558,12 +558,11 @@ async fn publish_confirmed_raw_event(
 
 #[cfg(feature = "messaging")]
 async fn node_run_status(pool: &sinex_db::DbPool, node_run_id: Uuid) -> TestResult<String> {
-    let status = sqlx::query_scalar::<_, String>(
-        "SELECT status::text FROM core.node_runs WHERE id = $1",
-    )
-    .bind(node_run_id)
-    .fetch_one(pool)
-    .await?;
+    let status =
+        sqlx::query_scalar::<_, String>("SELECT status::text FROM core.node_runs WHERE id = $1")
+            .bind(node_run_id)
+            .fetch_one(pool)
+            .await?;
     Ok(status)
 }
 

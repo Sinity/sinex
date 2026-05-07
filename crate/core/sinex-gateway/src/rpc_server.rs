@@ -2043,7 +2043,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn parse_cors_origin_values_keeps_valid_entries_and_rejects_invalid_ones() -> TestResult<()> {
+    async fn parse_cors_origin_values_keeps_valid_entries_and_rejects_invalid_ones()
+    -> TestResult<()> {
         let origins = parse_cors_origin_values(&[
             "http://localhost:3000".to_string(),
             "bad\norigin".to_string(),

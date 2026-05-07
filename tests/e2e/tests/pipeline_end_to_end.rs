@@ -2,6 +2,7 @@ use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_primitives::DynamicPayload;
 use sinex_primitives::query::{EventQuery, EventQueryResult, SortDirection};
+use std::collections::HashMap;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{DEFAULT_WAIT_SECS, WaitHelpers};
 
@@ -40,10 +41,26 @@ async fn pipeline_end_to_end(ctx: TestContext) -> TestResult<()> {
     let result = ctx.pool.events().query(query).await?;
     match result {
         EventQueryResult::Events { events: found, .. } => {
-            assert!(
-                found.len() >= events.len(),
-                "composable query should observe staged events"
+            assert_eq!(
+                found.len(),
+                events.len(),
+                "composable query should return exactly the staged events for the source"
             );
+            let expected_by_id: HashMap<_, _> =
+                event_ids.iter().copied().zip(events.iter()).collect();
+
+            for result in &found {
+                let id = result
+                    .event
+                    .id
+                    .ok_or_else(|| color_eyre::eyre::eyre!("query result event missing id"))?;
+                let expected_payload = expected_by_id
+                    .get(&id)
+                    .ok_or_else(|| color_eyre::eyre::eyre!("query returned unexpected id {id}"))?;
+                assert_eq!(result.event.source.as_str(), "integration-e2e");
+                assert_eq!(result.event.event_type.as_str(), "log.line");
+                assert_eq!(&result.event.payload, *expected_payload);
+            }
         }
         _ => panic!("expected Events result variant"),
     }

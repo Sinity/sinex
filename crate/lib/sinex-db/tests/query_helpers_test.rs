@@ -23,8 +23,8 @@ use xtask::sandbox::prelude::*;
 #[sinex_test]
 async fn retryable_deadlock_detected() -> TestResult<()> {
     // SQLSTATE 40P01 = deadlock_detected
-    let err = SinexError::database("query failed during deadlock")
-        .with_context("sqlstate", "40P01");
+    let err =
+        SinexError::database("query failed during deadlock").with_context("sqlstate", "40P01");
     assert!(is_retryable_db_error(&err));
     Ok(())
 }
@@ -41,8 +41,7 @@ async fn retryable_could_not_serialize_access() -> TestResult<()> {
 #[sinex_test]
 async fn retryable_transaction_rollback() -> TestResult<()> {
     // Class 40 — any 40xxx SQLSTATE is retryable
-    let err = SinexError::database("query failed")
-        .with_context("sqlstate", "40002"); // transaction_rollback / integrity violation
+    let err = SinexError::database("query failed").with_context("sqlstate", "40002"); // transaction_rollback / integrity violation
     assert!(is_retryable_db_error(&err));
     Ok(())
 }
@@ -76,8 +75,8 @@ async fn not_retryable_constraint_violation() -> TestResult<()> {
 #[sinex_test]
 async fn not_retryable_syntax_error() -> TestResult<()> {
     // SQLSTATE 42601 = syntax_error (class 42, not retryable)
-    let err = SinexError::database("syntax error at or near SELECT")
-        .with_context("sqlstate", "42601");
+    let err =
+        SinexError::database("syntax error at or near SELECT").with_context("sqlstate", "42601");
     assert!(!is_retryable_db_error(&err));
     Ok(())
 }

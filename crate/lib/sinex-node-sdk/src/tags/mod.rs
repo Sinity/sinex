@@ -115,17 +115,21 @@ pub fn is_valid_tag_name(name: &str) -> bool {
     if name.is_empty() || name.starts_with('.') || name.ends_with('.') {
         return false;
     }
-    name.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_')
+    name.chars()
+        .all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_')
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{sinex_test, TestResult};
+    use xtask::sandbox::{TestResult, sinex_test};
 
     #[sinex_test]
     async fn test_tag_name_construction() -> TestResult<()> {
-        assert_eq!(tag_name("sys.mime", "text-markdown"), "sys.mime.text-markdown");
+        assert_eq!(
+            tag_name("sys.mime", "text-markdown"),
+            "sys.mime.text-markdown"
+        );
         Ok(())
     }
 

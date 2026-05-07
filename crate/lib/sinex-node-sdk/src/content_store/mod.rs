@@ -25,7 +25,7 @@ pub mod gc;
 pub mod manager;
 pub mod path_validator;
 
-pub use cas_fsck::{CasFsckReport, CasFileStatus, CasStatus, check_cas, sweep_orphans_cas};
+pub use cas_fsck::{CasFileStatus, CasFsckReport, CasStatus, check_cas, sweep_orphans_cas};
 pub use manager::{BlobMetadata, ContentStoreManager};
 pub use path_validator::{VerifiedPath, create_secure_temp_path, validate_and_convert_path};
 
@@ -367,8 +367,9 @@ impl MaterialContentStore {
 
         if config.legacy_annex_enabled {
             // Verify git-annex is available
-            which::which("git-annex")
-                .map_err(|e| SinexError::processing("git-annex not found in PATH").with_source(e))?;
+            which::which("git-annex").map_err(|e| {
+                SinexError::processing("git-annex not found in PATH").with_source(e)
+            })?;
 
             let git_dir = config.root_path.join(".git");
             if !git_dir.exists() {
@@ -379,10 +380,8 @@ impl MaterialContentStore {
 
                 let mut git_cmd = Command::new("git");
                 git_cmd.arg("init").current_dir(&config.root_path);
-                let git_output = run_command_blocking(
-                    git_cmd,
-                    "Failed to run git init for content-store root",
-                )?;
+                let git_output =
+                    run_command_blocking(git_cmd, "Failed to run git init for content-store root")?;
                 if !git_output.status.success() {
                     return Err(SinexError::processing(format!(
                         "git init failed for content-store root: {}",
@@ -594,7 +593,8 @@ impl MaterialContentStore {
         if let Some(path) = self.path_if_local(key)? {
             return Err(SinexError::processing(format!(
                 "resolve_annex_content_path is for legacy annex keys, but got local CAS key: {key}"
-            )).with_context("local_cas_path", path.to_string()));
+            ))
+            .with_context("local_cas_path", path.to_string()));
         }
         if !self.config.legacy_annex_enabled {
             return Err(SinexError::processing(
@@ -1014,30 +1014,37 @@ impl MaterialContentStore {
                 .await
                 .map_err(SinexError::io)?;
             while let Some(sub_entry) = inner.next_entry().await.map_err(SinexError::io)? {
-                if !sub_entry.file_type().await.map_err(SinexError::io)?.is_dir() {
+                if !sub_entry
+                    .file_type()
+                    .await
+                    .map_err(SinexError::io)?
+                    .is_dir()
+                {
                     continue;
                 }
-                let mut hash_dir =
-                    tokio::fs::read_dir(sub_entry.path()).await.map_err(SinexError::io)?;
-                while let Some(hash_entry) =
-                    hash_dir.next_entry().await.map_err(SinexError::io)?
-                {
+                let mut hash_dir = tokio::fs::read_dir(sub_entry.path())
+                    .await
+                    .map_err(SinexError::io)?;
+                while let Some(hash_entry) = hash_dir.next_entry().await.map_err(SinexError::io)? {
                     let path = hash_entry.path();
-                    if !hash_entry.file_type().await.map_err(SinexError::io)?.is_file() {
+                    if !hash_entry
+                        .file_type()
+                        .await
+                        .map_err(SinexError::io)?
+                        .is_file()
+                    {
                         continue;
                     }
-                    let metadata =
-                        tokio::fs::metadata(&path).await.map_err(SinexError::io)?;
-                    let path_utf8 = Utf8PathBuf::from_path_buf(path.clone())
-                        .map_err(|p| SinexError::processing(format!(
+                    let metadata = tokio::fs::metadata(&path).await.map_err(SinexError::io)?;
+                    let path_utf8 = Utf8PathBuf::from_path_buf(path.clone()).map_err(|p| {
+                        SinexError::processing(format!(
                             "non-UTF-8 path in CAS tree: {}",
                             p.display()
-                        )))?;
-                    let hash_str = path_utf8
-                        .file_name()
-                        .ok_or_else(|| SinexError::processing(format!(
-                            "CAS path has no filename: {path_utf8}"
-                        )))?;
+                        ))
+                    })?;
+                    let hash_str = path_utf8.file_name().ok_or_else(|| {
+                        SinexError::processing(format!("CAS path has no filename: {path_utf8}"))
+                    })?;
                     entries.push((hash_str.to_string(), path_utf8, metadata.len()));
                 }
             }
@@ -1063,7 +1070,12 @@ impl MaterialContentStore {
         if !entries.is_empty() {
             out.push_str(&format!(
                 "  Largest file: {} bytes ({})\n",
-                entries.iter().map(|(_, _, s)| s).max().copied().unwrap_or(0),
+                entries
+                    .iter()
+                    .map(|(_, _, s)| s)
+                    .max()
+                    .copied()
+                    .unwrap_or(0),
                 entries
                     .iter()
                     .max_by_key(|(_, _, s)| s)

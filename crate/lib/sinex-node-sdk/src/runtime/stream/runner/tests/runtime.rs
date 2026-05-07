@@ -69,11 +69,10 @@ async fn run_service_drain_finishes_inflight_automaton_batch_and_emits_completio
 
     release_processing.notify_one();
 
-    let drain_complete =
-        tokio::time::timeout(Duration::from_secs(3), drain_complete_sub.next())
-            .await
-            .map_err(|_| color_eyre::eyre::eyre!("automaton drain_complete was not published"))?
-            .ok_or_else(|| color_eyre::eyre::eyre!("drain_complete subscription closed"))?;
+    let drain_complete = tokio::time::timeout(Duration::from_secs(3), drain_complete_sub.next())
+        .await
+        .map_err(|_| color_eyre::eyre::eyre!("automaton drain_complete was not published"))?
+        .ok_or_else(|| color_eyre::eyre::eyre!("drain_complete subscription closed"))?;
     let payload: NodeDrainComplete = serde_json::from_slice(&drain_complete.payload)?;
 
     let run_result = tokio::time::timeout(Duration::from_secs(3), run_handle)
@@ -147,8 +146,7 @@ async fn acquire_leader_standby_waits_for_existing_leader_release(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let transport =
-        EventTransport::Nats(Arc::new(crate::NatsPublisher::new(ctx.nats_client())));
+    let transport = EventTransport::Nats(Arc::new(crate::NatsPublisher::new(ctx.nats_client())));
     let mut runner = NodeRunner::new(RuntimeTestNode);
     runner
         .initialize_with_transport(
@@ -210,9 +208,8 @@ async fn shutdown_join_result_rejects_panicked_tasks() -> TestResult<()> {
         panic!("runtime panic");
     });
 
-    let error =
-        NodeRunner::<RuntimeTestNode>::shutdown_join_result("runtime-task", handle.await)
-            .expect_err("panicked runtime tasks must fail shutdown honestly");
+    let error = NodeRunner::<RuntimeTestNode>::shutdown_join_result("runtime-task", handle.await)
+        .expect_err("panicked runtime tasks must fail shutdown honestly");
     let message = format!("{error:#}");
     assert!(message.contains("Task failed during shutdown"));
     assert!(message.contains("runtime-task"));
@@ -374,8 +371,7 @@ async fn shutdown_task_waits_for_watch_signalled_exit() -> TestResult<()> {
     });
 
     let mut task = Some(task);
-    NodeRunner::<RuntimeTestNode>::shutdown_task(&mut task, Some(shutdown_tx), "listener")
-        .await?;
+    NodeRunner::<RuntimeTestNode>::shutdown_task(&mut task, Some(shutdown_tx), "listener").await?;
 
     assert!(finished.load(Ordering::SeqCst));
     assert!(task.is_none());

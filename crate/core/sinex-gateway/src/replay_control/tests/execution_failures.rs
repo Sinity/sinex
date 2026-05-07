@@ -1,4 +1,5 @@
-#[allow(unused_imports)] use super::*;
+#[allow(unused_imports)]
+use super::*;
 #[sinex_test]
 async fn replay_execution_fails_when_outputs_never_become_query_visible(
     ctx: TestContext,
@@ -86,9 +87,9 @@ async fn replay_execution_fails_when_outputs_never_become_query_visible(
     assert_eq!(live_target_count, 0);
     assert_eq!(archived_target_count, 1);
 
-    let dispatched_command = scan_command_rx.await.map_err(|_| {
-        eyre!("fake visibility-timeout-test node did not receive a scan command")
-    })?;
+    let dispatched_command = scan_command_rx
+        .await
+        .map_err(|_| eyre!("fake visibility-timeout-test node did not receive a scan command"))?;
     assert_eq!(dispatched_command.operation_id, planned.operation_id);
 
     scan_handle
@@ -99,9 +100,7 @@ async fn replay_execution_fails_when_outputs_never_become_query_visible(
 }
 
 #[sinex_test]
-async fn replay_execution_fails_when_node_never_reports_completion(
-    ctx: TestContext,
-) -> Result<()> {
+async fn replay_execution_fails_when_node_never_reports_completion(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().dedicated().await?;
 
     let material_id = ctx.create_source_material(Some("replay-timeout")).await?;
@@ -229,14 +228,9 @@ async fn replay_execution_fails_fast_when_progress_checkpoint_persist_fails(
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
     let env = environment();
-    let (_scan_command_rx, scan_handle) = spawn_fake_scan_node_with_progress(
-        nats_client.clone(),
-        env,
-        "checkpoint-fail-test",
-        1,
-        0,
-    )
-    .await?;
+    let (_scan_command_rx, scan_handle) =
+        spawn_fake_scan_node_with_progress(nats_client.clone(), env, "checkpoint-fail-test", 1, 0)
+            .await?;
 
     let mut scope = sample_scope();
     scope.node_id = "checkpoint-fail-test".to_string();
@@ -312,9 +306,7 @@ async fn replay_execution_fails_fast_when_progress_checkpoint_persist_fails(
 }
 
 #[sinex_test]
-async fn replay_execution_fails_when_replacement_recording_fails(
-    ctx: TestContext,
-) -> Result<()> {
+async fn replay_execution_fails_when_replacement_recording_fails(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().dedicated().await?;
 
     let material_id = ctx
@@ -688,8 +680,7 @@ async fn replay_execution_restores_cascade_when_initial_scope_invalidation_publi
         .approve(planned.operation_id, "admin:approver".into())
         .await?;
 
-    let mut invalidation_rx =
-        spawn_invalidation_listener_for_test(&ctx.nats_client()).await?;
+    let mut invalidation_rx = spawn_invalidation_listener_for_test(&ctx.nats_client()).await?;
 
     let executor = ReplayExecutionEngine::new(replay.clone(), ctx.nats_client())
         .with_scope_invalidation_publish_failures(Arc::new(AtomicUsize::new(1)));
@@ -749,4 +740,3 @@ async fn replay_execution_restores_cascade_when_initial_scope_invalidation_publi
 
     Ok(())
 }
-
