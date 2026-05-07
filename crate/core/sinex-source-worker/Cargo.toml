@@ -1,0 +1,92 @@
+[[bin]]
+name = "sinex-source-worker"
+path = "src/main.rs"
+
+[package]
+name = "sinex-source-worker"
+
+[package.version]
+workspace = true
+
+[package.edition]
+workspace = true
+
+[package.authors]
+workspace = true
+
+[package.repository]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dependencies]
+human-panic = "2.0"
+
+[dependencies.mimalloc]
+workspace = true
+
+[dependencies.tokio]
+workspace = true
+features = [
+    "full",
+]
+
+[dependencies.tracing]
+workspace = true
+
+[dependencies.tracing-subscriber]
+workspace = true
+
+[dependencies.clap]
+workspace = true
+features = [
+    "derive",
+    "env",
+]
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.camino]
+workspace = true
+
+[dependencies.time]
+workspace = true
+
+[dependencies.uuid]
+workspace = true
+
+[dependencies.sqlx]
+workspace = true
+
+[dependencies.async-nats]
+workspace = true
+
+[dependencies.sinex-node-sdk]
+path = "../../lib/sinex-node-sdk"
+
+[dependencies.sinex-primitives]
+path = "../../lib/sinex-primitives"
+
+[dev-dependencies.xtask]
+path = "../../../xtask"
+
+[dev-dependencies.sinex-primitives]
+path = "../../lib/sinex-primitives"
+features = [
+    "testing",
+]
+
+[features]
+tokio-console = ["dep:console-subscriber"]
+
+[dependencies.console-subscriber]
+workspace = true
+optional = true
+
+[lints]
+workspace = true
