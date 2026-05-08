@@ -682,7 +682,13 @@ pub async fn run_cli() -> Result<()> {
                         // Critical for FIFO queue: handle_completion may have
                         // left remaining items in the state file with sentinel values.
                         if let Some(pid) = job.pid {
-                            if let Err(error) = coord.update_state(&queued_command, job.id, pid) {
+                            let start_ticks =
+                                crate::process::read_proc_sample(pid)
+                                    .map(|s| s.start_ticks)
+                                    .unwrap_or(0);
+                            if let Err(error) =
+                                coord.update_state(&queued_command, job.id, pid, start_ticks)
+                            {
                                 eprintln!(
                                     "⚠️  Failed to update queued {queued_command} coordinator state for job {}: {error}",
                                     job.id

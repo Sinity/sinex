@@ -242,11 +242,11 @@ pub struct InvocationResourceMetrics {
 
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone)]
-struct ProcSample {
-    ppid: u32,
-    start_ticks: u64,
-    total_cpu_ticks: u64,
-    rss_pages: u64,
+pub(crate) struct ProcSample {
+    pub(crate) ppid: u32,
+    pub(crate) start_ticks: u64,
+    pub(crate) total_cpu_ticks: u64,
+    pub(crate) rss_pages: u64,
 }
 
 #[cfg(target_os = "linux")]
@@ -424,7 +424,7 @@ fn resolve_cgroup_dir(
 }
 
 #[cfg(target_os = "linux")]
-fn read_proc_sample(pid: u32) -> Option<ProcSample> {
+pub(crate) fn read_proc_sample(pid: u32) -> Option<ProcSample> {
     let path = format!("/proc/{pid}/stat");
     let stat = std::fs::read_to_string(path).ok()?;
     parse_proc_stat(&stat)

@@ -54,12 +54,17 @@ pub enum CoordinationResult {
 }
 
 /// Persisted coordination state for a command class.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CoordinationState {
     #[serde(default)]
     pub command: String,
     pub job_id: i64,
     pub pid: u32,
+    /// `/proc/{pid}/stat` start_ticks at spawn time. Used to detect PID reuse
+    /// before sending signals — if the current process at this PID has different
+    /// start_ticks, it is an unrelated process and must not be killed.
+    #[serde(default)]
+    pub process_start_ticks: u64,
     pub is_foreground: bool,
     #[serde(default)]
     pub tree_fingerprint: String,
@@ -415,7 +420,7 @@ impl JobCoordinator {
             } else {
                 // Cancel stale bg job and start fresh
                 let old_job_id = state.job_id;
-                cancel_process(state.pid);
+                cancel_process(state.pid, state.process_start_ticks);
                 mark_cancelled(old_job_id)?;
                 remove_state_file(
                     state_path,
@@ -532,6 +537,7 @@ impl JobCoordinator {
             command: command.to_string(),
             job_id: -1, // Sentinel: "pending spawn" — updated by caller via update_state()
             pid: 0,     // Sentinel: "not yet spawned" — updated by caller via update_state()
+            process_start_ticks: 0, // Sentinel: captured by update_coordinator_state after spawn
             is_foreground,
             tree_fingerprint: tree_fingerprint.to_string(),
             scope_key: scope_key.to_string(),
@@ -574,7 +580,13 @@ impl JobCoordinator {
     ///
     /// Preserves the queue — this is critical for FIFO queue correctness when
     /// `handle_completion()` left remaining items in the state file.
-    pub fn update_state(&self, command: &str, job_id: i64, pid: u32) -> Result<()> {
+    pub fn update_state(
+        &self,
+        command: &str,
+        job_id: i64,
+        pid: u32,
+        start_ticks: u64,
+    ) -> Result<()> {
         let lock_path = self.lock_path_for(command);
         let state_path = self.state_path_for(command);
 
@@ -589,6 +601,7 @@ impl JobCoordinator {
         if let Some(mut state) = read_state(&state_path)? {
             state.job_id = job_id;
             state.pid = pid;
+            state.process_start_ticks = start_ticks;
             write_state(&state_path, &state)?;
         } else {
             // Another process may have completed and cleaned up the state in the reserve→spawn
@@ -951,6 +964,23 @@ fn state_file_is_recent(path: &std::path::Path) -> bool {
         .is_ok_and(|t| t.elapsed().is_ok_and(|e| e.as_secs() < 5))
 }
 
+/// Check if a process at `pid` is the same one we spawned, by comparing
+/// `/proc/{pid}/stat` start_ticks. Returns true if:
+/// - expected_start_ticks is 0 (sentinel: not captured — skip validation), or
+/// - `/proc/{pid}/stat` reads successfully and start_ticks match.
+///
+/// Returns false if the process at this PID has different start_ticks
+/// (PID was reused by an unrelated process since we captured the state).
+fn process_identity_valid(pid: u32, expected_start_ticks: u64) -> bool {
+    if expected_start_ticks == 0 {
+        return true; // Sentinel: start_ticks not captured (pre-existing state)
+    }
+    match crate::process::read_proc_sample(pid) {
+        Some(sample) => sample.start_ticks == expected_start_ticks,
+        None => true, // Process is gone — nothing to kill
+    }
+}
+
 /// Check if a process is still alive via `kill(pid, 0)`.
 ///
 /// Returns false for sentinel PID 0 (not yet spawned).
@@ -961,15 +991,32 @@ fn is_process_alive(pid: u32) -> bool {
     unsafe { libc::kill(pid as i32, 0) == 0 }
 }
 
-/// Cancel a process and its children: SIGTERM → wait 5s → SIGKILL.
+/// Cancel a process and its children: validate PID identity → SIGTERM →
+/// wait 5s → SIGKILL.
+///
+/// If `expected_start_ticks` is non-zero, the function validates that the
+/// current process at `pid` has matching start_ticks before sending signals.
+/// If the PID was reused by an unrelated process, the function skips the
+/// kill and logs a warning — the stale job is still marked cancelled.
 ///
 /// Sends signals to the process group (negative PID) so that child processes
 /// (e.g., rustc, nextest) spawned by the background cargo process are also
 /// terminated. If process group kill fails (ESRCH), falls back to single-PID kill.
-fn cancel_process(pid: u32) {
+fn cancel_process(pid: u32, expected_start_ticks: u64) {
     let pid = pid as i32;
     if pid == 0 {
         return; // Sentinel PID — nothing to cancel
+    }
+
+    // Validate that the process at this PID is still ours.
+    if expected_start_ticks != 0 && !process_identity_valid(pid as u32, expected_start_ticks) {
+        tracing::warn!(
+            pid = pid,
+            expected_start_ticks = expected_start_ticks,
+            "Stale coordinator state: PID {pid} no longer belongs to the original process \
+             (PID was reused). Skipping signal delivery; the stale job will be marked cancelled."
+        );
+        return;
     }
 
     // Try process group first (-pid), fall back to single process
@@ -1214,7 +1261,15 @@ pub fn update_coordinator_state(command: &str, bg_result: &CommandResult) -> Res
     let coordinator = JobCoordinator::new()
         .with_context(|| format!("failed to initialize coordinator while recording `{command}`"))?;
 
-    if let Err(error) = coordinator.update_state(command, job_id, pid as u32) {
+    // Capture process start_ticks for PID reuse detection. If the process has
+    // already exited by the time we read /proc/{pid}/stat, store 0 (sentinel:
+    // "unknown") — the coordinator will treat any non-zero process at this PID
+    // as a mismatch and refuse to send signals.
+    let start_ticks = crate::process::read_proc_sample(pid as u32)
+        .map(|s| s.start_ticks)
+        .unwrap_or(0);
+
+    if let Err(error) = coordinator.update_state(command, job_id, pid as u32, start_ticks) {
         let cleared = clear_pending(
             Some(&coordinator),
             "failed to clear pending coordinator state after spawn recording failure",
@@ -1700,6 +1755,7 @@ mod tests {
             command: "check".into(),
             job_id: 42,
             pid: 1234,
+            process_start_ticks: 0,
             is_foreground: false,
             tree_fingerprint: "abc123".into(),
             scope_key: "def456".into(),
@@ -1767,6 +1823,7 @@ mod tests {
             command: "check".into(),
             job_id: 1,
             pid: 100,
+            process_start_ticks: 0,
             is_foreground: false,
             tree_fingerprint: "fp1".into(),
             scope_key: "sk1".into(),
@@ -1834,6 +1891,7 @@ mod tests {
                 command: "check".into(),
                 job_id: 41,
                 pid: 4242,
+                process_start_ticks: 0,
                 is_foreground: false,
                 tree_fingerprint: "running-fp".into(),
                 scope_key: "running-scope".into(),
@@ -1896,6 +1954,7 @@ mod tests {
                 command: "check".into(),
                 job_id: 52,
                 pid: 5252,
+                process_start_ticks: 0,
                 is_foreground: false,
                 tree_fingerprint: "running-fp".into(),
                 scope_key: "running-scope".into(),
@@ -1931,7 +1990,7 @@ mod tests {
         assert_eq!(pending.scope_key, "queued-scope-final");
         assert!(pending.queue.is_empty());
 
-        coordinator.update_state("check", 77, 7777)?;
+        coordinator.update_state("check", 77, 7777, 0)?;
 
         let running = coordinator
             .state("check")?
@@ -1958,6 +2017,7 @@ mod tests {
             command: "check".into(),
             job_id: 77,
             pid: std::process::id(),
+            process_start_ticks: 0,
             is_foreground: false,
             tree_fingerprint: "running-fp".into(),
             scope_key: "running-scope".into(),
@@ -2111,6 +2171,7 @@ mod tests {
             command: "check".into(),
             job_id: 42,
             pid: 1234,
+            process_start_ticks: 0,
             is_foreground: true,
             tree_fingerprint: "abc".into(),
             scope_key: "def".into(),
@@ -2159,6 +2220,7 @@ mod tests {
                 command: "check".into(),
                 job_id: -1,
                 pid: 0,
+                process_start_ticks: 0,
                 is_foreground: false,
                 tree_fingerprint: "old".into(),
                 scope_key: "scope".into(),
@@ -2186,6 +2248,7 @@ mod tests {
                 command: "check".into(),
                 job_id: 41,
                 pid: 4242,
+                process_start_ticks: 0,
                 is_foreground: false,
                 tree_fingerprint: "old".into(),
                 scope_key: "scope".into(),
@@ -2214,6 +2277,7 @@ mod tests {
                 command: "check".into(),
                 job_id: -1,
                 pid: 0,
+                process_start_ticks: 0,
                 is_foreground: false,
                 tree_fingerprint: "old".into(),
                 scope_key: "scope".into(),
@@ -2324,6 +2388,7 @@ mod tests {
                 command: "check".into(),
                 job_id: 41,
                 pid: 999_999_999,
+                process_start_ticks: 0,
                 is_foreground: false,
                 tree_fingerprint: "old".into(),
                 scope_key: "old".into(),
@@ -2353,8 +2418,143 @@ mod tests {
 
     #[sinex_test]
     async fn test_cancel_process_sentinel_noop() -> TestResult<()> {
-        // cancel_process(0) should be a no-op (sentinel PID)
-        cancel_process(0); // Should not panic
+        // cancel_process(0, _) should be a no-op (sentinel PID)
+        cancel_process(0, 0); // Should not panic
+        Ok(())
+    }
+
+    // PID reuse detection tests (#1141)
+    //
+    // These tests validate that cancel_process does not kill unrelated processes
+    // whose PID matches a stale coordinator state. The kernel recycles PIDs, and
+    // `kill(pid, 0)` alone cannot distinguish "our process" from "a new process
+    // that got the same PID."
+
+    #[sinex_test]
+    async fn test_cancel_process_skips_wrong_start_ticks() -> TestResult<()> {
+        // Spawn an innocent long-running process.
+        let mut child = std::process::Command::new("sleep")
+            .arg("10")
+            .spawn()?;
+        let pid = child.id();
+
+        // Read its actual start_ticks from /proc.
+        let actual = crate::process::read_proc_sample(pid)
+            .expect("should be able to read /proc/{pid}/stat for spawned child");
+        let wrong_ticks = actual.start_ticks.wrapping_add(1000);
+
+        // Call cancel_process with WRONG start_ticks — must NOT kill.
+        cancel_process(pid, wrong_ticks);
+
+        // The sleep process must still be alive.
+        assert!(
+            is_process_alive(pid),
+            "cancel_process with wrong start_ticks must not kill the process \
+             (PID reuse protection failed — innocent process was killed)"
+        );
+
+        // Now call cancel_process with CORRECT start_ticks — should kill.
+        cancel_process(pid, actual.start_ticks);
+
+        // Reap the zombie — kill(pid, 0) returns success for zombies that
+        // haven't been waited on, so is_process_alive would be a false positive.
+        let _ = child.wait();
+
+        assert!(
+            !is_process_alive(pid),
+            "cancel_process with correct start_ticks should kill the process"
+        );
+
+        let _ = child.kill();
+        let _ = child.wait();
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_cancel_process_with_sentinel_start_ticks_does_kill() -> TestResult<()> {
+        // start_ticks=0 is the sentinel: "not captured, pre-existing state."
+        // In this case cancel_process must still deliver signals (backward
+        // compatible with state files written before the #1141 fix).
+        let mut child = std::process::Command::new("sleep")
+            .arg("10")
+            .spawn()?;
+        let pid = child.id();
+
+        cancel_process(pid, 0);
+
+        // Reap before checking — zombies register as alive via kill(pid, 0).
+        let _ = child.wait();
+        assert!(
+            !is_process_alive(pid),
+            "cancel_process with sentinel start_ticks=0 must still deliver signals \
+             (backward compatibility with pre-#1141 state files)"
+        );
+
+        let _ = child.kill();
+        let _ = child.wait();
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_process_identity_valid_rejects_stolen_pid() -> TestResult<()> {
+        let mut child = std::process::Command::new("sleep")
+            .arg("10")
+            .spawn()?;
+        let pid = child.id();
+        let actual = crate::process::read_proc_sample(pid).unwrap();
+
+        // A real process with matching start_ticks should validate.
+        assert!(
+            process_identity_valid(pid, actual.start_ticks),
+            "same start_ticks should validate"
+        );
+
+        // Wrong start_ticks should be rejected.
+        assert!(
+            !process_identity_valid(pid, actual.start_ticks.wrapping_add(500)),
+            "different start_ticks should not validate (PID reused)"
+        );
+
+        // Sentinel 0 should pass through.
+        assert!(
+            process_identity_valid(pid, 0),
+            "sentinel start_ticks=0 should validate (backward compat)"
+        );
+
+        let _ = child.kill();
+        let _ = child.wait();
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_coordination_state_serializes_process_start_ticks() -> TestResult<()> {
+        // Verify the new field serializes and deserializes correctly,
+        // including backward-compatible reading of old state files.
+        let state = CoordinationState {
+            command: "check".to_string(),
+            job_id: 42,
+            pid: 12345,
+            process_start_ticks: 9876543210,
+            is_foreground: false,
+            tree_fingerprint: "fp".to_string(),
+            scope_key: "scope".to_string(),
+            started_at: "now".to_string(),
+            args: vec![],
+            queue: vec![],
+        };
+
+        let json = serde_json::to_string(&state)?;
+        let roundtripped: CoordinationState = serde_json::from_str(&json)?;
+        assert_eq!(roundtripped.process_start_ticks, 9876543210);
+
+        // Old state files (without process_start_ticks) must deserialize as 0.
+        let old_json = r#"{"command":"check","job_id":1,"pid":999,"is_foreground":false,"tree_fingerprint":"fp","scope_key":"scope","started_at":"t","args":[],"queue":[]}"#;
+        let old_state: CoordinationState = serde_json::from_str(old_json)?;
+        assert_eq!(
+            old_state.process_start_ticks, 0,
+            "old state files without process_start_ticks must deserialize as 0"
+        );
+
         Ok(())
     }
 
