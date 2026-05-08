@@ -395,7 +395,7 @@ impl IngestService {
 
         // Register a run for ingestd and start periodic heartbeat
         if let Some(ref pool) = self.db_pool {
-            let host = hostname();
+            let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".to_string());
             match pool.state().start_run(None, "sinex-ingestd", "default", &host).await {
                 Ok(_) => info!("Started ingestd run"),
                 Err(e) => warn!(%e, "Failed to start ingestd run"),

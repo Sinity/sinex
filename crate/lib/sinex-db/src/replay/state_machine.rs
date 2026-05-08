@@ -110,6 +110,17 @@ pub struct ReplayScope {
     /// Additional filters as JSON
     #[serde(default)]
     pub filters: HashMap<String, serde_json::Value>,
+    /// ── Staged-source replay (#1060) ───────────────────────────────
+    /// Source to replay material through (e.g. "weechat-log", "fs-watcher").
+    /// When set, routes execution through source-worker instead of legacy node scan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    /// Replay only this specific source material by UUID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_material_id: Option<Uuid>,
+    /// Constrain source semantics version (defaults to latest).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_version: Option<String>,
 }
 
 /// Normalized replay scope filters shared by preview and execute paths.
@@ -117,9 +128,20 @@ pub struct ReplayScope {
 pub struct ReplayScopeFilters {
     pub material_ids: Option<Vec<Uuid>>,
     pub event_types: Option<Vec<String>>,
+    /// Staged-source context carried through to normalized filters.
+    pub source_id: Option<String>,
+    pub source_material_id: Option<Uuid>,
+    pub source_version: Option<String>,
 }
 
 impl ReplayScope {
+    /// Returns `true` when the scope targets the staged-source architecture
+    /// (source identity or specific material). Replay planning uses this to
+    /// decide between source-worker and legacy node-scan execution.
+    pub fn is_staged_source_scope(&self) -> bool {
+        self.source_id.is_some() || self.source_material_id.is_some() || self.source_version.is_some()
+    }
+
     pub fn validate(&self) -> Result<()> {
         if let Some((start, end)) = self.time_window {
             sinex_primitives::validation::query_validation::validate_time_range(
@@ -172,6 +194,9 @@ impl ReplayScope {
         ReplayScopeFilters {
             material_ids,
             event_types,
+            source_id: self.source_id.clone(),
+            source_material_id: self.source_material_id,
+            source_version: self.source_version.clone(),
         }
     }
 

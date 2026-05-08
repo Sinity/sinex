@@ -571,7 +571,7 @@ async fn node_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Test
             ended_at as "ended_at: sinex_primitives::temporal::Timestamp",
             effective_config_hash,
             effective_config
-        FROM core.source_runs
+        FROM core.runs
         WHERE id = $1::uuid
         "#,
         run.id.as_uuid()
@@ -629,7 +629,7 @@ async fn node_run_heartbeat_does_not_revive_terminal_runs(ctx: TestContext) -> T
         SELECT
             status,
             ended_at as "ended_at: sinex_primitives::temporal::Timestamp"
-        FROM core.source_runs
+        FROM core.runs
         WHERE id = $1::uuid
         "#,
         run.id.as_uuid()
