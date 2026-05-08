@@ -18,7 +18,6 @@ These are the commands worth remembering for day-to-day code changes.
 - `xtask check`: Run the fast workspace verification pipeline. Use when you changed Rust code and want the default fast correctness pass. Common forms: `xtask check`; `xtask check --lint`; `xtask check --full`.
 - `xtask fix`: Apply automatic fixes across workspace packages. Use when formatting or clippy fixes are mechanical and you want the repo-approved autofix pass first. Common forms: `xtask fix`; `xtask fix --check`.
 - `xtask test`: Run the repo's primary nextest-backed test workflows. Use when you need package tests, a targeted filter, or the normal preflight-aware local test loop. Common forms: `xtask test`; `xtask test -p sinex-primitives`; `xtask test --debug -E 'test(name)'`; `xtask test -p sinex-e2e-tests -E 'test(test_batch_large_payloads)'`; `xtask test --heavy`. Notes: Simple test(name) filters infer matching integration-test binaries automatically; use --test only when inference is too ambiguous. Do not use bare cargo test or bare cargo nextest when xtask already exposes the surface you need.
-- `xtask work`: Execute the minimum workflow sequence to reach a target state. Use when you want the standard end-to-end local validation path. Common forms: `xtask work`.
 - `xtask build`: Build workspace packages while capturing compiler diagnostics. Use when you need binaries or build artifacts. Common forms: `xtask build`; `xtask build -p sinex-gateway`.
 
 ## Runtime & Infra

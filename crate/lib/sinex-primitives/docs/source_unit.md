@@ -121,8 +121,7 @@ explicit follow-ups:
 
 - *Cross-reference verification (xtask warnings on missing
   descriptors):* superseded by the proof-catalog/source-unit validation
-  work (#1129/#1099); this belongs in live checks, not a phantom
-  issue-drift command.
+  work (#1129/#1099).
 - *Backfill remaining ingestors:* mechanical follow-up; one PR per
   ingestor crate.
 - *CLAUDE.md / CONTRIBUTING references the descriptor as the promotion
