@@ -28,8 +28,10 @@ async fn test_generic_id_uuid_roundtrip_preserves_phantom_type(ctx: TestContext)
     let event_id = Id::<Event>::new();
     let checkpoint_id = Id::<TestCheckpoint>::new();
 
-    // Compile-fail type isolation is covered by id_type_system_test.rs.
-    // This runtime test only covers roundtripping through the raw UUID form.
+    // Compile-time type isolation is proven by `id_type_system_test.rs` which
+    // uses trybuild to verify `Id<A> = Id<B>` is rejected at compile time.
+    // This runtime test covers the complementary invariant: raw-UUID roundtrip
+    // preserves identity and phantom types can be reconstructed correctly.
     let event_uuid: Uuid = event_id.into();
     let checkpoint_uuid: Uuid = checkpoint_id.into();
 
