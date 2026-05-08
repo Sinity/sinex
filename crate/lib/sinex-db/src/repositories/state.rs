@@ -772,6 +772,7 @@ impl StateRepository<'_> {
     /// If a run is already active for this service, it is returned instead.
     pub async fn start_run(
         &self,
+        manifest_id: Option<i32>,
         service_name: &str,
         instance_id: &str,
         host: &str,
@@ -779,11 +780,12 @@ impl StateRepository<'_> {
         sqlx::query_as!(
             NodeRun,
             r#"
-            INSERT INTO core.runs (service_name, instance_id, host, started_at, status)
-            VALUES ($1, $2, $3, now(), 'running')
+            INSERT INTO core.runs (manifest_id, service_name, instance_id, host, started_at, status)
+            VALUES ($1, $2, $3, $4, now(), 'running')
             ON CONFLICT DO NOTHING
             RETURNING
                 id as "id: _",
+                manifest_id as "manifest_id?: i32",
                 service_name,
                 instance_id,
                 host,
@@ -794,6 +796,7 @@ impl StateRepository<'_> {
                 effective_config_hash,
                 effective_config as "effective_config: _"
             "#,
+            manifest_id,
             service_name,
             instance_id,
             host,
@@ -805,8 +808,6 @@ impl StateRepository<'_> {
             "start_run: ON CONFLICT DO NOTHING returned no row"
         ))
     }
-        .map_err(|e| db_error(e, "register node"))
-    }
 
     /// Get all nodes in the manifest
     pub async fn get_all_nodes(&self) -> DbResult<Vec<NodeManifest>> {
@@ -814,18 +815,25 @@ impl StateRepository<'_> {
             NodeManifest,
             r#"
             SELECT
-                id,
-                node_name,
-                node_type,
-                version,
-                description,
-                anchor_rule_version,
-                config_schema,
-                created_at as "created_at!: sinex_primitives::temporal::Timestamp",
-                status,
-                last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
-            FROM core.node_manifests
-            ORDER BY node_name, version
+                m.id,
+                m.name as "node_name!: NodeName",
+                m.manifest_type::text as "node_type!: NodeType",
+                m.version,
+                m.description,
+                NULL::int4 as "anchor_rule_version?: i32",
+                NULL::jsonb as "config_schema?: JsonValue",
+                m.created_at as "created_at!: sinex_primitives::temporal::Timestamp",
+                COALESCE(lr.status, 'unknown') as "status!",
+                lr.last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
+            FROM core.manifests m
+            LEFT JOIN LATERAL (
+                SELECT r.status, r.last_heartbeat_at
+                FROM core.runs r
+                WHERE r.manifest_id = m.id
+                ORDER BY r.id DESC
+                LIMIT 1
+            ) lr ON true
+            ORDER BY m.name, m.version
             "#
         )
         .fetch_all(self.pool)
@@ -839,19 +847,26 @@ impl StateRepository<'_> {
             NodeManifest,
             r#"
             SELECT
-                id,
-                node_name,
-                node_type,
-                version,
-                description,
-                anchor_rule_version,
-                config_schema,
-                created_at as "created_at!: sinex_primitives::temporal::Timestamp",
-                status,
-                last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
-            FROM core.node_manifests
-            WHERE node_type = $1
-            ORDER BY node_name, version
+                m.id,
+                m.name as "node_name!: NodeName",
+                m.manifest_type::text as "node_type!: NodeType",
+                m.version,
+                m.description,
+                NULL::int4 as "anchor_rule_version?: i32",
+                NULL::jsonb as "config_schema?: JsonValue",
+                m.created_at as "created_at!: sinex_primitives::temporal::Timestamp",
+                COALESCE(lr.status, 'unknown') as "status!",
+                lr.last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
+            FROM core.manifests m
+            LEFT JOIN LATERAL (
+                SELECT r.status, r.last_heartbeat_at
+                FROM core.runs r
+                WHERE r.manifest_id = m.id
+                ORDER BY r.id DESC
+                LIMIT 1
+            ) lr ON true
+            WHERE m.manifest_type = $1
+            ORDER BY m.name, m.version
             "#,
             node_type.to_string()
         )
@@ -870,11 +885,16 @@ impl StateRepository<'_> {
     ) -> DbResult<bool> {
         let result = sqlx::query!(
             r#"
-            UPDATE core.node_manifests
+            UPDATE core.runs
             SET last_heartbeat_at = NOW(),
                 status = 'active'
-            WHERE node_name = $1
-              AND version = $2
+            WHERE id IN (
+                SELECT r.id FROM core.runs r
+                JOIN core.manifests m ON m.id = r.manifest_id
+                WHERE m.name = $1 AND m.version = $2
+                ORDER BY r.id DESC
+                LIMIT 1
+            )
             "#,
             node_name as &NodeName,
             version,
@@ -885,9 +905,9 @@ impl StateRepository<'_> {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Mark a specific node manifest as inactive.
+    /// Mark a specific node's latest run as inactive.
     ///
-    /// Returns whether a matching manifest row was updated.
+    /// Returns whether a matching run row was updated.
     pub async fn mark_node_inactive_for_version(
         &self,
         node_name: &NodeName,
@@ -895,10 +915,15 @@ impl StateRepository<'_> {
     ) -> DbResult<bool> {
         let result = sqlx::query!(
             r#"
-            UPDATE core.node_manifests
+            UPDATE core.runs
             SET status = 'inactive'
-            WHERE node_name = $1
-              AND version = $2
+            WHERE id IN (
+                SELECT r.id FROM core.runs r
+                JOIN core.manifests m ON m.id = r.manifest_id
+                WHERE m.name = $1 AND m.version = $2
+                ORDER BY r.id DESC
+                LIMIT 1
+            )
             "#,
             node_name as &NodeName,
             version,
@@ -912,7 +937,7 @@ impl StateRepository<'_> {
     /// Insert a concrete node-run row for a single process execution.
     pub async fn start_node_run(
         &self,
-        node_manifest_id: i32,
+        manifest_id: i32,
         service_name: &str,
         instance_id: &str,
         host: &str,
@@ -922,8 +947,8 @@ impl StateRepository<'_> {
         sqlx::query_as!(
             NodeRun,
             r#"
-            INSERT INTO core.source_runs (
-                node_manifest_id,
+            INSERT INTO core.runs (
+                manifest_id,
                 service_name,
                 instance_id,
                 host,
@@ -943,7 +968,7 @@ impl StateRepository<'_> {
             )
             RETURNING
                 id as "id!: Id<NodeRun>",
-                node_manifest_id,
+                manifest_id,
                 service_name,
                 instance_id,
                 host,
@@ -954,7 +979,7 @@ impl StateRepository<'_> {
                 effective_config_hash,
                 effective_config
             "#,
-            node_manifest_id,
+            manifest_id,
             service_name,
             instance_id,
             host,
@@ -970,7 +995,7 @@ impl StateRepository<'_> {
     pub async fn update_node_run_heartbeat(&self, source_run_id: Id<NodeRun>) -> DbResult<bool> {
         let result = sqlx::query!(
             r#"
-            UPDATE core.source_runs
+            UPDATE core.runs
             SET last_heartbeat_at = NOW(),
                 status = 'running'
             WHERE id = $1::uuid
@@ -1000,7 +1025,7 @@ impl StateRepository<'_> {
         // also transiently make it appear live to the presence query.
         let result = sqlx::query!(
             r#"
-            UPDATE core.source_runs
+            UPDATE core.runs
             SET status = $2,
                 last_heartbeat_at = NOW(),
                 ended_at = CASE
@@ -1032,8 +1057,8 @@ impl StateRepository<'_> {
             r#"
             WITH active_runs AS (
                 SELECT
-                    nm.node_name::text as node_name,
-                    nm.node_type::text as node_type,
+                    nm.name,
+                    nm.manifest_type::text as node_type,
                     nm.version,
                     nm.description,
                     nr.service_name,
@@ -1044,13 +1069,13 @@ impl StateRepository<'_> {
                     nr.last_heartbeat_at,
                     nr.started_at,
                     'run'::text as heartbeat_source
-                FROM core.source_runs nr
-                JOIN core.node_manifests nm ON nm.id = nr.node_manifest_id
+                FROM core.runs nr
+                JOIN core.manifests nm ON nm.id = nr.manifest_id
                 WHERE nr.status = 'running'
                   AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8)
             )
             SELECT
-                live_nodes.node_name as "node_name!: NodeName",
+                live_nodes.name as "node_name!: NodeName",
                 live_nodes.node_type as "node_type!: NodeType",
                 live_nodes.version as "version!",
                 description,
@@ -1064,7 +1089,7 @@ impl StateRepository<'_> {
                 live_nodes.heartbeat_source as "heartbeat_source!"
             FROM (
                 SELECT
-                    node_name,
+                    name,
                     node_type,
                     version,
                     description,
@@ -1081,25 +1106,26 @@ impl StateRepository<'_> {
                 UNION ALL
 
                 SELECT
-                    nm.node_name::text as node_name,
-                    nm.node_type::text as node_type,
+                    nm.name::text,
+                    nm.manifest_type::text as node_type,
                     nm.version,
                     nm.description,
                     NULL::text as service_name,
                     NULL::text as instance_id,
                     NULL::uuid as source_run_id,
                     NULL::text as host,
-                    nm.status,
-                    nm.last_heartbeat_at,
+                    nr.status,
+                    nr.last_heartbeat_at,
                     NULL::timestamptz as started_at,
                     'manifest'::text as heartbeat_source
-                FROM core.node_manifests nm
-                WHERE nm.status = 'active'
-                  AND nm.last_heartbeat_at > NOW() - make_interval(secs => $1::float8)
+                FROM core.runs nr
+                JOIN core.manifests nm ON nm.id = nr.manifest_id
+                WHERE nr.status = 'active'
+                  AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8)
                   AND NOT EXISTS (
                       SELECT 1
                       FROM active_runs ar
-                      WHERE ar.node_name = nm.node_name::text
+                      WHERE ar.name = nm.name::text
                         AND ar.version = nm.version
                   )
             ) live_nodes
@@ -1132,50 +1158,51 @@ impl StateRepository<'_> {
             r#"
             WITH active_runs AS (
                 SELECT
-                    nm.node_name,
+                    nm.name,
                     COUNT(*)::bigint AS active_run_count,
                     MAX(nr.last_heartbeat_at) AS latest_heartbeat_at
-                FROM core.source_runs nr
-                JOIN core.node_manifests nm ON nm.id = nr.node_manifest_id
+                FROM core.runs nr
+                JOIN core.manifests nm ON nm.id = nr.manifest_id
                 WHERE nr.status = 'running'
                   AND nr.last_heartbeat_at IS NOT NULL
                   AND nr.last_heartbeat_at >= $1
-                GROUP BY nm.node_name
+                GROUP BY nm.name
             ),
             manifest_only_live AS (
                 SELECT
-                    nm.node_name,
-                    MAX(nm.last_heartbeat_at) AS latest_heartbeat_at
-                FROM core.node_manifests nm
-                WHERE nm.status = 'active'
-                  AND nm.last_heartbeat_at IS NOT NULL
-                  AND nm.last_heartbeat_at >= $1
+                    nm.name,
+                    MAX(nr.last_heartbeat_at) AS latest_heartbeat_at
+                FROM core.runs nr
+                JOIN core.manifests nm ON nm.id = nr.manifest_id
+                WHERE nr.status = 'active'
+                  AND nr.last_heartbeat_at IS NOT NULL
+                  AND nr.last_heartbeat_at >= $1
                   AND NOT EXISTS (
                       SELECT 1
                       FROM active_runs ar
-                      WHERE ar.node_name = nm.node_name
+                      WHERE ar.name = nm.name
                   )
-                GROUP BY nm.node_name
+                GROUP BY nm.name
             ),
             node_inventory AS (
-                SELECT DISTINCT node_name
-                FROM core.node_manifests
+                SELECT DISTINCT name
+                FROM core.manifests
 
                 UNION
 
-                SELECT DISTINCT nm.node_name
-                FROM core.source_runs nr
-                JOIN core.node_manifests nm ON nm.id = nr.node_manifest_id
+                SELECT DISTINCT nm.name
+                FROM core.runs nr
+                JOIN core.manifests nm ON nm.id = nr.manifest_id
             ),
             node_status AS (
                 SELECT
-                    ni.node_name,
+                    ni.name,
                     COALESCE(ar.active_run_count, 0) AS active_run_count,
                     COALESCE(ar.latest_heartbeat_at, mol.latest_heartbeat_at) AS latest_heartbeat_at,
-                    (ar.node_name IS NOT NULL OR mol.node_name IS NOT NULL) AS has_live_instance
+                    (ar.name IS NOT NULL OR mol.name IS NOT NULL) AS has_live_instance
                 FROM node_inventory ni
-                LEFT JOIN active_runs ar ON ar.node_name = ni.node_name
-                LEFT JOIN manifest_only_live mol ON mol.node_name = ni.node_name
+                LEFT JOIN active_runs ar ON ar.name = ni.name
+                LEFT JOIN manifest_only_live mol ON mol.name = ni.name
             )
             SELECT
                 COUNT(*) FILTER (WHERE has_live_instance) as "active_count!",
@@ -1217,18 +1244,18 @@ impl StateRepository<'_> {
             AutomataStatusRow,
             r#"
             SELECT
-                nm.node_name::text as "node_name!: NodeName",
+                nm.name::text as "node_name!: NodeName",
                 nm.version as "version!",
                 nm.description,
-                nm.status as "manifest_status!",
+                nr.status as "manifest_status!",
                 (
                     (nr.id IS NOT NULL
                         AND nr.status = 'running'
                         AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8))
                     OR
                     (nr.id IS NULL
-                        AND nm.status = 'active'
-                        AND nm.last_heartbeat_at > NOW() - make_interval(secs => $1::float8))
+                        AND nr.status = 'active'
+                        AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8))
                 ) as "live!",
                 nr.service_name,
                 nr.instance_id,
@@ -1236,7 +1263,7 @@ impl StateRepository<'_> {
                 nr.host,
                 nr.status as run_status,
                 nr.started_at as "started_at: sinex_primitives::temporal::Timestamp",
-                COALESCE(nr.last_heartbeat_at, nm.last_heartbeat_at)
+                COALESCE(nr.last_heartbeat_at, nr.last_heartbeat_at)
                     as "last_heartbeat_at: sinex_primitives::temporal::Timestamp",
                 processed.events_processed_current_run as "events_processed_current_run?",
                 checkpoint.checkpoint_kind as "checkpoint_kind?",
@@ -1253,7 +1280,7 @@ impl StateRepository<'_> {
                 COALESCE(outputs.recent_output_count, 0)::bigint as "recent_output_count!",
                 outputs.last_output_at as "last_output_at?: sinex_primitives::temporal::Timestamp",
                 outputs.last_replay_at as "last_replay_at?: sinex_primitives::temporal::Timestamp"
-            FROM core.node_manifests nm
+            FROM core.manifests nm
             LEFT JOIN LATERAL (
                 SELECT
                     nr.id,
@@ -1263,8 +1290,8 @@ impl StateRepository<'_> {
                     nr.status,
                     nr.started_at,
                     nr.last_heartbeat_at
-                FROM core.source_runs nr
-                WHERE nr.node_manifest_id = nm.id
+                FROM core.runs nr
+                WHERE nr.manifest_id = nm.id
                 -- Prefer an active (running/draining/paused) run over a more-recently-started
                 -- terminal run, so a restarted node doesn't immediately appear as failed/stopped.
                 ORDER BY (CASE WHEN nr.status IN ('running', 'draining', 'paused') THEN 1 ELSE 0 END) DESC,
@@ -1279,7 +1306,7 @@ impl StateRepository<'_> {
                 WHERE e.source = 'sinex'
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.events_processed.run'
-                  AND e.payload->'labels'->>'node' = nm.node_name::text
+                  AND e.payload->'labels'->>'node' = nm.name::text
                   AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
@@ -1294,7 +1321,7 @@ impl StateRepository<'_> {
                 WHERE e.source = 'sinex'
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.checkpoint.revision'
-                  AND e.payload->'labels'->>'node' = nm.node_name::text
+                  AND e.payload->'labels'->>'node' = nm.name::text
                   AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
@@ -1307,7 +1334,7 @@ impl StateRepository<'_> {
                 WHERE e.source = 'sinex'
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.invalidations.pending'
-                  AND e.payload->'labels'->>'node' = nm.node_name::text
+                  AND e.payload->'labels'->>'node' = nm.name::text
                   AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
@@ -1319,7 +1346,7 @@ impl StateRepository<'_> {
                 WHERE e.source = 'sinex'
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.error_rate_5m'
-                  AND e.payload->'labels'->>'node' = nm.node_name::text
+                  AND e.payload->'labels'->>'node' = nm.name::text
                   AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
@@ -1331,7 +1358,7 @@ impl StateRepository<'_> {
                 WHERE e.source = 'sinex'
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.event_lag_p50_ms'
-                  AND e.payload->'labels'->>'node' = nm.node_name::text
+                  AND e.payload->'labels'->>'node' = nm.name::text
                   AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
@@ -1343,7 +1370,7 @@ impl StateRepository<'_> {
                 WHERE e.source = 'sinex'
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.event_lag_p99_ms'
-                  AND e.payload->'labels'->>'node' = nm.node_name::text
+                  AND e.payload->'labels'->>'node' = nm.name::text
                   AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
@@ -1355,7 +1382,7 @@ impl StateRepository<'_> {
                 WHERE e.source = 'sinex'
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.tick_runtime_p99_ms'
-                  AND e.payload->'labels'->>'node' = nm.node_name::text
+                  AND e.payload->'labels'->>'node' = nm.name::text
                   AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
@@ -1367,7 +1394,7 @@ impl StateRepository<'_> {
                 WHERE e.source = 'sinex'
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.throughput_eps'
-                  AND e.payload->'labels'->>'node' = nm.node_name::text
+                  AND e.payload->'labels'->>'node' = nm.name::text
                   AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
@@ -1385,8 +1412,8 @@ impl StateRepository<'_> {
                   AND e.source_run_id = nr.id
                   AND e.source_event_ids IS NOT NULL
             ) outputs ON true
-            WHERE nm.node_type = 'automaton'
-            ORDER BY nm.node_name, nm.version
+            WHERE nm.manifest_type = 'automaton'
+            ORDER BY nm.name, nm.version
             "#,
             stale_secs,
             recent_secs
@@ -1544,6 +1571,7 @@ impl StateRepository<'_> {
             node_health_error,
         })
     }
+}
 
 /// Node manifest record
 #[derive(Debug, sqlx::FromRow)]
@@ -1564,7 +1592,7 @@ pub struct NodeManifest {
 #[derive(Debug, sqlx::FromRow)]
 pub struct NodeRun {
     pub id: Id<NodeRun>,
-    pub node_manifest_id: i32,
+    pub manifest_id: Option<i32>,
     pub service_name: String,
     pub instance_id: String,
     pub host: String,
