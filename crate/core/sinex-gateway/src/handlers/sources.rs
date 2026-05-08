@@ -94,23 +94,9 @@ pub async fn handle_sources_stage(
     }
 
     // ── Determine material capture class ─────────────────────────
-    let mut capture_class = "allowed_plaintext".to_string();
-    if let Some(ref binding_name) = req.binding_name {
-        if let Some(binding) = pool
-            .source_bindings()
-            .get_binding_by_name(binding_name)
-            .await
-            .map_err(|error| {
-                SinexError::database("Failed to look up source binding")
-                    .with_context("binding_name", binding_name)
-                    .with_std_error(&error)
-            })?
-        {
-            if let Some(class) = binding.raw_material_policy.get("capture_class").and_then(|v| v.as_str()) {
-                capture_class = class.to_string();
-            }
-        }
-    }
+    // Source bindings are Nix config (#1098), not a DB catalog.
+    // Default to allowed_plaintext for now; binding-based policy is a follow-up.
+    let capture_class = "allowed_plaintext".to_string();
 
     let material_class =
         sinex_primitives::privacy::MaterialCaptureClass::from_str(&capture_class)
@@ -482,42 +468,12 @@ pub async fn handle_sources_presets_list(
 // ── sources.bindings.list ───────────────────────────────────────
 
 pub async fn handle_sources_bindings_list(
-    pool: &PgPool,
-    params: Value,
+    _pool: &PgPool,
+    _params: Value,
 ) -> Result<Value> {
-    let req: SourcesBindingsListRequest =
-        super::parse_default_on_null(params).map_err(|error| {
-            SinexError::serialization("Invalid sources.bindings.list request")
-                .with_std_error(&error)
-        })?;
-
-    let rows = pool
-        .source_bindings()
-        .list_bindings(
-            req.source_family.as_deref(),
-            req.include_disabled,
-        )
-        .await
-        .map_err(|error| {
-            SinexError::database("Failed to list source bindings").with_std_error(&error)
-        })?;
-
-    let bindings: Vec<SourceBindingSummary> = rows
-        .into_iter()
-        .map(|row| SourceBindingSummary {
-            id: row.id.to_string(),
-            name: row.name,
-            source_family: row.source_family,
-            binding_mode: row.binding_mode,
-            input_shape_kind: row.input_shape_kind,
-            enabled: row.enabled,
-            status: row.status,
-            last_error: row.last_error,
-            created_at: Some(row.created_at.to_string()),
-        })
-        .collect();
-
-    let response = SourcesBindingsListResponse { bindings };
+    // Source bindings are Nix configuration (#1098), not a DB catalog.
+    // The binding catalog DB tables were removed in #1160.
+    let response = SourcesBindingsListResponse { bindings: vec![] };
     serde_json::to_value(response).map_err(|error| {
         SinexError::serialization("Failed to serialize sources.bindings.list response")
             .with_std_error(&error)
@@ -527,117 +483,23 @@ pub async fn handle_sources_bindings_list(
 // ── sources.bindings.create ─────────────────────────────────────
 
 pub async fn handle_sources_bindings_create(
-    pool: &PgPool,
-    params: Value,
+    _pool: &PgPool,
+    _params: Value,
 ) -> Result<Value> {
-    let req: SourcesBindingsCreateRequest =
-        serde_json::from_value(params).map_err(|error| {
-            SinexError::serialization("Invalid sources.bindings.create request")
-                .with_std_error(&error)
-        })?;
-
-    let id = pool
-        .source_bindings()
-        .create_binding(
-            &req.name,
-            &req.source_family,
-            &req.binding_mode,
-            &req.input_shape_kind,
-            req.resolver_preset.as_deref(),
-            &req.locator,
-            req.material_format_hint.as_deref(),
-            &req.privacy_policy_id,
-            &req.raw_material_policy,
-            req.enabled,
-        )
-        .await
-        .map_err(|error| {
-            SinexError::database("Failed to create source binding").with_std_error(&error)
-        })?;
-
-    let response = SourcesBindingsCreateResponse {
-        id: id.to_string(),
-        name: req.name,
-    };
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization("Failed to serialize sources.bindings.create response")
-            .with_std_error(&error)
-    })
+    Err(SinexError::configuration(
+        "Source bindings are Nix configuration (#1098), not a DB catalog. Bindings are declared in nixos/modules/source-bindings.nix."
+    ))
 }
 
 // ── sources.bindings.resolve ─────────────────────────────────────
 
 pub async fn handle_sources_bindings_resolve(
-    pool: &PgPool,
-    params: Value,
+    _pool: &PgPool,
+    _params: Value,
 ) -> Result<Value> {
-    let req: SourcesBindingsResolveRequest =
-        serde_json::from_value(params).map_err(|error| {
-            SinexError::serialization("Invalid sources.bindings.resolve request")
-                .with_std_error(&error)
-        })?;
-
-    // Look up the binding.
-    let binding = pool
-        .source_bindings()
-        .get_binding_by_name(&req.binding_name)
-        .await
-        .map_err(|error| {
-            SinexError::database("Failed to look up source binding for resolution")
-                .with_std_error(&error)
-        })?
-        .ok_or_else(|| {
-            SinexError::not_found(format!(
-                "Source binding not found: {}",
-                req.binding_name
-            ))
-        })?;
-
-    // Simple resolution: if the binding has a locator, it's "resolved".
-    // Full resolver-preset evaluation (env vars, filesystem checks) is deferred
-    // to #1067 acquisition jobs.
-    let locator = binding.locator;
-    let is_empty = locator.is_null()
-        || locator.as_object().map_or(false, |o| o.is_empty());
-    let resolved = !is_empty;
-    let candidate_count = if is_empty { 0i32 } else { 1i32 };
-
-    // Log resolution attempt.
-    let _ = pool
-        .source_bindings()
-        .log_resolution(
-            binding.id,
-            candidate_count,
-            if resolved { Some(&locator) } else { None },
-            &serde_json::json!({"method": "direct"}),
-            if resolved { "enabled" } else { "missing" },
-            if resolved {
-                None
-            } else {
-                Some("No locator configured for this binding")
-            },
-        )
-        .await;
-
-    let response = SourcesBindingsResolveResponse {
-        binding_name: req.binding_name,
-        resolved,
-        candidate_count,
-        selected_locator: if resolved {
-            Some(locator)
-        } else {
-            None
-        },
-        error_summary: if resolved {
-            None
-        } else {
-            Some("No locator configured for this binding".to_string())
-        },
-    };
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization("Failed to serialize sources.bindings.resolve response")
-            .with_std_error(&error)
-    })
+    Err(SinexError::configuration(
+        "Source bindings are Nix configuration (#1098), not a DB catalog. Bindings are declared in nixos/modules/source-bindings.nix."
+    ))
 }
 
 // ── sources.annotate ─────────────────────────────────────────────

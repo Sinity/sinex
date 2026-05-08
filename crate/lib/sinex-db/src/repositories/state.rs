@@ -768,6 +768,31 @@ impl StateRepository<'_> {
 
     // ========== Node Manifests ==========
 
+    /// Register a node manifest row. Idempotent per (name, version).
+    pub async fn register_node(
+        &self,
+        node_name: &NodeName,
+        node_type: NodeType,
+        version: &str,
+        description: Option<&str>,
+    ) -> DbResult<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO core.manifests (name, manifest_type, version, description)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT DO NOTHING
+            "#,
+            node_name.to_string(),
+            node_type.to_string(),
+            version,
+            description,
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "register node"))?;
+        Ok(())
+    }
+
     /// Start a run for a process. Creates a new row in `core.runs` and returns it.
     /// If a run is already active for this service, it is returned instead.
     pub async fn start_run(

@@ -132,7 +132,7 @@ fn intents_to_events(
                 payload: intent.payload.clone(),
                 ts_orig: Some(intent.ts_orig),
                 host: HostName::from_static("test-host"),
-                node_run_id: None,
+                source_run_id: None,
                 payload_schema_id: None,
                 provenance: Provenance::Material {
                     id: material_id,

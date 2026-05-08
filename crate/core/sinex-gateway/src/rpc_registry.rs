@@ -526,8 +526,6 @@ fn build_registry_impl() -> RpcRegistry {
             Role::ReadOnly,
             boxed!(handle_automata_status),
         )
-        // GitOps source listing removed (#1160)
-        .pool_rpc()
         // Source material inventory (ReadOnly)
         .pool_rpc(
             methods::SOURCES_LIST,
@@ -821,22 +819,6 @@ fn build_registry_impl() -> RpcRegistry {
             methods::LIFECYCLE_TOMBSTONE_STATUS,
             Role::Admin,
             boxed!(handle_tombstone_status, 3),
-        )
-        // GitOps source management (Admin)
-        .pool_rpc(
-            methods::GITOPS_CREATE_SOURCE,
-            Role::Admin,
-            boxed!(handle_gitops_create_source),
-        )
-        .pool_rpc(
-            methods::GITOPS_DELETE_SOURCE,
-            Role::Admin,
-            boxed!(handle_gitops_delete_source),
-        )
-        .pool_rpc(
-            methods::GITOPS_TRIGGER_SYNC,
-            Role::Admin,
-            boxed!(handle_gitops_trigger_sync),
         )
         // Shadow consumer mutations (Admin)
         .register(
