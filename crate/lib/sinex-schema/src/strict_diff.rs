@@ -220,6 +220,68 @@ async fn check_column_defaults(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyE
 }
 
 // ─── Trigger function bodies ────────────────────────────────────────────────
+//
+// # Classification of all schema-apply-installed functions (#1133)
+//
+// ## Strict body check (DECLARED_FUNCTION_BODIES — below)
+//
+// These functions have load-bearing logic where a body change could cause
+// silent data corruption, broken provenance, or audit gaps. The strict diff
+// checks that expected markers appear in the live function body.
+//
+//   Trigger functions:
+//   - core.fn_events_no_update          — immutability guard
+//   - core.fn_events_validate_payload   — payload validation gate
+//   - core.fn_events_validate_material_bounds — anchor/offset boundary check
+//   - core.fn_archive_before_delete     — cascade-archive on DELETE
+//   - raw.fn_source_material_validate_event_bounds — shrink-prevention
+//   - raw.fn_temporal_ledger_append_only — append-only guard
+//
+//   Operation management:
+//   - core.start_operation              — audit trail entry
+//   - core.complete_operation           — audit trail closure
+//   - core.fail_operation               — audit trail failure record
+//
+//   Cascade support:
+//   - core.expand_cascade               — BFS expansion with depth limit
+//   - core.prepare_cascade_session      — temp table setup
+//   - core.cascade_populate_roots       — root discovery
+//   - core.cascade_find_integrity_violations — provenance-chain validation
+//
+//   Lifecycle:
+//   - core.execute_cascade_tombstone    — permanent deletion
+//   - core.execute_cascade_restore      — restore from archive
+//
+// ## Required presence only (apply::diff checks trigger existence)
+//
+// These triggers are installed by CREATE OR REPLACE on every apply.
+// apply::diff detects missing triggers; body drift is not checked because
+// the functions are straightforward updated_at helpers or projection logic.
+//
+//   - trg_entities_updated_at           — updated_at convenience
+//   - trg_entity_relations_updated_at   — updated_at convenience
+//   - trg_event_annotations_updated_at  — updated_at convenience
+//   - trg_event_payload_schemas_updated_at — updated_at convenience
+//   - set_timestamp (dlq_events)        — updated_at convenience
+//   - trg_embedding_model_create_index  — HNSW index management
+//   - public.set_current_timestamp_updated_at() — shared updated_at helper
+//   - core.embedding_model_index_trigger() — index creation trigger fn
+//
+// ## Explicitly non-goal (query-only or idempotent recreation)
+//
+// These functions are query-only (no mutation), diagnostic, or idempotent
+// (re-running produces the same state). Body drift here can't corrupt data.
+//
+//   - core.cascade_count_nodes           — diagnostic
+//   - core.cascade_depth_histogram       — diagnostic
+//   - core.cascade_find_integrity_violations_paginated — diagnostic variant
+//   - core.cleanup_cascade_session       — temp table cleanup
+//   - core.lifecycle_tier_status()       — query-only (STABLE, SQL)
+//   - core.jsonb_merge_deep()            — pure utility (IMMUTABLE)
+//   - core.create_embedding_model_index  — idempotent DDL
+//   - core.drop_embedding_model_index    — idempotent DDL
+//   - core.hybrid_search()               — query-only (read path)
+//   - core.fn_document_projection()      — projection (non-critical)
 
 /// One declared expectation for a stored function body.
 struct DeclaredFunctionBody {
@@ -235,19 +297,109 @@ struct DeclaredFunctionBody {
 }
 
 const DECLARED_FUNCTION_BODIES: &[DeclaredFunctionBody] = &[
+    // ── Trigger functions (critical — body drift = silent data corruption) ──────
+    DeclaredFunctionBody {
+        schema: "core",
+        function_name: "fn_events_no_update",
+        // Prevents UPDATE on core.events — immutability is a core invariant.
+        expected_markers: &["UPDATE on core.events is forbidden"],
+    },
+    DeclaredFunctionBody {
+        schema: "core",
+        function_name: "fn_events_validate_payload",
+        // Payload validation gate — removal means invalid payloads persist silently.
+        expected_markers: &["jsonb_matches_schema", "sinex.payload_validation"],
+    },
+    DeclaredFunctionBody {
+        schema: "core",
+        function_name: "fn_events_validate_material_bounds",
+        // Prevents anchor_byte/offset overflow beyond material total_bytes.
+        expected_markers: &["anchor_byte > material_total_bytes", "offset_kind"],
+    },
+    DeclaredFunctionBody {
+        schema: "core",
+        function_name: "fn_archive_before_delete",
+        // THE archive trigger — cascade-archives annotations, embeddings, cluster
+        // members, and validation cache before allowing DELETE on core.events.
+        expected_markers: &[
+            "sinex.operation_id",
+            "archived_events",
+            "archived_annotations",
+            "archived_embeddings",
+        ],
+    },
+    DeclaredFunctionBody {
+        schema: "raw",
+        function_name: "fn_source_material_validate_event_bounds",
+        // Prevents shrinking source material total_bytes below existing event anchors.
+        expected_markers: &["total_bytes would invalidate existing event anchors"],
+    },
+    DeclaredFunctionBody {
+        schema: "raw",
+        function_name: "fn_temporal_ledger_append_only",
+        // Append-only invariant on temporal_ledger — prevents mutation of observation log.
+        expected_markers: &["append-only", "is forbidden"],
+    },
+    // ── Operation management (critical — audit trail integrity) ─────────────────
+    DeclaredFunctionBody {
+        schema: "core",
+        function_name: "start_operation",
+        expected_markers: &["operations_log", "uuidv7()", "operation_type"],
+    },
+    DeclaredFunctionBody {
+        schema: "core",
+        function_name: "complete_operation",
+        expected_markers: &["result_status = 'success'", "operations_log"],
+    },
+    DeclaredFunctionBody {
+        schema: "core",
+        function_name: "fail_operation",
+        expected_markers: &["result_status = 'failure'", "operations_log"],
+    },
+    // ── Cascade support ─────────────────────────────────────────────────────────
     DeclaredFunctionBody {
         schema: "core",
         function_name: "expand_cascade",
         // The cascade-truncation refusal landed in #565 — the body must
         // continue to RAISE EXCEPTION when descendants exceed max_depth.
-        // If a manual prod edit reverts this, replay starts silently
-        // truncating again.
         expected_markers: &["RAISE EXCEPTION", "max depth"],
     },
     DeclaredFunctionBody {
         schema: "core",
         function_name: "prepare_cascade_session",
         expected_markers: &["TEMP TABLE", "cascade_analysis_"],
+    },
+    DeclaredFunctionBody {
+        schema: "core",
+        function_name: "cascade_populate_roots",
+        expected_markers: &["source_event_ids", "cascade"],
+    },
+    DeclaredFunctionBody {
+        schema: "core",
+        function_name: "cascade_find_integrity_violations",
+        // Detects broken provenance chains — critical for replay safety.
+        expected_markers: &["violations", "source_event_ids"],
+    },
+    // ── Lifecycle (critical — archive/restore/tombstone) ────────────────────────
+    DeclaredFunctionBody {
+        schema: "core",
+        function_name: "execute_cascade_tombstone",
+        // Permanent deletion from archive — irrecoverable if the body is wrong.
+        expected_markers: &["event_tombstones", "archived_events", "ON CONFLICT"],
+    },
+    DeclaredFunctionBody {
+        schema: "core",
+        function_name: "execute_cascade_restore",
+        // Restore from archive with side-table recovery (#1134).
+        // Must track restored IDs, restore side-tables, and only delete
+        // archive rows that were actually restored.
+        expected_markers: &[
+            "_restored_ids",
+            "ON CONFLICT (id) DO NOTHING",
+            "archived_annotations",
+            "archived_embeddings",
+            "archived_tagged_items",
+        ],
     },
 ];
 
