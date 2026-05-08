@@ -563,7 +563,6 @@ let
     let
       sat = nodesCfg.filesystem;
       instances = resolveInstances sat.instances;
-      batch = resolveBatch sat.batch;
       resources = resolveResources sat.resources;
       nodeConfig = builtins.toJSON {
         watch_paths = sat.watchPaths;
@@ -575,18 +574,14 @@ let
         poll_interval_secs = sat.pollIntervalSec;
       };
       derivedArgs = [ "--node-config ${escapeShellArg nodeConfig}" ];
-      extraArgs = derivedArgs ++ sat.extraArgs;
     in
-    mkNodeUnits {
-      name = "filesystem";
-      binary = "fs-ingestor";
-      description = "Filesystem node";
-      inherit instances batch resources extraArgs;
+    mkSourceWorkerUnit {
+      sourceUnit = "fs";
+      inherit instances resources;
+      description = "Filesystem watcher";
+      extraArgs = derivedArgs ++ sat.extraArgs;
       env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
       serviceConfig = {
-        # The default watch path is /home/<target>; keep home read-only rather
-        # than hiding it entirely so the configured watch paths are actually
-        # observable on real hosts.
         ProtectHome = lib.mkForce "read-only";
       };
     };
@@ -694,7 +689,7 @@ let
           serviceConfig = mkBaseServiceConfig resources env ({
             ExecStart = mkDatabasePasswordExec {
               name = sourceUnitId;
-              command = "${sinexPackage}/bin/sinex-terminal-ingestor ${execArgs}";
+              command = "${sinexPackage}/bin/sinex-source-worker ${execArgs}";
               passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
             };
             WorkingDirectory = stateRoot;
@@ -1065,11 +1060,10 @@ let
             exit 1
           fi
         '';
-      units = mkNodeUnits {
-        name = "desktop";
-        binary = "desktop-ingestor";
-        description = "Desktop node";
-        inherit instances batch resources;
+      units = mkSourceWorkerUnit {
+        sourceUnit = "desktop";
+        description = "Desktop node (source-worker)";
+        inherit instances resources;
         afterUnits = runtimeRootUnits;
         wantsUnits = runtimeRootUnits;
         extraArgs = sat.extraArgs;
@@ -1281,11 +1275,10 @@ let
             exit 1
           fi
         '';
-      units = mkNodeUnits {
-        name = "browser";
-        binary = "browser-ingestor";
-        description = "Browser history node";
-        inherit instances batch resources;
+      units = mkSourceWorkerUnit {
+        sourceUnit = "browser";
+        description = "Browser history node (source-worker)";
+        inherit instances resources;
         extraArgs = [ "--node-config ${escapeShellArg nodeConfig}" ] ++ sat.extraArgs;
         env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
         serviceConfig = {
@@ -1368,11 +1361,10 @@ let
         };
       };
     in
-    mkNodeUnits {
-      name = "system";
-      binary = "system-ingestor";
-      description = "System node";
-      inherit instances batch resources;
+    mkSourceWorkerUnit {
+      sourceUnit = "system";
+      description = "System node (source-worker)";
+      inherit instances resources;
       extraArgs = [ "--node-config ${escapeShellArg nodeConfig}" ] ++ sat.extraArgs;
       env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
       serviceConfig = {
@@ -1392,7 +1384,7 @@ let
       };
       scanCommand = concatStringsSep " " (
         [
-          "${sinexPackage}/bin/sinex-document-ingestor"
+          "${sinexPackage}/bin/sinex-source-worker"
           "--service-name"
           "sinex-document-scan"
           "--node-config"
@@ -1553,10 +1545,22 @@ let
       inherit units supportUnits;
     };
 
-  mkNodeUnits = params:
+  # ── Source-worker host template (#1081) ────────────────────────────────
+  # Creates a systemd unit that runs a source unit through the consolidated
+  # sinex-source-worker binary instead of the legacy per-domain ingestor binary.
+  #
+  # Pattern:
+  #   mkSourceWorkerUnit {
+  #     sourceUnit = "fs";
+  #     description = "Filesystem watcher (source-worker)";
+  #     instances = resolveInstances nodesCfg.filesystem.instances;
+  #     resources = ...;
+  #     extraArgs = ...;
+  #   }
+  mkSourceWorkerUnit = params:
     let
-      instances = params.instances;
-      resources = params.resources;
+      instances = params.instances or 1;
+      resources = params.resources or { };
       extraArgs = params.extraArgs or [ ];
       envExtras = params.env or [ ];
       unitPath = params.path or [ ];
@@ -1564,29 +1568,26 @@ let
       additionalAfterUnits = params.afterUnits or [ ];
       additionalRequireUnits = params.requiresUnits or [ ];
       additionalWantsUnits = params.wantsUnits or [ ];
-      afterUnits = schemaApplyUnits ++ optionals coreEnabled [ "sinex-ingestd.service" ];
-      requireUnits = schemaApplyUnits;
-      # Nodes publish to NATS and don't strictly require ingestd to be up.
-      # Use `wants` so that ingestd going down doesn't cascade-stop all nodes;
-      # NATS will buffer events until ingestd recovers.
-      wantsUnits = optionals coreEnabled [ "sinex-ingestd.service" ];
+      afterUnits = schemaApplyUnits ++ optionals coreEnabled [ "sinex-ingestd.service" ] ++ additionalAfterUnits;
+      requireUnits = schemaApplyUnits ++ additionalRequireUnits;
+      wantsUnits = optionals coreEnabled [ "sinex-ingestd.service" ] ++ additionalWantsUnits;
       execArgs = concatStringsSep " " (
-        [ "--service-name sinex-${params.name}" ] ++ extraArgs ++ [ "service" ]
+        [ "--source-unit ${params.sourceUnit}" ] ++ extraArgs ++ [ "service" ]
       );
       env = mkServiceEnv envExtras;
       mkUnit = instance: {
         description = "${params.description} (instance ${toString instance})";
         wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
         restartIfChanged = cfg.runtime.restartOnSwitch;
-        after = afterUnits ++ additionalAfterUnits;
-        requires = requireUnits ++ additionalRequireUnits;
-        wants = wantsUnits ++ additionalWantsUnits;
+        after = afterUnits;
+        requires = requireUnits;
+        wants = wantsUnits;
         unitConfig = restartRateLimits // { PartOf = [ "sinex-runtime.target" ]; } // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
         path = unitPath;
         serviceConfig = mkBaseServiceConfig resources env ({
           ExecStart = mkDatabasePasswordExec {
-            name = "${params.name}-${toString instance}";
-            command = "${sinexPackage}/bin/sinex-${params.binary} ${execArgs}";
+            name = "source-worker-${params.sourceUnit}-${toString instance}";
+            command = "${sinexPackage}/bin/sinex-source-worker ${execArgs}";
             passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
           };
           WorkingDirectory = stateRoot;
@@ -1594,7 +1595,7 @@ let
       };
     in
     if instances <= 0 then { } else
-    listToAttrs (map (idx: nameValuePair "sinex-${params.name}-${toString idx}" (mkUnit idx)) (range 1 instances));
+    listToAttrs (map (idx: nameValuePair "sinex-source-worker-${params.sourceUnit}-${toString idx}" (mkUnit idx)) (range 1 instances));
 
   mkAutomataProfile = profileName:
     let
