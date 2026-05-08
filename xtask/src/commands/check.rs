@@ -46,6 +46,9 @@ pub struct CheckCommand {
     /// Check specific package(s) only
     #[arg(short = 'p', long = "package")]
     pub packages: Vec<String>,
+    /// Use planner to select workload (supplements affected-scope with failure history)
+    #[arg(long)]
+    pub plan: bool,
     /// Skip test compilation check (faster, but may miss test errors)
     #[arg(long)]
     pub skip_tests: bool,
@@ -140,6 +143,22 @@ impl CheckCommand {
         if !self.all {
             // Affected mode is default ON, --all disables it
             let mut affected_pkgs = crate::affected::affected_packages()?;
+
+            // --plan: supplement affected scope with planner recommendations (#1146)
+            if self.plan {
+                if let Ok(actions) = crate::planner::plan_next_actions() {
+                    let planner_pkgs = extract_packages_from_actions(&actions);
+                    for pkg in planner_pkgs {
+                        if !affected_pkgs.contains(&pkg) {
+                            if is_human {
+                                eprintln!("  ℹ Planner: adding {pkg} (recent failure context)");
+                            }
+                            affected_pkgs.push(pkg);
+                        }
+                    }
+                }
+            }
+
             if affected_pkgs.is_empty() {
                 if is_human {
                     eprintln!("  ℹ No affected packages detected — checking full workspace");
@@ -677,6 +696,28 @@ fn ensure_nix_tool_ready_with(check_tool: impl FnOnce(&str) -> Result<ToolInfo>)
     Ok(())
 }
 
+/// Extract package names from planner action commands (#1146).
+///
+/// Parses commands like "xtask check -p sinex-db -p sinex-gateway" and
+/// returns the set of package names after `-p` flags.
+fn extract_packages_from_actions(actions: &[crate::planner::PlannedAction]) -> Vec<String> {
+    let mut packages = std::collections::BTreeSet::new();
+    for action in actions {
+        let tokens: Vec<&str> = action.command.split_whitespace().collect();
+        let mut i = 0;
+        while i < tokens.len() {
+            if tokens[i] == "-p" && i + 1 < tokens.len() {
+                let pkg = tokens[i + 1];
+                if !pkg.starts_with('-') {
+                    packages.insert(pkg.to_string());
+                }
+            }
+            i += 1;
+        }
+    }
+    packages.into_iter().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -709,6 +750,7 @@ mod tests {
             lint_breakdown: false,
             by_file: false,
             nix: false,
+            plan: false,
         }
     }
 
