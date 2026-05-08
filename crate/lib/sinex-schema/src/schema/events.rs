@@ -6,7 +6,7 @@
 //! core architectural invariants related to events and their provenance.
 
 use crate::primitives::{Timestamp, Uuid};
-use crate::schema::{EventPayloadSchemas, SourceMaterialRegistry, SourceRuns, TableDef};
+use crate::schema::{EventPayloadSchemas, Runs, SourceMaterialRegistry, TableDef};
 use sea_query::{
     Alias, ColumnDef, ColumnType, ConditionalStatement, Expr, ForeignKey, ForeignKeyAction,
     ForeignKeyCreateStatement, Iden, Index, IndexCreateStatement, IndexOrder, IntoIden, Table,
@@ -265,7 +265,7 @@ impl Events {
         ForeignKey::create()
             .name("events_source_run_id_fkey")
             .from(Self::table_iden(), Events::NodeRunId)
-            .to(SourceRuns::table_iden(), Alias::new("id"))
+            .to(Runs::table_iden(), Alias::new("id"))
             .to_owned()
     }
 

@@ -1542,7 +1542,6 @@ impl StateRepository<'_> {
             node_health_error,
         })
     }
-}
 
 /// Node manifest record
 #[derive(Debug, sqlx::FromRow)]

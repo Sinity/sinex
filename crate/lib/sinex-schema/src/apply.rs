@@ -1,11 +1,10 @@
 use crate::schema::{
     ArchivedEventAnnotations, ArchivedEventEmbeddings, ArchivedEvents,
-    ArchivedTaggedItems, BinarySchemaVersion, Blobs, DocumentChunks, Documents, EmbeddingCache,
+    ArchivedTaggedItems, Blobs, DocumentChunks, Documents, EmbeddingCache,
     EmbeddingModels, Entities, EntityRelations, EventAnnotations, EventClusterMembers,
     EventClusters, EventEmbeddings, EventPayloadSchemas, EventReplacements, EventTombstones, Events,
     Manifests, OperationsLog, Runs,
     SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger,
-    ValidationCache,
 };
 use crate::schema_registry;
 use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement};
@@ -43,7 +42,6 @@ const ARCHIVED_EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_archived_events_superseded_by_event_id",
     "ix_archived_events_source_event_ids",
 ];
-    &["idx_processors_status", "idx_processors_heartbeat"];
 const TEMPORAL_LEDGER_REQUIRED_INDEXES: &[&str] = &[
     "uk_temporal_ledger_material_offset_source_type",
     "ix_tl_material_offsets",
@@ -163,10 +161,6 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
         for index in ARCHIVED_EVENTS_REQUIRED_INDEXES {
             if !index_exists(pool, "audit", "archived_events", index).await? {
                 drifts.push(format!("missing audit.archived_events index {index}"));
-            }
-        }
-    }
-
             }
         }
     }
@@ -448,9 +442,6 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         render_table(&Manifests::create_table_statement()),
         render_table(&Runs::create_table_statement()),
         render_table(&Events::create_table_statement()),
-        render_table(&GitopsSchemaSources::create_table_statement()),
-        render_table(&ValidationCache::create_table_statement()),
-        render_table(&BinarySchemaVersion::create_table_statement()),
         render_table(&TemporalLedger::create_table_statement()),
         render_table(&Entities::create_table_statement()),
         render_table(&EntityRelations::create_table_statement()),
@@ -535,7 +526,6 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(render_indexes(EventPayloadSchemas::create_indexes()));
     index_sql.extend(render_indexes(Manifests::create_indexes()));
     index_sql.extend(render_indexes(Runs::create_indexes()));
-    index_sql.extend(render_indexes(GitopsSchemaSources::create_indexes()));
     index_sql.extend(render_indexes(EventReplacements::create_indexes()));
     index_sql.extend(render_indexes(Documents::create_indexes()));
     index_sql.extend(render_indexes(DocumentChunks::create_indexes()));
@@ -564,7 +554,6 @@ async fn create_triggers_and_functions(pool: &PgPool) -> Result<(), ApplyError> 
     execute_sql(pool, &EntityRelations::create_updated_at_trigger_sql()).await?;
     execute_sql(pool, &EventAnnotations::create_updated_at_trigger_sql()).await?;
     execute_sql(pool, &EventPayloadSchemas::create_updated_at_trigger_sql()).await?;
-    execute_sql(pool, &GitopsSchemaSources::create_updated_at_trigger_sql()).await?;
     execute_sql(pool, DocumentChunks::create_projection_trigger_sql()).await?;
 
     execute_sql(pool, OPERATIONS_AND_CASCADE_SQL).await?;

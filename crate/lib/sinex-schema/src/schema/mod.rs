@@ -182,12 +182,6 @@ const ALL_TABLES: &[TableMeta] = &[
         cleanup_protected: false,
     },
     TableMeta {
-        schema: "core",
-        is_hypertable: false,
-        has_triggers: false,
-        cleanup_protected: false,
-    },
-    TableMeta {
         schema: "sinex_schemas",
         name: "event_payload_schemas",
         qualified_name: "sinex_schemas.event_payload_schemas",
