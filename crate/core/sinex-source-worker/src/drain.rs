@@ -347,3 +347,101 @@ impl Drop for ActiveWorkGuard<'_> {
         self.controller.exit_work();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn test_drain_phases_transition_in_order() {
+        let controller = SourceWorkerDrainController::new();
+        assert_eq!(controller.current_phase().await, DrainPhase::Idle);
+
+        controller.request_drain("test-unit").await;
+        assert_eq!(controller.current_phase().await, DrainPhase::StoppingAccept);
+
+        controller.finish_active_work("test-unit").await;
+        assert_eq!(controller.current_phase().await, DrainPhase::FinishingActive);
+
+        controller.flush_intents("test-unit").await;
+        assert_eq!(controller.current_phase().await, DrainPhase::FlushingIntents);
+
+        controller.wait_confirmations("test-unit", Duration::from_millis(10)).await;
+        assert_eq!(controller.current_phase().await, DrainPhase::WaitingConfirmations);
+
+        controller.finalize_materials("test-unit").await;
+        assert_eq!(controller.current_phase().await, DrainPhase::FinalizingMaterials);
+
+        controller.save_checkpoint("test-unit").await;
+        assert_eq!(controller.current_phase().await, DrainPhase::SavingCheckpoint);
+
+        controller.mark_drained("test-unit").await;
+        assert_eq!(controller.current_phase().await, DrainPhase::Drained);
+    }
+
+    #[tokio::test]
+    async fn test_work_guard_increments_and_decrements_counter() {
+        let controller = SourceWorkerDrainController::new();
+        assert_eq!(controller.active_work_count(), 0);
+
+        {
+            let _guard = controller.work_guard();
+            assert_eq!(controller.active_work_count(), 1);
+            let _guard2 = controller.work_guard();
+            assert_eq!(controller.active_work_count(), 2);
+        }
+        // Guards dropped
+        assert_eq!(controller.active_work_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_drain_waits_for_active_work() {
+        let controller = SourceWorkerDrainController::new();
+        controller.enter_work();
+        assert_eq!(controller.active_work_count(), 1);
+
+        // With active work, wait should time out
+        let completed = controller.wait_for_active_work(Duration::from_millis(10)).await;
+        assert!(!completed, "should not complete with active work");
+
+        controller.exit_work();
+        assert_eq!(controller.active_work_count(), 0);
+
+        // Without active work, wait should complete
+        let completed = controller.wait_for_active_work(Duration::from_millis(10)).await;
+        assert!(completed, "should complete when no active work");
+    }
+
+    #[tokio::test]
+    async fn test_double_drain_is_idempotent() {
+        let controller = SourceWorkerDrainController::new();
+        controller.request_drain("test-unit").await;
+        assert_eq!(controller.current_phase().await, DrainPhase::StoppingAccept);
+
+        // Calling request_drain again returns false (already draining), phase unchanged
+        let already_draining = !controller.request_drain("test-unit").await;
+        assert!(already_draining);
+        assert_eq!(controller.current_phase().await, DrainPhase::StoppingAccept);
+    }
+
+    #[tokio::test]
+    async fn test_gap_evidence_on_restart() {
+        let controller = SourceWorkerDrainController::new();
+        controller.request_drain("test-unit").await;
+        // Simulate crash mid-drain
+        let evidence = controller.record_gap_evidence("test-unit").await;
+        assert_eq!(evidence.unit_id, "test-unit");
+        assert_eq!(evidence.drain_phase_at_crash, Some(DrainPhase::StoppingAccept));
+        assert_eq!(evidence.in_flight_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_clean_start_evidence() {
+        let controller = SourceWorkerDrainController::new();
+        let evidence = controller.clean_start_evidence("test-unit");
+        assert_eq!(evidence.unit_id, "test-unit");
+        assert_eq!(evidence.drain_phase_at_crash, None);
+        assert_eq!(evidence.in_flight_count, 0);
+    }
+}
