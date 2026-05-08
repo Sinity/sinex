@@ -80,6 +80,10 @@ pub struct StatusCommand {
     /// Show event payload schema information
     #[arg(long)]
     pub schemas: bool,
+
+    /// Show recommended next actions (planner)
+    #[arg(long)]
+    pub next: bool,
 }
 
 fn status_profile_enabled() -> bool {
@@ -125,6 +129,8 @@ impl XtaskCommand for StatusCommand {
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         if self.schemas {
             Ok(execute_schemas(ctx))
+        } else if self.next {
+            execute_next(ctx)
         } else if self.summary {
             summary::execute(ctx).await
         } else {
@@ -137,6 +143,43 @@ impl XtaskCommand for StatusCommand {
             .with_history_tracking(false)
             .with_history_access(crate::command::HistoryAccessMode::Query)
     }
+}
+
+/// Show recommended next actions from the planner (#1144).
+fn execute_next(ctx: &CommandContext) -> Result<CommandResult> {
+    let actions = crate::planner::plan_next_actions()?;
+
+    if ctx.is_json() {
+        let payload = serde_json::json!({
+            "actions": actions,
+        });
+        return Ok(CommandResult::success()
+            .with_data(payload)
+            .with_message(format!("{} recommended action(s)", actions.len())));
+    }
+
+    if actions.is_empty() {
+        println!("No recommended actions — workspace is idle.");
+        return Ok(CommandResult::success().with_message("idle"));
+    }
+
+    println!("Recommended next actions:\n");
+    for (i, action) in actions.iter().enumerate() {
+        let priority_marker = match action.priority {
+            crate::planner::Priority::Now => "●",
+            crate::planner::Priority::Soon => "○",
+            crate::planner::Priority::Idle => "·",
+        };
+        println!(
+            "  {priority_marker} {}  [confidence: {:.0}%]",
+            action.command,
+            action.confidence * 100.0
+        );
+        println!("    {}\n", action.reason);
+    }
+
+    Ok(CommandResult::success()
+        .with_message(format!("{} recommended action(s)", actions.len())))
 }
 
 /// Show event payload schema information (formerly `contracts info describe-schemas`)
@@ -368,6 +411,7 @@ mod tests {
             watch: false,
             summary: false,
             schemas: false,
+            next: false,
         };
         assert_eq!(cmd.name(), "status");
         Ok(())
@@ -379,6 +423,7 @@ mod tests {
             watch: false,
             summary: false,
             schemas: false,
+            next: false,
         };
         let metadata = cmd.metadata();
         assert!(!metadata.modifies_state);
