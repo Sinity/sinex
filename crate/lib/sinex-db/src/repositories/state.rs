@@ -768,33 +768,10 @@ impl StateRepository<'_> {
 
     // ========== Node Manifests ==========
 
-    /// Register a manifest row (idempotent by name + version). Returns the manifest id.
-    pub async fn register_manifest(
-        &self,
-        name: &str,
-        manifest_type: &str,
-        version: &str,
-        commit_hash: Option<&str>,
-        parent_manifest_id: Option<i32>,
-        description: Option<&str>,
-    ) -> DbResult<i32> {
-        let row = sqlx::query!(
-            r#"INSERT INTO core.manifests (name, manifest_type, version, commit_hash, parent_manifest_id, description)
-               VALUES ($1, $2, $3, $4, $5, $6)
-               ON CONFLICT (name, version) DO UPDATE SET manifest_type = EXCLUDED.manifest_type
-               RETURNING id"#,
-            name, manifest_type, version, commit_hash, parent_manifest_id, description,
-        )
-        .fetch_one(self.pool)
-        .await
-        .map_err(|e| db_error(e, "register manifest"))?;
-        Ok(row.id)
-    }
-
     /// Start a run for a process. Creates a new row in `core.runs` and returns it.
+    /// If a run is already active for this service, it is returned instead.
     pub async fn start_run(
         &self,
-        manifest_id: Option<i32>,
         service_name: &str,
         instance_id: &str,
         host: &str,
@@ -802,12 +779,11 @@ impl StateRepository<'_> {
         sqlx::query_as!(
             NodeRun,
             r#"
-            INSERT INTO core.runs (manifest_id, service_name, instance_id, host, started_at, status)
-            VALUES ($1, $2, $3, $4, now(), 'running')
+            INSERT INTO core.runs (service_name, instance_id, host, started_at, status)
+            VALUES ($1, $2, $3, now(), 'running')
             ON CONFLICT DO NOTHING
             RETURNING
                 id as "id: _",
-                manifest_id,
                 service_name,
                 instance_id,
                 host,
@@ -818,7 +794,6 @@ impl StateRepository<'_> {
                 effective_config_hash,
                 effective_config as "effective_config: _"
             "#,
-            manifest_id,
             service_name,
             instance_id,
             host,
@@ -849,7 +824,7 @@ impl StateRepository<'_> {
                 created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                 status,
                 last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
-            FROM core.manifests
+            FROM core.node_manifests
             ORDER BY node_name, version
             "#
         )
@@ -874,7 +849,7 @@ impl StateRepository<'_> {
                 created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                 status,
                 last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
-            FROM core.manifests
+            FROM core.node_manifests
             WHERE node_type = $1
             ORDER BY node_name, version
             "#,
@@ -887,47 +862,57 @@ impl StateRepository<'_> {
 
     /// Update a specific node manifest heartbeat timestamp and set status to 'active'.
     ///
-    /// Returns whether a matching run was updated.
+    /// Returns whether a matching manifest row was updated.
     pub async fn update_node_heartbeat_for_version(
         &self,
         node_name: &NodeName,
-        _version: &str,
+        version: &str,
     ) -> DbResult<bool> {
-        self.update_run_heartbeat(node_name.as_ref()).await
-    }
-
-    /// Update heartbeat for the active run of a service.
-    pub async fn update_run_heartbeat(&self, service_name: &str) -> DbResult<bool> {
         let result = sqlx::query!(
-            "UPDATE core.runs SET last_heartbeat_at = NOW(), status = 'active' WHERE service_name = $1 AND status = 'running'",
-            service_name,
+            r#"
+            UPDATE core.node_manifests
+            SET last_heartbeat_at = NOW(),
+                status = 'active'
+            WHERE node_name = $1
+              AND version = $2
+            "#,
+            node_name as &NodeName,
+            version,
         )
         .execute(self.pool)
         .await
-        .map_err(|e| db_error(e, "update run heartbeat"))?;
+        .map_err(|e| db_error(e, "update node heartbeat"))?;
         Ok(result.rows_affected() > 0)
     }
 
-    /// Mark the active run of a service as inactive.
+    /// Mark a specific node manifest as inactive.
+    ///
+    /// Returns whether a matching manifest row was updated.
     pub async fn mark_node_inactive_for_version(
         &self,
         node_name: &NodeName,
-        _version: &str,
+        version: &str,
     ) -> DbResult<bool> {
         let result = sqlx::query!(
-            "UPDATE core.runs SET status = 'inactive' WHERE service_name = $1 AND status = 'running'",
-            node_name.as_ref(),
+            r#"
+            UPDATE core.node_manifests
+            SET status = 'inactive'
+            WHERE node_name = $1
+              AND version = $2
+            "#,
+            node_name as &NodeName,
+            version,
         )
         .execute(self.pool)
         .await
-        .map_err(|e| db_error(e, "mark run inactive"))?;
+        .map_err(|e| db_error(e, "mark node inactive"))?;
         Ok(result.rows_affected() > 0)
     }
 
-    /// Insert a concrete run row for a single process execution.
+    /// Insert a concrete node-run row for a single process execution.
     pub async fn start_node_run(
         &self,
-        manifest_id: Option<i32>,
+        node_manifest_id: i32,
         service_name: &str,
         instance_id: &str,
         host: &str,
@@ -937,11 +922,28 @@ impl StateRepository<'_> {
         sqlx::query_as!(
             NodeRun,
             r#"
-            INSERT INTO core.runs (manifest_id, service_name, instance_id, host, started_at, status, last_heartbeat_at, effective_config_hash, effective_config)
-            VALUES ($1, $2, $3, $4, NOW(), 'running', NOW(), $5, $6)
+            INSERT INTO core.source_runs (
+                node_manifest_id,
+                service_name,
+                instance_id,
+                host,
+                status,
+                last_heartbeat_at,
+                effective_config_hash,
+                effective_config
+            ) VALUES (
+                $1,
+                $2,
+                $3,
+                $4,
+                'running',
+                NOW(),
+                $5,
+                $6
+            )
             RETURNING
                 id as "id!: Id<NodeRun>",
-                manifest_id,
+                node_manifest_id,
                 service_name,
                 instance_id,
                 host,
@@ -952,7 +954,7 @@ impl StateRepository<'_> {
                 effective_config_hash,
                 effective_config
             "#,
-            manifest_id,
+            node_manifest_id,
             service_name,
             instance_id,
             host,
@@ -1043,7 +1045,7 @@ impl StateRepository<'_> {
                     nr.started_at,
                     'run'::text as heartbeat_source
                 FROM core.source_runs nr
-                JOIN core.manifests nm ON nm.id = nr.manifest_id
+                JOIN core.node_manifests nm ON nm.id = nr.node_manifest_id
                 WHERE nr.status = 'running'
                   AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8)
             )
@@ -1091,7 +1093,7 @@ impl StateRepository<'_> {
                     nm.last_heartbeat_at,
                     NULL::timestamptz as started_at,
                     'manifest'::text as heartbeat_source
-                FROM core.manifests nm
+                FROM core.node_manifests nm
                 WHERE nm.status = 'active'
                   AND nm.last_heartbeat_at > NOW() - make_interval(secs => $1::float8)
                   AND NOT EXISTS (
@@ -1134,7 +1136,7 @@ impl StateRepository<'_> {
                     COUNT(*)::bigint AS active_run_count,
                     MAX(nr.last_heartbeat_at) AS latest_heartbeat_at
                 FROM core.source_runs nr
-                JOIN core.manifests nm ON nm.id = nr.manifest_id
+                JOIN core.node_manifests nm ON nm.id = nr.node_manifest_id
                 WHERE nr.status = 'running'
                   AND nr.last_heartbeat_at IS NOT NULL
                   AND nr.last_heartbeat_at >= $1
@@ -1144,7 +1146,7 @@ impl StateRepository<'_> {
                 SELECT
                     nm.node_name,
                     MAX(nm.last_heartbeat_at) AS latest_heartbeat_at
-                FROM core.manifests nm
+                FROM core.node_manifests nm
                 WHERE nm.status = 'active'
                   AND nm.last_heartbeat_at IS NOT NULL
                   AND nm.last_heartbeat_at >= $1
@@ -1157,13 +1159,13 @@ impl StateRepository<'_> {
             ),
             node_inventory AS (
                 SELECT DISTINCT node_name
-                FROM core.manifests
+                FROM core.node_manifests
 
                 UNION
 
                 SELECT DISTINCT nm.node_name
                 FROM core.source_runs nr
-                JOIN core.manifests nm ON nm.id = nr.manifest_id
+                JOIN core.node_manifests nm ON nm.id = nr.node_manifest_id
             ),
             node_status AS (
                 SELECT
@@ -1251,7 +1253,7 @@ impl StateRepository<'_> {
                 COALESCE(outputs.recent_output_count, 0)::bigint as "recent_output_count!",
                 outputs.last_output_at as "last_output_at?: sinex_primitives::temporal::Timestamp",
                 outputs.last_replay_at as "last_replay_at?: sinex_primitives::temporal::Timestamp"
-            FROM core.manifests nm
+            FROM core.node_manifests nm
             LEFT JOIN LATERAL (
                 SELECT
                     nr.id,
@@ -1262,7 +1264,7 @@ impl StateRepository<'_> {
                     nr.started_at,
                     nr.last_heartbeat_at
                 FROM core.source_runs nr
-                WHERE nr.manifest_id = nm.id
+                WHERE nr.node_manifest_id = nm.id
                 -- Prefer an active (running/draining/paused) run over a more-recently-started
                 -- terminal run, so a restarted node doesn't immediately appear as failed/stopped.
                 ORDER BY (CASE WHEN nr.status IN ('running', 'draining', 'paused') THEN 1 ELSE 0 END) DESC,
@@ -1562,7 +1564,7 @@ pub struct NodeManifest {
 #[derive(Debug, sqlx::FromRow)]
 pub struct NodeRun {
     pub id: Id<NodeRun>,
-    pub manifest_id: Option<i32>,
+    pub node_manifest_id: i32,
     pub service_name: String,
     pub instance_id: String,
     pub host: String,
