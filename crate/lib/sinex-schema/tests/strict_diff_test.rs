@@ -566,3 +566,347 @@ async fn column_rename_is_idempotent(ctx: TestContext) -> TestResult<()> {
 
     Ok(())
 }
+
+// ─── Extended trigger function body tests (#1133) ─────────────────────────────
+
+#[sinex_test]
+async fn detects_manual_edit_to_fn_archive_before_delete(ctx: TestContext) -> TestResult<()> {
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    // Replace the archive trigger function with a stub that drops the
+    // cascade-archive logic. This is the #988 scenario — a manual edit
+    // that removes side-table archiving (annotations, embeddings) without
+    // detection.
+    sqlx::query(
+        r"
+        CREATE OR REPLACE FUNCTION core.fn_archive_before_delete()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            INSERT INTO audit.archived_events SELECT OLD.*;
+            RETURN OLD;
+        END;
+        $$
+        ",
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let drifts = check_strict(&ctx.pool).await?;
+    let matched: Vec<_> = drifts
+        .iter()
+        .filter(|d| {
+            d.category == DriftCategory::TriggerBody
+                && d.location == "core.fn_archive_before_delete"
+        })
+        .collect();
+
+    assert_eq!(
+        matched.len(),
+        1,
+        "expected exactly one trigger_body drift on fn_archive_before_delete, got: {drifts:?}"
+    );
+    assert!(
+        matched[0].observed_summary.contains("archived_annotations")
+            || matched[0].observed_summary.contains("archived_embeddings"),
+        "observed summary should name missing side-table cascade markers: {}",
+        matched[0].observed_summary
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn detects_manual_edit_to_fn_events_validate_material_bounds(
+    ctx: TestContext,
+) -> TestResult<()> {
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    // Replace the material-bounds validation trigger with a pass-through stub.
+    // Removing the anchor_byte boundary check would let events claim offsets
+    // beyond the source material size — silent data corruption.
+    sqlx::query(
+        r"
+        CREATE OR REPLACE FUNCTION core.fn_events_validate_material_bounds()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            RETURN NEW;
+        END;
+        $$
+        ",
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let drifts = check_strict(&ctx.pool).await?;
+    let matched: Vec<_> = drifts
+        .iter()
+        .filter(|d| {
+            d.category == DriftCategory::TriggerBody
+                && d.location == "core.fn_events_validate_material_bounds"
+        })
+        .collect();
+
+    assert_eq!(
+        matched.len(),
+        1,
+        "expected exactly one trigger_body drift on fn_events_validate_material_bounds, got: {drifts:?}"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn detects_manual_edit_to_fn_source_material_validate_event_bounds(
+    ctx: TestContext,
+) -> TestResult<()> {
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    // Replace the source-material validation trigger with a pass-through stub.
+    // This would let an operator shrink total_bytes below existing event anchors.
+    sqlx::query(
+        r"
+        CREATE OR REPLACE FUNCTION raw.fn_source_material_validate_event_bounds()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            RETURN NEW;
+        END;
+        $$
+        ",
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let drifts = check_strict(&ctx.pool).await?;
+    let matched: Vec<_> = drifts
+        .iter()
+        .filter(|d| {
+            d.category == DriftCategory::TriggerBody
+                && d.location == "raw.fn_source_material_validate_event_bounds"
+        })
+        .collect();
+
+    assert_eq!(
+        matched.len(),
+        1,
+        "expected exactly one trigger_body drift on fn_source_material_validate_event_bounds, got: {drifts:?}"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn detects_missing_payload_validation_trigger(ctx: TestContext) -> TestResult<()> {
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    // Drop the payload validation trigger — this was NOT covered by
+    // EVENTS_REQUIRED_TRIGGERS before #1133. apply::diff must detect it.
+    sqlx::query("DROP TRIGGER IF EXISTS trg_events_validate_payload ON core.events")
+        .execute(&ctx.pool)
+        .await?;
+
+    let drifts = sinex_schema::apply::diff(&ctx.pool).await?;
+    let has_detection = drifts
+        .iter()
+        .any(|d| d.contains("trg_events_validate_payload"));
+
+    assert!(
+        has_detection,
+        "apply::diff must report missing trg_events_validate_payload: {drifts:?}"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn detects_missing_temporal_ledger_trigger(ctx: TestContext) -> TestResult<()> {
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    // Drop the temporal_ledger append-only trigger — before #1133 this table
+    // had no trigger existence check in apply::diff.
+    sqlx::query("DROP TRIGGER IF EXISTS trg_tl_no_update_delete ON raw.temporal_ledger")
+        .execute(&ctx.pool)
+        .await?;
+
+    let drifts = sinex_schema::apply::diff(&ctx.pool).await?;
+    let has_detection = drifts
+        .iter()
+        .any(|d| d.contains("trg_tl_no_update_delete"));
+
+    assert!(
+        has_detection,
+        "apply::diff must report missing trg_tl_no_update_delete: {drifts:?}"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn detects_missing_document_projection_trigger(ctx: TestContext) -> TestResult<()> {
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    // Drop the document projection trigger — before #1133 this trigger was
+    // not in EVENTS_REQUIRED_TRIGGERS.
+    sqlx::query("DROP TRIGGER IF EXISTS trg_document_projection ON core.events")
+        .execute(&ctx.pool)
+        .await?;
+
+    let drifts = sinex_schema::apply::diff(&ctx.pool).await?;
+    let has_detection = drifts
+        .iter()
+        .any(|d| d.contains("trg_document_projection"));
+
+    assert!(
+        has_detection,
+        "apply::diff must report missing trg_document_projection: {drifts:?}"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn detects_manual_edit_to_fn_temporal_ledger_append_only(
+    ctx: TestContext,
+) -> TestResult<()> {
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    // Replace the append-only guard with a pass-through — would allow
+    // UPDATE/DELETE on the temporal ledger table.
+    sqlx::query(
+        r"
+        CREATE OR REPLACE FUNCTION raw.fn_temporal_ledger_append_only()
+        RETURNS TRIGGER LANGUAGE plpgsql AS $$
+        BEGIN
+            RETURN NEW;
+        END;
+        $$
+        ",
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let drifts = check_strict(&ctx.pool).await?;
+    let matched: Vec<_> = drifts
+        .iter()
+        .filter(|d| {
+            d.category == DriftCategory::TriggerBody
+                && d.location == "raw.fn_temporal_ledger_append_only"
+        })
+        .collect();
+
+    assert_eq!(
+        matched.len(),
+        1,
+        "expected exactly one trigger_body drift on fn_temporal_ledger_append_only, got: {drifts:?}"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn detects_manual_edit_to_fn_events_no_update(ctx: TestContext) -> TestResult<()> {
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    // Replace the no-update guard with a pass-through — would allow UPDATE
+    // on core.events, violating the immutability invariant.
+    sqlx::query(
+        r"
+        CREATE OR REPLACE FUNCTION core.fn_events_no_update()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            RETURN NEW;
+        END;
+        $$
+        ",
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let drifts = check_strict(&ctx.pool).await?;
+    let matched: Vec<_> = drifts
+        .iter()
+        .filter(|d| {
+            d.category == DriftCategory::TriggerBody
+                && d.location == "core.fn_events_no_update"
+        })
+        .collect();
+
+    assert_eq!(
+        matched.len(),
+        1,
+        "expected exactly one trigger_body drift on fn_events_no_update, got: {drifts:?}"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn detects_manual_edit_to_execute_cascade_tombstone(ctx: TestContext) -> TestResult<()> {
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    // Replace execute_cascade_tombstone with a stub — would silently delete
+    // archived rows without creating tombstone records.
+    sqlx::query(
+        r"
+        CREATE OR REPLACE FUNCTION core.execute_cascade_tombstone(
+            p_archived_ids UUID[], p_reason TEXT, p_operation_id UUID
+        ) RETURNS BIGINT LANGUAGE plpgsql AS $$
+        BEGIN RETURN 0; END;
+        $$
+        ",
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let drifts = check_strict(&ctx.pool).await?;
+    let matched: Vec<_> = drifts
+        .iter()
+        .filter(|d| {
+            d.category == DriftCategory::TriggerBody
+                && d.location == "core.execute_cascade_tombstone"
+        })
+        .collect();
+
+    assert_eq!(
+        matched.len(),
+        1,
+        "expected exactly one trigger_body drift on execute_cascade_tombstone, got: {drifts:?}"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn detects_manual_edit_to_execute_cascade_restore(ctx: TestContext) -> TestResult<()> {
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    // Replace execute_cascade_restore with a stub — #1134 tracks atomicity
+    // gaps in this function; body drift detection is the first safety net.
+    sqlx::query(
+        r"
+        CREATE OR REPLACE FUNCTION core.execute_cascade_restore(
+            p_archived_ids UUID[], p_operation_id TEXT
+        ) RETURNS BIGINT LANGUAGE plpgsql AS $$
+        BEGIN RETURN 0; END;
+        $$
+        ",
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let drifts = check_strict(&ctx.pool).await?;
+    let matched: Vec<_> = drifts
+        .iter()
+        .filter(|d| {
+            d.category == DriftCategory::TriggerBody
+                && d.location == "core.execute_cascade_restore"
+        })
+        .collect();
+
+    assert_eq!(
+        matched.len(),
+        1,
+        "expected exactly one trigger_body drift on execute_cascade_restore, got: {drifts:?}"
+    );
+
+    Ok(())
+}
