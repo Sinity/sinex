@@ -68,7 +68,8 @@ use std::collections::{HashMap, HashSet};
 use crate::apply::ApplyError;
 use crate::schema::{
     Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations, EventAnnotations,
-    TaggedItems, Tags,
+    EventEmbeddings, EventPayloadSchemas, Events, OperationsLog,
+    TableMeta, TaggedItems, Tags,
 };
 use sea_query::{
     Alias, ColumnDef, ColumnSpec, ForeignKeyCreateStatement, PostgresQueryBuilder, Table,
