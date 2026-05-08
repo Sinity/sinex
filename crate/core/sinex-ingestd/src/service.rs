@@ -393,17 +393,6 @@ impl IngestService {
             );
         }
 
-        // Start GitOps sync service if enabled
-        if self.config.gitops_enabled {
-            if let Some(ref pool) = self.db_pool {
-                let handle = self.start_gitops_sync_task(pool.clone());
-                self.track_task(handle).await;
-                info!("GitOps schema sync service started");
-            } else {
-                warn!("GitOps sync enabled but no database pool available");
-            }
-        }
-
         // Register a run for ingestd and start periodic heartbeat
         if let Some(ref pool) = self.db_pool {
             let host = hostname();
@@ -985,23 +974,6 @@ impl IngestService {
                     }
                 }
             }
-        })
-    }
-
-    /// Start the `GitOps` schema sync background task
-    fn start_gitops_sync_task(&self, pool: PgPool) -> JoinHandle<()> {
-        let shutdown_flag = self.shutdown_flag.clone();
-        let shutdown_notify = self.shutdown_notify.clone();
-        let work_dir = self.config.gitops_work_dir.clone().into_std_path_buf();
-
-        tokio::spawn(async move {
-            let service = crate::gitops::GitOpsSyncService::new(
-                pool,
-                work_dir,
-                shutdown_flag,
-                shutdown_notify,
-            );
-            service.run().await;
         })
     }
 

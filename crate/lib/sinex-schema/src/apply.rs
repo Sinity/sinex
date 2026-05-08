@@ -1832,10 +1832,6 @@ ORDER BY last_updated DESC;
 const ROLE_GRANTS_SQL: &str = r"
 GRANT USAGE ON SCHEMA core, raw, sinex_schemas, audit TO sinex_ingestd, sinex_gateway, sinex_readonly;
 
-REVOKE ALL ON sinex_schemas.gitops_schema_sources FROM sinex_ingestd, sinex_gateway, sinex_readonly;
-GRANT SELECT, UPDATE ON sinex_schemas.gitops_schema_sources TO sinex_ingestd;
-GRANT SELECT, INSERT, DELETE ON sinex_schemas.gitops_schema_sources TO sinex_gateway;
-GRANT SELECT ON sinex_schemas.gitops_schema_sources TO sinex_readonly;
 
 GRANT EXECUTE ON FUNCTION core.start_operation TO sinex_gateway;
 GRANT EXECUTE ON FUNCTION core.complete_operation TO sinex_gateway;

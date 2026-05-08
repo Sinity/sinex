@@ -7,7 +7,6 @@
 
 pub mod admission;
 pub mod config;
-pub mod gitops;
 pub mod jetstream_consumer;
 pub mod material_assembler;
 pub mod material_ready_set;
