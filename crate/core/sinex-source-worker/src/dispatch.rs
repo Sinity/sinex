@@ -43,7 +43,6 @@ pub fn default_parser_dispatch() -> ParserDispatchFn {
 }
 
 /// A test-only parser dispatch that records invocation and returns no events.
-#[cfg(test)]
 pub fn test_parser_dispatch() -> (
     ParserDispatchFn,
     Arc<std::sync::Mutex<Vec<(String, Vec<u8>, Option<Uuid>)>>>,
