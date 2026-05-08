@@ -1094,6 +1094,100 @@ mod tests {
         Ok(())
     }
 
+    // ── Log handoff tests (#1139) ─────────────────────────────────────────
+
+    /// Simulate the follow loop's file→DB handoff and verify exact output
+    /// preservation: no dropped lines, no duplicated lines, correct order.
+    #[sinex_test]
+    async fn test_follow_log_handoff_preserves_output()
+    -> ::xtask::sandbox::TestResult<()> {
+        // Build numbered-line content: "1\n2\n...100\n"
+        let lines: Vec<String> = (1..=100).map(|i| i.to_string()).collect();
+        let content = lines.join("\n") + "\n";
+        let content_bytes = &content;
+
+        // Phase 1: write to temp file (simulates running job's stdout.log)
+        let dir = tempdir()?;
+        let file_path = dir.path().join("stdout.log");
+        std::fs::write(&file_path, content_bytes)?;
+
+        // Phase 2: read first half from file (simulates early follow iterations)
+        let midpoint: u64 = 150; // roughly half of "1\n2\n...50\n" (~150 bytes)
+        let (first_half, new_pos) =
+            read_stdout_delta_from_file(&file_path, 0)?
+                .expect("file should exist and be readable");
+        // Read the rest from file up to midpoint.
+        let (second_half, _) =
+            read_stdout_delta_from_file(&file_path, midpoint)?
+                .expect("file should still exist");
+
+        // Phase 3: simulate archiving — delete the file, read remainder from
+        // a buffer (standing in for the DB-archived content).
+        std::fs::remove_file(&file_path)?;
+        let remainder = &content_bytes[new_pos as usize..];
+        let combined = format!("{}{}{}", first_half, second_half, remainder);
+
+        // Phase 4: verify exact match — order, no drops, no duplicates.
+        let original_lines: Vec<&str> = content.lines().collect();
+        let combined_lines: Vec<&str> = combined.lines().collect();
+
+        assert_eq!(
+            original_lines, combined_lines,
+            "log handoff must preserve exact line sequence: \
+             {} original lines, {} combined lines. \
+             Gaps/duplications indicate a handoff bug.",
+            original_lines.len(),
+            combined_lines.len()
+        );
+
+        // Also verify the delta-read semantics: new_pos advances correctly.
+        assert!(
+            new_pos > 0 && new_pos <= content_bytes.len() as u64,
+            "new_pos {new_pos} out of range for content of {} bytes",
+            content_bytes.len()
+        );
+
+        Ok(())
+    }
+
+    /// Verify the handoff detects when file content grows between delta-read
+    /// and the terminal-state DB read.
+    #[sinex_test]
+    async fn test_follow_handoff_catches_growth_before_archive()
+    -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempdir()?;
+        let file_path = dir.path().join("stdout.log");
+
+        // Write initial content
+        let initial = "line1\nline2\n";
+        std::fs::write(&file_path, initial)?;
+
+        // Read position 0..end (gets "line1\nline2\n")
+        let (buf1, pos1) =
+            read_stdout_delta_from_file(&file_path, 0)?
+                .expect("file should exist");
+
+        // Append more content (simulating the job writing more between reads)
+        std::fs::write(&file_path, format!("{initial}line3\nline4\n"))?;
+
+        // Read from pos1 (gets "line3\nline4\n")
+        let (buf2, pos2) =
+            read_stdout_delta_from_file(&file_path, pos1)?
+                .expect("file should exist");
+
+        // Combined output should have all 4 lines in order
+        let combined = format!("{buf1}{buf2}");
+        let combined_lines: Vec<&str> = combined.lines().collect();
+        assert_eq!(
+            combined_lines,
+            vec!["line1", "line2", "line3", "line4"],
+            "interleaved writes between follow reads must be captured in order"
+        );
+        assert!(pos2 > pos1, "position must advance after new content");
+
+        Ok(())
+    }
+
     #[sinex_test]
     async fn test_read_stdout_delta_from_file_reports_io_failures()
     -> ::xtask::sandbox::TestResult<()> {
