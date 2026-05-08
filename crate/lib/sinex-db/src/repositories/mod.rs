@@ -6,7 +6,6 @@ pub mod common;
 pub mod embeddings;
 pub mod events;
 pub mod events_extensions;
-pub mod gitops;
 pub mod integrity;
 pub mod knowledge_graph;
 pub mod replay;
@@ -27,7 +26,6 @@ pub use events::{
     COPY_BATCH_THRESHOLD, EventAnnotation, EventPayloadSchema, EventRepository, EventRepositoryTx,
     ReplacementKind, ReplacementRecord, StreamBatchInsertResult, StreamBatchRow,
 };
-pub use gitops::{GitOpsRepository, GitOpsSourceRecord};
 pub use integrity::IntegrityRepository;
 pub use knowledge_graph::{
     CreateEntity, CreateEntityRelation, EntityExt, EntityRecord, EntityRelationExt,
@@ -61,7 +59,6 @@ pub trait DbPoolExt {
     fn blobs(&self) -> blobs::BlobRepository;
     fn embeddings(&self) -> embeddings::EmbeddingRepository<'_>;
     fn events(&self) -> events::EventRepository<'_>;
-    fn gitops(&self) -> gitops::GitOpsRepository<'_>;
     fn source_materials(&self) -> source_materials::SourceMaterialRepository<'_>;
     fn knowledge_graph(&self) -> knowledge_graph::KnowledgeGraphRepository<'_>;
     fn state(&self) -> state::StateRepository<'_>;
@@ -85,10 +82,6 @@ impl DbPoolExt for PgPool {
 
     fn events(&self) -> events::EventRepository<'_> {
         events::EventRepository::new(self)
-    }
-
-    fn gitops(&self) -> gitops::GitOpsRepository<'_> {
-        gitops::GitOpsRepository::new(self)
     }
 
     fn source_materials(&self) -> source_materials::SourceMaterialRepository<'_> {

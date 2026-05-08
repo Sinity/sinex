@@ -849,7 +849,7 @@ impl StateRepository<'_> {
                 created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                 status,
                 last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
-            FROM core.node_manifests
+            FROM core.manifests
             ORDER BY node_name, version
             "#
         )
@@ -874,7 +874,7 @@ impl StateRepository<'_> {
                 created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                 status,
                 last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
-            FROM core.node_manifests
+            FROM core.manifests
             WHERE node_type = $1
             ORDER BY node_name, version
             "#,
@@ -952,7 +952,7 @@ impl StateRepository<'_> {
                 effective_config_hash,
                 effective_config
             "#,
-            node_manifest_id,
+            manifest_id,
             service_name,
             instance_id,
             host,
@@ -1043,7 +1043,7 @@ impl StateRepository<'_> {
                     nr.started_at,
                     'run'::text as heartbeat_source
                 FROM core.source_runs nr
-                JOIN core.node_manifests nm ON nm.id = nr.node_manifest_id
+                JOIN core.manifests nm ON nm.id = nr.manifest_id
                 WHERE nr.status = 'running'
                   AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8)
             )
@@ -1091,7 +1091,7 @@ impl StateRepository<'_> {
                     nm.last_heartbeat_at,
                     NULL::timestamptz as started_at,
                     'manifest'::text as heartbeat_source
-                FROM core.node_manifests nm
+                FROM core.manifests nm
                 WHERE nm.status = 'active'
                   AND nm.last_heartbeat_at > NOW() - make_interval(secs => $1::float8)
                   AND NOT EXISTS (
@@ -1134,7 +1134,7 @@ impl StateRepository<'_> {
                     COUNT(*)::bigint AS active_run_count,
                     MAX(nr.last_heartbeat_at) AS latest_heartbeat_at
                 FROM core.source_runs nr
-                JOIN core.node_manifests nm ON nm.id = nr.node_manifest_id
+                JOIN core.manifests nm ON nm.id = nr.manifest_id
                 WHERE nr.status = 'running'
                   AND nr.last_heartbeat_at IS NOT NULL
                   AND nr.last_heartbeat_at >= $1
@@ -1144,7 +1144,7 @@ impl StateRepository<'_> {
                 SELECT
                     nm.node_name,
                     MAX(nm.last_heartbeat_at) AS latest_heartbeat_at
-                FROM core.node_manifests nm
+                FROM core.manifests nm
                 WHERE nm.status = 'active'
                   AND nm.last_heartbeat_at IS NOT NULL
                   AND nm.last_heartbeat_at >= $1
@@ -1157,13 +1157,13 @@ impl StateRepository<'_> {
             ),
             node_inventory AS (
                 SELECT DISTINCT node_name
-                FROM core.node_manifests
+                FROM core.manifests
 
                 UNION
 
                 SELECT DISTINCT nm.node_name
                 FROM core.source_runs nr
-                JOIN core.node_manifests nm ON nm.id = nr.node_manifest_id
+                JOIN core.manifests nm ON nm.id = nr.manifest_id
             ),
             node_status AS (
                 SELECT
@@ -1251,7 +1251,7 @@ impl StateRepository<'_> {
                 COALESCE(outputs.recent_output_count, 0)::bigint as "recent_output_count!",
                 outputs.last_output_at as "last_output_at?: sinex_primitives::temporal::Timestamp",
                 outputs.last_replay_at as "last_replay_at?: sinex_primitives::temporal::Timestamp"
-            FROM core.node_manifests nm
+            FROM core.manifests nm
             LEFT JOIN LATERAL (
                 SELECT
                     nr.id,
@@ -1262,7 +1262,7 @@ impl StateRepository<'_> {
                     nr.started_at,
                     nr.last_heartbeat_at
                 FROM core.source_runs nr
-                WHERE nr.node_manifest_id = nm.id
+                WHERE nr.manifest_id = nm.id
                 -- Prefer an active (running/draining/paused) run over a more-recently-started
                 -- terminal run, so a restarted node doesn't immediately appear as failed/stopped.
                 ORDER BY (CASE WHEN nr.status IN ('running', 'draining', 'paused') THEN 1 ELSE 0 END) DESC,

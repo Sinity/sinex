@@ -386,8 +386,7 @@ fn build_registry_impl() -> RpcRegistry {
         handle_coordination_instance_health, handle_coordination_list_instances,
         handle_create_entities, handle_create_note, handle_dlq_list, handle_dlq_peek,
         handle_dlq_purge, handle_dlq_requeue, handle_events_lineage, handle_events_query,
-        handle_gitops_create_source, handle_gitops_delete_source, handle_gitops_list_sources,
-        handle_gitops_trigger_sync, handle_lifecycle_archive, handle_lifecycle_restore,
+        handle_lifecycle_archive, handle_lifecycle_restore,
         handle_lifecycle_status, handle_link_entities, handle_nodes_drain, handle_nodes_health,
         handle_nodes_list, handle_nodes_list_active, handle_nodes_resume, handle_nodes_set_horizon,
         handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start,
@@ -527,12 +526,8 @@ fn build_registry_impl() -> RpcRegistry {
             Role::ReadOnly,
             boxed!(handle_automata_status),
         )
-        // GitOps source listing (ReadOnly)
-        .pool_rpc(
-            methods::GITOPS_LIST_SOURCES,
-            Role::ReadOnly,
-            boxed!(handle_gitops_list_sources),
-        )
+        // GitOps source listing removed (#1160)
+        .pool_rpc()
         // Source material inventory (ReadOnly)
         .pool_rpc(
             methods::SOURCES_LIST,

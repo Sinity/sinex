@@ -162,7 +162,7 @@ const EVENT_COPY_COLUMNS: [EventCopyColumn; 22] = [
         copy_type: EventCopyColumnType::Uuid,
     },
     EventCopyColumn {
-        event: Events::NodeRunId,
+        event: Events::SourceRunId,
         copy_type: EventCopyColumnType::Uuid,
     },
     EventCopyColumn {
@@ -485,7 +485,7 @@ impl ToPostgresCopy for Event<JsonValue> {
         writer.field(Events::PayloadSchemaId, payload_schema_id.as_deref())?;
         {
             let source_run_id_str = self.source_run_id.map(|id| id.to_string());
-            writer.field(Events::NodeRunId, source_run_id_str.as_deref())?;
+            writer.field(Events::SourceRunId, source_run_id_str.as_deref())?;
         }
         writer.field(
             Events::AssociatedBlobIds,
@@ -567,7 +567,7 @@ impl ToPostgresCopy for StreamBatchRow {
         writer.field(Events::PayloadSchemaId, payload_schema_id_str.as_deref())?;
         {
             let source_run_id_str = self.source_run_id.map(|id| id.to_string());
-            writer.field(Events::NodeRunId, source_run_id_str.as_deref())?;
+            writer.field(Events::SourceRunId, source_run_id_str.as_deref())?;
         }
         writer.field(
             Events::AssociatedBlobIds,
@@ -722,7 +722,7 @@ mod tests {
             Events::OffsetKind,
             Events::SourceEventIds,
             Events::PayloadSchemaId,
-            Events::NodeRunId,
+            Events::SourceRunId,
             Events::AssociatedBlobIds,
             Events::TemporalPolicy,
             Events::SemanticsVersion,
