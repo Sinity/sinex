@@ -8,7 +8,8 @@
 //! 1. **Active/queued jobs** — if work is already running, wait for it
 //! 2. **Dirty files** — uncommitted changes should be checked
 //! 3. **Generated surface drift** — docs/schema/snapshots may be stale
-//! 4. **Idle** — no action needed, checkout is freshly proven
+//! 4. **Resource pressure** — warn when CPU/memory are under load (#1145)
+//! 5. **Idle** — no action needed, checkout is freshly proven
 
 use color_eyre::eyre::Result;
 use serde::Serialize;
@@ -53,7 +54,12 @@ pub fn plan_next_actions() -> Result<Vec<PlannedAction>> {
         actions.extend(drift_actions);
     }
 
-    // ── Signal 4: idle — nothing to do ───────────────────────────────────
+    // ── Signal 4: resource pressure (#1145) ───────────────────────────────
+    if let Some(pressure_actions) = check_resource_pressure() {
+        actions.extend(pressure_actions);
+    }
+
+    // ── Signal 5: idle — nothing to do ───────────────────────────────────
     if actions.is_empty() {
         actions.push(PlannedAction {
             command: "xtask check".to_string(),
@@ -193,6 +199,44 @@ fn check_generated_drift() -> Result<Option<Vec<PlannedAction>>> {
     }
 
     Ok(None)
+}
+
+fn check_resource_pressure() -> Option<Vec<PlannedAction>> {
+    // Read CPU pressure stall information (Linux only).
+    // /proc/pressure/cpu has lines like: some avg10=5.23 avg60=2.10 avg300=1.05
+    let cpu_pressure = std::fs::read_to_string("/proc/pressure/cpu").ok()?;
+    let cpu_10s = cpu_pressure
+        .lines()
+        .find(|l| l.starts_with("some"))
+        .and_then(|l| {
+            l.split_whitespace()
+                .find(|w| w.starts_with("avg10="))
+                .and_then(|w| w.strip_prefix("avg10=")?.parse::<f64>().ok())
+        })?;
+
+    // Load average
+    let loadavg = std::fs::read_to_string("/proc/loadavg").ok()?;
+    let load_1m: f64 = loadavg.split_whitespace().next()?.parse().ok()?;
+    let ncpus = num_cpus();
+
+    if cpu_10s > 30.0 || (load_1m / ncpus as f64) > 4.0 {
+        return Some(vec![PlannedAction {
+            command: "xtask status".to_string(),
+            reason: format!(
+                "system under pressure: CPU pressure {cpu_10s:.1}% (10s), load {load_1m:.1} / {ncpus} CPUs"
+            ),
+            priority: Priority::Soon,
+            confidence: 0.7,
+        }]);
+    }
+
+    None
+}
+
+fn num_cpus() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
