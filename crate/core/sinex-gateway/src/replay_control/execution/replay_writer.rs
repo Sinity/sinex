@@ -304,6 +304,24 @@ impl ReplayExecutionEngine {
 
         checkpoint.total_events = material_roots.len() as u64;
 
+        // Step 2: Route staged-source scopes through source-worker, not node scan.
+        // Node scan publishes a NodeScanCommand to sinex.control.nodes.{node}.scan;
+        // staged-source replay creates a source_run and dispatches to the source-worker
+        // host (#1081) via a parse command. The routing decision is made here so both
+        // paths share the archive + invalidation + checkpoint machinery above.
+        if scope.is_staged_source_scope() {
+            return self
+                .dispatch_staged_source_replay(
+                    operation_id,
+                    scope,
+                    pool,
+                    &cascade_ids,
+                    &scope_metadata,
+                    executor_name,
+                )
+                .await;
+        }
+
         // Step 2: Build and send the scan command to the ingestor node
         let scan_subject = self
             .env
@@ -621,6 +639,149 @@ impl ReplayExecutionEngine {
                 } else {
                     "Replay scan failed before emitting any replacement events; archived cascade left untouched"
                 })
+            }
+        }
+    }
+
+    /// Dispatches a staged-source replay through the source-worker host (#1081)
+    /// instead of the legacy node scan path.
+    ///
+    /// Publishes a parse command to the source-worker NATS control subject
+    /// and polls for operation completion. The source-worker is responsible for
+    /// invoking the parser capability and publishing admitted event intents.
+    async fn dispatch_staged_source_replay(
+        &self,
+        operation_id: Uuid,
+        scope: &ReplayScope,
+        pool: &sqlx::PgPool,
+        cascade_ids: &[Uuid],
+        scope_metadata: &[ScopeInvalidationBucket],
+        executor_name: &str,
+    ) -> Result<u64> {
+        let source_id = scope.source_id.as_deref().unwrap_or("unknown");
+        let parse_subject = self
+            .env
+            .nats_subject(&format!("sinex.control.sources.{source_id}.parse"));
+
+        let parse_command = serde_json::json!({
+            "operation_id": operation_id,
+            "source_id": source_id,
+            "source_material_id": scope.source_material_id,
+            "source_version": scope.source_version,
+            "executor": executor_name,
+        });
+
+        let command_payload = serde_json::to_vec(&parse_command)
+            .map_err(|e| eyre!("Failed to serialize source parse command: {e}"))?;
+
+        info!(
+            operation_id = %operation_id,
+            source_id = source_id,
+            subject = %parse_subject,
+            "Dispatching staged-source replay to source-worker"
+        );
+
+        let ack_msg = match tokio::time::timeout(
+            self.scan_ack_timeout,
+            self.nats_client
+                .request(parse_subject.clone(), command_payload.into()),
+        )
+        .await
+        {
+            Ok(Ok(message)) => message,
+            Ok(Err(error)) => {
+                return self
+                    .abort_before_scan_ack(
+                        pool,
+                        cascade_ids,
+                        scope_metadata,
+                        operation_id,
+                        eyre!("NATS request to {parse_subject} failed: {error}"),
+                    )
+                    .await;
+            }
+            Err(_) => {
+                return self
+                    .abort_before_scan_ack(
+                        pool,
+                        cascade_ids,
+                        scope_metadata,
+                        operation_id,
+                        eyre!(
+                            "Timed out waiting for source-worker parse ack from '{source_id}' after {:?}",
+                            self.scan_ack_timeout
+                        ),
+                    )
+                    .await;
+            }
+        };
+
+        let ack: serde_json::Value = serde_json::from_slice(&ack_msg.payload)
+            .map_err(|e| eyre!("Failed to deserialize source parse ack: {e}"))?;
+
+        if ack.get("accepted").and_then(|v| v.as_bool()) != Some(true) {
+            let error_msg = ack
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown reason");
+            return self
+                .abort_before_scan_ack(
+                    pool,
+                    cascade_ids,
+                    scope_metadata,
+                    operation_id,
+                    eyre!("Source-worker '{source_id}' rejected parse command: {error_msg}"),
+                )
+                .await;
+        }
+
+        info!(
+            operation_id = %operation_id,
+            source_id = source_id,
+            "Source-worker accepted parse command, waiting for completion"
+        );
+
+        // Poll replay operation state for terminal status. The source-worker
+        // processes the parse, publishes event intents through NATS → ingestd,
+        // and the operation state machine transitions to Completed/Failed/Cancelled.
+        let replay = self.replay.clone();
+        loop {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+
+            let operation = replay.load_operation(operation_id).await.map_err(|e| {
+                eyre!("Failed to load replay operation {operation_id} during source parse: {e}")
+            })?;
+
+            match operation.state {
+                ReplayState::Completed => {
+                    info!(
+                        operation_id = %operation_id,
+                        "Staged-source replay completed"
+                    );
+                    let count = operation
+                        .output_event_count
+                        .map(|c| c as u64)
+                        .unwrap_or(0);
+                    return Ok(count);
+                }
+                ReplayState::Failed => {
+                    return Err(eyre!(
+                        "Staged-source replay failed for operation {operation_id}: {}",
+                        operation.error_details.unwrap_or_else(|| "unknown error".to_string())
+                    ));
+                }
+                ReplayState::Cancelled => {
+                    return Err(eyre!(
+                        "Staged-source replay cancelled for operation {operation_id}",
+                    ));
+                }
+                _ => {
+                    debug!(
+                        operation_id = %operation_id,
+                        state = ?operation.state,
+                        "Waiting for staged-source replay to complete"
+                    );
+                }
             }
         }
     }
