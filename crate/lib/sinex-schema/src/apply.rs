@@ -17,8 +17,18 @@ const EVENTS_REQUIRED_TRIGGERS: &[&str] = &[
     "trg_events_no_update",
     "trg_events_archive_before_delete",
     "trg_events_validate_material_bounds",
+    "trg_events_validate_payload",
+    "trg_document_projection",
 ];
 const SOURCE_MATERIAL_REQUIRED_TRIGGERS: &[&str] = &["trg_source_material_validate_event_bounds"];
+const TEMPORAL_LEDGER_REQUIRED_TRIGGERS: &[&str] = &["trg_tl_no_update_delete"];
+const ENTITIES_REQUIRED_TRIGGERS: &[&str] = &["trg_entities_updated_at"];
+const ENTITY_RELATIONS_REQUIRED_TRIGGERS: &[&str] = &["trg_entity_relations_updated_at"];
+const EVENT_ANNOTATIONS_REQUIRED_TRIGGERS: &[&str] = &["trg_event_annotations_updated_at"];
+const EVENT_PAYLOAD_SCHEMAS_REQUIRED_TRIGGERS: &[&str] =
+    &["trg_event_payload_schemas_updated_at"];
+const DLQ_EVENTS_REQUIRED_TRIGGERS: &[&str] = &["set_timestamp"];
+const EMBEDDING_MODELS_REQUIRED_TRIGGERS: &[&str] = &["trg_embedding_model_create_index"];
 const EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_events_material_anchor",
     "ix_events_ts_orig",
@@ -153,6 +163,31 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
                 drifts.push(format!(
                     "missing raw.source_material_registry trigger {trigger}"
                 ));
+            }
+        }
+    }
+
+    // Trigger existence checks for all other trigger-bearing tables.
+    // Each trigger is installed by create_triggers_and_functions via CREATE OR REPLACE.
+    // Missing triggers indicate incomplete apply or manual DROP TRIGGER.
+    let extended_trigger_checks: &[(&str, &[&str])] = &[
+        ("raw.temporal_ledger", TEMPORAL_LEDGER_REQUIRED_TRIGGERS),
+        ("core.entities", ENTITIES_REQUIRED_TRIGGERS),
+        ("core.entity_relations", ENTITY_RELATIONS_REQUIRED_TRIGGERS),
+        ("core.event_annotations", EVENT_ANNOTATIONS_REQUIRED_TRIGGERS),
+        (
+            "sinex_schemas.event_payload_schemas",
+            EVENT_PAYLOAD_SCHEMAS_REQUIRED_TRIGGERS,
+        ),
+        ("sinex_schemas.dlq_events", DLQ_EVENTS_REQUIRED_TRIGGERS),
+        ("core.embedding_models", EMBEDDING_MODELS_REQUIRED_TRIGGERS),
+    ];
+    for &(qualified_table, required_triggers) in extended_trigger_checks {
+        if relation_exists(pool, qualified_table).await? {
+            for trigger in required_triggers {
+                if !trigger_exists(pool, qualified_table, trigger).await? {
+                    drifts.push(format!("missing {qualified_table} trigger {trigger}"));
+                }
             }
         }
     }
@@ -1162,7 +1197,7 @@ CREATE OR REPLACE FUNCTION core.execute_cascade_restore(
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    v_count BIGINT;
+    v_restored_count BIGINT;
 BEGIN
     IF p_archived_ids IS NULL OR array_length(p_archived_ids, 1) IS NULL THEN
         RETURN 0;
@@ -1171,33 +1206,89 @@ BEGIN
     PERFORM pg_catalog.set_config('sinex.operation_id', p_operation_id, true);
     PERFORM pg_catalog.set_config('sinex.archive_reason', 'restored from archive', true);
 
-    INSERT INTO core.events (
-        id, source, event_type, host, payload,
-        ts_orig, ts_orig_subnano,
-        source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
-        source_event_ids, associated_blob_ids,
-        payload_schema_id, source_run_id,
-        temporal_policy, semantics_version, scope_key, equivalence_key,
-        created_by_operation_id, node_model
+    -- Defensive: drop temp table from a prior failed call in this session.
+    DROP TABLE IF EXISTS _restored_ids;
+
+    -- Step 1: Restore events into a temp table to capture exactly which IDs
+    -- were actually inserted. ON CONFLICT DO NOTHING skips IDs already in
+    -- core.events; those must NOT be deleted from the archive (#1134).
+    CREATE TEMP TABLE _restored_ids (id UUID PRIMARY KEY) ON COMMIT DROP;
+
+    WITH inserted AS (
+        INSERT INTO core.events (
+            id, source, event_type, host, payload,
+            ts_orig, ts_orig_subnano,
+            source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
+            source_event_ids, associated_blob_ids,
+            payload_schema_id, source_run_id,
+            temporal_policy, semantics_version, scope_key, equivalence_key,
+            created_by_operation_id, node_model
+        )
+        SELECT
+            ae.id, ae.source, ae.event_type, ae.host, ae.payload,
+            ae.ts_orig, ae.ts_orig_subnano,
+            ae.source_material_id, ae.anchor_byte, ae.offset_start, ae.offset_end, ae.offset_kind,
+            ae.source_event_ids, ae.associated_blob_ids,
+            ae.payload_schema_id, ae.source_run_id,
+            ae.temporal_policy, ae.semantics_version, ae.scope_key, ae.equivalence_key,
+            ae.created_by_operation_id, ae.node_model
+        FROM audit.archived_events ae
+        WHERE ae.id = ANY(p_archived_ids)
+        ON CONFLICT (id) DO NOTHING
+        RETURNING id
     )
-    SELECT
-        ae.id, ae.source, ae.event_type, ae.host, ae.payload,
-        ae.ts_orig, ae.ts_orig_subnano,
-        ae.source_material_id, ae.anchor_byte, ae.offset_start, ae.offset_end, ae.offset_kind,
-        ae.source_event_ids, ae.associated_blob_ids,
-        ae.payload_schema_id, ae.source_run_id,
-        ae.temporal_policy, ae.semantics_version, ae.scope_key, ae.equivalence_key,
-        ae.created_by_operation_id, ae.node_model
-    FROM audit.archived_events ae
-    WHERE ae.id = ANY(p_archived_ids)
+    INSERT INTO _restored_ids SELECT id FROM inserted;
+
+    SELECT count(*)::bigint INTO v_restored_count FROM _restored_ids;
+
+    -- Step 2: Restore side-table state for the events we actually restored.
+    -- Annotations.
+    INSERT INTO core.event_annotations (
+        id, event_id, annotation_type, content, metadata, created_at, updated_at
+    )
+    SELECT aa.id, aa.event_id, aa.annotation_type, aa.content, aa.metadata,
+           aa.created_at, aa.updated_at
+    FROM audit.archived_annotations aa
+    JOIN _restored_ids r ON aa.event_id = r.id
     ON CONFLICT (id) DO NOTHING;
 
-    GET DIAGNOSTICS v_count = ROW_COUNT;
+    -- Embeddings.
+    INSERT INTO core.event_embeddings (
+        id, event_id, embedding_model_id, embedding, created_at, updated_at
+    )
+    SELECT aem.id, aem.event_id, aem.embedding_model_id, aem.embedding,
+           aem.created_at, aem.updated_at
+    FROM audit.archived_embeddings aem
+    JOIN _restored_ids r ON aem.event_id = r.id
+    ON CONFLICT (id) DO NOTHING;
 
+    -- Tagged items.
+    INSERT INTO core.tagged_items (
+        id, tag_id, item_id, item_type, created_at
+    )
+    SELECT ati.id, ati.tag_id, ati.item_id, ati.item_type, ati.created_at
+    FROM audit.archived_tagged_items ati
+    JOIN _restored_ids r ON ati.item_id = r.id
+    WHERE ati.item_type = 'event'
+    ON CONFLICT (id) DO NOTHING;
+
+    -- Step 3: Delete only the archive rows that were actually restored.
+    -- Rows where ON CONFLICT DO NOTHING fired stay in the archive.
     DELETE FROM audit.archived_events
-    WHERE id = ANY(p_archived_ids);
+    WHERE id IN (SELECT id FROM _restored_ids);
 
-    RETURN v_count;
+    -- Clean up archive side-tables for restored event IDs.
+    DELETE FROM audit.archived_annotations
+    WHERE event_id IN (SELECT id FROM _restored_ids);
+
+    DELETE FROM audit.archived_embeddings
+    WHERE event_id IN (SELECT id FROM _restored_ids);
+
+    DELETE FROM audit.archived_tagged_items
+    WHERE item_id IN (SELECT id FROM _restored_ids) AND item_type = 'event';
+
+    DROP TABLE _restored_ids;
+    RETURN v_restored_count;
 END;
 $$;
 
