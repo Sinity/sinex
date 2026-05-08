@@ -10,7 +10,6 @@ pub mod automata;
 pub mod content;
 pub mod coordination;
 pub mod dlq;
-pub mod gitops;
 pub mod lifecycle;
 pub mod node_registry;
 pub mod nodes;
@@ -47,11 +46,6 @@ pub use nodes::{
 };
 pub use ops::{handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start};
 pub use shadow::{handle_shadow_create, handle_shadow_delete, handle_shadow_list};
-
-pub use gitops::{
-    handle_gitops_create_source, handle_gitops_delete_source, handle_gitops_list_sources,
-    handle_gitops_trigger_sync,
-};
 
 pub use content::{handle_retrieve_blob, handle_store_blob};
 pub use coordination::{
