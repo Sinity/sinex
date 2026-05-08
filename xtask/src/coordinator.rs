@@ -80,7 +80,7 @@ pub struct CoordinationState {
 }
 
 /// A queued job waiting for the current one to finish.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct QueuedWork {
     #[serde(default)]
     pub command: String,
@@ -91,6 +91,9 @@ pub struct QueuedWork {
     pub tree_fingerprint: String,
     #[serde(default)]
     pub scope_key: String,
+    /// Why this work is queued, e.g. "behind running check job 42" (#1163).
+    #[serde(default)]
+    pub reason: String,
 }
 
 /// Scoped job coordinator.
@@ -571,6 +574,10 @@ impl JobCoordinator {
             output_format,
             tree_fingerprint: tree_fingerprint.to_string(),
             scope_key: scope_key.to_string(),
+            reason: format!(
+                "waiting for {} job {} to complete",
+                state.command, state.job_id
+            ),
         });
         write_state(state_path, &updated)?;
         Ok(())
@@ -1769,7 +1776,8 @@ mod tests {
                     output_format: OutputFormat::Human,
                     tree_fingerprint: "queued-fp-1".into(),
                     scope_key: "queued-scope-1".into(),
-                },
+                                    reason: String::new(),
+},
                 QueuedWork {
                     command: "test".into(),
                     args: vec!["-p".into(), "sinex-primitives".into()],
@@ -1777,7 +1785,8 @@ mod tests {
                     output_format: OutputFormat::Json,
                     tree_fingerprint: "queued-fp-2".into(),
                     scope_key: "queued-scope-2".into(),
-                },
+                                    reason: String::new(),
+},
             ],
         };
 
@@ -1842,7 +1851,8 @@ mod tests {
             output_format: OutputFormat::Human,
             tree_fingerprint: "fp-first".into(),
             scope_key: "scope-first".into(),
-        });
+                    reason: String::new(),
+});
         s.queue.push(QueuedWork {
             command: "build".into(),
             args: vec!["second".into()],
@@ -1850,7 +1860,8 @@ mod tests {
             output_format: OutputFormat::Json,
             tree_fingerprint: "fp-second".into(),
             scope_key: "scope-second".into(),
-        });
+                    reason: String::new(),
+});
         s.queue.push(QueuedWork {
             command: "vm".into(),
             args: vec!["third".into()],
@@ -1858,7 +1869,8 @@ mod tests {
             output_format: OutputFormat::Compact,
             tree_fingerprint: "fp-third".into(),
             scope_key: "scope-third".into(),
-        });
+                    reason: String::new(),
+});
         write_state(&state_path, &s)?;
 
         // Read back and verify FIFO order
@@ -1905,7 +1917,8 @@ mod tests {
                         output_format: OutputFormat::Json,
                         tree_fingerprint: "queued-fp".into(),
                         scope_key: "queued-scope".into(),
-                    },
+                                            reason: String::new(),
+},
                     QueuedWork {
                         command: "vm".into(),
                         args: vec!["-p".into(), "xtask".into()],
@@ -1913,7 +1926,8 @@ mod tests {
                         output_format: OutputFormat::Human,
                         tree_fingerprint: "queued-fp-2".into(),
                         scope_key: "queued-scope-2".into(),
-                    },
+                                            reason: String::new(),
+},
                 ],
             },
         )?;
@@ -1967,7 +1981,8 @@ mod tests {
                     output_format: OutputFormat::Json,
                     tree_fingerprint: "queued-fp-final".into(),
                     scope_key: "queued-scope-final".into(),
-                }],
+                                    reason: String::new(),
+}],
             },
         )?;
 
@@ -2184,7 +2199,8 @@ mod tests {
                 output_format: OutputFormat::Human,
                 tree_fingerprint: "queued-fp".into(),
                 scope_key: "queued-scope".into(),
-            }],
+                            reason: String::new(),
+}],
         };
 
         write_state(&path, &state)?;
