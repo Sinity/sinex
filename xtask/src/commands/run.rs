@@ -1689,6 +1689,41 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_dev_journal_writes_durable_ndjson_entries() -> ::xtask::sandbox::TestResult<()> {
+        // Verify that DevJournal writes queryable NDJSON entries that survive
+        // the journal handle being dropped (process exit simulation). (#1140)
+        let dir = tempfile::tempdir()?;
+        let journal_path = dir.path().join("dev-journal.log");
+
+        {
+            let journal = DevJournal::new(&journal_path)?;
+            journal.write_entry("sinex-gateway", 12345, "gateway started");
+            journal.write_entry("sinex-gateway", 12345, "listening on :8080");
+        } // Journal dropped → writer task flushed and exited
+
+        // Read back and verify entries survived.
+        let content = std::fs::read_to_string(&journal_path)?;
+        let entries: Vec<serde_json::Value> = content
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+
+        assert_eq!(entries.len(), 2, "both entries must be durable");
+        for entry in &entries {
+            assert_eq!(entry["_SYSTEMD_UNIT"], "sinex-gateway.service");
+            assert_eq!(entry["_PID"], "12345");
+            assert_eq!(entry["SYSLOG_IDENTIFIER"], "sinex-gateway");
+            assert!(!entry["__REALTIME_TIMESTAMP"].as_str().unwrap().is_empty());
+            assert!(!entry["_BOOT_ID"].as_str().unwrap().is_empty());
+        }
+        assert_eq!(entries[0]["MESSAGE"], "gateway started");
+        assert_eq!(entries[1]["MESSAGE"], "listening on :8080");
+
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_dev_journal_rejects_watch_mode() -> ::xtask::sandbox::TestResult<()> {
         let ctx = test_context(false);
         let mut command = base_command(RunSubcommand::Gateway { instance_id: None });
