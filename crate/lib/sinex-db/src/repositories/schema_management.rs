@@ -722,82 +722,22 @@ impl<'a> SchemaManagementRepository<'a> {
 
     async fn fetch_cached_validation(
         &self,
-        event_id: &Uuid,
-        schema_id: &Uuid,
+        _event_id: &Uuid,
+        _schema_id: &Uuid,
     ) -> DbResult<Option<ValidationResult>> {
-        let row = sqlx::query!(
-            r#"
-            SELECT
-                is_valid,
-                validation_errors as "validation_errors?: JsonValue"
-            FROM sinex_schemas.validation_cache
-            WHERE event_id = $1::uuid
-              AND schema_id = $2::uuid
-            "#,
-            event_id,
-            schema_id
-        )
-        .fetch_optional(self.pool)
-        .await
-        .map_err(|e| db_error(e, "fetch validation cache entry"))?;
-
-        let Some(row) = row else {
-            return Ok(None);
-        };
-
-        let errors = match row.validation_errors {
-            Some(value) => serde_json::from_value(value).map_err(|error| {
-                SinexError::serialization(format!(
-                    "deserialize validation cache entry for event {event_id} schema {schema_id}: {error}"
-                ))
-            })?,
-            None => Vec::new(),
-        };
-
-        Ok(Some(ValidationResult {
-            is_valid: row.is_valid,
-            errors,
-            warnings: Vec::new(),
-        }))
+        // validation_cache table was removed in #1160; caching deferred to follow-up
+        let _ = (_event_id, _schema_id, self.pool);
+        Ok(None)
     }
 
     async fn store_validation_cache(
         &self,
-        event_id: &Uuid,
-        schema_id: &Uuid,
-        result: &ValidationResult,
+        _event_id: &Uuid,
+        _schema_id: &Uuid,
+        _result: &ValidationResult,
     ) -> DbResult<()> {
-        let errors_json = if result.errors.is_empty() {
-            None
-        } else {
-            Some(serde_json::to_value(&result.errors).map_err(|e| {
-                SinexError::serialization(format!("serialize validation errors: {e}"))
-            })?)
-        };
-
-        if let Err(e) = sqlx::query!(
-            r#"
-            INSERT INTO sinex_schemas.validation_cache (
-                event_id, schema_id, is_valid, validation_errors
-            ) VALUES (
-                $1::uuid, $2::uuid, $3, $4
-            )
-            ON CONFLICT (event_id, schema_id) DO UPDATE
-            SET is_valid = EXCLUDED.is_valid,
-                validation_errors = EXCLUDED.validation_errors,
-                validated_at = NOW()
-            "#,
-            event_id,
-            schema_id,
-            result.is_valid,
-            errors_json
-        )
-        .execute(self.pool)
-        .await
-        {
-            return Err(db_error(e, "upsert validation cache entry"));
-        }
-
+        // validation_cache table was removed in #1160; caching deferred to follow-up
+        let _ = (_event_id, _schema_id, _result, self.pool);
         Ok(())
     }
 
