@@ -8,9 +8,9 @@
 //! - Caching for validation results (`validation_cache`).
 
 use crate::primitives::{Timestamp, Uuid};
-use crate::schema::{Events, TableDef};
+use crate::schema::TableDef;
 use sea_query::{
-    Alias, ColumnDef, ConditionalStatement, Expr, ForeignKey, ForeignKeyAction, Iden, Index,
+    Alias, ColumnDef, Expr, ForeignKey, ForeignKeyAction, Iden, Index,
     IndexCreateStatement, Table, TableCreateStatement,
 };
 use serde_json::Value as JsonValue;
