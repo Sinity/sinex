@@ -1438,56 +1438,6 @@ pub fn compute_scope_key(command: &str, args: &[String]) -> String {
 
 // --- R2: Workflow Dependency Graph ---
 
-/// R2: Operation dependency edges: (command, prerequisite).
-///
-/// Declares that `command` should be preceded by `prerequisite` in a workflow sequence.
-/// `xtask work <target>` uses this to compute the minimum execution sequence.
-static WORKFLOW: &[(&str, &str)] = &[
-    ("test", "check"), // test builds on a passing check
-];
-
-/// R2: Topological sequencer for the workflow dependency graph.
-///
-/// Given a target command, returns the ordered sequence of commands needed to
-/// reach that state. Dependencies appear before the commands that depend on them.
-pub struct WorkflowGraph;
-
-impl WorkflowGraph {
-    /// Returns the minimum ordered sequence of commands needed to reach `target`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// // "test" depends on "check", so the sequence is ["check", "test"]
-    /// let seq = WorkflowGraph::sequence_to("test");
-    /// assert_eq!(seq, vec!["check", "test"]);
-    /// ```
-    #[must_use]
-    pub fn sequence_to(target: &str) -> Vec<String> {
-        let mut result = Vec::new();
-        let mut visited = std::collections::HashSet::new();
-        Self::topo_collect(target, &mut result, &mut visited);
-        result
-    }
-
-    fn topo_collect(
-        target: &str,
-        result: &mut Vec<String>,
-        visited: &mut std::collections::HashSet<String>,
-    ) {
-        if visited.contains(target) {
-            return;
-        }
-        visited.insert(target.to_string());
-        // Add prerequisites first (depth-first)
-        for &(cmd, prereq) in WORKFLOW {
-            if cmd == target {
-                Self::topo_collect(prereq, result, visited);
-            }
-        }
-        result.push(target.to_string());
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -2739,45 +2689,6 @@ mod tests {
         // Unknown package should fall back to "crate/" (broad, safe)
         let path = package_to_path("nonexistent-package-xyz");
         assert_eq!(path, "crate/");
-        Ok(())
-    }
-
-    // --- R2: Workflow dependency graph ---
-
-    #[sinex_test]
-    async fn test_workflow_sequence_test() -> TestResult<()> {
-        // test depends on check → sequence should be ["check", "test"]
-        let seq = WorkflowGraph::sequence_to("test");
-        assert_eq!(seq, vec!["check", "test"]);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_workflow_sequence_check() -> TestResult<()> {
-        // check has no prerequisites
-        let seq = WorkflowGraph::sequence_to("check");
-        assert_eq!(seq, vec!["check"]);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_workflow_sequence_build() -> TestResult<()> {
-        // build has no declared prerequisites
-        let seq = WorkflowGraph::sequence_to("build");
-        assert_eq!(seq, vec!["build"]);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_workflow_sequence_deduplicates() -> TestResult<()> {
-        // No duplicates even with shared prereqs
-        let seq = WorkflowGraph::sequence_to("test");
-        let unique: std::collections::HashSet<_> = seq.iter().collect();
-        assert_eq!(
-            seq.len(),
-            unique.len(),
-            "sequence should not have duplicates"
-        );
         Ok(())
     }
 
