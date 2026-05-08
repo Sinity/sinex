@@ -4,6 +4,7 @@
 //! (`sinex-node-sdk::parser`). Source-specific parsers live in `crate::parsers`.
 //! Source modules in `crate::sources` bind mechanisms + parsers.
 
+pub mod dispatch;
 pub mod drain;
 pub mod noop;
 pub mod parse_listener;
