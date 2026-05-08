@@ -232,3 +232,43 @@ impl Runs {
         ]
     }
 }
+
+// =============================================================================
+// III. BINARY SCHEMA VERSION (Startup Compatibility Gate)
+// =============================================================================
+
+/// **Table: `sinex_schemas.binary_schema_version`**
+///
+/// Single-row table checked at gateway and ingestd startup. If the row is
+/// missing it is inserted with the current expected version; if the version
+/// mismatches the service refuses to start.
+#[derive(Iden, Copy, Clone)]
+pub enum BinarySchemaVersion {
+    Table,
+    Id,
+    Version,
+}
+
+impl TableDef for BinarySchemaVersion {
+    fn table_name() -> &'static str { "binary_schema_version" }
+    fn schema_name() -> &'static str { "sinex_schemas" }
+    fn primary_key() -> &'static str { "id" }
+}
+
+#[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
+pub struct BinarySchemaVersionRecord {
+    pub id: i32,
+    pub version: String,
+}
+
+impl BinarySchemaVersion {
+    #[must_use]
+    pub fn create_table_statement() -> TableCreateStatement {
+        Table::create()
+            .table(Self::table_iden())
+            .if_not_exists()
+            .col(ColumnDef::new(BinarySchemaVersion::Id).integer().primary_key())
+            .col(ColumnDef::new(BinarySchemaVersion::Version).text().not_null())
+            .to_owned()
+    }
+}

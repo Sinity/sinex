@@ -758,10 +758,7 @@ impl ReplayExecutionEngine {
                         operation_id = %operation_id,
                         "Staged-source replay completed"
                     );
-                    let count = operation
-                        .output_event_count
-                        .map(|c| c as u64)
-                        .unwrap_or(0);
+                    let count = 0u64; // output_event_count removed in #1160
                     return Ok(count);
                 }
                 ReplayState::Failed => {

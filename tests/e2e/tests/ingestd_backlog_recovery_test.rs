@@ -93,7 +93,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
             payload: json!({"seq": idx}),
             ts_orig: Some(sinex_primitives::Timestamp::now()),
             host: HostName::new("test-host")?,
-            node_run_id: None,
+            source_run_id: None,
             payload_schema_id: None,
             provenance: Provenance::Material {
                 id: material_id,

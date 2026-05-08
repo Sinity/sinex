@@ -1,6 +1,6 @@
 use crate::schema::{
     ArchivedEventAnnotations, ArchivedEventEmbeddings, ArchivedEvents,
-    ArchivedTaggedItems, Blobs, DocumentChunks, Documents, EmbeddingCache,
+    ArchivedTaggedItems, BinarySchemaVersion, Blobs, DocumentChunks, Documents, EmbeddingCache,
     EmbeddingModels, Entities, EntityRelations, EventAnnotations, EventClusterMembers,
     EventClusters, EventEmbeddings, EventPayloadSchemas, EventReplacements, EventTombstones, Events,
     Manifests, OperationsLog, Runs,
@@ -442,6 +442,7 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         render_table(&Manifests::create_table_statement()),
         render_table(&Runs::create_table_statement()),
         render_table(&Events::create_table_statement()),
+        render_table(&BinarySchemaVersion::create_table_statement()),
         render_table(&TemporalLedger::create_table_statement()),
         render_table(&Entities::create_table_statement()),
         render_table(&EntityRelations::create_table_statement()),

@@ -227,7 +227,7 @@ impl<'ctx> TestCoreStack<'ctx> {
             payload: json,
             ts_orig: Some(Timestamp::now()),
             host: crate::sandbox::local_test_host(),
-            node_run_id: None,
+            source_run_id: None,
             payload_schema_id: None,
             provenance: sinex_primitives::events::Provenance::Material {
                 id: material_id,
@@ -327,7 +327,7 @@ impl<'ctx> TestCoreStack<'ctx> {
                 payload: serde_json::json!({ "index": i, "seeded": true }),
                 ts_orig: Some(Timestamp::now()),
                 host: crate::sandbox::local_test_host(),
-                node_run_id: None,
+                source_run_id: None,
                 payload_schema_id: None,
                 provenance: sinex_primitives::events::Provenance::Material {
                     id: material_id,

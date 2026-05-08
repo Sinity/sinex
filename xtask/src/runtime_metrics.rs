@@ -260,37 +260,14 @@ async fn query_inner(db_url: &str) -> Result<RuntimeMetrics, sqlx::Error> {
     let heartbeat_row = sqlx::query_as!(
         HeartbeatRow,
         r#"
-        WITH run_candidate AS (
-            SELECT
-                nr.status,
-                EXTRACT(EPOCH FROM (NOW() - nr.last_heartbeat_at))::bigint AS age_secs,
-                0 AS priority
-            FROM core.node_runs nr
-            JOIN core.node_manifests nm ON nm.id = nr.node_manifest_id
-            WHERE nm.node_name = 'sinex-ingestd'
-              AND nr.status = 'running'
-            ORDER BY nr.last_heartbeat_at DESC NULLS LAST
-            LIMIT 1
-        ),
-        manifest_candidate AS (
-            SELECT
-                nm.status,
-                EXTRACT(EPOCH FROM (NOW() - nm.last_heartbeat_at))::bigint AS age_secs,
-                1 AS priority
-            FROM core.node_manifests nm
-            WHERE nm.node_name = 'sinex-ingestd'
-            ORDER BY nm.last_heartbeat_at DESC NULLS LAST
-            LIMIT 1
-        )
         SELECT
-            status,
-            age_secs as "age_secs: i64"
-        FROM (
-            SELECT * FROM run_candidate
-            UNION ALL
-            SELECT * FROM manifest_candidate
-        ) candidates
-        ORDER BY priority
+            nr.status,
+            EXTRACT(EPOCH FROM (NOW() - nr.last_heartbeat_at))::bigint as "age_secs: i64"
+        FROM core.runs nr
+        JOIN core.manifests nm ON nm.id = nr.manifest_id
+        WHERE nm.name = 'sinex-ingestd'
+          AND nr.status = 'running'
+        ORDER BY nr.last_heartbeat_at DESC NULLS LAST
         LIMIT 1
         "#,
     )
