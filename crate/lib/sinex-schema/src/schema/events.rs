@@ -71,7 +71,7 @@ pub enum Events {
 
     // Metadata
     PayloadSchemaId,
-    NodeRunId,
+    SourceRunId,
 
     // Synthetic event metadata (nullable — only set for derived/synthesized events)
     TemporalPolicy,
@@ -194,7 +194,7 @@ impl Events {
             .col(ColumnDef::new(Events::SourceEventIds).array(ColumnType::Custom(Alias::new("UUID").into_iden())))
             .col(ColumnDef::new(Events::AssociatedBlobIds).array(ColumnType::Custom(Alias::new("UUID").into_iden())))
             .col(ColumnDef::new(Events::PayloadSchemaId).custom(Alias::new("UUID")))
-            .col(ColumnDef::new(Events::NodeRunId).custom(Alias::new("UUID")))
+            .col(ColumnDef::new(Events::SourceRunId).custom(Alias::new("UUID")))
             // Synthetic event metadata (nullable — only populated for derived/synthesized events)
             .col(ColumnDef::new(Events::TemporalPolicy).text().check(
                 Expr::cust("temporal_policy IS NULL OR temporal_policy IN ('inherit_parent', 'latest_input', 'window_boundary', 'declared_effective')")
@@ -264,7 +264,7 @@ impl Events {
     pub fn create_node_run_foreign_key() -> ForeignKeyCreateStatement {
         ForeignKey::create()
             .name("events_source_run_id_fkey")
-            .from(Self::table_iden(), Events::NodeRunId)
+            .from(Self::table_iden(), Events::SourceRunId)
             .to(Runs::table_iden(), Alias::new("id"))
             .to_owned()
     }
