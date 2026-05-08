@@ -32,6 +32,7 @@ pub mod infra;
 pub mod jobs;
 pub mod orchestrator;
 pub mod output;
+pub mod planner;
 pub mod preflight;
 pub mod process;
 pub mod proof_catalog;
@@ -976,6 +977,7 @@ mod tests {
             watch: false,
             summary: true,
             schemas: false,
+            next: false,
         }
         .metadata();
         assert!(!status.track_in_history);
