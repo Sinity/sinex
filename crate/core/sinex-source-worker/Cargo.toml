@@ -73,6 +73,9 @@ path = "../../lib/sinex-node-sdk"
 [dependencies.sinex-primitives]
 path = "../../lib/sinex-primitives"
 
+[dev-dependencies.color-eyre]
+workspace = true
+
 [dev-dependencies.xtask]
 path = "../../../xtask"
 
