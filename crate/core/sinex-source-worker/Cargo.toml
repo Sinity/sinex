@@ -28,9 +28,7 @@ workspace = true
 
 [dependencies.tokio]
 workspace = true
-features = [
-    "full",
-]
+features = ["full"]
 
 [dependencies.tracing]
 workspace = true
@@ -40,10 +38,7 @@ workspace = true
 
 [dependencies.clap]
 workspace = true
-features = [
-    "derive",
-    "env",
-]
+features = ["derive", "env"]
 
 [dependencies.serde]
 workspace = true
@@ -66,6 +61,9 @@ workspace = true
 [dependencies.async-nats]
 workspace = true
 
+[dependencies.futures]
+workspace = true
+
 [dependencies.sinex-db]
 path = "../../lib/sinex-db"
 
@@ -80,11 +78,10 @@ path = "../../../xtask"
 
 [dev-dependencies.sinex-primitives]
 path = "../../lib/sinex-primitives"
-features = [
-    "testing",
-]
+features = ["testing"]
 
 [features]
+default = []
 tokio-console = ["dep:console-subscriber"]
 
 [dependencies.console-subscriber]
