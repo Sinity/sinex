@@ -408,7 +408,7 @@ impl IngestService {
                 ServiceName::new("sinex-ingestd"),
                 sinex_primitives::Seconds::from_secs(60),
             )
-            .with_node_name(node_name.clone())
+            .with_node_name(NodeName::new("sinex-ingestd"))
             .with_db_pool(pool.clone());
             self.heartbeat_counter_handle = Some(emitter.get_counter_handle());
 

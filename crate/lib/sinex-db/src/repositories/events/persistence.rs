@@ -1968,6 +1968,29 @@ impl<'a> EventRepository<'a> {
         }
 
         let ids: Vec<Uuid> = live_ids.to_vec();
+        let requested_count = ids.len() as u64;
+
+        // Pre-validate: ensure all requested live IDs exist before any mutation.
+        // This prevents the transaction from committing partial work and then
+        // returning Err (the #1134 atomicity gap).
+        let existing_count: i64 = sqlx::query_scalar(
+            "SELECT count(*)::bigint FROM core.events WHERE id = ANY($1::uuid[])",
+        )
+        .bind(&ids)
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "pre-validate archive roots"))?;
+
+        if existing_count as u64 != requested_count {
+            let missing_count = requested_count - existing_count as u64;
+            return Err(db_error(
+                sqlx::Error::RowNotFound,
+                &format!(
+                    "archive_cascade: {missing_count} of {requested_count} requested root IDs \
+                     were not present in core.events — archive aborted before any mutation"
+                ),
+            ));
+        }
 
         // Begin transaction and set audit context
         let mut tx = self.pool.begin().await.map_err(|e| {
@@ -2000,7 +2023,6 @@ impl<'a> EventRepository<'a> {
             .map_err(|e| db_error(e, "set archive_reason"))?;
 
         // Copy annotations to archive before the DELETE cascade destroys them.
-        // This preserves user-curated metadata through replay operations.
         let annotation_count = sqlx::query(
             r"INSERT INTO audit.archived_annotations
               SELECT a.*, now(), $2, $3
@@ -2059,63 +2081,37 @@ impl<'a> EventRepository<'a> {
             .map_err(|e| db_error(e, "cleanup archived tagged items"))?;
         }
 
-        // Delete events - the trigger fn_archive_before_delete copies them to archive
-        // Process in reverse depth order (children first, then parents) to avoid FK issues
-        let result = sqlx::query("DELETE FROM core.events WHERE id = ANY($1::uuid[])")
+        // Delete events - the trigger fn_archive_before_delete copies them to archive.
+        // Pre-validation (above) guarantees all IDs exist, so this DELETE cannot
+        // come up short due to missing roots.
+        sqlx::query("DELETE FROM core.events WHERE id = ANY($1::uuid[])")
             .bind(&ids)
             .execute(&mut *tx)
             .await
             .map_err(|e| db_error(e, "execute cascade archive"))?;
 
-        let archived_count = result.rows_affected();
-
-        // Verify all requested roots were actually archived. The DELETE trigger
-        // copies matching rows to audit.archived_events; a count mismatch means
-        // some IDs were not found in core.events (already archived, tombstoned,
-        // or never existed).
-        let requested_count = ids.len() as u64;
-        if archived_count < requested_count {
-            let missing_count = requested_count - archived_count;
-            tracing::warn!(
-                operation_id = %operation_id,
-                requested = requested_count,
-                archived = archived_count,
-                missing = missing_count,
-                "archive_cascade: {missing_count} of {requested_count} requested root IDs were not \
-                 found in core.events (already archived, tombstoned, or never existed)"
-            );
-        }
-
         tx.commit().await.map_err(|e| {
             db_error(
                 e,
-                &format!("Failed to commit archive transaction (archived {archived_count} events)"),
+                &format!(
+                    "Failed to commit archive transaction for {} events",
+                    requested_count
+                ),
             )
         })?;
-
-        if archived_count < requested_count {
-            let missing_count = requested_count - archived_count;
-            return Err(db_error(
-                sqlx::Error::RowNotFound,
-                &format!(
-                    "archive_cascade: {missing_count} of {requested_count} requested root IDs \
-                     were not present in core.events and could not be archived"
-                ),
-            ));
-        }
 
         tracing::info!(
             operation_id = %operation_id,
             archived_by = %archived_by,
             reason = %reason,
-            archived_count = %archived_count,
+            archived_count = %requested_count,
             annotations_archived = annotation_count,
             embeddings_archived = embedding_count,
             tagged_items_archived = tagged_count,
             "Archived events via cascade operation"
         );
 
-        Ok(archived_count)
+        Ok(requested_count)
     }
 }
 
