@@ -22,7 +22,7 @@ struct GuideEntry {
 const HELP_CATEGORIES: &[HelpCategory] = &[
     HelpCategory {
         title: "Development",
-        command_paths: &["fix", "check", "test", "build", "work"],
+        command_paths: &["fix", "check", "test", "build"],
     },
     HelpCategory {
         title: "Runtime",
@@ -80,13 +80,6 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                     "Simple test(name) filters infer matching integration-test binaries automatically; use --test only when inference is too ambiguous.",
                     "Do not use bare cargo test or bare cargo nextest when xtask already exposes the surface you need.",
                 ],
-            },
-            GuideEntry {
-                path: "work",
-                fallback_summary: "Run the standard local workflow pipeline",
-                when: "you want the standard end-to-end local validation path",
-                examples: &["xtask work"],
-                notes: &[],
             },
             GuideEntry {
                 path: "build",

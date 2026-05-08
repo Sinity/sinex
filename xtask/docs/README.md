@@ -23,7 +23,7 @@ development.
 
 ## Mental Model
 
-- **Core loop**: `xtask check`, `xtask fix`, `xtask test`, `xtask work`, and `xtask build`.
+- **Core loop**: `xtask check`, `xtask fix`, `xtask test`, and `xtask build`.
 - **Runtime/infra**: `xtask infra`, `xtask run`, `xtask status`, `xtask doctor`, `xtask jobs`, and `xtask reset`.
 - **Investigation**: `xtask history`, `xtask analytics`, and `xtask deps`.
 - **Docs/context**: `xtask docs sync`, `xtask docs check`, `xtask docs agents`, `xtask docs proof-catalog`, `xtask docs ast-grep-catalog`, `xtask docs schema-bundle`, and `xtask docs snapshot`.

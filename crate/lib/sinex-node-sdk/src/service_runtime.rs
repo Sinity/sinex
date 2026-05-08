@@ -6,7 +6,7 @@
 //! it provides pure setup functions that each binary calls once at the start
 //! of `main`.
 //!
-//! The duplication this consolidates was flagged by the issue-drift detector
+//! The duplication this consolidates was flagged during the declaration→consumer drift audit (#744)
 //! (#694) and the audit-cycle synthesis: `load_env_filter` was copy-pasted
 //! identically into both gateway and ingestd, and the tracing-init shape
 //! drifted between them in small ways (try_init vs init, target/thread-id

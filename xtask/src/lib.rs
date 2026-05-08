@@ -54,7 +54,7 @@ use command::{CommandContext, HistoryAccessMode, XtaskCommand};
 use commands::{
     AnalyticsCommand, BuildCommand, CheckCommand, DoctorCommand, FixCommand, GitStackCommand,
     JobsCommand, PrivacyCommand, ResetCommand, SchemaCommand, StatusCommand, TestCommand,
-    WorkCommand, ci::CiCommand, completions::CompletionsCommand, source_units::SourceUnitsCommand,
+    ci::CiCommand, completions::CompletionsCommand, source_units::SourceUnitsCommand,
     verify::VerifyCommand,
 };
 use config::config;
@@ -264,8 +264,6 @@ enum Commands {
     Test(TestCommand),
     #[command(hide = true)]
     Build(BuildCommand),
-    #[command(hide = true)]
-    Work(WorkCommand),
 
     // ─── Runtime ───────────────────────────────────────────────────
     #[command(hide = true)]
@@ -421,7 +419,6 @@ pub async fn run_cli() -> Result<()> {
         Commands::Verify(cmd) => ("verify", None, None, cmd.metadata()),
         Commands::Exercise(cmd) => ("exercise", None, None, cmd.metadata()),
         Commands::Reset(cmd) => ("reset", None, None, cmd.metadata()),
-        Commands::Work(cmd) => ("work", None, None, cmd.metadata()),
         Commands::Ci(cmd) => ("ci", None, None, cmd.metadata()),
         Commands::Completions(cmd) => ("completions", None, None, cmd.metadata()),
     };
@@ -541,7 +538,6 @@ pub async fn run_cli() -> Result<()> {
             Commands::Verify(cmd) => cmd.execute(&ctx).await,
             Commands::Exercise(cmd) => cmd.execute(&ctx).await,
             Commands::Reset(cmd) => cmd.execute(&ctx).await,
-            Commands::Work(cmd) => cmd.execute(&ctx).await,
             Commands::Ci(cmd) => cmd.execute(&ctx).await,
             Commands::Completions(cmd) => cmd.execute(&ctx).await,
         }

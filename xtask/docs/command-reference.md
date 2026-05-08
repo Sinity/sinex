@@ -26,7 +26,6 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `check` | Run the fast workspace verification pipeline |
 | `test` | Run the repo's primary nextest-backed test workflows |
 | `build` | Build workspace packages while capturing compiler diagnostics |
-| `work` | Execute the minimum workflow sequence to reach a target state |
 | `run` | Run command for binary lifecycle management |
 | `infra` | Manage local infrastructure (Postgres, NATS, VMs) |
 | `jobs` | Inspect and manage background xtask jobs |
@@ -74,6 +73,7 @@ Run the fast workspace verification pipeline
 | `--heavy` | no | no | Also run slow lints |
 | `-a, --all` | no | no | Check ALL packages (disables affected mode default) |
 | `-p, --package` | yes | no | Check specific package(s) only |
+| `--features` | yes | no | Cargo features to enable (comma-separated, forwarded to --features) |
 | `--skip-tests` | no | no | Skip test compilation check (faster, but may miss test errors) |
 | `--lint-breakdown` | no | no | Show breakdown of warning counts by lint code (top 10) |
 | `--by-file` | no | no | Show breakdown of warning counts by file path (top 20) |
@@ -214,18 +214,8 @@ Build workspace packages while capturing compiler diagnostics
 | `-p, --package` | yes | no | Packages to build (default: all) |
 | `-r, --release` | no | no | Build in release mode |
 | `-a, --all` | no | no | Build ALL packages (disables affected mode default) |
+| `--features` | yes | no | Cargo features to enable (comma-separated, forwarded to --features) |
 | `--dry-run` | no | no | Print what would happen without building |
-
-
-## `xtask work`
-
-Execute the minimum workflow sequence to reach a target state
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `target` | yes | yes | Target operation to reach (check, test, build) |
 
 
 ## `xtask run`
