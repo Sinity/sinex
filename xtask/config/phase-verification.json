@@ -24,7 +24,7 @@
     {
       "id": "1",
       "title": "Build the contract foundation",
-      "issues": [1058, 1059, 1064, 1065, 1082, 1097, 1098, 1130, 1131, 1137],
+      "issues": [1058, 1059, 1064, 1065, 1082, 1097, 1098],
       "required_checks": [
         "xtask check -p sinex-primitives",
         "xtask check -p sinex-node-sdk",
