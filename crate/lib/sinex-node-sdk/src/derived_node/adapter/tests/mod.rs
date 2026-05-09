@@ -12,8 +12,7 @@ use crate::exploration::{ExplorationProvider, ExportFormat};
 #[cfg(feature = "messaging")]
 use crate::health_reporter::{HealthReporter, HealthThresholds};
 use crate::runtime::stream::{
-    Checkpoint, EventEmitter, Node, NodeHandles, NodeRuntimeState, RuntimeDrainController,
-    ScanArgs, ServiceInfo,
+    Checkpoint, EventEmitter, Node, NodeHandles, NodeRuntimeState, ScanArgs, ServiceInfo,
 };
 #[cfg(feature = "messaging")]
 use crate::self_observation::{SelfObservationError, SelfObserver, SelfObserverConfig};
@@ -585,23 +584,13 @@ async fn make_runtime_state_with_validator(
 
 #[sinex_test]
 async fn request_runtime_drain_delivers_to_receiver() -> TestResult<()> {
-    let drain = RuntimeDrainController::new();
-    let mut rx = drain.subscribe();
-
-    assert!(drain.request_drain_and_warn("test-derived"));
-    rx.changed().await?;
-    assert!(*rx.borrow());
-    Ok(())
+    crate::runtime::stream::test_support::assert_request_drain_delivers_to_receiver("test-derived")
+        .await
 }
 
 #[sinex_test]
 async fn request_runtime_drain_is_idempotent() -> TestResult<()> {
-    let drain = RuntimeDrainController::new();
-
-    assert!(drain.request_drain_and_warn("test-derived"));
-    assert!(drain.request_drain_and_warn("test-derived"));
-    assert!(drain.is_requested());
-    Ok(())
+    crate::runtime::stream::test_support::assert_request_drain_is_idempotent("test-derived").await
 }
 
 #[sinex_test]

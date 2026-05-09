@@ -659,8 +659,7 @@ mod tests {
     use super::{IngestorNodeAdapter, IngestorState};
     use crate::checkpoint::{CheckpointManager, CheckpointState};
     use crate::runtime::stream::{
-        Checkpoint, ContinuousStart, NodeCapabilities, RuntimeDrainController, ScanArgs,
-        ScanReport, TimeHorizon,
+        Checkpoint, ContinuousStart, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon,
     };
     use crate::shutdown::ShutdownConfig;
     use crate::{IngestorNode, NodeResult};
@@ -759,23 +758,16 @@ mod tests {
 
     #[sinex_test]
     async fn request_runtime_drain_delivers_to_receiver() -> TestResult<()> {
-        let drain = RuntimeDrainController::new();
-        let mut rx = drain.subscribe();
-
-        assert!(drain.request_drain_and_warn("test-ingestor"));
-        rx.changed().await?;
-        assert!(*rx.borrow());
-        Ok(())
+        crate::runtime::stream::test_support::assert_request_drain_delivers_to_receiver(
+            "test-ingestor",
+        )
+        .await
     }
 
     #[sinex_test]
     async fn request_runtime_drain_is_idempotent() -> TestResult<()> {
-        let drain = RuntimeDrainController::new();
-
-        assert!(drain.request_drain_and_warn("test-ingestor"));
-        assert!(drain.request_drain_and_warn("test-ingestor"));
-        assert!(drain.is_requested());
-        Ok(())
+        crate::runtime::stream::test_support::assert_request_drain_is_idempotent("test-ingestor")
+            .await
     }
 
     #[sinex_test]
