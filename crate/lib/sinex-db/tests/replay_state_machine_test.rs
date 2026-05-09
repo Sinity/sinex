@@ -53,6 +53,7 @@ async fn replay_preview_nulls_cascade_impact_when_metadata_queries_fail(
             )),
             material_filter: None,
             filters: HashMap::new(),
+            ..Default::default()
         })
         .await?;
 
@@ -99,6 +100,7 @@ async fn replay_preview_maps_watcher_node_ids_to_emitted_event_sources(
             )),
             material_filter: None,
             filters: HashMap::new(),
+            ..Default::default()
         })
         .await?;
 

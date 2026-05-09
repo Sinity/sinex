@@ -304,6 +304,7 @@ async fn ops_cancel_replay_updates_replay_state_machine(ctx: TestContext) -> Tes
                 time_window: None,
                 material_filter: None,
                 filters: HashMap::new(),
+                ..Default::default()
             },
             "test:planner".to_string(),
         )

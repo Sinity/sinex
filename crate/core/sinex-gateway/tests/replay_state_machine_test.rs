@@ -95,6 +95,7 @@ async fn scope_serialization_round_trips() -> Result<()> {
         )),
         material_filter: Some(vec![Uuid::now_v7(), Uuid::now_v7()]),
         filters,
+        ..Default::default()
     };
 
     let json = serde_json::to_string(&scope)?;
@@ -128,6 +129,7 @@ async fn scope_normalized_filters_drop_empty_and_dedupe() -> Result<()> {
             "event_types".to_string(),
             serde_json::json!(["file.created", "", "file.created", "file.modified", 7]),
         )]),
+        ..Default::default()
     };
 
     let normalized = scope.normalized_filters();
@@ -149,6 +151,7 @@ async fn operations_default_to_planning() -> Result<()> {
         time_window: None,
         material_filter: Some(vec![Uuid::now_v7()]),
         filters: HashMap::new(),
+        ..Default::default()
     };
 
     let operation = ReplayOperation {
@@ -187,6 +190,7 @@ async fn create_operation_persists_loadable_metadata_atomically(ctx: TestContext
             "event_types".to_string(),
             serde_json::json!(["file.created"]),
         )]),
+        ..Default::default()
     };
 
     let created = replay
@@ -230,6 +234,7 @@ async fn preview_updates_do_not_regress_approved_state(ctx: TestContext) -> Resu
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
+        ..Default::default()
     };
 
     let operation = replay
@@ -276,6 +281,7 @@ async fn submit_previewed_operation_sets_execution_metadata_atomically(
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
+        ..Default::default()
     };
 
     let operation = replay
@@ -332,6 +338,7 @@ async fn begin_execution_sets_execution_metadata_atomically(ctx: TestContext) ->
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
+        ..Default::default()
     };
 
     let operation = replay
@@ -379,6 +386,7 @@ async fn mark_failed_persists_pre_execution_and_execution_failures(ctx: TestCont
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
+        ..Default::default()
     };
 
     let operation = replay
@@ -424,6 +432,7 @@ async fn mark_failed_persists_pre_execution_and_execution_failures(ctx: TestCont
                 time_window: None,
                 material_filter: None,
                 filters: HashMap::new(),
+                ..Default::default()
             },
             "test:planner".to_string(),
         )
@@ -463,6 +472,7 @@ async fn cancel_enforces_state_transition_rules(ctx: TestContext) -> Result<()> 
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
+        ..Default::default()
     };
 
     let operation = replay
@@ -521,6 +531,7 @@ async fn cancel_marks_executing_operation_as_cancelling_until_finalized(
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
+        ..Default::default()
     };
 
     let operation = replay
@@ -577,6 +588,7 @@ async fn execution_lock_is_released_when_guard_drops(ctx: TestContext) -> Result
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
+        ..Default::default()
     };
 
     let operation = replay
@@ -627,6 +639,7 @@ async fn recover_stale_executing_clears_executor_node(ctx: TestContext) -> Resul
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
+        ..Default::default()
     };
 
     let operation = replay
@@ -705,6 +718,7 @@ async fn recover_stale_committing_clears_executor_node(ctx: TestContext) -> Resu
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
+        ..Default::default()
     };
 
     let operation = replay

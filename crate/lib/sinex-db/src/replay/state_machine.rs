@@ -99,7 +99,7 @@ impl ReplayState {
 }
 
 /// Scope defining what to replay
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReplayScope {
     /// Node ID to replay
     pub node_id: String,
