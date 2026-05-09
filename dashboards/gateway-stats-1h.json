@@ -1,0 +1,76 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Hourly RPC traffic, latency, and rate-limit signal from sinex-gateway, derived from the gateway_stats_1h view.",
+  "editable": true,
+  "graphTooltip": 0,
+  "panels": [
+    {
+      "datasource": "${DS_POSTGRES}",
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "title": "Requests per hour",
+      "targets": [
+        {
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT bucket AS time, total_requests AS value FROM sinex_telemetry.gateway_stats_1h WHERE bucket > now() - INTERVAL '7 days' ORDER BY bucket",
+          "refId": "A"
+        }
+      ],
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_POSTGRES}",
+      "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "id": 2,
+      "title": "Latency p99 (ms)",
+      "targets": [
+        {
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT bucket AS time, p99_latency_ms AS value FROM sinex_telemetry.gateway_stats_1h WHERE bucket > now() - INTERVAL '7 days' ORDER BY bucket",
+          "refId": "A"
+        }
+      ],
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_POSTGRES}",
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+      "id": 3,
+      "title": "Rate-limited vs rejected",
+      "targets": [
+        {
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT bucket AS time, rate_limited_requests AS \"rate_limited\", rejected_requests AS \"rejected\" FROM sinex_telemetry.gateway_stats_1h WHERE bucket > now() - INTERVAL '7 days' ORDER BY bucket",
+          "refId": "A"
+        }
+      ],
+      "type": "timeseries"
+    }
+  ],
+  "schemaVersion": 38,
+  "tags": ["sinex", "gateway"],
+  "templating": {"list": []},
+  "time": {"from": "now-7d", "to": "now"},
+  "timezone": "browser",
+  "title": "Sinex Gateway Stats (1h)",
+  "uid": "sinex-gateway-stats-1h",
+  "version": 1
+}
