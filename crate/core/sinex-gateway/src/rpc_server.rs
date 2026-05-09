@@ -729,6 +729,9 @@ pub(crate) struct AppState {
     pub(crate) rate_limiter: RateLimiter,
     pub(crate) metrics: Arc<GatewayMetrics>,
     pub(crate) sse_bus: Option<Arc<crate::sse_bus::SubscriptionBus>>,
+    /// Shutdown signal receiver — `/ready` reports 503 once asserted so that
+    /// upstream load balancers stop routing during graceful drain.
+    pub(crate) shutdown_rx: tokio::sync::watch::Receiver<bool>,
 }
 
 /// Shared dispatch function for RPC methods (used by both `rpc_server` and `native_messaging`)
@@ -783,14 +786,13 @@ pub async fn dispatch_rpc_method(
     result
 }
 
-/// Health and readiness check endpoint
+/// Detailed component health endpoint (`/health`).
 ///
-/// Returns 200 OK while the gateway can still serve DB-backed RPCs; the JSON
-/// body distinguishes full health from degraded operation.
-///
-/// NATS or replay-control failures no longer present as "healthy". Operators
+/// Always returns the full `SystemHealthResponse` body and uses the HTTP
+/// status code to distinguish serving (200) from non-serving (503). Operators
 /// should read `status`, `healthy`, and `degradation_reasons` rather than
-/// treating HTTP 200 as full readiness.
+/// treating HTTP 200 as full readiness; this route is intentionally verbose
+/// and is the destination for human-driven diagnostics.
 async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
     let response = system_health_response(state.services.health_report().await);
     let status = if response.serving {
@@ -800,6 +802,69 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
     };
 
     (status, axum::Json(response)).into_response()
+}
+
+/// Load-balancer-oriented readiness probe (`/ready`).
+///
+/// Returns 200 only when:
+/// - graceful drain has not been requested
+/// - the database pool can be acquired and ping-checked in <100ms
+/// - the NATS active probe reports connected
+///
+/// Returns 503 otherwise. The body is a minimal JSON object so probes can be
+/// cheap; richer diagnostics belong on `/health`.
+async fn ready_check(State(state): State<AppState>) -> impl IntoResponse {
+    use serde_json::json;
+    use std::time::Duration;
+
+    // 1. Drain semantics: while the shutdown signal is asserted the gateway
+    //    must report not-ready so external load balancers stop routing.
+    let draining = *state.shutdown_rx.borrow();
+    if draining {
+        let body = json!({
+            "ready": false,
+            "reason": "draining",
+        });
+        return (StatusCode::SERVICE_UNAVAILABLE, axum::Json(body)).into_response();
+    }
+
+    // 2. DB pool acquirable in <100ms.
+    let db_start = std::time::Instant::now();
+    let db_ok = matches!(
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            sqlx::query_scalar!("SELECT 1").fetch_one(state.services.pool()),
+        )
+        .await,
+        Ok(Ok(_))
+    );
+    let db_elapsed_ms = db_start.elapsed().as_millis() as u64;
+
+    if !db_ok {
+        let body = json!({
+            "ready": false,
+            "reason": "database_not_ready",
+            "db_probe_ms": db_elapsed_ms,
+        });
+        return (StatusCode::SERVICE_UNAVAILABLE, axum::Json(body)).into_response();
+    }
+
+    // 3. NATS connected (active probe).
+    let nats = state.services.probe_nats_active().await;
+    if !nats.connected {
+        let body = json!({
+            "ready": false,
+            "reason": "nats_not_ready",
+            "detail": nats.detail,
+        });
+        return (StatusCode::SERVICE_UNAVAILABLE, axum::Json(body)).into_response();
+    }
+
+    let body = json!({
+        "ready": true,
+        "db_probe_ms": db_elapsed_ms,
+    });
+    (StatusCode::OK, axum::Json(body)).into_response()
 }
 
 /// Main RPC handler using dispatch table
@@ -1592,6 +1657,7 @@ pub async fn spawn(
         rate_limiter,
         metrics,
         sse_bus,
+        shutdown_rx: shutdown_rx.clone(),
     };
 
     let app = RpcServer::build_app(&limits, &config.cors_origins_list(), state);
@@ -1711,7 +1777,7 @@ impl RpcServer {
             .route("/rpc/batch", post(handle_rpc_batch))
             .route("/", post(handle_rpc))
             .route("/health", get(health_check))
-            .route("/ready", get(health_check))
+            .route("/ready", get(ready_check))
     }
 
     /// Build the complete app with split middleware:
