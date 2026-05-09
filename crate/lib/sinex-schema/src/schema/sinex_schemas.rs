@@ -37,6 +37,14 @@ pub enum EventPayloadSchemas {
     ContentHash,
     IsActive,
     UpdatedAt,
+    /// Retention horizon for events bound to this schema (#1172).
+    ///
+    /// `BIGINT NULL` — `NULL` means "never expire" (current default for all
+    /// existing schemas). When non-null, the gateway-side TTL enforcer
+    /// (Phase 6 follow-up) will archive events older than `retention_seconds`
+    /// since `ts_orig`. This phase only lands the column; no archival logic
+    /// is wired yet.
+    RetentionSeconds,
 }
 
 impl TableDef for EventPayloadSchemas {
@@ -61,6 +69,10 @@ pub struct EventPayloadSchemaRecord {
     pub content_hash: String,
     pub is_active: bool,
     pub updated_at: Timestamp,
+    /// Retention horizon in seconds (#1172). `None` means "never expire".
+    /// Phase 1 lands the column; Phase 6 wires gateway-side TTL enforcement.
+    #[serde(default)]
+    pub retention_seconds: Option<i64>,
 }
 
 impl EventPayloadSchemas {
@@ -114,6 +126,10 @@ impl EventPayloadSchemas {
                     .not_null()
                     .default(Expr::current_timestamp()),
             )
+            // Retention horizon (#1172). NULL = never expire (current default
+            // for every schema). Phase 6 wires gateway-side enforcement; this
+            // phase only lands the column.
+            .col(ColumnDef::new(EventPayloadSchemas::RetentionSeconds).big_integer())
             .to_owned()
     }
 

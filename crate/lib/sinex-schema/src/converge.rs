@@ -762,6 +762,13 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                     name: "event_payload_schemas_schema_version_bounds",
                     expression: "length(schema_version) BETWEEN 1 AND 64",
                 },
+                // Retention horizon (#1172): NULL = never expire; otherwise
+                // must be a strictly positive number of seconds. Phase 1
+                // only lands the column + CHECK; Phase 6 wires enforcement.
+                NamedConstraint {
+                    name: "event_payload_schemas_retention_seconds_positive",
+                    expression: "retention_seconds IS NULL OR retention_seconds > 0",
+                },
             ],
             foreign_keys: vec![],
             columns_to_drop: &[],
