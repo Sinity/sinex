@@ -58,7 +58,7 @@ pub struct Event<T = JsonValue> {
     pub host: HostName,
 
     /// UUID of the node run (session) that created this event.
-    /// References `core.source_runs.id`.
+    /// References `core.runs.id`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_run_id: Option<Uuid>,
 
@@ -127,7 +127,7 @@ impl<T> Event<T> {
         self
     }
 
-    /// Set the node run ID (references `core.source_runs`)
+    /// Set the node run ID (references `core.runs`)
     pub fn with_source_run_id(mut self, run_id: Uuid) -> Self {
         self.source_run_id = Some(run_id);
         self

@@ -44,7 +44,8 @@ pub use source_materials::{
     relation_types as source_material_relation_types, status as material_status, timing_info_types,
 };
 pub use state::{
-    Operation, OperationRecord, OperationStatistics, StateRepository, SystemHealthReport,
+    ManifestRow, NodeRun, Operation, OperationRecord, OperationStatistics, StateRepository,
+    SystemHealthReport,
 };
 
 use sqlx::PgPool;

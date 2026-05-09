@@ -166,9 +166,9 @@ async fn test_runner_registers_node_run_when_database_is_available(
 
     let manifest = sqlx::query!(
         r#"
-        SELECT id, node_name, version
-        FROM core.node_manifests
-        WHERE node_name = $1
+        SELECT id, name, version
+        FROM core.manifests
+        WHERE name = $1
         "#,
         "registered_ingestor",
     )
@@ -179,12 +179,12 @@ async fn test_runner_registers_node_run_when_database_is_available(
         r#"
         SELECT
             id as "id!: uuid::Uuid",
-            node_manifest_id,
+            manifest_id,
             service_name,
             status,
             effective_config_hash,
-            effective_config
-        FROM core.source_runs
+            effective_config as "effective_config: serde_json::Value"
+        FROM core.runs
         WHERE id = $1::uuid
         "#,
         source_run_id,
@@ -192,7 +192,7 @@ async fn test_runner_registers_node_run_when_database_is_available(
     .fetch_one(ctx.pool())
     .await?;
 
-    assert_eq!(node_run.node_manifest_id, manifest.id);
+    assert_eq!(node_run.manifest_id, Some(manifest.id));
     assert_eq!(node_run.service_name.as_str(), "registered_ingestor");
     assert_eq!(node_run.status, "running");
     assert!(node_run.effective_config_hash.is_some());
@@ -242,7 +242,7 @@ async fn test_run_service_marks_registered_node_run_stopped(ctx: TestContext) ->
         SELECT
             status,
             ended_at as "ended_at: sinex_primitives::temporal::Timestamp"
-        FROM core.source_runs
+        FROM core.runs
         WHERE id = $1::uuid
         "#,
         source_run_id,
