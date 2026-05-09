@@ -27,6 +27,7 @@ pub mod query;
 pub mod rpc;
 pub mod runtime_target;
 pub mod settlement;
+pub mod sources;
 pub mod temporal;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

@@ -14,6 +14,13 @@ use sinex_primitives::rpc::sources::{
     SourceReadiness, SourceReadinessStatus, SourcesReadinessGetRequest,
     SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
 };
+use sinex_primitives::sources::SourceFamily;
+use sinex_primitives::sources::continuity::{
+    SourceContinuityReport, SourcesContinuityGetRequest, SourcesContinuityGetResponse,
+    SourcesContinuityListRequest, SourcesContinuityListResponse, SourcesExplainGapRequest,
+    SourcesExplainGapResponse,
+};
+use sinex_primitives::Timestamp;
 
 use crate::Result;
 use crate::client::GatewayClient;
@@ -66,6 +73,7 @@ impl SourcesCommand {
             SourcesSubcommand::Archive(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::Continuity(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::Readiness(cmd) => cmd.execute(client, format).await,
+            SourcesSubcommand::ExplainGap(cmd) => cmd.execute(client, format).await,
         }
     }
 }
@@ -88,6 +96,9 @@ pub enum SourcesSubcommand {
     Continuity(ContinuityCommand),
     /// Report source readiness, cost, freshness, and caveats
     Readiness(ReadinessCommand),
+    /// Explain a coverage gap at a specific timestamp
+    #[command(name = "explain-gap")]
+    ExplainGap(ExplainGapCommand),
 }
 
 // ── Stage ──────────────────────────────────────────────────────────────
@@ -512,32 +523,245 @@ fn format_archive_result(response: &SourcesArchiveResponse) -> String {
 
 // ── Continuity ─────────────────────────────────────────────────────────
 
-/// Diagnose temporal continuity and replayability for a source
+/// Diagnose temporal continuity and replayability.
+///
+/// Three modes (resolved by argument shape):
+///   `sinexctl sources continuity`               — list reports per source family.
+///   `sinexctl sources continuity <FAMILY>`      — report for one source family.
+///   `sinexctl sources continuity --source <ID>` — per-identifier diagnostics.
 #[derive(Debug, Args)]
 pub struct ContinuityCommand {
-    /// Source identifier (file path, URI, or source name)
-    #[arg(long)]
-    source: String,
+    /// Source family (e.g. `shell`, `file`, `browser`). Empty -> list mode.
+    family: Option<String>,
 
-    /// Optional material kind filter (e.g. "file", "sqlite_db")
+    /// Per-identifier mode: source identifier (file path, URI, or source name).
+    #[arg(long)]
+    source: Option<String>,
+
+    /// Per-identifier mode: optional material kind filter.
     #[arg(long)]
     kind: Option<String>,
+
+    /// Restrict listed reports to families staged at or after this RFC3339 timestamp.
+    #[arg(long, conflicts_with_all = ["source", "family"])]
+    since: Option<String>,
 }
 
 impl ContinuityCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
-        let req = SourcesContinuityRequest {
-            source_identifier: self.source.clone(),
-            material_kind: self.kind.clone(),
-        };
+        // ── Per-identifier mode ──
+        if let Some(source) = &self.source {
+            let req = SourcesContinuityRequest {
+                source_identifier: source.clone(),
+                material_kind: self.kind.clone(),
+            };
+            let response = client
+                .call_raw_rpc("sources.continuity", serde_json::to_value(&req)?)
+                .await?;
+            let resp: SourcesContinuityResponse = serde_json::from_value(response)?;
+            CommandOutput::single(resp, format_continuity_result).display(&format)?;
+            return Ok(());
+        }
 
+        // ── Get-by-family mode ──
+        if let Some(family_str) = &self.family {
+            let family = SourceFamily::new(family_str.clone()).map_err(|e| {
+                color_eyre::eyre::eyre!("invalid source family `{family_str}`: {e}")
+            })?;
+            let req = SourcesContinuityGetRequest {
+                source_family: family,
+            };
+            let response = client
+                .call_raw_rpc("sources.continuity.get", serde_json::to_value(&req)?)
+                .await?;
+            let resp: SourcesContinuityGetResponse = serde_json::from_value(response)?;
+            CommandOutput::single(resp, format_continuity_get).display(&format)?;
+            return Ok(());
+        }
+
+        // ── List mode ──
+        let since = self
+            .since
+            .as_deref()
+            .map(parse_timestamp)
+            .transpose()?;
+        let req = SourcesContinuityListRequest { since };
         let response = client
-            .call_raw_rpc("sources.continuity", serde_json::to_value(&req)?)
+            .call_raw_rpc("sources.continuity.list", serde_json::to_value(&req)?)
             .await?;
-        let continuity_response: SourcesContinuityResponse = serde_json::from_value(response)?;
-
-        CommandOutput::single(continuity_response, format_continuity_result).display(&format)?;
+        let resp: SourcesContinuityListResponse = serde_json::from_value(response)?;
+        CommandOutput::single(resp, format_continuity_list).display(&format)?;
         Ok(())
+    }
+}
+
+// ── Explain gap ─────────────────────────────────────────────────────────
+
+/// Explain a coverage gap at a specific timestamp.
+#[derive(Debug, Args)]
+pub struct ExplainGapCommand {
+    /// Source family (e.g. `shell`, `browser`).
+    family: String,
+
+    /// Timestamp to explain (RFC3339).
+    #[arg(long)]
+    at: String,
+}
+
+impl ExplainGapCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let family = SourceFamily::new(self.family.clone())
+            .map_err(|e| color_eyre::eyre::eyre!("invalid source family: {e}"))?;
+        let at = parse_timestamp(&self.at)?;
+        let req = SourcesExplainGapRequest {
+            source_family: family,
+            at,
+        };
+        let response = client
+            .call_raw_rpc(
+                "sources.continuity.explain_gap",
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        let resp: SourcesExplainGapResponse = serde_json::from_value(response)?;
+        CommandOutput::single(resp, format_explain_gap).display(&format)?;
+        Ok(())
+    }
+}
+
+fn parse_timestamp(s: &str) -> Result<Timestamp> {
+    sinex_primitives::temporal::parse_rfc3339(s)
+        .map_err(|e| color_eyre::eyre::eyre!("invalid RFC3339 timestamp `{s}`: {e}"))
+}
+
+fn format_continuity_list(resp: &SourcesContinuityListResponse) -> String {
+    if resp.reports.is_empty() {
+        return "No source families observed.".to_string();
+    }
+    let mut lines = vec![format!(
+        "{} source families:",
+        style(resp.reports.len()).cyan().bold()
+    )];
+    for r in &resp.reports {
+        lines.push(format_report_summary(r));
+    }
+    lines.join("\n")
+}
+
+fn format_continuity_get(resp: &SourcesContinuityGetResponse) -> String {
+    match &resp.report {
+        Some(r) => format_report_full(r),
+        None => "No continuity report — no events observed for this family.".to_string(),
+    }
+}
+
+fn format_explain_gap(resp: &SourcesExplainGapResponse) -> String {
+    let mut lines = vec![format!(
+        "Source family: {}    at: {}",
+        style(&resp.source_family).green().bold(),
+        style(resp.at).dim()
+    )];
+    lines.push(resp.explanation.clone());
+    if let Some(gap) = &resp.gap {
+        lines.push(format!(
+            "  Gap window: {} -> {}",
+            style(gap.from_ts).dim(),
+            style(gap.to_ts).dim()
+        ));
+        lines.push(format!("  Kind:       {:?}", gap.kind));
+        if let Some(attr) = &gap.attribution {
+            lines.push(format!("  Reason:     {}", style(attr).yellow()));
+        }
+    }
+    lines.join("\n")
+}
+
+fn format_report_summary(r: &SourceContinuityReport) -> String {
+    let green = r.replayability.green_count();
+    format!(
+        "  {:24} {:14} replayability {}/5  events:{}  materials:{}  gaps:{}  seams:{}",
+        r.source_family.as_str(),
+        format!("{:?}", r.coverage_contract).to_lowercase(),
+        green,
+        r.event_count,
+        r.material_count,
+        r.gaps.len(),
+        r.seams.len()
+    )
+}
+
+fn format_report_full(r: &SourceContinuityReport) -> String {
+    let mut lines = vec![format!(
+        "Source family: {}",
+        style(r.source_family.as_str()).green().bold()
+    )];
+    lines.push(format!(
+        "  Coverage contract: {}",
+        format!("{:?}", r.coverage_contract).to_lowercase()
+    ));
+    if let Some(start) = r.earliest_ts {
+        lines.push(format!("  Earliest:          {start}"));
+    }
+    if let Some(end) = r.latest_ts {
+        lines.push(format!("  Latest:            {end}"));
+    }
+    lines.push(format!("  Materials:         {}", r.material_count));
+    lines.push(format!("  Events:            {}", r.event_count));
+
+    let rp = &r.replayability;
+    lines.push(format!(
+        "  Replayability:     {}/5",
+        style(rp.green_count()).cyan()
+    ));
+    lines.push(format!("    raw_bytes_preserved : {}", checkmark(rp.raw_bytes_preserved)));
+    lines.push(format!("    timing_quality      : {}", checkmark(rp.timing_quality)));
+    lines.push(format!("    anchor_stability    : {}", checkmark(rp.anchor_stability)));
+    lines.push(format!("    parser_determinism  : {}", checkmark(rp.parser_determinism)));
+    lines.push(format!("    privacy_safe_replay : {}", checkmark(rp.privacy_safe_replay)));
+    if !rp.weak_points.is_empty() {
+        lines.push("  Weak points:".to_string());
+        for w in &rp.weak_points {
+            lines.push(format!("    - {}", style(w).yellow()));
+        }
+    }
+
+    if r.seams.is_empty() {
+        lines.push("  Seams:             none".to_string());
+    } else {
+        lines.push(format!("  Seams ({}):", r.seams.len()));
+        for s in &r.seams {
+            lines.push(format!(
+                "    {:?}  before={}  after={}",
+                s.kind,
+                s.before_ts.map_or_else(|| "-".to_string(), |t| t.to_string()),
+                s.after_ts.map_or_else(|| "-".to_string(), |t| t.to_string()),
+            ));
+        }
+    }
+
+    if r.gaps.is_empty() {
+        lines.push("  Gaps:              none".to_string());
+    } else {
+        lines.push(format!("  Gaps ({}):", r.gaps.len()));
+        for g in &r.gaps {
+            let kind = format!("{:?}", g.kind).to_lowercase();
+            lines.push(format!(
+                "    {} -> {}  [{}]  {}",
+                style(g.from_ts).dim(),
+                style(g.to_ts).dim(),
+                style(kind).yellow(),
+                g.attribution.as_deref().unwrap_or("")
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
+fn checkmark(b: bool) -> console::StyledObject<&'static str> {
+    if b {
+        style("yes").green()
+    } else {
+        style("no").red()
     }
 }
 
