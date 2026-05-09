@@ -15,6 +15,7 @@ pub mod gateway_metrics;
 pub mod handlers;
 #[cfg(any(feature = "test-support", test))]
 pub mod handlers_test_support;
+pub mod lifecycle_ttl;
 pub mod native_messaging;
 pub mod prelude;
 pub mod rate_limit;

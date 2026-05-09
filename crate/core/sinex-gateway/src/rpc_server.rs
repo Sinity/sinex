@@ -1662,6 +1662,21 @@ pub async fn spawn(
         RpcServer::monitor_background_task("SSE subscription bus", task, shutdown_rx.clone())
     });
 
+    // TTL enforcement task (#1172 AC-5). Cheap: most ticks are no-ops because
+    // very few schemas declare `retention_seconds`. Survives missing
+    // coordination by self-skipping per tick.
+    let host = sinex_primitives::events::builder::get_hostname();
+    let ttl_instance_id = format!("gateway:{}:{}", host.as_str(), std::process::id());
+    let _ttl_task = RpcServer::monitor_background_task(
+        "TTL enforcement task",
+        crate::lifecycle_ttl::spawn_ttl_task(
+            services.clone(),
+            ttl_instance_id,
+            shutdown_rx.clone(),
+        ),
+        shutdown_rx.clone(),
+    );
+
     let state = AppState {
         services,
         auth,
