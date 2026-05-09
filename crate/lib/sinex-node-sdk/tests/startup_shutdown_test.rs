@@ -59,8 +59,8 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
     // ON CONFLICT DO NOTHING (no target) suppresses any unique-constraint violation,
     // independent of which specific constraint the schema defines on this table.
     sqlx::query!(
-        "INSERT INTO core.node_manifests (node_name, node_type, version, description, anchor_rule_version)
-             VALUES ($1, 'automaton', '1.0.0', $2, 1)
+        "INSERT INTO core.manifests (name, manifest_type, version, description)
+             VALUES ($1, 'automaton', '1.0.0', $2)
              ON CONFLICT DO NOTHING",
         "existing_agent",
         "Pre-existing agent for startup test"
@@ -89,7 +89,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
     apply_schema(pool).await?;
 
     let manifest_count: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM core.node_manifests WHERE node_name = $1",
+        "SELECT COUNT(*) FROM core.manifests WHERE name = $1",
         "existing_agent"
     )
     .fetch_one(pool)

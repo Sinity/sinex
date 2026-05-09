@@ -14,7 +14,7 @@ async fn register_test_node(
     name: &str,
     node_type: NodeType,
     version: &str,
-) -> color_eyre::Result<sinex_db::repositories::state::NodeManifest> {
+) -> color_eyre::Result<sinex_db::repositories::state::ManifestRow> {
     let node_name = NodeName::new(name);
     Ok(pool
         .state()

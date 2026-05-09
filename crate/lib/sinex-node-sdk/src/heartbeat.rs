@@ -120,7 +120,7 @@ pub struct HeartbeatEmitter {
     source_run_id: Option<Uuid>,
     /// Counter for rate-limiting persistence failure warn! logs (every 100th).
     persistence_warn_count: Arc<AtomicU64>,
-    /// Optional database pool for persisting heartbeat status to `core.node_manifests`.
+    /// Optional database pool for persisting heartbeat status to `core.runs`.
     /// When set, each heartbeat emission also updates the `last_heartbeat_at` and `status`
     /// columns for this node, enabling efficient active-node queries.
     #[cfg(feature = "db")]
@@ -194,7 +194,7 @@ impl HeartbeatEmitter {
     /// Configure a database pool for persisting heartbeat status.
     ///
     /// When set, each heartbeat emission will also update `last_heartbeat_at`
-    /// and `status = 'active'` in `core.node_manifests` for this node.
+    /// and `status = 'active'` in `core.runs` for this node.
     #[cfg(feature = "db")]
     #[must_use]
     pub fn with_db_pool(mut self, pool: sinex_db::DbPool) -> Self {
