@@ -1610,6 +1610,17 @@ pub async fn spawn(
     // Create shutdown channels for background tasks
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
+    // Eagerly build the static (source, event_type) registry from the
+    // EventPayload inventory (#1172 schema-as-code). The first call lazily
+    // initialises a `OnceLock`; touching it at startup turns any registry
+    // panic / inventory drift into a startup failure rather than a per-RPC
+    // surprise.
+    let schema_registry = crate::schema_registry::registry();
+    info!(
+        registered_payloads = schema_registry.len(),
+        "Schema-as-code: EventPayload inventory loaded into gateway registry"
+    );
+
     let auth = GatewayAuth::from_config(config)?
         .start_file_watcher(shutdown_rx.clone())
         .await?;
