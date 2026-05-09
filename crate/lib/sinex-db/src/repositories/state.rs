@@ -768,29 +768,35 @@ impl StateRepository<'_> {
 
     // ========== Node Manifests ==========
 
-    /// Register a node manifest row. Idempotent per (name, version).
+    /// Register a manifest row. Idempotent per (name, version); updates description on
+    /// conflict so re-registration with a new description is reflected. Returns the
+    /// persisted row.
     pub async fn register_node(
         &self,
         node_name: &NodeName,
         node_type: NodeType,
         version: &str,
         description: Option<&str>,
-    ) -> DbResult<()> {
-        sqlx::query!(
+    ) -> DbResult<ManifestRow> {
+        let row = sqlx::query_as!(
+            ManifestRow,
             r#"
             INSERT INTO core.manifests (name, manifest_type, version, description)
             VALUES ($1, $2, $3, $4)
-            ON CONFLICT DO NOTHING
+            ON CONFLICT (name, version)
+            DO UPDATE SET description = EXCLUDED.description
+            RETURNING id, name, manifest_type, version, description,
+                      created_at as "created_at: sinex_primitives::temporal::Timestamp"
             "#,
             node_name.to_string(),
             node_type.to_string(),
             version,
             description,
         )
-        .execute(self.pool)
+        .fetch_one(self.pool)
         .await
         .map_err(|e| db_error(e, "register node"))?;
-        Ok(())
+        Ok(row)
     }
 
     /// Start a run for a process. Creates a new row in `core.runs` and returns it.
@@ -1596,6 +1602,17 @@ impl StateRepository<'_> {
             node_health_error,
         })
     }
+}
+
+/// Manifest row returned by `register_node` — lightweight projection of `core.manifests`.
+#[derive(Debug, sqlx::FromRow)]
+pub struct ManifestRow {
+    pub id: i32,
+    pub name: String,
+    pub manifest_type: String,
+    pub version: String,
+    pub description: Option<String>,
+    pub created_at: sinex_primitives::temporal::Timestamp,
 }
 
 /// Node manifest record
