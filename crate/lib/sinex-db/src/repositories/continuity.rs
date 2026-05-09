@@ -59,7 +59,7 @@ impl<'a> ContinuityRepository<'a> {
         let families = self.observed_families(since).await?;
         let mut out = Vec::with_capacity(families.len());
         for family in families {
-            if let Some(report) = self.build_report(&family).await? {
+            if let Some(report) = self.build_report(&family, since).await? {
                 out.push(report);
             }
         }
@@ -74,7 +74,7 @@ impl<'a> ContinuityRepository<'a> {
         &self,
         source_family: &SourceFamily,
     ) -> DbResult<Option<SourceContinuityReport>> {
-        self.build_report(source_family).await
+        self.build_report(source_family, None).await
     }
 
     /// Resolve attribution for a single point inside a suspected gap.
@@ -85,7 +85,7 @@ impl<'a> ContinuityRepository<'a> {
         source_family: &SourceFamily,
         at: Timestamp,
     ) -> DbResult<Option<CoverageGap>> {
-        let report = match self.build_report(source_family).await? {
+        let report = match self.build_report(source_family, None).await? {
             Some(r) => r,
             None => return Ok(None),
         };
@@ -137,26 +137,66 @@ impl<'a> ContinuityRepository<'a> {
     async fn build_report(
         &self,
         family: &SourceFamily,
+        since: Option<Timestamp>,
     ) -> DbResult<Option<SourceContinuityReport>> {
         let family_str = family.as_str();
+        let since_pg: Option<OffsetDateTime> = since.map(Into::into);
 
-        // Aggregate over events + materials joined together, scoped to family.
+        // The "family materials" CTE captures every material that belongs to
+        // this family — including parser-failure / cancelled materials that
+        // produced zero events. We do this by:
+        //   (a) materials referenced by at least one event whose source
+        //       starts with the family,
+        //   (b) eventless materials whose source_identifier matches the
+        //       source_identifier of any (a)-class material — i.e. the same
+        //       logical source captured into multiple registry rows because
+        //       one of them failed.
+        // Both arms are clamped by `since` so a windowed list call remains
+        // honest about its time bound. Eventless materials in case (b) are
+        // the load-bearing inclusion: parser failures, disabled captures, and
+        // staged-unparsed material would otherwise be silently excluded by
+        // an inner-join-only query.
+        //
+        // Aggregate over events + materials joined together, scoped to
+        // family. Counts events by material so eventless materials still
+        // contribute to material_count.
         let agg = sqlx::query!(
             r#"
+            WITH family_materials AS (
+                SELECT sm.*
+                FROM raw.source_material_registry sm
+                WHERE ($2::timestamptz IS NULL OR sm.staged_at >= $2)
+                  AND (
+                       sm.id IN (
+                            SELECT e.source_material_id
+                            FROM core.events e
+                            WHERE split_part(e.source, '.', 1) = $1
+                              AND e.source_material_id IS NOT NULL
+                       )
+                       OR sm.source_identifier IN (
+                            SELECT DISTINCT sm2.source_identifier
+                            FROM raw.source_material_registry sm2
+                            JOIN core.events e2 ON e2.source_material_id = sm2.id
+                            WHERE split_part(e2.source, '.', 1) = $1
+                       )
+                  )
+            )
             SELECT
-                COUNT(DISTINCT sm.id) AS "material_count!: i64",
+                COUNT(DISTINCT fm.id) AS "material_count!: i64",
                 COUNT(e.id) AS "event_count!: i64",
-                MIN(COALESCE(sm.start_time, sm.staged_at)) AS earliest_ts,
-                MAX(COALESCE(sm.end_time, sm.staged_at)) AS latest_ts,
-                BOOL_OR(sm.optional_blob_id IS NOT NULL) AS "any_blob!: bool",
-                BOOL_AND(sm.total_bytes IS NOT NULL) AS "all_finalized!: bool",
-                BOOL_OR(sm.timing_info_type IN ('realtime', 'intrinsic'))
+                MIN(COALESCE(fm.start_time, fm.staged_at)) AS earliest_ts,
+                MAX(COALESCE(fm.end_time, fm.staged_at)) AS latest_ts,
+                BOOL_OR(fm.optional_blob_id IS NOT NULL) AS "any_blob!: bool",
+                BOOL_AND(fm.total_bytes IS NOT NULL) AS "all_finalized!: bool",
+                BOOL_OR(fm.timing_info_type IN ('realtime', 'intrinsic'))
                     AS "good_timing!: bool"
-            FROM core.events e
-            JOIN raw.source_material_registry sm ON sm.id = e.source_material_id
-            WHERE split_part(e.source, '.', 1) = $1
+            FROM family_materials fm
+            LEFT JOIN core.events e
+                   ON e.source_material_id = fm.id
+                  AND split_part(e.source, '.', 1) = $1
             "#,
-            family_str
+            family_str,
+            since_pg
         )
         .fetch_one(self.pool)
         .await
@@ -166,23 +206,45 @@ impl<'a> ContinuityRepository<'a> {
             return Ok(None);
         }
 
-        // Per-material chunks for seams and gap detection.
+        // Per-material chunks for seams and gap detection. Sorted by the
+        // effective chunk start (start_time falling back to staged_at) so
+        // adjacency comparisons run in real temporal order — a NULLS LAST
+        // sort by start_time alone forces NULL-start chunks to the end even
+        // when their staged_at is earlier, producing false overlaps.
         let chunk_rows = sqlx::query!(
             r#"
-            SELECT DISTINCT
-                sm.id AS "id!: uuid::Uuid",
-                sm.material_kind AS "material_kind!: String",
-                sm.status AS "status!: String",
-                sm.start_time,
-                sm.end_time,
-                sm.staged_at AS "staged_at!: OffsetDateTime",
-                sm.timing_info_type AS "timing!: String"
-            FROM raw.source_material_registry sm
-            JOIN core.events e ON e.source_material_id = sm.id
-            WHERE split_part(e.source, '.', 1) = $1
-            ORDER BY sm.start_time NULLS LAST, sm.staged_at
+            WITH family_materials AS (
+                SELECT sm.*
+                FROM raw.source_material_registry sm
+                WHERE ($2::timestamptz IS NULL OR sm.staged_at >= $2)
+                  AND (
+                       sm.id IN (
+                            SELECT e.source_material_id
+                            FROM core.events e
+                            WHERE split_part(e.source, '.', 1) = $1
+                              AND e.source_material_id IS NOT NULL
+                       )
+                       OR sm.source_identifier IN (
+                            SELECT DISTINCT sm2.source_identifier
+                            FROM raw.source_material_registry sm2
+                            JOIN core.events e2 ON e2.source_material_id = sm2.id
+                            WHERE split_part(e2.source, '.', 1) = $1
+                       )
+                  )
+            )
+            SELECT
+                fm.id AS "id!: uuid::Uuid",
+                fm.material_kind AS "material_kind!: String",
+                fm.status AS "status!: String",
+                fm.start_time,
+                fm.end_time,
+                fm.staged_at AS "staged_at!: OffsetDateTime",
+                fm.timing_info_type AS "timing!: String"
+            FROM family_materials fm
+            ORDER BY COALESCE(fm.start_time, fm.staged_at), fm.staged_at
             "#,
-            family_str
+            family_str,
+            since_pg
         )
         .fetch_all(self.pool)
         .await
