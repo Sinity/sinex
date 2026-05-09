@@ -139,6 +139,19 @@ pub struct GatewayConfig {
     #[serde(default = "default_rate_limit_requests_per_second")]
     pub rpc_rate_limit_requests_per_sec: u32,
 
+    /// Per-role refill rate for `ReadOnly` tokens (overrides the global rate).
+    #[serde(default = "default_rate_limit_readonly_rps")]
+    pub rpc_rate_limit_readonly_rps: u32,
+
+    /// Per-role refill rate for `Write` tokens (overrides the global rate).
+    #[serde(default = "default_rate_limit_write_rps")]
+    pub rpc_rate_limit_write_rps: u32,
+
+    /// Per-role refill rate for `Admin` tokens (overrides the global rate;
+    /// tighter than write because admin operations have higher impact).
+    #[serde(default = "default_rate_limit_admin_rps")]
+    pub rpc_rate_limit_admin_rps: u32,
+
     /// In-memory token bucket burst capacity.
     #[serde(default = "default_rate_limit_burst")]
     pub rpc_rate_limit_burst: u32,
@@ -220,6 +233,18 @@ fn default_rate_limit_requests_per_second() -> u32 {
     100
 }
 
+fn default_rate_limit_readonly_rps() -> u32 {
+    200
+}
+
+fn default_rate_limit_write_rps() -> u32 {
+    100
+}
+
+fn default_rate_limit_admin_rps() -> u32 {
+    50
+}
+
 fn default_rate_limit_burst() -> u32 {
     50
 }
@@ -277,6 +302,9 @@ impl Default for GatewayConfig {
             native_messaging_max_size_bytes: default_native_messaging_max_size_bytes(),
             rpc_rate_limit_enabled: default_rate_limit_enabled(),
             rpc_rate_limit_requests_per_sec: default_rate_limit_requests_per_second(),
+            rpc_rate_limit_readonly_rps: default_rate_limit_readonly_rps(),
+            rpc_rate_limit_write_rps: default_rate_limit_write_rps(),
+            rpc_rate_limit_admin_rps: default_rate_limit_admin_rps(),
             rpc_rate_limit_burst: default_rate_limit_burst(),
             rpc_rate_limit_idle_timeout_secs: default_rate_limit_idle_timeout_secs(),
             rpc_rate_limit_window_secs: default_rate_limit_window_secs(),
@@ -431,12 +459,30 @@ impl GatewayConfig {
 
     // SAFETY: these are known non-zero compile-time constants.
     const DEFAULT_RATE_RPS: NonZeroU32 = NonZeroU32::new(100).unwrap();
+    const DEFAULT_RATE_READONLY_RPS: NonZeroU32 = NonZeroU32::new(200).unwrap();
+    const DEFAULT_RATE_WRITE_RPS: NonZeroU32 = NonZeroU32::new(100).unwrap();
+    const DEFAULT_RATE_ADMIN_RPS: NonZeroU32 = NonZeroU32::new(50).unwrap();
     const DEFAULT_RATE_BURST: NonZeroU32 = NonZeroU32::new(50).unwrap();
     const DEFAULT_RATE_PER_MIN: NonZeroU32 = NonZeroU32::new(6000).unwrap();
 
     #[must_use]
     pub fn rate_limit_requests_per_second(&self) -> NonZeroU32 {
         NonZeroU32::new(self.rpc_rate_limit_requests_per_sec).unwrap_or(Self::DEFAULT_RATE_RPS)
+    }
+
+    #[must_use]
+    pub fn rate_limit_readonly_rps(&self) -> NonZeroU32 {
+        NonZeroU32::new(self.rpc_rate_limit_readonly_rps).unwrap_or(Self::DEFAULT_RATE_READONLY_RPS)
+    }
+
+    #[must_use]
+    pub fn rate_limit_write_rps(&self) -> NonZeroU32 {
+        NonZeroU32::new(self.rpc_rate_limit_write_rps).unwrap_or(Self::DEFAULT_RATE_WRITE_RPS)
+    }
+
+    #[must_use]
+    pub fn rate_limit_admin_rps(&self) -> NonZeroU32 {
+        NonZeroU32::new(self.rpc_rate_limit_admin_rps).unwrap_or(Self::DEFAULT_RATE_ADMIN_RPS)
     }
 
     #[must_use]
@@ -532,6 +578,18 @@ impl GatewayConfig {
         self.rpc_rate_limit_requests_per_sec = env_u32_override(
             "SINEX_RPC_RATE_LIMIT_REQUESTS_PER_SEC",
             self.rpc_rate_limit_requests_per_sec,
+        )?;
+        self.rpc_rate_limit_readonly_rps = env_u32_override(
+            "SINEX_RPC_RATE_LIMIT_READONLY_RPS",
+            self.rpc_rate_limit_readonly_rps,
+        )?;
+        self.rpc_rate_limit_write_rps = env_u32_override(
+            "SINEX_RPC_RATE_LIMIT_WRITE_RPS",
+            self.rpc_rate_limit_write_rps,
+        )?;
+        self.rpc_rate_limit_admin_rps = env_u32_override(
+            "SINEX_RPC_RATE_LIMIT_ADMIN_RPS",
+            self.rpc_rate_limit_admin_rps,
         )?;
         self.rpc_rate_limit_burst =
             env_u32_override("SINEX_RPC_RATE_LIMIT_BURST", self.rpc_rate_limit_burst)?;

@@ -707,10 +707,15 @@ pub(crate) enum RateLimiter {
 }
 
 impl RateLimiter {
-    /// Check if request is allowed for the given token
-    async fn check(&self, token: &str) -> bool {
+    /// Check if request is allowed for the given (token, role).
+    ///
+    /// In-memory limiter applies per-role quotas (`readonly`/`write`/`admin`)
+    /// against a (token, role) key. The distributed limiter is keyed on the
+    /// token only — role-specific quotas are an in-memory feature; distributed
+    /// keeps the global per-token budget.
+    async fn check(&self, token: &str, role: crate::auth::Role) -> bool {
         match self {
-            RateLimiter::InMemory(limiter) => limiter.check(token).is_ok(),
+            RateLimiter::InMemory(limiter) => limiter.check(token, role).is_ok(),
             RateLimiter::Distributed(limiter) => limiter.check_and_increment(token).await,
         }
     }
@@ -867,7 +872,7 @@ async fn handle_rpc(
     };
 
     // Issue 143: Per-token rate limiting
-    if !state.rate_limiter.check(&token).await {
+    if !state.rate_limiter.check(&token, auth_context.role).await {
         let token_prefix = &token[..8.min(token.len())];
         warn!(token_prefix, "Request rejected: rate limit exceeded");
         state.metrics.record_rate_limited();
@@ -1073,7 +1078,7 @@ async fn handle_rpc_batch(
     let mut responses = Vec::with_capacity(requests.len());
     for request in requests {
         // Rate limit each request individually
-        if !state.rate_limiter.check(&token).await {
+        if !state.rate_limiter.check(&token, auth_context.role).await {
             let token_prefix = &token[..8.min(token.len())];
             warn!(token_prefix, "Batch request rejected: rate limit exceeded");
             state.metrics.record_rate_limited();

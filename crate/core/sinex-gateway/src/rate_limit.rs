@@ -1,6 +1,7 @@
 #![doc = include_str!("../docs/rate_limit.md")]
 #![allow(clippy::expect_used)] // All expects are on compile-time NonZeroU32 constants
 
+use crate::auth::Role;
 use crate::config::GatewayConfig;
 use dashmap::DashMap;
 use governor::{
@@ -16,8 +17,12 @@ use tracing::debug;
 /// Configuration for per-token rate limiting
 #[derive(Debug, Clone)]
 pub struct RateLimitConfig {
-    /// Maximum requests per second per token
-    pub requests_per_second: NonZeroU32,
+    /// Maximum requests per second per `ReadOnly`-role token
+    pub readonly_rps: NonZeroU32,
+    /// Maximum requests per second per `Write`-role token
+    pub write_rps: NonZeroU32,
+    /// Maximum requests per second per `Admin`-role token
+    pub admin_rps: NonZeroU32,
     /// Burst capacity (additional requests allowed in a burst)
     pub burst_size: NonZeroU32,
     /// How long to keep idle token limiters before eviction
@@ -29,7 +34,9 @@ pub struct RateLimitConfig {
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {
-            requests_per_second: NonZeroU32::new(100).expect("100 is a valid NonZero value"),
+            readonly_rps: NonZeroU32::new(200).expect("200 is a valid NonZero value"),
+            write_rps: NonZeroU32::new(100).expect("100 is a valid NonZero value"),
+            admin_rps: NonZeroU32::new(50).expect("50 is a valid NonZero value"),
             burst_size: NonZeroU32::new(50).expect("50 is a valid NonZero value"),
             idle_timeout: Duration::from_hours(1), // 1 hour
             enabled: true,
@@ -41,10 +48,20 @@ impl RateLimitConfig {
     #[must_use]
     pub fn from_gateway_config(config: &GatewayConfig) -> Self {
         Self {
-            requests_per_second: config.rate_limit_requests_per_second(),
+            readonly_rps: config.rate_limit_readonly_rps(),
+            write_rps: config.rate_limit_write_rps(),
+            admin_rps: config.rate_limit_admin_rps(),
             burst_size: config.rate_limit_burst(),
             idle_timeout: Duration::from_secs(config.rpc_rate_limit_idle_timeout_secs),
             enabled: config.rpc_rate_limit_enabled,
+        }
+    }
+
+    fn rps_for_role(&self, role: Role) -> NonZeroU32 {
+        match role {
+            Role::ReadOnly => self.readonly_rps,
+            Role::Write => self.write_rps,
+            Role::Admin => self.admin_rps,
         }
     }
 }
@@ -55,12 +72,14 @@ struct TokenEntry {
     last_access: Instant,
 }
 
-/// Per-token rate limiter
+/// Per-(token, role) rate limiter
 ///
-/// Maintains a separate rate limiter for each authentication token,
-/// with automatic cleanup of stale entries.
+/// Maintains a separate rate limiter for each (authentication-token, role) pair,
+/// so distinct roles draw from independent buckets even if a token were ever
+/// presented under different role suffixes. Stale entries are evicted on a
+/// background cleanup task.
 pub struct TokenRateLimiter {
-    limiters: DashMap<String, TokenEntry>,
+    limiters: DashMap<(String, Role), TokenEntry>,
     config: RateLimitConfig,
 }
 
@@ -86,25 +105,30 @@ impl TokenRateLimiter {
         self.config.enabled
     }
 
-    /// Check if the given token is allowed to make a request
+    /// Check if the given (token, role) is allowed to make a request.
     ///
-    /// Returns `Ok(())` if allowed, `Err(())` if rate limited
-    pub fn check(&self, token: &str) -> Result<(), ()> {
+    /// Each (token, role) pair gets its own bucket, sized by the role-specific
+    /// `requests_per_second` from the gateway config. Returns `Ok(())` when
+    /// allowed and `Err(())` when the bucket is empty.
+    pub fn check(&self, token: &str, role: Role) -> Result<(), ()> {
         if !self.config.enabled {
             return Ok(());
         }
 
         let now = Instant::now();
+        let rps = self.config.rps_for_role(role);
 
-        // Get or create limiter for this token
-        let mut entry = self.limiters.entry(token.to_string()).or_insert_with(|| {
-            let quota = Quota::per_second(self.config.requests_per_second)
-                .allow_burst(self.config.burst_size);
-            TokenEntry {
-                limiter: RateLimiter::direct(quota),
-                last_access: now,
-            }
-        });
+        // Get or create limiter for this (token, role) pair
+        let mut entry = self
+            .limiters
+            .entry((token.to_string(), role))
+            .or_insert_with(|| {
+                let quota = Quota::per_second(rps).allow_burst(self.config.burst_size);
+                TokenEntry {
+                    limiter: RateLimiter::direct(quota),
+                    last_access: now,
+                }
+            });
 
         // Update last access time
         entry.last_access = now;
@@ -115,6 +139,7 @@ impl TokenRateLimiter {
         } else {
             debug!(
                 token_prefix = &token[..8.min(token.len())],
+                role = %role,
                 "Rate limit exceeded"
             );
             Err(())
@@ -197,6 +222,46 @@ mod tests {
             .map_err(|_| {
                 color_eyre::eyre::eyre!("cleanup task should exit after shutdown sender drops")
             })??;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn per_role_buckets_apply_distinct_capacity() -> TestResult<()> {
+        // Build a config where ReadOnly has more headroom than Admin so we
+        // can exhaust the admin bucket while readonly still passes.
+        let config = RateLimitConfig {
+            readonly_rps: NonZeroU32::new(100).unwrap(),
+            write_rps: NonZeroU32::new(50).unwrap(),
+            admin_rps: NonZeroU32::new(2).unwrap(),
+            burst_size: NonZeroU32::new(2).unwrap(),
+            idle_timeout: Duration::from_secs(60),
+            enabled: true,
+        };
+        let limiter = TokenRateLimiter::new(config);
+        let token = "sinex_abcdefghij";
+
+        // Burst capacity 2 — first two admin requests should pass, the third trips.
+        assert!(limiter.check(token, Role::Admin).is_ok());
+        assert!(limiter.check(token, Role::Admin).is_ok());
+        assert!(
+            limiter.check(token, Role::Admin).is_err(),
+            "third admin request should be rate limited"
+        );
+
+        // ReadOnly bucket on the same token must be independent and unaffected.
+        assert!(limiter.check(token, Role::ReadOnly).is_ok());
+        assert!(limiter.check(token, Role::ReadOnly).is_ok());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn rate_limiting_disabled_short_circuits() -> TestResult<()> {
+        let mut config = RateLimitConfig::default();
+        config.enabled = false;
+        let limiter = TokenRateLimiter::new(config);
+        for _ in 0..1_000 {
+            assert!(limiter.check("any", Role::Admin).is_ok());
+        }
         Ok(())
     }
 }
