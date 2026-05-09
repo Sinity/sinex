@@ -3,6 +3,7 @@
 pub mod blobs;
 // pub mod checkpoints; // Removed
 pub mod common;
+pub mod continuity;
 pub mod embeddings;
 pub mod events;
 pub mod events_extensions;
@@ -18,6 +19,7 @@ pub mod state;
 pub use blobs::{BlobRepository, StorageStats};
 // pub use checkpoints::{Checkpoint, CheckpointExt, CheckpointRecord, CheckpointRepository}; // Removed
 pub use common::{DbResult, EnhancedRepository, Repository, TableDef, TransactionSupport};
+pub use continuity::ContinuityRepository;
 pub use embeddings::{
     CacheEntry, CachedEmbeddingHit, EmbeddingModelRecord, EmbeddingRepository, EmbeddingTarget,
     EventEmbeddingRow, HybridSearchResult, KnnSearchResult, SimilarityResult,
@@ -66,6 +68,7 @@ pub trait DbPoolExt {
     fn schema_cache(&self) -> schema_cache::SchemaCacheRepository<'_>;
     fn replay(&self) -> replay::ReplayRepository<'_>;
     fn integrity(&self) -> integrity::IntegrityRepository<'_>;
+    fn continuity(&self) -> continuity::ContinuityRepository<'_>;
     async fn with_transaction<F, T>(&self, f: F) -> crate::DbResult<T>
     where
         F: for<'tx> AsyncFnOnce(&'tx mut crate::DbTransaction<'_>) -> crate::DbResult<T>;
@@ -110,6 +113,10 @@ impl DbPoolExt for PgPool {
 
     fn integrity(&self) -> integrity::IntegrityRepository<'_> {
         integrity::IntegrityRepository::new(self)
+    }
+
+    fn continuity(&self) -> continuity::ContinuityRepository<'_> {
+        continuity::ContinuityRepository::new(self)
     }
 
     async fn with_transaction<F, T>(&self, f: F) -> crate::DbResult<T>
