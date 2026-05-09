@@ -10,6 +10,10 @@ use sinex_primitives::rpc::sources::{
     SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest, SourcesArchiveResponse,
     SourcesContinuityRequest, SourcesContinuityResponse,
 };
+use sinex_primitives::rpc::sources::{
+    SourceReadiness, SourceReadinessStatus, SourcesReadinessGetRequest,
+    SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
+};
 
 use crate::Result;
 use crate::client::GatewayClient;
@@ -61,6 +65,7 @@ impl SourcesCommand {
             SourcesSubcommand::Annotate(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::Archive(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::Continuity(cmd) => cmd.execute(client, format).await,
+            SourcesSubcommand::Readiness(cmd) => cmd.execute(client, format).await,
         }
     }
 }
@@ -81,6 +86,8 @@ pub enum SourcesSubcommand {
     Archive(ArchiveCommand),
     /// Diagnose temporal continuity and replayability for a source
     Continuity(ContinuityCommand),
+    /// Report source readiness, cost, freshness, and caveats
+    Readiness(ReadinessCommand),
 }
 
 // ── Stage ──────────────────────────────────────────────────────────────
@@ -606,5 +613,155 @@ fn format_continuity_result(response: &SourcesContinuityResponse) -> String {
         style(rp.events_count).cyan()
     ));
 
+    lines.join("\n")
+}
+
+// ── Readiness (#1099) ──────────────────────────────────────────────────
+
+/// Report source readiness, cost, freshness, and caveats
+#[derive(Debug, Args)]
+pub struct ReadinessCommand {
+    /// Optional source identifier; when provided, returns the readiness for
+    /// just that source. When omitted, lists readiness for every source.
+    source: Option<String>,
+
+    /// Optional source family filter (e.g. "terminal", "browser", "chat").
+    #[arg(long)]
+    family: Option<String>,
+
+    /// Treat last-success older than this many seconds as `Stale`.
+    /// Defaults to 7 days.
+    #[arg(long = "stale-after-seconds")]
+    stale_after_seconds: Option<i64>,
+}
+
+impl ReadinessCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        if let Some(source) = &self.source {
+            let req = SourcesReadinessGetRequest {
+                source_identifier: source.clone(),
+                source_family: self.family.clone(),
+                stale_after_seconds: self.stale_after_seconds,
+            };
+            let response = client
+                .call_raw_rpc("sources.readiness.get", serde_json::to_value(&req)?)
+                .await?;
+            let body: SourcesReadinessGetResponse = serde_json::from_value(response)?;
+            CommandOutput::single(body, format_readiness_get).display(&format)?;
+        } else {
+            let req = SourcesReadinessListRequest {
+                source_family: self.family.clone(),
+                stale_after_seconds: self.stale_after_seconds,
+            };
+            let response = client
+                .call_raw_rpc("sources.readiness.list", serde_json::to_value(&req)?)
+                .await?;
+            let body: SourcesReadinessListResponse = serde_json::from_value(response)?;
+            CommandOutput::single(body, format_readiness_list).display(&format)?;
+        }
+        Ok(())
+    }
+}
+
+fn status_label(status: SourceReadinessStatus) -> console::StyledObject<&'static str> {
+    match status {
+        SourceReadinessStatus::Available => style("available").green(),
+        SourceReadinessStatus::Partial => style("partial").yellow(),
+        SourceReadinessStatus::Stale => style("stale").yellow(),
+        SourceReadinessStatus::Error => style("error").red(),
+        SourceReadinessStatus::Missing => style("missing").red(),
+        SourceReadinessStatus::Blocked => style("blocked").red(),
+        SourceReadinessStatus::Disabled => style("disabled").dim(),
+        SourceReadinessStatus::Unknown => style("unknown").dim(),
+    }
+}
+
+fn format_readiness_list(response: &SourcesReadinessListResponse) -> String {
+    use tabled::{builder::Builder, settings::Style};
+
+    if response.sources.is_empty() {
+        return "No source readiness data available.".to_string();
+    }
+
+    let mut builder = Builder::new();
+    builder.push_record([
+        "SOURCE",
+        "FAMILY",
+        "STATUS",
+        "COST",
+        "MATERIALS",
+        "EVENTS",
+        "FRESHNESS (s)",
+        "CAVEATS",
+    ]);
+
+    for r in &response.sources {
+        let freshness = r
+            .freshness_seconds
+            .map_or_else(|| style("-").dim().to_string(), |s| s.to_string());
+        let events = r
+            .parsed_event_count
+            .map_or_else(|| style("-").dim().to_string(), |c| c.to_string());
+        let caveat_codes: Vec<&str> = r.caveats.iter().map(|c| c.code.as_str()).collect();
+        let caveat_text = if caveat_codes.is_empty() {
+            style("-").dim().to_string()
+        } else {
+            caveat_codes.join(", ")
+        };
+        builder.push_record([
+            r.source_identifier.clone(),
+            r.source_family.clone(),
+            status_label(r.status).to_string(),
+            format!("{:?}", r.cost).to_lowercase(),
+            r.material_count.to_string(),
+            events,
+            freshness,
+            caveat_text,
+        ]);
+    }
+
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    table.to_string()
+}
+
+fn format_readiness_get(response: &SourcesReadinessGetResponse) -> String {
+    let Some(r) = response.readiness.as_ref() else {
+        return "No readiness data for that source.".to_string();
+    };
+    format_readiness_detail(r)
+}
+
+fn format_readiness_detail(r: &SourceReadiness) -> String {
+    let mut lines = vec![
+        format!(
+            "Readiness for: {}",
+            style(&r.source_identifier).green().bold()
+        ),
+        format!("  Family:         {}", r.source_family),
+        format!("  Status:         {}", status_label(r.status)),
+        format!("  Cost:           {}", format!("{:?}", r.cost).to_lowercase()),
+        format!("  Materials:      {}", r.material_count),
+    ];
+    if let Some(c) = r.parsed_event_count {
+        lines.push(format!("  Parsed events:  {c}"));
+    }
+    if let Some(s) = r.freshness_seconds {
+        lines.push(format!("  Freshness:      {s}s"));
+    }
+    if let Some(ts) = &r.last_success_at {
+        lines.push(format!("  Last success:   {ts}"));
+    }
+    if r.caveats.is_empty() {
+        lines.push("  Caveats:        none".to_string());
+    } else {
+        lines.push(format!("  Caveats ({}):", r.caveats.len()));
+        for caveat in &r.caveats {
+            lines.push(format!(
+                "    [{:?}] {} — {}",
+                caveat.severity, caveat.code, caveat.message
+            ));
+        }
+    }
     lines.join("\n")
 }
