@@ -16,7 +16,9 @@ use sinex_primitives::rpc::sources::{
     SourcesBindingsCreateResponse, SourcesBindingsListRequest, SourcesBindingsListResponse,
     SourcesBindingsResolveRequest, SourcesBindingsResolveResponse, SourcesContinuityRequest,
     SourcesContinuityResponse, SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest,
-    SourcesListResponse, SourcesPresetsListResponse, SourcesShowRequest, SourcesShowResponse,
+    SourcesListResponse, SourcesPresetsListResponse,
+    SourcesReadinessGetRequest, SourcesReadinessGetResponse, SourcesReadinessListRequest,
+    SourcesReadinessListResponse, SourcesShowRequest, SourcesShowResponse,
     SourcesStageRequest, SourcesStageResponse, TemporalEvidenceSummary,
 };
 use sinex_primitives::{Result, SinexError};
@@ -869,6 +871,54 @@ pub async fn handle_sources_continuity(pool: &PgPool, params: Value) -> Result<V
 
     serde_json::to_value(response).map_err(|error| {
         SinexError::serialization("Failed to serialize sources.continuity response")
+            .with_std_error(&error)
+    })
+}
+
+// ── sources.readiness.list (#1099) ─────────────────────────────
+
+pub async fn handle_sources_readiness_list(pool: &PgPool, params: Value) -> Result<Value> {
+    let req: SourcesReadinessListRequest = super::parse_default_on_null(params).map_err(|error| {
+        SinexError::serialization("Invalid sources.readiness.list request").with_std_error(&error)
+    })?;
+
+    let sources = pool
+        .source_materials()
+        .list_source_readiness(req.source_family.as_deref(), req.stale_after_seconds)
+        .await
+        .map_err(|error| {
+            SinexError::database("Failed to list source readiness").with_std_error(&error)
+        })?;
+
+    let response = SourcesReadinessListResponse { sources };
+    serde_json::to_value(response).map_err(|error| {
+        SinexError::serialization("Failed to serialize sources.readiness.list response")
+            .with_std_error(&error)
+    })
+}
+
+// ── sources.readiness.get (#1099) ──────────────────────────────
+
+pub async fn handle_sources_readiness_get(pool: &PgPool, params: Value) -> Result<Value> {
+    let req: SourcesReadinessGetRequest = serde_json::from_value(params).map_err(|error| {
+        SinexError::serialization("Invalid sources.readiness.get request").with_std_error(&error)
+    })?;
+
+    let readiness = pool
+        .source_materials()
+        .get_source_readiness(
+            &req.source_identifier,
+            req.source_family.as_deref(),
+            req.stale_after_seconds,
+        )
+        .await
+        .map_err(|error| {
+            SinexError::database("Failed to get source readiness").with_std_error(&error)
+        })?;
+
+    let response = SourcesReadinessGetResponse { readiness };
+    serde_json::to_value(response).map_err(|error| {
+        SinexError::serialization("Failed to serialize sources.readiness.get response")
             .with_std_error(&error)
     })
 }
