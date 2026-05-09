@@ -3495,7 +3495,7 @@ mod tests {
                                 material_kind: "annex".to_string(),
                                 source_identifier: SourceIdentifier::new(
                                     file_a.display().to_string(),
-                                    Uuid::now_v7(),
+                                    sinex_primitives::Id::<sinex_primitives::events::SourceMaterial>::new(),
                                 )
                                 .to_wire(),
                                 material_metadata: serde_json::json!({
@@ -3509,7 +3509,7 @@ mod tests {
                                 material_kind: "annex".to_string(),
                                 source_identifier: SourceIdentifier::new(
                                     file_b.display().to_string(),
-                                    Uuid::now_v7(),
+                                    sinex_primitives::Id::<sinex_primitives::events::SourceMaterial>::new(),
                                 )
                                 .to_wire(),
                                 material_metadata: serde_json::json!({

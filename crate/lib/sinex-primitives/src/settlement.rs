@@ -323,7 +323,7 @@ pub struct ProgressProposal {
 /// A processing failure intent for a single bad event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessingFailureIntent {
-    pub event_id: crate::Uuid,
+    pub event_id: crate::Id<crate::events::Event>,
     pub error: SinexError,
     pub error_fingerprint: String,
     pub effect_id: String,
