@@ -14,6 +14,8 @@ sinex-db = { path = "../../lib/sinex-db" }
 tempfile = "3.10"
 which    = "6"
 rcgen    = { workspace = true }
+bytes    = "1.5"
+uuid     = { workspace = true }
 
 [features]
 default = []
@@ -169,6 +171,7 @@ features = [
     "json",
     "http2",
     "rustls-tls",
+    "stream",
 ]
 
 [dev-dependencies.sinex-gateway]
