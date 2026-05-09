@@ -1698,16 +1698,34 @@ impl SourceMaterialRepository<'_> {
 
     /// List readiness reports for every source observed in the registry.
     ///
-    /// Sources are grouped by `(source_identifier, material_kind)`. The
-    /// derivation runs purely from `raw.source_material_registry` and
-    /// `core.events`; binding and parser-job tables do not yet exist
-    /// (#1098 places bindings in Nix configuration; #1057 will add parser
-    /// jobs as a DB table). Caveats record those gaps.
+    /// Sources are grouped at `source_identifier` granularity; counts and the
+    /// worst-case status are aggregated across all `material_kind` values for
+    /// the same identifier so callers cannot get a healthy kind silently
+    /// masking a stale or failed kind. The kind list is preserved in
+    /// `evidence.material_kinds` for diagnostics. The derivation runs purely
+    /// from `raw.source_material_registry` and `core.events`; binding and
+    /// parser-job tables do not yet exist (#1098 places bindings in Nix
+    /// configuration; #1057 will add parser jobs as a DB table). Caveats
+    /// record those gaps.
     ///
     /// `stale_after_seconds` controls when a recent-success source flips to
     /// `Stale`. Defaults to 7 days when `None`.
     pub async fn list_source_readiness(
         &self,
+        source_family: Option<&str>,
+        stale_after_seconds: Option<i64>,
+    ) -> DbResult<Vec<SourceReadiness>> {
+        self.readiness_query(None, source_family, stale_after_seconds)
+            .await
+    }
+
+    /// Internal: build readiness rows. If `only_identifier` is `Some`, the
+    /// SQL filters at WHERE-clause granularity on the canonical raw
+    /// identifier — used by [`get_source_readiness`] to avoid the
+    /// display-redaction match ambiguity.
+    async fn readiness_query(
+        &self,
+        only_identifier: Option<&str>,
         source_family: Option<&str>,
         stale_after_seconds: Option<i64>,
     ) -> DbResult<Vec<SourceReadiness>> {
@@ -1717,7 +1735,8 @@ impl SourceMaterialRepository<'_> {
             r#"
             SELECT
                 sm.source_identifier        AS "source_identifier!",
-                sm.material_kind            AS "material_kind!",
+                ARRAY_AGG(DISTINCT sm.material_kind ORDER BY sm.material_kind)
+                                            AS "material_kinds!: Vec<String>",
                 COUNT(*)                    AS "material_count!",
                 COUNT(*) FILTER (WHERE sm.status = 'completed')         AS "completed_count!",
                 COUNT(*) FILTER (WHERE sm.status = 'sensing')           AS "sensing_count!",
@@ -1726,9 +1745,11 @@ impl SourceMaterialRepository<'_> {
                 COUNT(*) FILTER (WHERE sm.status = 'recovered_partial') AS "partial_count!",
                 MAX(sm.staged_at) FILTER (WHERE sm.status = 'completed') AS "last_success_at: time::OffsetDateTime"
             FROM raw.source_material_registry sm
-            GROUP BY sm.source_identifier, sm.material_kind
-            ORDER BY sm.source_identifier, sm.material_kind
+            WHERE $1::text IS NULL OR sm.source_identifier = $1
+            GROUP BY sm.source_identifier
+            ORDER BY sm.source_identifier
             "#,
+            only_identifier,
         )
         .fetch_all(self.pool)
         .await
@@ -1738,27 +1759,30 @@ impl SourceMaterialRepository<'_> {
         let mut out = Vec::with_capacity(rows.len());
 
         for row in rows {
-            let family = derive_source_family(&row.source_identifier, &row.material_kind);
+            // For family classification, prefer the most-specific kind we saw;
+            // sorted ascending, the last element is the alphabetically-greatest
+            // kind, which is fine as a stable tiebreaker. Family is advisory.
+            let representative_kind = row.material_kinds.last().map(String::as_str).unwrap_or("");
+            let family = derive_source_family(&row.source_identifier, representative_kind);
             if let Some(filter) = source_family {
                 if family != filter {
                     continue;
                 }
             }
 
-            // Parsed-event count: count events referencing any material from this
-            // source identifier. Cheap because the FK is indexed; safe because
-            // material_id presence is the established replay anchor.
+            // Parsed-event count: count events referencing any material from
+            // this source identifier across ALL material_kinds — matches the
+            // identifier-granular aggregation above.
             let parsed_event_count = sqlx::query_scalar!(
                 r#"
                 SELECT COUNT(*)::BIGINT AS "count!"
                 FROM core.events e
                 WHERE e.source_material_id IN (
                     SELECT id FROM raw.source_material_registry
-                    WHERE source_identifier = $1 AND material_kind = $2
+                    WHERE source_identifier = $1
                 )
                 "#,
                 row.source_identifier,
-                row.material_kind,
             )
             .fetch_one(self.pool)
             .await
@@ -1845,7 +1869,7 @@ impl SourceMaterialRepository<'_> {
             let cost = SourceReadinessCost::LocalFast;
 
             let evidence = serde_json::json!({
-                "material_kind": row.material_kind,
+                "material_kinds": row.material_kinds,
                 "material_count": row.material_count,
                 "completed_count": row.completed_count,
                 "sensing_count": row.sensing_count,
@@ -1878,6 +1902,13 @@ impl SourceMaterialRepository<'_> {
 
     /// Get the readiness report for a single source identifier.
     ///
+    /// `source_identifier` is the canonical raw identifier stored in
+    /// `raw.source_material_registry` and is matched at SQL granularity, NOT
+    /// against the redacted display form. Multiple raw identifiers can
+    /// collapse to the same redacted display string, so display-form
+    /// matching would silently return the wrong source on collision.
+    /// Redaction is applied only when populating the response struct.
+    ///
     /// Returns `Ok(None)` when no material is registered for that identifier.
     pub async fn get_source_readiness(
         &self,
@@ -1885,12 +1916,10 @@ impl SourceMaterialRepository<'_> {
         source_family: Option<&str>,
         stale_after_seconds: Option<i64>,
     ) -> DbResult<Option<SourceReadiness>> {
-        let mut all = self
-            .list_source_readiness(source_family, stale_after_seconds)
+        let mut rows = self
+            .readiness_query(Some(source_identifier), source_family, stale_after_seconds)
             .await?;
-        let display = redact_identifier_for_display(source_identifier);
-        Ok(all.drain(..).find(|r| r.source_identifier == display
-            || r.source_identifier == source_identifier))
+        Ok(rows.pop())
     }
 
     pub async fn append_temporal_ledger_with_executor<'e, E>(
