@@ -11,8 +11,9 @@ use sinex_primitives::domain::{
     TemporalSourceType,
 };
 use sinex_primitives::rpc::sources::{
-    SOURCE_MATERIAL_CONTRACT_METADATA_KEY, SourceMaterialMetadataContract,
-    SourceMaterialStatistics, SourceOrigin,
+    CaveatSeverity, SOURCE_MATERIAL_CONTRACT_METADATA_KEY, SourceCaveat, SourceMaterialMetadataContract,
+    SourceMaterialStatistics, SourceOrigin, SourceReadiness, SourceReadinessCost,
+    SourceReadinessStatus, caveat_codes,
 };
 use sinex_primitives::{Id, SinexError, Timestamp, events::OffsetKind};
 pub use sinex_schema::schema::records::SourceMaterialLinkRecord;
@@ -1693,6 +1694,205 @@ impl SourceMaterialRepository<'_> {
             .await
     }
 
+    // ========== Source readiness (#1099) ==========
+
+    /// List readiness reports for every source observed in the registry.
+    ///
+    /// Sources are grouped by `(source_identifier, material_kind)`. The
+    /// derivation runs purely from `raw.source_material_registry` and
+    /// `core.events`; binding and parser-job tables do not yet exist
+    /// (#1098 places bindings in Nix configuration; #1057 will add parser
+    /// jobs as a DB table). Caveats record those gaps.
+    ///
+    /// `stale_after_seconds` controls when a recent-success source flips to
+    /// `Stale`. Defaults to 7 days when `None`.
+    pub async fn list_source_readiness(
+        &self,
+        source_family: Option<&str>,
+        stale_after_seconds: Option<i64>,
+    ) -> DbResult<Vec<SourceReadiness>> {
+        let stale_after = stale_after_seconds.unwrap_or(7 * 24 * 3600);
+
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                sm.source_identifier        AS "source_identifier!",
+                sm.material_kind            AS "material_kind!",
+                COUNT(*)                    AS "material_count!",
+                COUNT(*) FILTER (WHERE sm.status = 'completed')         AS "completed_count!",
+                COUNT(*) FILTER (WHERE sm.status = 'sensing')           AS "sensing_count!",
+                COUNT(*) FILTER (WHERE sm.status = 'failed')            AS "failed_count!",
+                COUNT(*) FILTER (WHERE sm.status = 'cancelled')         AS "cancelled_count!",
+                COUNT(*) FILTER (WHERE sm.status = 'recovered_partial') AS "partial_count!",
+                MAX(sm.staged_at) FILTER (WHERE sm.status = 'completed') AS "last_success_at: time::OffsetDateTime"
+            FROM raw.source_material_registry sm
+            GROUP BY sm.source_identifier, sm.material_kind
+            ORDER BY sm.source_identifier, sm.material_kind
+            "#,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "list source readiness"))?;
+
+        let now = time::OffsetDateTime::now_utc();
+        let mut out = Vec::with_capacity(rows.len());
+
+        for row in rows {
+            let family = derive_source_family(&row.source_identifier, &row.material_kind);
+            if let Some(filter) = source_family {
+                if family != filter {
+                    continue;
+                }
+            }
+
+            // Parsed-event count: count events referencing any material from this
+            // source identifier. Cheap because the FK is indexed; safe because
+            // material_id presence is the established replay anchor.
+            let parsed_event_count = sqlx::query_scalar!(
+                r#"
+                SELECT COUNT(*)::BIGINT AS "count!"
+                FROM core.events e
+                WHERE e.source_material_id IN (
+                    SELECT id FROM raw.source_material_registry
+                    WHERE source_identifier = $1 AND material_kind = $2
+                )
+                "#,
+                row.source_identifier,
+                row.material_kind,
+            )
+            .fetch_one(self.pool)
+            .await
+            .map_err(|e| db_error(e, "count parsed events for readiness"))?;
+
+            let freshness_seconds = row
+                .last_success_at
+                .map(|ts| (now - ts).whole_seconds());
+
+            let display_identifier = redact_identifier_for_display(&row.source_identifier);
+
+            let mut caveats = Vec::new();
+            // Bindings live in Nix configuration; surface as info caveat.
+            caveats.push(SourceCaveat {
+                code: caveat_codes::BINDINGS_NOT_IN_DB.to_string(),
+                severity: CaveatSeverity::Info,
+                message:
+                    "Source bindings live in Nix configuration; binding-level evidence is not joined here."
+                        .to_string(),
+                evidence_ref: None,
+            });
+            caveats.push(SourceCaveat {
+                code: caveat_codes::PARSER_JOBS_UNTRACKED.to_string(),
+                severity: CaveatSeverity::Info,
+                message:
+                    "Parser jobs are not yet tracked in the database (#1057); parser-failure evidence not available."
+                        .to_string(),
+                evidence_ref: None,
+            });
+
+            // Status classification.
+            let status = if row.completed_count == 0 && row.failed_count > 0 {
+                caveats.push(SourceCaveat {
+                    code: caveat_codes::PARSER_FAILED_RECENTLY.to_string(),
+                    severity: CaveatSeverity::Degraded,
+                    message: format!(
+                        "{} material(s) in failed state and no completed staging recorded.",
+                        row.failed_count
+                    ),
+                    evidence_ref: None,
+                });
+                SourceReadinessStatus::Error
+            } else if row.completed_count == 0 && row.material_count > 0 {
+                caveats.push(SourceCaveat {
+                    code: caveat_codes::MATERIAL_STAGED_UNPARSED.to_string(),
+                    severity: CaveatSeverity::Degraded,
+                    message: "Material is registered but no successful staging has finalized."
+                        .to_string(),
+                    evidence_ref: None,
+                });
+                SourceReadinessStatus::Partial
+            } else if parsed_event_count == 0 && row.completed_count > 0 {
+                caveats.push(SourceCaveat {
+                    code: caveat_codes::MATERIAL_STAGED_UNPARSED.to_string(),
+                    severity: CaveatSeverity::Degraded,
+                    message: "Material is staged but no parsed events reference it."
+                        .to_string(),
+                    evidence_ref: None,
+                });
+                SourceReadinessStatus::Partial
+            } else if let Some(secs) = freshness_seconds {
+                if secs > stale_after {
+                    caveats.push(SourceCaveat {
+                        code: caveat_codes::MATERIAL_NO_RECENT_SNAPSHOT.to_string(),
+                        severity: CaveatSeverity::Warning,
+                        message: format!(
+                            "Last successful staging was {secs}s ago, exceeding stale threshold {stale_after}s."
+                        ),
+                        evidence_ref: None,
+                    });
+                    SourceReadinessStatus::Stale
+                } else {
+                    SourceReadinessStatus::Available
+                }
+            } else if row.material_count == 0 {
+                SourceReadinessStatus::Unknown
+            } else {
+                SourceReadinessStatus::Unknown
+            };
+
+            // Cost: registry-only data is local and cheap. Replay/refresh of an
+            // archive_kind material would be local-heavy; we don't have that
+            // signal here so we report local_fast and let consumers escalate.
+            let cost = SourceReadinessCost::LocalFast;
+
+            let evidence = serde_json::json!({
+                "material_kind": row.material_kind,
+                "material_count": row.material_count,
+                "completed_count": row.completed_count,
+                "sensing_count": row.sensing_count,
+                "failed_count": row.failed_count,
+                "cancelled_count": row.cancelled_count,
+                "recovered_partial_count": row.partial_count,
+            });
+
+            out.push(SourceReadiness {
+                binding_id: None,
+                source_family: family.into(),
+                source_unit_id: None,
+                parser_id: None,
+                source_identifier: display_identifier,
+                status,
+                cost,
+                freshness_seconds,
+                #[allow(clippy::cast_sign_loss)]
+                material_count: row.material_count.max(0) as u64,
+                #[allow(clippy::cast_sign_loss)]
+                parsed_event_count: Some(parsed_event_count.max(0) as u64),
+                last_success_at: row.last_success_at.map(|ts| ts.to_string()),
+                caveats,
+                evidence,
+            });
+        }
+
+        Ok(out)
+    }
+
+    /// Get the readiness report for a single source identifier.
+    ///
+    /// Returns `Ok(None)` when no material is registered for that identifier.
+    pub async fn get_source_readiness(
+        &self,
+        source_identifier: &str,
+        source_family: Option<&str>,
+        stale_after_seconds: Option<i64>,
+    ) -> DbResult<Option<SourceReadiness>> {
+        let mut all = self
+            .list_source_readiness(source_family, stale_after_seconds)
+            .await?;
+        let display = redact_identifier_for_display(source_identifier);
+        Ok(all.drain(..).find(|r| r.source_identifier == display
+            || r.source_identifier == source_identifier))
+    }
+
     pub async fn append_temporal_ledger_with_executor<'e, E>(
         &self,
         executor: E,
@@ -1720,6 +1920,56 @@ impl SourceMaterialRepository<'_> {
         .await
         .map_err(|e| db_error(e, "append temporal ledger entry"))?;
         Ok(())
+    }
+}
+
+/// Best-effort family classification from registry-only data.
+///
+/// Bindings (#1098) carry the canonical source_family in Nix; until the
+/// readiness derivation can join binding evidence, we infer a coarse family
+/// from the identifier shape. The classification is advisory; consumers
+/// should treat unfamiliar values as `"generic"`.
+fn derive_source_family(source_identifier: &str, _material_kind: &str) -> &'static str {
+    let lower = source_identifier.to_ascii_lowercase();
+    if lower.starts_with("integration.")
+        || lower.starts_with("analysis.")
+    {
+        // External producer envelopes use dotted source-unit identifiers.
+        return "integration";
+    }
+    if lower.contains("atuin") || lower.contains("zsh_history") {
+        return "terminal";
+    }
+    if lower.contains("firefox") || lower.contains("chromium") || lower.contains("places.sqlite") {
+        return "browser";
+    }
+    if lower.contains("activitywatch") {
+        return "desktop";
+    }
+    if lower.contains("polylogue") || lower.contains("conversations") {
+        return "chat";
+    }
+    if lower.contains("/var/log") || lower.contains("journal") {
+        return "system";
+    }
+    "generic"
+}
+
+/// Apply privacy redaction to a source identifier for display in readiness.
+///
+/// Filesystem paths are routed through [`sinex_primitives::privacy::classify_material_path`].
+/// Dotted identifiers (e.g. `integration.polylogue`) pass through unchanged.
+fn redact_identifier_for_display(source_identifier: &str) -> String {
+    if source_identifier.starts_with('/') || source_identifier.starts_with('~') {
+        let (_class, display) =
+            sinex_primitives::privacy::classify_material_path(source_identifier);
+        if display.is_empty() {
+            "<redacted>".to_string()
+        } else {
+            display
+        }
+    } else {
+        source_identifier.to_string()
     }
 }
 
