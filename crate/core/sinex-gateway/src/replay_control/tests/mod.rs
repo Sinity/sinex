@@ -84,6 +84,7 @@ fn sample_scope() -> ReplayScope {
         time_window: None,
         material_filter: None,
         filters: HashMap::new(),
+        ..Default::default()
     }
 }
 

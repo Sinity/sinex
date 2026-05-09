@@ -11,6 +11,7 @@ async fn replay_control_request_round_trip() -> TestResult<()> {
         time_window: None,
         material_filter: None,
         filters: HashMap::default(),
+        ..Default::default()
     };
 
     let request = ReplayControlRequest::Plan {

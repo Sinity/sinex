@@ -275,6 +275,7 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
         )),
         material_filter: None,
         filters: HashMap::new(),
+        ..Default::default()
     };
     let planned_reexecution = client
         .plan("test:replay-user".into(), reexecution_scope)
