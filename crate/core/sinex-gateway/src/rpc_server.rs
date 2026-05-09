@@ -908,6 +908,16 @@ async fn handle_rpc(
                 None,
                 Some(&detail),
             );
+            // Audit `gateway.rpc.call` (#1172 AC-7): unauthenticated. We
+            // cannot derive a token prefix from a rejected bearer; record
+            // an empty prefix and `unknown` role.
+            state.metrics.record_rpc_call(
+                &request.method,
+                "unknown",
+                start.elapsed().as_millis() as u64,
+                sinex_primitives::events::payloads::RpcStatus::Unauthenticated,
+                "",
+            );
             return err.into_response();
         }
     };
@@ -924,6 +934,14 @@ async fn handle_rpc(
                 AccessOutcome::Rejected,
                 None,
                 Some(&detail),
+            );
+            let token_prefix = &token[..8.min(token.len())];
+            state.metrics.record_rpc_call(
+                &request.method,
+                "unknown",
+                start.elapsed().as_millis() as u64,
+                sinex_primitives::events::payloads::RpcStatus::Rejected,
+                token_prefix,
             );
             return (
                 StatusCode::UNAUTHORIZED,
@@ -948,6 +966,14 @@ async fn handle_rpc(
             Some(&auth_context),
             None,
         );
+        emit_rpc_call_audit(
+            &state,
+            &request.method,
+            auth_context.role,
+            start.elapsed(),
+            sinex_primitives::events::payloads::RpcStatus::RateLimited,
+            token_prefix,
+        );
         return (
             StatusCode::TOO_MANY_REQUESTS,
             Json(JsonRpcResponse::error(
@@ -967,6 +993,14 @@ async fn handle_rpc(
             AccessOutcome::InvalidRequest,
             Some(&auth_context),
             Some(&detail),
+        );
+        emit_rpc_call_audit(
+            &state,
+            &request.method,
+            auth_context.role,
+            start.elapsed(),
+            sinex_primitives::events::payloads::RpcStatus::InvalidRequest,
+            &auth_context.token_prefix,
         );
         let response = JsonRpcResponse::error(request.id, -32600, detail.to_string());
         return (StatusCode::BAD_REQUEST, Json(response));
@@ -991,18 +1025,25 @@ async fn handle_rpc(
 
     // Record latency on success
     let latency_us = start.elapsed().as_micros() as u64;
+    let elapsed = start.elapsed();
 
-    let response = match result {
+    let (response, audit_status) = match result {
         Ok(value) => {
             state.metrics.record_request_success(latency_us);
-            JsonRpcResponse::success(request.id, value)
+            (
+                JsonRpcResponse::success(request.id, value),
+                sinex_primitives::events::payloads::RpcStatus::Success,
+            )
         }
         Err(err)
             if matches!(&err, SinexError::NotFound(_))
                 && err.to_string().starts_with("Unknown method:") =>
         {
             state.metrics.record_request_rejected();
-            JsonRpcResponse::error(request.id, -32601, err.to_string())
+            (
+                JsonRpcResponse::error(request.id, -32601, err.to_string()),
+                sinex_primitives::events::payloads::RpcStatus::Failed,
+            )
         }
         Err(err) => {
             let error_id = Uuid::now_v7();
@@ -1031,11 +1072,42 @@ async fn handle_rpc(
                 // No internal error details - check server logs with error_id
             });
 
-            JsonRpcResponse::error_with_data(request.id, code, message, data)
+            (
+                JsonRpcResponse::error_with_data(request.id, code, message, data),
+                sinex_primitives::events::payloads::RpcStatus::Failed,
+            )
         }
     };
 
+    emit_rpc_call_audit(
+        &state,
+        &method,
+        auth_context.role,
+        elapsed,
+        audit_status,
+        &auth_context.token_prefix,
+    );
+
     (StatusCode::OK, Json(response))
+}
+
+/// Helper that wraps the gateway-metrics audit emission so the call sites
+/// stay readable. No-op when metrics are disabled.
+fn emit_rpc_call_audit(
+    state: &AppState,
+    method: &str,
+    role: crate::auth::Role,
+    elapsed: std::time::Duration,
+    status: sinex_primitives::events::payloads::RpcStatus,
+    token_prefix: &str,
+) {
+    state.metrics.record_rpc_call(
+        method,
+        role.as_str(),
+        elapsed.as_millis() as u64,
+        status,
+        token_prefix,
+    );
 }
 
 /// Maximum number of requests allowed in a single JSON-RPC batch
