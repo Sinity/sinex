@@ -23,7 +23,7 @@ pub mod sources;
 pub mod system;
 pub mod telemetry;
 
-pub use query::{handle_events_lineage, handle_events_query};
+pub use query::{handle_events_annotate, handle_events_lineage, handle_events_query};
 pub use replay::{
     handle_replay_approve_operation, handle_replay_cancel_operation,
     handle_replay_create_operation, handle_replay_execute_operation,
@@ -77,7 +77,7 @@ pub use telemetry::{
     handle_telemetry_ingestd_batch_stats, handle_telemetry_ingestd_validation,
     handle_telemetry_metric_counters, handle_telemetry_node_stats,
     handle_telemetry_recent_activity, handle_telemetry_stream_stats, handle_telemetry_system_state,
-    handle_telemetry_window_focus,
+    handle_telemetry_throughput, handle_telemetry_window_focus,
 };
 
 fn parse_default_on_null<T>(params: Value) -> Result<T, serde_json::Error>

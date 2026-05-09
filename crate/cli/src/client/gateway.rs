@@ -57,6 +57,7 @@ use sinex_primitives::rpc::{
         TelemetryIngestdValidationResponse, TelemetryMetricCountersRequest,
         TelemetryMetricCountersResponse, TelemetryNodeStatsRequest, TelemetryNodeStatsResponse,
         TelemetryRecentActivityRequest, TelemetryRecentActivityResponse,
+        TelemetryThroughputRequest, TelemetryThroughputResponse,
         TelemetryStreamStatsRequest, TelemetryStreamStatsResponse, TelemetrySystemStateRequest,
         TelemetrySystemStateResponse, TelemetryTimeRange, TelemetryWindowFocusRequest,
         TelemetryWindowFocusResponse, WindowFocusBucket,
@@ -1162,6 +1163,15 @@ impl GatewayClient {
             .await?;
         let response: TelemetryFileActivityResponse = serde_json::from_value(result)?;
         Ok(response.entries)
+    }
+
+    /// Query the per-source/component throughput summary (#1172 AC-8).
+    pub async fn telemetry_throughput(&self) -> Result<TelemetryThroughputResponse> {
+        let req = TelemetryThroughputRequest::default();
+        let result = self
+            .call_rpc(methods::TELEMETRY_THROUGHPUT, serde_json::to_value(&req)?)
+            .await?;
+        Ok(serde_json::from_value(result)?)
     }
 
     /// Query recent activity summary (hardcoded lookback window, no time params).
