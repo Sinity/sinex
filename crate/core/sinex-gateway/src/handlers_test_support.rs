@@ -6,10 +6,10 @@ use sinex_db::replay::state_machine::ReplayState;
 use sinex_primitives::Id;
 use uuid::Uuid;
 
+use crate::handlers::replay::parse_replay_state as parse_replay_state_inner;
 use crate::handlers::{
     decode_blob_content as decode_blob_content_inner,
     decode_note_content as decode_note_content_inner,
-    parse_replay_state as parse_replay_state_inner,
     validate_entity_link_ids as validate_entity_link_ids_inner,
     validate_entity_name as validate_entity_name_inner,
 };

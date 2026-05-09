@@ -16,6 +16,7 @@ pub mod nodes;
 pub mod ops;
 pub mod pkm;
 pub mod query;
+pub mod replay;
 pub mod rpc_handlers;
 pub mod shadow;
 pub mod sources;
@@ -23,6 +24,12 @@ pub mod system;
 pub mod telemetry;
 
 pub use query::{handle_events_lineage, handle_events_query};
+pub use replay::{
+    handle_replay_approve_operation, handle_replay_cancel_operation,
+    handle_replay_create_operation, handle_replay_execute_operation,
+    handle_replay_list_operations, handle_replay_operation_status,
+    handle_replay_preview_operation, handle_replay_submit_operation,
+};
 pub use rpc_handlers::*;
 
 // Re-export new domain-specific handler functions
