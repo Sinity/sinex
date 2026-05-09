@@ -127,13 +127,51 @@ async fn test_sse_delivers_event_after_real_ingestd_confirmation(
 
     let (mut stream, mut buf) = open_sse(&client, &base, &token, &filter_json).await?;
 
-    // The bus subscribes asynchronously after the HTTP handler returns 200.
-    // Wait for the first heartbeat or a subscribed marker so we don't race
-    // the publish below ahead of the bus subscription.
-    let prelude = next_frame(&mut stream, &mut buf, Duration::from_secs(15)).await?;
+    // ── Bus-readiness handshake ──────────────────────────────────────────
+    //
+    // `start_test_gateway` only waits for TCP accept; it does not signal that
+    // `SubscriptionBus::run` has finished `nats_client.subscribe(confirmations.>)`.
+    // A heartbeat frame proves the per-connection HTTP task is alive but does
+    // NOT prove the bus's NATS subscription is up — heartbeats originate from
+    // the SSE handler's local timer.
+    //
+    // The only signal observable from a black-box test is: an event we publish
+    // actually traverses ingestd → bus → SSE. So we publish a warmup event in
+    // a retry loop until SSE delivers it. After that, the bus's NATS
+    // subscription is provably active and we can run the real assertion.
+    let warmup_event_type = "test.sse_warmup";
+    let warmup_deadline = tokio::time::Instant::now() + Duration::from_secs(45);
+    let mut warmup_id: Option<String> = None;
+    while tokio::time::Instant::now() < warmup_deadline {
+        let warmup = DynamicPayload::new(
+            unique_source.as_str(),
+            warmup_event_type,
+            serde_json::json!({"marker": "warmup"}),
+        );
+        let id = stack.publish(warmup).await?.to_string();
+        // Read frames for up to 5s; if our id appears, bus is live.
+        let frame_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let remaining = frame_deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            let Some(frame) = next_frame(&mut stream, &mut buf, remaining).await? else {
+                break;
+            };
+            if frame.event == "event" && frame.data.contains(&id) {
+                warmup_id = Some(id.clone());
+                break;
+            }
+        }
+        if warmup_id.is_some() {
+            break;
+        }
+        tracing::warn!("SSE warmup event {id} not yet delivered; republishing");
+    }
     assert!(
-        prelude.is_some(),
-        "SSE stream produced no frame within 15s of connect; bus may be unreachable"
+        warmup_id.is_some(),
+        "SSE never delivered warmup event after 45s — bus NATS subscription likely never came up"
     );
 
     // Publish through the real pipeline: NATS → ingestd → DB → confirmation
