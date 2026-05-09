@@ -374,7 +374,7 @@ async fn collect_schema_drift(pool: &PgPool) -> NodeResult<Vec<String>> {
         ("core", "operations_log"),
         ("raw", "source_material_registry"),
         ("sinex_schemas", "event_payload_schemas"),
-        ("core", "node_manifests"),
+        ("core", "manifests"),
     ];
 
     for (schema, table) in required_tables {
@@ -593,7 +593,7 @@ async fn verify_schema_integrity(
         "core.blobs",
         "raw.source_material_registry",
         "sinex_schemas.event_payload_schemas",
-        "core.node_manifests",
+        "core.manifests",
         "core.operations_log",
     ];
 

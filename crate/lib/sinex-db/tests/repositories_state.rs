@@ -549,7 +549,7 @@ async fn node_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Test
         )
         .await?;
 
-    assert_eq!(run.node_manifest_id, manifest.id);
+    assert_eq!(run.manifest_id, Some(manifest.id));
     assert_eq!(run.service_name, "sinex-terminal-ingestor");
     assert_eq!(run.instance_id, "host-123-run");
     assert_eq!(run.host, "test-host");
