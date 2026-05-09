@@ -922,3 +922,103 @@ pub async fn handle_sources_readiness_get(pool: &PgPool, params: Value) -> Resul
             .with_std_error(&error)
     })
 }
+
+// ── sources.continuity.list / .get / .explain_gap (#1085) ────────
+//
+// Operator-facing continuity diagnostics scoped by `SourceFamily`.
+// Sits alongside `sources.continuity` (per `source_identifier`); the
+// new methods aggregate across the family rollup axis and return
+// richer scorecard / seam / gap structures.
+
+/// Handle `sources.continuity.list` — a continuity report per observed source family.
+pub async fn handle_sources_continuity_list(pool: &PgPool, params: Value) -> Result<Value> {
+    use sinex_primitives::sources::continuity::{
+        SourcesContinuityListRequest, SourcesContinuityListResponse,
+    };
+
+    let req: SourcesContinuityListRequest = if params.is_null() {
+        SourcesContinuityListRequest::default()
+    } else {
+        serde_json::from_value(params).map_err(|error| {
+            SinexError::serialization("Invalid sources.continuity.list request")
+                .with_std_error(&error)
+        })?
+    };
+
+    let reports = pool
+        .continuity()
+        .list_continuity_reports(req.since)
+        .await?;
+
+    serde_json::to_value(SourcesContinuityListResponse { reports }).map_err(|error| {
+        SinexError::serialization("Failed to serialize sources.continuity.list response")
+            .with_std_error(&error)
+    })
+}
+
+/// Handle `sources.continuity.get` — continuity report for one family.
+pub async fn handle_sources_continuity_get(pool: &PgPool, params: Value) -> Result<Value> {
+    use sinex_primitives::sources::continuity::{
+        SourcesContinuityGetRequest, SourcesContinuityGetResponse,
+    };
+
+    let req: SourcesContinuityGetRequest = serde_json::from_value(params).map_err(|error| {
+        SinexError::serialization("Invalid sources.continuity.get request").with_std_error(&error)
+    })?;
+
+    let report = pool
+        .continuity()
+        .get_continuity_report(&req.source_family)
+        .await?;
+
+    serde_json::to_value(SourcesContinuityGetResponse { report }).map_err(|error| {
+        SinexError::serialization("Failed to serialize sources.continuity.get response")
+            .with_std_error(&error)
+    })
+}
+
+/// Handle `sources.continuity.explain_gap` — attribute a single window.
+pub async fn handle_sources_continuity_explain_gap(
+    pool: &PgPool,
+    params: Value,
+) -> Result<Value> {
+    use sinex_primitives::sources::continuity::{
+        SourcesExplainGapRequest, SourcesExplainGapResponse,
+    };
+
+    let req: SourcesExplainGapRequest = serde_json::from_value(params).map_err(|error| {
+        SinexError::serialization("Invalid sources.continuity.explain_gap request")
+            .with_std_error(&error)
+    })?;
+
+    let gap = pool
+        .continuity()
+        .explain_gap(&req.source_family, req.at)
+        .await?;
+
+    let explanation = match (&gap, gap.as_ref().and_then(|g| g.attribution.as_deref())) {
+        (Some(_), Some(reason)) => format!(
+            "At {}, source family {} was inside a coverage gap: {}",
+            req.at, req.source_family, reason
+        ),
+        (Some(_), None) => format!(
+            "At {}, source family {} was inside a coverage gap (no attribution available)",
+            req.at, req.source_family
+        ),
+        (None, _) => format!(
+            "At {}, coverage was present for source family {} (no gap to explain)",
+            req.at, req.source_family
+        ),
+    };
+
+    serde_json::to_value(SourcesExplainGapResponse {
+        source_family: req.source_family,
+        at: req.at,
+        gap,
+        explanation,
+    })
+    .map_err(|error| {
+        SinexError::serialization("Failed to serialize sources.continuity.explain_gap response")
+            .with_std_error(&error)
+    })
+}

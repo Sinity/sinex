@@ -396,10 +396,12 @@ fn build_registry_impl() -> RpcRegistry {
         handle_replay_preview_operation, handle_replay_submit_operation, handle_retrieve_blob,
         handle_shadow_create, handle_shadow_delete, handle_shadow_list, handle_sources_annotate,
         handle_sources_archive, handle_sources_bindings_create, handle_sources_bindings_list,
-        handle_sources_bindings_resolve, handle_sources_continuity, handle_sources_coverage,
-        handle_sources_list, handle_sources_presets_list,
-        handle_sources_readiness_get, handle_sources_readiness_list,
-        handle_sources_show, handle_sources_stage, handle_store_blob,
+        handle_sources_bindings_resolve, handle_sources_continuity,
+        handle_sources_continuity_explain_gap, handle_sources_continuity_get,
+        handle_sources_continuity_list, handle_sources_coverage, handle_sources_list,
+        handle_sources_presets_list, handle_sources_readiness_get,
+        handle_sources_readiness_list, handle_sources_show, handle_sources_stage,
+        handle_store_blob,
         handle_system_health, handle_system_ping, handle_system_version,
         handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
         handle_telemetry_current_device_state, handle_telemetry_current_health,
@@ -557,6 +559,21 @@ fn build_registry_impl() -> RpcRegistry {
             methods::SOURCES_READINESS_GET,
             Role::ReadOnly,
             boxed!(handle_sources_readiness_get),
+        )
+        .pool_rpc(
+            methods::SOURCES_CONTINUITY_LIST,
+            Role::ReadOnly,
+            boxed!(handle_sources_continuity_list),
+        )
+        .pool_rpc(
+            methods::SOURCES_CONTINUITY_GET,
+            Role::ReadOnly,
+            boxed!(handle_sources_continuity_get),
+        )
+        .pool_rpc(
+            methods::SOURCES_CONTINUITY_EXPLAIN_GAP,
+            Role::ReadOnly,
+            boxed!(handle_sources_continuity_explain_gap),
         )
         // Source presets and bindings (ReadOnly)
         .register(
