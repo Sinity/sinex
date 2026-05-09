@@ -98,6 +98,8 @@
 //! | `analysis.lynchpin` | [lynchpin](https://github.com/sinity/sinity-lynchpin) | Analysis artifact staging |
 
 use crate::domain::{SourceMaterialFormat, SourceMaterialTimingInfoType};
+use crate::parser::{ParserId, SourceBindingId, SourceUnitId};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -692,4 +694,212 @@ pub fn bridge_material_presets() -> Vec<SourcePresetDescriptor> {
             resolver_preset: None,
         },
     ]
+}
+
+// ─────────────────────────────────────────────────────────────
+// sources.readiness — source readiness and caveat surface (#1099)
+// ─────────────────────────────────────────────────────────────
+
+/// Status of a source's readiness.
+///
+/// Precedence (highest first): `Disabled` > `Blocked` > `Missing` > `Error` >
+/// `Stale` > `Partial` > `Available` > `Unknown`. Classification is performed
+/// in the readiness derivation; `Unknown` indicates the underlying signals
+/// were inconclusive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceReadinessStatus {
+    /// Source is configured, recent successful acquisition+parse, fresh enough.
+    Available,
+    /// Source has staged material but no parsed events, or only partial coverage.
+    Partial,
+    /// Last successful acquisition is older than the freshness threshold.
+    Stale,
+    /// Source has acquisition or parser failures recorded recently.
+    Error,
+    /// Locator could not be resolved or material is missing/unreadable.
+    Missing,
+    /// Source is intentionally blocked (privacy policy, admission decision, etc.).
+    Blocked,
+    /// Source is configured but explicitly disabled.
+    Disabled,
+    /// Underlying signals are insufficient to classify.
+    Unknown,
+}
+
+/// Cost class for using a source.
+///
+/// Operators and agents use this hint to choose between sources or to warn
+/// before using an expensive one (e.g., gating heavy parses behind explicit
+/// confirmation).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceReadinessCost {
+    /// Already-staged material; cheap local read.
+    LocalFast,
+    /// Local but heavy: large parse, decompression, or scan.
+    LocalHeavy,
+    /// Requires network access to acquire or refresh.
+    Network,
+    /// Requires operator review or manual approval before use.
+    OperatorReview,
+    /// Source is currently unavailable; cost is undefined.
+    Unavailable,
+}
+
+/// Severity of a caveat attached to a readiness report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CaveatSeverity {
+    /// Diagnostic information; does not change usability.
+    Info,
+    /// Caller should be aware but the source is still usable.
+    Warning,
+    /// Source is degraded and results may be incomplete.
+    Degraded,
+    /// Source is not usable in the current state.
+    Blocking,
+}
+
+/// Stable caveat codes consumed by CLIs, context packs, and agents.
+///
+/// Codes are short, dotted strings; new codes can be introduced freely but
+/// existing codes must not change meaning. Consumers should treat unknown
+/// codes as `Info`-severity caveats they pass through unchanged.
+pub mod caveat_codes {
+    /// Binding's locator/path could not be found on disk.
+    pub const BINDING_MISSING_PATH: &str = "binding.missing_path";
+    /// Binding's locator was found but is not readable.
+    pub const BINDING_PERMISSION_DENIED: &str = "binding.permission_denied";
+    /// Binding is not declared in current configuration.
+    pub const BINDING_UNDECLARED: &str = "binding.undeclared";
+    /// Privacy policy or admission decision blocks this source.
+    pub const POLICY_RAW_MATERIAL_BLOCKED: &str = "policy.raw_material_blocked";
+    /// Material is staged but has no parsed events referencing it.
+    pub const MATERIAL_STAGED_UNPARSED: &str = "material.staged_unparsed";
+    /// No recent successful staging; coverage may have gaps.
+    pub const MATERIAL_NO_RECENT_SNAPSHOT: &str = "material.no_recent_snapshot";
+    /// Source has no parser binding declared.
+    pub const PARSER_NO_BINDING: &str = "parser.no_binding";
+    /// Parser job failed recently.
+    pub const PARSER_FAILED_RECENTLY: &str = "parser.failed_recently";
+    /// Parser version differs from the version that produced existing events.
+    pub const PARSER_VERSION_DRIFT: &str = "parser.version_drift";
+    /// Coverage is partial within the requested time window.
+    pub const COVERAGE_PARTIAL_TIME_WINDOW: &str = "coverage.partial_time_window";
+    /// Using this source will trigger local-heavy work.
+    pub const COST_LOCAL_HEAVY: &str = "cost.local_heavy";
+    /// Using this source requires network access.
+    pub const COST_NETWORK_REQUIRED: &str = "cost.network_required";
+    /// Parser jobs are not yet tracked in the database (#1057 follow-up).
+    pub const PARSER_JOBS_UNTRACKED: &str = "parser.jobs_untracked";
+    /// Source bindings are declared in Nix configuration; no DB catalog (#1098).
+    pub const BINDINGS_NOT_IN_DB: &str = "binding.not_in_db";
+}
+
+/// A single caveat attached to a readiness report.
+///
+/// Caveats explain why a source is not in `Available` status, or surface
+/// information operators/agents should know even when the source is usable.
+/// Codes from [`caveat_codes`] are stable; messages are human-readable and
+/// may evolve.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SourceCaveat {
+    /// Stable caveat code (see [`caveat_codes`]).
+    pub code: String,
+    /// Severity of this caveat.
+    pub severity: CaveatSeverity,
+    /// Human-readable description.
+    pub message: String,
+    /// Optional reference to evidence: a material UUID, run ID, or path.
+    /// Sensitive paths must be redacted before being placed here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_ref: Option<String>,
+}
+
+/// A readiness report for one source.
+///
+/// Sources are identified by `(source_family, source_unit_id)` when both are
+/// known; the readiness derivation may also report at the `source_identifier`
+/// level when only material registry data is available.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SourceReadiness {
+    /// Binding ID, when bindings are tracked (currently always None — see
+    /// [`caveat_codes::BINDINGS_NOT_IN_DB`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding_id: Option<SourceBindingId>,
+    /// Source family (e.g. "terminal", "browser", "desktop", "chat").
+    pub source_family: String,
+    /// Source unit identifier when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_unit_id: Option<SourceUnitId>,
+    /// Parser ID when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parser_id: Option<ParserId>,
+    /// Logical source identifier from the material registry. May be a
+    /// privacy-redacted path display.
+    pub source_identifier: String,
+    /// Computed readiness status.
+    pub status: SourceReadinessStatus,
+    /// Cost class for using this source.
+    pub cost: SourceReadinessCost,
+    /// Time since the most recent successful staging, in seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness_seconds: Option<i64>,
+    /// Number of source materials registered for this source.
+    pub material_count: u64,
+    /// Number of parsed events referencing materials from this source, when
+    /// known. May be `None` when the join is too expensive or unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parsed_event_count: Option<u64>,
+    /// Timestamp of the last successful staging (`completed` material), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_success_at: Option<String>,
+    /// Caveats explaining the status and the limits of this report.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub caveats: Vec<SourceCaveat>,
+    /// Free-form evidence (material counts by status, latest blob ID, etc.).
+    /// Sensitive paths must be redacted.
+    #[serde(default, skip_serializing_if = "JsonValue::is_null")]
+    pub evidence: JsonValue,
+}
+
+/// Request: `sources.readiness.list`
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct SourcesReadinessListRequest {
+    /// Optional source family filter (e.g. "terminal", "browser").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_family: Option<String>,
+    /// Maximum freshness threshold in seconds for the `Stale` classification.
+    /// Defaults to 7 days when not provided.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale_after_seconds: Option<i64>,
+}
+
+/// Response: `sources.readiness.list`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SourcesReadinessListResponse {
+    pub sources: Vec<SourceReadiness>,
+}
+
+/// Request: `sources.readiness.get`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SourcesReadinessGetRequest {
+    /// Logical source identifier from the material registry.
+    pub source_identifier: String,
+    /// Optional source family filter (disambiguates same identifier in
+    /// multiple families).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_family: Option<String>,
+    /// Stale-after threshold in seconds (default 7 days).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale_after_seconds: Option<i64>,
+}
+
+/// Response: `sources.readiness.get`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SourcesReadinessGetResponse {
+    /// `None` when no material has been registered for the requested source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub readiness: Option<SourceReadiness>,
 }

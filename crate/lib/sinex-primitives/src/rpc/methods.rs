@@ -104,6 +104,8 @@ pub const SOURCES_BINDINGS_LIST: &str = "sources.bindings.list";
 pub const SOURCES_BINDINGS_CREATE: &str = "sources.bindings.create";
 pub const SOURCES_BINDINGS_UPDATE: &str = "sources.bindings.update";
 pub const SOURCES_BINDINGS_RESOLVE: &str = "sources.bindings.resolve";
+pub const SOURCES_READINESS_LIST: &str = "sources.readiness.list";
+pub const SOURCES_READINESS_GET: &str = "sources.readiness.get";
 
 // Tombstone (two-step)
 pub const LIFECYCLE_TOMBSTONE_CREATE: &str = "lifecycle.tombstone.create";
