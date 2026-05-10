@@ -1,4 +1,7 @@
-use sinex_primitives::{proof::SourceUnitBinding, subject_ref};
+use sinex_primitives::{
+    proof::{CheckpointFamily, RuntimeShape, SourceUnitBinding, SourceUnitBuildImpact},
+    subject_ref,
+};
 
 fn main() {
     let _ = SourceUnitBinding::builder(
@@ -10,5 +13,8 @@ fn main() {
     .privacy_context("command")
     .material_policy("canonical_json_lines")
     .checkpoint_policy("row_id")
+    .checkpoint_family(CheckpointFamily::AppendStream)
+    .runtime_shape(RuntimeShape::Continuous)
+    .build_impact(SourceUnitBuildImpact::ZERO)
     .build();
 }
