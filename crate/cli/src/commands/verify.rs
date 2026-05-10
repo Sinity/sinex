@@ -7,6 +7,8 @@ use serde::Serialize;
 use serde_json::json;
 use sinex_primitives::DeploymentReadinessDescriptor;
 use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::events::schema_registry::get_all_payloads;
+use sinex_primitives::proof;
 use sinex_primitives::query::{EventQuery, EventQueryResult, PayloadFilter, TimeRange};
 use sinex_primitives::temporal::Timestamp;
 use tokio::process::Command;
@@ -28,6 +30,20 @@ pub struct VerifyCommand {
     /// Check whether historical-import event types have persisted event evidence.
     #[arg(long = "historical-evidence", default_value_t = false)]
     historical_evidence: bool,
+
+    /// Cross-check every registered `SourceUnitDescriptor` against the
+    /// `EventPayload` inventory: report orphan descriptor pairs (descriptor
+    /// declares a (source, event_type) with no matching payload) and
+    /// unclaimed payloads (payload has no `register_source_unit!` entry).
+    ///
+    /// Uses `docs/source-units.json` if present (xtask renders the manifest
+    /// from the full descriptor graph including node crates); otherwise
+    /// falls back to the descriptors compiled into this binary, which
+    /// generally only covers the infra/primitives descriptors and will
+    /// report node-crate-claimed payloads as unclaimed. Use
+    /// `xtask source-units check` for the deeper, fully-linked validation.
+    #[arg(long = "source-units", default_value_t = false)]
+    source_units: bool,
 
     /// Run the seeded demo walkthrough (#1172 AC-10): if the database is
     /// empty, seed it with `sinexctl demo`; then exercise documented
@@ -180,24 +196,52 @@ impl VerifyCommand {
         .await?;
         run_active_verification(self, &mut summary, client, descriptor.as_ref()).await?;
         report_historical_evidence(self, &mut summary, client, descriptor.as_ref()).await?;
+        report_source_units_check(self, &mut summary);
 
-        match format {
-            OutputFormat::Table => print_verification_footer(&summary),
-            OutputFormat::Json | OutputFormat::Dot => {
-                println!("{}", format_json(&summary.as_json())?);
-                if summary.fail > 0 {
-                    std::process::exit(1);
-                }
-            }
-            OutputFormat::Yaml => {
-                println!("{}", format_yaml(&summary.as_json())?);
-                if summary.fail > 0 {
-                    std::process::exit(1);
-                }
+        finalize_summary(&summary, format)
+    }
+
+    /// Returns true when `--source-units` is the only request and the
+    /// gateway-dependent checks should be skipped entirely.
+    pub fn is_source_units_only(&self) -> bool {
+        self.source_units
+            && !self.demo
+            && !self.document_smoke
+            && !self.source_evidence
+            && !self.historical_evidence
+    }
+
+    /// Run only the descriptor/payload coverage check, without requiring a
+    /// gateway connection or auth token. Use after [`Self::is_source_units_only`]
+    /// returns true.
+    pub fn execute_source_units_only(&self, format: OutputFormat) -> Result<()> {
+        let table_mode = matches!(format, OutputFormat::Table);
+        if table_mode {
+            print_verification_header();
+        }
+        let mut summary = VerificationSummary::new(format);
+        report_source_units_check(self, &mut summary);
+        finalize_summary(&summary, format)
+    }
+}
+
+fn finalize_summary(summary: &VerificationSummary, format: OutputFormat) -> Result<()> {
+    match format {
+        OutputFormat::Table => print_verification_footer(summary),
+        OutputFormat::Json | OutputFormat::Dot => {
+            println!("{}", format_json(&summary.as_json())?);
+            if summary.fail > 0 {
+                std::process::exit(1);
             }
         }
-        Ok(())
+        OutputFormat::Yaml => {
+            println!("{}", format_yaml(&summary.as_json())?);
+            if summary.fail > 0 {
+                std::process::exit(1);
+            }
+        }
     }
+    Ok(())
 }
 
 fn print_verification_header() {
@@ -360,6 +404,186 @@ async fn report_historical_evidence(
     }
     run_historical_evidence(summary, client, descriptor).await?;
     Ok(())
+}
+
+/// Cross-check `SourceUnitDescriptor.event_types` pairs against the
+/// `EventPayload` inventory. See `--source-units` flag docs.
+fn report_source_units_check(command: &VerifyCommand, summary: &mut VerificationSummary) {
+    if !command.source_units {
+        summary.skip(
+            "Descriptor/payload coverage check not run — pass --source-units to cross-check `SourceUnitDescriptor` declarations against the `EventPayload` inventory",
+        );
+        return;
+    }
+    run_source_units_check(summary);
+}
+
+fn run_source_units_check(summary: &mut VerificationSummary) {
+    let report = build_source_units_report();
+    if let Some(source) = &report.descriptor_source_note {
+        summary.warn(format!("Descriptor source: {source}"));
+    }
+    if report.orphan_descriptor_pairs.is_empty() {
+        summary.pass(format!(
+            "Every declared `SourceUnitDescriptor` (source, event_type) pair ({} pairs across {} descriptors) maps to a registered `EventPayload`",
+            report.descriptor_pair_count, report.descriptor_count
+        ));
+    } else {
+        let preview = report
+            .orphan_descriptor_pairs
+            .iter()
+            .take(5)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        summary.fail(format!(
+            "{} descriptor pair(s) declare a (source, event_type) with no matching `EventPayload` (orphan): {preview}{}",
+            report.orphan_descriptor_pairs.len(),
+            if report.orphan_descriptor_pairs.len() > 5 {
+                format!(" … +{} more", report.orphan_descriptor_pairs.len() - 5)
+            } else {
+                String::new()
+            }
+        ));
+    }
+    if report.unclaimed_payloads.is_empty() {
+        summary.pass(format!(
+            "Every registered `EventPayload` ({} payloads) is claimed by a `SourceUnitDescriptor`",
+            report.payload_count
+        ));
+    } else {
+        // Unclaimed payloads are reported as warnings rather than failures
+        // because the descriptor catalog is curated incrementally — a payload
+        // can exist before its descriptor is registered. The check is
+        // informational: it prints the gap so future descriptor work knows
+        // exactly which payloads are still unclaimed. Orphan descriptor
+        // pairs (descriptor → no payload) remain a hard failure because
+        // they indicate a deleted-payload + leftover-descriptor bug.
+        let preview = report
+            .unclaimed_payloads
+            .iter()
+            .take(10)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        summary.warn(format!(
+            "{} `EventPayload`(s) have no `register_source_unit!` claim: {preview}{}",
+            report.unclaimed_payloads.len(),
+            if report.unclaimed_payloads.len() > 10 {
+                format!(" … +{} more", report.unclaimed_payloads.len() - 10)
+            } else {
+                String::new()
+            }
+        ));
+    }
+    summary.skip(
+        "Use `xtask source-units check` for the deeper, fully-linked validation across every node crate",
+    );
+}
+
+#[derive(Debug, Default)]
+struct SourceUnitsReport {
+    descriptor_count: usize,
+    descriptor_pair_count: usize,
+    payload_count: usize,
+    orphan_descriptor_pairs: Vec<String>,
+    unclaimed_payloads: Vec<String>,
+    /// Set when descriptor pairs were loaded from `docs/source-units.json`
+    /// instead of the in-binary `proof::all_source_units()` inventory; or
+    /// when neither source could be loaded.
+    descriptor_source_note: Option<String>,
+}
+
+fn build_source_units_report() -> SourceUnitsReport {
+    let manifest_pairs = load_descriptor_pairs_from_manifest();
+    let (descriptor_count, declared_pairs, source_note) = match manifest_pairs {
+        Some((count, pairs)) => (
+            count,
+            pairs,
+            Some(format!(
+                "loaded from {MANIFEST_RELATIVE_PATH} (xtask-rendered manifest with full crate linkage)"
+            )),
+        ),
+        None => {
+            let mut count = 0usize;
+            let mut pairs = BTreeSet::new();
+            for descriptor in proof::all_source_units() {
+                count += 1;
+                for (src, ty) in descriptor.event_types {
+                    pairs.insert(((*src).to_string(), (*ty).to_string()));
+                }
+            }
+            let note = if count == 0 {
+                Some(
+                    "no manifest at docs/source-units.json and no descriptors compiled into this binary — descriptor coverage cannot be verified".to_string(),
+                )
+            } else {
+                Some(format!(
+                    "no manifest at {MANIFEST_RELATIVE_PATH}; falling back to {count} in-binary descriptor(s); node-crate descriptors will not be visible — run `xtask source-units check` for full coverage"
+                ))
+            };
+            (count, pairs, note)
+        }
+    };
+
+    let mut payload_pairs: BTreeSet<(String, String)> = BTreeSet::new();
+    for payload in get_all_payloads() {
+        payload_pairs.insert((payload.source.to_string(), payload.event_type.to_string()));
+    }
+
+    let orphan_descriptor_pairs = declared_pairs
+        .iter()
+        .filter(|pair| !payload_pairs.contains(*pair))
+        .map(|(src, ty)| format!("{src}/{ty}"))
+        .collect::<Vec<_>>();
+    let unclaimed_payloads = payload_pairs
+        .iter()
+        .filter(|pair| !declared_pairs.contains(*pair))
+        .map(|(src, ty)| format!("{src}/{ty}"))
+        .collect::<Vec<_>>();
+
+    SourceUnitsReport {
+        descriptor_count,
+        descriptor_pair_count: declared_pairs.len(),
+        payload_count: payload_pairs.len(),
+        orphan_descriptor_pairs,
+        unclaimed_payloads,
+        descriptor_source_note: source_note,
+    }
+}
+
+const MANIFEST_RELATIVE_PATH: &str = "docs/source-units.json";
+
+/// Try to load descriptor pairs from the xtask-rendered manifest, which
+/// reflects the full descriptor graph (including node crates not linked into
+/// the CLI binary). Searches a small set of candidate paths anchored at the
+/// current working directory, falling back to None if the manifest is not
+/// present (e.g. deployed CLI run from `/`).
+fn load_descriptor_pairs_from_manifest() -> Option<(usize, BTreeSet<(String, String)>)> {
+    let candidates: [PathBuf; 3] = [
+        PathBuf::from(MANIFEST_RELATIVE_PATH),
+        PathBuf::from("../").join(MANIFEST_RELATIVE_PATH),
+        PathBuf::from("../../").join(MANIFEST_RELATIVE_PATH),
+    ];
+    let path = candidates.iter().find(|candidate| candidate.is_file())?;
+    let content = std::fs::read_to_string(path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let units = value.get("source_units")?.as_array()?;
+    let mut pairs = BTreeSet::new();
+    for unit in units {
+        let event_pairs = unit.get("output_event_types").and_then(|v| v.as_array());
+        let Some(event_pairs) = event_pairs else {
+            continue;
+        };
+        for pair in event_pairs {
+            let source = pair.get("source").and_then(|v| v.as_str());
+            let event_type = pair.get("event_type").and_then(|v| v.as_str());
+            if let (Some(source), Some(event_type)) = (source, event_type) {
+                pairs.insert((source.to_string(), event_type.to_string()));
+            }
+        }
+    }
+    Some((units.len(), pairs))
 }
 
 fn print_verification_footer(summary: &VerificationSummary) {
