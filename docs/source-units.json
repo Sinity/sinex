@@ -723,6 +723,10 @@
         {
           "source": "sinex.gateway",
           "event_type": "replay.stats"
+        },
+        {
+          "source": "sinex.gateway",
+          "event_type": "gateway.rpc.call"
         }
       ],
       "privacy_context": "public",
@@ -754,6 +758,10 @@
       "checkpoint_policy": "live_observation_state",
       "occurrence_policy": "natural_key",
       "output_event_types": [
+        {
+          "source": "sinex.ingestd",
+          "event_type": "batch.stats"
+        },
         {
           "source": "sinex.ingestd",
           "event_type": "stream.stats"
