@@ -260,10 +260,24 @@ where
                 last_etag: page.etag.clone(),
                 last_fetched: Some(Timestamp::now()),
             };
+            // Attach per-record checkpoints so a retryable failure mid-page
+            // doesn't advance the stored checkpoint past unprocessed records.
+            // Records before the last carry the START checkpoint (so a retry
+            // re-fetches the same page from the same cursor); only the LAST
+            // record carries the page-advancing `final_checkpoint`.
+            let total = page.records.len();
             let items: Vec<_> = page
                 .records
                 .into_iter()
-                .map(|record| RecordReadItem::new(record, final_checkpoint.clone()))
+                .enumerate()
+                .map(|(idx, record)| {
+                    let cp = if idx + 1 == total {
+                        final_checkpoint.clone()
+                    } else {
+                        checkpoint.clone()
+                    };
+                    RecordReadItem::new(record, cp)
+                })
                 .collect();
             Ok(RecordReadBatch {
                 start_checkpoint: checkpoint.clone(),

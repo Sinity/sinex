@@ -179,9 +179,23 @@ where
                 consumed: true,
                 content_hash: Some(content_hash),
             };
+            // Per-record checkpoints: only the LAST record carries the
+            // `consumed: true` advancing checkpoint. Earlier records carry the
+            // pre-read checkpoint, so a retryable failure mid-batch leaves
+            // `consumed: false` and the next read re-emits the dump rather
+            // than short-circuiting to empty.
+            let total = records.len();
             let items = records
                 .into_iter()
-                .map(|record| RecordReadItem::new(record, final_checkpoint))
+                .enumerate()
+                .map(|(idx, record)| {
+                    let cp = if idx + 1 == total {
+                        final_checkpoint
+                    } else {
+                        *checkpoint
+                    };
+                    RecordReadItem::new(record, cp)
+                })
                 .collect();
             Ok(RecordReadBatch {
                 start_checkpoint: *checkpoint,
