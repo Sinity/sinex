@@ -169,13 +169,18 @@ pub use processing::NodeLogicError;
 pub use record_source::SqliteSnapshotLinker;
 #[cfg(feature = "messaging")]
 pub use record_source::{
+    ApiClient, ApiFetchCheckpoint, ApiFetchError, ApiFetchPage, ApiFetchRecordSource,
     AppendOnlyTextRecord, AppendOnlyUtf8FileSource, BufferedRecordMaterializer, BufferedRecordSink,
-    BufferedRecordSourceHarness, JournalCursorCheckpoint, MockRecordSource, MockRecordSourceError,
+    BufferedRecordSourceHarness, IncrementalDumpCheckpoint, IncrementalDumpError,
+    IncrementalDumpRecordSource, IpcStreamCheckpoint, IpcStreamError, IpcStreamRecord,
+    IpcStreamRecordSource, JournalCursorCheckpoint, MockRecordSource, MockRecordSourceError,
+    OneTimeDumpCheckpoint, OneTimeDumpError, OneTimeDumpRecord, OneTimeDumpRecordSource,
     PollingRecordSource, RecordMaterialSink, RecordMaterializer, RecordProcessContext,
     RecordProcessReport, RecordProcessingOutcome, RecordReadBatch, RecordReadHorizon,
     RecordReadItem, RecordSource, RecordSourceDescriptor, RecordSourceHarness, RecordSourceKind,
-    RecordSourceObservation, RecordSources, RecordWarningDisposition, SqliteRecordSource,
-    SqliteRowCheckpoint, TimestampRecordCheckpoint, process_record_batch_lenient, stable_json_line,
+    RecordSourceObservation, RecordSources, RecordWarningDisposition, RetryPolicy,
+    SqliteRecordSource, SqliteRowCheckpoint, TimestampRecordCheckpoint,
+    process_record_batch_lenient, stable_json_line,
 };
 #[cfg(feature = "messaging")]
 pub use runtime::stream::{
