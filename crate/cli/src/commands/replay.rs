@@ -747,15 +747,40 @@ async fn collect_material_scorecards(
             .await
         {
             Ok(v) => v,
-            // A missing material in scope is not fatal at the preview
-            // layer — operators may have archived a material out from
-            // under a stale plan. Skip silently rather than blocking the
-            // entire preview.
-            Err(_) => continue,
+            Err(err) => {
+                // A missing material in scope is not fatal at the preview
+                // layer — operators may have archived a material out from
+                // under a stale plan. Skip silently for those.
+                //
+                // Transport / auth / server / schema errors, however,
+                // should surface as warnings so the preview is not silently
+                // partial; a healthy-looking scorecard built on swallowed
+                // failures lets operators make decisions on incomplete
+                // diagnostics. (PR #1187 codex P2.)
+                let msg = err.to_string();
+                let is_not_found = msg.contains("not found")
+                    || msg.contains("Not found")
+                    || msg.contains("NotFound");
+                if !is_not_found {
+                    tracing::warn!(
+                        material_id = %material_id,
+                        error = %err,
+                        "scorecard collection skipped material due to non-not-found error; preview will be partial"
+                    );
+                }
+                continue;
+            }
         };
         let show: SourcesShowResponse = match serde_json::from_value(response) {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(err) => {
+                tracing::warn!(
+                    material_id = %material_id,
+                    error = %err,
+                    "scorecard collection skipped material — sources.show response failed schema validation; preview will be partial"
+                );
+                continue;
+            }
         };
         let m = &show.material;
         let has_blob = m.optional_blob_id.is_some();
@@ -795,16 +820,12 @@ fn format_per_material_scorecard_table(rows: &[MaterialReplayabilityScorecard]) 
 
     let mut score_total: u32 = 0;
     for row in rows {
-        let mid = if row.material_id.len() > 12 {
-            format!("{}…", &row.material_id[..12])
-        } else {
-            row.material_id.clone()
-        };
-        let src = if row.source_identifier.len() > 26 {
-            format!("…{}", &row.source_identifier[row.source_identifier.len() - 25..])
-        } else {
-            row.source_identifier.clone()
-        };
+        // Char-aware truncation. Byte-slicing identifiers panicked at the
+        // table renderer when a source path or material id contained
+        // multi-byte UTF-8, so operators lost the preview exactly when
+        // replay scope was large enough to need truncation. PR #1187 codex P1.
+        let mid = truncate_head_chars(&row.material_id, 12);
+        let src = truncate_tail_chars(&row.source_identifier, 26, 25);
         let score = row.replayability.green_count();
         score_total += u32::from(score);
         let weak = weakness_dimensions(&row.replayability);
@@ -840,6 +861,31 @@ fn format_per_material_scorecard_table(rows: &[MaterialReplayabilityScorecard]) 
     out
 }
 
+/// Truncate the head of a string to at most `max_chars` characters and
+/// append an ellipsis when truncation occurs. Char-aware so it never
+/// panics on multi-byte UTF-8 boundaries.
+fn truncate_head_chars(s: &str, max_chars: usize) -> String {
+    let count = s.chars().count();
+    if count <= max_chars {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(max_chars).collect();
+    format!("{head}…")
+}
+
+/// Truncate the tail of a string to the last `tail_chars` characters and
+/// prepend an ellipsis. Activates only when the source has more than
+/// `threshold_chars` characters (so we don't expand short strings).
+fn truncate_tail_chars(s: &str, threshold_chars: usize, tail_chars: usize) -> String {
+    let count = s.chars().count();
+    if count <= threshold_chars {
+        return s.to_string();
+    }
+    let skip = count.saturating_sub(tail_chars);
+    let tail: String = s.chars().skip(skip).collect();
+    format!("…{tail}")
+}
+
 /// Compact dimension labels for the weakness column. Returns the
 /// dimensions that are NOT green so the operator-facing table only
 /// surfaces the failure modes, not the green dimensions.
@@ -867,7 +913,8 @@ fn weakness_dimensions(r: &Replayability) -> Vec<&'static str> {
 mod tests {
     use super::{
         format_per_material_scorecard_table, format_replay_preview_table, preview_total_events,
-        weakness_dimensions, MaterialReplayabilityScorecard, Replayability,
+        truncate_head_chars, truncate_tail_chars, weakness_dimensions,
+        MaterialReplayabilityScorecard, Replayability,
     };
     use serde_json::json;
     use sinex_primitives::rpc::replay::{
@@ -879,6 +926,31 @@ mod tests {
     async fn preview_total_events_accepts_valid_counts() -> TestResult<()> {
         assert_eq!(preview_total_events(&json!({ "total_events": 0 }))?, 0);
         assert_eq!(preview_total_events(&json!({ "total_events": 42 }))?, 42);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn truncate_helpers_handle_multi_byte_utf8() -> TestResult<()> {
+        // Mix of 1-byte ASCII, 2-byte (e), 3-byte (β), 4-byte (𝛼) characters.
+        // Byte slicing here would panic at the 12-byte / len-25 boundaries
+        // when those land in the middle of a code point — char-based
+        // truncation must always succeed.
+        let s = "/home/usér/φιλε-βυcket/path/𝛼-final-segment-with-extra-padding";
+        // Just verify the calls don't panic and the return is non-empty.
+        let head = truncate_head_chars(s, 12);
+        assert!(!head.is_empty());
+        let tail = truncate_tail_chars(s, 26, 25);
+        assert!(!tail.is_empty());
+
+        // Short strings are returned unchanged (no ellipsis).
+        let short = "abc";
+        assert_eq!(truncate_head_chars(short, 12), "abc");
+        assert_eq!(truncate_tail_chars(short, 26, 25), "abc");
+
+        // Length above threshold gets ellipsis.
+        let long = "x".repeat(40);
+        assert!(truncate_head_chars(&long, 12).ends_with('…'));
+        assert!(truncate_tail_chars(&long, 26, 25).starts_with('…'));
         Ok(())
     }
 
