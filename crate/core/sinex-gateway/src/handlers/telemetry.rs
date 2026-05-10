@@ -19,8 +19,9 @@ use sinex_primitives::rpc::telemetry::{
     TelemetryMetricCountersRequest, TelemetryMetricCountersResponse, TelemetryNodeStatsRequest,
     TelemetryNodeStatsResponse, TelemetryRecentActivityRequest, TelemetryRecentActivityResponse,
     TelemetryStreamStatsRequest, TelemetryStreamStatsResponse, TelemetrySystemStateRequest,
-    TelemetrySystemStateResponse, TelemetryWindowFocusRequest, TelemetryWindowFocusResponse,
-    WindowFocusBucket,
+    TelemetrySystemStateResponse, TelemetryThroughputRequest, TelemetryThroughputResponse,
+    TelemetryWindowFocusRequest, TelemetryWindowFocusResponse, ThroughputComponentEntry,
+    ThroughputSourceEntry, WindowFocusBucket,
 };
 use sinex_primitives::{Result, SinexError};
 use sqlx::PgPool;
@@ -933,5 +934,105 @@ pub async fn handle_telemetry_ingestd_validation(pool: &PgPool, params: Value) -
     serialize_telemetry_response(
         "ingestd_validation",
         TelemetryIngestdValidationResponse { snapshot },
+    )
+}
+
+// ─────────────────────────────────────────────────────────────
+// telemetry.throughput  (#1172 AC-8)
+//
+// Returns per-source EPS over fixed 1h and 24h windows plus a per-component
+// aggregate. The data comes from `core.events` directly (recent_activity is
+// a context-rollup not an event-source rollup) so the figures are honest
+// even on freshly seeded databases.
+// ─────────────────────────────────────────────────────────────
+
+const THROUGHPUT_SOURCE_LIMIT: i64 = 64;
+
+pub async fn handle_telemetry_throughput(pool: &PgPool, params: Value) -> Result<Value> {
+    let _req: TelemetryThroughputRequest = parse_telemetry_request("throughput", params)?;
+
+    // Per-source counts via grouped SELECTs against core.events. We use
+    // ts_orig because it's the operator-meaningful clock.
+    #[derive(sqlx::FromRow)]
+    struct PerSourceRow {
+        source: String,
+        events_last_1h: i64,
+        events_last_24h: i64,
+    }
+
+    let rows = sqlx::query_as::<_, PerSourceRow>(
+        r"
+        SELECT
+            source::text AS source,
+            COALESCE(SUM(CASE WHEN ts_orig >= NOW() - INTERVAL '1 hour' THEN 1 ELSE 0 END), 0)::bigint AS events_last_1h,
+            COALESCE(SUM(CASE WHEN ts_orig >= NOW() - INTERVAL '24 hours' THEN 1 ELSE 0 END), 0)::bigint AS events_last_24h
+        FROM core.events
+        WHERE ts_orig >= NOW() - INTERVAL '24 hours'
+        GROUP BY source
+        ORDER BY events_last_1h DESC
+        LIMIT $1
+        ",
+    )
+    .bind(THROUGHPUT_SOURCE_LIMIT)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| telemetry_query_error("core.events throughput", error))?;
+
+    let per_source: Vec<ThroughputSourceEntry> = rows
+        .into_iter()
+        .map(|row| ThroughputSourceEntry {
+            source: row.source,
+            events_last_1h: row.events_last_1h,
+            events_last_24h: row.events_last_24h,
+            eps_1h: row.events_last_1h as f64 / 3_600.0,
+            eps_24h: row.events_last_24h as f64 / 86_400.0,
+        })
+        .collect();
+
+    // Per-component aggregate. Component buckets here are intentionally
+    // coarse: ingestion (everything not on `sinex.*`), gateway
+    // (`sinex.gateway`), derived (`derived.*`), and self-observation
+    // (`sinex.metric.*` / `sinex.health.*`). Tweaks to the bucket logic are
+    // expected over the lifetime of #1172's operator UX work.
+    fn classify_component(source: &str) -> &'static str {
+        if source.starts_with("sinex.gateway") {
+            "gateway"
+        } else if source.starts_with("derived.") {
+            "derived"
+        } else if source.starts_with("sinex.") {
+            "self_observation"
+        } else {
+            "ingestion"
+        }
+    }
+
+    let mut comp_1h: std::collections::HashMap<&'static str, i64> = std::collections::HashMap::new();
+    let mut comp_24h: std::collections::HashMap<&'static str, i64> = std::collections::HashMap::new();
+    for row in &per_source {
+        let c = classify_component(&row.source);
+        *comp_1h.entry(c).or_insert(0) += row.events_last_1h;
+        *comp_24h.entry(c).or_insert(0) += row.events_last_24h;
+    }
+
+    let mut per_component: Vec<ThroughputComponentEntry> = ["gateway", "ingestion", "derived", "self_observation"]
+        .iter()
+        .map(|component| ThroughputComponentEntry {
+            component: (*component).to_string(),
+            eps_1h: comp_1h.get(component).copied().unwrap_or(0) as f64 / 3_600.0,
+            eps_24h: comp_24h.get(component).copied().unwrap_or(0) as f64 / 86_400.0,
+        })
+        .collect();
+    per_component.sort_by(|a, b| {
+        b.eps_1h
+            .partial_cmp(&a.eps_1h)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    serialize_telemetry_response(
+        "throughput",
+        TelemetryThroughputResponse {
+            per_source,
+            per_component,
+        },
     )
 }

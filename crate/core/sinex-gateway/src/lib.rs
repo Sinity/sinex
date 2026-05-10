@@ -15,12 +15,14 @@ pub mod gateway_metrics;
 pub mod handlers;
 #[cfg(any(feature = "test-support", test))]
 pub mod handlers_test_support;
+pub mod lifecycle_ttl;
 pub mod native_messaging;
 pub mod prelude;
 pub mod rate_limit;
 pub mod replay_control;
 pub mod rpc_registry;
 pub mod rpc_server;
+pub mod schema_registry;
 #[cfg(any(feature = "test-support", test))]
 pub mod rpc_server_test_support;
 pub mod service_container;

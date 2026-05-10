@@ -95,6 +95,35 @@ impl GatewayMetrics {
         self.observer.is_enabled()
     }
 
+    /// Emit a `gateway.rpc.call` audit event for a single completed dispatch
+    /// (#1172 AC-7). No-op when self-observation is disabled. Errors are
+    /// logged at warn but never bubble: an audit drop must not fail the
+    /// underlying RPC.
+    pub fn record_rpc_call(
+        &self,
+        method: &str,
+        role: &str,
+        latency_ms: u64,
+        status: sinex_primitives::events::payloads::RpcStatus,
+        token_prefix: &str,
+    ) {
+        if !self.observer.is_enabled() {
+            return;
+        }
+        let observer = self.observer.clone();
+        let method = method.to_string();
+        let role = role.to_string();
+        let token_prefix = token_prefix.to_string();
+        tokio::spawn(async move {
+            if let Err(error) = observer
+                .emit_rpc_call(&method, &role, latency_ms, status, &token_prefix)
+                .await
+            {
+                tracing::warn!(error = %error, method = %method, "Failed to emit gateway.rpc.call audit event");
+            }
+        });
+    }
+
     /// Record a request started
     #[inline]
     pub fn record_request_start(&self) {
