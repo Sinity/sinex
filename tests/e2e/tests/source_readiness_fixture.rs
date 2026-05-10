@@ -83,10 +83,12 @@ async fn seed_event(pool: &DbPool, source: &str, material_id: Uuid) -> TestResul
 }
 
 #[sinex_test(
-    scenario = "readiness::tri_state_fixture",
+    scenario = "readiness::tri_state_fixture::missing",
     category = "source_material",
     lane = "fast",
-    tags = "readiness,tri_state_fixture"
+    tags = "readiness,tri_state_fixture",
+    subjects = "issue:1174,issue:1099,explore:readiness",
+    claims = "assertion:readiness.missing_returns_none"
 )]
 async fn readiness_missing_source_returns_none(ctx: TestContext) -> TestResult<()> {
     // No registry row, no events. The readiness API must report `None`
@@ -121,10 +123,12 @@ async fn readiness_missing_source_returns_none(ctx: TestContext) -> TestResult<(
 }
 
 #[sinex_test(
-    scenario = "readiness::tri_state_fixture",
+    scenario = "readiness::tri_state_fixture::staged_unparsed",
     category = "source_material",
     lane = "fast",
-    tags = "readiness,tri_state_fixture"
+    tags = "readiness,tri_state_fixture",
+    subjects = "issue:1174,issue:1099,explore:readiness",
+    claims = "assertion:readiness.staged_unparsed_partial"
 )]
 async fn readiness_staged_unparsed_reports_partial(ctx: TestContext) -> TestResult<()> {
     // Material registered but never finalized. The readiness API must
@@ -170,10 +174,12 @@ async fn readiness_staged_unparsed_reports_partial(ctx: TestContext) -> TestResu
 }
 
 #[sinex_test(
-    scenario = "readiness::tri_state_fixture",
+    scenario = "readiness::tri_state_fixture::available",
     category = "source_material",
     lane = "fast",
-    tags = "readiness,tri_state_fixture"
+    tags = "readiness,tri_state_fixture",
+    subjects = "issue:1174,issue:1099,explore:readiness",
+    claims = "assertion:readiness.available_completed"
 )]
 async fn readiness_available_completed_with_events(ctx: TestContext) -> TestResult<()> {
     // Material completed AND parsed events reference it — readiness must
@@ -223,10 +229,12 @@ async fn readiness_available_completed_with_events(ctx: TestContext) -> TestResu
 }
 
 #[sinex_test(
-    scenario = "readiness::tri_state_fixture",
+    scenario = "readiness::tri_state_fixture::distinct_in_one_run",
     category = "source_material",
     lane = "fast",
-    tags = "readiness,tri_state_fixture"
+    tags = "readiness,tri_state_fixture",
+    subjects = "issue:1174,issue:1099,explore:readiness",
+    claims = "assertion:readiness.tri_state_distinct"
 )]
 async fn readiness_tri_state_distinct_in_one_run(ctx: TestContext) -> TestResult<()> {
     // The bundled assertion: stage all three states inside a single
