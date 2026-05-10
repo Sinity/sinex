@@ -793,8 +793,15 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
             named_constraints: vec![
                 NamedConstraint {
                     name: "source_material_registry_coverage_contract_kind_check",
+                    // `IS NOT NULL` on the `->>'kind'` extraction guards against
+                    // both a missing `kind` key AND a `kind: null` literal.
+                    // Without it, `(coverage_contract->>'kind') IN (...)`
+                    // returns NULL when the key is absent or its value is
+                    // JSON null — and a CHECK that evaluates to NULL passes
+                    // in PostgreSQL. The earlier `? 'kind'` rejected only the
+                    // missing-key case.
                     expression:
-                        "coverage_contract IS NULL OR (jsonb_typeof(coverage_contract) = 'object' AND coverage_contract ? 'kind' AND (coverage_contract->>'kind') IN ('Continuous', 'PeriodicDump', 'OpportunisticImport', 'FiniteOneShot', 'EphemeralStream', 'Unknown'))",
+                        "coverage_contract IS NULL OR (jsonb_typeof(coverage_contract) = 'object' AND (coverage_contract->>'kind') IS NOT NULL AND (coverage_contract->>'kind') IN ('Continuous', 'PeriodicDump', 'OpportunisticImport', 'FiniteOneShot', 'EphemeralStream', 'Unknown'))",
                 },
                 NamedConstraint {
                     name: "source_material_registry_privacy_class_check",
