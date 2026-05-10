@@ -99,7 +99,6 @@ pub struct JetStreamConsumer {
     topology: JetStreamTopology,
     ack_wait: Duration,
     max_ack_pending: i64,
-    post_persist_fail_once: Option<Arc<AtomicBool>>,
     confirmation_failures_remaining: Option<Arc<AtomicUsize>>,
     confirmation_semaphore: Arc<tokio::sync::Semaphore>,
     processing_delay: Option<Duration>,
@@ -428,7 +427,6 @@ impl JetStreamConsumer {
             topology,
             ack_wait: Duration::from_secs(30),
             max_ack_pending: DEFAULT_MAX_ACK_PENDING,
-            post_persist_fail_once: None,
             confirmation_failures_remaining: None,
             confirmation_semaphore: Arc::new(tokio::sync::Semaphore::new(
                 CONFIRM_PUBLISH_CONCURRENCY,
@@ -532,31 +530,12 @@ impl JetStreamConsumer {
         self
     }
 
-    /// Build a consumer that will fail once before proceeding (test-only hook).
-    pub fn with_ack_wait_and_fail_once(
-        nats_client: NatsClient,
-        pool: DbPool,
-        validator: Arc<RwLock<IngestEventValidator>>,
-        topology: JetStreamTopology,
-        ack_wait: Duration,
-        fail_once: Arc<AtomicBool>,
-    ) -> Self {
-        Self::with_test_hooks(
-            nats_client,
-            pool,
-            validator,
-            topology,
-            ack_wait,
-            Some(fail_once),
-            None,
-            None,
-            None,
-            false,
-            None,
-        )
-    }
-
     /// Build a consumer with optional test-only hooks.
+    ///
+    /// This constructor is intended only for tests and fault-injection harnesses.
+    /// It exposes injection points for fail-once flags, processing delays, and
+    /// delivery observers that have no production path.
+    #[doc(hidden)]
     pub fn with_test_hooks(
         nats_client: NatsClient,
         pool: DbPool,
@@ -1189,11 +1168,6 @@ impl JetStreamConsumer {
                         .copied()
                         .filter(|prepared| tombstoned_ids.contains(&prepared.parsed_id))
                         .collect();
-                    if let Some(fail_flag) = &self.post_persist_fail_once
-                        && fail_flag.swap(false, Ordering::SeqCst)
-                    {
-                        return Err(SinexError::database("forced post-persist failure"));
-                    }
                     if let Some(delay) = self.processing_delay {
                         tokio::time::sleep(delay).await;
                     }
