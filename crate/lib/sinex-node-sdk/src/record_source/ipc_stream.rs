@@ -231,18 +231,21 @@ where
                 last_message_seq: checkpoint.last_message_seq,
             };
             let mut records = Vec::new();
+            // Cache reconnect_index up front: once we hold `&mut state.reader`,
+            // we can't re-read `state.reconnects` inside the loop without a
+            // borrow conflict. The value only changes on EOF (which breaks the
+            // loop) so a snapshot is sufficient for record annotation.
+            let reconnect_index = state.reconnects;
             let reader = state
                 .reader
                 .as_mut()
                 .expect("ensure_connected populated reader");
+            let mut hit_eof = false;
             for _ in 0..self.drain_budget {
                 let mut line = String::new();
                 match reader.read_line(&mut line).await {
                     Ok(0) => {
-                        // EOF: drop reader, bump reconnect counter so the next
-                        // read_batch call re-invokes the connect closure.
-                        state.reader = None;
-                        state.reconnects = state.reconnects.saturating_add(1);
+                        hit_eof = true;
                         break;
                     }
                     Ok(_) => {
@@ -255,13 +258,21 @@ where
                         }
                         records.push(IpcStreamRecord {
                             line,
-                            reconnect_index: state.reconnects,
+                            reconnect_index,
                         });
                     }
                     Err(error) => {
                         return Err(IpcStreamError::Read(error));
                     }
                 }
+            }
+
+            // Handle EOF: drop reader and bump reconnect counter so the next
+            // read_batch call re-invokes the connect closure. Done after the
+            // mutable-borrow scope ends so we can mutate state freely.
+            if hit_eof {
+                state.reader = None;
+                state.reconnects = state.reconnects.saturating_add(1);
             }
 
             let final_checkpoint = IpcStreamCheckpoint {

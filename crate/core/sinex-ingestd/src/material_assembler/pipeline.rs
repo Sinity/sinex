@@ -145,7 +145,7 @@ pub(super) async fn bootstrap_streams(assembler: &MaterialAssembler) -> IngestdR
             name: namespaced_stream(assembler, SOURCE_MATERIAL_STREAM),
             subjects: vec![namespaced_subject(
                 assembler,
-                SOURCE_MATERIAL_FRAMES_SUBJECT,
+                SOURCE_MATERIAL_FRAMES_SUBJECT.as_str(),
             )],
             retention: jetstream::stream::RetentionPolicy::WorkQueue,
             storage: jetstream::stream::StorageType::File,
@@ -408,7 +408,7 @@ fn decode_material_frame(
     headers: Option<&async_nats::HeaderMap>,
     payload: &[u8],
 ) -> Result<MaterialFrame, MaterialFrameDecodeError> {
-    if subject_has_suffix(subject, SOURCE_MATERIAL_BEGIN_SUBJECT) {
+    if subject_has_suffix(subject, SOURCE_MATERIAL_BEGIN_SUBJECT.as_str()) {
         let (message, material_id) = decode_begin_message(payload).map_err(|message| {
             MaterialFrameDecodeError::new("begin_payload_invalid", None, message)
         })?;
@@ -418,7 +418,7 @@ fn decode_material_frame(
         });
     }
 
-    if subject_has_suffix(subject, SOURCE_MATERIAL_END_SUBJECT) {
+    if subject_has_suffix(subject, SOURCE_MATERIAL_END_SUBJECT.as_str()) {
         let message = serde_json::from_slice::<MaterialEndMessage>(payload).map_err(|error| {
             MaterialFrameDecodeError::new(
                 "end_payload_invalid",
