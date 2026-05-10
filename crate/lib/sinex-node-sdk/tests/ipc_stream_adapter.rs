@@ -109,16 +109,14 @@ async fn ipc_stream_drains_lines_and_advances_reconnect_on_eof() -> TestResult<(
 #[sinex_test]
 async fn ipc_stream_initial_checkpoint_is_zero() -> TestResult<()> {
     let (_server, client) = tokio::io::duplex(64);
-    let client = AsyncMutex::new(Some(client));
+    // Arc-wrap so each Fn invocation can clone a shared handle into the
+    // async block. `&client` would tie the returned future to the closure-
+    // call lifetime, which the `Connect: Fn() -> Fut` bound on
+    // `IpcStreamRecordSource::new` cannot express.
+    let client = Arc::new(AsyncMutex::new(Some(client)));
     let source = IpcStreamRecordSource::new("test://ipc-init", move || {
-        let client = &client;
-        async move {
-            client
-                .lock()
-                .await
-                .take()
-                .ok_or(ConnectError)
-        }
+        let client = client.clone();
+        async move { client.lock().await.take().ok_or(ConnectError) }
     });
     assert_eq!(source.initial_checkpoint(), IpcStreamCheckpoint::default());
     Ok(())

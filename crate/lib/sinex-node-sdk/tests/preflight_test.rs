@@ -169,7 +169,7 @@ async fn ensure_preflight_streams(
     let _ = js
         .get_or_create_stream(jetstream::stream::Config {
             name: env.nats_stream_name(SOURCE_MATERIAL_STREAM),
-            subjects: vec![env.nats_subject(SOURCE_MATERIAL_FRAMES_SUBJECT)],
+            subjects: vec![env.nats_subject(SOURCE_MATERIAL_FRAMES_SUBJECT.as_str())],
             ..Default::default()
         })
         .await?;
@@ -210,7 +210,7 @@ async fn ensure_preflight_event_streams_only(
     let _ = js
         .get_or_create_stream(jetstream::stream::Config {
             name: env.nats_stream_name(SOURCE_MATERIAL_STREAM),
-            subjects: vec![env.nats_subject(SOURCE_MATERIAL_FRAMES_SUBJECT)],
+            subjects: vec![env.nats_subject(SOURCE_MATERIAL_FRAMES_SUBJECT.as_str())],
             ..Default::default()
         })
         .await?;
