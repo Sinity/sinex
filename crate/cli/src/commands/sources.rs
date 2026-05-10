@@ -678,10 +678,18 @@ fn format_explain_gap(resp: &SourcesExplainGapResponse) -> String {
 
 fn format_report_summary(r: &SourceContinuityReport) -> String {
     let green = r.replayability.green_count();
+    let contract_label = if r.is_declared {
+        format!("{:?}", r.coverage_contract).to_lowercase()
+    } else {
+        format!(
+            "{} (inferred)",
+            format!("{:?}", r.coverage_contract).to_lowercase()
+        )
+    };
     format!(
-        "  {:24} {:14} replayability {}/5  events:{}  materials:{}  gaps:{}  seams:{}",
+        "  {:24} {:24} replayability {}/5  events:{}  materials:{}  gaps:{}  seams:{}",
         r.source_family.as_str(),
-        format!("{:?}", r.coverage_contract).to_lowercase(),
+        contract_label,
         green,
         r.event_count,
         r.material_count,
@@ -695,9 +703,11 @@ fn format_report_full(r: &SourceContinuityReport) -> String {
         "Source family: {}",
         style(r.source_family.as_str()).green().bold()
     )];
+    let contract_suffix = if r.is_declared { "" } else { " (inferred)" };
     lines.push(format!(
-        "  Coverage contract: {}",
-        format!("{:?}", r.coverage_contract).to_lowercase()
+        "  Coverage contract: {}{}",
+        format!("{:?}", r.coverage_contract).to_lowercase(),
+        contract_suffix
     ));
     if let Some(start) = r.earliest_ts {
         lines.push(format!("  Earliest:          {start}"));
