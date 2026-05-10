@@ -460,3 +460,44 @@ pub struct TelemetryIngestdValidationResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot: Option<IngestdValidationSnapshot>,
 }
+
+// ─────────────────────────────────────────────────────────────
+// telemetry.throughput  (#1172 AC-8)
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `telemetry.throughput`. No parameters today; the handler returns
+/// per-source EPS over fixed 1h and 24h windows plus a per-component
+/// aggregate.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelemetryThroughputRequest {}
+
+/// Per-source EPS over the fixed 1h and 24h windows.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThroughputSourceEntry {
+    pub source: String,
+    pub events_last_1h: i64,
+    pub events_last_24h: i64,
+    /// Events per second over the last 1h window.
+    pub eps_1h: f64,
+    /// Events per second over the last 24h window.
+    pub eps_24h: f64,
+}
+
+/// Per-component aggregate: ingestd/gateway/derived-nodes lumped into one
+/// row each so an operator can see "is the gateway above its long-run rate?"
+/// in a glance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThroughputComponentEntry {
+    pub component: String,
+    /// Requests/events per second over the last 1h window.
+    pub eps_1h: f64,
+    /// Requests/events per second over the last 24h window.
+    pub eps_24h: f64,
+}
+
+/// Response: `telemetry.throughput`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelemetryThroughputResponse {
+    pub per_source: Vec<ThroughputSourceEntry>,
+    pub per_component: Vec<ThroughputComponentEntry>,
+}

@@ -385,7 +385,8 @@ fn build_registry_impl() -> RpcRegistry {
         handle_audit_get, handle_automata_status, handle_coordination_get_leader,
         handle_coordination_instance_health, handle_coordination_list_instances,
         handle_create_entities, handle_create_note, handle_dlq_list, handle_dlq_peek,
-        handle_dlq_purge, handle_dlq_requeue, handle_events_lineage, handle_events_query,
+        handle_dlq_purge, handle_dlq_requeue, handle_events_annotate, handle_events_lineage,
+        handle_events_query,
         handle_lifecycle_archive, handle_lifecycle_restore,
         handle_lifecycle_status, handle_link_entities, handle_nodes_drain, handle_nodes_health,
         handle_nodes_list, handle_nodes_list_active, handle_nodes_resume, handle_nodes_set_horizon,
@@ -409,7 +410,8 @@ fn build_registry_impl() -> RpcRegistry {
         handle_telemetry_ingestd_batch_stats, handle_telemetry_ingestd_validation,
         handle_telemetry_metric_counters, handle_telemetry_node_stats,
         handle_telemetry_recent_activity, handle_telemetry_stream_stats,
-        handle_telemetry_system_state, handle_telemetry_window_focus, handle_tombstone_approve,
+        handle_telemetry_system_state, handle_telemetry_throughput, handle_telemetry_window_focus,
+        handle_tombstone_approve,
         handle_tombstone_cancel, handle_tombstone_create, handle_tombstone_list,
         handle_tombstone_preview, handle_tombstone_status,
     };
@@ -659,9 +661,20 @@ fn build_registry_impl() -> RpcRegistry {
             Role::ReadOnly,
             boxed!(handle_telemetry_ingestd_validation),
         )
+        .pool_rpc(
+            methods::TELEMETRY_THROUGHPUT,
+            Role::ReadOnly,
+            boxed!(handle_telemetry_throughput),
+        )
         // ─────────────────────────────────────────────────────────────
         // Write methods (requires Write or Admin role)
         // ─────────────────────────────────────────────────────────────
+        // Event annotations (#1172 AC-9)
+        .pool_auth_rpc(
+            methods::EVENTS_ANNOTATE,
+            Role::Write,
+            boxed!(handle_events_annotate, 3),
+        )
         // PKM methods (Write)
         .register(
             methods::PKM_CREATE_NOTE,

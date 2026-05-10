@@ -37,9 +37,9 @@ use async_nats::Client as NatsClient;
 use sinex_primitives::env as shared_env;
 use sinex_primitives::events::payloads::{
     AssemblyStatsPayload, ConsumerStartupSnapshotPayload, GatewayRequestStatsPayload,
-    HealthStatusPayload, IngestdBatchStatsPayload, MetricCounterPayload, MetricGaugePayload,
-    MetricHistogramPayload, NodeProcessingStatsPayload, PoolStatsPayload, RateLimitExceededPayload,
-    ReplayStatsPayload, StreamStatsPayload,
+    GatewayRpcCallPayload, HealthStatusPayload, IngestdBatchStatsPayload, MetricCounterPayload,
+    MetricGaugePayload, MetricHistogramPayload, NodeProcessingStatsPayload, PoolStatsPayload,
+    RateLimitExceededPayload, ReplayStatsPayload, RpcStatus, StreamStatsPayload,
 };
 use sinex_primitives::events::{Event, Provenance, SourceMaterial};
 use sinex_primitives::{Id, JsonValue, SinexError, Timestamp};
@@ -541,6 +541,33 @@ impl SelfObserver {
             min_latency_ms,
             max_latency_ms,
             active_connections,
+        })
+        .await
+    }
+
+    /// Emit a single completed RPC dispatch as a `gateway.rpc.call` audit
+    /// event (#1172 AC-7). The token prefix is recorded for correlation;
+    /// the full token is never persisted.
+    pub async fn emit_rpc_call(
+        &self,
+        method: &str,
+        role: &str,
+        latency_ms: u64,
+        status: RpcStatus,
+        token_prefix: &str,
+    ) -> Result<(), SelfObservationError> {
+        // Cap the recorded token prefix at 8 chars defensively even if a
+        // caller passed a longer string.
+        let prefix = token_prefix
+            .chars()
+            .take(8)
+            .collect::<String>();
+        self.publish(GatewayRpcCallPayload {
+            method: method.to_string(),
+            role: role.to_string(),
+            latency_ms,
+            status,
+            token_prefix: prefix,
         })
         .await
     }

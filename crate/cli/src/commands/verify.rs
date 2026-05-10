@@ -28,6 +28,14 @@ pub struct VerifyCommand {
     /// Check whether historical-import event types have persisted event evidence.
     #[arg(long = "historical-evidence", default_value_t = false)]
     historical_evidence: bool,
+
+    /// Run the seeded demo walkthrough (#1172 AC-10): if the database is
+    /// empty, seed it with `sinexctl demo`; then exercise documented
+    /// `sinexctl` queries against the deterministic dataset and write the
+    /// expected-vs-actual report to `.sinex/demo/walkthrough.md` and
+    /// `.sinex/demo/dataset.json`.
+    #[arg(long, default_value_t = false)]
+    demo: bool,
 }
 
 const DOCUMENT_INGESTOR_SOURCE: &str = "document-ingestor";
@@ -151,6 +159,9 @@ impl VerifyCommand {
     /// emits a structured summary with per-check status/message records and
     /// the overall pass/skip/warn/fail counts at the end.
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        if self.demo {
+            return run_demo_walkthrough(client, format).await;
+        }
         let table_mode = matches!(format, OutputFormat::Table);
         if table_mode {
             print_verification_header();
@@ -1202,4 +1213,202 @@ mod tests {
         ));
         Ok(())
     }
+}
+
+// ─────────────────────────────────────────────────────────────
+// `sinexctl verify --demo`  (#1172 AC-10)
+// ─────────────────────────────────────────────────────────────
+
+const DEMO_DATASET_PATH: &str = ".sinex/demo/dataset.json";
+const DEMO_WALKTHROUGH_PATH: &str = ".sinex/demo/walkthrough.md";
+
+async fn run_demo_walkthrough(client: &GatewayClient, format: OutputFormat) -> Result<()> {
+    use std::fs;
+    use std::path::Path;
+
+    let table_mode = matches!(format, OutputFormat::Table);
+    if table_mode {
+        println!();
+        println!("{}", style("Sinex Demo Walkthrough").bold().cyan());
+        println!("{}", style("═".repeat(50)).dim());
+        println!();
+    }
+
+    // 1. Snapshot the current event-store size; if empty, run `sinexctl demo`.
+    let initial_count = sample_events(client).await?;
+    let seeded_now = if initial_count == 0 {
+        if table_mode {
+            println!("Database empty — invoking `sinexctl demo` to seed deterministic data.");
+        }
+        let exe = std::env::current_exe()?;
+        let mut cmd = Command::new(exe);
+        cmd.arg("demo");
+        let status = cmd.status().await?;
+        if !status.success() {
+            return Err(eyre!(
+                "sinexctl demo exited with status {status}; cannot run --demo walkthrough"
+            ));
+        }
+        true
+    } else {
+        if table_mode {
+            println!(
+                "Database already has {initial_count} sampled events — exercising queries against existing data."
+            );
+        }
+        false
+    };
+
+    // 2. Exercise three documented queries and capture expected vs actual.
+    //    The expected counts are loose lower-bounds because demo seed
+    //    randomisation produces non-deterministic per-type splits even
+    //    under deterministic seed. The walkthrough records what we saw.
+    let mut walkthrough_steps: Vec<DemoWalkthroughStep> = Vec::new();
+
+    walkthrough_steps.push(
+        record_demo_step(
+            "sample-events",
+            "events.query (basic): bounded sample of latest events",
+            sample_events(client).await,
+        )
+        .with_expectation_min(1),
+    );
+
+    walkthrough_steps.push(
+        record_demo_step(
+            "throughput",
+            "telemetry.throughput: per-source EPS",
+            client.telemetry_throughput().await.map(|r| r.per_source.len() as i64),
+        )
+        .with_expectation_min(1),
+    );
+
+    walkthrough_steps.push(
+        record_demo_step(
+            "recent-activity",
+            "telemetry.recent_activity",
+            client
+                .telemetry_recent_activity(Some(VERIFY_EVENT_SAMPLE_LIMIT))
+                .await
+                .map(|entries| entries.len() as i64),
+        )
+        .with_expectation_min(0),
+    );
+
+    // 3. Write the dataset snapshot + walkthrough markdown.
+    fs::create_dir_all(Path::new(".sinex/demo"))?;
+    let dataset = serde_json::json!({
+        "generated_at": Timestamp::now().format_rfc3339(),
+        "seeded_now": seeded_now,
+        "initial_event_sample_count": initial_count,
+        "steps": &walkthrough_steps,
+    });
+    fs::write(
+        DEMO_DATASET_PATH,
+        format!("{}\n", serde_json::to_string_pretty(&dataset)?),
+    )?;
+    fs::write(DEMO_WALKTHROUGH_PATH, render_demo_markdown(&walkthrough_steps, seeded_now))?;
+
+    if table_mode {
+        println!();
+        println!("Wrote {DEMO_DATASET_PATH}");
+        println!("Wrote {DEMO_WALKTHROUGH_PATH}");
+    } else {
+        println!("{}", format_json(&dataset)?);
+    }
+
+    let any_failed = walkthrough_steps.iter().any(|s| !s.passed);
+    if any_failed {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct DemoWalkthroughStep {
+    id: &'static str,
+    description: &'static str,
+    actual: Option<i64>,
+    error: Option<String>,
+    expectation_min: Option<i64>,
+    passed: bool,
+}
+
+impl DemoWalkthroughStep {
+    fn with_expectation_min(mut self, value: i64) -> Self {
+        self.expectation_min = Some(value);
+        self.passed = match self.actual {
+            Some(actual) => actual >= value,
+            None => false,
+        };
+        self
+    }
+}
+
+fn record_demo_step(
+    id: &'static str,
+    description: &'static str,
+    result: std::result::Result<i64, color_eyre::Report>,
+) -> DemoWalkthroughStep {
+    match result {
+        Ok(actual) => DemoWalkthroughStep {
+            id,
+            description,
+            actual: Some(actual),
+            error: None,
+            expectation_min: None,
+            passed: true,
+        },
+        Err(error) => DemoWalkthroughStep {
+            id,
+            description,
+            actual: None,
+            error: Some(error.to_string()),
+            expectation_min: None,
+            passed: false,
+        },
+    }
+}
+
+fn render_demo_markdown(steps: &[DemoWalkthroughStep], seeded_now: bool) -> String {
+    let mut out = String::new();
+    out.push_str("# Sinex Demo Walkthrough\n\n");
+    out.push_str(
+        "Auto-generated by `sinexctl verify --demo`. \
+This file is regenerated on every run; do not edit by hand.\n\n",
+    );
+    if seeded_now {
+        out.push_str("The database was empty when this walkthrough started, so `sinexctl demo` was invoked to seed deterministic events before exercising queries.\n\n");
+    } else {
+        out.push_str("The database already had events when this walkthrough started, so no seeding was performed.\n\n");
+    }
+    out.push_str("## Steps\n\n");
+    out.push_str("| ID | Description | Expected ≥ | Actual | Passed |\n");
+    out.push_str("|----|-------------|------------|--------|--------|\n");
+    for step in steps {
+        let expected = step
+            .expectation_min
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "-".into());
+        let actual = step
+            .actual
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "(error)".into());
+        let passed = if step.passed { "yes" } else { "no" };
+        out.push_str(&format!(
+            "| `{id}` | {description} | {expected} | {actual} | {passed} |\n",
+            id = step.id,
+            description = step.description,
+        ));
+    }
+    out.push('\n');
+    for step in steps {
+        if let Some(err) = &step.error {
+            out.push_str(&format!(
+                "### `{}` — error\n\n```\n{}\n```\n\n",
+                step.id, err
+            ));
+        }
+    }
+    out
 }
