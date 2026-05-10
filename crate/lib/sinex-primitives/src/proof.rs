@@ -305,11 +305,39 @@ pub struct MissingCheckpoint;
 /// state machine — see issue #746 (A9).
 #[derive(Debug, Clone, Copy)]
 pub struct CheckpointPresent;
+#[derive(Debug, Clone, Copy)]
+pub struct MissingCheckpointFamily;
+#[derive(Debug, Clone, Copy)]
+pub struct HasCheckpointFamily;
+#[derive(Debug, Clone, Copy)]
+pub struct MissingRuntimeShape;
+#[derive(Debug, Clone, Copy)]
+pub struct HasRuntimeShape;
+#[derive(Debug, Clone, Copy)]
+pub struct MissingBuildImpact;
+#[derive(Debug, Clone, Copy)]
+pub struct HasBuildImpact;
 
 #[derive(Debug, Clone, Copy)]
-pub struct SourceUnitBindingBuilder<Output, Privacy, Material, Checkpoint> {
+pub struct SourceUnitBindingBuilder<
+    Output,
+    Privacy,
+    Material,
+    Checkpoint,
+    CheckpointFam,
+    Runtime,
+    Build,
+> {
     descriptor: SourceUnitBinding,
-    _state: PhantomData<(Output, Privacy, Material, Checkpoint)>,
+    _state: PhantomData<(
+        Output,
+        Privacy,
+        Material,
+        Checkpoint,
+        CheckpointFam,
+        Runtime,
+        Build,
+    )>,
 }
 
 impl SourceUnitBinding {
@@ -323,6 +351,9 @@ impl SourceUnitBinding {
         MissingPrivacy,
         MissingMaterial,
         MissingCheckpoint,
+        MissingCheckpointFamily,
+        MissingRuntimeShape,
+        MissingBuildImpact,
     > {
         SourceUnitBindingBuilder {
             descriptor: SourceUnitBinding {
@@ -351,7 +382,7 @@ impl SourceUnitBinding {
     }
 }
 
-impl<O, P, M, C> SourceUnitBindingBuilder<O, P, M, C> {
+impl<O, P, M, C, CF, RS, BI> SourceUnitBindingBuilder<O, P, M, C, CF, RS, BI> {
     #[must_use]
     pub const fn implementation(mut self, implementation: &'static str) -> Self {
         self.descriptor.implementation = implementation;
@@ -408,20 +439,6 @@ impl<O, P, M, C> SourceUnitBindingBuilder<O, P, M, C> {
         self
     }
 
-    /// Shape of the source's checkpoint state machine.
-    #[must_use]
-    pub const fn checkpoint_family(mut self, family: CheckpointFamily) -> Self {
-        self.descriptor.checkpoint_family = family;
-        self
-    }
-
-    /// Runtime invocation shape (continuous, scheduled, on-demand).
-    #[must_use]
-    pub const fn runtime_shape(mut self, shape: RuntimeShape) -> Self {
-        self.descriptor.runtime_shape = shape;
-        self
-    }
-
     /// Coarse package-level impact summary string.
     #[must_use]
     pub const fn package_impact(mut self, package_impact: &'static str) -> Self {
@@ -435,21 +452,14 @@ impl<O, P, M, C> SourceUnitBindingBuilder<O, P, M, C> {
         self.descriptor.implementation_mode = mode;
         self
     }
-
-    /// Physical/build footprint declared by this binding.
-    #[must_use]
-    pub const fn build_impact(mut self, build_impact: SourceUnitBuildImpact) -> Self {
-        self.descriptor.build_impact = build_impact;
-        self
-    }
 }
 
-impl<P, M, C> SourceUnitBindingBuilder<MissingOutput, P, M, C> {
+impl<P, M, C, CF, RS, BI> SourceUnitBindingBuilder<MissingOutput, P, M, C, CF, RS, BI> {
     #[must_use]
     pub const fn output_event_type(
         mut self,
         output_event_type: &'static str,
-    ) -> SourceUnitBindingBuilder<HasOutput, P, M, C> {
+    ) -> SourceUnitBindingBuilder<HasOutput, P, M, C, CF, RS, BI> {
         self.descriptor.output_event_type = output_event_type;
         SourceUnitBindingBuilder {
             descriptor: self.descriptor,
@@ -458,12 +468,12 @@ impl<P, M, C> SourceUnitBindingBuilder<MissingOutput, P, M, C> {
     }
 }
 
-impl<O, M, C> SourceUnitBindingBuilder<O, MissingPrivacy, M, C> {
+impl<O, M, C, CF, RS, BI> SourceUnitBindingBuilder<O, MissingPrivacy, M, C, CF, RS, BI> {
     #[must_use]
     pub const fn privacy_context(
         mut self,
         privacy_context: &'static str,
-    ) -> SourceUnitBindingBuilder<O, HasPrivacy, M, C> {
+    ) -> SourceUnitBindingBuilder<O, HasPrivacy, M, C, CF, RS, BI> {
         self.descriptor.privacy_context = privacy_context;
         SourceUnitBindingBuilder {
             descriptor: self.descriptor,
@@ -472,12 +482,12 @@ impl<O, M, C> SourceUnitBindingBuilder<O, MissingPrivacy, M, C> {
     }
 }
 
-impl<O, P, C> SourceUnitBindingBuilder<O, P, MissingMaterial, C> {
+impl<O, P, C, CF, RS, BI> SourceUnitBindingBuilder<O, P, MissingMaterial, C, CF, RS, BI> {
     #[must_use]
     pub const fn material_policy(
         mut self,
         material_policy: &'static str,
-    ) -> SourceUnitBindingBuilder<O, P, HasMaterial, C> {
+    ) -> SourceUnitBindingBuilder<O, P, HasMaterial, C, CF, RS, BI> {
         self.descriptor.material_policy = material_policy;
         SourceUnitBindingBuilder {
             descriptor: self.descriptor,
@@ -486,12 +496,12 @@ impl<O, P, C> SourceUnitBindingBuilder<O, P, MissingMaterial, C> {
     }
 }
 
-impl<O, P, M> SourceUnitBindingBuilder<O, P, M, MissingCheckpoint> {
+impl<O, P, M, CF, RS, BI> SourceUnitBindingBuilder<O, P, M, MissingCheckpoint, CF, RS, BI> {
     #[must_use]
     pub const fn checkpoint_policy(
         mut self,
         checkpoint_policy: &'static str,
-    ) -> SourceUnitBindingBuilder<O, P, M, CheckpointPresent> {
+    ) -> SourceUnitBindingBuilder<O, P, M, CheckpointPresent, CF, RS, BI> {
         self.descriptor.checkpoint_policy = checkpoint_policy;
         SourceUnitBindingBuilder {
             descriptor: self.descriptor,
@@ -500,7 +510,69 @@ impl<O, P, M> SourceUnitBindingBuilder<O, P, M, MissingCheckpoint> {
     }
 }
 
-impl SourceUnitBindingBuilder<HasOutput, HasPrivacy, HasMaterial, CheckpointPresent> {
+impl<O, P, M, C, RS, BI> SourceUnitBindingBuilder<O, P, M, C, MissingCheckpointFamily, RS, BI> {
+    /// Shape of the source's checkpoint state machine. Required: codex P2 follow-up
+    /// on PR #1189 — concrete defaults silently passed `xtask source-units check`
+    /// for new bindings that forgot to set it. Typestate forces every binding to
+    /// declare the family explicitly.
+    #[must_use]
+    pub const fn checkpoint_family(
+        mut self,
+        family: CheckpointFamily,
+    ) -> SourceUnitBindingBuilder<O, P, M, C, HasCheckpointFamily, RS, BI> {
+        self.descriptor.checkpoint_family = family;
+        SourceUnitBindingBuilder {
+            descriptor: self.descriptor,
+            _state: PhantomData,
+        }
+    }
+}
+
+impl<O, P, M, C, CF, BI> SourceUnitBindingBuilder<O, P, M, C, CF, MissingRuntimeShape, BI> {
+    /// Runtime invocation shape (continuous, scheduled, on-demand). Required:
+    /// see `checkpoint_family` for the same rationale.
+    #[must_use]
+    pub const fn runtime_shape(
+        mut self,
+        shape: RuntimeShape,
+    ) -> SourceUnitBindingBuilder<O, P, M, C, CF, HasRuntimeShape, BI> {
+        self.descriptor.runtime_shape = shape;
+        SourceUnitBindingBuilder {
+            descriptor: self.descriptor,
+            _state: PhantomData,
+        }
+    }
+}
+
+impl<O, P, M, C, CF, RS> SourceUnitBindingBuilder<O, P, M, C, CF, RS, MissingBuildImpact> {
+    /// Physical/build footprint declared by this binding. Required: see
+    /// `checkpoint_family` for the same rationale. `SourceUnitBuildImpact::ZERO`
+    /// is a perfectly fine value to set explicitly — typestate only requires
+    /// that the choice be intentional.
+    #[must_use]
+    pub const fn build_impact(
+        mut self,
+        build_impact: SourceUnitBuildImpact,
+    ) -> SourceUnitBindingBuilder<O, P, M, C, CF, RS, HasBuildImpact> {
+        self.descriptor.build_impact = build_impact;
+        SourceUnitBindingBuilder {
+            descriptor: self.descriptor,
+            _state: PhantomData,
+        }
+    }
+}
+
+impl
+    SourceUnitBindingBuilder<
+        HasOutput,
+        HasPrivacy,
+        HasMaterial,
+        CheckpointPresent,
+        HasCheckpointFamily,
+        HasRuntimeShape,
+        HasBuildImpact,
+    >
+{
     #[must_use]
     pub const fn build(self) -> SourceUnitBinding {
         self.descriptor
@@ -946,6 +1018,9 @@ mod tests {
         .material_policy("canonical_json_lines")
         .checkpoint_policy("row_id")
         .resource_shape("linear_rows_bounded_memory")
+        .checkpoint_family(CheckpointFamily::AppendStream)
+        .runtime_shape(RuntimeShape::Continuous)
+        .build_impact(SourceUnitBuildImpact::ZERO)
         .build();
 
         assert_eq!(descriptor.output_event_type, "test.output");

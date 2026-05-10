@@ -1,0 +1,17 @@
+error[E0599]: no method named `build` found for struct `SourceUnitBindingBuilder<HasOutput, HasPrivacy, HasMaterial, CheckpointPresent, HasCheckpointFamily, HasRuntimeShape, MissingBuildImpact>` in the current scope
+  --> tests/proof_compile_fail/missing_build_impact.rs:19:6
+   |
+ 7 |       let _ = SourceUnitBinding::builder(
+   |  _____________-
+ 8 | |         subject_ref!("runtime_unit:test.missing_build_impact"),
+ 9 | |         "test.missing_build_impact",
+10 | |         "test",
+...  |
+18 | |     .runtime_shape(RuntimeShape::Continuous)
+19 | |     .build();
+   | |     -^^^^^ method not found in `SourceUnitBindingBuilder<HasOutput, HasPrivacy, HasMaterial, CheckpointPresent, HasCheckpointFamily, HasRuntimeShape, MissingBuildImpact>`
+   | |_____|
+   |
+   |
+   = note: the method was found for
+           - `SourceUnitBindingBuilder<HasOutput, HasPrivacy, HasMaterial, CheckpointPresent, HasCheckpointFamily, HasRuntimeShape, HasBuildImpact>`
