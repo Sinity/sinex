@@ -30,8 +30,8 @@
 use super::common::{DbResult, db_error};
 use sinex_primitives::sources::SourceFamily;
 use sinex_primitives::sources::continuity::{
-    CoverageContract, CoverageGap, GapKind, Replayability, SeamKind, SourceContinuityReport,
-    TemporalSeam,
+    CoverageContract, CoverageGap, DeclaredCoverageContract, DeclaredCoverageContractKind, GapKind,
+    PrivacyClass, Replayability, SeamKind, SourceContinuityReport, TemporalSeam,
 };
 use sinex_primitives::Timestamp;
 use sqlx::PgPool;
@@ -239,7 +239,9 @@ impl<'a> ContinuityRepository<'a> {
                 fm.start_time,
                 fm.end_time,
                 fm.staged_at AS "staged_at!: OffsetDateTime",
-                fm.timing_info_type AS "timing!: String"
+                fm.timing_info_type AS "timing!: String",
+                fm.coverage_contract AS "coverage_contract!: serde_json::Value",
+                fm.privacy_class AS "privacy_class!: String"
             FROM family_materials fm
             ORDER BY COALESCE(fm.start_time, fm.staged_at), fm.staged_at
             "#,
@@ -252,17 +254,31 @@ impl<'a> ContinuityRepository<'a> {
 
         let chunks: Vec<Chunk> = chunk_rows
             .into_iter()
-            .map(|r| Chunk {
-                material_kind: r.material_kind,
-                status: r.status,
-                start_time: r.start_time,
-                end_time: r.end_time,
-                staged_at: r.staged_at,
-                timing: r.timing,
+            .map(|r| {
+                let privacy_class = r.privacy_class.parse().unwrap_or(PrivacyClass::Unknown);
+                Chunk {
+                    material_kind: r.material_kind,
+                    status: r.status,
+                    start_time: r.start_time,
+                    end_time: r.end_time,
+                    staged_at: r.staged_at,
+                    timing: r.timing,
+                    declared_contract: serde_json::from_value::<DeclaredCoverageContract>(
+                        r.coverage_contract,
+                    )
+                    .unwrap_or_default(),
+                    privacy_class,
+                }
             })
             .collect();
 
-        let coverage_contract = infer_coverage_contract(family_str, &chunks);
+        // Resolve coverage contract: prefer the operator-declared kind on
+        // the registry when any chunk in the family carries a non-Unknown
+        // declaration. Fall back to the family-name + timing heuristic
+        // otherwise. `is_declared` flags which path produced the value so
+        // CLI / RPC consumers can distinguish declared from inferred
+        // contracts (configuration gap vs data gap).
+        let (coverage_contract, is_declared) = resolve_coverage_contract(family_str, &chunks);
 
         // Compute seams between adjacent chunks.
         let mut seams: Vec<TemporalSeam> = Vec::new();
@@ -321,6 +337,7 @@ impl<'a> ContinuityRepository<'a> {
         Ok(Some(SourceContinuityReport {
             source_family: family.clone(),
             coverage_contract,
+            is_declared,
             replayability,
             seams,
             gaps,
@@ -357,6 +374,13 @@ trait ChunkAccess {
     fn status(&self) -> &str;
     fn material_kind(&self) -> &str;
     fn timing(&self) -> &str;
+    /// Operator-declared coverage contract for this chunk's source material.
+    /// Defaults to `Unknown` when the registry row carries the legacy
+    /// `{"kind":"Unknown"}` payload.
+    fn declared_contract(&self) -> &DeclaredCoverageContract;
+    /// Operator-declared privacy classification. Defaults to `Unknown`
+    /// when the registry row has not been classified.
+    fn privacy_class(&self) -> PrivacyClass;
 }
 
 // Provide ChunkAccess for the anonymous row type produced by query!
@@ -387,10 +411,12 @@ where
     if prev.status() == "recovered_partial" || curr.status() == "recovered_partial" {
         return SeamKind::RecoveredPartial;
     }
-    // Heuristic: if the gap is bounded by a privacy-marked material kind,
-    // treat as private-mode gap. We currently have no explicit private-mode
-    // marker on the registry, so this branch only fires once that lands.
-    if prev.material_kind().contains("private") || curr.material_kind().contains("private") {
+    // Operator-declared `privacy_class` drives `PrivateModeGap` classification
+    // (#1174). Only `Personal`, `Secret`, or `Redacted` count as private —
+    // `Public` and `Unknown` do not, so heuristic and declared signals stay
+    // separate. Either side of the seam being private-classed is enough to
+    // attribute the gap to private mode.
+    if prev.privacy_class().is_private() || curr.privacy_class().is_private() {
         return SeamKind::PrivateModeGap;
     }
     if secs > 60 {
@@ -432,6 +458,45 @@ fn gap_attribution(kind: GapKind) -> Option<String> {
         }
         .to_string(),
     )
+}
+
+/// Resolve the coverage contract for a family.
+///
+/// Returns `(contract, is_declared)` where `is_declared = true` when at least
+/// one chunk's `coverage_contract` JSONB column carries a `kind` other than
+/// `Unknown`. The first declared kind wins (chunks are sorted by start time
+/// so this is the earliest declared intent for the family). When no chunk
+/// declares a kind, falls back to the family-name + timing heuristic and
+/// returns `is_declared = false`.
+fn resolve_coverage_contract<R>(family: &str, chunks: &[R]) -> (CoverageContract, bool)
+where
+    R: ChunkAccess,
+{
+    for chunk in chunks {
+        let declared = chunk.declared_contract();
+        if !declared.is_unknown() {
+            return (declared_kind_to_contract(declared.kind), true);
+        }
+    }
+    (infer_coverage_contract(family, chunks), false)
+}
+
+/// Map the persisted `DeclaredCoverageContractKind` to the inferred
+/// `CoverageContract` enum used in operator-facing reports. The two enums
+/// carry the same five live shapes; `Unknown` is unreachable from the caller
+/// because [`resolve_coverage_contract`] filters it out before calling here.
+fn declared_kind_to_contract(kind: DeclaredCoverageContractKind) -> CoverageContract {
+    match kind {
+        DeclaredCoverageContractKind::Continuous => CoverageContract::Continuous,
+        DeclaredCoverageContractKind::PeriodicDump => CoverageContract::PeriodicDump,
+        DeclaredCoverageContractKind::OpportunisticImport => {
+            CoverageContract::OpportunisticImport
+        }
+        DeclaredCoverageContractKind::FiniteOneShot => CoverageContract::FiniteOneShot,
+        DeclaredCoverageContractKind::EphemeralStream => CoverageContract::EphemeralStream,
+        // Filtered upstream; if reached, treat as opportunistic.
+        DeclaredCoverageContractKind::Unknown => CoverageContract::OpportunisticImport,
+    }
 }
 
 fn infer_coverage_contract<R>(family: &str, chunks: &[R]) -> CoverageContract
@@ -543,6 +608,8 @@ struct Chunk {
     end_time: Option<OffsetDateTime>,
     staged_at: OffsetDateTime,
     timing: String,
+    declared_contract: DeclaredCoverageContract,
+    privacy_class: PrivacyClass,
 }
 
 impl ChunkAccess for Chunk {
@@ -564,6 +631,12 @@ impl ChunkAccess for Chunk {
     fn timing(&self) -> &str {
         &self.timing
     }
+    fn declared_contract(&self) -> &DeclaredCoverageContract {
+        &self.declared_contract
+    }
+    fn privacy_class(&self) -> PrivacyClass {
+        self.privacy_class
+    }
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -582,6 +655,17 @@ mod tests {
         end: Option<OffsetDateTime>,
         timing: &str,
     ) -> Chunk {
+        chunk_with_privacy(kind, status, start, end, timing, PrivacyClass::Unknown)
+    }
+
+    fn chunk_with_privacy(
+        kind: &str,
+        status: &str,
+        start: Option<OffsetDateTime>,
+        end: Option<OffsetDateTime>,
+        timing: &str,
+        privacy_class: PrivacyClass,
+    ) -> Chunk {
         Chunk {
             material_kind: kind.into(),
             status: status.into(),
@@ -589,6 +673,28 @@ mod tests {
             end_time: end,
             staged_at: start.unwrap_or(datetime!(2026-01-01 0:00 UTC)),
             timing: timing.into(),
+            declared_contract: DeclaredCoverageContract::default(),
+            privacy_class,
+        }
+    }
+
+    fn chunk_with_declared(
+        kind: &str,
+        status: &str,
+        start: Option<OffsetDateTime>,
+        end: Option<OffsetDateTime>,
+        timing: &str,
+        declared: DeclaredCoverageContract,
+    ) -> Chunk {
+        Chunk {
+            material_kind: kind.into(),
+            status: status.into(),
+            start_time: start,
+            end_time: end,
+            staged_at: start.unwrap_or(datetime!(2026-01-01 0:00 UTC)),
+            timing: timing.into(),
+            declared_contract: declared,
+            privacy_class: PrivacyClass::Unknown,
         }
     }
 
@@ -721,5 +827,87 @@ mod tests {
             infer_coverage_contract("unknown", &chunks),
             CoverageContract::OpportunisticImport
         ));
+    }
+
+    #[test]
+    fn private_mode_seam_only_fires_for_private_classes() {
+        let prev = chunk_with_privacy(
+            "annex",
+            "completed",
+            Some(datetime!(2026-01-01 10:00 UTC)),
+            Some(datetime!(2026-01-01 10:30 UTC)),
+            "intrinsic",
+            PrivacyClass::Personal,
+        );
+        let curr = chunk_with_privacy(
+            "annex",
+            "completed",
+            Some(datetime!(2026-01-01 12:00 UTC)),
+            Some(datetime!(2026-01-01 12:30 UTC)),
+            "intrinsic",
+            PrivacyClass::Public,
+        );
+        // Personal + Public + 90 minute gap → PrivateModeGap because one
+        // side is private-classed.
+        let kind = classify_seam(
+            datetime!(2026-01-01 10:30 UTC),
+            datetime!(2026-01-01 12:00 UTC),
+            &prev,
+            &curr,
+        );
+        assert!(matches!(kind, SeamKind::PrivateModeGap));
+
+        // Unknown + Unknown + same gap → Discontinuity (Unknown is NOT
+        // treated as private).
+        let prev2 = chunk(
+            "annex",
+            "completed",
+            Some(datetime!(2026-01-01 10:00 UTC)),
+            Some(datetime!(2026-01-01 10:30 UTC)),
+            "intrinsic",
+        );
+        let kind2 = classify_seam(
+            datetime!(2026-01-01 10:30 UTC),
+            datetime!(2026-01-01 12:00 UTC),
+            &prev2,
+            &curr,
+        );
+        assert!(matches!(kind2, SeamKind::Discontinuity));
+    }
+
+    #[test]
+    fn declared_coverage_contract_overrides_heuristic_inference() {
+        let declared = DeclaredCoverageContract {
+            kind: DeclaredCoverageContractKind::EphemeralStream,
+            ..Default::default()
+        };
+        let chunks = vec![chunk_with_declared(
+            "annex",
+            "completed",
+            Some(datetime!(2026-01-01 10:00 UTC)),
+            Some(datetime!(2026-01-01 11:00 UTC)),
+            "realtime",
+            declared,
+        )];
+        // Family name `shell` would heuristically map to Continuous; the
+        // declared kind takes precedence.
+        let (contract, is_declared) = resolve_coverage_contract("shell", &chunks);
+        assert!(matches!(contract, CoverageContract::EphemeralStream));
+        assert!(is_declared);
+    }
+
+    #[test]
+    fn unknown_declared_contract_falls_back_to_heuristic() {
+        let chunks = vec![chunk(
+            "annex",
+            "completed",
+            Some(datetime!(2026-01-01 10:00 UTC)),
+            Some(datetime!(2026-01-01 11:00 UTC)),
+            "intrinsic",
+        )];
+        // Default declared contract is Unknown; family name decides.
+        let (contract, is_declared) = resolve_coverage_contract("browser", &chunks);
+        assert!(matches!(contract, CoverageContract::PeriodicDump));
+        assert!(!is_declared);
     }
 }

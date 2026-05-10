@@ -386,6 +386,18 @@ impl Replayability {
 pub struct SourceContinuityReport {
     pub source_family: SourceFamily,
     pub coverage_contract: CoverageContract,
+    /// True when `coverage_contract` was read from an operator-declared
+    /// `DeclaredCoverageContract` (kind != Unknown) on the source-material
+    /// registry. False when the value is inferred from family-name and
+    /// timing heuristics because no declared contract was found (or the
+    /// declared kind was `Unknown`).
+    ///
+    /// Continuity reports treat declared and inferred contracts identically
+    /// for routing purposes; this flag exists so operator surfaces can
+    /// disambiguate "configuration gap" (no declared intent) from "data
+    /// gap" (declared continuous, observed gaps).
+    #[serde(default)]
+    pub is_declared: bool,
     pub replayability: Replayability,
     /// Adjacencies between material chunks for this source family.
     #[serde(default)]
@@ -545,6 +557,7 @@ mod tests {
         let report = SourceContinuityReport {
             source_family: SourceFamily::from_static("terminal"),
             coverage_contract: CoverageContract::Continuous,
+            is_declared: true,
             replayability: Replayability {
                 raw_bytes_preserved: true,
                 timing_quality: true,
