@@ -747,15 +747,40 @@ async fn collect_material_scorecards(
             .await
         {
             Ok(v) => v,
-            // A missing material in scope is not fatal at the preview
-            // layer — operators may have archived a material out from
-            // under a stale plan. Skip silently rather than blocking the
-            // entire preview.
-            Err(_) => continue,
+            Err(err) => {
+                // A missing material in scope is not fatal at the preview
+                // layer — operators may have archived a material out from
+                // under a stale plan. Skip silently for those.
+                //
+                // Transport / auth / server / schema errors, however,
+                // should surface as warnings so the preview is not silently
+                // partial; a healthy-looking scorecard built on swallowed
+                // failures lets operators make decisions on incomplete
+                // diagnostics. (PR #1187 codex P2.)
+                let msg = err.to_string();
+                let is_not_found = msg.contains("not found")
+                    || msg.contains("Not found")
+                    || msg.contains("NotFound");
+                if !is_not_found {
+                    tracing::warn!(
+                        material_id = %material_id,
+                        error = %err,
+                        "scorecard collection skipped material due to non-not-found error; preview will be partial"
+                    );
+                }
+                continue;
+            }
         };
         let show: SourcesShowResponse = match serde_json::from_value(response) {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(err) => {
+                tracing::warn!(
+                    material_id = %material_id,
+                    error = %err,
+                    "scorecard collection skipped material — sources.show response failed schema validation; preview will be partial"
+                );
+                continue;
+            }
         };
         let m = &show.material;
         let has_blob = m.optional_blob_id.is_some();
