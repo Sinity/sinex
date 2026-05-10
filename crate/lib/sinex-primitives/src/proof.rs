@@ -264,10 +264,10 @@ pub struct SourceUnitBinding {
     /// be treated as the source of truth for runtime behavior.
     pub proposed: bool,
     // ────────────────────────────────────────────────────────────
-    // Deployment-shape fields. These mirror the corresponding
-    // [`SourceUnitDescriptor`] fields during the descriptor→binding
-    // migration (issue #1175). Once `xtask source-units render` reads
-    // these from the binding, they will be removed from the descriptor.
+    // Deployment-shape fields (#1175). These live ONLY on the binding
+    // — `SourceUnitDescriptor` is now strictly semantic. Renderers that
+    // need deployment shape (xtask source-units render, xtask
+    // proof_catalog) look up the binding via `source_unit_id` FK.
     // ────────────────────────────────────────────────────────────
     /// Logical runner pack hosting this binding (e.g. "terminal", "process").
     pub runner_pack: &'static str,
@@ -538,15 +538,19 @@ pub fn exemptions() -> impl Iterator<Item = &'static Exemption> {
     inventory::iter::<Exemption>()
 }
 
+// Pre-existing binding for the only currently-deployed source unit
+// (`terminal.atuin-history`). Aligned with the post-#1184 naming convention
+// (`source_unit:<id>`), the descriptor's id (`terminal.atuin-history`), and
+// the descriptor's event_types (`("shell.atuin", "command.executed")`).
 inventory::submit! {
     SourceUnitBinding::builder(
-        SubjectRef::from_static("runtime_unit:terminal.atuin"),
-        "terminal.atuin",
+        SubjectRef::from_static("source_unit:terminal.atuin-history"),
+        "terminal.atuin-history",
         "terminal",
     )
     .implementation("sinex-terminal-ingestor::atuin")
     .adapter("sqlite_row_stream")
-    .output_event_type("shell.command")
+    .output_event_type("command.executed")
     .privacy_context("command")
     .material_policy("canonical_json_lines")
     .checkpoint_policy("sqlite_row_id")
@@ -957,7 +961,7 @@ mod tests {
             .map(|descriptor| descriptor.subject.as_str())
             .collect::<Vec<_>>();
 
-        assert!(bindings.contains(&"runtime_unit:terminal.atuin"));
+        assert!(bindings.contains(&"source_unit:terminal.atuin-history"));
         assert!(claims().any(|claim| claim.id == "claim:source_material.material_provenance"));
         assert!(claims().any(|claim| claim.id == "claim:source_unit.package_impact_visible"));
         assert!(runner_bindings().any(|binding| binding.id == "runner:rust.nextest.scenario"));

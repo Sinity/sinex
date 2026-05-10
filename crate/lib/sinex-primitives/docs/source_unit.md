@@ -60,38 +60,68 @@ evidence; the row stream remains canonical event provenance.
 
 ## Registration
 
+`SourceUnitDescriptor` is **semantic-only** — it describes the (source, event_type)
+contract, privacy tier, retention policy, and proof obligations. Deployment-shape
+fields (`runner_pack`, `runtime_shape`, `checkpoint_family`, `package_impact`,
+`implementation_mode`, `build_impact`) live on a paired `SourceUnitBinding`,
+keyed by `source_unit_id` (FK to the descriptor's `id`). See `proof.rs` and
+`docs/design/event-taxonomy-v2.md` Section 9 for the split rationale.
+
 ```rust
-use sinex_primitives::register_source_unit;
-use sinex_primitives::source_unit::*;
+use sinex_primitives::{register_source_unit, register_source_unit_binding};
+use sinex_primitives::proof::{
+    SourceUnitDescriptor, SourceUnitBinding, SourceUnitBuildImpact,
+    PrivacyTier, Horizon, RetentionPolicy, OccurrenceIdentity,
+    CheckpointFamily, RuntimeShape, SubjectRef,
+};
 
 register_source_unit! {
     SourceUnitDescriptor {
-        id: "terminal",
-        namespace: "shell",
-        runner_pack: "terminal",
-        checkpoint_family: CheckpointFamily::MutableSnapshot {
-            backing_store_kind: "sqlite",
-            occurrence_anchor: "atuin_history_id",
-        },
-        event_types: &[("shell.atuin", "command.executed"), …],
+        id: "terminal.atuin-history",
+        namespace: "terminal",
+        event_types: &[("shell.atuin", "command.executed")],
         privacy_tier: PrivacyTier::Sensitive,
-        runtime_shape: RuntimeShape::Continuous,
         horizons: &[Horizon::Continuous, Horizon::Historical],
         retention: RetentionPolicy::Forever,
-        proof_obligations: &["terminal_smoke", "terminal_history_replay"],
-        occurrence_identity: OccurrenceIdentity::Uuid5From(
-            "(source_unit, atuin_history_id)"),
+        proof_obligations: &[
+            "obligation:source_unit.material_provenance",
+            "obligation:source_unit.package_impact_rationale",
+        ],
+        occurrence_identity: OccurrenceIdentity::Natural,
         access_policy: "target_home_read:.local/share/atuin/history.db",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:terminal",
-        build_impact: SourceUnitBuildImpact::ZERO,
     }
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:terminal.atuin-history"),
+        "terminal.atuin-history",
+        "terminal",
+    )
+    .implementation("sinex-terminal-ingestor::atuin")
+    .adapter("sqlite_row_stream")
+    .output_event_type("command.executed")
+    .privacy_context("command")
+    .material_policy("canonical_json_lines")
+    .checkpoint_policy("sqlite_row_id")
+    .resource_shape("linear_rows_bounded_memory")
+    .source_unit_id("terminal.atuin-history")
+    .runner_pack("terminal")
+    .checkpoint_family(CheckpointFamily::MutableSnapshot {
+        backing_store_kind: "sqlite",
+        occurrence_anchor: "atuin_history_id",
+    })
+    .runtime_shape(RuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:terminal")
+    .build_impact(SourceUnitBuildImpact::ZERO)
+    .build()
 }
 ```
 
-`register_source_unit!` is a thin wrapper over `inventory::submit!`.
-Walk the registry through `sinex_primitives::source_unit::all_source_units()`
-or `find_source_unit(id)`.
+Both macros are thin wrappers over `inventory::submit!`. Walk the registries via
+`sinex_primitives::proof::all_source_units()` and
+`sinex_primitives::proof::source_unit_bindings()`.
 
 ## Promotion gate
 

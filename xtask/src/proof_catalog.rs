@@ -5,15 +5,16 @@
 //! discovered scenario annotations. Runtime semantics stay in Rust tests and
 //! SDK descriptors; this module only projects them into one inspectable graph.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use color_eyre::eyre::Result;
 use serde::Serialize;
 use sinex_primitives::events::schema_registry::get_all_payloads;
 use sinex_primitives::proof::{
-    self, Claim, Exemption, Horizon, OccurrenceIdentity, PROOF_CATALOG_SCHEMA_VERSION, PrivacyTier,
-    ProofObligation, RetentionPolicy, RunnerBinding, RuntimeShape, SourceUnitBinding,
+    self, CheckpointFamily, Claim, Exemption, Horizon, OccurrenceIdentity,
+    PROOF_CATALOG_SCHEMA_VERSION, PrivacyTier, ProofObligation, RetentionPolicy, RunnerBinding,
+    RuntimeShape, SourceUnitBinding,
 };
 
 use crate::command_catalog::{CommandInfo, collect_command_catalog};
@@ -123,8 +124,26 @@ pub fn build_proof_catalog(workspace_root: &Path) -> Result<ProofCatalog> {
         .collect::<Vec<_>>();
     runtime_units.sort_by(|left, right| left.subject.as_str().cmp(right.subject.as_str()));
 
+    // Build a binding lookup keyed by source_unit_id so source_unit_subject
+    // can read deployment-shape fields (`runner_pack`, `runtime_shape`,
+    // `checkpoint_family`, `package_impact`, `implementation_mode`) from the
+    // binding (#1175 split). Live bindings beat proposed bindings when both
+    // exist; descriptors with no binding fall back to inert defaults.
+    let mut binding_lookup: HashMap<&'static str, &'static SourceUnitBinding> = HashMap::new();
+    for binding in proof::source_unit_bindings() {
+        if binding.source_unit_id.is_empty() {
+            continue;
+        }
+        match binding_lookup.get(binding.source_unit_id) {
+            Some(existing) if !existing.proposed && binding.proposed => {}
+            _ => {
+                binding_lookup.insert(binding.source_unit_id, binding);
+            }
+        }
+    }
+
     let mut source_units = proof::all_source_units()
-        .map(source_unit_subject)
+        .map(|unit| source_unit_subject(unit, &binding_lookup))
         .collect::<Vec<_>>();
     source_units.sort_by(|left, right| left.subject.cmp(&right.subject));
 
@@ -432,12 +451,25 @@ fn collect_event_payload_subjects() -> Vec<EventPayloadSubject> {
     subjects
 }
 
-fn source_unit_subject(unit: &'static proof::SourceUnitDescriptor) -> SourceUnitSubject {
+fn source_unit_subject(
+    unit: &'static proof::SourceUnitDescriptor,
+    binding_lookup: &HashMap<&'static str, &'static SourceUnitBinding>,
+) -> SourceUnitSubject {
+    // Deployment-shape fields live on the binding only (#1175). Descriptor with
+    // no binding falls back to inert defaults — the manifest validator surfaces
+    // those via `unmapped_runner_packs` / `unresolved_binding_source_unit_ids`.
+    let binding = binding_lookup.get(unit.id).copied();
+    let runner_pack = binding.map_or("", |b| b.runner_pack);
+    let runtime_shape = binding.map_or(RuntimeShape::Continuous, |b| b.runtime_shape);
+    let checkpoint_family = binding.map_or(CheckpointFamily::AppendStream, |b| b.checkpoint_family);
+    let package_impact = binding.map_or("", |b| b.package_impact);
+    let implementation_mode = binding.map_or("", |b| b.implementation_mode);
+
     SourceUnitSubject {
         subject: format!("source_unit:{}", unit.id),
         id: unit.id.to_string(),
         namespace: unit.namespace.to_string(),
-        runner_pack: unit.runner_pack.to_string(),
+        runner_pack: runner_pack.to_string(),
         modes: unit
             .horizons
             .iter()
@@ -452,13 +484,13 @@ fn source_unit_subject(unit: &'static proof::SourceUnitDescriptor) -> SourceUnit
             })
             .collect(),
         privacy_tier: privacy_tier_name(unit.privacy_tier).to_string(),
-        runtime_shape: runtime_shape_name(unit.runtime_shape).to_string(),
+        runtime_shape: runtime_shape_name(runtime_shape).to_string(),
         retention_policy: retention_policy(unit.retention),
-        checkpoint_family: checkpoint_family_name(unit.checkpoint_family).to_string(),
+        checkpoint_family: checkpoint_family_name(checkpoint_family).to_string(),
         occurrence_identity: occurrence_identity(unit.occurrence_identity),
         access_policy: unit.access_policy.to_string(),
-        package_impact: unit.package_impact.to_string(),
-        implementation_mode: unit.implementation_mode.to_string(),
+        package_impact: package_impact.to_string(),
+        implementation_mode: implementation_mode.to_string(),
         proof_obligations: unit
             .proof_obligations
             .iter()
