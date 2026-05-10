@@ -86,6 +86,73 @@ pub struct AutomatonErrorPayload {
     pub context: Option<serde_json::Value>,
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Source-unit descriptors for sinex.* self-observation infra events.
+//
+// `sinex.process.*` and `sinex.automaton.error` are emitted by every long-
+// running sinex binary as part of standard lifecycle/health observability.
+// These are infra source units in the same sense as `blob-storage`: the
+// events exist today (ingestd/gateway/nodes publish them on boot, on
+// degradation, on shutdown), but they are not produced by a dedicated
+// systemd service — every binary participates. We register descriptors so
+// `sinexctl verify --source-units` finds a claim for each declared
+// `(source, event_type)` payload pair. They have no `SourceUnitBinding`
+// because the runtime owners are existing pack bindings.
+// ─────────────────────────────────────────────────────────────────────────────
+
+use crate::proof::{
+    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
+    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBuildImpact,
+    SourceUnitDescriptor,
+};
+use crate::register_source_unit;
+
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "sinex-process-lifecycle",
+        namespace: "infra",
+        runner_pack: "infra",
+        checkpoint_family: SuCheckpointFamily::LiveObservation,
+        event_types: &[
+            ("sinex", "process.started"),
+            ("sinex", "process.degraded"),
+            ("sinex", "process.failed"),
+            ("sinex", "process.shutdown"),
+        ],
+        privacy_tier: SuPrivacyTier::Public,
+        runtime_shape: SuRuntimeShape::Continuous,
+        horizons: &[SuHorizon::Continuous],
+        retention: SuRetentionPolicy::Forever,
+        proof_obligations: &[],
+        occurrence_identity: SuOccurrenceIdentity::Natural,
+        access_policy: "embedded_in_every_sinex_binary",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_every_sinex_binary",
+        build_impact: SourceUnitBuildImpact::ZERO,
+    }
+}
+
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "sinex-automaton-error",
+        namespace: "infra",
+        runner_pack: "infra",
+        checkpoint_family: SuCheckpointFamily::LiveObservation,
+        event_types: &[("sinex", "automaton.error")],
+        privacy_tier: SuPrivacyTier::Public,
+        runtime_shape: SuRuntimeShape::Continuous,
+        horizons: &[SuHorizon::Continuous],
+        retention: SuRetentionPolicy::Forever,
+        proof_obligations: &[],
+        occurrence_identity: SuOccurrenceIdentity::Natural,
+        access_policy: "embedded_in_automaton_runtime",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pack:process",
+        build_impact: SourceUnitBuildImpact::ZERO,
+    }
+}
+
 // Test helpers for external tests
 #[cfg(any(test, feature = "testing"))]
 impl ProcessStartedPayload {

@@ -45,6 +45,55 @@ pub struct StorageStatisticsPayload {
     pub storage_backend: String, // "git-annex"
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Source-unit descriptor for blob storage infra events.
+//
+// `blob_storage` is not a normal ingestor source unit — it is sinex's
+// content-addressable BLOB store, which emits operational events as it
+// retrieves, ingests, verifies blobs and reports aggregate statistics. We
+// register a descriptor so the (source, event_type) pairs declared via
+// `#[event_payload(...)]` are claimed by *something* in the source-unit
+// inventory, instead of showing up as unclaimed payloads in
+// `sinexctl verify --source-units`. The descriptor has no `SourceUnitBinding`
+// because there is no per-host systemd unit named "blob storage" — the events
+// are produced from inside other binaries (ingestd, gateway, node SDK) that
+// already have their own bindings. The "infra source unit, descriptor-only"
+// shape is documented in Section 9 of `docs/design/event-taxonomy-v2.md`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+use crate::proof::{
+    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
+    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBuildImpact,
+    SourceUnitDescriptor,
+};
+use crate::register_source_unit;
+
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "blob-storage",
+        namespace: "infra",
+        runner_pack: "infra",
+        checkpoint_family: SuCheckpointFamily::LiveObservation,
+        event_types: &[
+            ("blob_storage", "blob.retrieved"),
+            ("blob_storage", "blob.ingested"),
+            ("blob_storage", "blob.verified"),
+            ("blob_storage", "storage.statistics"),
+        ],
+        privacy_tier: SuPrivacyTier::Sensitive,
+        runtime_shape: SuRuntimeShape::Continuous,
+        horizons: &[SuHorizon::Continuous],
+        retention: SuRetentionPolicy::Forever,
+        proof_obligations: &[],
+        occurrence_identity: SuOccurrenceIdentity::Natural,
+        access_policy: "embedded_in_pipeline_processes",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_pipeline_processes",
+        build_impact: SourceUnitBuildImpact::ZERO,
+    }
+}
+
 // Test helpers for external tests
 #[cfg(any(test, feature = "testing"))]
 impl BlobIngestedPayload {
