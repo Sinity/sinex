@@ -1299,7 +1299,7 @@ async fn handle_rpc_batch(
                 state.metrics.record_request_rejected();
                 (
                     JsonRpcResponse::error(request.id, -32601, err.to_string()),
-                    sinex_primitives::events::payloads::RpcStatus::InvalidRequest,
+                    sinex_primitives::events::payloads::RpcStatus::Failed,
                 )
             }
             Err(err) => {
