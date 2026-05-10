@@ -12,12 +12,13 @@ use serde::Serialize;
 use serde_json::{Value as JsonValue, json};
 use sinex_primitives::{
     Uuid,
-    domain::SourceIdentifier,
+    domain::{NatsSubject, SourceIdentifier},
     environment::{SinexEnvironment, environment},
     temporal::Timestamp,
     transport,
     units::{Bytes, Seconds},
 };
+use std::str::FromStr;
 use std::{
     future::Future,
     path::{Path, PathBuf},
@@ -39,17 +40,23 @@ const JETSTREAM_BOOTSTRAP_MAX_BYTES: i64 = 2_147_483_647;
 /// Ordered `JetStream` stream used for all source-material lifecycle frames.
 pub const SOURCE_MATERIAL_STREAM: &str = "SOURCE_MATERIAL";
 /// Subject wildcard for the ordered source-material frame stream.
-pub const SOURCE_MATERIAL_FRAMES_SUBJECT: &str = "source_material.frames.>";
+pub const SOURCE_MATERIAL_FRAMES_SUBJECT: NatsSubject =
+    NatsSubject::from_static("source_material.frames.>");
 /// Subject for material begin frames.
-pub const SOURCE_MATERIAL_BEGIN_SUBJECT: &str = "source_material.frames.begin";
-/// Subject prefix for material slice frames.
+pub const SOURCE_MATERIAL_BEGIN_SUBJECT: NatsSubject =
+    NatsSubject::from_static("source_material.frames.begin");
+/// Subject prefix for material slice frames (used in `source_material_slice_subject`
+/// to build a per-material subject by appending the material UUID).
 pub const SOURCE_MATERIAL_SLICE_SUBJECT_PREFIX: &str = "source_material.frames.slices.";
 /// Subject for material end frames.
-pub const SOURCE_MATERIAL_END_SUBJECT: &str = "source_material.frames.end";
+pub const SOURCE_MATERIAL_END_SUBJECT: NatsSubject =
+    NatsSubject::from_static("source_material.frames.end");
 
 #[must_use]
-pub fn source_material_slice_subject(material_id: Uuid) -> String {
-    format!("{SOURCE_MATERIAL_SLICE_SUBJECT_PREFIX}{material_id}")
+pub fn source_material_slice_subject(material_id: Uuid) -> NatsSubject {
+    let raw = format!("{SOURCE_MATERIAL_SLICE_SUBJECT_PREFIX}{material_id}");
+    NatsSubject::from_str(&raw)
+        .expect("UUIDs render to valid NATS subject segment characters by construction")
 }
 
 /// Rotation policy configuration
@@ -175,7 +182,11 @@ struct MaterialEndMessage {
 }
 
 fn registry_source_identifier(logical_source_identifier: &str, material_id: Uuid) -> String {
-    SourceIdentifier::new(logical_source_identifier, material_id).to_wire()
+    SourceIdentifier::new(
+        logical_source_identifier,
+        sinex_primitives::Id::<sinex_primitives::events::SourceMaterial>::from_uuid(material_id),
+    )
+    .to_wire()
 }
 
 fn annotate_material_metadata(
@@ -264,7 +275,7 @@ impl AcquisitionManager {
         js.create_or_update_stream(jetstream::stream::Config {
             name: env.nats_stream_name_with_namespace(namespace, SOURCE_MATERIAL_STREAM),
             subjects: vec![
-                env.nats_subject_with_namespace(namespace, SOURCE_MATERIAL_FRAMES_SUBJECT),
+                env.nats_subject_with_namespace(namespace, SOURCE_MATERIAL_FRAMES_SUBJECT.as_str()),
             ],
             retention: jetstream::stream::RetentionPolicy::WorkQueue,
             storage: jetstream::stream::StorageType::File,
@@ -410,7 +421,7 @@ impl AcquisitionManager {
 
         let subject = self
             .env
-            .nats_subject_with_namespace(self.namespace.as_deref(), SOURCE_MATERIAL_BEGIN_SUBJECT);
+            .nats_subject_with_namespace(self.namespace.as_deref(), SOURCE_MATERIAL_BEGIN_SUBJECT.as_str());
         let payload = serde_json::to_vec(&msg)?;
         let mut headers = async_nats::HeaderMap::new();
         transport::insert_transport_class_headers(&mut headers, transport::Class::SourceMaterial);
@@ -633,7 +644,7 @@ impl AcquisitionManager {
 
         let subject = self.env.nats_subject_with_namespace(
             self.namespace.as_deref(),
-            &source_material_slice_subject(material_id),
+            source_material_slice_subject(material_id).as_str(),
         );
 
         // Add headers
@@ -755,7 +766,7 @@ impl AcquisitionManager {
 
         let subject = self
             .env
-            .nats_subject_with_namespace(self.namespace.as_deref(), SOURCE_MATERIAL_END_SUBJECT);
+            .nats_subject_with_namespace(self.namespace.as_deref(), SOURCE_MATERIAL_END_SUBJECT.as_str());
         let payload = serde_json::to_vec(&msg)?;
         let mut headers = async_nats::HeaderMap::new();
         transport::insert_transport_class_headers(&mut headers, transport::Class::SourceMaterial);

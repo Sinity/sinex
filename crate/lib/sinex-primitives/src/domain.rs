@@ -1091,12 +1091,15 @@ define_string_type!(
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceIdentifier {
     pub logical_id: String,
-    pub material_id: Option<crate::Uuid>,
+    pub material_id: Option<crate::Id<crate::events::SourceMaterial>>,
 }
 
 impl SourceIdentifier {
     #[must_use]
-    pub fn new(logical_id: impl Into<String>, material_id: impl Into<Option<crate::Uuid>>) -> Self {
+    pub fn new(
+        logical_id: impl Into<String>,
+        material_id: impl Into<Option<crate::Id<crate::events::SourceMaterial>>>,
+    ) -> Self {
         Self {
             logical_id: logical_id.into(),
             material_id: material_id.into(),
@@ -1118,7 +1121,7 @@ impl SourceIdentifier {
             })?;
             Ok(Self {
                 logical_id,
-                material_id: Some(material_id),
+                material_id: Some(crate::Id::from_uuid(material_id)),
             })
         } else {
             Ok(Self {
