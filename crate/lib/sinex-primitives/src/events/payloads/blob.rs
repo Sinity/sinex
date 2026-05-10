@@ -73,8 +73,6 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "blob-storage",
         namespace: "infra",
-        runner_pack: "infra",
-        checkpoint_family: SuCheckpointFamily::LiveObservation,
         event_types: &[
             ("blob_storage", "blob.retrieved"),
             ("blob_storage", "blob.ingested"),
@@ -82,15 +80,11 @@ register_source_unit! {
             ("blob_storage", "storage.statistics"),
         ],
         privacy_tier: SuPrivacyTier::Sensitive,
-        runtime_shape: SuRuntimeShape::Continuous,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Natural,
         access_policy: "embedded_in_pipeline_processes",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pipeline_processes",
-        build_impact: SourceUnitBuildImpact::ZERO,
     }
 }
 

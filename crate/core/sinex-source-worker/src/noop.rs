@@ -25,19 +25,13 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "noop",
         namespace: "sinex",
-        runner_pack: "source-worker",
-        checkpoint_family: CheckpointFamily::LiveObservation,
         event_types: &[],
         privacy_tier: PrivacyTier::Public,
-        runtime_shape: RuntimeShape::Continuous,
         horizons: &[Horizon::Continuous],
         retention: RetentionPolicy::Forever,
         proof_obligations: &[],
         occurrence_identity: OccurrenceIdentity::Uuid5From("(source_unit)"),
         access_policy: "none",
-        package_impact: "noop_source_unit",
-        implementation_mode: "rust_in_pack:source-worker",
-        build_impact: SourceUnitBuildImpact::ZERO,
     }
 }
 

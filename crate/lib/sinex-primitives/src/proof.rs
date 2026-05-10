@@ -850,23 +850,24 @@ impl SourceUnitBuildImpact {
 }
 
 /// The typed declaration every ingestor fills in.
+///
+/// This is strictly a *semantic* descriptor: identity, emitted event-type
+/// pairs, privacy tier, time horizons, retention, occurrence identity, and
+/// access policy. Deployment-shape fields (`runner_pack`, `checkpoint_family`,
+/// `runtime_shape`, `package_impact`, `implementation_mode`, `build_impact`)
+/// live on the matching [`SourceUnitBinding`] and are the source of truth for
+/// `xtask source-units render`. See issue #1175.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct SourceUnitDescriptor {
     pub id: &'static str,
     pub namespace: &'static str,
-    pub runner_pack: &'static str,
-    pub checkpoint_family: CheckpointFamily,
     pub event_types: &'static [(&'static str, &'static str)],
     pub privacy_tier: PrivacyTier,
-    pub runtime_shape: RuntimeShape,
     pub horizons: &'static [Horizon],
     pub retention: RetentionPolicy,
     pub proof_obligations: &'static [&'static str],
     pub occurrence_identity: OccurrenceIdentity,
     pub access_policy: &'static str,
-    pub package_impact: &'static str,
-    pub implementation_mode: &'static str,
-    pub build_impact: SourceUnitBuildImpact,
 }
 
 inventory::collect!(SourceUnitDescriptor);

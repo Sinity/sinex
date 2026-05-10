@@ -30,19 +30,13 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "terminal.monitor",
         namespace: "terminal",
-        runner_pack: "terminal",
-        checkpoint_family: CheckpointFamily::LiveObservation,
         event_types: &[("terminal", "shell.terminal_monitoring_started")],
         privacy_tier: PrivacyTier::Sensitive,
-        runtime_shape: RuntimeShape::Continuous,
         horizons: &[Horizon::Continuous],
         retention: RetentionPolicy::Forever,
         proof_obligations: &[],
         occurrence_identity: OccurrenceIdentity::Uuid5From("(source_unit, run_id)"),
         access_policy: "runtime_self_observation",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:terminal",
-        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -50,11 +44,8 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "terminal.text-history",
         namespace: "terminal",
-        runner_pack: "terminal",
-        checkpoint_family: CheckpointFamily::AppendStream,
         event_types: &[("shell.history", "command.imported")],
         privacy_tier: PrivacyTier::Sensitive,
-        runtime_shape: RuntimeShape::Continuous,
         horizons: &[Horizon::Continuous, Horizon::Historical],
         retention: RetentionPolicy::Forever,
         proof_obligations: &[
@@ -63,9 +54,6 @@ register_source_unit! {
         ],
         occurrence_identity: OccurrenceIdentity::Anchor,
         access_policy: "target_home_read:shell_history_text",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:terminal",
-        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -73,14 +61,8 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "terminal.atuin-history",
         namespace: "terminal",
-        runner_pack: "terminal",
-        checkpoint_family: CheckpointFamily::MutableSnapshot {
-            backing_store_kind: "sqlite",
-            occurrence_anchor: "atuin_history_id",
-        },
         event_types: &[("shell.atuin", "command.executed")],
         privacy_tier: PrivacyTier::Sensitive,
-        runtime_shape: RuntimeShape::Continuous,
         horizons: &[Horizon::Continuous, Horizon::Historical],
         retention: RetentionPolicy::Forever,
         proof_obligations: &[
@@ -89,9 +71,6 @@ register_source_unit! {
         ],
         occurrence_identity: OccurrenceIdentity::Natural,
         access_policy: "target_home_read:.local/share/atuin/history.db",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:terminal",
-        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -99,11 +78,8 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "terminal.zsh-history",
         namespace: "terminal",
-        runner_pack: "terminal",
-        checkpoint_family: CheckpointFamily::AppendStream,
         event_types: &[("shell.history", "command.imported")],
         privacy_tier: PrivacyTier::Sensitive,
-        runtime_shape: RuntimeShape::Continuous,
         horizons: &[Horizon::Continuous, Horizon::Historical],
         retention: RetentionPolicy::Forever,
         proof_obligations: &[
@@ -112,9 +88,6 @@ register_source_unit! {
         ],
         occurrence_identity: OccurrenceIdentity::Anchor,
         access_policy: "target_home_read:.zsh_history",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:terminal",
-        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -122,14 +95,8 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "terminal.fish-history",
         namespace: "terminal",
-        runner_pack: "terminal",
-        checkpoint_family: CheckpointFamily::MutableSnapshot {
-            backing_store_kind: "sqlite",
-            occurrence_anchor: "fish_history_row_id",
-        },
         event_types: &[("shell.history", "command.imported")],
         privacy_tier: PrivacyTier::Sensitive,
-        runtime_shape: RuntimeShape::Continuous,
         horizons: &[Horizon::Continuous, Horizon::Historical],
         retention: RetentionPolicy::Forever,
         proof_obligations: &[
@@ -138,9 +105,6 @@ register_source_unit! {
         ],
         occurrence_identity: OccurrenceIdentity::Natural,
         access_policy: "target_home_read:.local/share/fish/fish_history",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:terminal",
-        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -148,11 +112,8 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "terminal.bash-history",
         namespace: "terminal",
-        runner_pack: "terminal",
-        checkpoint_family: CheckpointFamily::AppendStream,
         event_types: &[("shell.history", "command.imported")],
         privacy_tier: PrivacyTier::Sensitive,
-        runtime_shape: RuntimeShape::Continuous,
         horizons: &[Horizon::Continuous, Horizon::Historical],
         retention: RetentionPolicy::Forever,
         proof_obligations: &[
@@ -161,9 +122,6 @@ register_source_unit! {
         ],
         occurrence_identity: OccurrenceIdentity::Anchor,
         access_policy: "target_home_read:.bash_history",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:terminal",
-        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 

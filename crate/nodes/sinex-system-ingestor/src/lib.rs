@@ -124,19 +124,13 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "system.monitor",
         namespace: "system",
-        runner_pack: "system",
-        checkpoint_family: SuCheckpointFamily::LiveObservation,
         event_types: &[("system", "monitoring.started")],
         privacy_tier: SuPrivacyTier::Sensitive,
-        runtime_shape: SuRuntimeShape::Continuous,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Uuid5From("(source_unit, run_id)"),
         access_policy: "runtime_self_observation",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:system",
-        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -144,8 +138,6 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "system.systemd",
         namespace: "system",
-        runner_pack: "system",
-        checkpoint_family: SuCheckpointFamily::Journal,
         event_types: &[
             ("systemd", "unit.started"),
             ("systemd", "unit.stopped"),
@@ -154,7 +146,6 @@ register_source_unit! {
             ("systemd", "timer.triggered"),
         ],
         privacy_tier: SuPrivacyTier::Sensitive,
-        runtime_shape: SuRuntimeShape::Continuous,
         horizons: &[SuHorizon::Continuous, SuHorizon::Historical],
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
@@ -162,9 +153,6 @@ register_source_unit! {
             "(source_unit, journal_cursor)",
         ),
         access_policy: "systemd_journal_read",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:system",
-        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -172,14 +160,11 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "system.journald",
         namespace: "system",
-        runner_pack: "system",
-        checkpoint_family: SuCheckpointFamily::Journal,
         event_types: &[
             ("journald", "entry.written"),
             ("journald", "sync.completed"),
         ],
         privacy_tier: SuPrivacyTier::Sensitive,
-        runtime_shape: SuRuntimeShape::Continuous,
         horizons: &[SuHorizon::Continuous, SuHorizon::Historical],
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
@@ -187,9 +172,6 @@ register_source_unit! {
             "(source_unit, journal_cursor)",
         ),
         access_policy: "systemd_journal_read",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:system",
-        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -197,8 +179,6 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "system.dbus",
         namespace: "system",
-        runner_pack: "system",
-        checkpoint_family: SuCheckpointFamily::LiveObservation,
         event_types: &[
             ("dbus", "signal.received"),
             ("dbus", "method.called"),
@@ -211,15 +191,11 @@ register_source_unit! {
             ("dbus", "notification.sent"),
         ],
         privacy_tier: SuPrivacyTier::Sensitive,
-        runtime_shape: SuRuntimeShape::Continuous,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Anchor,
         access_policy: "system_bus_session_bus_read",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:system",
-        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -227,8 +203,6 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "system.udev",
         namespace: "system",
-        runner_pack: "system",
-        checkpoint_family: SuCheckpointFamily::LiveObservation,
         event_types: &[
             ("udev", "device.connected"),
             ("udev", "device.disconnected"),
@@ -237,15 +211,11 @@ register_source_unit! {
             ("udev", "device.other"),
         ],
         privacy_tier: SuPrivacyTier::Sensitive,
-        runtime_shape: SuRuntimeShape::Continuous,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Anchor,
         access_policy: "udev_monitor_read",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:system",
-        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 

@@ -215,13 +215,10 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "relation-extractor",
         namespace: "derived",
-        runner_pack: "process",
-        checkpoint_family: SuCheckpointFamily::AppendStream,
         event_types: &[
             ("relation-extractor", "entity.related"),
         ],
         privacy_tier: SuPrivacyTier::Sensitive,
-        runtime_shape: SuRuntimeShape::Continuous,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
@@ -229,9 +226,6 @@ register_source_unit! {
             "(source_entity_id, target_entity_id, relation_type)",
         ),
         access_policy: "event_stream_read",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:process",
-        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 

@@ -464,8 +464,6 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "sinex-metrics",
         namespace: "infra",
-        runner_pack: "infra",
-        checkpoint_family: SuCheckpointFamily::LiveObservation,
         event_types: &[
             ("sinex", "metric.counter"),
             ("sinex", "metric.gauge"),
@@ -473,15 +471,11 @@ register_source_unit! {
             ("sinex", "health.status"),
         ],
         privacy_tier: SuPrivacyTier::Public,
-        runtime_shape: SuRuntimeShape::Continuous,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Natural,
         access_policy: "embedded_in_every_sinex_binary",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_every_sinex_binary",
-        build_impact: SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -489,8 +483,6 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "sinex-ingestd-telemetry",
         namespace: "infra",
-        runner_pack: "infra",
-        checkpoint_family: SuCheckpointFamily::LiveObservation,
         event_types: &[
             ("sinex.ingestd", "stream.stats"),
             ("sinex.ingestd", "assembly.stats"),
@@ -498,15 +490,11 @@ register_source_unit! {
             ("sinex.ingestd", "consumer.startup_replay_risk"),
         ],
         privacy_tier: SuPrivacyTier::Public,
-        runtime_shape: SuRuntimeShape::Continuous,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Natural,
         access_policy: "embedded_in_ingestd",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_ingestd",
-        build_impact: SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -514,8 +502,6 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "sinex-gateway-telemetry",
         namespace: "infra",
-        runner_pack: "infra",
-        checkpoint_family: SuCheckpointFamily::LiveObservation,
         event_types: &[
             ("sinex.gateway", "request.stats"),
             ("sinex.gateway", "rate_limit.exceeded"),
@@ -523,15 +509,11 @@ register_source_unit! {
             ("sinex.gateway", "replay.stats"),
         ],
         privacy_tier: SuPrivacyTier::Public,
-        runtime_shape: SuRuntimeShape::Continuous,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Natural,
         access_policy: "embedded_in_gateway",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_gateway",
-        build_impact: SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -539,19 +521,13 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "sinex-node-telemetry",
         namespace: "infra",
-        runner_pack: "infra",
-        checkpoint_family: SuCheckpointFamily::LiveObservation,
         event_types: &[("sinex.node", "processing.stats")],
         privacy_tier: SuPrivacyTier::Public,
-        runtime_shape: SuRuntimeShape::Continuous,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Natural,
         access_policy: "embedded_in_node_sdk",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_node_sdk",
-        build_impact: SourceUnitBuildImpact::ZERO,
     }
 }
 

@@ -973,22 +973,16 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "document.staging",
         namespace: "document",
-        runner_pack: "document",
-        checkpoint_family: SuCheckpointFamily::AppendStream,
         event_types: &[
             ("document-ingestor", "document.ingested"),
         ],
         // Document contents are arbitrary user files — secrets are routine.
         privacy_tier: SuPrivacyTier::Secret,
-        runtime_shape: SuRuntimeShape::OnDemand,
         horizons: &[SuHorizon::Continuous, SuHorizon::Historical],
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Anchor,
         access_policy: "configured_document_roots",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:document",
-        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 

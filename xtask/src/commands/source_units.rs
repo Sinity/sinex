@@ -355,13 +355,16 @@ fn canonical_source_unit_descriptor(
     unit: &'static proof::SourceUnitDescriptor,
     deployment_lookup: &HashMap<&'static str, &'static SourceUnitBinding>,
 ) -> SourceUnitDescriptor {
+    // Deployment-shape fields live on the binding only (#1175). Descriptor with
+    // no binding falls back to inert defaults that the manifest validator will
+    // surface as empty/unmapped.
     let binding = deployment_lookup.get(unit.id).copied();
     let runner_pack = binding.map_or("", |b| b.runner_pack);
-    let checkpoint_family = binding.map_or(unit.checkpoint_family, |b| b.checkpoint_family);
-    let runtime_shape = binding.map_or(unit.runtime_shape, |b| b.runtime_shape);
+    let checkpoint_family = binding.map_or(CheckpointFamily::AppendStream, |b| b.checkpoint_family);
+    let runtime_shape = binding.map_or(RuntimeShape::Continuous, |b| b.runtime_shape);
     let package_impact = binding.map_or("", |b| b.package_impact);
     let implementation_mode = binding.map_or("", |b| b.implementation_mode);
-    let build_impact = binding.map_or(unit.build_impact, |b| b.build_impact);
+    let build_impact = binding.map_or(proof::SourceUnitBuildImpact::ZERO, |b| b.build_impact);
 
     SourceUnitDescriptor {
         subject: format!("source_unit:{}", unit.id),
