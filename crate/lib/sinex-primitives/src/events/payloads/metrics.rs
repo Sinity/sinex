@@ -437,3 +437,120 @@ impl StreamStatsPayload {
         }
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Source-unit descriptors for sinex.* self-observation metrics infra events.
+//
+// Every long-running sinex binary participates in self-observation:
+// counters/gauges/histograms (`sinex.metric.*`), component health
+// (`sinex.health.status`), and per-binary operational rollups
+// (`sinex.ingestd.*`, `sinex.gateway.*`, `sinex.node.*`). These payloads have
+// no dedicated systemd unit — they are produced from inside ingestd, gateway,
+// and the node SDK as those processes run. We register infra source-unit
+// descriptors so the (source, event_type) pairs declared by `#[event_payload]`
+// are claimed by the source-unit inventory; bindings continue to live with the
+// owning ingestor / runner-pack descriptors.
+// ─────────────────────────────────────────────────────────────────────────────
+
+use crate::proof::{
+    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
+    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBuildImpact,
+    SourceUnitDescriptor,
+};
+use crate::register_source_unit;
+
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "sinex-metrics",
+        namespace: "infra",
+        runner_pack: "infra",
+        checkpoint_family: SuCheckpointFamily::LiveObservation,
+        event_types: &[
+            ("sinex", "metric.counter"),
+            ("sinex", "metric.gauge"),
+            ("sinex", "metric.histogram"),
+            ("sinex", "health.status"),
+        ],
+        privacy_tier: SuPrivacyTier::Public,
+        runtime_shape: SuRuntimeShape::Continuous,
+        horizons: &[SuHorizon::Continuous],
+        retention: SuRetentionPolicy::Forever,
+        proof_obligations: &[],
+        occurrence_identity: SuOccurrenceIdentity::Natural,
+        access_policy: "embedded_in_every_sinex_binary",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_every_sinex_binary",
+        build_impact: SourceUnitBuildImpact::ZERO,
+    }
+}
+
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "sinex-ingestd-telemetry",
+        namespace: "infra",
+        runner_pack: "infra",
+        checkpoint_family: SuCheckpointFamily::LiveObservation,
+        event_types: &[
+            ("sinex.ingestd", "stream.stats"),
+            ("sinex.ingestd", "assembly.stats"),
+            ("sinex.ingestd", "consumer.startup_snapshot"),
+            ("sinex.ingestd", "consumer.startup_replay_risk"),
+        ],
+        privacy_tier: SuPrivacyTier::Public,
+        runtime_shape: SuRuntimeShape::Continuous,
+        horizons: &[SuHorizon::Continuous],
+        retention: SuRetentionPolicy::Forever,
+        proof_obligations: &[],
+        occurrence_identity: SuOccurrenceIdentity::Natural,
+        access_policy: "embedded_in_ingestd",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_ingestd",
+        build_impact: SourceUnitBuildImpact::ZERO,
+    }
+}
+
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "sinex-gateway-telemetry",
+        namespace: "infra",
+        runner_pack: "infra",
+        checkpoint_family: SuCheckpointFamily::LiveObservation,
+        event_types: &[
+            ("sinex.gateway", "request.stats"),
+            ("sinex.gateway", "rate_limit.exceeded"),
+            ("sinex.gateway", "pool.stats"),
+            ("sinex.gateway", "replay.stats"),
+        ],
+        privacy_tier: SuPrivacyTier::Public,
+        runtime_shape: SuRuntimeShape::Continuous,
+        horizons: &[SuHorizon::Continuous],
+        retention: SuRetentionPolicy::Forever,
+        proof_obligations: &[],
+        occurrence_identity: SuOccurrenceIdentity::Natural,
+        access_policy: "embedded_in_gateway",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_gateway",
+        build_impact: SourceUnitBuildImpact::ZERO,
+    }
+}
+
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "sinex-node-telemetry",
+        namespace: "infra",
+        runner_pack: "infra",
+        checkpoint_family: SuCheckpointFamily::LiveObservation,
+        event_types: &[("sinex.node", "processing.stats")],
+        privacy_tier: SuPrivacyTier::Public,
+        runtime_shape: SuRuntimeShape::Continuous,
+        horizons: &[SuHorizon::Continuous],
+        retention: SuRetentionPolicy::Forever,
+        proof_obligations: &[],
+        occurrence_identity: SuOccurrenceIdentity::Natural,
+        access_policy: "embedded_in_node_sdk",
+        package_impact: "no_new_output",
+        implementation_mode: "rust_in_node_sdk",
+        build_impact: SourceUnitBuildImpact::ZERO,
+    }
+}

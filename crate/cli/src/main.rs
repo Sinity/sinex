@@ -294,6 +294,13 @@ async fn main() -> color_eyre::Result<()> {
         }
         Commands::Demo(cmd) => cmd.execute().await?,
         Commands::Blob { cmd } => cmd.execute(format).await?,
+        // `sinexctl verify --source-units` (alone) is a static descriptor /
+        // payload coverage check that does not need a gateway connection
+        // or auth token. Short-circuit so it can be run in CI without
+        // requiring a live deployment.
+        Commands::Verify(cmd) if cmd.is_source_units_only() => {
+            cmd.execute_source_units_only(format)?
+        }
         other => {
             let client_config = ClientConfig::from(&config);
             let client = GatewayClient::new(client_config)?;
