@@ -26,6 +26,24 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+pub mod api_fetch;
+pub mod incremental_dump;
+pub mod ipc_stream;
+pub mod one_time_dump;
+
+pub use api_fetch::{
+    ApiClient, ApiFetchCheckpoint, ApiFetchError, ApiFetchPage, ApiFetchRecordSource, RetryPolicy,
+};
+pub use incremental_dump::{
+    IncrementalDumpCheckpoint, IncrementalDumpError, IncrementalDumpRecordSource,
+};
+pub use ipc_stream::{
+    IpcStreamCheckpoint, IpcStreamError, IpcStreamRecord, IpcStreamRecordSource,
+};
+pub use one_time_dump::{
+    OneTimeDumpCheckpoint, OneTimeDumpError, OneTimeDumpRecord, OneTimeDumpRecordSource,
+};
+
 use crate::sqlite_source::{
     SqliteSnapshotEvidenceReport, SqliteSnapshotPolicy, SqliteSnapshotState,
     capture_sqlite_snapshot,
@@ -499,6 +517,77 @@ impl RecordSources {
             initial_checkpoint,
             poll,
         )
+    }
+
+    /// Wrap any `AsyncRead` IPC stream behind the [`RecordSource`] trait.
+    /// See [`ipc_stream`] for semantics.
+    #[must_use]
+    pub fn ipc_stream<S, Connect, ConnectFut, ConnectError>(
+        source_identifier: impl Into<String>,
+        connect: Connect,
+    ) -> IpcStreamRecordSource<S, Connect, ConnectFut, ConnectError>
+    where
+        S: tokio::io::AsyncRead + Unpin + Send + 'static,
+        Connect: Fn() -> ConnectFut + Send + Sync,
+        ConnectFut: Future<Output = Result<S, ConnectError>> + Send,
+        ConnectError: Error + Send + Sync + 'static,
+    {
+        IpcStreamRecordSource::new(source_identifier, connect)
+    }
+
+    /// Read a single dump source to completion exactly once.
+    /// See [`one_time_dump`] for semantics.
+    #[must_use]
+    pub fn one_time_dump<R, Open, OpenFut, OpenError>(
+        source_identifier: impl Into<String>,
+        open: Open,
+    ) -> OneTimeDumpRecordSource<R, Open, OpenFut, OpenError>
+    where
+        R: tokio::io::AsyncRead + Unpin + Send + 'static,
+        Open: Fn() -> OpenFut + Send + Sync,
+        OpenFut: Future<Output = Result<R, OpenError>> + Send,
+        OpenError: Error + Send + Sync + 'static,
+    {
+        OneTimeDumpRecordSource::new(source_identifier, open)
+    }
+
+    /// Re-read a refreshable dump on every scan, emitting only new records.
+    /// See [`incremental_dump`] for semantics.
+    #[must_use]
+    pub fn incremental_dump<Record, K, Load, LoadFut, LoadError, Key>(
+        source_identifier: impl Into<String>,
+        load: Load,
+        key: Key,
+    ) -> IncrementalDumpRecordSource<Record, K, Load, LoadFut, LoadError, Key>
+    where
+        Record: Send + Sync + 'static,
+        K: Clone
+            + Ord
+            + std::hash::Hash
+            + Serialize
+            + DeserializeOwned
+            + Send
+            + Sync
+            + 'static,
+        Load: Fn() -> LoadFut + Send + Sync,
+        LoadFut: Future<Output = Result<Vec<Record>, LoadError>> + Send,
+        LoadError: Error + Send + Sync + 'static,
+        Key: Fn(&Record) -> K + Send + Sync,
+    {
+        IncrementalDumpRecordSource::new(source_identifier, load, key)
+    }
+
+    /// Drive a paginated API client through the [`RecordSource`] trait.
+    /// See [`api_fetch`] for semantics.
+    #[must_use]
+    pub fn api_fetch<C>(
+        source_identifier: impl Into<String>,
+        client: C,
+    ) -> ApiFetchRecordSource<C>
+    where
+        C: ApiClient + 'static,
+    {
+        ApiFetchRecordSource::new(source_identifier, client)
     }
 }
 
