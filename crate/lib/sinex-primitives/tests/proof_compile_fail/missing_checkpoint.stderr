@@ -1,17 +1,17 @@
-error[E0599]: no method named `build` found for struct `SourceUnitBindingBuilder<HasOutput, HasPrivacy, HasMaterial, MissingCheckpoint>` in the current scope
-  --> tests/proof_compile_fail/missing_checkpoint.rs:13:6
+error[E0599]: no method named `build` found for struct `SourceUnitBindingBuilder<HasOutput, HasPrivacy, HasMaterial, MissingCheckpoint, HasCheckpointFamily, HasRuntimeShape, HasBuildImpact>` in the current scope
+  --> tests/proof_compile_fail/missing_checkpoint.rs:19:6
    |
- 4 |       let _ = SourceUnitBinding::builder(
+ 7 |       let _ = SourceUnitBinding::builder(
    |  _____________-
- 5 | |         subject_ref!("runtime_unit:test.missing_checkpoint"),
- 6 | |         "test.missing_checkpoint",
- 7 | |         "test",
+ 8 | |         subject_ref!("runtime_unit:test.missing_checkpoint"),
+ 9 | |         "test.missing_checkpoint",
+10 | |         "test",
 ...  |
-12 | |     .material_policy("canonical_json_lines")
-13 | |     .build();
-   | |     -^^^^^ method not found in `SourceUnitBindingBuilder<HasOutput, HasPrivacy, HasMaterial, MissingCheckpoint>`
+18 | |     .build_impact(SourceUnitBuildImpact::ZERO)
+19 | |     .build();
+   | |     -^^^^^ method not found in `SourceUnitBindingBuilder<HasOutput, HasPrivacy, HasMaterial, MissingCheckpoint, HasCheckpointFamily, HasRuntimeShape, HasBuildImpact>`
    | |_____|
    |
    |
    = note: the method was found for
-           - `SourceUnitBindingBuilder<HasOutput, HasPrivacy, HasMaterial, CheckpointPresent>`
+           - `SourceUnitBindingBuilder<HasOutput, HasPrivacy, HasMaterial, CheckpointPresent, HasCheckpointFamily, HasRuntimeShape, HasBuildImpact>`
