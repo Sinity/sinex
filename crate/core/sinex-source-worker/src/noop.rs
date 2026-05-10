@@ -14,9 +14,9 @@ use sinex_node_sdk::{
 };
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceUnitBuildImpact, SourceUnitDescriptor,
+    SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
-use sinex_primitives::register_source_unit;
+use sinex_primitives::{register_source_unit, register_source_unit_binding};
 use std::collections::HashMap;
 use std::time::Instant;
 use tokio::sync::watch;
@@ -39,6 +39,23 @@ register_source_unit! {
         implementation_mode: "rust_in_pack:source-worker",
         build_impact: SourceUnitBuildImpact::ZERO,
     }
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:noop"),
+        "noop",
+        "sinex",
+    )
+    .implementation("sinex-source-worker")
+    .adapter("IngestorNodeAdapter")
+    .output_event_type("noop")
+    .privacy_context("none")
+    .material_policy("none")
+    .checkpoint_policy("live_observation")
+    .resource_shape("event_emitter")
+    .source_unit_id("noop")
+    .build()
 }
 
 /// State for the noop source unit.

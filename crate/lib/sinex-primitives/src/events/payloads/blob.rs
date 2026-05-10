@@ -64,10 +64,10 @@ pub struct StorageStatisticsPayload {
 use crate::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBuildImpact,
-    SourceUnitDescriptor,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
+    SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
-use crate::register_source_unit;
+use crate::{register_source_unit, register_source_unit_binding};
 
 register_source_unit! {
     SourceUnitDescriptor {
@@ -92,6 +92,27 @@ register_source_unit! {
         implementation_mode: "rust_in_pipeline_processes",
         build_impact: SourceUnitBuildImpact::ZERO,
     }
+}
+
+// Infra source unit: descriptor-only by design — events emitted from inside
+// other binaries (ingestd, gateway, node SDK). The binding records the
+// embedded shape; `proposed: true` flags it as not a host-level adapter.
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:blob-storage"),
+        "blob-storage",
+        "infra",
+    )
+    .implementation("sinex-primitives::blob")
+    .adapter("EmbeddedEmitter")
+    .output_event_type("blob.retrieved")
+    .privacy_context("blob_metadata")
+    .material_policy("none")
+    .checkpoint_policy("live_observation")
+    .resource_shape("embedded_emitter")
+    .source_unit_id("blob-storage")
+    .proposed(true)
+    .build()
 }
 
 // Test helpers for external tests

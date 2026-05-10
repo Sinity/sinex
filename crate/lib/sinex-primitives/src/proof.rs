@@ -824,6 +824,18 @@ macro_rules! register_source_unit {
     };
 }
 
+/// Register a [`SourceUnitBinding`] with the binary's inventory.
+///
+/// Companion to [`register_source_unit!`]: descriptors describe the *semantic*
+/// shape of a source unit, bindings describe the deployed adapter that runs
+/// it. Both are mechanically discoverable through the `inventory` crate.
+#[macro_export]
+macro_rules! register_source_unit_binding {
+    ($binding:expr $(,)?) => {
+        $crate::proof::__register::inventory::submit! { $binding }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
