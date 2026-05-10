@@ -13,8 +13,9 @@ use serde::Serialize;
 use sinex_primitives::events::schema_registry::get_all_payloads;
 use sinex_primitives::proof::{
     self, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ProofObligation,
-    RetentionPolicy, RuntimeShape,
+    RetentionPolicy, RuntimeShape, SourceUnitBinding,
 };
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -269,8 +270,9 @@ fn execute_check(output: Option<&Path>, ctx: &CommandContext) -> Result<CommandR
 fn build_source_unit_manifest() -> SourceUnitManifest {
     crate::source_unit_inventory::link_source_unit_inventories();
 
+    let deployment_lookup = build_deployment_lookup();
     let mut source_units = proof::all_source_units()
-        .map(canonical_source_unit_descriptor)
+        .map(|unit| canonical_source_unit_descriptor(unit, &deployment_lookup))
         .collect::<Vec<_>>();
     source_units.sort_by(|left, right| left.subject.cmp(&right.subject));
 
@@ -318,9 +320,49 @@ fn build_source_unit_manifest() -> SourceUnitManifest {
     }
 }
 
+/// Build a `source_unit_id -> &SourceUnitBinding` lookup used to resolve the
+/// deployment-shape fields (`runner_pack`, `checkpoint_family`, `runtime_shape`,
+/// `package_impact`, `implementation_mode`, `build_impact`).
+///
+/// Per #1175, deployment shape lives on the binding, not the descriptor. Most
+/// source units have a live binding (`proposed: false`); the seven infra units
+/// (`blob-storage`, `sinex-process-lifecycle`, `sinex-automaton-error`,
+/// `sinex-metrics`, `sinex-ingestd-telemetry`, `sinex-gateway-telemetry`,
+/// `sinex-node-telemetry`) only have proposed bindings because they are
+/// embedded in other binaries rather than running as their own systemd
+/// service. We treat proposed bindings as authoritative for deployment fields:
+/// they describe the intended adapter shape and the same field semantics
+/// apply, the `proposed: true` flag only informs whether the binding is
+/// surfaced as live or as a future-state proposal in the manifest.
+fn build_deployment_lookup() -> HashMap<&'static str, &'static SourceUnitBinding> {
+    let mut by_id: HashMap<&'static str, &'static SourceUnitBinding> = HashMap::new();
+    for binding in proof::source_unit_bindings() {
+        if binding.source_unit_id.is_empty() {
+            continue;
+        }
+        match by_id.get(binding.source_unit_id) {
+            // Prefer a live binding over a proposed one if both exist.
+            Some(existing) if !existing.proposed && binding.proposed => {}
+            _ => {
+                by_id.insert(binding.source_unit_id, binding);
+            }
+        }
+    }
+    by_id
+}
+
 fn canonical_source_unit_descriptor(
     unit: &'static proof::SourceUnitDescriptor,
+    deployment_lookup: &HashMap<&'static str, &'static SourceUnitBinding>,
 ) -> SourceUnitDescriptor {
+    let binding = deployment_lookup.get(unit.id).copied();
+    let runner_pack = binding.map_or("", |b| b.runner_pack);
+    let checkpoint_family = binding.map_or(unit.checkpoint_family, |b| b.checkpoint_family);
+    let runtime_shape = binding.map_or(unit.runtime_shape, |b| b.runtime_shape);
+    let package_impact = binding.map_or("", |b| b.package_impact);
+    let implementation_mode = binding.map_or("", |b| b.implementation_mode);
+    let build_impact = binding.map_or(unit.build_impact, |b| b.build_impact);
+
     SourceUnitDescriptor {
         subject: format!("source_unit:{}", unit.id),
         id: unit.id.to_string(),
@@ -331,9 +373,9 @@ fn canonical_source_unit_descriptor(
             .iter()
             .map(|horizon| horizon_name(*horizon).to_string())
             .collect(),
-        acquisition_shape: checkpoint_family_name(unit.checkpoint_family).to_string(),
+        acquisition_shape: checkpoint_family_name(checkpoint_family).to_string(),
         material_policy: material_policy_for(unit).to_string(),
-        checkpoint_policy: checkpoint_policy(unit.checkpoint_family),
+        checkpoint_policy: checkpoint_policy(checkpoint_family),
         occurrence_policy: occurrence_policy(unit.occurrence_identity),
         output_event_types: unit
             .event_types
@@ -345,24 +387,23 @@ fn canonical_source_unit_descriptor(
             .collect(),
         privacy_context: privacy_tier_name(unit.privacy_tier).to_string(),
         retention_policy: retention_policy(unit.retention),
-        resource_profile: runtime_shape_name(unit.runtime_shape).to_string(),
+        resource_profile: runtime_shape_name(runtime_shape).to_string(),
         access_policy: unit.access_policy.to_string(),
-        service_policy: service_policy(unit.runtime_shape).to_string(),
-        runner_pack: unit.runner_pack.to_string(),
-        package_impact: unit.package_impact.to_string(),
-        implementation_mode: unit.implementation_mode.to_string(),
+        service_policy: service_policy(runtime_shape).to_string(),
+        runner_pack: runner_pack.to_string(),
+        package_impact: package_impact.to_string(),
+        implementation_mode: implementation_mode.to_string(),
         proof_obligations: unit
             .proof_obligations
             .iter()
             .map(|obligation| (*obligation).to_string())
             .collect(),
-        crate_impact: unit.build_impact.crate_impact.to_string(),
-        binary_impact: unit.build_impact.binary_impact.to_string(),
-        nix_output_impact: unit.build_impact.nix_output_impact.to_string(),
-        derivation_impact: unit.build_impact.derivation_impact.to_string(),
-        sqlx_validation_impact: unit.build_impact.sqlx_validation_impact.to_string(),
-        dedicated_build_rationale: unit
-            .build_impact
+        crate_impact: build_impact.crate_impact.to_string(),
+        binary_impact: build_impact.binary_impact.to_string(),
+        nix_output_impact: build_impact.nix_output_impact.to_string(),
+        derivation_impact: build_impact.derivation_impact.to_string(),
+        sqlx_validation_impact: build_impact.sqlx_validation_impact.to_string(),
+        dedicated_build_rationale: build_impact
             .dedicated_build_rationale
             .map(str::to_string),
     }
