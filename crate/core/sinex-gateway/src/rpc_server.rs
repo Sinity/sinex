@@ -1214,6 +1214,11 @@ async fn handle_rpc_batch(
 
     let mut responses = Vec::with_capacity(requests.len());
     for request in requests {
+        // Each batch member gets its own audit/latency window so the
+        // `gateway.rpc.call` stream covers per-dispatch outcomes (#1172 AC-7).
+        let member_start = std::time::Instant::now();
+        let method_for_audit = request.method.clone();
+
         // Rate limit each request individually
         if !state.rate_limiter.check(&token, auth_context.role).await {
             let token_prefix = &token[..8.min(token.len())];
@@ -1225,6 +1230,14 @@ async fn handle_rpc_batch(
                 AccessOutcome::RateLimited,
                 Some(&auth_context),
                 None,
+            );
+            emit_rpc_call_audit(
+                &state,
+                &method_for_audit,
+                auth_context.role,
+                member_start.elapsed(),
+                sinex_primitives::events::payloads::RpcStatus::RateLimited,
+                &auth_context.token_prefix,
             );
             responses.push(JsonRpcResponse::error(
                 request.id,
@@ -1243,6 +1256,14 @@ async fn handle_rpc_batch(
                 AccessOutcome::InvalidRequest,
                 Some(&auth_context),
                 Some(&detail),
+            );
+            emit_rpc_call_audit(
+                &state,
+                &method_for_audit,
+                auth_context.role,
+                member_start.elapsed(),
+                sinex_primitives::events::payloads::RpcStatus::InvalidRequest,
+                &auth_context.token_prefix,
             );
             responses.push(JsonRpcResponse::error(
                 request.id,
@@ -1263,17 +1284,23 @@ async fn handle_rpc_batch(
         )
         .await;
 
-        let response = match result {
+        let (response, audit_status) = match result {
             Ok(value) => {
                 state.metrics.record_request_success(0);
-                JsonRpcResponse::success(request.id, value)
+                (
+                    JsonRpcResponse::success(request.id, value),
+                    sinex_primitives::events::payloads::RpcStatus::Success,
+                )
             }
             Err(err)
                 if matches!(&err, SinexError::NotFound(_))
                     && err.to_string().starts_with("Unknown method:") =>
             {
                 state.metrics.record_request_rejected();
-                JsonRpcResponse::error(request.id, -32601, err.to_string())
+                (
+                    JsonRpcResponse::error(request.id, -32601, err.to_string()),
+                    sinex_primitives::events::payloads::RpcStatus::InvalidRequest,
+                )
             }
             Err(err) => {
                 state.metrics.record_request_rejected();
@@ -1298,9 +1325,20 @@ async fn handle_rpc_batch(
                     "error_id": error_id.to_string(),
                 });
 
-                JsonRpcResponse::error_with_data(request.id, code, message, data)
+                (
+                    JsonRpcResponse::error_with_data(request.id, code, message, data),
+                    sinex_primitives::events::payloads::RpcStatus::Failed,
+                )
             }
         };
+        emit_rpc_call_audit(
+            &state,
+            &method_for_audit,
+            auth_context.role,
+            member_start.elapsed(),
+            audit_status,
+            &auth_context.token_prefix,
+        );
         responses.push(response);
     }
 
