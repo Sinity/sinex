@@ -27,12 +27,25 @@ use super::{
 };
 
 /// Checkpoint for an incremental dump.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IncrementalDumpCheckpoint<K>
 where
     K: Ord,
 {
     pub seen: BTreeSet<K>,
+}
+
+// Hand-written Default that doesn't require K: Default — only Ord, matching
+// the struct's where clause. The derive expansion would force K: Default.
+impl<K> Default for IncrementalDumpCheckpoint<K>
+where
+    K: Ord,
+{
+    fn default() -> Self {
+        Self {
+            seen: BTreeSet::new(),
+        }
+    }
 }
 
 impl<K> IncrementalDumpCheckpoint<K>
