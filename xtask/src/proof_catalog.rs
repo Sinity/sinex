@@ -621,7 +621,7 @@ mod tests {
             catalog
                 .runtime_units
                 .iter()
-                .any(|unit| unit.subject.as_str() == "runtime_unit:terminal.atuin")
+                .any(|unit| unit.subject.as_str() == "source_unit:terminal.atuin-history")
         );
         assert!(
             catalog
