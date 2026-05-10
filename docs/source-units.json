@@ -1906,5 +1906,62 @@
     "non_rust_source_unit_mode": "implementation_mode records external, off-host, or non-Rust units; dedicated build surfaces require rationale.",
     "normal_source_unit_physical_impact": "crate_impact=0, binary_impact=0, nix_output_impact=0, derivation_impact=0, sqlx_validation_impact=0"
   },
-  "proposed_bindings": []
+  "proposed_bindings": [
+    {
+      "subject": "source_unit:blob-storage",
+      "id": "blob-storage",
+      "source_unit_id": "blob-storage",
+      "domain": "infra",
+      "adapter": "EmbeddedEmitter",
+      "output_event_type": "blob.retrieved"
+    },
+    {
+      "subject": "source_unit:sinex-automaton-error",
+      "id": "sinex-automaton-error",
+      "source_unit_id": "sinex-automaton-error",
+      "domain": "infra",
+      "adapter": "EmbeddedEmitter",
+      "output_event_type": "automaton.error"
+    },
+    {
+      "subject": "source_unit:sinex-gateway-telemetry",
+      "id": "sinex-gateway-telemetry",
+      "source_unit_id": "sinex-gateway-telemetry",
+      "domain": "infra",
+      "adapter": "EmbeddedEmitter",
+      "output_event_type": "request.stats"
+    },
+    {
+      "subject": "source_unit:sinex-ingestd-telemetry",
+      "id": "sinex-ingestd-telemetry",
+      "source_unit_id": "sinex-ingestd-telemetry",
+      "domain": "infra",
+      "adapter": "EmbeddedEmitter",
+      "output_event_type": "stream.stats"
+    },
+    {
+      "subject": "source_unit:sinex-metrics",
+      "id": "sinex-metrics",
+      "source_unit_id": "sinex-metrics",
+      "domain": "infra",
+      "adapter": "EmbeddedEmitter",
+      "output_event_type": "metric.counter"
+    },
+    {
+      "subject": "source_unit:sinex-node-telemetry",
+      "id": "sinex-node-telemetry",
+      "source_unit_id": "sinex-node-telemetry",
+      "domain": "infra",
+      "adapter": "EmbeddedEmitter",
+      "output_event_type": "processing.stats"
+    },
+    {
+      "subject": "source_unit:sinex-process-lifecycle",
+      "id": "sinex-process-lifecycle",
+      "source_unit_id": "sinex-process-lifecycle",
+      "domain": "infra",
+      "adapter": "EmbeddedEmitter",
+      "output_event_type": "process.started"
+    }
+  ]
 }
