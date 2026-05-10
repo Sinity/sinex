@@ -92,19 +92,27 @@ async fn seed_event(
     claims = "assertion:seam.expected_continuation"
 )]
 async fn seam_classification_emits_expected_continuation(ctx: TestContext) -> TestResult<()> {
-    let identifier = format!("seam-continuation-{}", Uuid::now_v7());
+    // Two registry rows representing the two adjacent chunks. They must
+    // have distinct `source_identifier`s — `uk_sm_registry_source_identifier`
+    // is UNIQUE (sinex-schema/src/schema/source_materials.rs#L252) — and
+    // both must be referenced by at least one event in the same source
+    // family so the continuity query (continuity.rs:170-182) picks up both
+    // via path (a) (`sm.id IN (events for family)`).
+    let suffix = Uuid::now_v7();
+    let id_a = format!("seam-continuation-a-{suffix}");
+    let id_b = format!("seam-continuation-b-{suffix}");
     let m1 = insert_chunk(
         ctx.pool(),
-        &identifier,
+        &id_a,
         "completed",
         "intrinsic",
         datetime("2026-04-01T10:00:00Z"),
         datetime("2026-04-01T11:00:00Z"),
     )
     .await?;
-    let _m2 = insert_chunk(
+    let m2 = insert_chunk(
         ctx.pool(),
-        &identifier,
+        &id_b,
         "completed",
         "intrinsic",
         datetime("2026-04-01T11:00:00Z"),
@@ -112,6 +120,7 @@ async fn seam_classification_emits_expected_continuation(ctx: TestContext) -> Te
     )
     .await?;
     seed_event(ctx.pool(), "shellseamcont", "shell.command", m1).await?;
+    seed_event(ctx.pool(), "shellseamcont", "shell.command", m2).await?;
 
     let family = SourceFamily::new("shellseamcont".to_string())?;
     let report = ctx
@@ -139,10 +148,12 @@ async fn seam_classification_emits_expected_continuation(ctx: TestContext) -> Te
     claims = "assertion:seam.overlap"
 )]
 async fn seam_classification_emits_overlap(ctx: TestContext) -> TestResult<()> {
-    let identifier = format!("seam-overlap-{}", Uuid::now_v7());
+    let suffix = Uuid::now_v7();
+    let id_a = format!("seam-overlap-a-{suffix}");
+    let id_b = format!("seam-overlap-b-{suffix}");
     let m1 = insert_chunk(
         ctx.pool(),
-        &identifier,
+        &id_a,
         "completed",
         "intrinsic",
         datetime("2026-04-02T10:00:00Z"),
@@ -150,9 +161,9 @@ async fn seam_classification_emits_overlap(ctx: TestContext) -> TestResult<()> {
     )
     .await?;
     // Second chunk starts 30 minutes BEFORE the first ends → overlap.
-    let _m2 = insert_chunk(
+    let m2 = insert_chunk(
         ctx.pool(),
-        &identifier,
+        &id_b,
         "completed",
         "intrinsic",
         datetime("2026-04-02T10:30:00Z"),
@@ -160,6 +171,7 @@ async fn seam_classification_emits_overlap(ctx: TestContext) -> TestResult<()> {
     )
     .await?;
     seed_event(ctx.pool(), "shellseamoverlap", "shell.command", m1).await?;
+    seed_event(ctx.pool(), "shellseamoverlap", "shell.command", m2).await?;
 
     let family = SourceFamily::new("shellseamoverlap".to_string())?;
     let report = ctx
@@ -186,10 +198,12 @@ async fn seam_classification_emits_overlap(ctx: TestContext) -> TestResult<()> {
     claims = "assertion:seam.discontinuity"
 )]
 async fn seam_classification_emits_discontinuity(ctx: TestContext) -> TestResult<()> {
-    let identifier = format!("seam-discont-{}", Uuid::now_v7());
+    let suffix = Uuid::now_v7();
+    let id_a = format!("seam-discont-a-{suffix}");
+    let id_b = format!("seam-discont-b-{suffix}");
     let m1 = insert_chunk(
         ctx.pool(),
-        &identifier,
+        &id_a,
         "completed",
         "intrinsic",
         datetime("2026-04-03T10:00:00Z"),
@@ -197,9 +211,9 @@ async fn seam_classification_emits_discontinuity(ctx: TestContext) -> TestResult
     )
     .await?;
     // 3.5 hour gap ⇒ Discontinuity (no privacy markers, no partial state).
-    let _m2 = insert_chunk(
+    let m2 = insert_chunk(
         ctx.pool(),
-        &identifier,
+        &id_b,
         "completed",
         "intrinsic",
         datetime("2026-04-03T14:00:00Z"),
@@ -207,6 +221,7 @@ async fn seam_classification_emits_discontinuity(ctx: TestContext) -> TestResult
     )
     .await?;
     seed_event(ctx.pool(), "shellseamdiscont", "shell.command", m1).await?;
+    seed_event(ctx.pool(), "shellseamdiscont", "shell.command", m2).await?;
 
     let family = SourceFamily::new("shellseamdiscont".to_string())?;
     let report = ctx
@@ -241,22 +256,24 @@ async fn seam_classification_emits_discontinuity(ctx: TestContext) -> TestResult
     claims = "assertion:seam.recovered_partial"
 )]
 async fn seam_classification_emits_recovered_partial(ctx: TestContext) -> TestResult<()> {
-    let identifier = format!("seam-recpartial-{}", Uuid::now_v7());
+    let suffix = Uuid::now_v7();
+    let id_a = format!("seam-recpartial-a-{suffix}");
+    let id_b = format!("seam-recpartial-b-{suffix}");
     // Earlier chunk marked recovered_partial — the seam should classify
     // as RecoveredPartial regardless of gap length, because the partial
     // marker takes precedence over plain discontinuity.
     let m1 = insert_chunk(
         ctx.pool(),
-        &identifier,
+        &id_a,
         "recovered_partial",
         "intrinsic",
         datetime("2026-04-04T10:00:00Z"),
         datetime("2026-04-04T10:30:00Z"),
     )
     .await?;
-    let _m2 = insert_chunk(
+    let m2 = insert_chunk(
         ctx.pool(),
-        &identifier,
+        &id_b,
         "completed",
         "intrinsic",
         datetime("2026-04-04T11:00:00Z"),
@@ -264,6 +281,7 @@ async fn seam_classification_emits_recovered_partial(ctx: TestContext) -> TestRe
     )
     .await?;
     seed_event(ctx.pool(), "shellseamrec", "shell.command", m1).await?;
+    seed_event(ctx.pool(), "shellseamrec", "shell.command", m2).await?;
 
     let family = SourceFamily::new("shellseamrec".to_string())?;
     let report = ctx
