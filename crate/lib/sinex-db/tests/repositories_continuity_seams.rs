@@ -84,10 +84,12 @@ async fn seed_event(
 }
 
 #[sinex_test(
-    scenario = "continuity::seam_classification",
+    scenario = "continuity::seam_classification::expected_continuation",
     category = "source_material",
     lane = "fast",
-    tags = "continuity,seam_classification"
+    tags = "continuity,seam_classification",
+    subjects = "issue:1085,db:continuity",
+    claims = "assertion:seam.expected_continuation"
 )]
 async fn seam_classification_emits_expected_continuation(ctx: TestContext) -> TestResult<()> {
     let identifier = format!("seam-continuation-{}", Uuid::now_v7());
@@ -129,10 +131,12 @@ async fn seam_classification_emits_expected_continuation(ctx: TestContext) -> Te
 }
 
 #[sinex_test(
-    scenario = "continuity::seam_classification",
+    scenario = "continuity::seam_classification::overlap",
     category = "source_material",
     lane = "fast",
-    tags = "continuity,seam_classification"
+    tags = "continuity,seam_classification",
+    subjects = "issue:1085,db:continuity",
+    claims = "assertion:seam.overlap"
 )]
 async fn seam_classification_emits_overlap(ctx: TestContext) -> TestResult<()> {
     let identifier = format!("seam-overlap-{}", Uuid::now_v7());
@@ -174,10 +178,12 @@ async fn seam_classification_emits_overlap(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test(
-    scenario = "continuity::seam_classification",
+    scenario = "continuity::seam_classification::discontinuity",
     category = "source_material",
     lane = "fast",
-    tags = "continuity,seam_classification"
+    tags = "continuity,seam_classification",
+    subjects = "issue:1085,db:continuity",
+    claims = "assertion:seam.discontinuity"
 )]
 async fn seam_classification_emits_discontinuity(ctx: TestContext) -> TestResult<()> {
     let identifier = format!("seam-discont-{}", Uuid::now_v7());
@@ -227,10 +233,12 @@ async fn seam_classification_emits_discontinuity(ctx: TestContext) -> TestResult
 }
 
 #[sinex_test(
-    scenario = "continuity::seam_classification",
+    scenario = "continuity::seam_classification::recovered_partial",
     category = "source_material",
     lane = "fast",
-    tags = "continuity,seam_classification"
+    tags = "continuity,seam_classification",
+    subjects = "issue:1085,db:continuity",
+    claims = "assertion:seam.recovered_partial"
 )]
 async fn seam_classification_emits_recovered_partial(ctx: TestContext) -> TestResult<()> {
     let identifier = format!("seam-recpartial-{}", Uuid::now_v7());
