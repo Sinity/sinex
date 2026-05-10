@@ -41,6 +41,52 @@
       "dedicated_build_rationale": null
     },
     {
+      "subject": "source_unit:blob-storage",
+      "id": "blob-storage",
+      "domain": "infra",
+      "role": "source_adapter",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "live_observation",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "live_observation_state",
+      "occurrence_policy": "natural_key",
+      "output_event_types": [
+        {
+          "source": "blob_storage",
+          "event_type": "blob.retrieved"
+        },
+        {
+          "source": "blob_storage",
+          "event_type": "blob.ingested"
+        },
+        {
+          "source": "blob_storage",
+          "event_type": "blob.verified"
+        },
+        {
+          "source": "blob_storage",
+          "event_type": "storage.statistics"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "embedded_in_pipeline_processes",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "infra",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pipeline_processes",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
       "subject": "source_unit:browser.history",
       "id": "browser.history",
       "domain": "web",
@@ -607,6 +653,258 @@
       "runner_pack": "process",
       "package_impact": "no_new_output",
       "implementation_mode": "rust_in_pack:process",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:sinex-automaton-error",
+      "id": "sinex-automaton-error",
+      "domain": "infra",
+      "role": "source_adapter",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "live_observation",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "live_observation_state",
+      "occurrence_policy": "natural_key",
+      "output_event_types": [
+        {
+          "source": "sinex",
+          "event_type": "automaton.error"
+        }
+      ],
+      "privacy_context": "public",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "embedded_in_automaton_runtime",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "infra",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:sinex-gateway-telemetry",
+      "id": "sinex-gateway-telemetry",
+      "domain": "infra",
+      "role": "source_adapter",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "live_observation",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "live_observation_state",
+      "occurrence_policy": "natural_key",
+      "output_event_types": [
+        {
+          "source": "sinex.gateway",
+          "event_type": "request.stats"
+        },
+        {
+          "source": "sinex.gateway",
+          "event_type": "rate_limit.exceeded"
+        },
+        {
+          "source": "sinex.gateway",
+          "event_type": "pool.stats"
+        },
+        {
+          "source": "sinex.gateway",
+          "event_type": "replay.stats"
+        }
+      ],
+      "privacy_context": "public",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "embedded_in_gateway",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "infra",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_gateway",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:sinex-ingestd-telemetry",
+      "id": "sinex-ingestd-telemetry",
+      "domain": "infra",
+      "role": "source_adapter",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "live_observation",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "live_observation_state",
+      "occurrence_policy": "natural_key",
+      "output_event_types": [
+        {
+          "source": "sinex.ingestd",
+          "event_type": "stream.stats"
+        },
+        {
+          "source": "sinex.ingestd",
+          "event_type": "assembly.stats"
+        },
+        {
+          "source": "sinex.ingestd",
+          "event_type": "consumer.startup_snapshot"
+        },
+        {
+          "source": "sinex.ingestd",
+          "event_type": "consumer.startup_replay_risk"
+        }
+      ],
+      "privacy_context": "public",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "embedded_in_ingestd",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "infra",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_ingestd",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:sinex-metrics",
+      "id": "sinex-metrics",
+      "domain": "infra",
+      "role": "source_adapter",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "live_observation",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "live_observation_state",
+      "occurrence_policy": "natural_key",
+      "output_event_types": [
+        {
+          "source": "sinex",
+          "event_type": "metric.counter"
+        },
+        {
+          "source": "sinex",
+          "event_type": "metric.gauge"
+        },
+        {
+          "source": "sinex",
+          "event_type": "metric.histogram"
+        },
+        {
+          "source": "sinex",
+          "event_type": "health.status"
+        }
+      ],
+      "privacy_context": "public",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "embedded_in_every_sinex_binary",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "infra",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_every_sinex_binary",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:sinex-node-telemetry",
+      "id": "sinex-node-telemetry",
+      "domain": "infra",
+      "role": "source_adapter",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "live_observation",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "live_observation_state",
+      "occurrence_policy": "natural_key",
+      "output_event_types": [
+        {
+          "source": "sinex.node",
+          "event_type": "processing.stats"
+        }
+      ],
+      "privacy_context": "public",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "embedded_in_node_sdk",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "infra",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_node_sdk",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:sinex-process-lifecycle",
+      "id": "sinex-process-lifecycle",
+      "domain": "infra",
+      "role": "source_adapter",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "live_observation",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "live_observation_state",
+      "occurrence_policy": "natural_key",
+      "output_event_types": [
+        {
+          "source": "sinex",
+          "event_type": "process.started"
+        },
+        {
+          "source": "sinex",
+          "event_type": "process.degraded"
+        },
+        {
+          "source": "sinex",
+          "event_type": "process.failed"
+        },
+        {
+          "source": "sinex",
+          "event_type": "process.shutdown"
+        }
+      ],
+      "privacy_context": "public",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "embedded_in_every_sinex_binary",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "infra",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_every_sinex_binary",
       "proof_obligations": [],
       "crate_impact": "0",
       "binary_impact": "0",
@@ -1184,6 +1482,20 @@
       "source_unit_count": 1
     },
     {
+      "id": "infra",
+      "source_unit_ids": [
+        "blob-storage",
+        "sinex-automaton-error",
+        "sinex-gateway-telemetry",
+        "sinex-ingestd-telemetry",
+        "sinex-metrics",
+        "sinex-node-telemetry",
+        "sinex-process-lifecycle"
+      ],
+      "shared_binary": "<embedded>",
+      "source_unit_count": 7
+    },
+    {
       "id": "process",
       "source_unit_ids": [
         "analytics",
@@ -1236,6 +1548,15 @@
       "binary": "sinex-process",
       "checkpoint_identity": "analytics",
       "control_identity": "analytics",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "blob-storage",
+      "service_name": "sinex-source@blob-storage",
+      "runner_pack": "infra",
+      "binary": "<embedded>",
+      "checkpoint_identity": "blob-storage",
+      "control_identity": "blob-storage",
       "host_identity": "runtime_hostname"
     },
     {
@@ -1374,6 +1695,60 @@
       "host_identity": "runtime_hostname"
     },
     {
+      "source_unit_id": "sinex-automaton-error",
+      "service_name": "sinex-source@sinex-automaton-error",
+      "runner_pack": "infra",
+      "binary": "<embedded>",
+      "checkpoint_identity": "sinex-automaton-error",
+      "control_identity": "sinex-automaton-error",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "sinex-gateway-telemetry",
+      "service_name": "sinex-source@sinex-gateway-telemetry",
+      "runner_pack": "infra",
+      "binary": "<embedded>",
+      "checkpoint_identity": "sinex-gateway-telemetry",
+      "control_identity": "sinex-gateway-telemetry",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "sinex-ingestd-telemetry",
+      "service_name": "sinex-source@sinex-ingestd-telemetry",
+      "runner_pack": "infra",
+      "binary": "<embedded>",
+      "checkpoint_identity": "sinex-ingestd-telemetry",
+      "control_identity": "sinex-ingestd-telemetry",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "sinex-metrics",
+      "service_name": "sinex-source@sinex-metrics",
+      "runner_pack": "infra",
+      "binary": "<embedded>",
+      "checkpoint_identity": "sinex-metrics",
+      "control_identity": "sinex-metrics",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "sinex-node-telemetry",
+      "service_name": "sinex-source@sinex-node-telemetry",
+      "runner_pack": "infra",
+      "binary": "<embedded>",
+      "checkpoint_identity": "sinex-node-telemetry",
+      "control_identity": "sinex-node-telemetry",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "sinex-process-lifecycle",
+      "service_name": "sinex-source@sinex-process-lifecycle",
+      "runner_pack": "infra",
+      "binary": "<embedded>",
+      "checkpoint_identity": "sinex-process-lifecycle",
+      "control_identity": "sinex-process-lifecycle",
+      "host_identity": "runtime_hostname"
+    },
+    {
       "source_unit_id": "system.dbus",
       "service_name": "sinex-source@system.dbus",
       "runner_pack": "system",
@@ -1492,12 +1867,12 @@
     }
   ],
   "package_impact": {
-    "total_source_units": 29,
-    "zero_crate_impact": 29,
-    "zero_binary_impact": 29,
-    "zero_nix_output_impact": 29,
-    "zero_derivation_impact": 29,
-    "zero_sqlx_validation_impact": 29,
+    "total_source_units": 36,
+    "zero_crate_impact": 36,
+    "zero_binary_impact": 36,
+    "zero_nix_output_impact": 36,
+    "zero_derivation_impact": 36,
+    "zero_sqlx_validation_impact": 36,
     "dedicated_build_rationales": []
   },
   "proof_obligations": [

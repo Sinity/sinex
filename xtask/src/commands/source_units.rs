@@ -713,6 +713,12 @@ fn runner_pack_binary(runner_pack: &str) -> Option<&'static str> {
         "fs" => Some("sinex-fs-ingestor"),
         "system" => Some("sinex-system-ingestor"),
         "terminal" => Some("sinex-terminal-ingestor"),
+        // Infra source units are embedded in every long-running sinex binary
+        // (ingestd, gateway, node SDK) — there is no dedicated `sinex-infra`
+        // binary. The descriptor exists so the (source, event_type) payload
+        // pairs are claimed by *something* in the inventory; the runtime
+        // owners are the surrounding pack bindings.
+        "infra" => Some("<embedded>"),
         _ => None,
     }
 }
@@ -805,8 +811,37 @@ fn static_emitter_event_pairs(
     Some(pairs.iter().copied().collect())
 }
 
-fn emitter_backing_exemption_reason(_source_unit_id: &str) -> Option<&'static str> {
-    None
+fn emitter_backing_exemption_reason(source_unit_id: &str) -> Option<&'static str> {
+    match source_unit_id {
+        // Infra source units have no single static emitter — `blob_storage`
+        // events are produced from the BLOB store call sites embedded in
+        // multiple binaries (ingestd, gateway, node SDK) and `sinex.*`
+        // self-observation events are produced from every long-running sinex
+        // binary as part of standard lifecycle/health/metrics observability.
+        // The descriptor exists so the (source, event_type) payload pairs
+        // are claimed by *something* in the inventory; static emitter
+        // backing is exempted.
+        "blob-storage" => Some("infra: blob store call sites embedded in multiple sinex binaries"),
+        "sinex-process-lifecycle" => {
+            Some("infra: process lifecycle events emitted by every long-running sinex binary")
+        }
+        "sinex-automaton-error" => {
+            Some("infra: automaton error events emitted from inside every automaton runtime")
+        }
+        "sinex-metrics" => {
+            Some("infra: metrics + health.status emitted by every long-running sinex binary")
+        }
+        "sinex-ingestd-telemetry" => {
+            Some("infra: ingestd-internal telemetry emitted from inside the ingestd process")
+        }
+        "sinex-gateway-telemetry" => {
+            Some("infra: gateway-internal telemetry emitted from inside the gateway process")
+        }
+        "sinex-node-telemetry" => {
+            Some("infra: node-SDK-internal telemetry emitted by every node binary")
+        }
+        _ => None,
+    }
 }
 
 fn source_unit_service_name(source_unit_id: &str) -> String {
