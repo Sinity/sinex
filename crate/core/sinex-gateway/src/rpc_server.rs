@@ -707,10 +707,15 @@ pub(crate) enum RateLimiter {
 }
 
 impl RateLimiter {
-    /// Check if request is allowed for the given token
-    async fn check(&self, token: &str) -> bool {
+    /// Check if request is allowed for the given (token, role).
+    ///
+    /// In-memory limiter applies per-role quotas (`readonly`/`write`/`admin`)
+    /// against a (token, role) key. The distributed limiter is keyed on the
+    /// token only — role-specific quotas are an in-memory feature; distributed
+    /// keeps the global per-token budget.
+    async fn check(&self, token: &str, role: crate::auth::Role) -> bool {
         match self {
-            RateLimiter::InMemory(limiter) => limiter.check(token).is_ok(),
+            RateLimiter::InMemory(limiter) => limiter.check(token, role).is_ok(),
             RateLimiter::Distributed(limiter) => limiter.check_and_increment(token).await,
         }
     }
@@ -724,6 +729,9 @@ pub(crate) struct AppState {
     pub(crate) rate_limiter: RateLimiter,
     pub(crate) metrics: Arc<GatewayMetrics>,
     pub(crate) sse_bus: Option<Arc<crate::sse_bus::SubscriptionBus>>,
+    /// Shutdown signal receiver — `/ready` reports 503 once asserted so that
+    /// upstream load balancers stop routing during graceful drain.
+    pub(crate) shutdown_rx: tokio::sync::watch::Receiver<bool>,
 }
 
 /// Shared dispatch function for RPC methods (used by both `rpc_server` and `native_messaging`)
@@ -778,14 +786,13 @@ pub async fn dispatch_rpc_method(
     result
 }
 
-/// Health and readiness check endpoint
+/// Detailed component health endpoint (`/health`).
 ///
-/// Returns 200 OK while the gateway can still serve DB-backed RPCs; the JSON
-/// body distinguishes full health from degraded operation.
-///
-/// NATS or replay-control failures no longer present as "healthy". Operators
+/// Always returns the full `SystemHealthResponse` body and uses the HTTP
+/// status code to distinguish serving (200) from non-serving (503). Operators
 /// should read `status`, `healthy`, and `degradation_reasons` rather than
-/// treating HTTP 200 as full readiness.
+/// treating HTTP 200 as full readiness; this route is intentionally verbose
+/// and is the destination for human-driven diagnostics.
 async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
     let response = system_health_response(state.services.health_report().await);
     let status = if response.serving {
@@ -795,6 +802,69 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
     };
 
     (status, axum::Json(response)).into_response()
+}
+
+/// Load-balancer-oriented readiness probe (`/ready`).
+///
+/// Returns 200 only when:
+/// - graceful drain has not been requested
+/// - the database pool can be acquired and ping-checked in <100ms
+/// - the NATS active probe reports connected
+///
+/// Returns 503 otherwise. The body is a minimal JSON object so probes can be
+/// cheap; richer diagnostics belong on `/health`.
+async fn ready_check(State(state): State<AppState>) -> impl IntoResponse {
+    use serde_json::json;
+    use std::time::Duration;
+
+    // 1. Drain semantics: while the shutdown signal is asserted the gateway
+    //    must report not-ready so external load balancers stop routing.
+    let draining = *state.shutdown_rx.borrow();
+    if draining {
+        let body = json!({
+            "ready": false,
+            "reason": "draining",
+        });
+        return (StatusCode::SERVICE_UNAVAILABLE, axum::Json(body)).into_response();
+    }
+
+    // 2. DB pool acquirable in <100ms.
+    let db_start = std::time::Instant::now();
+    let db_ok = matches!(
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            sqlx::query_scalar!("SELECT 1").fetch_one(state.services.pool()),
+        )
+        .await,
+        Ok(Ok(_))
+    );
+    let db_elapsed_ms = db_start.elapsed().as_millis() as u64;
+
+    if !db_ok {
+        let body = json!({
+            "ready": false,
+            "reason": "database_not_ready",
+            "db_probe_ms": db_elapsed_ms,
+        });
+        return (StatusCode::SERVICE_UNAVAILABLE, axum::Json(body)).into_response();
+    }
+
+    // 3. NATS connected (active probe).
+    let nats = state.services.probe_nats_active().await;
+    if !nats.connected {
+        let body = json!({
+            "ready": false,
+            "reason": "nats_not_ready",
+            "detail": nats.detail,
+        });
+        return (StatusCode::SERVICE_UNAVAILABLE, axum::Json(body)).into_response();
+    }
+
+    let body = json!({
+        "ready": true,
+        "db_probe_ms": db_elapsed_ms,
+    });
+    (StatusCode::OK, axum::Json(body)).into_response()
 }
 
 /// Main RPC handler using dispatch table
@@ -838,6 +908,16 @@ async fn handle_rpc(
                 None,
                 Some(&detail),
             );
+            // Audit `gateway.rpc.call` (#1172 AC-7): unauthenticated. We
+            // cannot derive a token prefix from a rejected bearer; record
+            // an empty prefix and `unknown` role.
+            state.metrics.record_rpc_call(
+                &request.method,
+                "unknown",
+                start.elapsed().as_millis() as u64,
+                sinex_primitives::events::payloads::RpcStatus::Unauthenticated,
+                "",
+            );
             return err.into_response();
         }
     };
@@ -855,6 +935,14 @@ async fn handle_rpc(
                 None,
                 Some(&detail),
             );
+            let token_prefix = &token[..8.min(token.len())];
+            state.metrics.record_rpc_call(
+                &request.method,
+                "unknown",
+                start.elapsed().as_millis() as u64,
+                sinex_primitives::events::payloads::RpcStatus::Rejected,
+                token_prefix,
+            );
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(JsonRpcResponse::error(
@@ -867,7 +955,7 @@ async fn handle_rpc(
     };
 
     // Issue 143: Per-token rate limiting
-    if !state.rate_limiter.check(&token).await {
+    if !state.rate_limiter.check(&token, auth_context.role).await {
         let token_prefix = &token[..8.min(token.len())];
         warn!(token_prefix, "Request rejected: rate limit exceeded");
         state.metrics.record_rate_limited();
@@ -877,6 +965,14 @@ async fn handle_rpc(
             AccessOutcome::RateLimited,
             Some(&auth_context),
             None,
+        );
+        emit_rpc_call_audit(
+            &state,
+            &request.method,
+            auth_context.role,
+            start.elapsed(),
+            sinex_primitives::events::payloads::RpcStatus::RateLimited,
+            token_prefix,
         );
         return (
             StatusCode::TOO_MANY_REQUESTS,
@@ -897,6 +993,14 @@ async fn handle_rpc(
             AccessOutcome::InvalidRequest,
             Some(&auth_context),
             Some(&detail),
+        );
+        emit_rpc_call_audit(
+            &state,
+            &request.method,
+            auth_context.role,
+            start.elapsed(),
+            sinex_primitives::events::payloads::RpcStatus::InvalidRequest,
+            &auth_context.token_prefix,
         );
         let response = JsonRpcResponse::error(request.id, -32600, detail.to_string());
         return (StatusCode::BAD_REQUEST, Json(response));
@@ -921,18 +1025,25 @@ async fn handle_rpc(
 
     // Record latency on success
     let latency_us = start.elapsed().as_micros() as u64;
+    let elapsed = start.elapsed();
 
-    let response = match result {
+    let (response, audit_status) = match result {
         Ok(value) => {
             state.metrics.record_request_success(latency_us);
-            JsonRpcResponse::success(request.id, value)
+            (
+                JsonRpcResponse::success(request.id, value),
+                sinex_primitives::events::payloads::RpcStatus::Success,
+            )
         }
         Err(err)
             if matches!(&err, SinexError::NotFound(_))
                 && err.to_string().starts_with("Unknown method:") =>
         {
             state.metrics.record_request_rejected();
-            JsonRpcResponse::error(request.id, -32601, err.to_string())
+            (
+                JsonRpcResponse::error(request.id, -32601, err.to_string()),
+                sinex_primitives::events::payloads::RpcStatus::Failed,
+            )
         }
         Err(err) => {
             let error_id = Uuid::now_v7();
@@ -961,11 +1072,42 @@ async fn handle_rpc(
                 // No internal error details - check server logs with error_id
             });
 
-            JsonRpcResponse::error_with_data(request.id, code, message, data)
+            (
+                JsonRpcResponse::error_with_data(request.id, code, message, data),
+                sinex_primitives::events::payloads::RpcStatus::Failed,
+            )
         }
     };
 
+    emit_rpc_call_audit(
+        &state,
+        &method,
+        auth_context.role,
+        elapsed,
+        audit_status,
+        &auth_context.token_prefix,
+    );
+
     (StatusCode::OK, Json(response))
+}
+
+/// Helper that wraps the gateway-metrics audit emission so the call sites
+/// stay readable. No-op when metrics are disabled.
+fn emit_rpc_call_audit(
+    state: &AppState,
+    method: &str,
+    role: crate::auth::Role,
+    elapsed: std::time::Duration,
+    status: sinex_primitives::events::payloads::RpcStatus,
+    token_prefix: &str,
+) {
+    state.metrics.record_rpc_call(
+        method,
+        role.as_str(),
+        elapsed.as_millis() as u64,
+        status,
+        token_prefix,
+    );
 }
 
 /// Maximum number of requests allowed in a single JSON-RPC batch
@@ -1073,7 +1215,7 @@ async fn handle_rpc_batch(
     let mut responses = Vec::with_capacity(requests.len());
     for request in requests {
         // Rate limit each request individually
-        if !state.rate_limiter.check(&token).await {
+        if !state.rate_limiter.check(&token, auth_context.role).await {
             let token_prefix = &token[..8.min(token.len())];
             warn!(token_prefix, "Batch request rejected: rate limit exceeded");
             state.metrics.record_rate_limited();
@@ -1540,6 +1682,17 @@ pub async fn spawn(
     // Create shutdown channels for background tasks
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
+    // Eagerly build the static (source, event_type) registry from the
+    // EventPayload inventory (#1172 schema-as-code). The first call lazily
+    // initialises a `OnceLock`; touching it at startup turns any registry
+    // panic / inventory drift into a startup failure rather than a per-RPC
+    // surprise.
+    let schema_registry = crate::schema_registry::registry();
+    info!(
+        registered_payloads = schema_registry.len(),
+        "Schema-as-code: EventPayload inventory loaded into gateway registry"
+    );
+
     let auth = GatewayAuth::from_config(config)?
         .start_file_watcher(shutdown_rx.clone())
         .await?;
@@ -1581,12 +1734,28 @@ pub async fn spawn(
         RpcServer::monitor_background_task("SSE subscription bus", task, shutdown_rx.clone())
     });
 
+    // TTL enforcement task (#1172 AC-5). Cheap: most ticks are no-ops because
+    // very few schemas declare `retention_seconds`. Survives missing
+    // coordination by self-skipping per tick.
+    let host = sinex_primitives::events::builder::get_hostname();
+    let ttl_instance_id = format!("gateway:{}:{}", host.as_str(), std::process::id());
+    let _ttl_task = RpcServer::monitor_background_task(
+        "TTL enforcement task",
+        crate::lifecycle_ttl::spawn_ttl_task(
+            services.clone(),
+            ttl_instance_id,
+            shutdown_rx.clone(),
+        ),
+        shutdown_rx.clone(),
+    );
+
     let state = AppState {
         services,
         auth,
         rate_limiter,
         metrics,
         sse_bus,
+        shutdown_rx: shutdown_rx.clone(),
     };
 
     let app = RpcServer::build_app(&limits, &config.cors_origins_list(), state);
@@ -1706,7 +1875,7 @@ impl RpcServer {
             .route("/rpc/batch", post(handle_rpc_batch))
             .route("/", post(handle_rpc))
             .route("/health", get(health_check))
-            .route("/ready", get(health_check))
+            .route("/ready", get(ready_check))
     }
 
     /// Build the complete app with split middleware:

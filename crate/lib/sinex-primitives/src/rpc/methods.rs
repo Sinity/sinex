@@ -90,6 +90,10 @@ pub const TELEMETRY_NODE_STATS: &str = "telemetry.node_stats";
 pub const TELEMETRY_METRIC_COUNTERS: &str = "telemetry.metric_counters";
 pub const TELEMETRY_INGESTD_BATCH_STATS: &str = "telemetry.ingestd_batch_stats";
 pub const TELEMETRY_INGESTD_VALIDATION: &str = "telemetry.ingestd_validation";
+pub const TELEMETRY_THROUGHPUT: &str = "telemetry.throughput";
+
+// Annotations
+pub const EVENTS_ANNOTATE: &str = "events.annotate";
 
 // Sources
 pub const SOURCES_STAGE: &str = "sources.stage";

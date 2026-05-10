@@ -1,27 +1,34 @@
+use sinex_gateway::auth::Role;
 use sinex_gateway::rate_limit::{RateLimitConfig, TokenRateLimiter};
 use std::num::NonZeroU32;
 use std::time::Duration;
 use xtask::sandbox::prelude::*;
 
+fn cfg(rps: u32, burst: u32, idle: Duration, enabled: bool) -> RateLimitConfig {
+    RateLimitConfig {
+        readonly_rps: NonZeroU32::new(rps).expect("non-zero rps"),
+        write_rps: NonZeroU32::new(rps).expect("non-zero rps"),
+        admin_rps: NonZeroU32::new(rps).expect("non-zero rps"),
+        burst_size: NonZeroU32::new(burst).expect("non-zero burst"),
+        idle_timeout: idle,
+        enabled,
+    }
+}
+
 #[sinex_test]
 async fn test_rate_limiter_allows_initial_requests() -> TestResult<()> {
-    let limiter = TokenRateLimiter::new(RateLimitConfig {
-        requests_per_second: NonZeroU32::new(100).expect("100 is a valid NonZero value"),
-        burst_size: NonZeroU32::new(50).expect("50 is a valid NonZero value"),
-        idle_timeout: Duration::from_mins(1),
-        enabled: true,
-    });
+    let limiter = TokenRateLimiter::new(cfg(100, 50, Duration::from_mins(1), true));
 
     for i in 0..50 {
         assert!(
-            limiter.check("test-token").is_ok(),
+            limiter.check("test-token", Role::Write).is_ok(),
             "Request {i} should succeed within burst capacity"
         );
     }
 
     let mut limited = false;
     for _ in 0..200 {
-        if limiter.check("test-token").is_err() {
+        if limiter.check("test-token", Role::Write).is_err() {
             limited = true;
             break;
         }
@@ -32,52 +39,59 @@ async fn test_rate_limiter_allows_initial_requests() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_rate_limiter_disabled() -> TestResult<()> {
-    let limiter = TokenRateLimiter::new(RateLimitConfig {
-        requests_per_second: NonZeroU32::new(1).expect("1 is a valid NonZero value"),
-        burst_size: NonZeroU32::new(1).expect("1 is a valid NonZero value"),
-        idle_timeout: Duration::from_mins(1),
-        enabled: false,
-    });
+    let limiter = TokenRateLimiter::new(cfg(1, 1, Duration::from_mins(1), false));
 
     for _ in 0..1000 {
-        assert!(limiter.check("test-token").is_ok());
+        assert!(limiter.check("test-token", Role::Admin).is_ok());
     }
     Ok(())
 }
 
 #[sinex_test]
 async fn test_separate_tokens_have_separate_limits() -> TestResult<()> {
-    let limiter = TokenRateLimiter::new(RateLimitConfig {
-        requests_per_second: NonZeroU32::new(5).expect("5 is a valid NonZero value"),
-        burst_size: NonZeroU32::new(5).expect("5 is a valid NonZero value"),
-        idle_timeout: Duration::from_mins(1),
-        enabled: true,
-    });
+    let limiter = TokenRateLimiter::new(cfg(5, 5, Duration::from_mins(1), true));
 
     for _ in 0..20 {
-        let _ = limiter.check("token1");
+        let _ = limiter.check("token1", Role::ReadOnly);
     }
 
-    assert!(limiter.check("token2").is_ok());
+    assert!(limiter.check("token2", Role::ReadOnly).is_ok());
     Ok(())
 }
 
 #[sinex_test]
 async fn test_cleanup_removes_stale_entries() -> TestResult<()> {
-    let limiter = TokenRateLimiter::new(RateLimitConfig {
-        requests_per_second: NonZeroU32::new(10).expect("10 is a valid NonZero value"),
-        burst_size: NonZeroU32::new(5).expect("5 is a valid NonZero value"),
-        idle_timeout: Duration::from_millis(1),
-        enabled: true,
-    });
+    let limiter = TokenRateLimiter::new(cfg(10, 5, Duration::from_millis(1), true));
 
-    limiter.check("token1").ok();
-    limiter.check("token2").ok();
+    limiter.check("token1", Role::ReadOnly).ok();
+    limiter.check("token2", Role::Write).ok();
     assert_eq!(limiter.token_count(), 2);
 
     tokio::time::sleep(Duration::from_millis(10)).await;
 
     limiter.cleanup_stale();
     assert_eq!(limiter.token_count(), 0);
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_per_role_buckets_independent_for_same_token() -> TestResult<()> {
+    // Admin gets 1 RPS / burst 1. ReadOnly gets 100 RPS / burst 100.
+    let config = RateLimitConfig {
+        readonly_rps: NonZeroU32::new(100).unwrap(),
+        write_rps: NonZeroU32::new(100).unwrap(),
+        admin_rps: NonZeroU32::new(1).unwrap(),
+        burst_size: NonZeroU32::new(1).unwrap(),
+        idle_timeout: Duration::from_mins(1),
+        enabled: true,
+    };
+    let limiter = TokenRateLimiter::new(config);
+
+    // Admin bucket exhausts after one request.
+    assert!(limiter.check("token", Role::Admin).is_ok());
+    assert!(limiter.check("token", Role::Admin).is_err());
+
+    // ReadOnly bucket on the same token is independent.
+    assert!(limiter.check("token", Role::ReadOnly).is_ok());
     Ok(())
 }

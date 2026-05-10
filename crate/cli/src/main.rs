@@ -8,7 +8,8 @@ use sinexctl::commands::{
     ContextCommand, CoreCommands, DemoCommand, DlqCommands, ErrorsCommand, ExplainCommand,
     GatewayCommands, GitOpsCommands, LifecycleCommands, NodeCommands, NodesCommand, NowCommand,
     OpsCommands, QueryCommand, RecentCommand, ReplayCommands, ReportCommands, SourcesCommand,
-    StatusCommand, TelemetryCommands, TraceCommand, TuiCommand, VerifyCommand, WatchCommand,
+    AnnotateCommand, StatusCommand, TelemetryCommands, ThroughputCommand, TraceCommand,
+    TuiCommand, VerifyCommand, WatchCommand,
 };
 use sinexctl::model::OutputFormat;
 use sinexctl::{Config, default_rpc_url, render_format_matrix_terminal, validate_format};
@@ -204,6 +205,12 @@ enum Commands {
     /// List running nodes with status and health
     Nodes(NodesCommand),
 
+    /// Per-source / per-component event throughput (#1172 AC-8)
+    Throughput(ThroughputCommand),
+
+    /// Annotate an event with a typed note (#1172 AC-9)
+    Annotate(AnnotateCommand),
+
     /// Generate shell completions
     Completions(CompletionsCommand),
 }
@@ -322,6 +329,8 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Verify(cmd) => cmd.execute(&client, format).await?,
                 Commands::Now(cmd) => cmd.execute(&client, format).await?,
                 Commands::Nodes(cmd) => cmd.execute(&client, format).await?,
+                Commands::Throughput(cmd) => cmd.execute(&client, format).await?,
+                Commands::Annotate(cmd) => cmd.execute(&client, format).await?,
                 Commands::Completions(_) => unreachable!("Completions command handled above"),
             }
         }
@@ -456,6 +465,8 @@ fn command_path(cmd: &Commands) -> String {
         Commands::Verify(_) => "verify".to_string(),
         Commands::Now(_) => "now".to_string(),
         Commands::Nodes(_) => "nodes".to_string(),
+        Commands::Throughput(_) => "throughput".to_string(),
+        Commands::Annotate(_) => "annotate".to_string(),
         Commands::Completions(_) => "completions".to_string(),
     }
 }
