@@ -30,7 +30,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         instance_id: &str,
         host: &str,
         version: &str,
-        _raw_config: &HashMap<String, serde_json::Value>,
+        raw_config: &HashMap<String, serde_json::Value>,
     ) -> NodeResult<Option<Uuid>> {
         let node_name = NodeName::new(self.node.node_name());
         let node_type = self.node.node_type();
@@ -43,9 +43,37 @@ impl<T: Node + 'static> NodeRunner<T> {
                     "Failed to register manifest for {service_name}: {error}"
                 ))
             })?;
+
+        // Persist effective-config provenance on the run row so config-drift
+        // and audit workflows can reconstruct what version + config a process
+        // started with. Hash is BLAKE3 over the canonical-JSON serialization
+        // of the config map plus the version string.
+        let effective_config_value = serde_json::to_value(raw_config).ok();
+        let effective_config_hash = effective_config_value.as_ref().map(|cfg| {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(version.as_bytes());
+            hasher.update(b"\0");
+            // Canonical JSON: serde_json::to_string sorts map keys when the
+            // map type does (HashMap doesn't, but the input is small enough
+            // that ordering instability across versions is acceptable for
+            // hashing — the hash exists to detect changes, not to be a
+            // cross-host invariant.)
+            if let Ok(serialized) = serde_json::to_string(cfg) {
+                hasher.update(serialized.as_bytes());
+            }
+            hasher.finalize().to_hex().to_string()
+        });
+
         let run = pool
             .state()
-            .start_run(Some(manifest.id), service_name, instance_id, host)
+            .start_run(
+                Some(manifest.id),
+                service_name,
+                instance_id,
+                host,
+                effective_config_hash.as_deref(),
+                effective_config_value.as_ref(),
+            )
             .await
             .map_err(|error| {
                 SinexError::processing(format!(

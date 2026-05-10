@@ -784,7 +784,7 @@ impl StateRepository<'_> {
             INSERT INTO core.manifests (name, manifest_type, version, description)
             VALUES ($1, $2, $3, $4)
             ON CONFLICT (name, version)
-            DO UPDATE SET description = EXCLUDED.description
+            DO UPDATE SET description = COALESCE(EXCLUDED.description, core.manifests.description)
             RETURNING id, name, manifest_type, version, description,
                       created_at as "created_at: sinex_primitives::temporal::Timestamp"
             "#,
@@ -807,12 +807,14 @@ impl StateRepository<'_> {
         service_name: &str,
         instance_id: &str,
         host: &str,
+        effective_config_hash: Option<&str>,
+        effective_config: Option<&JsonValue>,
     ) -> DbResult<NodeRun> {
         sqlx::query_as!(
             NodeRun,
             r#"
-            INSERT INTO core.runs (manifest_id, service_name, instance_id, host, started_at, status)
-            VALUES ($1, $2, $3, $4, now(), 'running')
+            INSERT INTO core.runs (manifest_id, service_name, instance_id, host, started_at, status, effective_config_hash, effective_config)
+            VALUES ($1, $2, $3, $4, now(), 'running', $5, $6)
             ON CONFLICT DO NOTHING
             RETURNING
                 id as "id: _",
@@ -831,6 +833,8 @@ impl StateRepository<'_> {
             service_name,
             instance_id,
             host,
+            effective_config_hash,
+            effective_config,
         )
         .fetch_optional(self.pool)
         .await?
