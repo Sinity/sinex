@@ -667,6 +667,10 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                     expression: "source_event_ids IS NULL OR array_position(source_event_ids, NULL) IS NULL",
                 },
                 NamedConstraint {
+                    name: "events_no_self_parent",
+                    expression: "source_event_ids IS NULL OR NOT (id = ANY(source_event_ids))",
+                },
+                NamedConstraint {
                     name: "events_source_material_only_offsets",
                     expression: "source_material_id IS NOT NULL OR (anchor_byte IS NULL AND offset_start IS NULL AND offset_end IS NULL AND offset_kind IS NULL)",
                 },

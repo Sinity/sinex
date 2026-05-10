@@ -933,6 +933,30 @@ mod constraint_validation_tests {
             &empty_array[..]
         ).execute(pool).await;
         assert!(result.is_err(), "Should reject empty UUIDv7 array");
+
+        // Self-parent (#1191, deferred from #755): an event MUST NOT list its
+        // own id in source_event_ids. UUIDv7 monotonicity prevents cross-row
+        // backward cycles for already-persisted events, but a fresh row's id
+        // is one of the values being assigned at insert time — only the DB
+        // CHECK can refuse to write the row.
+        let self_parent_id = Uuid::now_v7();
+        let result = sqlx::query!(
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[])",
+            self_parent_id,
+            "self-parent",
+            "self-event",
+            "test-host",
+            serde_json::json!({}),
+            *Timestamp::now(),
+            &[self_parent_id][..],
+        ).execute(pool).await;
+        let err = result.expect_err("self-parent insert must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("events_no_self_parent"),
+            "expected events_no_self_parent constraint violation, got: {msg}"
+        );
+
         // Clean up to avoid leaking rows into other constraint tests.
         sqlx::query("TRUNCATE core.events CASCADE")
             .execute(pool)
