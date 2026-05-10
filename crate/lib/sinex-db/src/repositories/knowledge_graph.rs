@@ -672,10 +672,51 @@ impl KnowledgeGraphRepository<'_> {
 
         // Rewire relations from source to target, deduplicating to avoid
         // violating the uk_entity_relations_triple unique constraint.
-        // For each direction, first delete relations that would become
-        // duplicates, then update the remaining ones.
+        //
+        // For each direction (outgoing, incoming), when source and target both
+        // have a relation with the same (other-end, relation_type), the source
+        // row would collide with target's row on rewire. The previous
+        // implementation deleted the colliding source row and silently dropped
+        // its `source_event_ids`. To preserve provenance we instead:
+        //   1. UPDATE the survivor (target's) `source_event_ids` to the
+        //      sorted-unique union of both rows' arrays.
+        //   2. DELETE the duplicate source rows (their provenance is now on
+        //      the survivor).
+        //   3. UPDATE the remaining (non-colliding) source rows to point at
+        //      target.
+        // De-duplication uses `array(SELECT DISTINCT unnest(...))`, which
+        // PostgreSQL guarantees produces a deterministic sorted-by-value
+        // ordering only after explicit ORDER BY; we sort to keep the array
+        // shape stable for assertions and downstream consumers.
 
-        // Delete outgoing relations from source that duplicate target's outgoing
+        // 1a. Union outgoing duplicate provenance into target's surviving row.
+        sqlx::query!(
+            r#"
+            UPDATE core.entity_relations target
+            SET source_event_ids = (
+                    SELECT COALESCE(array_agg(DISTINCT eid ORDER BY eid), ARRAY[]::uuid[])
+                    FROM unnest(target.source_event_ids || dup.source_event_ids) AS eid
+                ),
+                updated_at = NOW()
+            FROM core.entity_relations dup
+            WHERE target.from_entity_id::uuid = $2
+              AND dup.from_entity_id::uuid = $1
+              AND dup.to_entity_id = target.to_entity_id
+              AND dup.relation_type = target.relation_type
+            "#,
+            *source.id.as_uuid() as _,
+            *target.id.as_uuid() as _
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| {
+            db_error(
+                e,
+                "merge outgoing relation source_event_ids before deduplication",
+            )
+        })?;
+
+        // 1b. Delete the now-redundant outgoing duplicates from source.
         sqlx::query!(
             r#"
             DELETE FROM core.entity_relations
@@ -693,7 +734,8 @@ impl KnowledgeGraphRepository<'_> {
         .await
         .map_err(|e| db_error(e, "deduplicate outgoing relations before merge"))?;
 
-        // Update remaining outgoing relations from source to target
+        // 1c. Update remaining (non-colliding) outgoing relations from source
+        //     to target.
         sqlx::query!(
             r#"
             UPDATE core.entity_relations
@@ -707,7 +749,34 @@ impl KnowledgeGraphRepository<'_> {
         .await
         .map_err(|e| db_error(e, "update source relations"))?;
 
-        // Delete incoming relations to source that duplicate target's incoming
+        // 2a. Union incoming duplicate provenance into target's surviving row.
+        sqlx::query!(
+            r#"
+            UPDATE core.entity_relations target
+            SET source_event_ids = (
+                    SELECT COALESCE(array_agg(DISTINCT eid ORDER BY eid), ARRAY[]::uuid[])
+                    FROM unnest(target.source_event_ids || dup.source_event_ids) AS eid
+                ),
+                updated_at = NOW()
+            FROM core.entity_relations dup
+            WHERE target.to_entity_id::uuid = $2
+              AND dup.to_entity_id::uuid = $1
+              AND dup.from_entity_id = target.from_entity_id
+              AND dup.relation_type = target.relation_type
+            "#,
+            *source.id.as_uuid() as _,
+            *target.id.as_uuid() as _
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| {
+            db_error(
+                e,
+                "merge incoming relation source_event_ids before deduplication",
+            )
+        })?;
+
+        // 2b. Delete the now-redundant incoming duplicates pointing at source.
         sqlx::query!(
             r#"
             DELETE FROM core.entity_relations
@@ -725,7 +794,8 @@ impl KnowledgeGraphRepository<'_> {
         .await
         .map_err(|e| db_error(e, "deduplicate incoming relations before merge"))?;
 
-        // Update remaining incoming relations to source to target
+        // 2c. Update remaining (non-colliding) incoming relations from source
+        //     to target.
         sqlx::query!(
             r#"
             UPDATE core.entity_relations
