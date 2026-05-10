@@ -13,7 +13,7 @@ use serde::Serialize;
 use sinex_primitives::events::schema_registry::get_all_payloads;
 use sinex_primitives::proof::{
     self, Claim, Exemption, Horizon, OccurrenceIdentity, PROOF_CATALOG_SCHEMA_VERSION, PrivacyTier,
-    ProofObligation, RetentionPolicy, RunnerBinding, RuntimeShape, RuntimeUnitDescriptor,
+    ProofObligation, RetentionPolicy, RunnerBinding, RuntimeShape, SourceUnitBinding,
 };
 
 use crate::command_catalog::{CommandInfo, collect_command_catalog};
@@ -22,7 +22,7 @@ use crate::commands::test::{ScenarioCatalogEntry, discover_scenario_catalog};
 #[derive(Debug, Clone, Serialize)]
 pub struct ProofCatalog {
     pub schema_version: u32,
-    pub runtime_units: Vec<RuntimeUnitDescriptor>,
+    pub runtime_units: Vec<SourceUnitBinding>,
     pub source_units: Vec<SourceUnitSubject>,
     pub claims: Vec<Claim>,
     pub runner_bindings: Vec<RunnerBinding>,
@@ -118,7 +118,7 @@ impl ProofCatalogValidation {
 pub fn build_proof_catalog(workspace_root: &Path) -> Result<ProofCatalog> {
     crate::source_unit_inventory::link_source_unit_inventories();
 
-    let mut runtime_units = proof::runtime_unit_descriptors()
+    let mut runtime_units = proof::source_unit_bindings()
         .copied()
         .collect::<Vec<_>>();
     runtime_units.sort_by(|left, right| left.subject.as_str().cmp(right.subject.as_str()));
