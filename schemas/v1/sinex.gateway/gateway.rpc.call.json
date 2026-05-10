@@ -1,0 +1,77 @@
+{
+  "$defs": {
+    "RpcStatus": {
+      "description": "Outcome class for a finished RPC call.\n\nMirrors the existing `AccessOutcome` audit values, but lives at the\npayload layer so it serializes deterministically into the event store.",
+      "oneOf": [
+        {
+          "const": "success",
+          "description": "Method dispatch returned `Ok(_)`.",
+          "type": "string"
+        },
+        {
+          "const": "unauthenticated",
+          "description": "Token failed authentication.",
+          "type": "string"
+        },
+        {
+          "const": "rejected",
+          "description": "Authenticated, but token role rejected (e.g. RBAC).",
+          "type": "string"
+        },
+        {
+          "const": "rate_limited",
+          "description": "Token bucket exhausted.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_request",
+          "description": "JSON-RPC envelope or schema validation rejected the request.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Method dispatch returned `Err(_)` for any other reason.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Audit payload for a single completed RPC dispatch (#1172 AC-7).\n\nPrivacy: only the `token_prefix` (first 8 chars of the bearer token) is\nrecorded — never the full token. The `Role` is safe to record because it\ndescribes the request's authorization band, not the bearer.",
+  "properties": {
+    "latency_ms": {
+      "description": "Wall-clock dispatch latency in milliseconds.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "method": {
+      "description": "JSON-RPC method name (e.g. `events.query`, `lifecycle.archive`).",
+      "type": "string"
+    },
+    "role": {
+      "description": "Authenticated role on the request, lowercased: `readonly`, `write`,\nor `admin`. (We use a string here rather than a typed enum because\n`Role` lives in `sinex-gateway` and can't be imported by primitives\nwithout inverting the dependency direction.)",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/RpcStatus",
+      "description": "Outcome classification."
+    },
+    "token_prefix": {
+      "description": "First 8 characters of the bearer token used for the request, or\n`system` for trusted local calls. Never the full token.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "method",
+    "role",
+    "latency_ms",
+    "status",
+    "token_prefix"
+  ],
+  "title": "GatewayRpcCallPayload",
+  "type": "object",
+  "x-sinex-event-type": "gateway.rpc.call",
+  "x-sinex-source": "sinex.gateway",
+  "x-sinex-version": "1.0.0"
+}

@@ -437,6 +437,13 @@
     },
     {
       "source": "sinex.gateway",
+      "event_type": "gateway.rpc.call",
+      "version": "1.0.0",
+      "path": "sinex.gateway/gateway.rpc.call.json",
+      "content_hash": "b7d3b700911b275cb042194162eb37c492af2aed15939e85af23ddc4f51c550d"
+    },
+    {
+      "source": "sinex.gateway",
       "event_type": "pool.stats",
       "version": "1.0.0",
       "path": "sinex.gateway/pool.stats.json",
