@@ -1,7 +1,7 @@
-use sinex_primitives::{proof::RuntimeUnitDescriptor, subject_ref};
+use sinex_primitives::{proof::SourceUnitBinding, subject_ref};
 
 fn main() {
-    let _ = RuntimeUnitDescriptor::builder(
+    let _ = SourceUnitBinding::builder(
         subject_ref!("runtime_unit:test.missing_privacy"),
         "test.missing_privacy",
         "test",
