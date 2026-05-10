@@ -42,6 +42,28 @@ pub enum SourceMaterialRegistry {
     StagedOnHost,
     OptionalBlobId,
     TotalBytes,
+    /// Operator-declared coverage contract (#1174).
+    ///
+    /// JSONB column carrying a [`DeclaredCoverageContract`][dc] payload with
+    /// the discriminator field `kind` constrained by a named CHECK to one of
+    /// `Continuous`, `PeriodicDump`, `OpportunisticImport`, `FiniteOneShot`,
+    /// `EphemeralStream`, or `Unknown`. Legacy rows default to `Unknown` so
+    /// continuity reports can flag "configuration gap" rather than "data gap".
+    ///
+    /// [dc]: sinex_primitives::sources::continuity::DeclaredCoverageContract
+    CoverageContract,
+    /// Operator-declared privacy classification (#1174).
+    ///
+    /// `TEXT NOT NULL DEFAULT 'unknown'`. Constrained by a named CHECK to
+    /// one of `public`, `personal`, `secret`, `redacted`, `unknown`. Seam
+    /// classification only treats `personal` / `secret` / `redacted` as
+    /// private — never `unknown` — to keep heuristic and declared signals
+    /// distinct.
+    ///
+    /// Mirrored by [`PrivacyClass`][pc] in primitives.
+    ///
+    /// [pc]: sinex_primitives::sources::continuity::PrivacyClass
+    PrivacyClass,
 }
 
 /// **Table: `raw.source_material_links`**
@@ -94,6 +116,24 @@ pub struct SourceMaterialRecord {
     /// Total size of the source material in bytes, set during finalization.
     /// NULL until finalization completes. Used for `anchor_byte` plausibility checks.
     pub total_bytes: Option<i64>,
+    /// Operator-declared coverage contract (#1174). Defaults to a
+    /// `{"kind":"Unknown"}` payload for legacy rows so continuity reports
+    /// can flag "configuration gap" rather than "data gap".
+    #[serde(default = "default_unknown_coverage_contract")]
+    pub coverage_contract: JsonValue,
+    /// Operator-declared privacy classification (#1174). Defaults to
+    /// `"unknown"` for legacy rows; downstream seam classification only
+    /// treats `"personal"` / `"secret"` / `"redacted"` as private.
+    #[serde(default = "default_unknown_privacy_class")]
+    pub privacy_class: String,
+}
+
+fn default_unknown_coverage_contract() -> JsonValue {
+    serde_json::json!({ "kind": "Unknown", "declared_at": null })
+}
+
+fn default_unknown_privacy_class() -> String {
+    "unknown".to_string()
 }
 
 /// The Rust struct representation of a row from `raw.source_material_links`.
@@ -165,6 +205,33 @@ impl SourceMaterialRegistry {
                 ColumnDef::new(SourceMaterialRegistry::TotalBytes)
                     .big_integer()
                     .check(Expr::cust("total_bytes IS NULL OR total_bytes >= 0")),
+            )
+            // Coverage contract (#1174): JSONB carrying the operator-declared
+            // shape. Default is `{"kind":"Unknown","declared_at":null}` so
+            // legacy rows pre-date operator intent and continuity reports can
+            // flag the absence as a configuration gap.
+            //
+            // The `kind` discriminator is constrained by the named CHECK
+            // `source_material_registry_coverage_contract_kind_check` listed
+            // in the convergence registry (`crate/lib/sinex-schema/src/converge.rs`).
+            // Named CHECKs are reconciled by the convergence engine; inline
+            // CHECKs in CREATE TABLE are not.
+            .col(
+                ColumnDef::new(SourceMaterialRegistry::CoverageContract)
+                    .json_binary()
+                    .not_null()
+                    .default(Expr::cust(
+                        "'{\"kind\":\"Unknown\",\"declared_at\":null}'::jsonb",
+                    )),
+            )
+            // Privacy class (#1174): operator-declared classification.
+            // Default `'unknown'` for legacy rows; the convergence registry
+            // carries a named CHECK constraining the value to the canonical set.
+            .col(
+                ColumnDef::new(SourceMaterialRegistry::PrivacyClass)
+                    .text()
+                    .not_null()
+                    .default("unknown"),
             )
             .foreign_key(
                 ForeignKey::create()

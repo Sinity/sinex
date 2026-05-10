@@ -47,6 +47,217 @@ pub enum CoverageContract {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Declared coverage contract (stored shape, #1174)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Kind discriminator for the stored, operator-declared coverage contract.
+///
+/// Mirrors [`CoverageContract`] for the five live shapes plus an explicit
+/// `Unknown` value used as the default for legacy rows. `Unknown` allows
+/// `sinexctl sources continuity` to flag "configuration gap" rather than
+/// "data gap" — the two are different operator concerns.
+///
+/// Persisted as a `TEXT`-shaped string inside the `coverage_contract` JSONB
+/// column on `raw.source_material_registry`; the named CHECK constraint
+/// `source_material_registry_coverage_contract_kind_check` keeps the column
+/// in sync with this enum (see `crate/lib/sinex-schema/src/converge.rs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "PascalCase")]
+pub enum DeclaredCoverageContractKind {
+    Continuous,
+    PeriodicDump,
+    OpportunisticImport,
+    FiniteOneShot,
+    EphemeralStream,
+    /// Legacy default — operator has not declared an intent yet.
+    Unknown,
+}
+
+impl DeclaredCoverageContractKind {
+    /// Return the canonical PascalCase wire form persisted in JSONB.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Continuous => "Continuous",
+            Self::PeriodicDump => "PeriodicDump",
+            Self::OpportunisticImport => "OpportunisticImport",
+            Self::FiniteOneShot => "FiniteOneShot",
+            Self::EphemeralStream => "EphemeralStream",
+            Self::Unknown => "Unknown",
+        }
+    }
+
+    /// All canonical kind strings, in declaration order. Used by the schema
+    /// CHECK constraint generator and by validation paths that need to
+    /// confirm a value is permitted before persisting.
+    pub const ALL: &'static [&'static str] = &[
+        "Continuous",
+        "PeriodicDump",
+        "OpportunisticImport",
+        "FiniteOneShot",
+        "EphemeralStream",
+        "Unknown",
+    ];
+}
+
+/// Operator-declared coverage contract for a source material.
+///
+/// Distinct from [`CoverageContract`] which is the inferred-from-observation
+/// shape. `DeclaredCoverageContract` is the stored shape: what the operator
+/// said the source *should* look like, plus a structured set of expected
+/// horizons / cadences and a declaration timestamp.
+///
+/// The default ([`DeclaredCoverageContract::unknown`]) is what legacy rows
+/// receive — its `kind` is [`DeclaredCoverageContractKind::Unknown`] and
+/// `declared_at` is `None`. Continuity reports treat `Unknown` rows as
+/// "configuration gap, no operator intent recorded".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DeclaredCoverageContract {
+    pub kind: DeclaredCoverageContractKind,
+    /// Event types the source is expected to emit. Empty for `Unknown`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub expected_event_types: Vec<String>,
+    /// Expected coverage horizon in seconds (e.g. "covers the last 30 days").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_horizon_seconds: Option<i64>,
+    /// Expected cadence in seconds between successive dumps / fetches.
+    /// Meaningful primarily for `PeriodicDump` / `OpportunisticImport`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_cadence_seconds: Option<i64>,
+    /// When the operator declared this contract. `None` for legacy rows
+    /// that received the `Unknown` default at column-add time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_at: Option<Timestamp>,
+    /// Free-form attribution string identifying the operator or process
+    /// that declared the contract. Optional.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_by: Option<String>,
+}
+
+impl DeclaredCoverageContract {
+    /// The canonical "no operator intent declared" contract used as the
+    /// column default for legacy rows.
+    #[must_use]
+    pub const fn unknown() -> Self {
+        Self {
+            kind: DeclaredCoverageContractKind::Unknown,
+            expected_event_types: Vec::new(),
+            expected_horizon_seconds: None,
+            expected_cadence_seconds: None,
+            declared_at: None,
+            declared_by: None,
+        }
+    }
+
+    /// Returns true when the operator has not yet declared an intent for
+    /// this source. Continuity reports treat this as a "configuration gap".
+    #[must_use]
+    pub const fn is_unknown(&self) -> bool {
+        matches!(self.kind, DeclaredCoverageContractKind::Unknown)
+    }
+}
+
+impl Default for DeclaredCoverageContract {
+    fn default() -> Self {
+        Self::unknown()
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Privacy class (declared per-material, #1174)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Operator-declared privacy classification for a source material.
+///
+/// Persisted as a `TEXT` column on `raw.source_material_registry` with the
+/// named CHECK constraint `source_material_registry_privacy_class_check`
+/// keeping the live values in sync with this enum.
+///
+/// `Unknown` is the column default for legacy rows that pre-date the
+/// classification surface; private-mode classification at the seam level
+/// (`SeamKind::PrivateModeGap`) only fires when the classification is one
+/// of `Personal`, `Secret`, or `Redacted` — never on `Unknown`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum PrivacyClass {
+    /// Material may be shown / shared without redaction.
+    Public,
+    /// Personal data — visible to the operator, redacted in shared surfaces.
+    Personal,
+    /// Secret material (credentials, tokens, identity documents).
+    Secret,
+    /// Material that has already been redacted at capture time.
+    Redacted,
+    /// Operator has not classified this material yet (legacy default).
+    Unknown,
+}
+
+impl PrivacyClass {
+    /// Canonical wire-form string used in the database column.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Personal => "personal",
+            Self::Secret => "secret",
+            Self::Redacted => "redacted",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// All canonical class strings, in declaration order. Used by the schema
+    /// CHECK constraint generator and by validation paths that need to
+    /// confirm a value is permitted before persisting.
+    pub const ALL: &'static [&'static str] =
+        &["public", "personal", "secret", "redacted", "unknown"];
+
+    /// Returns true when the operator has not yet classified this material.
+    #[must_use]
+    pub const fn is_unknown(self) -> bool {
+        matches!(self, Self::Unknown)
+    }
+
+    /// Returns true when this class is one of the privacy-sensitive shapes
+    /// (`Personal`, `Secret`, or `Redacted`). `Public` and `Unknown` return
+    /// `false`. Used by seam classification to decide whether a gap is
+    /// attributable to private mode.
+    #[must_use]
+    pub const fn is_private(self) -> bool {
+        matches!(self, Self::Personal | Self::Secret | Self::Redacted)
+    }
+}
+
+impl Default for PrivacyClass {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+impl std::str::FromStr for PrivacyClass {
+    type Err = crate::SinexError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "public" => Ok(Self::Public),
+            "personal" => Ok(Self::Personal),
+            "secret" => Ok(Self::Secret),
+            "redacted" => Ok(Self::Redacted),
+            "unknown" => Ok(Self::Unknown),
+            other => Err(crate::SinexError::validation(format!(
+                "invalid privacy_class '{other}'; must be one of {:?}",
+                Self::ALL
+            ))),
+        }
+    }
+}
+
+impl std::fmt::Display for PrivacyClass {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Temporal seams (boundaries between adjacent material chunks)
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -249,6 +460,72 @@ pub struct SourcesExplainGapResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn declared_coverage_contract_default_is_unknown() {
+        let c = DeclaredCoverageContract::default();
+        assert!(c.is_unknown());
+        assert_eq!(c.kind, DeclaredCoverageContractKind::Unknown);
+        assert!(c.expected_event_types.is_empty());
+        assert!(c.declared_at.is_none());
+    }
+
+    #[test]
+    fn declared_coverage_contract_kind_strings_match_check_set() {
+        for kind in [
+            DeclaredCoverageContractKind::Continuous,
+            DeclaredCoverageContractKind::PeriodicDump,
+            DeclaredCoverageContractKind::OpportunisticImport,
+            DeclaredCoverageContractKind::FiniteOneShot,
+            DeclaredCoverageContractKind::EphemeralStream,
+            DeclaredCoverageContractKind::Unknown,
+        ] {
+            assert!(
+                DeclaredCoverageContractKind::ALL.contains(&kind.as_str()),
+                "kind {} missing from ALL",
+                kind.as_str()
+            );
+        }
+        assert_eq!(DeclaredCoverageContractKind::ALL.len(), 6);
+    }
+
+    #[test]
+    fn declared_coverage_contract_serializes_kind_pascal_case() {
+        let c = DeclaredCoverageContract {
+            kind: DeclaredCoverageContractKind::PeriodicDump,
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&c).unwrap();
+        assert_eq!(
+            json["kind"],
+            serde_json::Value::String("PeriodicDump".into())
+        );
+    }
+
+    #[test]
+    fn privacy_class_round_trip_str() {
+        for s in PrivacyClass::ALL {
+            let parsed: PrivacyClass = s.parse().expect("parse known class");
+            assert_eq!(parsed.as_str(), *s);
+        }
+        assert!("nope".parse::<PrivacyClass>().is_err());
+    }
+
+    #[test]
+    fn privacy_class_default_is_unknown() {
+        assert_eq!(PrivacyClass::default(), PrivacyClass::Unknown);
+        assert!(PrivacyClass::default().is_unknown());
+        assert!(!PrivacyClass::default().is_private());
+    }
+
+    #[test]
+    fn privacy_class_is_private_excludes_public_and_unknown() {
+        assert!(!PrivacyClass::Public.is_private());
+        assert!(!PrivacyClass::Unknown.is_private());
+        assert!(PrivacyClass::Personal.is_private());
+        assert!(PrivacyClass::Secret.is_private());
+        assert!(PrivacyClass::Redacted.is_private());
+    }
 
     #[test]
     fn replayability_green_count() {
