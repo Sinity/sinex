@@ -484,6 +484,7 @@ register_source_unit! {
         id: "sinex-ingestd-telemetry",
         namespace: "infra",
         event_types: &[
+            ("sinex.ingestd", "batch.stats"),
             ("sinex.ingestd", "stream.stats"),
             ("sinex.ingestd", "assembly.stats"),
             ("sinex.ingestd", "consumer.startup_snapshot"),
@@ -507,6 +508,7 @@ register_source_unit! {
             ("sinex.gateway", "rate_limit.exceeded"),
             ("sinex.gateway", "pool.stats"),
             ("sinex.gateway", "replay.stats"),
+            ("sinex.gateway", "gateway.rpc.call"),
         ],
         privacy_tier: SuPrivacyTier::Public,
         horizons: &[SuHorizon::Continuous],
