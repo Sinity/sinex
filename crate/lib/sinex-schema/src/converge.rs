@@ -69,7 +69,7 @@ use crate::apply::ApplyError;
 use crate::schema::{
     Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations, EventAnnotations,
     EventEmbeddings, EventPayloadSchemas, Events, OperationsLog,
-    TableMeta, TaggedItems, Tags,
+    SourceMaterialRegistry, TableMeta, TaggedItems, Tags,
 };
 use sea_query::{
     Alias, ColumnDef, ColumnSpec, ForeignKeyCreateStatement, PostgresQueryBuilder, Table,
@@ -761,6 +761,41 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                 NamedConstraint {
                     name: "event_payload_schemas_schema_version_bounds",
                     expression: "length(schema_version) BETWEEN 1 AND 64",
+                },
+                // Retention horizon (#1172): NULL = never expire; otherwise
+                // must be a strictly positive number of seconds. Phase 1
+                // only lands the column + CHECK; Phase 6 wires enforcement.
+                NamedConstraint {
+                    name: "event_payload_schemas_retention_seconds_positive",
+                    expression: "retention_seconds IS NULL OR retention_seconds > 0",
+                },
+            ],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("raw.source_material_registry")?,
+            statement_fn: SourceMaterialRegistry::create_table_statement,
+            column_renames: &[],
+            pending_drop: &[],
+            // Named CHECKs for the columns added in #1174.
+            //
+            // The status and timing_info_type CHECKs are intentionally NOT
+            // listed here — they are converged by the older
+            // `converge_source_material_registry_constraints` path in
+            // `apply.rs` for historical reasons. New CHECKs go through the
+            // standard convergence engine (this list).
+            named_constraints: vec![
+                NamedConstraint {
+                    name: "source_material_registry_coverage_contract_kind_check",
+                    expression:
+                        "coverage_contract IS NULL OR (jsonb_typeof(coverage_contract) = 'object' AND coverage_contract ? 'kind' AND (coverage_contract->>'kind') IN ('Continuous', 'PeriodicDump', 'OpportunisticImport', 'FiniteOneShot', 'EphemeralStream', 'Unknown'))",
+                },
+                NamedConstraint {
+                    name: "source_material_registry_privacy_class_check",
+                    expression:
+                        "privacy_class IN ('public', 'personal', 'secret', 'redacted', 'unknown')",
                 },
             ],
             foreign_keys: vec![],

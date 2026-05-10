@@ -852,7 +852,9 @@ impl SourceMaterialRepository<'_> {
                             staged_by,
                             staged_on_host,
                             optional_blob_id as "optional_blob_id: Uuid",
-                            total_bytes as "total_bytes?: i64"
+                            total_bytes as "total_bytes?: i64",
+                coverage_contract as "coverage_contract!: JsonValue",
+                privacy_class as "privacy_class!: String"
                         "#,
                         id.to_uuid(),
                         material.material_kind,
@@ -928,7 +930,9 @@ impl SourceMaterialRepository<'_> {
                 staged_by,
                 staged_on_host,
                 optional_blob_id as "optional_blob_id?: uuid::Uuid",
-                total_bytes as "total_bytes?: i64"
+                total_bytes as "total_bytes?: i64",
+                coverage_contract as "coverage_contract!: JsonValue",
+                privacy_class as "privacy_class!: String"
             FROM raw.source_material_registry
             WHERE id = $1
             "#,
@@ -959,7 +963,9 @@ impl SourceMaterialRepository<'_> {
                 staged_by,
                 staged_on_host,
                 optional_blob_id as "optional_blob_id?: uuid::Uuid",
-                total_bytes as "total_bytes?: i64"
+                total_bytes as "total_bytes?: i64",
+                coverage_contract as "coverage_contract!: JsonValue",
+                privacy_class as "privacy_class!: String"
             FROM raw.source_material_registry
             WHERE optional_blob_id = $1
             "#,
@@ -987,7 +993,9 @@ impl SourceMaterialRepository<'_> {
                 staged_by,
                 staged_on_host,
                 optional_blob_id as "optional_blob_id?: uuid::Uuid",
-                total_bytes as "total_bytes?: i64"
+                total_bytes as "total_bytes?: i64",
+                coverage_contract as "coverage_contract!: JsonValue",
+                privacy_class as "privacy_class!: String"
             FROM raw.source_material_registry
             ORDER BY staged_at DESC
             LIMIT $1
@@ -1023,7 +1031,9 @@ impl SourceMaterialRepository<'_> {
                 staged_by,
                 staged_on_host,
                 optional_blob_id as "optional_blob_id?: uuid::Uuid",
-                total_bytes as "total_bytes?: i64"
+                total_bytes as "total_bytes?: i64",
+                coverage_contract as "coverage_contract!: JsonValue",
+                privacy_class as "privacy_class!: String"
             FROM raw.source_material_registry
             WHERE ($2::text IS NULL OR material_kind = $2)
             ORDER BY staged_at DESC
@@ -1062,7 +1072,9 @@ impl SourceMaterialRepository<'_> {
                 staged_by,
                 staged_on_host,
                 optional_blob_id as "optional_blob_id?: uuid::Uuid",
-                total_bytes as "total_bytes?: i64"
+                total_bytes as "total_bytes?: i64",
+                coverage_contract as "coverage_contract!: JsonValue",
+                privacy_class as "privacy_class!: String"
             FROM raw.source_material_registry
             WHERE metadata @> $1
             ORDER BY staged_at DESC
@@ -1114,7 +1126,9 @@ impl SourceMaterialRepository<'_> {
                 staged_by,
                 staged_on_host,
                 optional_blob_id as "optional_blob_id?: uuid::Uuid",
-                total_bytes as "total_bytes?: i64"
+                total_bytes as "total_bytes?: i64",
+                coverage_contract as "coverage_contract!: JsonValue",
+                privacy_class as "privacy_class!: String"
             FROM raw.source_material_registry
             WHERE (metadata->>'archived') IS DISTINCT FROM 'true'
               AND staged_at < $1
@@ -1177,7 +1191,9 @@ impl SourceMaterialRepository<'_> {
                 staged_by,
                 staged_on_host,
                 optional_blob_id as "optional_blob_id: Uuid",
-                total_bytes as "total_bytes?: i64"
+                total_bytes as "total_bytes?: i64",
+                coverage_contract as "coverage_contract!: JsonValue",
+                privacy_class as "privacy_class!: String"
             "#,
             id.to_uuid(),
             caller_metadata,
@@ -1319,7 +1335,9 @@ impl SourceMaterialRepository<'_> {
                 staged_by,
                 staged_on_host,
                 optional_blob_id::uuid as optional_blob_id,
-                total_bytes
+                total_bytes,
+                coverage_contract,
+                privacy_class
         ";
 
         sqlx::query_as::<_, SourceMaterialRecord>(upsert_sql)
@@ -1455,7 +1473,9 @@ impl SourceMaterialRepository<'_> {
                 staged_by,
                 staged_on_host,
                 optional_blob_id::uuid as optional_blob_id,
-                total_bytes
+                total_bytes,
+                coverage_contract,
+                privacy_class
         ";
 
         sqlx::query_as::<_, SourceMaterialRecord>(upsert_sql)
