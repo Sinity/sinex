@@ -375,6 +375,110 @@ impl Replayability {
             + u8::from(self.parser_determinism)
             + u8::from(self.privacy_safe_replay)
     }
+
+    /// Build a scorecard for a single source material from its persisted
+    /// facts.
+    ///
+    /// This mirrors the family-level heuristic in
+    /// `sinex_db::repositories::ContinuityRepository::build_replayability`
+    /// but operates on one material's properties — the shape needed by
+    /// `sinexctl replay preview` when surfacing per-material scorecards
+    /// across a replay scope.
+    ///
+    /// Inputs are the registry-row facts `sources.show` returns:
+    /// - `status`: registry status string (`completed`, `sensing`,
+    ///   `failed`, `recovered_partial`, `cancelled`).
+    /// - `has_blob`: `true` when `optional_blob_id IS NOT NULL` — source
+    ///   bytes are still on disk and re-readable.
+    /// - `timing_info_type`: registry timing classification (`realtime`,
+    ///   `intrinsic`, `inferred`, etc.).
+    /// - `total_bytes`: registry size in bytes; `None` means the material
+    ///   is still in-flight (`status='sensing'`) and anchor stability is
+    ///   not yet guaranteed.
+    ///
+    /// `parser_determinism` and `privacy_safe_replay` are operator-asserted
+    /// rather than measured at this layer; they default to `true` and
+    /// always carry a `weak_points` caveat so the report stays honest
+    /// about what is asserted vs measured.
+    #[must_use]
+    pub fn from_material_facts(
+        status: &str,
+        has_blob: bool,
+        timing_info_type: &str,
+        total_bytes: Option<i64>,
+    ) -> Self {
+        let timing_quality = matches!(timing_info_type, "realtime" | "intrinsic");
+        let anchor_stability = total_bytes.is_some();
+        let any_failed = status == "failed";
+        let any_recovered = status == "recovered_partial";
+
+        let mut weak_points: Vec<String> = Vec::new();
+        if !has_blob {
+            weak_points.push("no source bytes preserved (no blob backing)".into());
+        }
+        if !timing_quality {
+            weak_points.push(
+                "timing inferred from filesystem mtime/ctime — replay times may drift".into(),
+            );
+        }
+        if !anchor_stability {
+            weak_points.push(
+                "material still in `sensing` (total_bytes unset); anchor stability not guaranteed"
+                    .into(),
+            );
+        }
+        if any_failed {
+            weak_points.push("material status=failed".into());
+        }
+        if any_recovered {
+            weak_points.push(
+                "material status=recovered_partial; replay covers the recovered subset only"
+                    .into(),
+            );
+        }
+        weak_points.push(
+            "parser_determinism is asserted, not measured; bug fixes may produce different events on replay"
+                .into(),
+        );
+
+        Self {
+            raw_bytes_preserved: has_blob,
+            timing_quality,
+            anchor_stability,
+            // Operator-asserted dimensions — see weak_points caveats above.
+            parser_determinism: true,
+            privacy_safe_replay: true,
+            weak_points,
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Per-material replayability scorecard (#1174 Phase 5.5)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Per-material replayability scorecard rendered by
+/// `sinexctl replay preview` when a replay scope crosses material
+/// boundaries.
+///
+/// The aggregate scorecard on [`SourceContinuityReport`] hides per-material
+/// weakness — a single failed material in a 50-material scope can drag the
+/// aggregate down without telling the operator which material is at fault.
+/// This scorecard surfaces the per-material score so the operator can see
+/// the weakness dimension and the responsible material identifier in the
+/// same view.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MaterialReplayabilityScorecard {
+    /// UUID of the source material this scorecard describes.
+    pub material_id: String,
+    /// Operator-visible source identifier (file path / URI / source name).
+    pub source_identifier: String,
+    /// Material kind (e.g. `annex`, `inline`, `archive`).
+    pub material_kind: String,
+    /// Registry status (`completed`, `sensing`, `failed`, etc.).
+    pub status: String,
+    /// Replayability scorecard derived from this material's facts.
+    pub replayability: Replayability,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
