@@ -21,9 +21,10 @@ pub use unified_node::{
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
+    SourceUnitDescriptor, SubjectRef,
 };
-use sinex_primitives::register_source_unit;
+use sinex_primitives::{register_source_unit, register_source_unit_binding};
 
 // Source-unit descriptors (issue #690 / #734). Desktop is one runner pack, but
 // operators should see the logical capture leaves it hosts.
@@ -108,4 +109,57 @@ register_source_unit! {
         implementation_mode: "rust_in_pack:desktop",
         build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
+}
+
+// SourceUnitBinding registrations co-located with the descriptors above.
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:desktop.clipboard"),
+        "desktop.clipboard",
+        "desktop",
+    )
+    .implementation("sinex-desktop-ingestor")
+    .adapter("IngestorNodeAdapter")
+    .output_event_type("clipboard.copied")
+    .privacy_context("clipboard")
+    .material_policy("clipboard_anchor")
+    .checkpoint_policy("live_observation")
+    .resource_shape("event_emitter")
+    .source_unit_id("desktop.clipboard")
+    .build()
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:desktop.window-manager"),
+        "desktop.window-manager",
+        "desktop",
+    )
+    .implementation("sinex-desktop-ingestor")
+    .adapter("IngestorNodeAdapter")
+    .output_event_type("window.opened")
+    .privacy_context("window_title")
+    .material_policy("wm_anchor")
+    .checkpoint_policy("live_observation")
+    .resource_shape("event_emitter")
+    .source_unit_id("desktop.window-manager")
+    .build()
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:desktop.activitywatch"),
+        "desktop.activitywatch",
+        "desktop",
+    )
+    .implementation("sinex-desktop-ingestor")
+    .adapter("IngestorNodeAdapter")
+    .output_event_type("window.active")
+    .privacy_context("window_title")
+    .material_policy("activitywatch_bucket_event")
+    .checkpoint_policy("mutable_snapshot")
+    .resource_shape("linear_rows_bounded_memory")
+    .source_unit_id("desktop.activitywatch")
+    .build()
 }

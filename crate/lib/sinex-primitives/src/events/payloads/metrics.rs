@@ -455,10 +455,10 @@ impl StreamStatsPayload {
 use crate::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBuildImpact,
-    SourceUnitDescriptor,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
+    SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
-use crate::register_source_unit;
+use crate::{register_source_unit, register_source_unit_binding};
 
 register_source_unit! {
     SourceUnitDescriptor {
@@ -553,4 +553,81 @@ register_source_unit! {
         implementation_mode: "rust_in_node_sdk",
         build_impact: SourceUnitBuildImpact::ZERO,
     }
+}
+
+// Infra source units: descriptor-only by design (events emitted from inside
+// every sinex binary or specific runtime processes). Bindings are recorded
+// with `proposed: true` so manifest renderers separate them from host-level
+// adapter deployments.
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:sinex-metrics"),
+        "sinex-metrics",
+        "infra",
+    )
+    .implementation("sinex-primitives::metrics")
+    .adapter("EmbeddedEmitter")
+    .output_event_type("metric.counter")
+    .privacy_context("none")
+    .material_policy("none")
+    .checkpoint_policy("live_observation")
+    .resource_shape("embedded_emitter")
+    .source_unit_id("sinex-metrics")
+    .proposed(true)
+    .build()
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:sinex-ingestd-telemetry"),
+        "sinex-ingestd-telemetry",
+        "infra",
+    )
+    .implementation("sinex-ingestd")
+    .adapter("EmbeddedEmitter")
+    .output_event_type("stream.stats")
+    .privacy_context("none")
+    .material_policy("none")
+    .checkpoint_policy("live_observation")
+    .resource_shape("embedded_emitter")
+    .source_unit_id("sinex-ingestd-telemetry")
+    .proposed(true)
+    .build()
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:sinex-gateway-telemetry"),
+        "sinex-gateway-telemetry",
+        "infra",
+    )
+    .implementation("sinex-gateway")
+    .adapter("EmbeddedEmitter")
+    .output_event_type("request.stats")
+    .privacy_context("none")
+    .material_policy("none")
+    .checkpoint_policy("live_observation")
+    .resource_shape("embedded_emitter")
+    .source_unit_id("sinex-gateway-telemetry")
+    .proposed(true)
+    .build()
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:sinex-node-telemetry"),
+        "sinex-node-telemetry",
+        "infra",
+    )
+    .implementation("sinex-node-sdk")
+    .adapter("EmbeddedEmitter")
+    .output_event_type("processing.stats")
+    .privacy_context("none")
+    .material_policy("none")
+    .checkpoint_policy("live_observation")
+    .resource_shape("embedded_emitter")
+    .source_unit_id("sinex-node-telemetry")
+    .proposed(true)
+    .build()
 }

@@ -18,9 +18,9 @@ pub use unified_node::{HistorySourceConfig, TerminalConfig, TerminalNode, Termin
 
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceUnitDescriptor,
+    SourceUnitBinding, SourceUnitDescriptor, SubjectRef,
 };
-use sinex_primitives::register_source_unit;
+use sinex_primitives::{register_source_unit, register_source_unit_binding};
 
 // Source-unit declaration & promotion contract (issue #690).
 //
@@ -165,4 +165,92 @@ register_source_unit! {
         implementation_mode: "rust_in_pack:terminal",
         build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
+}
+
+// SourceUnitBinding registrations for the terminal source units above.
+// terminal.atuin-history's binding is registered in sinex-primitives/src/proof.rs.
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:terminal.monitor"),
+        "terminal.monitor",
+        "terminal",
+    )
+    .implementation("sinex-terminal-ingestor")
+    .adapter("IngestorNodeAdapter")
+    .output_event_type("shell.terminal_monitoring_started")
+    .privacy_context("command")
+    .material_policy("self_observation")
+    .checkpoint_policy("live_observation")
+    .resource_shape("event_emitter")
+    .source_unit_id("terminal.monitor")
+    .build()
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:terminal.text-history"),
+        "terminal.text-history",
+        "terminal",
+    )
+    .implementation("sinex-terminal-ingestor")
+    .adapter("IngestorNodeAdapter")
+    .output_event_type("command.imported")
+    .privacy_context("command")
+    .material_policy("text_history_anchor")
+    .checkpoint_policy("append_stream")
+    .resource_shape("linear_rows_bounded_memory")
+    .source_unit_id("terminal.text-history")
+    .build()
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:terminal.zsh-history"),
+        "terminal.zsh-history",
+        "terminal",
+    )
+    .implementation("sinex-terminal-ingestor")
+    .adapter("IngestorNodeAdapter")
+    .output_event_type("command.imported")
+    .privacy_context("command")
+    .material_policy("text_history_anchor")
+    .checkpoint_policy("append_stream")
+    .resource_shape("linear_rows_bounded_memory")
+    .source_unit_id("terminal.zsh-history")
+    .build()
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:terminal.fish-history"),
+        "terminal.fish-history",
+        "terminal",
+    )
+    .implementation("sinex-terminal-ingestor")
+    .adapter("IngestorNodeAdapter")
+    .output_event_type("command.imported")
+    .privacy_context("command")
+    .material_policy("sqlite_row_id")
+    .checkpoint_policy("mutable_snapshot")
+    .resource_shape("linear_rows_bounded_memory")
+    .source_unit_id("terminal.fish-history")
+    .build()
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:terminal.bash-history"),
+        "terminal.bash-history",
+        "terminal",
+    )
+    .implementation("sinex-terminal-ingestor")
+    .adapter("IngestorNodeAdapter")
+    .output_event_type("command.imported")
+    .privacy_context("command")
+    .material_policy("text_history_anchor")
+    .checkpoint_policy("append_stream")
+    .resource_shape("linear_rows_bounded_memory")
+    .source_unit_id("terminal.bash-history")
+    .build()
 }

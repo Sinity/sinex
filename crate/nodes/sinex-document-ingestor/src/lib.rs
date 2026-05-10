@@ -961,9 +961,10 @@ mod tests {
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
+    SourceUnitDescriptor, SubjectRef,
 };
-use sinex_primitives::register_source_unit;
+use sinex_primitives::{register_source_unit, register_source_unit_binding};
 
 // The document ingestor stages files as raw source material and emits a
 // `document.ingested` event per file. Until the parser/chunker train (#733)
@@ -989,4 +990,21 @@ register_source_unit! {
         implementation_mode: "rust_in_pack:document",
         build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:document.staging"),
+        "document.staging",
+        "document",
+    )
+    .implementation("sinex-document-ingestor")
+    .adapter("IngestorNodeAdapter")
+    .output_event_type("document.ingested")
+    .privacy_context("document_body")
+    .material_policy("document_anchor")
+    .checkpoint_policy("append_stream")
+    .resource_shape("on_demand_batch")
+    .source_unit_id("document.staging")
+    .build()
 }

@@ -112,9 +112,10 @@ impl Default for SystemConfig {
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
+    SourceUnitDescriptor, SubjectRef,
 };
-use sinex_primitives::register_source_unit;
+use sinex_primitives::{register_source_unit, register_source_unit_binding};
 
 // Source-unit descriptors (issue #690 / #734). The system ingestor is one
 // runner pack, but its logical source units have different cursors and access
@@ -246,4 +247,91 @@ register_source_unit! {
         implementation_mode: "rust_in_pack:system",
         build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
+}
+
+// SourceUnitBinding registrations co-located with the descriptors above.
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:system.monitor"),
+        "system.monitor",
+        "system",
+    )
+    .implementation("sinex-system-ingestor")
+    .adapter("IngestorNodeAdapter")
+    .output_event_type("monitoring.started")
+    .privacy_context("metadata")
+    .material_policy("self_observation")
+    .checkpoint_policy("live_observation")
+    .resource_shape("event_emitter")
+    .source_unit_id("system.monitor")
+    .build()
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:system.systemd"),
+        "system.systemd",
+        "system",
+    )
+    .implementation("sinex-system-ingestor")
+    .adapter("IngestorNodeAdapter")
+    .output_event_type("unit.started")
+    .privacy_context("metadata")
+    .material_policy("journal_cursor")
+    .checkpoint_policy("journal")
+    .resource_shape("journal_tail")
+    .source_unit_id("system.systemd")
+    .build()
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:system.journald"),
+        "system.journald",
+        "system",
+    )
+    .implementation("sinex-system-ingestor")
+    .adapter("IngestorNodeAdapter")
+    .output_event_type("entry.written")
+    .privacy_context("journal")
+    .material_policy("journal_cursor")
+    .checkpoint_policy("journal")
+    .resource_shape("journal_tail")
+    .source_unit_id("system.journald")
+    .build()
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:system.dbus"),
+        "system.dbus",
+        "system",
+    )
+    .implementation("sinex-system-ingestor")
+    .adapter("IngestorNodeAdapter")
+    .output_event_type("signal.received")
+    .privacy_context("dbus")
+    .material_policy("bus_anchor")
+    .checkpoint_policy("live_observation")
+    .resource_shape("event_emitter")
+    .source_unit_id("system.dbus")
+    .build()
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:system.udev"),
+        "system.udev",
+        "system",
+    )
+    .implementation("sinex-system-ingestor")
+    .adapter("IngestorNodeAdapter")
+    .output_event_type("device.connected")
+    .privacy_context("metadata")
+    .material_policy("udev_anchor")
+    .checkpoint_policy("live_observation")
+    .resource_shape("event_emitter")
+    .source_unit_id("system.udev")
+    .build()
 }

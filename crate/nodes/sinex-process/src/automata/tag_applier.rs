@@ -147,9 +147,10 @@ pub type TagApplierNode = TransducerNodeAdapter<TagApplier>;
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
+    SourceUnitDescriptor, SubjectRef,
 };
-use sinex_primitives::register_source_unit;
+use sinex_primitives::{register_source_unit, register_source_unit_binding};
 
 register_source_unit! {
     SourceUnitDescriptor {
@@ -173,6 +174,23 @@ register_source_unit! {
         implementation_mode: "rust_in_pack:process",
         build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:tag-applier"),
+        "tag-applier",
+        "derived",
+    )
+    .implementation("sinex-process")
+    .adapter("DerivedNodeAdapter")
+    .output_event_type("knowledge.tag_applied")
+    .privacy_context("inherits_from_parents")
+    .material_policy("synthesis_parents")
+    .checkpoint_policy("append_stream")
+    .resource_shape("event_stream_consumer")
+    .source_unit_id("tag-applier")
+    .build()
 }
 
 #[cfg(test)]
