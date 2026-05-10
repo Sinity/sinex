@@ -14,9 +14,10 @@ pub use unified_node::{BrowserIngestorConfig, BrowserNode};
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitDescriptor,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
+    SourceUnitDescriptor, SubjectRef,
 };
-use sinex_primitives::register_source_unit;
+use sinex_primitives::{register_source_unit, register_source_unit_binding};
 
 // Source-unit descriptor (issue #690 / #734). Browser history backing stores
 // are SQLite databases (Firefox `places.sqlite`, Chromium `History`); the
@@ -47,4 +48,21 @@ register_source_unit! {
         implementation_mode: "rust_in_pack:browser",
         build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:browser.history"),
+        "browser.history",
+        "web",
+    )
+    .implementation("sinex-browser-ingestor")
+    .adapter("IngestorNodeAdapter")
+    .output_event_type("page.visited")
+    .privacy_context("url")
+    .material_policy("browser_visit_id")
+    .checkpoint_policy("mutable_snapshot")
+    .resource_shape("linear_rows_bounded_memory")
+    .source_unit_id("browser.history")
+    .build()
 }

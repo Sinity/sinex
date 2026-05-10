@@ -103,10 +103,10 @@ pub struct AutomatonErrorPayload {
 use crate::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBuildImpact,
-    SourceUnitDescriptor,
+    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
+    SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
-use crate::register_source_unit;
+use crate::{register_source_unit, register_source_unit_binding};
 
 register_source_unit! {
     SourceUnitDescriptor {
@@ -151,6 +151,42 @@ register_source_unit! {
         implementation_mode: "rust_in_pack:process",
         build_impact: SourceUnitBuildImpact::ZERO,
     }
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:sinex-process-lifecycle"),
+        "sinex-process-lifecycle",
+        "infra",
+    )
+    .implementation("sinex-primitives::process")
+    .adapter("EmbeddedEmitter")
+    .output_event_type("process.started")
+    .privacy_context("none")
+    .material_policy("none")
+    .checkpoint_policy("live_observation")
+    .resource_shape("embedded_emitter")
+    .source_unit_id("sinex-process-lifecycle")
+    .proposed(true)
+    .build()
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:sinex-automaton-error"),
+        "sinex-automaton-error",
+        "infra",
+    )
+    .implementation("sinex-process")
+    .adapter("EmbeddedEmitter")
+    .output_event_type("automaton.error")
+    .privacy_context("none")
+    .material_policy("none")
+    .checkpoint_policy("live_observation")
+    .resource_shape("embedded_emitter")
+    .source_unit_id("sinex-automaton-error")
+    .proposed(true)
+    .build()
 }
 
 // Test helpers for external tests
