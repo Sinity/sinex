@@ -15,6 +15,7 @@ use sinex_primitives::proof::{
     self, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ProofObligation,
     RetentionPolicy, RuntimeShape,
 };
+use std::collections::HashSet;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -81,6 +82,18 @@ struct SourceUnitManifest {
     package_impact: SourceUnitImpactReport,
     proof_obligations: Vec<ProofObligation>,
     descriptor_contract: DescriptorContract,
+    /// Future-state bindings: registered with `proposed: true`, not yet a live deployment.
+    proposed_bindings: Vec<ProposedBindingManifest>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct ProposedBindingManifest {
+    subject: String,
+    id: String,
+    source_unit_id: String,
+    domain: String,
+    adapter: String,
+    output_event_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -171,6 +184,9 @@ struct SourceUnitValidation {
     missing_output_event_pair_backing: Vec<String>,
     exempted_output_event_pair_backing: Vec<String>,
     runner_packs_with_multiple_units: Vec<String>,
+    /// Bindings whose `source_unit_id` does not resolve to a registered descriptor.
+    /// Empty `source_unit_id` is allowed (legacy / pre-FK bindings) and not flagged here.
+    unresolved_binding_source_unit_ids: Vec<String>,
     stale_manifest: bool,
 }
 
@@ -224,6 +240,7 @@ fn execute_check(output: Option<&Path>, ctx: &CommandContext) -> Result<CommandR
         || !validation.invalid_output_event_pairs.is_empty()
         || !validation.unbacked_output_event_pairs.is_empty()
         || !validation.missing_output_event_pair_backing.is_empty()
+        || !validation.unresolved_binding_source_unit_ids.is_empty()
         || validation.runner_packs_with_multiple_units.is_empty()
         || validation.stale_manifest;
 
@@ -263,6 +280,19 @@ fn build_source_unit_manifest() -> SourceUnitManifest {
         .collect::<Vec<_>>();
     obligations.sort_by(|left, right| left.id.cmp(right.id));
 
+    let mut proposed_bindings = proof::source_unit_bindings()
+        .filter(|binding| binding.proposed)
+        .map(|binding| ProposedBindingManifest {
+            subject: binding.subject.as_str().to_string(),
+            id: binding.id.to_string(),
+            source_unit_id: binding.source_unit_id.to_string(),
+            domain: binding.domain.to_string(),
+            adapter: binding.adapter.to_string(),
+            output_event_type: binding.output_event_type.to_string(),
+        })
+        .collect::<Vec<_>>();
+    proposed_bindings.sort_by(|left, right| left.subject.cmp(&right.subject));
+
     SourceUnitManifest {
         schema_version: proof::PROOF_CATALOG_SCHEMA_VERSION,
         issue_refs: vec!["issue:518", "issue:486", "issue:369"],
@@ -270,6 +300,7 @@ fn build_source_unit_manifest() -> SourceUnitManifest {
         services: service_manifests(&source_units),
         package_impact: package_impact_report(&source_units),
         proof_obligations: obligations,
+        proposed_bindings,
         descriptor_contract: DescriptorContract {
             registration: "Rust descriptors register with inventory::submit!; no new Cargo member is required for a normal source unit.",
             runner_pack_selection: "Runner packs select source units by stable source_unit_id through --source-unit and share one binary per pack.",
@@ -579,6 +610,26 @@ fn validate_source_units(
         .map(|pack| pack.id)
         .collect::<Vec<_>>();
 
+    let registered_descriptor_ids = source_units
+        .iter()
+        .map(|unit| unit.id.as_str())
+        .collect::<HashSet<_>>();
+    let mut unresolved_binding_source_unit_ids = proof::source_unit_bindings()
+        .filter_map(|binding| {
+            (!binding.source_unit_id.is_empty()
+                && !registered_descriptor_ids.contains(binding.source_unit_id))
+            .then(|| {
+                format!(
+                    "{}->{}",
+                    binding.subject.as_str(),
+                    binding.source_unit_id
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    unresolved_binding_source_unit_ids.sort();
+    unresolved_binding_source_unit_ids.dedup();
+
     SourceUnitValidation {
         source_unit_count: source_units.len(),
         runner_pack_count: source_units
@@ -596,6 +647,7 @@ fn validate_source_units(
         missing_output_event_pair_backing,
         exempted_output_event_pair_backing,
         runner_packs_with_multiple_units,
+        unresolved_binding_source_unit_ids,
         stale_manifest,
     }
 }
@@ -1024,6 +1076,21 @@ mod tests {
         assert_eq!(
             validation.empty_fields,
             vec!["source_unit:fs:output_event_types".to_string()]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_unit_binding_fk_resolves_to_registered_descriptor() -> TestResult<()> {
+        // The terminal.atuin runtime-unit binding now points at the
+        // registered terminal.atuin-history descriptor; the live catalog
+        // must therefore validate without unresolved-FK entries.
+        let manifest = build_source_unit_manifest();
+        let validation = validate_source_units(&manifest.source_units, false);
+        assert!(
+            validation.unresolved_binding_source_unit_ids.is_empty(),
+            "unresolved binding -> descriptor FKs: {:?}",
+            validation.unresolved_binding_source_unit_ids
         );
         Ok(())
     }
