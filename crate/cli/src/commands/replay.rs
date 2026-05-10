@@ -1,6 +1,8 @@
 use clap::Subcommand;
 use color_eyre::eyre::eyre;
 use sinex_primitives::rpc::replay::ReplayState;
+use sinex_primitives::rpc::sources::{SourcesShowRequest, SourcesShowResponse};
+use sinex_primitives::sources::continuity::{MaterialReplayabilityScorecard, Replayability};
 use tokio::time::{Duration, sleep};
 
 use crate::Result;
@@ -21,7 +23,12 @@ EXAMPLES:
     # Create with scope filters
     sinexctl replay plan --node fs-ingestor --since 1h --material <UUID>
 
-    # Preview what will be replayed
+    # Preview what will be replayed. When the scope crosses material
+    # boundaries (more than one source_material_id), the preview adds a
+    # per-material replayability scorecard so the operator can see which
+    # material drags the aggregate down. Each row shows the material id,
+    # source identifier, replayability score (out of 5), and weakness
+    # dimensions (timing / anchor / blob / parser / privacy).
     sinexctl replay preview <OPERATION_ID>
 
     # Approve and execute separately
@@ -216,12 +223,14 @@ impl ReplayCommands {
 
             Self::Preview { operation_id } => {
                 let (operation, preview) = client.replay_preview(operation_id).await?;
+                let scorecards = collect_material_scorecards(client, &operation).await?;
                 match format {
                     OutputFormat::Json => println!(
                         "{}",
                         format_json(&serde_json::json!({
                             "operation": operation,
                             "preview": preview,
+                            "per_material_replayability": scorecards,
                         }))?
                     ),
                     OutputFormat::Yaml => println!(
@@ -229,10 +238,15 @@ impl ReplayCommands {
                         format_yaml(&serde_json::json!({
                             "operation": operation,
                             "preview": preview,
+                            "per_material_replayability": scorecards,
                         }))?
                     ),
                     _ => {
                         println!("{}", format_replay_preview_table(&operation, &preview));
+                        if !scorecards.is_empty() {
+                            println!();
+                            println!("{}", format_per_material_scorecard_table(&scorecards));
+                        }
                     }
                 }
             }
@@ -687,9 +701,174 @@ fn format_replay_list_table(operations: &[ReplayOperation]) -> String {
     output
 }
 
+/// Collect per-material replayability scorecards for every source material
+/// referenced by the replay scope.
+///
+/// Returns an empty vec when:
+///   - the scope has no material filter (replay covers a node-wide window),
+///   - the filter resolves to a single material (the aggregate scorecard
+///     already represents the same content; per-row breakdown is noise),
+///   - or `sources.show` cannot resolve a UUID — that material's row is
+///     skipped silently and the partial scorecard is returned, since the
+///     operator-facing replay preview should not block on a missing
+///     material lookup.
+async fn collect_material_scorecards(
+    client: &GatewayClient,
+    operation: &ReplayOperation,
+) -> Result<Vec<MaterialReplayabilityScorecard>> {
+    // Collect every material id named on the scope. The replay scope can
+    // reference materials in two places — the legacy multi-id
+    // `material_filter` array and the typed-scope `source_material_id`
+    // field — so we union them and dedupe.
+    let mut ids: Vec<String> = Vec::new();
+    if let Some(materials) = operation.scope.material_filter.as_ref() {
+        ids.extend(materials.iter().cloned());
+    }
+    if let Some(single) = operation.scope.source_material_id.as_ref() {
+        ids.push(single.clone());
+    }
+    ids.sort();
+    ids.dedup();
+
+    // Per-material breakdown is only useful when the scope crosses
+    // material boundaries — otherwise the aggregate scorecard already
+    // represents the same content and we'd just print noise.
+    if ids.len() < 2 {
+        return Ok(Vec::new());
+    }
+
+    let mut out: Vec<MaterialReplayabilityScorecard> = Vec::with_capacity(ids.len());
+    for material_id in ids {
+        let req = SourcesShowRequest {
+            material_id: material_id.clone(),
+        };
+        let response = match client
+            .call_raw_rpc("sources.show", serde_json::to_value(&req)?)
+            .await
+        {
+            Ok(v) => v,
+            // A missing material in scope is not fatal at the preview
+            // layer — operators may have archived a material out from
+            // under a stale plan. Skip silently rather than blocking the
+            // entire preview.
+            Err(_) => continue,
+        };
+        let show: SourcesShowResponse = match serde_json::from_value(response) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let m = &show.material;
+        let has_blob = m.optional_blob_id.is_some();
+        let replayability = Replayability::from_material_facts(
+            &m.status,
+            has_blob,
+            &m.timing_info_type,
+            m.total_bytes,
+        );
+        out.push(MaterialReplayabilityScorecard {
+            material_id: m.id.clone(),
+            source_identifier: m.source_identifier.clone(),
+            material_kind: m.material_kind.clone(),
+            status: m.status.clone(),
+            replayability,
+        });
+    }
+
+    Ok(out)
+}
+
+/// Render the per-material replayability scorecard as a table. Each row
+/// names the material id (truncated for readability), the source
+/// identifier, the replayability score (`N/5` green dimensions), and the
+/// weakness dimensions (the human-readable `weak_points` collapsed to
+/// the dimension keys: timing/anchor/blob/parser/privacy). The final row
+/// is the aggregate column — green dimensions averaged across all rows
+/// — so the operator can see how the per-material rows compose into the
+/// aggregate.
+fn format_per_material_scorecard_table(rows: &[MaterialReplayabilityScorecard]) -> String {
+    let mut out = String::new();
+    out.push_str("Per-Material Replayability:\n");
+    out.push_str(&format!(
+        "  {:<14} {:<28} {:<14} {:<6} {}\n",
+        "MATERIAL", "SOURCE", "STATUS", "SCORE", "WEAKNESSES"
+    ));
+
+    let mut score_total: u32 = 0;
+    for row in rows {
+        let mid = if row.material_id.len() > 12 {
+            format!("{}…", &row.material_id[..12])
+        } else {
+            row.material_id.clone()
+        };
+        let src = if row.source_identifier.len() > 26 {
+            format!("…{}", &row.source_identifier[row.source_identifier.len() - 25..])
+        } else {
+            row.source_identifier.clone()
+        };
+        let score = row.replayability.green_count();
+        score_total += u32::from(score);
+        let weak = weakness_dimensions(&row.replayability);
+        let weak_str = if weak.is_empty() {
+            "-".to_string()
+        } else {
+            weak.join(",")
+        };
+        out.push_str(&format!(
+            "  {mid:<14} {src:<28} {status:<14} {score:>3}/5 {weak_str}\n",
+            mid = mid,
+            src = src,
+            status = row.status,
+            score = score,
+            weak_str = weak_str,
+        ));
+    }
+
+    // Aggregate row: average green-count across rows, rounded down.
+    if !rows.is_empty() {
+        #[allow(clippy::cast_possible_truncation)]
+        let avg = (score_total / rows.len() as u32) as u8;
+        out.push_str(&format!(
+            "  {:<14} {:<28} {:<14} {:>3}/5 (aggregate; {} materials)\n",
+            "—",
+            "—",
+            "—",
+            avg,
+            rows.len(),
+        ));
+    }
+
+    out
+}
+
+/// Compact dimension labels for the weakness column. Returns the
+/// dimensions that are NOT green so the operator-facing table only
+/// surfaces the failure modes, not the green dimensions.
+fn weakness_dimensions(r: &Replayability) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if !r.raw_bytes_preserved {
+        out.push("blob");
+    }
+    if !r.timing_quality {
+        out.push("timing");
+    }
+    if !r.anchor_stability {
+        out.push("anchor");
+    }
+    if !r.parser_determinism {
+        out.push("parser");
+    }
+    if !r.privacy_safe_replay {
+        out.push("privacy");
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{format_replay_preview_table, preview_total_events};
+    use super::{
+        format_per_material_scorecard_table, format_replay_preview_table, preview_total_events,
+        weakness_dimensions, MaterialReplayabilityScorecard, Replayability,
+    };
     use serde_json::json;
     use sinex_primitives::rpc::replay::{
         ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState,
@@ -768,6 +947,64 @@ mod tests {
         assert!(rendered.contains(
             "Safety Detail:  Cascade impact could not be determined. Approve with caution."
         ));
+        Ok(())
+    }
+
+    fn make_scorecard(
+        material_id: &str,
+        source: &str,
+        status: &str,
+        replayability: Replayability,
+    ) -> MaterialReplayabilityScorecard {
+        MaterialReplayabilityScorecard {
+            material_id: material_id.to_string(),
+            source_identifier: source.to_string(),
+            material_kind: "annex".to_string(),
+            status: status.to_string(),
+            replayability,
+        }
+    }
+
+    #[sinex_test]
+    async fn weakness_dimensions_lists_failed_axes_only() -> TestResult<()> {
+        // All-green scorecard reports no weaknesses.
+        let strong = Replayability::from_material_facts("completed", true, "intrinsic", Some(1024));
+        assert!(weakness_dimensions(&strong).is_empty());
+
+        // Sensing material with no blob and inferred timing must surface
+        // blob, timing, and anchor as weakness axes.
+        let weak = Replayability::from_material_facts("sensing", false, "inferred", None);
+        let dims = weakness_dimensions(&weak);
+        assert!(dims.contains(&"blob"));
+        assert!(dims.contains(&"timing"));
+        assert!(dims.contains(&"anchor"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn per_material_scorecard_table_contains_aggregate_row() -> TestResult<()> {
+        // Two materials with distinct replayability shapes — one strong,
+        // one weak — should compose into an aggregate row that names the
+        // material count and a midpoint score.
+        let strong =
+            Replayability::from_material_facts("completed", true, "intrinsic", Some(2048));
+        let weak = Replayability::from_material_facts("sensing", false, "inferred", None);
+        let rows = vec![
+            make_scorecard("mat-a-uuid", "/path/strong.csv", "completed", strong),
+            make_scorecard("mat-b-uuid", "/path/weak.csv", "sensing", weak),
+        ];
+
+        let rendered = format_per_material_scorecard_table(&rows);
+        assert!(rendered.contains("Per-Material Replayability:"));
+        assert!(rendered.contains("MATERIAL"));
+        assert!(rendered.contains("WEAKNESSES"));
+        // Both rows present (truncated material id prefix).
+        assert!(rendered.contains("mat-a-uuid"));
+        assert!(rendered.contains("mat-b-uuid"));
+        // Aggregate row mentions the material count.
+        assert!(rendered.contains("aggregate; 2 materials"));
+        // Weak row surfaces the dimension labels in the WEAKNESSES column.
+        assert!(rendered.contains("blob") || rendered.contains("timing"));
         Ok(())
     }
 }
