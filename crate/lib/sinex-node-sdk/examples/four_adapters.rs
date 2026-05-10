@@ -42,9 +42,13 @@ async fn show_ipc_stream() -> Result<(), Box<dyn std::error::Error>> {
         let mut server = server;
         let _ = server.write_all(b"hello\nworld\n").await;
     });
-    let client = AsyncMutex::new(Some(client));
+    // Wrap in Arc so each closure invocation can clone a shared handle into
+    // the async block. A bare `&client` reference would tie the returned
+    // future to the closure-call lifetime, which the `Connect: Fn() -> Fut`
+    // bound on `IpcStreamRecordSource::new` cannot express.
+    let client = Arc::new(AsyncMutex::new(Some(client)));
     let source = IpcStreamRecordSource::new("demo://ipc", move || {
-        let client = &client;
+        let client = client.clone();
         async move { client.lock().await.take().ok_or(DemoError("already connected")) }
     });
     let batch = source

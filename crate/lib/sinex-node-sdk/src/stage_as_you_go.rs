@@ -244,7 +244,7 @@ mod tests {
             .register_in_flight("log_file", Some("test://resume"), serde_json::json!({}))
             .await?;
         let end_subject =
-            environment().nats_subject_with_namespace(None, SOURCE_MATERIAL_END_SUBJECT);
+            environment().nats_subject_with_namespace(None, SOURCE_MATERIAL_END_SUBJECT.as_str());
         let mut end_sub = ctx.nats_client().subscribe(end_subject).await?;
 
         let mut handle = context
