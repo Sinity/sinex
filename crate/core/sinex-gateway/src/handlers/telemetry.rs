@@ -1006,13 +1006,60 @@ pub async fn handle_telemetry_throughput(pool: &PgPool, params: Value) -> Result
         }
     }
 
+    // Per-component aggregation runs across the FULL source set, not the
+    // top-N per_source slice. With more than THROUGHPUT_SOURCE_LIMIT active
+    // sources, restricting to the top-N rows would systematically undercount
+    // component totals — the operator-facing EPS would diverge from reality
+    // any time the long tail mattered. The DB does the bucket classification
+    // inline so the aggregate stays bounded regardless of source cardinality.
+    #[derive(sqlx::FromRow)]
+    struct ComponentRow {
+        component: String,
+        events_last_1h: i64,
+        events_last_24h: i64,
+    }
+
+    let component_rows = sqlx::query_as::<_, ComponentRow>(
+        r"
+        SELECT
+            CASE
+                WHEN source LIKE 'sinex.gateway%'  THEN 'gateway'
+                WHEN source LIKE 'derived.%'       THEN 'derived'
+                WHEN source LIKE 'sinex.%'         THEN 'self_observation'
+                ELSE 'ingestion'
+            END AS component,
+            COALESCE(SUM(CASE WHEN ts_orig >= NOW() - INTERVAL '1 hour' THEN 1 ELSE 0 END), 0)::bigint AS events_last_1h,
+            COALESCE(SUM(CASE WHEN ts_orig >= NOW() - INTERVAL '24 hours' THEN 1 ELSE 0 END), 0)::bigint AS events_last_24h
+        FROM core.events
+        WHERE ts_orig >= NOW() - INTERVAL '24 hours'
+        GROUP BY component
+        ",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|error| telemetry_query_error("core.events throughput components", error))?;
+
     let mut comp_1h: std::collections::HashMap<&'static str, i64> = std::collections::HashMap::new();
     let mut comp_24h: std::collections::HashMap<&'static str, i64> = std::collections::HashMap::new();
-    for row in &per_source {
-        let c = classify_component(&row.source);
-        *comp_1h.entry(c).or_insert(0) += row.events_last_1h;
-        *comp_24h.entry(c).or_insert(0) += row.events_last_24h;
+    for row in &component_rows {
+        // Map the SQL string back to the same &'static str the const slice
+        // below uses, so unknown buckets (which shouldn't happen) silently drop.
+        let key = match row.component.as_str() {
+            "gateway" => Some("gateway"),
+            "ingestion" => Some("ingestion"),
+            "derived" => Some("derived"),
+            "self_observation" => Some("self_observation"),
+            _ => None,
+        };
+        if let Some(c) = key {
+            *comp_1h.entry(c).or_insert(0) += row.events_last_1h;
+            *comp_24h.entry(c).or_insert(0) += row.events_last_24h;
+        }
     }
+    // `classify_component` is retained as the canonical Rust-side bucket
+    // mapping so future per_source consumers (and tests) can reuse it
+    // without re-typing the rule. The component query mirrors it exactly.
+    let _ = classify_component;
 
     let mut per_component: Vec<ThroughputComponentEntry> = ["gateway", "ingestion", "derived", "self_observation"]
         .iter()
