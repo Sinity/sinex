@@ -263,6 +263,24 @@ pub struct SourceUnitBinding {
     /// separately from live ones in the rendered manifest and must not
     /// be treated as the source of truth for runtime behavior.
     pub proposed: bool,
+    // ────────────────────────────────────────────────────────────
+    // Deployment-shape fields. These mirror the corresponding
+    // [`SourceUnitDescriptor`] fields during the descriptor→binding
+    // migration (issue #1175). Once `xtask source-units render` reads
+    // these from the binding, they will be removed from the descriptor.
+    // ────────────────────────────────────────────────────────────
+    /// Logical runner pack hosting this binding (e.g. "terminal", "process").
+    pub runner_pack: &'static str,
+    /// Shape of the source's checkpoint state machine.
+    pub checkpoint_family: CheckpointFamily,
+    /// Runtime invocation shape (continuous, scheduled, on-demand).
+    pub runtime_shape: RuntimeShape,
+    /// Coarse package-level impact summary string.
+    pub package_impact: &'static str,
+    /// How the unit is implemented (e.g. "rust_in_pack:terminal").
+    pub implementation_mode: &'static str,
+    /// Physical/build footprint declared by this binding.
+    pub build_impact: SourceUnitBuildImpact,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -321,6 +339,12 @@ impl SourceUnitBinding {
                 capabilities: &[],
                 source_unit_id: "",
                 proposed: false,
+                runner_pack: "",
+                checkpoint_family: CheckpointFamily::AppendStream,
+                runtime_shape: RuntimeShape::Continuous,
+                package_impact: "",
+                implementation_mode: "",
+                build_impact: SourceUnitBuildImpact::ZERO,
             },
             _state: PhantomData,
         }
@@ -373,6 +397,49 @@ impl<O, P, M, C> SourceUnitBindingBuilder<O, P, M, C> {
     #[must_use]
     pub const fn proposed(mut self, proposed: bool) -> Self {
         self.descriptor.proposed = proposed;
+        self
+    }
+
+    /// Logical runner pack hosting this binding. Mirrors the descriptor field
+    /// during the #1175 descriptor→binding migration.
+    #[must_use]
+    pub const fn runner_pack(mut self, runner_pack: &'static str) -> Self {
+        self.descriptor.runner_pack = runner_pack;
+        self
+    }
+
+    /// Shape of the source's checkpoint state machine.
+    #[must_use]
+    pub const fn checkpoint_family(mut self, family: CheckpointFamily) -> Self {
+        self.descriptor.checkpoint_family = family;
+        self
+    }
+
+    /// Runtime invocation shape (continuous, scheduled, on-demand).
+    #[must_use]
+    pub const fn runtime_shape(mut self, shape: RuntimeShape) -> Self {
+        self.descriptor.runtime_shape = shape;
+        self
+    }
+
+    /// Coarse package-level impact summary string.
+    #[must_use]
+    pub const fn package_impact(mut self, package_impact: &'static str) -> Self {
+        self.descriptor.package_impact = package_impact;
+        self
+    }
+
+    /// How the unit is implemented (e.g. "rust_in_pack:terminal").
+    #[must_use]
+    pub const fn implementation_mode(mut self, mode: &'static str) -> Self {
+        self.descriptor.implementation_mode = mode;
+        self
+    }
+
+    /// Physical/build footprint declared by this binding.
+    #[must_use]
+    pub const fn build_impact(mut self, build_impact: SourceUnitBuildImpact) -> Self {
+        self.descriptor.build_impact = build_impact;
         self
     }
 }
@@ -491,6 +558,15 @@ inventory::submit! {
         "requires_target_home",
     ])
     .source_unit_id("terminal.atuin-history")
+    .runner_pack("terminal")
+    .checkpoint_family(CheckpointFamily::MutableSnapshot {
+        backing_store_kind: "sqlite",
+        occurrence_anchor: "atuin_history_id",
+    })
+    .runtime_shape(RuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:terminal")
+    .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }
 
@@ -774,23 +850,24 @@ impl SourceUnitBuildImpact {
 }
 
 /// The typed declaration every ingestor fills in.
+///
+/// This is strictly a *semantic* descriptor: identity, emitted event-type
+/// pairs, privacy tier, time horizons, retention, occurrence identity, and
+/// access policy. Deployment-shape fields (`runner_pack`, `checkpoint_family`,
+/// `runtime_shape`, `package_impact`, `implementation_mode`, `build_impact`)
+/// live on the matching [`SourceUnitBinding`] and are the source of truth for
+/// `xtask source-units render`. See issue #1175.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct SourceUnitDescriptor {
     pub id: &'static str,
     pub namespace: &'static str,
-    pub runner_pack: &'static str,
-    pub checkpoint_family: CheckpointFamily,
     pub event_types: &'static [(&'static str, &'static str)],
     pub privacy_tier: PrivacyTier,
-    pub runtime_shape: RuntimeShape,
     pub horizons: &'static [Horizon],
     pub retention: RetentionPolicy,
     pub proof_obligations: &'static [&'static str],
     pub occurrence_identity: OccurrenceIdentity,
     pub access_policy: &'static str,
-    pub package_impact: &'static str,
-    pub implementation_mode: &'static str,
-    pub build_impact: SourceUnitBuildImpact,
 }
 
 inventory::collect!(SourceUnitDescriptor);

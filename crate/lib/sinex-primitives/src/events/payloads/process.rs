@@ -112,8 +112,6 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "sinex-process-lifecycle",
         namespace: "infra",
-        runner_pack: "infra",
-        checkpoint_family: SuCheckpointFamily::LiveObservation,
         event_types: &[
             ("sinex", "process.started"),
             ("sinex", "process.degraded"),
@@ -121,15 +119,11 @@ register_source_unit! {
             ("sinex", "process.shutdown"),
         ],
         privacy_tier: SuPrivacyTier::Public,
-        runtime_shape: SuRuntimeShape::Continuous,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Natural,
         access_policy: "embedded_in_every_sinex_binary",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_every_sinex_binary",
-        build_impact: SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -137,19 +131,13 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "sinex-automaton-error",
         namespace: "infra",
-        runner_pack: "infra",
-        checkpoint_family: SuCheckpointFamily::LiveObservation,
         event_types: &[("sinex", "automaton.error")],
         privacy_tier: SuPrivacyTier::Public,
-        runtime_shape: SuRuntimeShape::Continuous,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Natural,
         access_policy: "embedded_in_automaton_runtime",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:process",
-        build_impact: SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -168,6 +156,12 @@ register_source_unit_binding! {
     .resource_shape("embedded_emitter")
     .source_unit_id("sinex-process-lifecycle")
     .proposed(true)
+    .runner_pack("infra")
+    .checkpoint_family(SuCheckpointFamily::LiveObservation)
+    .runtime_shape(SuRuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_every_sinex_binary")
+    .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }
 
@@ -186,6 +180,12 @@ register_source_unit_binding! {
     .resource_shape("embedded_emitter")
     .source_unit_id("sinex-automaton-error")
     .proposed(true)
+    .runner_pack("infra")
+    .checkpoint_family(SuCheckpointFamily::LiveObservation)
+    .runtime_shape(SuRuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:process")
+    .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }
 
