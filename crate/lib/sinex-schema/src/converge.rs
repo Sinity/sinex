@@ -790,7 +790,7 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                 NamedConstraint {
                     name: "source_material_registry_coverage_contract_kind_check",
                     expression:
-                        "coverage_contract IS NULL OR (jsonb_typeof(coverage_contract) = 'object' AND (coverage_contract->>'kind') IN ('Continuous', 'PeriodicDump', 'OpportunisticImport', 'FiniteOneShot', 'EphemeralStream', 'Unknown'))",
+                        "coverage_contract IS NULL OR (jsonb_typeof(coverage_contract) = 'object' AND coverage_contract ? 'kind' AND (coverage_contract->>'kind') IN ('Continuous', 'PeriodicDump', 'OpportunisticImport', 'FiniteOneShot', 'EphemeralStream', 'Unknown'))",
                 },
                 NamedConstraint {
                     name: "source_material_registry_privacy_class_check",
