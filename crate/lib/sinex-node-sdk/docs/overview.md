@@ -175,6 +175,39 @@ The four input-shape adapters (`ipc_stream`, `one_time_dump`,
 `crate::record_source::*` and are also re-exported from the crate root.
 A compact end-to-end example exercising each adapter is under
 `crate/lib/sinex-node-sdk/examples/four_adapters.rs`.
+## Shutdown patterns
+
+Three shutdown primitives coexist in the SDK. They are not three competing
+patterns — they are layered, and each call site picks the layer that matches
+its lifetime.
+
+| Primitive | Owner | When to use |
+|-----------|-------|-------------|
+| `RuntimeDrainController` (`runtime::stream::handles`) | Node lifecycle | Default for ingestor and derived-node loops. The command listener raises the drain edge, long-running phases subscribe to it, and the runner registers an abort handle for runtime-owned background tasks that must stop accepting work immediately. |
+| `spawn_shutdown_task()` (`service_runtime`) | Service-level binaries | Use for xtask drivers, demos, and ad-hoc binaries that own their own process lifetime instead of running through the node runner. The factory returns a join handle wired to the same drain semantics. |
+| `tokio::sync::watch::Receiver<bool>` | Leaf consumer | Not a third pattern. It is the wire shape that both primitives above hand to inner loops. Code that already holds a controller or service runtime should subscribe to it; nothing should construct a bare watch channel for shutdown of its own. |
+
+When a node grows a new long-running task, subscribe to the existing
+controller via `controller.subscribe()` — do not invent a parallel signal.
+
+## Source-material staging APIs
+
+Three SDK-level APIs cover source-material capture. They serve different
+roles in the same pipeline and are intentionally distinct, not redundant:
+
+| API | Module | Role |
+|-----|--------|------|
+| `batch_importer` | `crate::batch_importer` | Discovers files in a directory tree (FS-style ingestors that turn N files in a directory into N source materials in one pass). |
+| `acquisition_manager` | `crate::acquisition_manager` | Owns the lifecycle of one source material: `begin → append slices → finalize`. Used by `StageAsYouGoContext` for streamed captures, and by ingestors that already have the bytes and need to register them as material. |
+| `record_source` | `crate::record_source` | Reads logical records out of a backed material (or a raw input stream): append-only UTF-8 lines, SQLite rows, JSON-API pages. The output is the per-record byte anchors that feed event provenance. |
+
+In a typical ingestor flow they layer top-down: the batch importer enumerates
+files, the acquisition manager registers and writes each as a source material,
+and the record source reads bytes for parsing. Direct callers of
+`acquisition_manager` are also valid (single-file streamed captures), and
+record sources can run against pre-registered materials without going through
+the importer (one-shot dumps, API-fetched payloads). Pick the lowest layer
+that matches the work; do not chain when a single layer suffices.
 
 ## 🚦 Error Handling, Raw DLQ, and Recovery
 

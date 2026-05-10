@@ -448,7 +448,7 @@ async fn source_material_scenario_batches_row_stream_records_with_stable_anchors
         .material_id;
     let slice_subject = ctx
         .pipeline_namespace()
-        .subject(&source_material_slice_subject(material_id));
+        .subject(source_material_slice_subject(material_id).as_str());
     wait_for_slice_payload(&mut slice_sub, &slice_subject, expected_payload.as_slice()).await?;
     assert_no_additional_slice_payload(&mut slice_sub, &slice_subject, Duration::from_millis(200))
         .await?;
@@ -592,7 +592,7 @@ async fn source_material_resource_frame_amplification_profile(ctx: TestContext) 
         .material_id;
     let slice_subject = ctx
         .pipeline_namespace()
-        .subject(&source_material_slice_subject(material_id));
+        .subject(source_material_slice_subject(material_id).as_str());
     wait_for_slice_payload(&mut slice_sub, &slice_subject, expected_payload.as_slice()).await?;
     assert_no_additional_slice_payload(&mut slice_sub, &slice_subject, Duration::from_millis(200))
         .await?;
@@ -1306,7 +1306,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     });
     js.publish(
         ctx.pipeline_namespace()
-            .subject(SOURCE_MATERIAL_BEGIN_SUBJECT),
+            .subject(SOURCE_MATERIAL_BEGIN_SUBJECT.as_str()),
         serde_json::to_vec(&begin_msg)?.into(),
     )
     .await?
@@ -1328,7 +1328,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
 
         js.publish_with_headers(
             ctx.pipeline_namespace()
-                .subject(&source_material_slice_subject(material_id)),
+                .subject(source_material_slice_subject(material_id).as_str()),
             headers,
             data.into(),
         )
@@ -1355,7 +1355,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     });
     js.publish(
         ctx.pipeline_namespace()
-            .subject(SOURCE_MATERIAL_END_SUBJECT),
+            .subject(SOURCE_MATERIAL_END_SUBJECT.as_str()),
         serde_json::to_vec(&end_msg)?.into(),
     )
     .await?
@@ -1449,7 +1449,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
     });
     js.publish(
         ctx.pipeline_namespace()
-            .subject(SOURCE_MATERIAL_END_SUBJECT),
+            .subject(SOURCE_MATERIAL_END_SUBJECT.as_str()),
         serde_json::to_vec(&end_msg)?.into(),
     )
     .await?
@@ -1467,7 +1467,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
     });
     js.publish(
         ctx.pipeline_namespace()
-            .subject(SOURCE_MATERIAL_BEGIN_SUBJECT),
+            .subject(SOURCE_MATERIAL_BEGIN_SUBJECT.as_str()),
         serde_json::to_vec(&begin_msg)?.into(),
     )
     .await?
@@ -1482,7 +1482,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
 
         js.publish_with_headers(
             ctx.pipeline_namespace()
-                .subject(&source_material_slice_subject(material_id)),
+                .subject(source_material_slice_subject(material_id).as_str()),
             headers,
             data.into(),
         )
