@@ -73,7 +73,7 @@ Run the fast workspace verification pipeline
 | `--heavy` | no | no | Also run slow lints |
 | `-a, --all` | no | no | Check ALL packages (disables affected mode default) |
 | `-p, --package` | yes | no | Check specific package(s) only |
-| `--features` | yes | no | Cargo features to enable (comma-separated, forwarded to --features) |
+| `--plan` | no | no | Use planner to select workload (supplements affected-scope with failure history) |
 | `--skip-tests` | no | no | Skip test compilation check (faster, but may miss test errors) |
 | `--lint-breakdown` | no | no | Show breakdown of warning counts by lint code (top 10) |
 | `--by-file` | no | no | Show breakdown of warning counts by file path (top 20) |
@@ -214,7 +214,6 @@ Build workspace packages while capturing compiler diagnostics
 | `-p, --package` | yes | no | Packages to build (default: all) |
 | `-r, --release` | no | no | Build in release mode |
 | `-a, --all` | no | no | Build ALL packages (disables affected mode default) |
-| `--features` | yes | no | Cargo features to enable (comma-separated, forwarded to --features) |
 | `--dry-run` | no | no | Print what would happen without building |
 
 
@@ -617,6 +616,7 @@ Inspect workspace status, service health, and recent activity
 | `-w, --watch` | no | no | Watch for changes (live updates) |
 | `--summary` | no | no | Rich multi-section MOTD |
 | `--schemas` | no | no | Show event payload schema information |
+| `--next` | no | no | Show recommended next actions (planner) |
 
 
 ## `xtask deps`

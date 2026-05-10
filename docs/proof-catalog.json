@@ -2,12 +2,916 @@
   "schema_version": 1,
   "runtime_units": [
     {
-      "subject": "runtime_unit:terminal.atuin",
-      "id": "terminal.atuin",
+      "subject": "source_unit:analytics",
+      "id": "analytics",
+      "domain": "derived",
+      "implementation": "sinex-process",
+      "adapter": "DerivedNodeAdapter",
+      "output_event_type": "activity.window.summary",
+      "privacy_context": "inherits_from_parents",
+      "material_policy": "synthesis_parents",
+      "checkpoint_policy": "append_stream",
+      "resource_shape": "event_stream_consumer",
+      "capabilities": [],
+      "source_unit_id": "analytics",
+      "proposed": false,
+      "runner_pack": "process",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:blob-storage",
+      "id": "blob-storage",
+      "domain": "infra",
+      "implementation": "sinex-primitives::blob",
+      "adapter": "EmbeddedEmitter",
+      "output_event_type": "blob.retrieved",
+      "privacy_context": "blob_metadata",
+      "material_policy": "none",
+      "checkpoint_policy": "live_observation",
+      "resource_shape": "embedded_emitter",
+      "capabilities": [],
+      "source_unit_id": "blob-storage",
+      "proposed": true,
+      "runner_pack": "infra",
+      "checkpoint_family": {
+        "kind": "live_observation"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pipeline_processes",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:browser.history",
+      "id": "browser.history",
+      "domain": "web",
+      "implementation": "sinex-browser-ingestor",
+      "adapter": "IngestorNodeAdapter",
+      "output_event_type": "page.visited",
+      "privacy_context": "url",
+      "material_policy": "browser_visit_id",
+      "checkpoint_policy": "mutable_snapshot",
+      "resource_shape": "linear_rows_bounded_memory",
+      "capabilities": [],
+      "source_unit_id": "browser.history",
+      "proposed": false,
+      "runner_pack": "browser",
+      "checkpoint_family": {
+        "kind": "mutable_snapshot",
+        "backing_store_kind": "sqlite",
+        "occurrence_anchor": "visit_id"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:browser",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:daily-summarizer",
+      "id": "daily-summarizer",
+      "domain": "derived",
+      "implementation": "sinex-process",
+      "adapter": "DerivedNodeAdapter",
+      "output_event_type": "activity.summary.daily",
+      "privacy_context": "inherits_from_parents",
+      "material_policy": "synthesis_parents",
+      "checkpoint_policy": "append_stream",
+      "resource_shape": "event_stream_consumer",
+      "capabilities": [],
+      "source_unit_id": "daily-summarizer",
+      "proposed": false,
+      "runner_pack": "process",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:desktop.activitywatch",
+      "id": "desktop.activitywatch",
+      "domain": "desktop",
+      "implementation": "sinex-desktop-ingestor",
+      "adapter": "IngestorNodeAdapter",
+      "output_event_type": "window.active",
+      "privacy_context": "window_title",
+      "material_policy": "activitywatch_bucket_event",
+      "checkpoint_policy": "mutable_snapshot",
+      "resource_shape": "linear_rows_bounded_memory",
+      "capabilities": [],
+      "source_unit_id": "desktop.activitywatch",
+      "proposed": false,
+      "runner_pack": "desktop",
+      "checkpoint_family": {
+        "kind": "mutable_snapshot",
+        "backing_store_kind": "sqlite",
+        "occurrence_anchor": "bucket_event_timestamp"
+      },
+      "runtime_shape": "on_demand",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:desktop",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:desktop.clipboard",
+      "id": "desktop.clipboard",
+      "domain": "desktop",
+      "implementation": "sinex-desktop-ingestor",
+      "adapter": "IngestorNodeAdapter",
+      "output_event_type": "clipboard.copied",
+      "privacy_context": "clipboard",
+      "material_policy": "clipboard_anchor",
+      "checkpoint_policy": "live_observation",
+      "resource_shape": "event_emitter",
+      "capabilities": [],
+      "source_unit_id": "desktop.clipboard",
+      "proposed": false,
+      "runner_pack": "desktop",
+      "checkpoint_family": {
+        "kind": "live_observation"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:desktop",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:desktop.window-manager",
+      "id": "desktop.window-manager",
+      "domain": "desktop",
+      "implementation": "sinex-desktop-ingestor",
+      "adapter": "IngestorNodeAdapter",
+      "output_event_type": "window.opened",
+      "privacy_context": "window_title",
+      "material_policy": "wm_anchor",
+      "checkpoint_policy": "live_observation",
+      "resource_shape": "event_emitter",
+      "capabilities": [],
+      "source_unit_id": "desktop.window-manager",
+      "proposed": false,
+      "runner_pack": "desktop",
+      "checkpoint_family": {
+        "kind": "live_observation"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:desktop",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:document-parser",
+      "id": "document-parser",
+      "domain": "derived",
+      "implementation": "sinex-process",
+      "adapter": "DerivedNodeAdapter",
+      "output_event_type": "document.parsed",
+      "privacy_context": "inherits_from_parents",
+      "material_policy": "synthesis_parents",
+      "checkpoint_policy": "append_stream",
+      "resource_shape": "event_stream_consumer",
+      "capabilities": [],
+      "source_unit_id": "document-parser",
+      "proposed": false,
+      "runner_pack": "process",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:document.staging",
+      "id": "document.staging",
+      "domain": "document",
+      "implementation": "sinex-document-ingestor",
+      "adapter": "IngestorNodeAdapter",
+      "output_event_type": "document.ingested",
+      "privacy_context": "document_body",
+      "material_policy": "document_anchor",
+      "checkpoint_policy": "append_stream",
+      "resource_shape": "on_demand_batch",
+      "capabilities": [],
+      "source_unit_id": "document.staging",
+      "proposed": false,
+      "runner_pack": "document",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "on_demand",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:document",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:entity-enricher",
+      "id": "entity-enricher",
+      "domain": "derived",
+      "implementation": "sinex-process",
+      "adapter": "DerivedNodeAdapter",
+      "output_event_type": "entity.enriched",
+      "privacy_context": "inherits_from_parents",
+      "material_policy": "synthesis_parents",
+      "checkpoint_policy": "append_stream",
+      "resource_shape": "event_stream_consumer",
+      "capabilities": [],
+      "source_unit_id": "entity-enricher",
+      "proposed": false,
+      "runner_pack": "process",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:entity-extractor",
+      "id": "entity-extractor",
+      "domain": "derived",
+      "implementation": "sinex-process",
+      "adapter": "DerivedNodeAdapter",
+      "output_event_type": "entity.extracted",
+      "privacy_context": "inherits_from_parents",
+      "material_policy": "synthesis_parents",
+      "checkpoint_policy": "append_stream",
+      "resource_shape": "event_stream_consumer",
+      "capabilities": [],
+      "source_unit_id": "entity-extractor",
+      "proposed": false,
+      "runner_pack": "process",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:entity-resolver",
+      "id": "entity-resolver",
+      "domain": "derived",
+      "implementation": "sinex-process",
+      "adapter": "DerivedNodeAdapter",
+      "output_event_type": "entity.resolved",
+      "privacy_context": "inherits_from_parents",
+      "material_policy": "synthesis_parents",
+      "checkpoint_policy": "append_stream",
+      "resource_shape": "event_stream_consumer",
+      "capabilities": [],
+      "source_unit_id": "entity-resolver",
+      "proposed": false,
+      "runner_pack": "process",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:fs",
+      "id": "fs",
+      "domain": "filesystem",
+      "implementation": "sinex-fs-ingestor",
+      "adapter": "IngestorNodeAdapter",
+      "output_event_type": "file.created",
+      "privacy_context": "fs_path",
+      "material_policy": "inotify_anchor",
+      "checkpoint_policy": "append_stream",
+      "resource_shape": "continuous_inotify",
+      "capabilities": [],
+      "source_unit_id": "fs",
+      "proposed": false,
+      "runner_pack": "fs",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:fs",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:health",
+      "id": "health",
+      "domain": "derived",
+      "implementation": "sinex-process",
+      "adapter": "DerivedNodeAdapter",
+      "output_event_type": "health.aggregated_report",
+      "privacy_context": "inherits_from_parents",
+      "material_policy": "synthesis_parents",
+      "checkpoint_policy": "append_stream",
+      "resource_shape": "event_stream_consumer",
+      "capabilities": [],
+      "source_unit_id": "health",
+      "proposed": false,
+      "runner_pack": "process",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:hourly-summarizer",
+      "id": "hourly-summarizer",
+      "domain": "derived",
+      "implementation": "sinex-process",
+      "adapter": "DerivedNodeAdapter",
+      "output_event_type": "activity.summary.hourly",
+      "privacy_context": "inherits_from_parents",
+      "material_policy": "synthesis_parents",
+      "checkpoint_policy": "append_stream",
+      "resource_shape": "event_stream_consumer",
+      "capabilities": [],
+      "source_unit_id": "hourly-summarizer",
+      "proposed": false,
+      "runner_pack": "process",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:relation-extractor",
+      "id": "relation-extractor",
+      "domain": "derived",
+      "implementation": "sinex-process",
+      "adapter": "DerivedNodeAdapter",
+      "output_event_type": "entity.related",
+      "privacy_context": "inherits_from_parents",
+      "material_policy": "synthesis_parents",
+      "checkpoint_policy": "append_stream",
+      "resource_shape": "event_stream_consumer",
+      "capabilities": [],
+      "source_unit_id": "relation-extractor",
+      "proposed": false,
+      "runner_pack": "process",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:session-detector",
+      "id": "session-detector",
+      "domain": "derived",
+      "implementation": "sinex-process",
+      "adapter": "DerivedNodeAdapter",
+      "output_event_type": "activity.session.boundary",
+      "privacy_context": "inherits_from_parents",
+      "material_policy": "synthesis_parents",
+      "checkpoint_policy": "append_stream",
+      "resource_shape": "event_stream_consumer",
+      "capabilities": [],
+      "source_unit_id": "session-detector",
+      "proposed": false,
+      "runner_pack": "process",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:sinex-automaton-error",
+      "id": "sinex-automaton-error",
+      "domain": "infra",
+      "implementation": "sinex-process",
+      "adapter": "EmbeddedEmitter",
+      "output_event_type": "automaton.error",
+      "privacy_context": "none",
+      "material_policy": "none",
+      "checkpoint_policy": "live_observation",
+      "resource_shape": "embedded_emitter",
+      "capabilities": [],
+      "source_unit_id": "sinex-automaton-error",
+      "proposed": true,
+      "runner_pack": "infra",
+      "checkpoint_family": {
+        "kind": "live_observation"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:sinex-gateway-telemetry",
+      "id": "sinex-gateway-telemetry",
+      "domain": "infra",
+      "implementation": "sinex-gateway",
+      "adapter": "EmbeddedEmitter",
+      "output_event_type": "request.stats",
+      "privacy_context": "none",
+      "material_policy": "none",
+      "checkpoint_policy": "live_observation",
+      "resource_shape": "embedded_emitter",
+      "capabilities": [],
+      "source_unit_id": "sinex-gateway-telemetry",
+      "proposed": true,
+      "runner_pack": "infra",
+      "checkpoint_family": {
+        "kind": "live_observation"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_gateway",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:sinex-ingestd-telemetry",
+      "id": "sinex-ingestd-telemetry",
+      "domain": "infra",
+      "implementation": "sinex-ingestd",
+      "adapter": "EmbeddedEmitter",
+      "output_event_type": "stream.stats",
+      "privacy_context": "none",
+      "material_policy": "none",
+      "checkpoint_policy": "live_observation",
+      "resource_shape": "embedded_emitter",
+      "capabilities": [],
+      "source_unit_id": "sinex-ingestd-telemetry",
+      "proposed": true,
+      "runner_pack": "infra",
+      "checkpoint_family": {
+        "kind": "live_observation"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_ingestd",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:sinex-metrics",
+      "id": "sinex-metrics",
+      "domain": "infra",
+      "implementation": "sinex-primitives::metrics",
+      "adapter": "EmbeddedEmitter",
+      "output_event_type": "metric.counter",
+      "privacy_context": "none",
+      "material_policy": "none",
+      "checkpoint_policy": "live_observation",
+      "resource_shape": "embedded_emitter",
+      "capabilities": [],
+      "source_unit_id": "sinex-metrics",
+      "proposed": true,
+      "runner_pack": "infra",
+      "checkpoint_family": {
+        "kind": "live_observation"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_every_sinex_binary",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:sinex-node-telemetry",
+      "id": "sinex-node-telemetry",
+      "domain": "infra",
+      "implementation": "sinex-node-sdk",
+      "adapter": "EmbeddedEmitter",
+      "output_event_type": "processing.stats",
+      "privacy_context": "none",
+      "material_policy": "none",
+      "checkpoint_policy": "live_observation",
+      "resource_shape": "embedded_emitter",
+      "capabilities": [],
+      "source_unit_id": "sinex-node-telemetry",
+      "proposed": true,
+      "runner_pack": "infra",
+      "checkpoint_family": {
+        "kind": "live_observation"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_node_sdk",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:sinex-process-lifecycle",
+      "id": "sinex-process-lifecycle",
+      "domain": "infra",
+      "implementation": "sinex-primitives::process",
+      "adapter": "EmbeddedEmitter",
+      "output_event_type": "process.started",
+      "privacy_context": "none",
+      "material_policy": "none",
+      "checkpoint_policy": "live_observation",
+      "resource_shape": "embedded_emitter",
+      "capabilities": [],
+      "source_unit_id": "sinex-process-lifecycle",
+      "proposed": true,
+      "runner_pack": "infra",
+      "checkpoint_family": {
+        "kind": "live_observation"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_every_sinex_binary",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:system.dbus",
+      "id": "system.dbus",
+      "domain": "system",
+      "implementation": "sinex-system-ingestor",
+      "adapter": "IngestorNodeAdapter",
+      "output_event_type": "signal.received",
+      "privacy_context": "dbus",
+      "material_policy": "bus_anchor",
+      "checkpoint_policy": "live_observation",
+      "resource_shape": "event_emitter",
+      "capabilities": [],
+      "source_unit_id": "system.dbus",
+      "proposed": false,
+      "runner_pack": "system",
+      "checkpoint_family": {
+        "kind": "live_observation"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:system",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:system.journald",
+      "id": "system.journald",
+      "domain": "system",
+      "implementation": "sinex-system-ingestor",
+      "adapter": "IngestorNodeAdapter",
+      "output_event_type": "entry.written",
+      "privacy_context": "journal",
+      "material_policy": "journal_cursor",
+      "checkpoint_policy": "journal",
+      "resource_shape": "journal_tail",
+      "capabilities": [],
+      "source_unit_id": "system.journald",
+      "proposed": false,
+      "runner_pack": "system",
+      "checkpoint_family": {
+        "kind": "journal"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:system",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:system.monitor",
+      "id": "system.monitor",
+      "domain": "system",
+      "implementation": "sinex-system-ingestor",
+      "adapter": "IngestorNodeAdapter",
+      "output_event_type": "monitoring.started",
+      "privacy_context": "metadata",
+      "material_policy": "self_observation",
+      "checkpoint_policy": "live_observation",
+      "resource_shape": "event_emitter",
+      "capabilities": [],
+      "source_unit_id": "system.monitor",
+      "proposed": false,
+      "runner_pack": "system",
+      "checkpoint_family": {
+        "kind": "live_observation"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:system",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:system.systemd",
+      "id": "system.systemd",
+      "domain": "system",
+      "implementation": "sinex-system-ingestor",
+      "adapter": "IngestorNodeAdapter",
+      "output_event_type": "unit.started",
+      "privacy_context": "metadata",
+      "material_policy": "journal_cursor",
+      "checkpoint_policy": "journal",
+      "resource_shape": "journal_tail",
+      "capabilities": [],
+      "source_unit_id": "system.systemd",
+      "proposed": false,
+      "runner_pack": "system",
+      "checkpoint_family": {
+        "kind": "journal"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:system",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:system.udev",
+      "id": "system.udev",
+      "domain": "system",
+      "implementation": "sinex-system-ingestor",
+      "adapter": "IngestorNodeAdapter",
+      "output_event_type": "device.connected",
+      "privacy_context": "metadata",
+      "material_policy": "udev_anchor",
+      "checkpoint_policy": "live_observation",
+      "resource_shape": "event_emitter",
+      "capabilities": [],
+      "source_unit_id": "system.udev",
+      "proposed": false,
+      "runner_pack": "system",
+      "checkpoint_family": {
+        "kind": "live_observation"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:system",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:tag-applier",
+      "id": "tag-applier",
+      "domain": "derived",
+      "implementation": "sinex-process",
+      "adapter": "DerivedNodeAdapter",
+      "output_event_type": "knowledge.tag_applied",
+      "privacy_context": "inherits_from_parents",
+      "material_policy": "synthesis_parents",
+      "checkpoint_policy": "append_stream",
+      "resource_shape": "event_stream_consumer",
+      "capabilities": [],
+      "source_unit_id": "tag-applier",
+      "proposed": false,
+      "runner_pack": "process",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:terminal-canonicalizer",
+      "id": "terminal-canonicalizer",
+      "domain": "derived",
+      "implementation": "sinex-process",
+      "adapter": "DerivedNodeAdapter",
+      "output_event_type": "command.canonical",
+      "privacy_context": "inherits_from_parents",
+      "material_policy": "synthesis_parents",
+      "checkpoint_policy": "append_stream",
+      "resource_shape": "event_stream_consumer",
+      "capabilities": [],
+      "source_unit_id": "terminal-canonicalizer",
+      "proposed": false,
+      "runner_pack": "process",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:terminal.atuin-history",
+      "id": "terminal.atuin-history",
       "domain": "terminal",
       "implementation": "sinex-terminal-ingestor::atuin",
       "adapter": "sqlite_row_stream",
-      "output_event_type": "shell.command",
+      "output_event_type": "command.executed",
       "privacy_context": "command",
       "material_policy": "canonical_json_lines",
       "checkpoint_policy": "sqlite_row_id",
@@ -17,7 +921,178 @@
         "supports_historical",
         "produces_material_anchors",
         "requires_target_home"
-      ]
+      ],
+      "source_unit_id": "terminal.atuin-history",
+      "proposed": false,
+      "runner_pack": "terminal",
+      "checkpoint_family": {
+        "kind": "mutable_snapshot",
+        "backing_store_kind": "sqlite",
+        "occurrence_anchor": "atuin_history_id"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:terminal",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:terminal.bash-history",
+      "id": "terminal.bash-history",
+      "domain": "terminal",
+      "implementation": "sinex-terminal-ingestor",
+      "adapter": "IngestorNodeAdapter",
+      "output_event_type": "command.imported",
+      "privacy_context": "command",
+      "material_policy": "text_history_anchor",
+      "checkpoint_policy": "append_stream",
+      "resource_shape": "linear_rows_bounded_memory",
+      "capabilities": [],
+      "source_unit_id": "terminal.bash-history",
+      "proposed": false,
+      "runner_pack": "terminal",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:terminal",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:terminal.fish-history",
+      "id": "terminal.fish-history",
+      "domain": "terminal",
+      "implementation": "sinex-terminal-ingestor",
+      "adapter": "IngestorNodeAdapter",
+      "output_event_type": "command.imported",
+      "privacy_context": "command",
+      "material_policy": "sqlite_row_id",
+      "checkpoint_policy": "mutable_snapshot",
+      "resource_shape": "linear_rows_bounded_memory",
+      "capabilities": [],
+      "source_unit_id": "terminal.fish-history",
+      "proposed": false,
+      "runner_pack": "terminal",
+      "checkpoint_family": {
+        "kind": "mutable_snapshot",
+        "backing_store_kind": "sqlite",
+        "occurrence_anchor": "fish_history_row_id"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:terminal",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:terminal.monitor",
+      "id": "terminal.monitor",
+      "domain": "terminal",
+      "implementation": "sinex-terminal-ingestor",
+      "adapter": "IngestorNodeAdapter",
+      "output_event_type": "shell.terminal_monitoring_started",
+      "privacy_context": "command",
+      "material_policy": "self_observation",
+      "checkpoint_policy": "live_observation",
+      "resource_shape": "event_emitter",
+      "capabilities": [],
+      "source_unit_id": "terminal.monitor",
+      "proposed": false,
+      "runner_pack": "terminal",
+      "checkpoint_family": {
+        "kind": "live_observation"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:terminal",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:terminal.text-history",
+      "id": "terminal.text-history",
+      "domain": "terminal",
+      "implementation": "sinex-terminal-ingestor",
+      "adapter": "IngestorNodeAdapter",
+      "output_event_type": "command.imported",
+      "privacy_context": "command",
+      "material_policy": "text_history_anchor",
+      "checkpoint_policy": "append_stream",
+      "resource_shape": "linear_rows_bounded_memory",
+      "capabilities": [],
+      "source_unit_id": "terminal.text-history",
+      "proposed": false,
+      "runner_pack": "terminal",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:terminal",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:terminal.zsh-history",
+      "id": "terminal.zsh-history",
+      "domain": "terminal",
+      "implementation": "sinex-terminal-ingestor",
+      "adapter": "IngestorNodeAdapter",
+      "output_event_type": "command.imported",
+      "privacy_context": "command",
+      "material_policy": "text_history_anchor",
+      "checkpoint_policy": "append_stream",
+      "resource_shape": "linear_rows_bounded_memory",
+      "capabilities": [],
+      "source_unit_id": "terminal.zsh-history",
+      "proposed": false,
+      "runner_pack": "terminal",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:terminal",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
     }
   ],
   "source_units": [
@@ -43,6 +1118,42 @@
       "access_policy": "event_stream_read",
       "package_impact": "no_new_output",
       "implementation_mode": "rust_in_pack:process",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:blob-storage",
+      "id": "blob-storage",
+      "namespace": "infra",
+      "runner_pack": "infra",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "blob_storage",
+          "event_type": "blob.retrieved"
+        },
+        {
+          "source": "blob_storage",
+          "event_type": "blob.ingested"
+        },
+        {
+          "source": "blob_storage",
+          "event_type": "blob.verified"
+        },
+        {
+          "source": "blob_storage",
+          "event_type": "storage.statistics"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "live_observation",
+      "occurrence_identity": "natural_key",
+      "access_policy": "embedded_in_pipeline_processes",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pipeline_processes",
       "proof_obligations": []
     },
     {
@@ -468,6 +1579,198 @@
       "access_policy": "event_stream_read",
       "package_impact": "no_new_output",
       "implementation_mode": "rust_in_pack:process",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:sinex-automaton-error",
+      "id": "sinex-automaton-error",
+      "namespace": "infra",
+      "runner_pack": "infra",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "sinex",
+          "event_type": "automaton.error"
+        }
+      ],
+      "privacy_tier": "public",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "live_observation",
+      "occurrence_identity": "natural_key",
+      "access_policy": "embedded_in_automaton_runtime",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:sinex-gateway-telemetry",
+      "id": "sinex-gateway-telemetry",
+      "namespace": "infra",
+      "runner_pack": "infra",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "sinex.gateway",
+          "event_type": "request.stats"
+        },
+        {
+          "source": "sinex.gateway",
+          "event_type": "rate_limit.exceeded"
+        },
+        {
+          "source": "sinex.gateway",
+          "event_type": "pool.stats"
+        },
+        {
+          "source": "sinex.gateway",
+          "event_type": "replay.stats"
+        }
+      ],
+      "privacy_tier": "public",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "live_observation",
+      "occurrence_identity": "natural_key",
+      "access_policy": "embedded_in_gateway",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_gateway",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:sinex-ingestd-telemetry",
+      "id": "sinex-ingestd-telemetry",
+      "namespace": "infra",
+      "runner_pack": "infra",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "sinex.ingestd",
+          "event_type": "stream.stats"
+        },
+        {
+          "source": "sinex.ingestd",
+          "event_type": "assembly.stats"
+        },
+        {
+          "source": "sinex.ingestd",
+          "event_type": "consumer.startup_snapshot"
+        },
+        {
+          "source": "sinex.ingestd",
+          "event_type": "consumer.startup_replay_risk"
+        }
+      ],
+      "privacy_tier": "public",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "live_observation",
+      "occurrence_identity": "natural_key",
+      "access_policy": "embedded_in_ingestd",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_ingestd",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:sinex-metrics",
+      "id": "sinex-metrics",
+      "namespace": "infra",
+      "runner_pack": "infra",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "sinex",
+          "event_type": "metric.counter"
+        },
+        {
+          "source": "sinex",
+          "event_type": "metric.gauge"
+        },
+        {
+          "source": "sinex",
+          "event_type": "metric.histogram"
+        },
+        {
+          "source": "sinex",
+          "event_type": "health.status"
+        }
+      ],
+      "privacy_tier": "public",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "live_observation",
+      "occurrence_identity": "natural_key",
+      "access_policy": "embedded_in_every_sinex_binary",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_every_sinex_binary",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:sinex-node-telemetry",
+      "id": "sinex-node-telemetry",
+      "namespace": "infra",
+      "runner_pack": "infra",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "sinex.node",
+          "event_type": "processing.stats"
+        }
+      ],
+      "privacy_tier": "public",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "live_observation",
+      "occurrence_identity": "natural_key",
+      "access_policy": "embedded_in_node_sdk",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_node_sdk",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:sinex-process-lifecycle",
+      "id": "sinex-process-lifecycle",
+      "namespace": "infra",
+      "runner_pack": "infra",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "sinex",
+          "event_type": "process.started"
+        },
+        {
+          "source": "sinex",
+          "event_type": "process.degraded"
+        },
+        {
+          "source": "sinex",
+          "event_type": "process.failed"
+        },
+        {
+          "source": "sinex",
+          "event_type": "process.shutdown"
+        }
+      ],
+      "privacy_tier": "public",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "live_observation",
+      "occurrence_identity": "natural_key",
+      "access_policy": "embedded_in_every_sinex_binary",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_every_sinex_binary",
       "proof_obligations": []
     },
     {
@@ -1395,6 +2698,13 @@
       "event_type": "command.executed",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::shell::KittyCommandExecutedPayload"
+    },
+    {
+      "subject": "event_payload:sinex.gateway/gateway.rpc.call/1.0.0",
+      "source": "sinex.gateway",
+      "event_type": "gateway.rpc.call",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::gateway::GatewayRpcCallPayload"
     },
     {
       "subject": "event_payload:sinex.gateway/pool.stats/1.0.0",
@@ -2380,14 +3690,101 @@
       "subject": "xtask_command:verify.report",
       "path": "verify.report",
       "about": "Print summary from a perf report JSON"
-    },
-    {
-      "subject": "xtask_command:work",
-      "path": "work",
-      "about": "Execute the minimum workflow sequence to reach a target state"
     }
   ],
   "scenarios": [
+    {
+      "subject": "scenario:continuity::seam_classification::discontinuity",
+      "id": "continuity::seam_classification::discontinuity",
+      "test_name": "seam_classification_emits_discontinuity",
+      "package": "sinex-db",
+      "path": "crate/lib/sinex-db/tests/repositories_continuity_seams.rs",
+      "category": "source_material",
+      "lane": "fast",
+      "cost_tier": "fast",
+      "tags": [
+        "continuity",
+        "seam_classification"
+      ],
+      "fixtures": [],
+      "subject_refs": [
+        "issue:1085",
+        "db:continuity"
+      ],
+      "claim_ids": [],
+      "assertion_ids": [
+        "assertion:seam.discontinuity"
+      ]
+    },
+    {
+      "subject": "scenario:continuity::seam_classification::expected_continuation",
+      "id": "continuity::seam_classification::expected_continuation",
+      "test_name": "seam_classification_emits_expected_continuation",
+      "package": "sinex-db",
+      "path": "crate/lib/sinex-db/tests/repositories_continuity_seams.rs",
+      "category": "source_material",
+      "lane": "fast",
+      "cost_tier": "fast",
+      "tags": [
+        "continuity",
+        "seam_classification"
+      ],
+      "fixtures": [],
+      "subject_refs": [
+        "issue:1085",
+        "db:continuity"
+      ],
+      "claim_ids": [],
+      "assertion_ids": [
+        "assertion:seam.expected_continuation"
+      ]
+    },
+    {
+      "subject": "scenario:continuity::seam_classification::overlap",
+      "id": "continuity::seam_classification::overlap",
+      "test_name": "seam_classification_emits_overlap",
+      "package": "sinex-db",
+      "path": "crate/lib/sinex-db/tests/repositories_continuity_seams.rs",
+      "category": "source_material",
+      "lane": "fast",
+      "cost_tier": "fast",
+      "tags": [
+        "continuity",
+        "seam_classification"
+      ],
+      "fixtures": [],
+      "subject_refs": [
+        "issue:1085",
+        "db:continuity"
+      ],
+      "claim_ids": [],
+      "assertion_ids": [
+        "assertion:seam.overlap"
+      ]
+    },
+    {
+      "subject": "scenario:continuity::seam_classification::recovered_partial",
+      "id": "continuity::seam_classification::recovered_partial",
+      "test_name": "seam_classification_emits_recovered_partial",
+      "package": "sinex-db",
+      "path": "crate/lib/sinex-db/tests/repositories_continuity_seams.rs",
+      "category": "source_material",
+      "lane": "fast",
+      "cost_tier": "fast",
+      "tags": [
+        "continuity",
+        "seam_classification"
+      ],
+      "fixtures": [],
+      "subject_refs": [
+        "issue:1085",
+        "db:continuity"
+      ],
+      "claim_ids": [],
+      "assertion_ids": [
+        "assertion:seam.recovered_partial"
+      ]
+    },
     {
       "subject": "scenario:derived-telemetry.lag-percentile-under-load.v1",
       "id": "derived-telemetry.lag-percentile-under-load.v1",
@@ -2416,6 +3813,102 @@
         "lag-p99-stays-bounded-under-synthetic-burst",
         "tick-runtime-p99-stays-bounded-for-noop-transducer",
         "reservoir-evicts-on-overflow"
+      ]
+    },
+    {
+      "subject": "scenario:readiness::tri_state_fixture::available",
+      "id": "readiness::tri_state_fixture::available",
+      "test_name": "readiness_available_completed_with_events",
+      "package": "sinex-e2e-tests",
+      "path": "tests/e2e/tests/source_readiness_fixture.rs",
+      "category": "source_material",
+      "lane": "fast",
+      "cost_tier": "fast",
+      "tags": [
+        "readiness",
+        "tri_state_fixture"
+      ],
+      "fixtures": [],
+      "subject_refs": [
+        "issue:1174",
+        "issue:1099",
+        "explore:readiness"
+      ],
+      "claim_ids": [],
+      "assertion_ids": [
+        "assertion:readiness.available_completed"
+      ]
+    },
+    {
+      "subject": "scenario:readiness::tri_state_fixture::distinct_in_one_run",
+      "id": "readiness::tri_state_fixture::distinct_in_one_run",
+      "test_name": "readiness_tri_state_distinct_in_one_run",
+      "package": "sinex-e2e-tests",
+      "path": "tests/e2e/tests/source_readiness_fixture.rs",
+      "category": "source_material",
+      "lane": "fast",
+      "cost_tier": "fast",
+      "tags": [
+        "readiness",
+        "tri_state_fixture"
+      ],
+      "fixtures": [],
+      "subject_refs": [
+        "issue:1174",
+        "issue:1099",
+        "explore:readiness"
+      ],
+      "claim_ids": [],
+      "assertion_ids": [
+        "assertion:readiness.tri_state_distinct"
+      ]
+    },
+    {
+      "subject": "scenario:readiness::tri_state_fixture::missing",
+      "id": "readiness::tri_state_fixture::missing",
+      "test_name": "readiness_missing_source_returns_none",
+      "package": "sinex-e2e-tests",
+      "path": "tests/e2e/tests/source_readiness_fixture.rs",
+      "category": "source_material",
+      "lane": "fast",
+      "cost_tier": "fast",
+      "tags": [
+        "readiness",
+        "tri_state_fixture"
+      ],
+      "fixtures": [],
+      "subject_refs": [
+        "issue:1174",
+        "issue:1099",
+        "explore:readiness"
+      ],
+      "claim_ids": [],
+      "assertion_ids": [
+        "assertion:readiness.missing_returns_none"
+      ]
+    },
+    {
+      "subject": "scenario:readiness::tri_state_fixture::staged_unparsed",
+      "id": "readiness::tri_state_fixture::staged_unparsed",
+      "test_name": "readiness_staged_unparsed_reports_partial",
+      "package": "sinex-e2e-tests",
+      "path": "tests/e2e/tests/source_readiness_fixture.rs",
+      "category": "source_material",
+      "lane": "fast",
+      "cost_tier": "fast",
+      "tags": [
+        "readiness",
+        "tri_state_fixture"
+      ],
+      "fixtures": [],
+      "subject_refs": [
+        "issue:1174",
+        "issue:1099",
+        "explore:readiness"
+      ],
+      "claim_ids": [],
+      "assertion_ids": [
+        "assertion:readiness.staged_unparsed_partial"
       ]
     },
     {
@@ -2455,7 +3948,7 @@
       "id": "source-adapter.record-source-harness-laws.v1",
       "test_name": "harness_materializes_records_and_finalizes_sink",
       "package": "sinex-node-sdk",
-      "path": "crate/lib/sinex-node-sdk/src/record_source.rs",
+      "path": "crate/lib/sinex-node-sdk/src/record_source/mod.rs",
       "category": "node_adapter",
       "lane": "fast",
       "cost_tier": "fast",
