@@ -196,13 +196,10 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "session-detector",
         namespace: "derived",
-        runner_pack: "process",
-        checkpoint_family: SuCheckpointFamily::AppendStream,
         event_types: &[
             ("derived.session-detector", "activity.session.boundary"),
         ],
         privacy_tier: SuPrivacyTier::Sensitive,
-        runtime_shape: SuRuntimeShape::Continuous,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
@@ -210,9 +207,6 @@ register_source_unit! {
             "(source_unit, parent_event_ids)",
         ),
         access_policy: "event_stream_read",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:process",
-        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -230,5 +224,11 @@ register_source_unit_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_unit_id("session-detector")
+    .runner_pack("process")
+    .checkpoint_family(SuCheckpointFamily::AppendStream)
+    .runtime_shape(SuRuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:process")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }

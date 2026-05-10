@@ -32,23 +32,17 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "desktop.clipboard",
         namespace: "desktop",
-        runner_pack: "desktop",
-        checkpoint_family: SuCheckpointFamily::LiveObservation,
         event_types: &[
             ("clipboard", "clipboard.copied"),
             ("clipboard", "clipboard.selected"),
         ],
         // Clipboard payloads routinely contain secrets.
         privacy_tier: SuPrivacyTier::Secret,
-        runtime_shape: SuRuntimeShape::Continuous,
         horizons: &[SuHorizon::Continuous, SuHorizon::Historical],
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Anchor,
         access_policy: "target_runtime_bridge:clipboard",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:desktop",
-        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -56,8 +50,6 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "desktop.window-manager",
         namespace: "desktop",
-        runner_pack: "desktop",
-        checkpoint_family: SuCheckpointFamily::LiveObservation,
         event_types: &[
             ("wm.hyprland", "window.opened"),
             ("wm.hyprland", "window.closed"),
@@ -70,15 +62,11 @@ register_source_unit! {
             ("wm.hyprland", "wm.unhandled"),
         ],
         privacy_tier: SuPrivacyTier::Sensitive,
-        runtime_shape: SuRuntimeShape::Continuous,
         horizons: &[SuHorizon::Continuous, SuHorizon::Historical],
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
         occurrence_identity: SuOccurrenceIdentity::Anchor,
         access_policy: "target_runtime_bridge:window_manager",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:desktop",
-        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -86,18 +74,12 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "desktop.activitywatch",
         namespace: "desktop",
-        runner_pack: "desktop",
-        checkpoint_family: SuCheckpointFamily::MutableSnapshot {
-            backing_store_kind: "sqlite",
-            occurrence_anchor: "bucket_event_timestamp",
-        },
         event_types: &[
             ("activitywatch", "window.active"),
             ("activitywatch", "afk.changed"),
             ("activitywatch", "browser.tab.active"),
         ],
         privacy_tier: SuPrivacyTier::Secret,
-        runtime_shape: SuRuntimeShape::OnDemand,
         horizons: &[SuHorizon::Historical],
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
@@ -105,9 +87,6 @@ register_source_unit! {
             "(source_unit, bucket_id, event_timestamp)",
         ),
         access_policy: "target_home_read:activitywatch_sqlite",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:desktop",
-        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -127,6 +106,12 @@ register_source_unit_binding! {
     .checkpoint_policy("live_observation")
     .resource_shape("event_emitter")
     .source_unit_id("desktop.clipboard")
+    .runner_pack("desktop")
+    .checkpoint_family(SuCheckpointFamily::LiveObservation)
+    .runtime_shape(SuRuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:desktop")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }
 
@@ -144,6 +129,12 @@ register_source_unit_binding! {
     .checkpoint_policy("live_observation")
     .resource_shape("event_emitter")
     .source_unit_id("desktop.window-manager")
+    .runner_pack("desktop")
+    .checkpoint_family(SuCheckpointFamily::LiveObservation)
+    .runtime_shape(SuRuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:desktop")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }
 
@@ -161,5 +152,14 @@ register_source_unit_binding! {
     .checkpoint_policy("mutable_snapshot")
     .resource_shape("linear_rows_bounded_memory")
     .source_unit_id("desktop.activitywatch")
+    .runner_pack("desktop")
+    .checkpoint_family(SuCheckpointFamily::MutableSnapshot {
+            backing_store_kind: "sqlite",
+            occurrence_anchor: "bucket_event_timestamp",
+        })
+    .runtime_shape(SuRuntimeShape::OnDemand)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:desktop")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }

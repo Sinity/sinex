@@ -26,17 +26,11 @@ register_source_unit! {
     SourceUnitDescriptor {
         id: "browser.history",
         namespace: "web",
-        runner_pack: "browser",
-        checkpoint_family: SuCheckpointFamily::MutableSnapshot {
-            backing_store_kind: "sqlite",
-            occurrence_anchor: "visit_id",
-        },
         event_types: &[
             ("webhistory", "page.visited"),
         ],
         // URLs and titles routinely contain auth tokens, search queries.
         privacy_tier: SuPrivacyTier::Secret,
-        runtime_shape: SuRuntimeShape::Continuous,
         horizons: &[SuHorizon::Continuous, SuHorizon::Historical],
         retention: SuRetentionPolicy::Forever,
         proof_obligations: &[],
@@ -44,9 +38,6 @@ register_source_unit! {
             "(source_unit, browser_profile, visit_id)",
         ),
         access_policy: "target_home_read:browser_history",
-        package_impact: "no_new_output",
-        implementation_mode: "rust_in_pack:browser",
-        build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
 }
 
@@ -64,5 +55,14 @@ register_source_unit_binding! {
     .checkpoint_policy("mutable_snapshot")
     .resource_shape("linear_rows_bounded_memory")
     .source_unit_id("browser.history")
+    .runner_pack("browser")
+    .checkpoint_family(SuCheckpointFamily::MutableSnapshot {
+            backing_store_kind: "sqlite",
+            occurrence_anchor: "visit_id",
+        })
+    .runtime_shape(SuRuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:browser")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }
