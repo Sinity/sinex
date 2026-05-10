@@ -251,6 +251,18 @@ pub struct SourceUnitBinding {
     pub checkpoint_policy: &'static str,
     pub resource_shape: &'static str,
     pub capabilities: &'static [&'static str],
+    /// Stable id of the [`SourceUnitDescriptor`] this binding belongs to.
+    ///
+    /// String FK across the inventory boundary: `xtask source-units check`
+    /// validates that this resolves to a registered descriptor id. Empty
+    /// string means "no descriptor yet" (legacy bindings registered before
+    /// the FK was introduced).
+    pub source_unit_id: &'static str,
+    /// True for "future-state" bindings that describe a planned but
+    /// not-yet-deployed adapter shape. Proposed bindings are surfaced
+    /// separately from live ones in the rendered manifest and must not
+    /// be treated as the source of truth for runtime behavior.
+    pub proposed: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -307,6 +319,8 @@ impl SourceUnitBinding {
                 checkpoint_policy: "",
                 resource_shape: "",
                 capabilities: &[],
+                source_unit_id: "",
+                proposed: false,
             },
             _state: PhantomData,
         }
@@ -335,6 +349,30 @@ impl<O, P, M, C> SourceUnitBindingBuilder<O, P, M, C> {
     #[must_use]
     pub const fn capabilities(mut self, capabilities: &'static [&'static str]) -> Self {
         self.descriptor.capabilities = capabilities;
+        self
+    }
+
+    /// Attach the binding to a registered source-unit descriptor by id.
+    ///
+    /// The id is treated as a string foreign key resolved by
+    /// `xtask source-units check`. Bindings that omit this default to
+    /// the empty string and are flagged as unresolved by the manifest
+    /// validator until they are wired up.
+    #[must_use]
+    pub const fn source_unit_id(mut self, source_unit_id: &'static str) -> Self {
+        self.descriptor.source_unit_id = source_unit_id;
+        self
+    }
+
+    /// Mark the binding as a future-state proposal rather than a live deployment.
+    ///
+    /// Proposed bindings are inert: they document an intended adapter shape
+    /// without claiming an active runtime. Manifest renderers must surface
+    /// them separately from live bindings so that "what runs today" is not
+    /// confused with "what we plan to add."
+    #[must_use]
+    pub const fn proposed(mut self, proposed: bool) -> Self {
+        self.descriptor.proposed = proposed;
         self
     }
 }
@@ -452,6 +490,7 @@ inventory::submit! {
         "produces_material_anchors",
         "requires_target_home",
     ])
+    .source_unit_id("terminal.atuin-history")
     .build()
 }
 
