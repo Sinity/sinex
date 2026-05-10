@@ -239,7 +239,7 @@ impl EvidenceEnvelope {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-pub struct RuntimeUnitDescriptor {
+pub struct SourceUnitBinding {
     pub subject: SubjectRef,
     pub id: &'static str,
     pub domain: &'static str,
@@ -251,6 +251,18 @@ pub struct RuntimeUnitDescriptor {
     pub checkpoint_policy: &'static str,
     pub resource_shape: &'static str,
     pub capabilities: &'static [&'static str],
+    /// Stable id of the [`SourceUnitDescriptor`] this binding belongs to.
+    ///
+    /// String FK across the inventory boundary: `xtask source-units check`
+    /// validates that this resolves to a registered descriptor id. Empty
+    /// string means "no descriptor yet" (legacy bindings registered before
+    /// the FK was introduced).
+    pub source_unit_id: &'static str,
+    /// True for "future-state" bindings that describe a planned but
+    /// not-yet-deployed adapter shape. Proposed bindings are surfaced
+    /// separately from live ones in the rendered manifest and must not
+    /// be treated as the source of truth for runtime behavior.
+    pub proposed: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -265,10 +277,10 @@ pub struct HasPrivacy;
 pub struct MissingMaterial;
 #[derive(Debug, Clone, Copy)]
 pub struct HasMaterial;
-/// Typestate marker: checkpoint policy not yet supplied to [`RuntimeUnitDescriptorBuilder`].
+/// Typestate marker: checkpoint policy not yet supplied to [`SourceUnitBindingBuilder`].
 #[derive(Debug, Clone, Copy)]
 pub struct MissingCheckpoint;
-/// Typestate marker: checkpoint policy supplied to [`RuntimeUnitDescriptorBuilder`].
+/// Typestate marker: checkpoint policy supplied to [`SourceUnitBindingBuilder`].
 ///
 /// Named `CheckpointPresent` (not `HasCheckpoint`) to distinguish this family from the
 /// `HasProvenance`/`NoProvenance` markers in `events::builder`, which guard a different
@@ -277,25 +289,25 @@ pub struct MissingCheckpoint;
 pub struct CheckpointPresent;
 
 #[derive(Debug, Clone, Copy)]
-pub struct RuntimeUnitDescriptorBuilder<Output, Privacy, Material, Checkpoint> {
-    descriptor: RuntimeUnitDescriptor,
+pub struct SourceUnitBindingBuilder<Output, Privacy, Material, Checkpoint> {
+    descriptor: SourceUnitBinding,
     _state: PhantomData<(Output, Privacy, Material, Checkpoint)>,
 }
 
-impl RuntimeUnitDescriptor {
+impl SourceUnitBinding {
     #[must_use]
     pub const fn builder(
         subject: SubjectRef,
         id: &'static str,
         domain: &'static str,
-    ) -> RuntimeUnitDescriptorBuilder<
+    ) -> SourceUnitBindingBuilder<
         MissingOutput,
         MissingPrivacy,
         MissingMaterial,
         MissingCheckpoint,
     > {
-        RuntimeUnitDescriptorBuilder {
-            descriptor: RuntimeUnitDescriptor {
+        SourceUnitBindingBuilder {
+            descriptor: SourceUnitBinding {
                 subject,
                 id,
                 domain,
@@ -307,13 +319,15 @@ impl RuntimeUnitDescriptor {
                 checkpoint_policy: "",
                 resource_shape: "",
                 capabilities: &[],
+                source_unit_id: "",
+                proposed: false,
             },
             _state: PhantomData,
         }
     }
 }
 
-impl<O, P, M, C> RuntimeUnitDescriptorBuilder<O, P, M, C> {
+impl<O, P, M, C> SourceUnitBindingBuilder<O, P, M, C> {
     #[must_use]
     pub const fn implementation(mut self, implementation: &'static str) -> Self {
         self.descriptor.implementation = implementation;
@@ -337,80 +351,104 @@ impl<O, P, M, C> RuntimeUnitDescriptorBuilder<O, P, M, C> {
         self.descriptor.capabilities = capabilities;
         self
     }
+
+    /// Attach the binding to a registered source-unit descriptor by id.
+    ///
+    /// The id is treated as a string foreign key resolved by
+    /// `xtask source-units check`. Bindings that omit this default to
+    /// the empty string and are flagged as unresolved by the manifest
+    /// validator until they are wired up.
+    #[must_use]
+    pub const fn source_unit_id(mut self, source_unit_id: &'static str) -> Self {
+        self.descriptor.source_unit_id = source_unit_id;
+        self
+    }
+
+    /// Mark the binding as a future-state proposal rather than a live deployment.
+    ///
+    /// Proposed bindings are inert: they document an intended adapter shape
+    /// without claiming an active runtime. Manifest renderers must surface
+    /// them separately from live bindings so that "what runs today" is not
+    /// confused with "what we plan to add."
+    #[must_use]
+    pub const fn proposed(mut self, proposed: bool) -> Self {
+        self.descriptor.proposed = proposed;
+        self
+    }
 }
 
-impl<P, M, C> RuntimeUnitDescriptorBuilder<MissingOutput, P, M, C> {
+impl<P, M, C> SourceUnitBindingBuilder<MissingOutput, P, M, C> {
     #[must_use]
     pub const fn output_event_type(
         mut self,
         output_event_type: &'static str,
-    ) -> RuntimeUnitDescriptorBuilder<HasOutput, P, M, C> {
+    ) -> SourceUnitBindingBuilder<HasOutput, P, M, C> {
         self.descriptor.output_event_type = output_event_type;
-        RuntimeUnitDescriptorBuilder {
+        SourceUnitBindingBuilder {
             descriptor: self.descriptor,
             _state: PhantomData,
         }
     }
 }
 
-impl<O, M, C> RuntimeUnitDescriptorBuilder<O, MissingPrivacy, M, C> {
+impl<O, M, C> SourceUnitBindingBuilder<O, MissingPrivacy, M, C> {
     #[must_use]
     pub const fn privacy_context(
         mut self,
         privacy_context: &'static str,
-    ) -> RuntimeUnitDescriptorBuilder<O, HasPrivacy, M, C> {
+    ) -> SourceUnitBindingBuilder<O, HasPrivacy, M, C> {
         self.descriptor.privacy_context = privacy_context;
-        RuntimeUnitDescriptorBuilder {
+        SourceUnitBindingBuilder {
             descriptor: self.descriptor,
             _state: PhantomData,
         }
     }
 }
 
-impl<O, P, C> RuntimeUnitDescriptorBuilder<O, P, MissingMaterial, C> {
+impl<O, P, C> SourceUnitBindingBuilder<O, P, MissingMaterial, C> {
     #[must_use]
     pub const fn material_policy(
         mut self,
         material_policy: &'static str,
-    ) -> RuntimeUnitDescriptorBuilder<O, P, HasMaterial, C> {
+    ) -> SourceUnitBindingBuilder<O, P, HasMaterial, C> {
         self.descriptor.material_policy = material_policy;
-        RuntimeUnitDescriptorBuilder {
+        SourceUnitBindingBuilder {
             descriptor: self.descriptor,
             _state: PhantomData,
         }
     }
 }
 
-impl<O, P, M> RuntimeUnitDescriptorBuilder<O, P, M, MissingCheckpoint> {
+impl<O, P, M> SourceUnitBindingBuilder<O, P, M, MissingCheckpoint> {
     #[must_use]
     pub const fn checkpoint_policy(
         mut self,
         checkpoint_policy: &'static str,
-    ) -> RuntimeUnitDescriptorBuilder<O, P, M, CheckpointPresent> {
+    ) -> SourceUnitBindingBuilder<O, P, M, CheckpointPresent> {
         self.descriptor.checkpoint_policy = checkpoint_policy;
-        RuntimeUnitDescriptorBuilder {
+        SourceUnitBindingBuilder {
             descriptor: self.descriptor,
             _state: PhantomData,
         }
     }
 }
 
-impl RuntimeUnitDescriptorBuilder<HasOutput, HasPrivacy, HasMaterial, CheckpointPresent> {
+impl SourceUnitBindingBuilder<HasOutput, HasPrivacy, HasMaterial, CheckpointPresent> {
     #[must_use]
-    pub const fn build(self) -> RuntimeUnitDescriptor {
+    pub const fn build(self) -> SourceUnitBinding {
         self.descriptor
     }
 }
 
-inventory::collect!(RuntimeUnitDescriptor);
+inventory::collect!(SourceUnitBinding);
 inventory::collect!(Claim);
 inventory::collect!(RunnerBinding);
 inventory::collect!(ProofObligation);
 inventory::collect!(Exemption);
 
 #[must_use]
-pub fn runtime_unit_descriptors() -> impl Iterator<Item = &'static RuntimeUnitDescriptor> {
-    inventory::iter::<RuntimeUnitDescriptor>()
+pub fn source_unit_bindings() -> impl Iterator<Item = &'static SourceUnitBinding> {
+    inventory::iter::<SourceUnitBinding>()
 }
 
 #[must_use]
@@ -434,7 +472,7 @@ pub fn exemptions() -> impl Iterator<Item = &'static Exemption> {
 }
 
 inventory::submit! {
-    RuntimeUnitDescriptor::builder(
+    SourceUnitBinding::builder(
         SubjectRef::from_static("runtime_unit:terminal.atuin"),
         "terminal.atuin",
         "terminal",
@@ -452,6 +490,7 @@ inventory::submit! {
         "produces_material_anchors",
         "requires_target_home",
     ])
+    .source_unit_id("terminal.atuin-history")
     .build()
 }
 
@@ -801,8 +840,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn runtime_unit_descriptor_builder_requires_proof_fields() -> TestResult<()> {
-        let descriptor = RuntimeUnitDescriptor::builder(
+    async fn source_unit_binding_builder_requires_proof_fields() -> TestResult<()> {
+        let descriptor = SourceUnitBinding::builder(
             SubjectRef::from_static("runtime_unit:test.demo"),
             "test.demo",
             "test",
@@ -824,12 +863,12 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn proof_inventory_contains_builtin_runtime_unit() -> TestResult<()> {
-        let runtime_units = runtime_unit_descriptors()
+    async fn proof_inventory_contains_builtin_source_unit_binding() -> TestResult<()> {
+        let bindings = source_unit_bindings()
             .map(|descriptor| descriptor.subject.as_str())
             .collect::<Vec<_>>();
 
-        assert!(runtime_units.contains(&"runtime_unit:terminal.atuin"));
+        assert!(bindings.contains(&"runtime_unit:terminal.atuin"));
         assert!(claims().any(|claim| claim.id == "claim:source_material.material_provenance"));
         assert!(claims().any(|claim| claim.id == "claim:source_unit.package_impact_visible"));
         assert!(runner_bindings().any(|binding| binding.id == "runner:rust.nextest.scenario"));

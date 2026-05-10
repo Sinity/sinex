@@ -1,7 +1,7 @@
-error[E0599]: no method named `build` found for struct `RuntimeUnitDescriptorBuilder<HasOutput, HasPrivacy, HasMaterial, MissingCheckpoint>` in the current scope
+error[E0599]: no method named `build` found for struct `SourceUnitBindingBuilder<HasOutput, HasPrivacy, HasMaterial, MissingCheckpoint>` in the current scope
   --> tests/proof_compile_fail/missing_checkpoint.rs:13:6
    |
- 4 |       let _ = RuntimeUnitDescriptor::builder(
+ 4 |       let _ = SourceUnitBinding::builder(
    |  _____________-
  5 | |         subject_ref!("runtime_unit:test.missing_checkpoint"),
  6 | |         "test.missing_checkpoint",
@@ -9,9 +9,9 @@ error[E0599]: no method named `build` found for struct `RuntimeUnitDescriptorBui
 ...  |
 12 | |     .material_policy("canonical_json_lines")
 13 | |     .build();
-   | |     -^^^^^ method not found in `RuntimeUnitDescriptorBuilder<HasOutput, HasPrivacy, HasMaterial, MissingCheckpoint>`
+   | |     -^^^^^ method not found in `SourceUnitBindingBuilder<HasOutput, HasPrivacy, HasMaterial, MissingCheckpoint>`
    | |_____|
    |
    |
    = note: the method was found for
-           - `RuntimeUnitDescriptorBuilder<HasOutput, HasPrivacy, HasMaterial, CheckpointPresent>`
+           - `SourceUnitBindingBuilder<HasOutput, HasPrivacy, HasMaterial, CheckpointPresent>`

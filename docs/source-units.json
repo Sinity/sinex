@@ -1530,5 +1530,6 @@
     ],
     "non_rust_source_unit_mode": "implementation_mode records external, off-host, or non-Rust units; dedicated build surfaces require rationale.",
     "normal_source_unit_physical_impact": "crate_impact=0, binary_impact=0, nix_output_impact=0, derivation_impact=0, sqlx_validation_impact=0"
-  }
+  },
+  "proposed_bindings": []
 }
