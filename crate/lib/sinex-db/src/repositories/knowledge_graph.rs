@@ -694,7 +694,7 @@ impl KnowledgeGraphRepository<'_> {
             r#"
             UPDATE core.entity_relations target
             SET source_event_ids = (
-                    SELECT array_agg(DISTINCT eid ORDER BY eid)
+                    SELECT COALESCE(array_agg(DISTINCT eid ORDER BY eid), ARRAY[]::uuid[])
                     FROM unnest(target.source_event_ids || dup.source_event_ids) AS eid
                 ),
                 updated_at = NOW()
@@ -754,7 +754,7 @@ impl KnowledgeGraphRepository<'_> {
             r#"
             UPDATE core.entity_relations target
             SET source_event_ids = (
-                    SELECT array_agg(DISTINCT eid ORDER BY eid)
+                    SELECT COALESCE(array_agg(DISTINCT eid ORDER BY eid), ARRAY[]::uuid[])
                     FROM unnest(target.source_event_ids || dup.source_event_ids) AS eid
                 ),
                 updated_at = NOW()
