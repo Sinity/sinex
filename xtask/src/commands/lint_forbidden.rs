@@ -198,6 +198,43 @@ impl XtaskCommand for LintForbiddenCommand {
             is_tests_path,
         )?);
 
+        // Bare `Uuid` for event_id / material_id (#1173): every public field
+        // named `event_id` or `material_id` must be phantom-typed (`Id<Event>`,
+        // `Id<SourceMaterial>`) rather than a raw `Uuid`. The SDK already has
+        // those phantom types in scope; this guard prevents drift back into
+        // bare-Uuid declarations.
+        //
+        // The current allowlist captures pre-existing violations that are
+        // tracked for follow-up promotion to phantom-typed IDs. Adding new
+        // entries to this allowlist requires the corresponding follow-up
+        // issue to record the migration plan; new files MUST use the
+        // phantom-typed variants.
+        let bare_uuid_id_field_allow = [
+            // DB row mirrors (typed via sqlx Type<Postgres>), tracked for
+            // later promotion to Id<T> repository surfaces.
+            "crate/lib/sinex-db/src/repositories/embeddings.rs",
+            "crate/lib/sinex-db/src/repositories/occurrences.rs",
+            "crate/lib/sinex-schema/src/schema/annotations.rs",
+            "crate/lib/sinex-schema/src/schema/occurrences.rs",
+            // Ingestd material assembler state mirrors NATS frame UUIDs.
+            "crate/core/sinex-ingestd/src/admission.rs",
+            "crate/core/sinex-ingestd/src/material_assembler/restore_plan.rs",
+            "crate/core/sinex-ingestd/src/material_assembler/state.rs",
+            // SDK material/anchor surface kept on bare Uuid until the
+            // SourceRecordAnchor / SourceMaterialHandle pair is promoted.
+            "crate/lib/sinex-node-sdk/src/acquisition_manager.rs",
+            "crate/lib/sinex-node-sdk/src/ingestion_helpers.rs",
+            // Process automata analytics row.
+            "crate/nodes/sinex-process/src/automata/analytics.rs",
+            // Test fixture publisher.
+            "xtask/src/sandbox/events.rs",
+        ];
+        violations.extend(check_pattern_allow_tests(
+            "bare Uuid event_id / material_id field",
+            r"pub\s+(event_id|material_id)\s*:\s*(Option<\s*)?(crate::|sinex_primitives::)?Uuid\b",
+            &bare_uuid_id_field_allow,
+        )?);
+
         // Report runtime vs compile-time SQLx query usage
         report_sqlx_query_stats()?;
 

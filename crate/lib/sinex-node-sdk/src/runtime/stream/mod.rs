@@ -9,6 +9,8 @@ mod node_trait;
 mod runner;
 mod runtime_state;
 mod stats;
+#[cfg(test)]
+pub(crate) mod test_support;
 mod time_horizon;
 mod wire_types;
 
