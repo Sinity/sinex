@@ -35,7 +35,7 @@ CMD=$(echo "$INPUT" | jq -r '.tool_input.command // ""')
 # still trip it. The cost of a rare false positive (a denial that needs the
 # agent to rephrase) is much lower than the cost of false negatives (a
 # 10-minute workspace rebuild from `cargo nextest list --workspace`).
-if echo "$CMD" | grep -qE '(^|\n)\s*([A-Z_][A-Z0-9_]*=\S+\s+)*cargo\s+[a-z]|(\s+(;|&&|\|\|?)\s+|;\s+)([A-Z_][A-Z0-9_]*=\S+\s+)*cargo\s+[a-z]'; then
+if echo "$CMD" | grep -qE '(^|\n)\s*([A-Z_][A-Z0-9_]*=\S+\s+)*cargo\s+(\+[A-Za-z0-9._-]+\s+)?[a-z]|(\s+(;|&&|\|\|?)\s+|;\s+)([A-Z_][A-Z0-9_]*=\S+\s+)*cargo\s+(\+[A-Za-z0-9._-]+\s+)?[a-z]'; then
   jq -n '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
