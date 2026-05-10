@@ -10,9 +10,9 @@ pub use unified_node::{FilesystemConfig, FilesystemNode, FilesystemState};
 
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceUnitDescriptor,
+    SourceUnitBinding, SourceUnitDescriptor, SubjectRef,
 };
-use sinex_primitives::register_source_unit;
+use sinex_primitives::{register_source_unit, register_source_unit_binding};
 
 // Source-unit descriptor (issue #690 / #734). The fs ingestor observes inotify
 // on watched roots and emits typed file events. Continuous path is an
@@ -43,4 +43,21 @@ register_source_unit! {
         implementation_mode: "rust_in_pack:fs",
         build_impact: sinex_primitives::proof::SourceUnitBuildImpact::ZERO,
     }
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:fs"),
+        "fs",
+        "filesystem",
+    )
+    .implementation("sinex-fs-ingestor")
+    .adapter("IngestorNodeAdapter")
+    .output_event_type("file.created")
+    .privacy_context("fs_path")
+    .material_policy("inotify_anchor")
+    .checkpoint_policy("append_stream")
+    .resource_shape("continuous_inotify")
+    .source_unit_id("fs")
+    .build()
 }
