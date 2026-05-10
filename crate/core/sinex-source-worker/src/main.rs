@@ -40,12 +40,12 @@ use sinex_source_worker::{NoopSourceUnit, registry::SourceUnitRegistry};
 fn extract_source_unit(
     args: Vec<std::ffi::OsString>,
 ) -> (String, Vec<std::ffi::OsString>) {
-    // Check env first.
+    // Read env as the fallback; CLI must override (standard CLI precedence).
     let env_val = std::env::var("SINEX_SOURCE_UNIT")
         .ok()
         .filter(|v| !v.trim().is_empty());
 
-    let mut source_unit: Option<String> = env_val;
+    let mut cli_value: Option<String> = None;
     let mut filtered: Vec<std::ffi::OsString> = Vec::with_capacity(args.len());
     let mut skip_next = false;
 
@@ -61,21 +61,30 @@ fn extract_source_unit(
         }
         let s = arg.to_string_lossy();
         if s == "--source-unit" {
-            // Next arg is the value; record it (if not already set from env).
             skip_next = true;
-            if source_unit.is_none() {
-                if let Some(val) = args.get(i + 1) {
-                    source_unit = Some(val.to_string_lossy().into_owned());
-                }
+            if let Some(val) = args.get(i + 1) {
+                let val_str = val.to_string_lossy().into_owned();
+                cli_value = Some(val_str);
+            }
+            // Forward both `--source-unit` and its value to NodeCli so
+            // `NodeCli::source_unit` is populated for downstream wiring
+            // (default_service_name, source_unit_id config injection).
+            filtered.push(arg.clone());
+            if let Some(val) = args.get(i + 1) {
+                filtered.push(val.clone());
             }
         } else if let Some(val) = s.strip_prefix("--source-unit=") {
-            if source_unit.is_none() {
-                source_unit = Some(val.to_owned());
-            }
+            cli_value = Some(val.to_owned());
+            filtered.push(arg.clone());
         } else {
             filtered.push(arg.clone());
         }
     }
+
+    // CLI takes precedence over env. Without this ordering, an env value
+    // set in the systemd service template silently overrides any explicit
+    // operator `--source-unit` override on the command line.
+    let source_unit = cli_value.or(env_val);
 
     let name = source_unit.unwrap_or_else(|| {
         eprintln!(
