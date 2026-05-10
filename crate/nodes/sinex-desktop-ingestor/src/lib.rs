@@ -127,6 +127,12 @@ register_source_unit_binding! {
     .checkpoint_policy("live_observation")
     .resource_shape("event_emitter")
     .source_unit_id("desktop.clipboard")
+    .runner_pack("desktop")
+    .checkpoint_family(SuCheckpointFamily::LiveObservation)
+    .runtime_shape(SuRuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:desktop")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }
 
@@ -144,6 +150,12 @@ register_source_unit_binding! {
     .checkpoint_policy("live_observation")
     .resource_shape("event_emitter")
     .source_unit_id("desktop.window-manager")
+    .runner_pack("desktop")
+    .checkpoint_family(SuCheckpointFamily::LiveObservation)
+    .runtime_shape(SuRuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:desktop")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }
 
@@ -161,5 +173,14 @@ register_source_unit_binding! {
     .checkpoint_policy("mutable_snapshot")
     .resource_shape("linear_rows_bounded_memory")
     .source_unit_id("desktop.activitywatch")
+    .runner_pack("desktop")
+    .checkpoint_family(SuCheckpointFamily::MutableSnapshot {
+            backing_store_kind: "sqlite",
+            occurrence_anchor: "bucket_event_timestamp",
+        })
+    .runtime_shape(SuRuntimeShape::OnDemand)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:desktop")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }

@@ -575,6 +575,12 @@ register_source_unit_binding! {
     .resource_shape("embedded_emitter")
     .source_unit_id("sinex-metrics")
     .proposed(true)
+    .runner_pack("infra")
+    .checkpoint_family(SuCheckpointFamily::LiveObservation)
+    .runtime_shape(SuRuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_every_sinex_binary")
+    .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }
 
@@ -593,6 +599,12 @@ register_source_unit_binding! {
     .resource_shape("embedded_emitter")
     .source_unit_id("sinex-ingestd-telemetry")
     .proposed(true)
+    .runner_pack("infra")
+    .checkpoint_family(SuCheckpointFamily::LiveObservation)
+    .runtime_shape(SuRuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_ingestd")
+    .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }
 
@@ -611,6 +623,12 @@ register_source_unit_binding! {
     .resource_shape("embedded_emitter")
     .source_unit_id("sinex-gateway-telemetry")
     .proposed(true)
+    .runner_pack("infra")
+    .checkpoint_family(SuCheckpointFamily::LiveObservation)
+    .runtime_shape(SuRuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_gateway")
+    .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }
 
@@ -629,5 +647,11 @@ register_source_unit_binding! {
     .resource_shape("embedded_emitter")
     .source_unit_id("sinex-node-telemetry")
     .proposed(true)
+    .runner_pack("infra")
+    .checkpoint_family(SuCheckpointFamily::LiveObservation)
+    .runtime_shape(SuRuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_node_sdk")
+    .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }

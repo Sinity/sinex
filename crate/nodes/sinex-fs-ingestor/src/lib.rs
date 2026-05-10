@@ -59,5 +59,11 @@ register_source_unit_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("continuous_inotify")
     .source_unit_id("fs")
+    .runner_pack("fs")
+    .checkpoint_family(CheckpointFamily::AppendStream)
+    .runtime_shape(RuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:fs")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }

@@ -64,5 +64,14 @@ register_source_unit_binding! {
     .checkpoint_policy("mutable_snapshot")
     .resource_shape("linear_rows_bounded_memory")
     .source_unit_id("browser.history")
+    .runner_pack("browser")
+    .checkpoint_family(SuCheckpointFamily::MutableSnapshot {
+            backing_store_kind: "sqlite",
+            occurrence_anchor: "visit_id",
+        })
+    .runtime_shape(SuRuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:browser")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }

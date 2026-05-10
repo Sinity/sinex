@@ -265,6 +265,12 @@ register_source_unit_binding! {
     .checkpoint_policy("live_observation")
     .resource_shape("event_emitter")
     .source_unit_id("system.monitor")
+    .runner_pack("system")
+    .checkpoint_family(SuCheckpointFamily::LiveObservation)
+    .runtime_shape(SuRuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:system")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }
 
@@ -282,6 +288,12 @@ register_source_unit_binding! {
     .checkpoint_policy("journal")
     .resource_shape("journal_tail")
     .source_unit_id("system.systemd")
+    .runner_pack("system")
+    .checkpoint_family(SuCheckpointFamily::Journal)
+    .runtime_shape(SuRuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:system")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }
 
@@ -299,6 +311,12 @@ register_source_unit_binding! {
     .checkpoint_policy("journal")
     .resource_shape("journal_tail")
     .source_unit_id("system.journald")
+    .runner_pack("system")
+    .checkpoint_family(SuCheckpointFamily::Journal)
+    .runtime_shape(SuRuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:system")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }
 
@@ -316,6 +334,12 @@ register_source_unit_binding! {
     .checkpoint_policy("live_observation")
     .resource_shape("event_emitter")
     .source_unit_id("system.dbus")
+    .runner_pack("system")
+    .checkpoint_family(SuCheckpointFamily::LiveObservation)
+    .runtime_shape(SuRuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:system")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }
 
@@ -333,5 +357,11 @@ register_source_unit_binding! {
     .checkpoint_policy("live_observation")
     .resource_shape("event_emitter")
     .source_unit_id("system.udev")
+    .runner_pack("system")
+    .checkpoint_family(SuCheckpointFamily::LiveObservation)
+    .runtime_shape(SuRuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:system")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }

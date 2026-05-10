@@ -1006,5 +1006,11 @@ register_source_unit_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("on_demand_batch")
     .source_unit_id("document.staging")
+    .runner_pack("document")
+    .checkpoint_family(SuCheckpointFamily::AppendStream)
+    .runtime_shape(SuRuntimeShape::OnDemand)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:document")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }

@@ -190,6 +190,12 @@ register_source_unit_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_unit_id("tag-applier")
+    .runner_pack("process")
+    .checkpoint_family(SuCheckpointFamily::AppendStream)
+    .runtime_shape(SuRuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:process")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }
 

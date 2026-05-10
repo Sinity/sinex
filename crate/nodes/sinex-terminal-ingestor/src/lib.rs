@@ -184,6 +184,12 @@ register_source_unit_binding! {
     .checkpoint_policy("live_observation")
     .resource_shape("event_emitter")
     .source_unit_id("terminal.monitor")
+    .runner_pack("terminal")
+    .checkpoint_family(CheckpointFamily::LiveObservation)
+    .runtime_shape(RuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:terminal")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }
 
@@ -201,6 +207,12 @@ register_source_unit_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("linear_rows_bounded_memory")
     .source_unit_id("terminal.text-history")
+    .runner_pack("terminal")
+    .checkpoint_family(CheckpointFamily::AppendStream)
+    .runtime_shape(RuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:terminal")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }
 
@@ -218,6 +230,12 @@ register_source_unit_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("linear_rows_bounded_memory")
     .source_unit_id("terminal.zsh-history")
+    .runner_pack("terminal")
+    .checkpoint_family(CheckpointFamily::AppendStream)
+    .runtime_shape(RuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:terminal")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }
 
@@ -235,6 +253,15 @@ register_source_unit_binding! {
     .checkpoint_policy("mutable_snapshot")
     .resource_shape("linear_rows_bounded_memory")
     .source_unit_id("terminal.fish-history")
+    .runner_pack("terminal")
+    .checkpoint_family(CheckpointFamily::MutableSnapshot {
+            backing_store_kind: "sqlite",
+            occurrence_anchor: "fish_history_row_id",
+        })
+    .runtime_shape(RuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:terminal")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }
 
@@ -252,5 +279,11 @@ register_source_unit_binding! {
     .checkpoint_policy("append_stream")
     .resource_shape("linear_rows_bounded_memory")
     .source_unit_id("terminal.bash-history")
+    .runner_pack("terminal")
+    .checkpoint_family(CheckpointFamily::AppendStream)
+    .runtime_shape(RuntimeShape::Continuous)
+    .package_impact("no_new_output")
+    .implementation_mode("rust_in_pack:terminal")
+    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
     .build()
 }

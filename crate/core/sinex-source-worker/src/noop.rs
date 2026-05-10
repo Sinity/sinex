@@ -55,6 +55,12 @@ register_source_unit_binding! {
     .checkpoint_policy("live_observation")
     .resource_shape("event_emitter")
     .source_unit_id("noop")
+    .runner_pack("source-worker")
+    .checkpoint_family(CheckpointFamily::LiveObservation)
+    .runtime_shape(RuntimeShape::Continuous)
+    .package_impact("noop_source_unit")
+    .implementation_mode("rust_in_pack:source-worker")
+    .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }
 
