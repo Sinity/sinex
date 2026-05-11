@@ -33,6 +33,10 @@ pub struct DoctorCommand {
     /// Check deployment readiness (schema, services, permissions)
     #[arg(long)]
     pub deployment_readiness: bool,
+
+    /// Reclaim stale target-dir artifacts (cargo-sweep + incremental/ prune)
+    #[arg(long)]
+    pub reclaim: bool,
 }
 
 /// Doctor report structures
@@ -299,6 +303,53 @@ impl XtaskCommand for DoctorCommand {
                 result
                     .warnings
                     .push("Deployment readiness has failing checks".to_string());
+            }
+        }
+
+        if self.reclaim {
+            let target_dir = std::env::var("CARGO_TARGET_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| crate::config::workspace_root().join("target"));
+            if ctx.is_human() {
+                println!(
+                    "Reclaiming stale artifacts from {}...",
+                    target_dir.display()
+                );
+            }
+            match crate::cache_hygiene::reclaim(&target_dir) {
+                Ok(report) => {
+                    let total_reclaimed = report.cargo_sweep_reclaimed_bytes
+                        + report.incremental_bytes_reclaimed;
+                    if ctx.is_human() {
+                        println!(
+                            "Reclaimed {:.2} GB (cargo-sweep: {:.2} GB; incremental keep-3: {} dirs / {:.2} GB).",
+                            total_reclaimed as f64 / 1e9,
+                            report.cargo_sweep_reclaimed_bytes as f64 / 1e9,
+                            report.incremental_dirs_deleted,
+                            report.incremental_bytes_reclaimed as f64 / 1e9,
+                        );
+                        if !report.cargo_sweep_ran {
+                            println!(
+                                "  (cargo-sweep not in PATH — install via flake.nix devshell)"
+                            );
+                        }
+                        if let (Some(before), Some(after)) = (&report.before, &report.after) {
+                            println!(
+                                "  Disk usage on {}: {:.1}% -> {:.1}% ({} GB free)",
+                                before.mount,
+                                before.percent_used,
+                                after.percent_used,
+                                after.free_gb as u64,
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    if ctx.is_human() {
+                        eprintln!("Reclaim failed: {error}");
+                    }
+                    result.warnings.push(format!("--reclaim failed: {error}"));
+                }
             }
         }
 
