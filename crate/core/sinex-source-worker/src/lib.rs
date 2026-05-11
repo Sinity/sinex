@@ -6,6 +6,7 @@
 
 pub mod dispatch;
 pub mod drain;
+pub mod node_factory;
 pub mod noop;
 pub mod parse_listener;
 pub mod parsers;

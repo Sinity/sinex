@@ -13,12 +13,10 @@
 //!
 //! # Source unit names
 //!
-//! - `noop` — template/test source unit (emits no events)
+//! Source units are registered at compile time via [`register_node_factory!`].
+//! No match arms — discovery is fully registry-driven.
 //!
-//! Additional source units are added by:
-//! 1. Adding the ingestor crate as a dependency
-//! 2. Adding `pub use` of the ingestor type in `lib.rs`
-//! 3. Adding a match arm below
+//! See `crate::node_factory` for the registration protocol.
 
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;
@@ -27,7 +25,8 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-use sinex_source_worker::{NoopSourceUnit, registry::SourceUnitRegistry};
+use sinex_source_worker::registry::SourceUnitRegistry;
+use sinex_source_worker::node_factory;
 
 /// Extract `--source-unit <name>` (or `SINEX_SOURCE_UNIT`) from raw argv and
 /// return both the source unit name and the filtered argv (without the
@@ -87,9 +86,15 @@ fn extract_source_unit(
     let source_unit = cli_value.or(env_val);
 
     let name = source_unit.unwrap_or_else(|| {
+        let registered = node_factory::registered_node_factory_ids();
+        let list = if registered.is_empty() {
+            "(none registered)".to_string()
+        } else {
+            registered.join(", ")
+        };
         eprintln!(
             "error: --source-unit <name> is required (or set SINEX_SOURCE_UNIT).\n\
-             Valid values: noop"
+             Registered source units: {list}"
         );
         std::process::exit(1);
     });
@@ -104,55 +109,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let raw_args: Vec<std::ffi::OsString> = std::env::args_os().collect();
     let (source_unit_name, filtered_args) = extract_source_unit(raw_args);
 
-    // Validate the source unit exists in the registry before attempting
-    // dispatch. This gives a clear error message listing available units.
+    // Validate the source unit exists in the descriptor registry before
+    // attempting dispatch. This gives a clear error listing available units.
     let registry = SourceUnitRegistry::from_inventory();
     if let Err(e) = registry.validate(&source_unit_name) {
         eprintln!("error: {e}");
         std::process::exit(1);
     }
 
-    // Dispatch to the source unit's IngestorNode implementation.
-    // Pattern follows sinex-process/src/main.rs exactly.
-    match source_unit_name.as_str() {
-        "noop" => {
-            run_source_unit::<NoopSourceUnit>(filtered_args).await
-        }
-        // Future source units — add a match arm per source unit id:
-        // "terminal.atuin" => run_source_unit::<TerminalNode>(filtered_args).await,
-        // "fs.watcher" => run_source_unit::<FsWatcherNode>(filtered_args).await,
-        // "desktop.focus" => run_source_unit::<DesktopFocusNode>(filtered_args).await,
-        // "system.journal" => run_source_unit::<SystemJournalNode>(filtered_args).await,
-        // "browser.history" => run_source_unit::<BrowserHistoryNode>(filtered_args).await,
-        // "document.watcher" => run_source_unit::<DocumentWatcherNode>(filtered_args).await,
-        other => {
+    // Dispatch to the source unit's factory — registry-driven, no match arms.
+    match node_factory::find_node_factory(&source_unit_name) {
+        Some(factory) => factory(filtered_args).await,
+        None => {
+            let registered = node_factory::registered_node_factory_ids();
+            let list = if registered.is_empty() {
+                "(none registered)".to_string()
+            } else {
+                registered.join(", ")
+            };
             eprintln!(
-                "error: unknown source unit '{other}'.\n\
-                 Valid values: noop"
+                "error: source unit '{source_unit_name}' is in the descriptor registry \
+                 but has no node factory registered.\n\
+                 Source units with factories: {list}\n\
+                 Register a factory with register_node_factory!(\"{source_unit_name}\", YourNode)."
             );
             std::process::exit(1);
         }
     }
-}
-
-/// Run a source-unit ingestor through the standard SDK lifecycle.
-///
-/// This is the generic dispatch function. Each source unit provides its
-/// own `IngestorNode` implementation, which is wrapped in an
-/// `IngestorNodeAdapter` that provides `Node`, `ExplorationProvider`,
-/// checkpoint persistence, and health reporting via the SDK.
-async fn run_source_unit<I>(
-    args: Vec<std::ffi::OsString>,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    I: sinex_node_sdk::IngestorNode + Default + 'static,
-{
-    use clap::Parser;
-    use sinex_node_sdk::IngestorNodeAdapter;
-    use sinex_node_sdk::node_cli::{NodeCli, NodeCliRunner};
-
-    let parsed = NodeCli::parse_from(args);
-    let node = IngestorNodeAdapter::new(I::default());
-    let mut runner = NodeCliRunner::new(node);
-    runner.run(parsed).await.map_err(std::convert::Into::into)
 }
