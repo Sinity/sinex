@@ -841,10 +841,12 @@ fn build_registry_impl() -> RpcRegistry {
             Role::Admin,
             boxed!(handle_tombstone_preview, 3),
         )
-        .pool_auth_rpc(
+        .register(
             methods::LIFECYCLE_TOMBSTONE_APPROVE,
             Role::Admin,
-            boxed!(handle_tombstone_approve, 3),
+            |params, services, auth| {
+                Box::pin(async move { handle_tombstone_approve(params, services, auth).await })
+            },
         )
         .pool_auth_rpc(
             methods::LIFECYCLE_TOMBSTONE_CANCEL,
