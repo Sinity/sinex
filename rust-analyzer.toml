@@ -38,16 +38,21 @@ enable = false
 # behind explicit invocation.
 workspace = false
 
-# Isolate RA's check target dir from xtask's 45 GB .sinex/target — they
-# clash on lockfiles and rebuild artifacts.
-extraArgs = ["--target-dir", ".sinex/target/ra-check"]
+# Don't override --target-dir: cargo's target dir is set by the devshell
+# to $SINEX_DEV_CACHE_ROOT/target (resolves to /cache/sinex/<hash>/target).
+# Letting RA share that dir with xtask trades a theoretical lockfile race
+# for warm-cache reuse. Isolating would force RA to compile every dep
+# from scratch into a separate dir — punishing in a 350K-LOC workspace
+# with a 124 GB+ artifact set. The lockfile contention is handled by
+# cargo's own per-target locking.
 
 [files]
-# Don't index target/state dirs — they're not source and slow indexing
-# while bloating the file watcher set.
+# Exclude everything that isn't source. The whole .sinex/ tree (target,
+# state, ci-pgdata, run, snapshots, test-artifacts, test-tmp, tls) is
+# generated artifacts or runtime state — RA has no business indexing
+# any of it. Likewise /cache and result symlinks.
 excludeDirs = [
-    ".sinex/target",
-    ".sinex/state",
+    ".sinex",
     "target",
     ".direnv",
     "result",
