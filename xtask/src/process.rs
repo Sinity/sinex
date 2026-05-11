@@ -1606,7 +1606,12 @@ const DEFAULT_HELPER_PROCESS_TIMEOUT_SECS: u64 = 300;
 const DEFAULT_HEAVY_HELPER_PROCESS_TIMEOUT_SECS: u64 = 1800;
 
 pub(crate) fn helper_process_timeout_for_program(program: &str) -> Duration {
-    let (env_var, default) = match program {
+    let program_name = Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(program);
+
+    let (env_var, default) = match program_name {
         "cargo" | "nix" | "xtask" | "cargo-mutants" | "cargo-fuzz" => (
             "SINEX_HEAVY_PROCESS_TIMEOUT",
             DEFAULT_HEAVY_HELPER_PROCESS_TIMEOUT_SECS,
@@ -2271,6 +2276,23 @@ mod tests {
 
         assert!(output.success());
         assert!(output.stdout.contains("cargo"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_helper_process_timeout_uses_executable_basename() -> TestResult<()> {
+        assert_eq!(
+            helper_process_timeout_for_program("/cache/sinex/target/debug/xtask"),
+            Duration::from_secs(DEFAULT_HEAVY_HELPER_PROCESS_TIMEOUT_SECS)
+        );
+        assert_eq!(
+            helper_process_timeout_for_program("/nix/store/hash/bin/cargo"),
+            Duration::from_secs(DEFAULT_HEAVY_HELPER_PROCESS_TIMEOUT_SECS)
+        );
+        assert_eq!(
+            helper_process_timeout_for_program("/tmp/custom-helper"),
+            Duration::from_secs(DEFAULT_HELPER_PROCESS_TIMEOUT_SECS)
+        );
         Ok(())
     }
 
