@@ -1848,3 +1848,21 @@ async fn test_nixos_descriptor_managed_units_are_consumed_directly()
     assert!(!units.iter().any(|unit| unit == "sinex-desktop-1.service"));
     Ok(())
 }
+
+#[sinex_test]
+async fn test_rust_analyzer_process_matcher_ignores_flag_names() -> ::xtask::sandbox::TestResult<()>
+{
+    assert!(!is_rust_analyzer_process(
+        "xtask",
+        "/cache/sinex/target/debug/xtask --json doctor --rust-analyzer",
+    ));
+    assert!(is_rust_analyzer_process(
+        "rust-analyzer",
+        "/nix/store/hash-rust-analyzer/bin/rust-analyzer",
+    ));
+    assert!(is_rust_analyzer_process(
+        "",
+        "/nix/store/hash-rust-analyzer/bin/rust-analyzer --log-file /tmp/ra.log",
+    ));
+    Ok(())
+}

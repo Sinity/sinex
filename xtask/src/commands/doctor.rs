@@ -37,6 +37,14 @@ pub struct DoctorCommand {
     /// Reclaim stale target-dir artifacts (cargo-sweep + incremental/ prune)
     #[arg(long)]
     pub reclaim: bool,
+
+    /// Inspect managed test database footprint and /dev/shm headroom
+    #[arg(long)]
+    pub test_db: bool,
+
+    /// Inspect rust-analyzer process footprint and local config
+    #[arg(long)]
+    pub rust_analyzer: bool,
 }
 
 /// Doctor report structures
@@ -89,6 +97,36 @@ pub(crate) struct TlsCheck {
     /// Error reported by TLS validation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct TestDbDoctorReport {
+    footprint: crate::sandbox::db::pool::TestDatabaseFootprintReport,
+    dev_shm: Option<DevShmSnapshot>,
+}
+
+#[derive(Debug, Serialize)]
+struct DevShmSnapshot {
+    used_mb: f64,
+    free_mb: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct RustAnalyzerDoctorReport {
+    config_path: String,
+    config_present: bool,
+    target_dir: String,
+    process_count: usize,
+    total_rss_mb: f64,
+    processes: Vec<RustAnalyzerProcess>,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct RustAnalyzerProcess {
+    pid: u32,
+    rss_mb: f64,
+    command: String,
 }
 
 impl TlsCheck {
@@ -306,6 +344,28 @@ impl XtaskCommand for DoctorCommand {
             }
         }
 
+        if self.test_db {
+            let test_db = execute_test_db_check(ctx).await?;
+            let test_db_value = serde_json::to_value(&test_db)?;
+            merge_result_data(&mut result, "test_db", test_db_value);
+            if ctx.is_human() {
+                print_test_db_report(&test_db);
+            }
+        }
+
+        if self.rust_analyzer {
+            let rust_analyzer = execute_rust_analyzer_check()?;
+            let rust_analyzer_value = serde_json::to_value(&rust_analyzer)?;
+            merge_result_data(&mut result, "rust_analyzer", rust_analyzer_value);
+            if !rust_analyzer.warnings.is_empty() && result.status == Status::Success {
+                result.status = Status::Partial;
+            }
+            result.warnings.extend(rust_analyzer.warnings.clone());
+            if ctx.is_human() {
+                print_rust_analyzer_report(&rust_analyzer);
+            }
+        }
+
         if self.reclaim {
             let target_dir = std::env::var("CARGO_TARGET_DIR")
                 .map(std::path::PathBuf::from)
@@ -399,6 +459,145 @@ impl XtaskCommand for DoctorCommand {
             CommandMetadata::diagnostics()
         }
     }
+}
+
+fn merge_result_data(result: &mut CommandResult, key: &str, value: serde_json::Value) {
+    let existing_data = result.data.take();
+    result.data = Some(match existing_data {
+        Some(mut existing) => {
+            if let Some(map) = existing.as_object_mut() {
+                map.insert(key.to_string(), value);
+                existing
+            } else {
+                serde_json::json!({
+                    "doctor": existing,
+                    key: value,
+                })
+            }
+        }
+        None => serde_json::json!({
+            key: value,
+        }),
+    });
+}
+
+async fn execute_test_db_check(_ctx: &CommandContext) -> Result<TestDbDoctorReport> {
+    let footprint = crate::sandbox::db::pool::inspect_test_database_footprint()
+        .await
+        .map_err(|error| eyre!("failed to inspect test database footprint: {error:#}"))?;
+    let dev_shm = crate::process::shm_usage_mb().map(|(used_mb, free_mb)| DevShmSnapshot {
+        used_mb,
+        free_mb,
+    });
+    Ok(TestDbDoctorReport { footprint, dev_shm })
+}
+
+fn execute_rust_analyzer_check() -> Result<RustAnalyzerDoctorReport> {
+    let root = crate::config::workspace_root();
+    let config_path = root.join("rust-analyzer.toml");
+    let target_dir = std::env::var("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| crate::config::workspace_target_dir_for(&root));
+    let processes = collect_rust_analyzer_processes()?;
+    let total_rss_mb = if processes.is_empty() {
+        0.0
+    } else {
+        processes.iter().map(|process| process.rss_mb).sum()
+    };
+    let mut warnings = Vec::new();
+    if processes.len() > 1 {
+        warnings.push(format!(
+            "{} rust-analyzer processes are running for this user/session",
+            processes.len()
+        ));
+    }
+    if total_rss_mb > 2048.0 {
+        warnings.push(format!(
+            "rust-analyzer RSS is {:.0} MB; consider checking editor duplicate sessions",
+            total_rss_mb
+        ));
+    }
+
+    Ok(RustAnalyzerDoctorReport {
+        config_path: config_path.display().to_string(),
+        config_present: config_path.is_file(),
+        target_dir: target_dir.display().to_string(),
+        process_count: processes.len(),
+        total_rss_mb,
+        processes,
+        warnings,
+    })
+}
+
+fn collect_rust_analyzer_processes() -> Result<Vec<RustAnalyzerProcess>> {
+    let mut processes = Vec::new();
+    let entries = match std::fs::read_dir("/proc") {
+        Ok(entries) => entries,
+        Err(error) => {
+            return Err(error).wrap_err("failed to read /proc for rust-analyzer processes");
+        }
+    };
+
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(pid) = file_name
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let proc_dir = entry.path();
+        let comm = std::fs::read_to_string(proc_dir.join("comm")).unwrap_or_default();
+        let command = read_proc_cmdline(&proc_dir).unwrap_or_else(|| comm.clone());
+        if !is_rust_analyzer_process(&comm, &command) {
+            continue;
+        }
+        let rss_mb = read_proc_rss_mb(&proc_dir).unwrap_or(0.0);
+        processes.push(RustAnalyzerProcess {
+            pid,
+            rss_mb,
+            command: command.trim().to_string(),
+        });
+    }
+
+    processes.sort_by_key(|process| process.pid);
+    Ok(processes)
+}
+
+fn is_rust_analyzer_process(comm: &str, command: &str) -> bool {
+    if comm.trim() == "rust-analyzer" {
+        return true;
+    }
+    command
+        .split_whitespace()
+        .next()
+        .and_then(|arg0| Path::new(arg0).file_name())
+        .and_then(|name| name.to_str())
+        == Some("rust-analyzer")
+}
+
+fn read_proc_cmdline(proc_dir: &Path) -> Option<String> {
+    let raw = std::fs::read(proc_dir.join("cmdline")).ok()?;
+    if raw.is_empty() {
+        return None;
+    }
+    Some(
+        raw.split(|byte| *byte == 0)
+            .filter(|part| !part.is_empty())
+            .map(|part| String::from_utf8_lossy(part))
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
+}
+
+fn read_proc_rss_mb(proc_dir: &Path) -> Option<f64> {
+    let raw = std::fs::read_to_string(proc_dir.join("status")).ok()?;
+    let line = raw.lines().find(|line| line.starts_with("VmRSS:"))?;
+    let kb = line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|value| value.parse::<f64>().ok())?;
+    Some(kb / 1024.0)
 }
 
 /// Run diagnostics.
@@ -672,6 +871,78 @@ fn print_check(name: &str, ok: bool, detail: Option<&str>) {
     };
     let detail_str = detail.map(|d| format!(" ({d})")).unwrap_or_default();
     println!("  {} {:<20}{}", status, name, style(detail_str).dim());
+}
+
+fn print_test_db_report(report: &TestDbDoctorReport) {
+    let totals = &report.footprint.totals;
+    println!("\n{}", style("Test Database Footprint:").bold());
+    println!(
+        "  Configured pool:     {} slots × {} conns (+{} admin conns)",
+        report.footprint.configured_pool_size,
+        report.footprint.slot_max_connections,
+        report.footprint.admin_max_connections,
+    );
+    println!(
+        "  Existing databases:  {} total ({} pool slots, {} shared templates, {} adhoc templates, {} stale/legacy)",
+        totals.database_count,
+        totals.pool_slot_count,
+        totals.shared_template_count,
+        totals.adhoc_template_count,
+        totals.stale_or_legacy_count,
+    );
+    println!(
+        "  Disk footprint:      {:.1} MB total ({:.1} MB pool, {:.1} MB templates)",
+        totals.total_size_bytes as f64 / 1_048_576.0,
+        totals.pool_slot_size_bytes as f64 / 1_048_576.0,
+        totals.template_size_bytes as f64 / 1_048_576.0,
+    );
+    println!(
+        "  Process-local pool:  {} initialized slots, {} open conns",
+        report.footprint.process_pool_slots,
+        report.footprint.process_pool_stats.total_connections,
+    );
+    if let Some(shm) = &report.dev_shm {
+        println!(
+            "  /dev/shm now:        {:.0} MB used, {:.0} MB free",
+            shm.used_mb, shm.free_mb
+        );
+    } else {
+        println!("  /dev/shm now:        unavailable");
+    }
+    if totals.stale_or_legacy_count > 0 {
+        println!(
+            "  {} {} stale/legacy sinex_test_* databases are visible; inspect before dropping.",
+            style("⚠").yellow(),
+            totals.stale_or_legacy_count
+        );
+    }
+}
+
+fn print_rust_analyzer_report(report: &RustAnalyzerDoctorReport) {
+    println!("\n{}", style("Rust Analyzer:").bold());
+    println!(
+        "  Config:             {} ({})",
+        report.config_path,
+        if report.config_present {
+            "present"
+        } else {
+            "missing"
+        }
+    );
+    println!("  Target dir:         {}", report.target_dir);
+    println!(
+        "  Processes:          {} ({:.0} MB RSS total)",
+        report.process_count, report.total_rss_mb
+    );
+    for process in &report.processes {
+        println!(
+            "    pid {:<8} {:>7.0} MB  {}",
+            process.pid, process.rss_mb, process.command
+        );
+    }
+    for warning in &report.warnings {
+        println!("  {} {warning}", style("⚠").yellow());
+    }
 }
 
 fn tool_check_detail(tool: &ToolCheck) -> Option<String> {

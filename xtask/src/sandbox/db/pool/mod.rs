@@ -9,6 +9,7 @@ use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::validation::validate_pg_identifier;
 
 use sqlx::Connection;
+use sqlx::Row;
 use sqlx::postgres::PgConnection;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
@@ -175,6 +176,129 @@ fn is_timescaledb_missing_library_schema_apply(err: &SinexError) -> bool {
 // stamp-file cleanup is required in the test pool lifecycle.
 
 // ── Pool stats ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TestDatabaseFootprintReport {
+    pub configured_pool_size: usize,
+    pub slot_max_connections: u32,
+    pub admin_max_connections: u32,
+    pub process_pool_slots: usize,
+    pub process_pool_stats: PoolStats,
+    pub discovered_databases: Vec<TestDatabaseFootprintEntry>,
+    pub totals: TestDatabaseFootprintTotals,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TestDatabaseFootprintEntry {
+    pub name: String,
+    pub kind: String,
+    pub size_bytes: i64,
+    pub active_connections: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TestDatabaseFootprintTotals {
+    pub database_count: usize,
+    pub pool_slot_count: usize,
+    pub shared_template_count: usize,
+    pub adhoc_template_count: usize,
+    pub stale_or_legacy_count: usize,
+    pub total_size_bytes: i64,
+    pub pool_slot_size_bytes: i64,
+    pub template_size_bytes: i64,
+}
+
+/// Inspect the managed test database footprint without creating or dropping databases.
+pub async fn inspect_test_database_footprint() -> TestResult<TestDatabaseFootprintReport> {
+    let config = PoolConfig::default();
+    let process_pool_slots = pool_slot_count().await;
+    let process_pool_stats = get_pool_stats_async().await;
+
+    let mut admin = connect_admin_with_retry(&config.admin_url).await?;
+    let rows = sqlx::query(
+        "SELECT d.datname,
+                pg_database_size(d.datname)::BIGINT AS size_bytes,
+                COALESCE(s.numbackends, 0)::BIGINT AS active_connections
+           FROM pg_database d
+           LEFT JOIN pg_stat_database s ON s.datid = d.oid
+          WHERE d.datname LIKE 'sinex_test_%'
+          ORDER BY d.datname",
+    )
+    .fetch_all(&mut admin)
+    .await?;
+
+    let mut discovered_databases = Vec::with_capacity(rows.len());
+    let mut totals = TestDatabaseFootprintTotals {
+        database_count: 0,
+        pool_slot_count: 0,
+        shared_template_count: 0,
+        adhoc_template_count: 0,
+        stale_or_legacy_count: 0,
+        total_size_bytes: 0,
+        pool_slot_size_bytes: 0,
+        template_size_bytes: 0,
+    };
+
+    for row in rows {
+        let name: String = row.try_get("datname")?;
+        let size_bytes: i64 = row.try_get("size_bytes")?;
+        let active_connections: i64 = row.try_get("active_connections")?;
+        let kind = classify_test_database_name(&name);
+
+        totals.database_count += 1;
+        totals.total_size_bytes += size_bytes;
+        match kind {
+            "pool_slot" => {
+                totals.pool_slot_count += 1;
+                totals.pool_slot_size_bytes += size_bytes;
+            }
+            "shared_template" => {
+                totals.shared_template_count += 1;
+                totals.template_size_bytes += size_bytes;
+            }
+            "adhoc_template" => {
+                totals.adhoc_template_count += 1;
+                totals.template_size_bytes += size_bytes;
+            }
+            _ => {
+                totals.stale_or_legacy_count += 1;
+            }
+        }
+
+        discovered_databases.push(TestDatabaseFootprintEntry {
+            name,
+            kind: kind.to_string(),
+            size_bytes,
+            active_connections,
+        });
+    }
+
+    Ok(TestDatabaseFootprintReport {
+        configured_pool_size: config.size,
+        slot_max_connections: config.slot_max_connections,
+        admin_max_connections: config.admin_max_connections,
+        process_pool_slots,
+        process_pool_stats,
+        discovered_databases,
+        totals,
+    })
+}
+
+fn classify_test_database_name(name: &str) -> &'static str {
+    if name
+        .strip_prefix("sinex_test_pool_")
+        .is_some_and(|suffix| suffix.parse::<usize>().is_ok())
+    {
+        return "pool_slot";
+    }
+    if name.starts_with("sinex_test_template_shared") {
+        return "shared_template";
+    }
+    if name.starts_with("sinex_test_template_adhoc") {
+        return "adhoc_template";
+    }
+    "stale_or_legacy"
+}
 
 /// Get current pool statistics
 pub fn get_pool_stats() -> PoolStats {
