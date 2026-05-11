@@ -56,14 +56,6 @@ pub struct BenchConfig {
     #[arg(long)]
     pub gha: bool,
 
-    /// Bisect mode: known good commit
-    #[arg(long)]
-    pub bisect_good: Option<String>,
-
-    /// Bisect mode: known bad commit
-    #[arg(long)]
-    pub bisect_bad: Option<String>,
-
     /// Stress mode: maximum iterations before giving up
     #[arg(long, default_value = "100")]
     pub stress_limit: u32,
@@ -112,8 +104,6 @@ pub enum BenchMode {
     Sweeps,
     /// Two-phase optimization: quick sweep → find top N → detailed sweep
     Refine,
-    /// Git bisect to find performance regression
-    Bisect,
     /// Stress test (run until failure)
     Stress,
     /// Soak test (run for extended duration)
@@ -125,7 +115,6 @@ impl std::fmt::Display for BenchMode {
         match self {
             BenchMode::Sweeps => write!(f, "sweeps"),
             BenchMode::Refine => write!(f, "refine"),
-            BenchMode::Bisect => write!(f, "bisect"),
             BenchMode::Stress => write!(f, "stress"),
             BenchMode::Soak => write!(f, "soak"),
         }

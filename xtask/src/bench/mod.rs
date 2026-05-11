@@ -20,7 +20,6 @@ pub fn run(config: BenchConfig) -> Result<()> {
     match ctx.config.mode {
         config::BenchMode::Sweeps => modes::sweep_mode(&ctx),
         config::BenchMode::Refine => modes::refine_mode(&ctx),
-        config::BenchMode::Bisect => modes::bisect_mode(&ctx),
         config::BenchMode::Stress => modes::stress_mode(&ctx),
         config::BenchMode::Soak => modes::soak_mode(&ctx),
     }

@@ -57,8 +57,6 @@ pub(super) fn execute_bench(bench: &BenchArgs, ctx: &CommandContext) -> Result<C
         git_tag: false,
         dry_run: bench.dry_run,
         gha: false,
-        bisect_good: None,
-        bisect_bad: None,
         stress_limit: 100,
         soak_duration: 3600,
         output: bench.output.clone(),
