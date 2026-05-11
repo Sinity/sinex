@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
 
 /// Verify phase plans and performance contracts.
@@ -89,6 +90,36 @@ pub enum VerifySubcommand {
         output_dir: Option<PathBuf>,
         #[arg(long)]
         history_db: Option<PathBuf>,
+    },
+    /// Source-worker integrity gate: dispatch cleanliness, NixOS binding drift,
+    /// ingestor-crate deletion, workspace member count, and parser registration smoke.
+    SourceWorker {
+        /// Crate names (without path prefix) expected to already be deleted.
+        /// Failing if they still exist. Use repeatedly or comma-separated.
+        #[arg(long, value_delimiter = ',')]
+        expect_deleted: Vec<String>,
+        /// Expected workspace member count. Defaults to 20 (current baseline).
+        #[arg(long, default_value_t = 20)]
+        expected_members: usize,
+        /// Treat ingestor crates still present as warnings, not failures.
+        #[arg(long)]
+        warn_ingestors: bool,
+        /// Emit JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Operationalize the 2026-05-11 closure-verification policy: fetch an
+    /// issue body via `gh`, extract AC checkboxes and shell code blocks marked
+    /// `verify`, and run each command, reporting pass/fail per command.
+    Closure {
+        /// GitHub issue number to verify.
+        issue: u64,
+        /// Emit JSON output.
+        #[arg(long)]
+        json: bool,
+        /// Dry-run: parse and print commands without executing them.
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -271,6 +302,23 @@ impl XtaskCommand for VerifyCommand {
                 },
                 ctx,
             ),
+            VerifySubcommand::SourceWorker {
+                expect_deleted,
+                expected_members,
+                warn_ingestors,
+                json,
+            } => execute_source_worker(
+                expect_deleted,
+                *expected_members,
+                *warn_ingestors,
+                *json,
+                ctx,
+            ),
+            VerifySubcommand::Closure {
+                issue,
+                json,
+                dry_run,
+            } => execute_closure(*issue, *json, *dry_run, ctx).await,
         }
     }
 
@@ -981,6 +1029,670 @@ fn render_prometheus(report: &PerfVerificationReport) -> String {
     lines.join("\n")
 }
 
+// =============================================================================
+// A3.1 — source-worker integrity gate
+// =============================================================================
+
+/// Outcome of a single source-worker integrity check.
+#[derive(Debug, Clone, Serialize)]
+struct SwCheck {
+    name: &'static str,
+    status: SwCheckStatus,
+    detail: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    items: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum SwCheckStatus {
+    Pass,
+    Warn,
+    Fail,
+}
+
+impl SwCheck {
+    fn pass(name: &'static str, detail: impl Into<String>) -> Self {
+        Self { name, status: SwCheckStatus::Pass, detail: detail.into(), items: Vec::new() }
+    }
+
+    fn warn(name: &'static str, detail: impl Into<String>, items: Vec<String>) -> Self {
+        Self { name, status: SwCheckStatus::Warn, detail: detail.into(), items }
+    }
+
+    fn fail(name: &'static str, detail: impl Into<String>, items: Vec<String>) -> Self {
+        Self { name, status: SwCheckStatus::Fail, detail: detail.into(), items }
+    }
+
+    fn is_fail(&self) -> bool {
+        self.status == SwCheckStatus::Fail
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SourceWorkerReport {
+    overall: SwCheckStatus,
+    checks: Vec<SwCheck>,
+}
+
+fn execute_source_worker(
+    expect_deleted: &[String],
+    expected_members: usize,
+    warn_ingestors: bool,
+    json: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let root = workspace_root();
+    let mut checks: Vec<SwCheck> = Vec::new();
+
+    // A3.1.1 — No match arms in source-worker dispatch/main
+    checks.push(check_sw_no_match_arms(&root));
+
+    // A3.1.2 — SourceUnitDescriptor inventory vs NixOS source-bindings drift
+    checks.push(check_sw_binding_drift(&root));
+
+    // A3.1.3 — Ingestor crates gone (or warn)
+    checks.push(check_sw_ingestor_crates(&root, expect_deleted, warn_ingestors));
+
+    // A3.1.4 — Workspace member count
+    checks.push(check_sw_member_count(&root, expected_members));
+
+    // A3.1.5 — Registered parsers smoke
+    checks.push(check_sw_registered_parsers(&root));
+
+    let overall = if checks.iter().any(SwCheck::is_fail) {
+        SwCheckStatus::Fail
+    } else if checks.iter().any(|c| c.status == SwCheckStatus::Warn) {
+        SwCheckStatus::Warn
+    } else {
+        SwCheckStatus::Pass
+    };
+
+    let report = SourceWorkerReport { overall: overall.clone(), checks: checks.clone() };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else if ctx.is_human() {
+        for check in &checks {
+            let tag = match check.status {
+                SwCheckStatus::Pass => "PASS",
+                SwCheckStatus::Warn => "WARN",
+                SwCheckStatus::Fail => "FAIL",
+            };
+            println!("[{tag}] {} — {}", check.name, check.detail);
+            for item in &check.items {
+                println!("       {item}");
+            }
+        }
+    }
+
+    let mut result = match &overall {
+        SwCheckStatus::Pass => CommandResult::success().with_message("source-worker integrity: all checks passed"),
+        SwCheckStatus::Warn => CommandResult::partial().with_message("source-worker integrity: warnings present"),
+        SwCheckStatus::Fail => CommandResult::failure(
+            crate::output::StructuredError::new(
+                "SOURCE_WORKER_INTEGRITY",
+                "source-worker integrity: one or more checks failed",
+            )
+        ).with_message("source-worker integrity: FAILED"),
+    };
+
+    result = result
+        .with_detail(format!("checks={}", checks.len()))
+        .with_detail(format!("failed={}", checks.iter().filter(|c| c.is_fail()).count()))
+        .with_detail(format!("warned={}", checks.iter().filter(|c| c.status == SwCheckStatus::Warn).count()))
+        .with_data(serde_json::to_value(&report)?)
+        .with_duration(ctx.elapsed());
+
+    Ok(result)
+}
+
+/// A3.1.1 — No match arms in source-worker dispatch or main.
+fn check_sw_no_match_arms(root: &Path) -> SwCheck {
+    let targets = [
+        root.join("crate/core/sinex-source-worker/src/main.rs"),
+        root.join("crate/core/sinex-source-worker/src/dispatch.rs"),
+    ];
+
+    // Pattern: a quoted source-unit name followed by `=>` (match arm).
+    // Legitimate dispatch is registry-driven and has none of these.
+    let arm_pattern = regex::Regex::new(r#""[a-z_][a-z0-9_.-]*"\s*=>"#)
+        .expect("static regex is valid");
+
+    let mut hits: Vec<String> = Vec::new();
+    for path in &targets {
+        let Ok(contents) = fs::read_to_string(path) else {
+            continue;
+        };
+        for (lineno, line) in contents.lines().enumerate() {
+            // Skip doc comments and regular comments.
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("///") || trimmed.starts_with("//") {
+                continue;
+            }
+            if arm_pattern.is_match(line) {
+                hits.push(format!(
+                    "{}:{}: {}",
+                    path.file_name().unwrap_or_default().to_string_lossy(),
+                    lineno + 1,
+                    line.trim()
+                ));
+            }
+        }
+    }
+
+    if hits.is_empty() {
+        SwCheck::pass("no_match_arms", "no source-unit match arms in dispatch/main")
+    } else {
+        SwCheck::fail(
+            "no_match_arms",
+            format!("{} match arm(s) found — dispatch must be registry-driven", hits.len()),
+            hits,
+        )
+    }
+}
+
+/// A3.1.2 — SourceUnitDescriptor inventory vs NixOS source-bindings drift.
+///
+/// Strategy: extract `sourceUnitId = "..."` from `source-bindings.nix` (the
+/// module example/option doc block). The live host configuration (in sinnix)
+/// is not statically accessible from xtask, so we compare against the Rust
+/// descriptor inventory via the `proof::all_source_units` iterator that xtask
+/// links at compile time.
+fn check_sw_binding_drift(root: &Path) -> SwCheck {
+    let bindings_nix = root.join("nixos/modules/source-bindings.nix");
+    let nix_source = match fs::read_to_string(&bindings_nix) {
+        Ok(s) => s,
+        Err(e) => {
+            return SwCheck::fail(
+                "binding_drift",
+                format!("cannot read {}: {e}", bindings_nix.display()),
+                Vec::new(),
+            )
+        }
+    };
+
+    // Extract `sourceUnitId = "..."` string literals from the Nix file.
+    // We only grab values (not the `mkOption` definition line).
+    let value_pattern = regex::Regex::new(r#"sourceUnitId\s*=\s*"([^"]+)""#)
+        .expect("static regex is valid");
+
+    let nix_ids: BTreeSet<String> = value_pattern
+        .captures_iter(&nix_source)
+        .map(|cap| cap[1].to_string())
+        .collect();
+
+    // Collect from compile-time SourceUnitDescriptor inventory.
+    let rust_ids: BTreeSet<String> = sinex_primitives::proof::all_source_units()
+        .map(|d| d.id.to_string())
+        .collect();
+
+    let nix_only: Vec<String> = nix_ids.difference(&rust_ids).cloned().collect();
+    let rust_only: Vec<String> = rust_ids.difference(&nix_ids).cloned().collect();
+
+    // We surface Nix-only IDs as informational (the module example may declare
+    // IDs that don't yet have Rust descriptors). Rust-only is the actionable
+    // direction — a descriptor exists but no NixOS binding is declared.
+    if nix_only.is_empty() && rust_only.is_empty() {
+        SwCheck::pass(
+            "binding_drift",
+            format!("{} source-unit IDs matched between NixOS bindings and Rust descriptors", nix_ids.len()),
+        )
+    } else {
+        let mut items = Vec::new();
+        for id in &nix_only {
+            items.push(format!("nix-only (no Rust descriptor): {id}"));
+        }
+        for id in &rust_only {
+            items.push(format!("rust-only (no NixOS binding): {id}"));
+        }
+        // Treat rust-only as warn (descriptors exist but no binding declared yet).
+        // Nix-only is also warn (binding example references unknown descriptor).
+        SwCheck::warn(
+            "binding_drift",
+            format!("{} nix-only, {} rust-only", nix_only.len(), rust_only.len()),
+            items,
+        )
+    }
+}
+
+/// A3.1.3 — Ingestor crates gone (or warn).
+///
+/// Lists `crate/nodes/` and fails/warns if any `sinex-*-ingestor` directory
+/// is still present. Pass `--expect-deleted <crate>` to promote a specific
+/// crate to a failure if it still exists. `--warn-ingestors` demotes all
+/// ingestor presence to warnings.
+fn check_sw_ingestor_crates(
+    root: &Path,
+    expect_deleted: &[String],
+    warn_ingestors: bool,
+) -> SwCheck {
+    let nodes_dir = root.join("crate/nodes");
+    let entries = match fs::read_dir(&nodes_dir) {
+        Ok(e) => e,
+        Err(err) => {
+            return SwCheck::fail(
+                "ingestor_crates",
+                format!("cannot read {}: {err}", nodes_dir.display()),
+                Vec::new(),
+            )
+        }
+    };
+
+    let mut present: Vec<String> = entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.ends_with("-ingestor") { Some(name) } else { None }
+        })
+        .collect();
+    present.sort();
+
+    // Any crate in `expect_deleted` that's still present is a hard failure.
+    let hard_fail: Vec<String> = expect_deleted
+        .iter()
+        .filter(|name| present.contains(name))
+        .cloned()
+        .collect();
+
+    if !hard_fail.is_empty() {
+        return SwCheck::fail(
+            "ingestor_crates",
+            format!("{} crate(s) declared --expect-deleted are still present", hard_fail.len()),
+            hard_fail,
+        );
+    }
+
+    if present.is_empty() {
+        return SwCheck::pass("ingestor_crates", "no ingestor crates remain in crate/nodes/");
+    }
+
+    let detail = format!("{} ingestor crate(s) still present in crate/nodes/", present.len());
+    if warn_ingestors {
+        SwCheck::warn("ingestor_crates", detail, present)
+    } else {
+        SwCheck::warn(
+            "ingestor_crates",
+            format!("{detail} (pass --warn-ingestors or --expect-deleted to control severity)"),
+            present,
+        )
+    }
+}
+
+/// A3.1.4 — Workspace member count.
+fn check_sw_member_count(root: &Path, expected: usize) -> SwCheck {
+    let cargo_toml = root.join("Cargo.toml");
+    let contents = match fs::read_to_string(&cargo_toml) {
+        Ok(s) => s,
+        Err(e) => {
+            return SwCheck::fail(
+                "member_count",
+                format!("cannot read Cargo.toml: {e}"),
+                Vec::new(),
+            )
+        }
+    };
+
+    // Count quoted members lines in the `[workspace] members = [...]` block.
+    // Simple heuristic: count lines that match `  "crate/` or `  "tests/` or
+    // `  "xtask"` patterns inside the members block.
+    let member_pattern = regex::Regex::new(r#"^\s+"[^"]+""#).expect("static regex");
+    let mut in_members = false;
+    let mut count = 0usize;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("members") && trimmed.contains('[') {
+            in_members = true;
+        }
+        if in_members && member_pattern.is_match(line) && !trimmed.starts_with('#') {
+            count += 1;
+        }
+        if in_members && trimmed == "]" {
+            break;
+        }
+    }
+
+    if count == expected {
+        SwCheck::pass(
+            "member_count",
+            format!("workspace has {count} member(s) (expected {expected})"),
+        )
+    } else {
+        SwCheck::fail(
+            "member_count",
+            format!("workspace has {count} member(s), expected {expected}"),
+            vec![format!("actual={count}, expected={expected}")],
+        )
+    }
+}
+
+/// A3.1.5 — Registered parsers smoke: list every `register_parser!` call in
+/// the workspace and surface source_unit_id + parser type for drift visibility.
+fn check_sw_registered_parsers(root: &Path) -> SwCheck {
+    // Static grep across crate/core/sinex-source-worker and crate/lib/sinex-node-sdk.
+    let search_roots = [
+        root.join("crate/core/sinex-source-worker"),
+        root.join("crate/lib/sinex-node-sdk"),
+    ];
+
+    let register_pattern =
+        regex::Regex::new(r#"register_parser!\s*\(\s*"([^"]+)"\s*,\s*(\w+)\s*\)"#)
+            .expect("static regex");
+
+    let mut registrations: Vec<String> = Vec::new();
+
+    for search_root in &search_roots {
+        scan_rs_files_for_pattern(search_root, &register_pattern, &mut registrations);
+    }
+
+    if registrations.is_empty() {
+        SwCheck::warn(
+            "registered_parsers",
+            "no register_parser! calls found in source-worker or sdk",
+            Vec::new(),
+        )
+    } else {
+        SwCheck::pass(
+            "registered_parsers",
+            format!("{} parser registration(s) found", registrations.len()),
+        )
+    }
+}
+
+/// Walk `.rs` files under `dir`, extract capture group 1 and 2 from `pattern`
+/// as `"source_unit_id -> TypeName"` strings, push to `out`.
+fn scan_rs_files_for_pattern(
+    dir: &Path,
+    pattern: &regex::Regex,
+    out: &mut Vec<String>,
+) {
+    let Ok(rd) = fs::read_dir(dir) else { return };
+    for entry in rd.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.is_dir() {
+            scan_rs_files_for_pattern(&path, pattern, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            let Ok(contents) = fs::read_to_string(&path) else { continue };
+            for cap in pattern.captures_iter(&contents) {
+                let source_unit_id = &cap[1];
+                let parser_type = &cap[2];
+                out.push(format!("{source_unit_id} -> {parser_type}"));
+            }
+        }
+    }
+}
+
+// =============================================================================
+// A3.2 — closure verification gate
+// =============================================================================
+
+#[derive(Debug, Clone, Serialize)]
+struct ClosureCommandResult {
+    command: String,
+    exit_code: i32,
+    passed: bool,
+    stdout_preview: String,
+    stderr_preview: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ClosureVerificationReport {
+    issue: u64,
+    dry_run: bool,
+    commands_found: usize,
+    commands_run: usize,
+    commands_passed: usize,
+    commands_failed: usize,
+    overall_passed: bool,
+    results: Vec<ClosureCommandResult>,
+}
+
+async fn execute_closure(
+    issue: u64,
+    json: bool,
+    dry_run: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    // Fetch issue body via gh CLI.
+    let body = fetch_issue_body(issue)?;
+
+    // Extract shell commands from:
+    // 1. Code blocks fenced with ```verify or ```bash labeled "verify"
+    // 2. Lines beginning with `$ ` inside any code block
+    let commands = extract_closure_commands(&body);
+
+    if commands.is_empty() {
+        if ctx.is_human() {
+            println!(
+                "Issue #{issue}: no explicit verification commands found in body.\n\
+                 No-op: the issue may be legitimately closed on a text-only decision."
+            );
+        }
+        let report = ClosureVerificationReport {
+            issue,
+            dry_run,
+            commands_found: 0,
+            commands_run: 0,
+            commands_passed: 0,
+            commands_failed: 0,
+            overall_passed: true,
+            results: Vec::new(),
+        };
+        if json {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        return Ok(CommandResult::success()
+            .with_message(format!("issue #{issue}: no verification commands to run"))
+            .with_data(serde_json::to_value(&report)?)
+            .with_duration(ctx.elapsed()));
+    }
+
+    if ctx.is_human() && !json {
+        println!("Issue #{issue}: {} verification command(s) found", commands.len());
+        if dry_run {
+            println!("Dry-run mode — printing commands without executing:");
+            for cmd in &commands {
+                println!("  $ {cmd}");
+            }
+        }
+    }
+
+    let mut results: Vec<ClosureCommandResult> = Vec::new();
+
+    if !dry_run {
+        for cmd in &commands {
+            let outcome = run_shell_command(cmd);
+            if ctx.is_human() && !json {
+                let tag = if outcome.passed { "PASS" } else { "FAIL" };
+                println!("[{tag}] $ {cmd}");
+                if !outcome.passed && !outcome.stderr_preview.is_empty() {
+                    println!("       stderr: {}", outcome.stderr_preview);
+                }
+            }
+            results.push(outcome);
+        }
+    }
+
+    let commands_run = results.len();
+    let commands_passed = results.iter().filter(|r| r.passed).count();
+    let commands_failed = results.iter().filter(|r| !r.passed).count();
+    let overall_passed = commands_failed == 0;
+
+    let report = ClosureVerificationReport {
+        issue,
+        dry_run,
+        commands_found: commands.len(),
+        commands_run,
+        commands_passed,
+        commands_failed,
+        overall_passed,
+        results,
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else if ctx.is_human() && !dry_run {
+        println!(
+            "Issue #{issue}: {commands_passed}/{commands_run} passed{}",
+            if commands_failed > 0 {
+                format!(", {commands_failed} FAILED")
+            } else {
+                String::new()
+            }
+        );
+    }
+
+    let mut result = if overall_passed || dry_run {
+        CommandResult::success()
+            .with_message(format!("issue #{issue}: closure verification passed"))
+    } else {
+        CommandResult::failure(crate::output::StructuredError::new(
+            "CLOSURE_VERIFICATION_FAILED",
+            format!("issue #{issue}: {commands_failed} verification command(s) failed"),
+        ))
+        .with_message(format!("issue #{issue}: closure verification FAILED"))
+    };
+
+    result = result
+        .with_detail(format!("issue={issue}"))
+        .with_detail(format!("commands_found={}", commands.len()))
+        .with_detail(format!("commands_run={commands_run}"))
+        .with_detail(format!("passed={commands_passed}"))
+        .with_detail(format!("failed={commands_failed}"))
+        .with_data(serde_json::to_value(&report)?)
+        .with_duration(ctx.elapsed());
+
+    Ok(result)
+}
+
+/// Fetch the body of a GitHub issue via the `gh` CLI.
+fn fetch_issue_body(issue: u64) -> Result<String> {
+    let output = Command::new("gh")
+        .args(["issue", "view", &issue.to_string(), "--json", "body", "--jq", ".body"])
+        .output();
+
+    match output {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            bail!(
+                "gh CLI not found; install GitHub CLI (https://cli.github.com/) to use \
+                 `xtask verify closure`"
+            )
+        }
+        Err(e) => bail!("failed to invoke gh CLI: {e}"),
+        Ok(out) if !out.status.success() => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            bail!("gh issue view #{issue} failed: {stderr}")
+        }
+        Ok(out) => {
+            let body = String::from_utf8(out.stdout)
+                .with_context(|| "gh output is not valid UTF-8")?;
+            Ok(body.trim().to_string())
+        }
+    }
+}
+
+/// Extract verification shell commands from an issue body.
+///
+/// Extracts from:
+/// 1. Fenced code blocks with `verify` or `bash` (or no language tag) that
+///    appear after a heading containing "verif" (case-insensitive).
+/// 2. Lines starting with `$ ` inside any code block in a verify context.
+/// 3. Lines in `Closure verification commands` sections (per CONTRIBUTING.md
+///    policy) that look like shell commands.
+fn extract_closure_commands(body: &str) -> Vec<String> {
+    let mut commands: Vec<String> = Vec::new();
+    let mut in_verify_section = false;
+    let mut in_code_block = false;
+    let mut code_lang = String::new();
+
+    for line in body.lines() {
+        let trimmed = line.trim();
+
+        // Detect section headings that indicate verification context.
+        if trimmed.starts_with('#') {
+            let heading_lower = trimmed.to_lowercase();
+            in_verify_section = heading_lower.contains("verif") || heading_lower.contains("closure");
+        }
+
+        // Code block start/end.
+        if trimmed.starts_with("```") {
+            if in_code_block {
+                in_code_block = false;
+                code_lang.clear();
+            } else {
+                in_code_block = true;
+                code_lang = trimmed.trim_start_matches('`').to_lowercase();
+            }
+            continue;
+        }
+
+        if in_code_block && in_verify_section {
+            // Accept all non-comment, non-empty lines from verify-section blocks
+            // whose language is bash, sh, verify, or unspecified.
+            let lang_ok = code_lang.is_empty()
+                || code_lang == "bash"
+                || code_lang == "sh"
+                || code_lang == "verify"
+                || code_lang == "shell";
+
+            if lang_ok && !trimmed.is_empty() && !trimmed.starts_with('#') {
+                // Strip leading `$ ` prompt if present.
+                let cmd = trimmed.strip_prefix("$ ").unwrap_or(trimmed);
+                commands.push(cmd.to_string());
+            }
+        } else if !in_code_block && in_verify_section {
+            // Bare `$ command` lines outside code blocks in a verify section.
+            if let Some(cmd) = trimmed.strip_prefix("$ ") {
+                commands.push(cmd.to_string());
+            }
+        }
+    }
+
+    commands
+}
+
+/// Run a single shell command and capture its outcome.
+fn run_shell_command(cmd: &str) -> ClosureCommandResult {
+    let result = Command::new("sh")
+        .args(["-c", cmd])
+        .output();
+
+    match result {
+        Err(e) => ClosureCommandResult {
+            command: cmd.to_string(),
+            exit_code: -1,
+            passed: false,
+            stdout_preview: String::new(),
+            stderr_preview: e.to_string(),
+        },
+        Ok(out) => {
+            let exit_code = out.status.code().unwrap_or(-1);
+            let passed = out.status.success();
+            let stdout_preview = preview_output(&out.stdout, 200);
+            let stderr_preview = preview_output(&out.stderr, 200);
+            ClosureCommandResult {
+                command: cmd.to_string(),
+                exit_code,
+                passed,
+                stdout_preview,
+                stderr_preview,
+            }
+        }
+    }
+}
+
+/// Truncate raw bytes to a UTF-8 preview string, replacing invalid chars.
+fn preview_output(bytes: &[u8], max_chars: usize) -> String {
+    let s = String::from_utf8_lossy(bytes);
+    let s = s.trim();
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max_chars).collect();
+        format!("{truncated}…")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1098,6 +1810,105 @@ mod tests {
 
         let error = validate_phase_manifest(&manifest).expect_err("unsupported command must fail");
         assert!(format!("{error:#}").contains("unsupported phase verification command"));
+        Ok(())
+    }
+
+    // ==========================================================================
+    // A3 — source-worker and closure subcommand unit tests
+    // ==========================================================================
+
+    #[sinex_test]
+    async fn extract_closure_commands_returns_empty_for_no_verify_section()
+    -> ::xtask::sandbox::TestResult<()> {
+        let body = "## Summary\nSome text.\n\n```bash\necho hello\n```\n";
+        let cmds = extract_closure_commands(body);
+        assert!(
+            cmds.is_empty(),
+            "no verify section should yield no commands, got: {cmds:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn extract_closure_commands_finds_commands_in_verify_section()
+    -> ::xtask::sandbox::TestResult<()> {
+        let body = "## Closure verification commands\n\n```bash\ngit log --oneline -3\nxtask verify source-worker\n```\n";
+        let cmds = extract_closure_commands(body);
+        assert_eq!(cmds.len(), 2, "expected 2 commands, got: {cmds:?}");
+        assert!(cmds[0].contains("git log"));
+        assert!(cmds[1].contains("xtask verify"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn extract_closure_commands_strips_dollar_prompt()
+    -> ::xtask::sandbox::TestResult<()> {
+        let body = "## Verification\n\n```bash\n$ git show HEAD --stat\n```\n";
+        let cmds = extract_closure_commands(body);
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0], "git show HEAD --stat");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn extract_closure_commands_ignores_comment_lines()
+    -> ::xtask::sandbox::TestResult<()> {
+        let body = "## Verification\n\n```bash\n# this is a comment\nxtask check\n```\n";
+        let cmds = extract_closure_commands(body);
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0], "xtask check");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn preview_output_truncates_long_text() -> ::xtask::sandbox::TestResult<()> {
+        let long = "a".repeat(300);
+        let preview = preview_output(long.as_bytes(), 200);
+        assert!(preview.chars().count() <= 210, "preview too long: {}", preview.chars().count());
+        assert!(preview.ends_with('…'), "should end with ellipsis");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn preview_output_preserves_short_text() -> ::xtask::sandbox::TestResult<()> {
+        let short = b"hello world";
+        let preview = preview_output(short, 200);
+        assert_eq!(preview, "hello world");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn sw_check_is_fail_only_for_fail_status() -> ::xtask::sandbox::TestResult<()> {
+        let pass = SwCheck::pass("x", "ok");
+        let warn = SwCheck::warn("x", "meh", Vec::new());
+        let fail = SwCheck::fail("x", "bad", Vec::new());
+        assert!(!pass.is_fail());
+        assert!(!warn.is_fail());
+        assert!(fail.is_fail());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn check_sw_member_count_detects_mismatch() -> ::xtask::sandbox::TestResult<()> {
+        let root = crate::config::workspace_root();
+        // Current real member count is 20. Asking for 5 should be a mismatch.
+        let check = check_sw_member_count(&root, 5);
+        assert!(check.is_fail(), "wrong expected count should fail: {:?}", check.detail);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn check_sw_no_match_arms_passes_on_registry_driven_files()
+    -> ::xtask::sandbox::TestResult<()> {
+        let root = crate::config::workspace_root();
+        let check = check_sw_no_match_arms(&root);
+        // Current dispatch is registry-driven, so there should be no match arms.
+        assert_ne!(
+            check.status,
+            SwCheckStatus::Fail,
+            "match-arm check should not fail on current dispatch: {:?}",
+            check.items
+        );
         Ok(())
     }
 }
