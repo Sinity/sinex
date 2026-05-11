@@ -5814,7 +5814,9 @@ name = "sinex-node-sdk"
 version = "0.4.2"
 dependencies = [
  "ahash",
+ "arboard",
  "async-nats",
+ "async-stream",
  "async-trait",
  "base64 0.22.1",
  "blake3",
