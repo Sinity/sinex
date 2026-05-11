@@ -585,6 +585,17 @@ impl ContentStoreManager {
         self.db_pool.blobs().insert(blob.clone()).await
     }
 
+    /// Drop content from the underlying CAS by key. Idempotent: tolerates
+    /// missing files. `force = true` skips the local-CAS safety check
+    /// (required for actual deletion as opposed to dropping replicas).
+    ///
+    /// Used by the gateway's tombstone-approve handler to delete-on-tombstone
+    /// for source materials whose only references were the tombstoned events
+    /// (#987).
+    pub async fn drop_content(&self, content_key: &str, force: bool) -> NodeResult<()> {
+        self.content_store.drop_content(content_key, force).await
+    }
+
     /// Get blob metadata by content-store key
     pub async fn get_blob_metadata(&self, content_key: &str) -> NodeResult<Blob> {
         let (backend, size, hash_fragment) =

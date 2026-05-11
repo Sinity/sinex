@@ -1970,6 +1970,92 @@ impl SourceMaterialRepository<'_> {
         .map_err(|e| db_error(e, "append temporal ledger entry"))?;
         Ok(())
     }
+
+    // -------------------------------------------------------------------------
+    // Tombstone-driven cleanup (#987 delete-on-tombstone)
+    // -------------------------------------------------------------------------
+
+    /// Collect distinct `source_material_id` values referenced by a set of
+    /// archived event IDs (in `audit.archived_events`).
+    ///
+    /// Used by the tombstone path to capture candidate materials for orphan
+    /// detection BEFORE `execute_cascade_tombstone` deletes the archived rows.
+    pub async fn material_ids_for_archived_events(
+        &self,
+        archived_event_ids: &[Uuid],
+    ) -> DbResult<Vec<Uuid>> {
+        if archived_event_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids = sqlx::query_scalar!(
+            r#"
+            SELECT DISTINCT source_material_id AS "id!: Uuid"
+            FROM audit.archived_events
+            WHERE id = ANY($1::uuid[])
+              AND source_material_id IS NOT NULL
+            "#,
+            archived_event_ids
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "material_ids_for_archived_events"))?;
+        Ok(ids)
+    }
+
+    /// Filter a set of material IDs to those with no remaining references in
+    /// `core.events` or `audit.archived_events`.
+    ///
+    /// Returns IDs that are safe to delete from the registry — no live or
+    /// archived event still claims this material as its provenance root.
+    /// Tombstones (`core.event_tombstones`) carry only metadata, not
+    /// `source_material_id`, so they don't keep materials alive.
+    pub async fn find_orphan_materials(
+        &self,
+        candidate_ids: &[Uuid],
+    ) -> DbResult<Vec<Uuid>> {
+        if candidate_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids = sqlx::query_scalar!(
+            r#"
+            SELECT id AS "id!: Uuid"
+            FROM unnest($1::uuid[]) AS candidates(id)
+            WHERE NOT EXISTS (
+                SELECT 1 FROM core.events e
+                WHERE e.source_material_id = candidates.id
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM audit.archived_events ae
+                WHERE ae.source_material_id = candidates.id
+            )
+            "#,
+            candidate_ids
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "find_orphan_materials"))?;
+        Ok(ids)
+    }
+
+    /// Delete a source material registry row by ID. Returns `true` if a row was
+    /// actually removed. Caller is responsible for dropping the associated
+    /// blob from the content store separately — this only removes the DB row.
+    pub async fn delete_material(
+        &self,
+        id: Id<SourceMaterialRecord>,
+    ) -> DbResult<bool> {
+        let result = sqlx::query!(
+            r#"
+            DELETE FROM raw.source_material_registry
+            WHERE id = $1
+            "#,
+            id.to_uuid()
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "delete material"))?;
+        Ok(result.rows_affected() > 0)
+    }
 }
 
 /// Best-effort family classification from registry-only data.
