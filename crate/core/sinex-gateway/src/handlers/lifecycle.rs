@@ -853,12 +853,17 @@ pub async fn handle_tombstone_preview(
 
 /// Handle lifecycle.tombstone.approve
 ///
-/// Approves and immediately executes a tombstone operation.
+/// Approves and immediately executes a tombstone operation. After the
+/// SQL cascade tombstone deletes the archived event rows, this also
+/// drops any source materials that no live or archived event still
+/// references — both the registry row and the underlying CAS blob.
+/// (#987 delete-on-tombstone for local CAS.)
 pub async fn handle_tombstone_approve(
-    pool: &PgPool,
     params: Value,
+    services: &crate::service_container::ServiceContainer,
     auth: &crate::rpc_server::RpcAuthContext,
 ) -> Result<Value> {
+    let pool = services.pool();
     let request: TombstoneApproveRequest = serde_json::from_value(params)?;
 
     if !request.yes_i_understand_data_is_gone {
@@ -979,11 +984,23 @@ pub async fn handle_tombstone_approve(
     );
 
     let repo = pool.events();
+    let materials_repo = pool.source_materials();
     let operation_uuid = parse_operation_uuid(&request.operation_id)?;
     let previewed_event_uuids: Vec<Uuid> = previewed_event_ids
         .iter()
         .map(|event_id| *event_id.as_uuid())
         .collect();
+
+    // Capture the source_material_ids referenced by the about-to-be-tombstoned
+    // archived events. We must read this BEFORE execute_cascade_tombstone runs
+    // because it deletes the archived_events rows we'd need to query.
+    let candidate_material_ids = materials_repo
+        .material_ids_for_archived_events(&previewed_event_uuids)
+        .await
+        .map_err(|e| {
+            SinexError::database("Failed to collect candidate material IDs")
+                .with_source(e.to_string())
+        })?;
 
     // Execute tombstone
     let tombstoned_count = match repo
@@ -1027,6 +1044,110 @@ pub async fn handle_tombstone_approve(
             );
         }
     };
+
+    // Delete-on-tombstone for source materials whose only references were the
+    // events we just tombstoned. (#987.) Failures here are logged but do not
+    // fail the tombstone operation — the tombstone itself succeeded; orphan
+    // material rows and orphan blobs will get cleaned up by the GC sweeper if
+    // this path falls back. Both halves (registry row + CAS blob) are best-effort
+    // because either failing would otherwise undo a successful tombstone.
+    let orphan_material_ids = match materials_repo
+        .find_orphan_materials(&candidate_material_ids)
+        .await
+    {
+        Ok(ids) => ids,
+        Err(e) => {
+            warn!(
+                operation_id = %request.operation_id,
+                error = %e,
+                "Failed to find orphan materials post-tombstone; GC sweeper will recover"
+            );
+            Vec::new()
+        }
+    };
+
+    if !orphan_material_ids.is_empty() {
+        let mut blobs_dropped = 0_usize;
+        let mut rows_deleted = 0_usize;
+        for material_id in &orphan_material_ids {
+            // Resolve the material to find its blob_id (if any) before deleting the row.
+            let material_record = match materials_repo
+                .get_by_id(sinex_primitives::Id::from_uuid(*material_id))
+                .await
+            {
+                Ok(Some(record)) => Some(record),
+                Ok(None) => None,
+                Err(e) => {
+                    warn!(
+                        material_id = %material_id,
+                        error = %e,
+                        "Failed to read material before delete-on-tombstone"
+                    );
+                    None
+                }
+            };
+
+            // Drop the CAS blob first (idempotent: drop_content tolerates missing files).
+            if let Some(record) = &material_record
+                && let Some(blob_uuid) = record.optional_blob_id
+            {
+                let content_store = services.content.content_store();
+                // Translate blob UUID to a content-store key by looking up core.blobs.
+                match pool.blobs().get_by_id(sinex_primitives::Id::from_uuid(blob_uuid)).await {
+                    Ok(Some(blob_row)) => {
+                        if let Err(e) = content_store
+                            .drop_content(&blob_row.content_key(), true)
+                            .await
+                        {
+                            warn!(
+                                material_id = %material_id,
+                                blob_id = %blob_uuid,
+                                error = %e,
+                                "Failed to drop CAS content for tombstoned material; \
+                                 GC sweeper will recover the orphan blob"
+                            );
+                        } else {
+                            blobs_dropped += 1;
+                        }
+                    }
+                    Ok(None) => {
+                        // Blob row already gone; treat as success.
+                    }
+                    Err(e) => {
+                        warn!(
+                            material_id = %material_id,
+                            blob_id = %blob_uuid,
+                            error = %e,
+                            "Failed to look up blob for delete-on-tombstone"
+                        );
+                    }
+                }
+            }
+
+            // Drop the registry row regardless of blob outcome — if the blob drop
+            // failed, GC will eventually catch up; what matters is the row goes.
+            match materials_repo
+                .delete_material(sinex_primitives::Id::from_uuid(*material_id))
+                .await
+            {
+                Ok(true) => rows_deleted += 1,
+                Ok(false) => {} // already gone
+                Err(e) => warn!(
+                    material_id = %material_id,
+                    error = %e,
+                    "Failed to delete orphan material registry row"
+                ),
+            }
+        }
+        info!(
+            operation_id = %request.operation_id,
+            materials_examined = candidate_material_ids.len(),
+            orphans_found = orphan_material_ids.len(),
+            rows_deleted = rows_deleted,
+            blobs_dropped = blobs_dropped,
+            "Delete-on-tombstone for orphan source materials"
+        );
+    }
 
     // Mark as completed and persist
     let finished_at = Timestamp::now();
