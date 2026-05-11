@@ -602,6 +602,7 @@
                 cargo-deny
                 cargo-machete
                 cargo-modules
+                cargo-sweep # reclaim stale dep artifacts from target/ (used by xtask doctor --reclaim)
                 tokei
                 mold
                 binutils
