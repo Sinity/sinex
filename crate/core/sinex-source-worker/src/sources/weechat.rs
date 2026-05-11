@@ -21,7 +21,7 @@
 //! No match arms.
 
 use sinex_macros::SourceRecord;
-use sinex_node_sdk::parser::WeeChatLogParser;
+use sinex_node_sdk::parser::{AppendOnlyFileAdapter, WeeChatLogParser};
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -79,12 +79,6 @@ register_source_unit_binding! {
     .build_impact(SourceUnitBuildImpact::ZERO)
     .build()
 }
-
-// ---------------------------------------------------------------------------
-// Parser registration — imperative WeeChatLogParser in the dispatch registry
-// ---------------------------------------------------------------------------
-
-register_parser!("weechat", WeeChatLogParser);
 
 // ---------------------------------------------------------------------------
 // Declarative companion — WeeChatMessageRecord (#[derive(SourceRecord)])
@@ -147,8 +141,22 @@ register_source_unit! {
     }
 }
 
-// No node factory for "weechat" or "weechat.message" yet — the WeeChat source
-// is file-based and runs through AppendOnlyFileAdapter + WeeChatLogParser, not
-// as a standalone IngestorNode. A full IngestorNode wrapper is a Phase 3
-// deliverable. The parser dispatch (for replay commands) is wired; the service
-// lifecycle (for continuous ingestion) is deferred.
+// ---------------------------------------------------------------------------
+// Node factory — Phase 3 (Wave A substrate).
+//
+// The WeeChat source is file-based and runs through
+// AppendOnlyFileAdapter + WeeChatLogParser. `register_adapter_ingestor!`
+// wires both the parser dispatch (for replay) and the node factory (for
+// continuous ingestion) in one call.
+//
+// Config JSON expected at runtime:
+//   { "path": "/path/to/weechat.log", "skip_empty": true }
+//
+// This is the canonical example; Wave-B folds follow the same pattern.
+// ---------------------------------------------------------------------------
+
+crate::register_adapter_ingestor!(
+    source_unit_id: "weechat",
+    adapter: AppendOnlyFileAdapter,
+    parser: WeeChatLogParser,
+);
