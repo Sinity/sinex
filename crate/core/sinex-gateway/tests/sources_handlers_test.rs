@@ -1,16 +1,11 @@
 //! Source material RPC handler tests.
-//!
-//! TEMPORARILY DISABLED: handler signatures changed from `(pool, params)` to
-//! `(params, services, auth)` post-#1162 ontology cleanup, but the test
-//! fixtures here still pass the old `(pool, json)` shape. Restoring requires
-//! constructing a `ServiceContainer` + `RpcAuthContext` for each call. Tracked
-//! as part of the #1161 migration follow-ups.
-#![cfg(any())]
 
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::source_materials::TemporalLedgerEntry;
 use sinex_gateway::handlers;
+use sinex_gateway::rpc_server::RpcAuthContext;
+use sinex_gateway::service_container::ServiceContainer;
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{SourceMaterialFormat, SourceMaterialTimingInfoType};
 use sinex_primitives::rpc::sources::{
@@ -20,14 +15,18 @@ use tempfile::tempdir;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-async fn sources_stage_list_and_show_surface_contract_metadata(ctx: TestContext) -> TestResult<()> {
+async fn sources_stage_list_and_show_surface_contract_metadata(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
+    let auth = RpcAuthContext::system();
+
     let dir = tempdir()?;
     let file_path = dir.path().join("atuin-history.sqlite3");
     std::fs::write(&file_path, b"sqlite bytes")?;
     let file_path = file_path.to_string_lossy().to_string();
 
     let stage_value = handlers::handle_sources_stage(
-        ctx.pool(),
         json!({
             "file_path": file_path,
             "format": "sqlite",
@@ -35,6 +34,8 @@ async fn sources_stage_list_and_show_surface_contract_metadata(ctx: TestContext)
             "reason": "continuous atuin history",
             "tags": ["shell", "history"]
         }),
+        &services,
+        &auth,
     )
     .await?;
     let stage: SourcesStageResponse = serde_json::from_value(stage_value)?;
@@ -106,17 +107,21 @@ async fn sources_stage_list_and_show_surface_contract_metadata(ctx: TestContext)
 
 #[sinex_test]
 async fn sources_stage_rejects_non_file_material_formats(ctx: TestContext) -> TestResult<()> {
+    let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
+    let auth = RpcAuthContext::system();
+
     let dir = tempdir()?;
     let file_path = dir.path().join("material.txt");
     std::fs::write(&file_path, b"material")?;
     let file_path = file_path.to_string_lossy().to_string();
 
     let error = handlers::handle_sources_stage(
-        ctx.pool(),
         json!({
             "file_path": file_path,
             "format": "directory"
         }),
+        &services,
+        &auth,
     )
     .await
     .expect_err("file-only sources.stage must reject directory material format");
@@ -132,16 +137,20 @@ async fn sources_stage_rejects_non_file_material_formats(ctx: TestContext) -> Te
 
 #[sinex_test]
 async fn sources_list_respects_limit(ctx: TestContext) -> TestResult<()> {
+    let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
+    let auth = RpcAuthContext::system();
+
     let dir = tempdir()?;
     for name in ["one.jsonl", "two.jsonl"] {
         let file_path = dir.path().join(name);
         std::fs::write(&file_path, b"{}")?;
         handlers::handle_sources_stage(
-            ctx.pool(),
             json!({
                 "file_path": file_path.to_string_lossy().to_string(),
                 "format": "jsonl"
             }),
+            &services,
+            &auth,
         )
         .await?;
     }
