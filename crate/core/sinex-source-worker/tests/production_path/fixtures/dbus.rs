@@ -29,7 +29,7 @@ pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
         .lines()
         .filter(|l| !l.trim().is_empty())
         .enumerate()
-        .map(|(i, line)| {
+        .map(|(i, line)| -> Result<DbusMessage, String> {
             let v: serde_json::Value = serde_json::from_str(line)
                 .map_err(|e| format!("dbus fixture line {i}: failed to parse JSON: {e}"))?;
             Ok(DbusMessage {
