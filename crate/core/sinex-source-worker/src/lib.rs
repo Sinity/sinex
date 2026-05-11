@@ -6,6 +6,7 @@
 
 pub mod dispatch;
 pub mod drain;
+pub mod monitor_node;
 pub mod node_factory;
 pub mod noop;
 pub mod parse_listener;
@@ -15,6 +16,7 @@ pub mod runner;
 pub mod sources;
 
 pub use drain::{GapEvidence, SourceWorkerDrainController};
+pub use monitor_node::{MonitorDriverNode, MonitorEmitFn, MonitorPhase, MonitorState};
 pub use noop::NoopSourceUnit;
 pub use registry::SourceUnitRegistry;
 pub use runner::SourceUnitRunner;
