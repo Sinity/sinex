@@ -9,7 +9,9 @@ pub struct PermissionGranter {
 
 impl PermissionGranter {
     pub fn from_env() -> Result<Option<Self>> {
-        if let Ok(url) = std::env::var("DATABASE_URL_SUPERUSER") {
+        if let Ok(url) = std::env::var("SINEX_TEST_DATABASE_URL_SUPERUSER")
+            .or_else(|_| std::env::var("DATABASE_URL_SUPERUSER"))
+        {
             Ok(Some(Self { superuser_url: url }))
         } else {
             Ok(None)

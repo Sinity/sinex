@@ -4,8 +4,31 @@ use crate::command::{CommandContext, WorkloadScope};
 use crate::process::ProcessBuilder;
 
 pub(super) const HEAVY_TEST_THREAD_CAP: usize = 4;
-const INGESTD_RUNTIME_TEST_PACKAGES: &[&str] =
-    &["sinex-e2e-tests", "sinex-ingestd", "sinex-node-sdk"];
+const INGESTD_RUNTIME_TEST_PACKAGES: &[&str] = &[
+    "sinex-browser-ingestor",
+    "sinex-db",
+    "sinex-desktop-ingestor",
+    "sinex-e2e-tests",
+    "sinex-gateway",
+    "sinex-ingestd",
+    "sinex-node-sdk",
+    "sinex-terminal-ingestor",
+    "sinex-workspace-tests",
+];
+const GATEWAY_RUNTIME_TEST_PACKAGES: &[&str] =
+    &["sinex-e2e-tests", "sinex-gateway", "sinex-workspace-tests"];
+const DATABASE_TEST_PACKAGES: &[&str] = &[
+    "sinex-browser-ingestor",
+    "sinex-db",
+    "sinex-desktop-ingestor",
+    "sinex-e2e-tests",
+    "sinex-gateway",
+    "sinex-ingestd",
+    "sinex-node-sdk",
+    "sinex-schema",
+    "sinex-terminal-ingestor",
+    "sinex-workspace-tests",
+];
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct RuntimeBinaryRequirement {
@@ -80,16 +103,30 @@ pub(super) fn resolve_nextest_execution_plan(
 pub(super) fn runtime_binary_requirements_for_plan(
     execution_plan: &NextestExecutionPlan,
 ) -> Vec<RuntimeBinaryRequirement> {
+    let mut requirements = Vec::new();
     if workload_scope_includes_any(
         &execution_plan.workload_scope,
         INGESTD_RUNTIME_TEST_PACKAGES,
     ) {
-        return vec![RuntimeBinaryRequirement {
+        requirements.push(RuntimeBinaryRequirement {
             package: "sinex-ingestd",
             binary: "sinex-ingestd",
-        }];
+        });
     }
-    Vec::new()
+    if workload_scope_includes_any(
+        &execution_plan.workload_scope,
+        GATEWAY_RUNTIME_TEST_PACKAGES,
+    ) {
+        requirements.push(RuntimeBinaryRequirement {
+            package: "sinex-gateway",
+            binary: "sinex-gateway",
+        });
+    }
+    requirements
+}
+
+pub(super) fn test_database_required_for_plan(execution_plan: &NextestExecutionPlan) -> bool {
+    workload_scope_includes_any(&execution_plan.workload_scope, DATABASE_TEST_PACKAGES)
 }
 
 fn workload_scope_includes_any(scope: &WorkloadScope, packages: &[&str]) -> bool {
@@ -262,7 +299,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn runtime_binary_requirements_include_ingestd_for_workspace()
+    async fn runtime_binary_requirements_include_runtime_binaries_for_workspace()
     -> ::xtask::sandbox::TestResult<()> {
         let plan = NextestExecutionPlan {
             runner_packages: Vec::new(),
@@ -271,9 +308,11 @@ mod tests {
         };
 
         let requirements = runtime_binary_requirements_for_plan(&plan);
-        assert_eq!(requirements.len(), 1);
+        assert_eq!(requirements.len(), 2);
         assert_eq!(requirements[0].package, "sinex-ingestd");
         assert_eq!(requirements[0].binary, "sinex-ingestd");
+        assert_eq!(requirements[1].package, "sinex-gateway");
+        assert_eq!(requirements[1].binary, "sinex-gateway");
         Ok(())
     }
 
@@ -293,7 +332,23 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn runtime_binary_requirements_include_ingestd_for_e2e_tests()
+    async fn runtime_binary_requirements_include_ingestd_for_db_tests()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = NextestExecutionPlan {
+            runner_packages: vec!["sinex-db".to_string()],
+            excluded_packages: Vec::new(),
+            workload_scope: WorkloadScope::Packages(vec!["sinex-db".to_string()]),
+        };
+
+        let requirements = runtime_binary_requirements_for_plan(&plan);
+        assert_eq!(requirements.len(), 1);
+        assert_eq!(requirements[0].package, "sinex-ingestd");
+        assert_eq!(requirements[0].binary, "sinex-ingestd");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_binary_requirements_include_runtime_binaries_for_e2e_tests()
     -> ::xtask::sandbox::TestResult<()> {
         let plan = NextestExecutionPlan {
             runner_packages: vec!["sinex-e2e-tests".to_string()],
@@ -302,9 +357,78 @@ mod tests {
         };
 
         let requirements = runtime_binary_requirements_for_plan(&plan);
-        assert_eq!(requirements.len(), 1);
+        assert_eq!(requirements.len(), 2);
         assert_eq!(requirements[0].package, "sinex-ingestd");
         assert_eq!(requirements[0].binary, "sinex-ingestd");
+        assert_eq!(requirements[1].package, "sinex-gateway");
+        assert_eq!(requirements[1].binary, "sinex-gateway");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_binary_requirements_include_gateway_for_gateway_tests()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = NextestExecutionPlan {
+            runner_packages: vec!["sinex-gateway".to_string()],
+            excluded_packages: Vec::new(),
+            workload_scope: WorkloadScope::Packages(vec!["sinex-gateway".to_string()]),
+        };
+
+        let requirements = runtime_binary_requirements_for_plan(&plan);
+        assert_eq!(requirements.len(), 2);
+        assert_eq!(requirements[0].package, "sinex-ingestd");
+        assert_eq!(requirements[1].package, "sinex-gateway");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_binary_requirements_include_ingestd_for_terminal_ingestor_tests()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = NextestExecutionPlan {
+            runner_packages: vec!["sinex-terminal-ingestor".to_string()],
+            excluded_packages: Vec::new(),
+            workload_scope: WorkloadScope::Packages(vec![
+                "sinex-terminal-ingestor".to_string(),
+            ]),
+        };
+
+        let requirements = runtime_binary_requirements_for_plan(&plan);
+        assert_eq!(requirements.len(), 1);
+        assert_eq!(requirements[0].package, "sinex-ingestd");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_binary_requirements_include_ingestd_for_browser_ingestor_tests()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = NextestExecutionPlan {
+            runner_packages: vec!["sinex-browser-ingestor".to_string()],
+            excluded_packages: Vec::new(),
+            workload_scope: WorkloadScope::Packages(vec![
+                "sinex-browser-ingestor".to_string(),
+            ]),
+        };
+
+        let requirements = runtime_binary_requirements_for_plan(&plan);
+        assert_eq!(requirements.len(), 1);
+        assert_eq!(requirements[0].package, "sinex-ingestd");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_binary_requirements_include_ingestd_for_desktop_ingestor_tests()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = NextestExecutionPlan {
+            runner_packages: vec!["sinex-desktop-ingestor".to_string()],
+            excluded_packages: Vec::new(),
+            workload_scope: WorkloadScope::Packages(vec![
+                "sinex-desktop-ingestor".to_string(),
+            ]),
+        };
+
+        let requirements = runtime_binary_requirements_for_plan(&plan);
+        assert_eq!(requirements.len(), 1);
+        assert_eq!(requirements[0].package, "sinex-ingestd");
         Ok(())
     }
 
@@ -318,6 +442,32 @@ mod tests {
         };
 
         assert!(runtime_binary_requirements_for_plan(&plan).is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn database_requirement_tracks_db_backed_test_plans() -> ::xtask::sandbox::TestResult<()>
+    {
+        let workspace = NextestExecutionPlan {
+            runner_packages: Vec::new(),
+            excluded_packages: Vec::new(),
+            workload_scope: WorkloadScope::Workspace,
+        };
+        assert!(test_database_required_for_plan(&workspace));
+
+        let db_package = NextestExecutionPlan {
+            runner_packages: vec!["sinex-db".to_string()],
+            excluded_packages: Vec::new(),
+            workload_scope: WorkloadScope::Packages(vec!["sinex-db".to_string()]),
+        };
+        assert!(test_database_required_for_plan(&db_package));
+
+        let xtask_package = NextestExecutionPlan {
+            runner_packages: vec!["xtask".to_string()],
+            excluded_packages: Vec::new(),
+            workload_scope: WorkloadScope::Packages(vec!["xtask".to_string()]),
+        };
+        assert!(!test_database_required_for_plan(&xtask_package));
         Ok(())
     }
 

@@ -2,6 +2,7 @@
 
 use color_eyre::eyre::{Result, WrapErr, bail};
 use std::env;
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
@@ -28,6 +29,7 @@ pub struct EphemeralPostgresArgs {
     pub superuser: String,
     pub database: String,
     pub operation_id: String,
+    pub schema: bool,
     pub command: Vec<String>,
 }
 
@@ -52,6 +54,9 @@ pub enum CiSubcommand {
         database: String,
         #[arg(long, default_value = "default-op")]
         operation_id: String,
+        /// Apply/check the Sinex schema before running the command.
+        #[arg(long)]
+        schema: bool,
         #[arg(last = true)]
         command: Vec<String>,
     },
@@ -104,6 +109,7 @@ impl XtaskCommand for CiCommand {
                 superuser,
                 database,
                 operation_id,
+                schema,
                 command,
             } => {
                 let args = EphemeralPostgresArgs {
@@ -115,9 +121,10 @@ impl XtaskCommand for CiCommand {
                     superuser: superuser.clone(),
                     database: database.clone(),
                     operation_id: operation_id.clone(),
+                    schema: *schema,
                     command: command.clone(),
                 };
-                execute_postgres(&args, ctx)
+                execute_postgres(&args, ctx).await
             }
             CiSubcommand::Workspace {
                 target_dir,
@@ -139,7 +146,10 @@ impl XtaskCommand for CiCommand {
     }
 }
 
-fn execute_postgres(args: &EphemeralPostgresArgs, ctx: &CommandContext) -> Result<CommandResult> {
+async fn execute_postgres(
+    args: &EphemeralPostgresArgs,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
     ctx.heading("ci postgres");
 
     let config = PostgresConfig {
@@ -147,6 +157,7 @@ fn execute_postgres(args: &EphemeralPostgresArgs, ctx: &CommandContext) -> Resul
         data_dir: args
             .data_dir
             .clone()
+            .or_else(|| env::var_os("SINEX_TEST_PGDATA_DIR").map(PathBuf::from))
             .unwrap_or_else(|| PathBuf::from(".sinex/ci-pgdata")),
         socket_dir: resolve_socket_dir(args.socket_dir.clone(), env::current_dir())?,
         keep_data: args.keep_data,
@@ -167,6 +178,28 @@ fn execute_postgres(args: &EphemeralPostgresArgs, ctx: &CommandContext) -> Resul
         args.superuser, pg_env.host, args.port, args.database
     );
 
+    if args.schema {
+        let port_string = args.port.to_string();
+        let _schema_env = EnvRestoreGuard::set_many([
+            ("PGHOST", pg_env.host.as_str()),
+            ("PGPORT", port_string.as_str()),
+            ("PGUSER", args.app_user.as_str()),
+            ("PGDATABASE", args.database.as_str()),
+            ("DATABASE_URL", app_url.as_str()),
+            ("DATABASE_URL_APP", app_url.as_str()),
+            ("DATABASE_URL_SUPERUSER", super_url.as_str()),
+            ("SINEX_TEST_DATABASE_URL", app_url.as_str()),
+            ("SINEX_TEST_DATABASE_URL_SUPERUSER", super_url.as_str()),
+            ("SUPERUSER", args.superuser.as_str()),
+            ("SINEX_OPERATION_ID", args.operation_id.as_str()),
+        ]);
+        let stage = ctx.start_stage("ephemeral_schema");
+        let target_dir = crate::config::workspace_target_dir();
+        let result = run_schema_setup(Some(&target_dir), "ci-postgres", ctx).await;
+        ctx.finish_stage(stage, result.is_ok());
+        result?;
+    }
+
     let Some(program) = args.command.first() else {
         bail!("ci postgres requires a command to run");
     };
@@ -181,11 +214,14 @@ fn execute_postgres(args: &EphemeralPostgresArgs, ctx: &CommandContext) -> Resul
         .env("PGPORT", args.port.to_string())
         .env("PGDATA", config.data_dir.to_string_lossy())
         .env("PGUSER", &args.app_user)
+        .env("SINEX_TEST_DATABASE_URL", &app_url)
+        .env("SINEX_TEST_DATABASE_URL_SUPERUSER", &super_url)
         .env("DATABASE_URL", &app_url)
         .env("DATABASE_URL_APP", &app_url)
         .env("DATABASE_URL_SUPERUSER", &super_url)
         .env("SUPERUSER", &args.superuser)
         .env("SINEX_OPERATION_ID", &args.operation_id)
+        .env("SINEX_EPHEMERAL_POSTGRES_ACTIVE", "1")
         .run();
 
     drop(pg_guard);
@@ -204,6 +240,36 @@ fn execute_postgres(args: &EphemeralPostgresArgs, ctx: &CommandContext) -> Resul
         })
         .with_detail(e.to_string())
         .with_duration(ctx.elapsed())),
+    }
+}
+
+struct EnvRestoreGuard {
+    previous: Vec<(&'static str, Option<OsString>)>,
+}
+
+impl EnvRestoreGuard {
+    fn set_many<const N: usize>(entries: [(&'static str, &str); N]) -> Self {
+        let previous = entries
+            .iter()
+            .map(|(key, _)| (*key, env::var_os(key)))
+            .collect();
+        for (key, value) in entries {
+            unsafe { env::set_var(key, value) };
+        }
+        Self { previous }
+    }
+}
+
+impl Drop for EnvRestoreGuard {
+    fn drop(&mut self) {
+        for (key, value) in self.previous.drain(..) {
+            unsafe {
+                match value {
+                    Some(value) => env::set_var(key, value),
+                    None => env::remove_var(key),
+                }
+            }
+        }
     }
 }
 

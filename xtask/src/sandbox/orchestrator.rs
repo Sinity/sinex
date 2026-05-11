@@ -252,20 +252,10 @@ async fn start_test_gateway_inner(
     wait_ready: bool,
 ) -> Result<TestGatewayHandle> {
     let workspace = find_workspace_root()?;
-    let profile = if cfg!(debug_assertions) {
-        "debug"
-    } else {
-        "release"
-    };
-    let target_dir = crate::orchestrator::get_target_dir(&workspace);
-    let binary_path = target_dir.join(profile).join("sinex-gateway");
-
-    if !binary_path.exists() {
-        bail!(
-            "sinex-gateway binary not found at {:?}. Please build it first.",
-            binary_path
-        );
-    }
+    let freshness =
+        check_runtime_binary_freshness(&workspace, "sinex-gateway", "sinex-gateway")?;
+    freshness.ensure_fresh()?;
+    let binary_path = freshness.binary_path;
 
     // If port 0 was requested, allocate a real port before spawning
     let actual_addr = if config.listen_addr.port() == 0 {

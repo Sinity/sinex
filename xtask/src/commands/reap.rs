@@ -15,9 +15,8 @@ use std::time::Duration;
 use clap::Parser;
 use color_eyre::eyre::Result;
 
-use crate::command::{CommandContext, CommandMetadata, XtaskCommand};
+use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::history::{HistoryDb, InvocationStatus, JobLifecycleStatus};
-use crate::output::CommandResult;
 
 #[derive(Parser, Clone, Debug)]
 #[command(hide = true, about = "Internal: detached process watchdog (not for human use)")]
@@ -48,6 +47,10 @@ pub struct ReapCommand {
 }
 
 impl XtaskCommand for ReapCommand {
+    fn name(&self) -> &'static str {
+        "__reap"
+    }
+
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata {
             track_in_history: false,
@@ -55,7 +58,7 @@ impl XtaskCommand for ReapCommand {
         }
     }
 
-    async fn execute(self, _ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, _ctx: &CommandContext) -> Result<CommandResult> {
         // Perform double-fork to detach from the parent's session and reparent
         // the grandchild to init so it survives when the launcher exits.
         //
@@ -68,7 +71,7 @@ impl XtaskCommand for ReapCommand {
         //
         // The parent branch returns Ok(CommandResult::success()) so the launcher
         // xtask can exit promptly.
-        double_fork_reap(self)
+        double_fork_reap(self.clone())
     }
 }
 

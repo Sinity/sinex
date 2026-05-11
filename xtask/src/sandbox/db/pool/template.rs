@@ -1217,7 +1217,10 @@ async fn run_template_schema_apply(
     template_admin_url: &str,
     template_pool_max: u32,
 ) -> TestResult<HashMap<String, String>> {
-    let template_schema_url = if let Ok(super_url) = std::env::var("DATABASE_URL_SUPERUSER") {
+    let template_schema_url = if let Ok(super_url) =
+        std::env::var("SINEX_TEST_DATABASE_URL_SUPERUSER")
+            .or_else(|_| std::env::var("DATABASE_URL_SUPERUSER"))
+    {
         url_with_db_name(&super_url, template_name)?
     } else {
         url_with_db_name(template_admin_url, template_name)?
@@ -1294,11 +1297,15 @@ async fn grant_template_permissions(template_pool: &DbPool) -> TestResult<()> {
     let Ok(Some(granter)) = crate::sandbox::db::permissions::PermissionGranter::from_env() else {
         return Ok(());
     };
-    let Some(username) = std::env::var("DATABASE_URL_APP").ok().and_then(|url| {
-        url.split("://")
-            .nth(1)
-            .and_then(|s| s.split('@').next().map(std::string::ToString::to_string))
-    }) else {
+    let Some(username) = std::env::var("SINEX_TEST_DATABASE_URL")
+        .or_else(|_| std::env::var("DATABASE_URL_APP"))
+        .ok()
+        .and_then(|url| {
+            url.split("://")
+                .nth(1)
+                .and_then(|s| s.split('@').next().map(std::string::ToString::to_string))
+        })
+    else {
         return Ok(());
     };
 

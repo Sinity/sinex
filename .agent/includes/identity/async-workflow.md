@@ -2,6 +2,20 @@
 
 Schedule -> continue -> poll. Never run -> wait when you can work in parallel.
 
+### History Is Evidence, Not Cache
+
+`$SINEX_STATE_DIR/xtask-history.db` is the accumulated development-loop
+observability dataset for this checkout. Treat it as durable project evidence:
+use it to analyze wall-clock time, test failures, diagnostics, and resource
+patterns, but do not classify it as disposable cache or delete it during
+performance cleanup. If history itself appears to slow a workflow down,
+investigate query shape, indexes, WAL behavior, compaction, or archival strategy
+with measurements; preserve the dataset first.
+
+Disposable development cache lives under `$SINEX_CACHE_DIR` / `CARGO_TARGET_DIR`
+(currently routed to `/cache/sinex/<checkout>/...` in the active devshell), not
+under `$SINEX_STATE_DIR`.
+
 ```bash
 # After editing code:
 xtask check --bg              # Returns job ID, continue working

@@ -365,6 +365,7 @@ async fn recreate_pool_database_locked(
                 PoolCleanVerification::RequireSchemaVerification
             }
         };
+    apply_pool_database_settings_admin(admin_conn, db_name).await?;
     mark_pool_database_clean(
         admin_conn,
         db_name,
@@ -373,6 +374,38 @@ async fn recreate_pool_database_locked(
         verification,
     )
     .await?;
+    Ok(())
+}
+
+async fn apply_pool_database_settings_admin(
+    admin_conn: &mut PgConnection,
+    db_name: &str,
+) -> TestResult<()> {
+    validate_pg_identifier(db_name, "database")
+        .map_err(|e| eyre!("cannot ALTER DATABASE test settings: {e}"))?;
+    let quoted_name = quote_ident(db_name);
+    for statement in [
+        format!("ALTER DATABASE {quoted_name} SET synchronous_commit = off"),
+        format!("ALTER DATABASE {quoted_name} SET jit = off"),
+    ] {
+        sqlx::query(&statement).execute(&mut *admin_conn).await?;
+    }
+    Ok(())
+}
+
+async fn apply_pool_database_settings(
+    conn: &mut PoolConnection<Postgres>,
+    db_name: &str,
+) -> TestResult<()> {
+    validate_pg_identifier(db_name, "database")
+        .map_err(|e| eyre!("cannot ALTER DATABASE test settings: {e}"))?;
+    let quoted_name = quote_ident(db_name);
+    for statement in [
+        format!("ALTER DATABASE {quoted_name} SET synchronous_commit = off"),
+        format!("ALTER DATABASE {quoted_name} SET jit = off"),
+    ] {
+        sqlx::query(&statement).execute(conn.as_mut()).await?;
+    }
     Ok(())
 }
 
@@ -413,6 +446,7 @@ pub(super) async fn create_database_from_template(
         Ok(_) => {
             // Grant permissions on the newly created database in CI environment
             grant_pool_database_permissions_checked(name).await?;
+            apply_pool_database_settings(conn, name).await?;
             Ok(CreateDatabaseOutcome::Created)
         }
         Err(err) => {
@@ -464,6 +498,7 @@ pub(super) async fn create_database_from_template_admin(
     {
         Ok(_) => {
             grant_pool_database_permissions_checked(name).await?;
+            apply_pool_database_settings_admin(admin_conn, name).await?;
             Ok(CreateDatabaseOutcome::Created)
         }
         Err(err) => {
@@ -535,6 +570,7 @@ async fn ensure_pool_database_exists_inner(
                 CreateDatabaseOutcome::AlreadyExists => {}
             }
         }
+        apply_pool_database_settings_admin(&mut lifecycle_admin_conn, db_name).await?;
         let verification = if created_from_fresh_template_clone {
             // Even fresh template clones must pass schema verification: the template
             // trust stamp could be stale (e.g. after a toolchain upgrade that changed
