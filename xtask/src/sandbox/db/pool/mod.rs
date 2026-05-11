@@ -243,7 +243,7 @@ pub async fn inspect_test_database_footprint() -> TestResult<TestDatabaseFootpri
         let name: String = row.try_get("datname")?;
         let size_bytes: i64 = row.try_get("size_bytes")?;
         let active_connections: i64 = row.try_get("active_connections")?;
-        let kind = classify_test_database_name(&name);
+        let kind = classify_test_database_name(&name, config.size);
 
         totals.database_count += 1;
         totals.total_size_bytes += size_bytes;
@@ -284,12 +284,16 @@ pub async fn inspect_test_database_footprint() -> TestResult<TestDatabaseFootpri
     })
 }
 
-fn classify_test_database_name(name: &str) -> &'static str {
-    if name
+fn classify_test_database_name(name: &str, configured_pool_size: usize) -> &'static str {
+    if let Some(slot) = name
         .strip_prefix("sinex_test_pool_")
-        .is_some_and(|suffix| suffix.parse::<usize>().is_ok())
+        .and_then(|suffix| suffix.parse::<usize>().ok())
     {
-        return "pool_slot";
+        return if slot < configured_pool_size {
+            "pool_slot"
+        } else {
+            "stale_or_legacy"
+        };
     }
     if name.starts_with("sinex_test_template_shared") {
         return "shared_template";

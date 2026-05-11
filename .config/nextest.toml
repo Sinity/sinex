@@ -17,7 +17,7 @@ dir = ".sinex/nextest"
 # default: Standard runs with no automatic retries
 # -----------------------------------------------------------------------------
 fail-fast          = false
-test-threads       = "num-cpus"
+test-threads       = 18
 retries            = 0
 slow-timeout       = { period = "60s", terminate-after = 2 }
 failure-output     = "immediate"

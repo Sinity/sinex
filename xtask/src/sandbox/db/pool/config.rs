@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use toml::Value;
 use url::Url;
 
-pub(super) const MIN_POOL_SIZE: usize = 64;
+pub(super) const MIN_POOL_SIZE: usize = 48;
 pub(super) const POOL_SIZE_MULTIPLIER: usize = 2;
 pub(super) const SLOT_MAX_CONNECTIONS: u32 = 8;
 pub(super) const ADMIN_MAX_CONNECTIONS: u32 = 8;
