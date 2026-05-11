@@ -23,10 +23,9 @@ sinex-db = { path = "../sinex-db", optional = true }
 
 [features]
 default = ["db", "messaging", "preflight"]
-db = ["dep:sinex-db", "sinex-db/sqlx", "dep:sqlx"]
+db = ["dep:sinex-db", "dep:sqlx"]
 messaging = ["async-nats"]
 preflight = []
-external-tests = []
 
 [dependencies.camino]
 workspace = true
