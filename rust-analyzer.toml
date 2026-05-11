@@ -1,0 +1,69 @@
+# rust-analyzer configuration for the sinex workspace.
+#
+# Why this file exists: Claude Code's LSP harness spawns its own
+# rust-analyzer per session and ignores editor-level configs (the VSCode
+# `rust-analyzer.*` settings in dots/vscode/User/settings.json don't reach
+# it). Without this file, claude's RA runs on pure defaults over a
+# 350K-line workspace and grows to 8+ GB RSS within a session.
+#
+# Investigation: .agent/scratch/ra-integration-investigation-2026-05-11.md
+#
+# Expected impact: cold-peak RSS ~4 GB, steady ~3 GB (down from 5.2 GB +
+# 3.5 GB swap = 8.7 GB residency).
+#
+# Verify after the next RA spawn:
+#   ps -o pid,rss,vsz,command -p $(pgrep -f 'rust-analyzer')
+
+[cargo]
+# Don't analyze every target (dev-deps, examples, benchmarks); analyze
+# only the default target tree. Big workspaces with rich dev-dep graphs
+# (xtask::sandbox, proptest, etc.) blow up the Salsa working set
+# otherwise.
+allTargets = false
+
+# Default to the main check target. Setting this true would extend the
+# rebuild graph to all binaries on every save — punishing in a 19-member
+# workspace.
+buildScripts.enable = true
+
+[cachePriming]
+# Don't aggressively walk the workspace on startup priming the cache.
+# We accept slower first-hover latency in exchange for not blowing the
+# memory ceiling during session startup.
+enable = false
+
+[check]
+# Don't run `cargo check --workspace` on every save — match what
+# `xtask check` does (scoped, targeted). The workspace check stays
+# behind explicit invocation.
+workspace = false
+
+# Isolate RA's check target dir from xtask's 45 GB .sinex/target — they
+# clash on lockfiles and rebuild artifacts.
+extraArgs = ["--target-dir", ".sinex/target/ra-check"]
+
+[files]
+# Don't index target/state dirs — they're not source and slow indexing
+# while bloating the file watcher set.
+excludeDirs = [
+    ".sinex/target",
+    ".sinex/state",
+    "target",
+    ".direnv",
+    "result",
+    "result-*",
+]
+
+[procMacro]
+# Keep proc-macro expansion ON (we need #[derive(EventPayload)],
+# #[derive(SourceRecord)], sqlx::query!, etc. to expand for type info).
+# But don't expand attribute proc-macros that aren't needed for typing
+# (e.g. #[tracing::instrument]).
+enable = true
+attributes.enable = false
+
+[diagnostics]
+# Disable Cargo's slow type-checker for non-edited files; let RA's own
+# semantic analysis handle most checks. Cuts the rebuild blast radius
+# during incremental edits.
+disabled = ["unresolved-proc-macro"]
