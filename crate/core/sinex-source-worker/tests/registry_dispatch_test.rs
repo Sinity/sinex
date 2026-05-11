@@ -19,7 +19,7 @@ use sinex_source_worker::{
 
 /// Verify that "weechat" is in the parser registry and that a well-formed log
 /// line dispatches without error.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn weechat_parser_registered_and_dispatches() {
     // Factory must be present.
     assert!(
@@ -47,7 +47,7 @@ async fn weechat_parser_registered_and_dispatches() {
 }
 
 /// Join events should produce irc.join.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn weechat_join_line_produces_irc_join() {
     let dispatch = default_parser_dispatch();
     let log_line = b"2024-06-01 10:00:00\t-->\tuser (~user@host) joined #general";
@@ -63,7 +63,7 @@ async fn weechat_join_line_produces_irc_join() {
 // ---------------------------------------------------------------------------
 
 /// Verify "weechat.message" is in the registry and produces irc.message events.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn weechat_message_declarative_registered() {
     assert!(
         find_parser_factory("weechat.message").is_some(),
