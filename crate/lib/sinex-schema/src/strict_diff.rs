@@ -862,9 +862,10 @@ async fn check_orphan_columns(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
 
-    #[test]
-    fn drift_category_display_round_trip() {
+    #[sinex_test]
+    async fn drift_category_display_round_trip() -> xtask::sandbox::TestResult<()> {
         // The Display impl is what `sinex-schema diff --strict` would surface
         // in operator-friendly output. Pin it so a refactor of the enum
         // names doesn't silently break consumer formatting.
@@ -878,10 +879,11 @@ mod tests {
             "foreign_key_action"
         );
         assert_eq!(format!("{}", DriftCategory::OrphanColumn), "orphan_column");
+        Ok(())
     }
 
-    #[test]
-    fn strict_drift_display_includes_location_and_summaries() {
+    #[sinex_test]
+    async fn strict_drift_display_includes_location_and_summaries() -> xtask::sandbox::TestResult<()> {
         let drift = StrictDrift {
             category: DriftCategory::ColumnDefault,
             location: "core.events.ts_persisted".to_string(),
@@ -893,5 +895,6 @@ mod tests {
         assert!(rendered.contains("core.events.ts_persisted"));
         assert!(rendered.contains("now()"));
         assert!(rendered.contains("no DEFAULT set"));
+        Ok(())
     }
 }

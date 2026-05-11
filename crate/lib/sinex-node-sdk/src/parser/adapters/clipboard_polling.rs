@@ -251,6 +251,7 @@ fn build_clipboard_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
     use futures::StreamExt;
     use tokio::time::{Duration, timeout};
 
@@ -262,8 +263,8 @@ mod tests {
         ClipboardPollingAdapter::from_backend(MockClipboardBackend::new(snapshots))
     }
 
-    #[tokio::test]
-    async fn test_clipboard_emits_record_on_change() {
+    #[sinex_test]
+    async fn test_clipboard_emits_record_on_change() -> xtask::sandbox::TestResult<()> {
         let adapter = make_adapter(vec![
             Some("hello".into()),
             None, // empty → skip
@@ -280,10 +281,11 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].as_ref().unwrap().bytes, b"hello");
         assert_eq!(records[1].as_ref().unwrap().bytes, b"world");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_clipboard_deduplicates_unchanged_content() {
+    #[sinex_test]
+    async fn test_clipboard_deduplicates_unchanged_content() -> xtask::sandbox::TestResult<()> {
         let adapter = make_adapter(vec![
             Some("same".into()),
             Some("same".into()),
@@ -301,10 +303,11 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].as_ref().unwrap().bytes, b"same");
         assert_eq!(records[1].as_ref().unwrap().bytes, b"different");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_clipboard_skips_oversized_content() {
+    #[sinex_test]
+    async fn test_clipboard_skips_oversized_content() -> xtask::sandbox::TestResult<()> {
         let big = "x".repeat(10);
         let adapter = make_adapter(vec![
             Some(big.clone()),
@@ -320,10 +323,11 @@ mod tests {
 
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].as_ref().unwrap().bytes, b"small");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_clipboard_anchor_is_stream_frame() {
+    #[sinex_test]
+    async fn test_clipboard_anchor_is_stream_frame() -> xtask::sandbox::TestResult<()> {
         let adapter = make_adapter(vec![Some("text".into())]);
         let config = ClipboardPollingConfig {
             poll_interval_ms: 1,
@@ -337,10 +341,11 @@ mod tests {
             records[0].as_ref().unwrap().anchor,
             MaterialAnchor::StreamFrame { frame_index: 0, .. }
         ));
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_clipboard_change_counter_monotonic() {
+    #[sinex_test]
+    async fn test_clipboard_change_counter_monotonic() -> xtask::sandbox::TestResult<()> {
         let adapter = make_adapter(vec![
             Some("a".into()),
             Some("b".into()),
@@ -363,10 +368,11 @@ mod tests {
             .collect();
 
         assert_eq!(indices, vec![0, 1, 2]);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_clipboard_cursor_after_is_unit() {
+    #[sinex_test]
+    async fn test_clipboard_cursor_after_is_unit() -> xtask::sandbox::TestResult<()> {
         let adapter = make_adapter(vec![]);
         let record = SourceRecord {
             material_id: dummy_material_id(),
@@ -378,10 +384,12 @@ mod tests {
         };
         let cursor = adapter.cursor_after(&record).unwrap();
         assert_eq!(cursor, ClipboardPollingCursor);
+        Ok(())
     }
 
-    #[test]
-    fn test_kind_is_polling() {
+    #[sinex_test]
+    async fn test_kind_is_polling() -> xtask::sandbox::TestResult<()> {
         assert_eq!(ClipboardPollingAdapter::KIND, InputShapeKind::Polling);
+        Ok(())
     }
 }

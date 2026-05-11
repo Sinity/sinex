@@ -351,10 +351,11 @@ impl Drop for ActiveWorkGuard<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
     use std::time::Duration;
 
-    #[tokio::test]
-    async fn test_drain_phases_transition_in_order() {
+    #[sinex_test]
+    async fn test_drain_phases_transition_in_order() -> xtask::sandbox::TestResult<()> {
         let controller = SourceWorkerDrainController::new();
         assert_eq!(controller.current_phase().await, DrainPhase::Idle);
 
@@ -378,10 +379,11 @@ mod tests {
 
         controller.mark_drained("test-unit").await;
         assert_eq!(controller.current_phase().await, DrainPhase::Drained);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_work_guard_increments_and_decrements_counter() {
+    #[sinex_test]
+    async fn test_work_guard_increments_and_decrements_counter() -> xtask::sandbox::TestResult<()> {
         let controller = SourceWorkerDrainController::new();
         assert_eq!(controller.active_work_count(), 0);
 
@@ -393,10 +395,11 @@ mod tests {
         }
         // Guards dropped
         assert_eq!(controller.active_work_count(), 0);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_drain_waits_for_active_work() {
+    #[sinex_test]
+    async fn test_drain_waits_for_active_work() -> xtask::sandbox::TestResult<()> {
         let controller = SourceWorkerDrainController::new();
         controller.enter_work();
         assert_eq!(controller.active_work_count(), 1);
@@ -411,10 +414,11 @@ mod tests {
         // Without active work, wait should complete
         let completed = controller.wait_for_active_work(Duration::from_millis(10)).await;
         assert!(completed, "should complete when no active work");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_double_drain_is_idempotent() {
+    #[sinex_test]
+    async fn test_double_drain_is_idempotent() -> xtask::sandbox::TestResult<()> {
         let controller = SourceWorkerDrainController::new();
         controller.request_drain("test-unit").await;
         assert_eq!(controller.current_phase().await, DrainPhase::StoppingAccept);
@@ -423,10 +427,11 @@ mod tests {
         let already_draining = !controller.request_drain("test-unit").await;
         assert!(already_draining);
         assert_eq!(controller.current_phase().await, DrainPhase::StoppingAccept);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_gap_evidence_on_restart() {
+    #[sinex_test]
+    async fn test_gap_evidence_on_restart() -> xtask::sandbox::TestResult<()> {
         let controller = SourceWorkerDrainController::new();
         controller.request_drain("test-unit").await;
         // Simulate crash mid-drain
@@ -434,14 +439,16 @@ mod tests {
         assert_eq!(evidence.unit_id, "test-unit");
         assert_eq!(evidence.drain_phase_at_crash, Some(DrainPhase::StoppingAccept));
         assert_eq!(evidence.in_flight_count, 0);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_clean_start_evidence() {
+    #[sinex_test]
+    async fn test_clean_start_evidence() -> xtask::sandbox::TestResult<()> {
         let controller = SourceWorkerDrainController::new();
         let evidence = controller.clean_start_evidence("test-unit");
         assert_eq!(evidence.unit_id, "test-unit");
         assert_eq!(evidence.drain_phase_at_crash, None);
         assert_eq!(evidence.in_flight_count, 0);
+        Ok(())
     }
 }

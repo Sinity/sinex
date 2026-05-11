@@ -549,6 +549,7 @@ fn value_as_string(value: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
     use sinex_primitives::Id;
 
     fn test_ctx() -> ParserContext {
@@ -590,8 +591,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn empty_spec_emits_one_event_with_empty_payload() {
+    #[sinex_test]
+    async fn empty_spec_emits_one_event_with_empty_payload() -> xtask::sandbox::TestResult<()> {
         let intents = DeclarativeParser::evaluate(
             &minimal_spec(),
             json_record("{}"),
@@ -602,10 +603,11 @@ mod tests {
         assert_eq!(intents.len(), 1);
         assert_eq!(intents[0].payload, serde_json::json!({}));
         assert_eq!(intents[0].field_privacy_log, Some(vec![]));
+        Ok(())
     }
 
-    #[test]
-    fn json_pointer_extracts_string_field() {
+    #[sinex_test]
+    async fn json_pointer_extracts_string_field() -> xtask::sandbox::TestResult<()> {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "command".into(),
@@ -629,10 +631,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(intents[0].payload["command"], "ls -la");
+        Ok(())
     }
 
-    #[test]
-    fn missing_required_field_errors() {
+    #[sinex_test]
+    async fn missing_required_field_errors() -> xtask::sandbox::TestResult<()> {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "cmd".into(),
@@ -655,10 +658,11 @@ mod tests {
             &BindingConfig::default(),
         );
         assert!(result.is_err());
+        Ok(())
     }
 
-    #[test]
-    fn missing_optional_field_uses_default() {
+    #[sinex_test]
+    async fn missing_optional_field_uses_default() -> xtask::sandbox::TestResult<()> {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "exit".into(),
@@ -682,10 +686,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(intents[0].payload["exit"], 0);
+        Ok(())
     }
 
-    #[test]
-    fn missing_optional_no_default_omits_field() {
+    #[sinex_test]
+    async fn missing_optional_no_default_omits_field() -> xtask::sandbox::TestResult<()> {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "exit".into(),
@@ -709,10 +714,11 @@ mod tests {
         )
         .unwrap();
         assert!(intents[0].payload.get("exit").is_none());
+        Ok(())
     }
 
-    #[test]
-    fn skip_payload_excludes_from_output() {
+    #[sinex_test]
+    async fn skip_payload_excludes_from_output() -> xtask::sandbox::TestResult<()> {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "internal".into(),
@@ -736,10 +742,11 @@ mod tests {
         )
         .unwrap();
         assert!(intents[0].payload.get("internal").is_none());
+        Ok(())
     }
 
-    #[test]
-    fn occurrence_key_concatenates_fields_in_declared_order() {
+    #[sinex_test]
+    async fn occurrence_key_concatenates_fields_in_declared_order() -> xtask::sandbox::TestResult<()> {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "session".into(),
@@ -782,10 +789,11 @@ mod tests {
                 ("id".into(), "evt-1".into())
             ]
         );
+        Ok(())
     }
 
-    #[test]
-    fn suppress_if_field_drops_field_only() {
+    #[sinex_test]
+    async fn suppress_if_field_drops_field_only() -> xtask::sandbox::TestResult<()> {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "command".into(),
@@ -815,10 +823,11 @@ mod tests {
         assert_eq!(log.len(), 1);
         assert!(log[0].suppressed);
         assert!(!log[0].whole_event_suppressed);
+        Ok(())
     }
 
-    #[test]
-    fn suppress_if_whole_event_drops_event_entirely() {
+    #[sinex_test]
+    async fn suppress_if_whole_event_drops_event_entirely() -> xtask::sandbox::TestResult<()> {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "command".into(),
@@ -844,10 +853,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(intents.len(), 0);
+        Ok(())
     }
 
-    #[test]
-    fn suppress_if_inactive_passes_through() {
+    #[sinex_test]
+    async fn suppress_if_inactive_passes_through() -> xtask::sandbox::TestResult<()> {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "command".into(),
@@ -873,10 +883,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(intents[0].payload["command"], "ls");
+        Ok(())
     }
 
-    #[test]
-    fn type_coercion_string_to_integer_works() {
+    #[sinex_test]
+    async fn type_coercion_string_to_integer_works() -> xtask::sandbox::TestResult<()> {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "exit".into(),
@@ -900,10 +911,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(intents[0].payload["exit"], 42);
+        Ok(())
     }
 
-    #[test]
-    fn type_coercion_string_to_boolean_works() {
+    #[sinex_test]
+    async fn type_coercion_string_to_boolean_works() -> xtask::sandbox::TestResult<()> {
         for (input, expected) in [("true", true), ("false", false), ("1", true), ("yes", true)] {
             let mut spec = minimal_spec();
             spec.fields.push(FieldSpec {
@@ -930,10 +942,11 @@ mod tests {
             .unwrap();
             assert_eq!(intents[0].payload["flag"], expected, "input was {input:?}");
         }
+        Ok(())
     }
 
-    #[test]
-    fn timestamp_rfc3339_parses() {
+    #[sinex_test]
+    async fn timestamp_rfc3339_parses() -> xtask::sandbox::TestResult<()> {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "ts".into(),
@@ -961,10 +974,11 @@ mod tests {
             &intents[0].timing,
             TimingEvidence::Intrinsic { field, .. } if field == "ts"
         ));
+        Ok(())
     }
 
-    #[test]
-    fn timestamp_unix_seconds_parses() {
+    #[sinex_test]
+    async fn timestamp_unix_seconds_parses() -> xtask::sandbox::TestResult<()> {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "ts".into(),
@@ -992,10 +1006,11 @@ mod tests {
             &intents[0].timing,
             TimingEvidence::Intrinsic { .. }
         ));
+        Ok(())
     }
 
-    #[test]
-    fn timestamp_invalid_falls_back_to_material_time() {
+    #[sinex_test]
+    async fn timestamp_invalid_falls_back_to_material_time() -> xtask::sandbox::TestResult<()> {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "ts".into(),
@@ -1023,10 +1038,11 @@ mod tests {
             &intents[0].timing,
             TimingEvidence::Intrinsic { .. }
         ));
+        Ok(())
     }
 
-    #[test]
-    fn no_timestamp_uses_acquisition_time_with_staged_fallback_evidence() {
+    #[sinex_test]
+    async fn no_timestamp_uses_acquisition_time_with_staged_fallback_evidence() -> xtask::sandbox::TestResult<()> {
         let intents = DeclarativeParser::evaluate(
             &minimal_spec(),
             json_record("{}"),
@@ -1035,10 +1051,11 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(intents[0].timing, TimingEvidence::StagedAtFallback));
+        Ok(())
     }
 
-    #[test]
-    fn tab_separated_extracts_by_index() {
+    #[sinex_test]
+    async fn tab_separated_extracts_by_index() -> xtask::sandbox::TestResult<()> {
         let mut spec = minimal_spec();
         spec.input_format = InputFormat::TabSeparated;
         spec.fields.push(FieldSpec {
@@ -1078,23 +1095,26 @@ mod tests {
                 .unwrap();
         assert_eq!(intents[0].payload["first"], "alpha");
         assert_eq!(intents[0].payload["third"], "gamma");
+        Ok(())
     }
 
-    #[test]
-    fn binding_config_default_is_falsy() {
+    #[sinex_test]
+    async fn binding_config_default_is_falsy() -> xtask::sandbox::TestResult<()> {
         let b = BindingConfig::default();
         assert!(!b.is_truthy("anything"));
+        Ok(())
     }
 
-    #[test]
-    fn binding_config_with_flag_is_truthy() {
+    #[sinex_test]
+    async fn binding_config_with_flag_is_truthy() -> xtask::sandbox::TestResult<()> {
         let b = BindingConfig::new().with_flag("on", true);
         assert!(b.is_truthy("on"));
         assert!(!b.is_truthy("off"));
+        Ok(())
     }
 
-    #[test]
-    fn record_anchor_passes_through_to_intent() {
+    #[sinex_test]
+    async fn record_anchor_passes_through_to_intent() -> xtask::sandbox::TestResult<()> {
         let record = SourceRecord {
             material_id: Id::from_uuid(uuid::Uuid::nil()),
             anchor: MaterialAnchor::SqliteRow {
@@ -1117,14 +1137,15 @@ mod tests {
             &intents[0].anchor,
             MaterialAnchor::SqliteRow { table, rowid: 42 } if table == "history"
         ));
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
     // Coverage gaps filled (#1100 substrate hardening)
     // -----------------------------------------------------------------------
 
-    #[test]
-    fn timestamp_invalid_with_error_fallback_rejects_record() {
+    #[sinex_test]
+    async fn timestamp_invalid_with_error_fallback_rejects_record() -> xtask::sandbox::TestResult<()> {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "ts".into(),
@@ -1148,10 +1169,11 @@ mod tests {
             &BindingConfig::default(),
         );
         assert!(matches!(result, Err(ParserError::Field(_))));
+        Ok(())
     }
 
-    #[test]
-    fn timestamp_unix_millis_distinguishable_from_seconds() {
+    #[sinex_test]
+    async fn timestamp_unix_millis_distinguishable_from_seconds() -> xtask::sandbox::TestResult<()> {
         // Same numeric input under millis vs seconds yields different timestamps.
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
@@ -1180,10 +1202,11 @@ mod tests {
         assert!(matches!(&intents[0].timing, TimingEvidence::Intrinsic { .. }));
         let expected = Timestamp::from_unix_timestamp_millis(1_700_000_000_000).unwrap();
         assert_eq!(intents[0].ts_orig, expected);
+        Ok(())
     }
 
-    #[test]
-    fn timestamp_unix_micros_parses() {
+    #[sinex_test]
+    async fn timestamp_unix_micros_parses() -> xtask::sandbox::TestResult<()> {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "ts".into(),
@@ -1208,10 +1231,11 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(intents[0].timing, TimingEvidence::Intrinsic { .. }));
+        Ok(())
     }
 
-    #[test]
-    fn coerce_non_integer_string_errors() {
+    #[sinex_test]
+    async fn coerce_non_integer_string_errors() -> xtask::sandbox::TestResult<()> {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "count".into(),
@@ -1232,10 +1256,11 @@ mod tests {
             &BindingConfig::default(),
         );
         assert!(matches!(result, Err(ParserError::Field(_))));
+        Ok(())
     }
 
-    #[test]
-    fn coerce_float_with_fraction_errors_for_integer() {
+    #[sinex_test]
+    async fn coerce_float_with_fraction_errors_for_integer() -> xtask::sandbox::TestResult<()> {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "n".into(),
@@ -1266,10 +1291,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ok[0].payload["n"], 3);
+        Ok(())
     }
 
-    #[test]
-    fn invalid_utf8_record_errors_with_decode_variant() {
+    #[sinex_test]
+    async fn invalid_utf8_record_errors_with_decode_variant() -> xtask::sandbox::TestResult<()> {
         let spec = minimal_spec();
         let record = SourceRecord {
             material_id: Id::from_uuid(uuid::Uuid::nil()),
@@ -1286,10 +1312,11 @@ mod tests {
             &BindingConfig::default(),
         );
         assert!(matches!(result, Err(ParserError::Decode(_))));
+        Ok(())
     }
 
-    #[test]
-    fn suppress_if_whole_event_without_privacy_context_drops_event() {
+    #[sinex_test]
+    async fn suppress_if_whole_event_without_privacy_context_drops_event() -> xtask::sandbox::TestResult<()> {
         // Cover the `else if suppressed_by_predicate` branch: no privacy_context
         // but whole_event = true. Must produce zero intents.
         let mut spec = minimal_spec();
@@ -1317,10 +1344,11 @@ mod tests {
         )
         .unwrap();
         assert!(intents.is_empty(), "whole_event suppression must yield no intents");
+        Ok(())
     }
 
-    #[test]
-    fn mismatched_source_format_returns_field_error() {
+    #[sinex_test]
+    async fn mismatched_source_format_returns_field_error() -> xtask::sandbox::TestResult<()> {
         // TabSeparated input with a JsonPointer source should fail with a clear
         // "incompatible" error, not silently produce an empty value.
         let mut spec = minimal_spec();
@@ -1352,10 +1380,11 @@ mod tests {
             &BindingConfig::default(),
         );
         assert!(matches!(result, Err(ParserError::Field(_))));
+        Ok(())
     }
 
-    #[test]
-    fn occurrence_key_with_skip_payload_contributes_key_but_not_payload() {
+    #[sinex_test]
+    async fn occurrence_key_with_skip_payload_contributes_key_but_not_payload() -> xtask::sandbox::TestResult<()> {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "rowid".into(),
@@ -1379,10 +1408,11 @@ mod tests {
         assert!(intents[0].payload.get("rowid").is_none());
         let key = intents[0].occurrence_key.as_ref().expect("occurrence_key");
         assert_eq!(key.fields, vec![("rowid".into(), "7".into())]);
+        Ok(())
     }
 
-    #[test]
-    fn default_value_is_type_coerced_into_payload() {
+    #[sinex_test]
+    async fn default_value_is_type_coerced_into_payload() -> xtask::sandbox::TestResult<()> {
         // A string-typed field with a numeric default should arrive in the
         // payload as a *string*, because coerce_field runs on the default.
         let mut spec = minimal_spec();
@@ -1406,10 +1436,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(intents[0].payload["label"], "42");
+        Ok(())
     }
 
-    #[test]
-    fn csv_row_uses_column_name_extraction() {
+    #[sinex_test]
+    async fn csv_row_uses_column_name_extraction() -> xtask::sandbox::TestResult<()> {
         // CsvRow decodes bytes as JSON object; ColumnName extracts by key.
         let mut spec = minimal_spec();
         spec.input_format = InputFormat::CsvRow;
@@ -1433,5 +1464,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(intents[0].payload["col"], "val");
+        Ok(())
     }
 }

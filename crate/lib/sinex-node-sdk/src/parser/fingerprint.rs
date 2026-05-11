@@ -451,10 +451,11 @@ fn current_unix_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
     use serde_json::json;
 
-    #[test]
-    fn test_from_json_simple() {
+    #[sinex_test]
+    async fn test_from_json_simple() -> xtask::sandbox::TestResult<()> {
         let value = json!({"name": "Alice", "age": 30});
         let fp = SourceRecordFingerprint::from_json(&value);
 
@@ -462,19 +463,21 @@ mod tests {
         assert_eq!(fp.keys, vec!["age", "name"]); // sorted
         assert_eq!(fp.type_map["name"], "string");
         assert_eq!(fp.type_map["age"], "integer");
+        Ok(())
     }
 
-    #[test]
-    fn test_from_json_with_nulls() {
+    #[sinex_test]
+    async fn test_from_json_with_nulls() -> xtask::sandbox::TestResult<()> {
         let value = json!({"name": "Bob", "email": null});
         let fp = SourceRecordFingerprint::from_json(&value);
 
         assert_eq!(fp.keys, vec!["email", "name"]);
         assert_eq!(fp.type_map["email"], "null");
+        Ok(())
     }
 
-    #[test]
-    fn test_from_json_with_mixed_types() {
+    #[sinex_test]
+    async fn test_from_json_with_mixed_types() -> xtask::sandbox::TestResult<()> {
         let value = json!({
             "text": "hello",
             "count": 42,
@@ -491,10 +494,11 @@ mod tests {
         assert_eq!(fp.type_map["nested"], "object");
         assert_eq!(fp.type_map["items"], "array");
         assert_eq!(fp.type_map["nullable"], "null");
+        Ok(())
     }
 
-    #[test]
-    fn test_fingerprint_stability() {
+    #[sinex_test]
+    async fn test_fingerprint_stability() -> xtask::sandbox::TestResult<()> {
         let value1 = json!({"z": 1, "a": "x", "m": 3.14});
         let value2 = json!({"a": "x", "m": 3.14, "z": 1});
 
@@ -504,10 +508,11 @@ mod tests {
         assert_eq!(fp1.keys, fp2.keys);
         assert_eq!(fp1.type_map, fp2.type_map);
         assert_eq!(fp1.hash(), fp2.hash());
+        Ok(())
     }
 
-    #[test]
-    fn test_fingerprint_different_when_keys_change() {
+    #[sinex_test]
+    async fn test_fingerprint_different_when_keys_change() -> xtask::sandbox::TestResult<()> {
         let value1 = json!({"name": "Alice", "age": 30});
         let value2 = json!({"name": "Alice", "age": 30, "city": "NYC"});
 
@@ -515,10 +520,11 @@ mod tests {
         let fp2 = SourceRecordFingerprint::from_json(&value2);
 
         assert_ne!(fp1.hash(), fp2.hash());
+        Ok(())
     }
 
-    #[test]
-    fn test_fingerprint_different_when_types_change() {
+    #[sinex_test]
+    async fn test_fingerprint_different_when_types_change() -> xtask::sandbox::TestResult<()> {
         let value1 = json!({"count": 42});
         let value2 = json!({"count": "42"});
 
@@ -526,10 +532,11 @@ mod tests {
         let fp2 = SourceRecordFingerprint::from_json(&value2);
 
         assert_ne!(fp1.hash(), fp2.hash());
+        Ok(())
     }
 
-    #[test]
-    fn test_drift_accumulator_first_observation() {
+    #[sinex_test]
+    async fn test_drift_accumulator_first_observation() -> xtask::sandbox::TestResult<()> {
         let source_unit = SourceUnitId::from_static("test.unit");
         let mut acc = DriftAccumulator::new(source_unit);
 
@@ -538,10 +545,11 @@ mod tests {
 
         assert!(event.is_none());
         assert_eq!(acc.last_seen_hash(), Some(fp.hash()));
+        Ok(())
     }
 
-    #[test]
-    fn test_drift_accumulator_same_fingerprint() {
+    #[sinex_test]
+    async fn test_drift_accumulator_same_fingerprint() -> xtask::sandbox::TestResult<()> {
         let source_unit = SourceUnitId::from_static("test.unit");
         let mut acc = DriftAccumulator::new(source_unit);
 
@@ -553,10 +561,11 @@ mod tests {
         // Second observation: identical fingerprint.
         let event = acc.observe(&fp);
         assert!(event.is_none());
+        Ok(())
     }
 
-    #[test]
-    fn test_drift_accumulator_detects_drift() {
+    #[sinex_test]
+    async fn test_drift_accumulator_detects_drift() -> xtask::sandbox::TestResult<()> {
         let source_unit = SourceUnitId::from_static("test.unit");
         let mut acc = DriftAccumulator::new(source_unit)
             .with_emit_every_n_records(2) // Low threshold for testing.
@@ -581,10 +590,11 @@ mod tests {
         assert_eq!(drift.added_keys, vec!["name".to_string()]);
         assert!(drift.removed_keys.is_empty());
         assert!(drift.type_changes.is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn test_drift_accumulator_respects_record_count_limit() {
+    #[sinex_test]
+    async fn test_drift_accumulator_respects_record_count_limit() -> xtask::sandbox::TestResult<()> {
         let source_unit = SourceUnitId::from_static("test.unit");
         let mut acc = DriftAccumulator::new(source_unit)
             .with_emit_every_n_records(100)
@@ -598,10 +608,11 @@ mod tests {
         // Only 1 record observed; need 100 before emitting drift.
         let event = acc.observe(&fp2);
         assert!(event.is_none());
+        Ok(())
     }
 
-    #[test]
-    fn test_drift_accumulator_respects_cooldown() {
+    #[sinex_test]
+    async fn test_drift_accumulator_respects_cooldown() -> xtask::sandbox::TestResult<()> {
         let source_unit = SourceUnitId::from_static("test.unit");
         let mut acc = DriftAccumulator::new(source_unit)
             .with_emit_every_n_records(1)
@@ -621,10 +632,11 @@ mod tests {
         acc.record_count_since_last_emit = 0; // Reset counter.
         let event2 = acc.observe(&fp3);
         assert!(event2.is_none());
+        Ok(())
     }
 
-    #[test]
-    fn test_drift_event_construction() {
+    #[sinex_test]
+    async fn test_drift_event_construction() -> xtask::sandbox::TestResult<()> {
         let source_unit = SourceUnitId::from_static("test.unit");
         let mut acc = DriftAccumulator::new(source_unit.clone())
             .with_emit_every_n_records(1)
@@ -641,10 +653,11 @@ mod tests {
         assert_eq!(event.removed_keys, vec!["b"]);
         // "a" should have no type change (integer -> integer).
         assert!(event.type_changes.is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn test_drift_event_type_changes() {
+    #[sinex_test]
+    async fn test_drift_event_type_changes() -> xtask::sandbox::TestResult<()> {
         let source_unit = SourceUnitId::from_static("test.unit");
         let mut acc = DriftAccumulator::new(source_unit)
             .with_emit_every_n_records(1)
@@ -660,10 +673,11 @@ mod tests {
         assert!(event.removed_keys.is_empty());
         assert_eq!(event.type_changes.len(), 1);
         assert_eq!(event.type_changes[0], ("count".to_string(), "integer".to_string(), "string".to_string()));
+        Ok(())
     }
 
-    #[test]
-    fn test_drift_event_to_payload() {
+    #[sinex_test]
+    async fn test_drift_event_to_payload() -> xtask::sandbox::TestResult<()> {
         let source_unit = SourceUnitId::from_static("test.unit");
         let mut acc = DriftAccumulator::new(source_unit)
             .with_emit_every_n_records(1)
@@ -679,33 +693,36 @@ mod tests {
         assert!(payload.is_object());
         assert_eq!(payload["format"], "json");
         assert_eq!(payload["added_keys"], serde_json::json!(["y"]));
+        Ok(())
     }
 
-    #[test]
-    fn test_empty_record() {
+    #[sinex_test]
+    async fn test_empty_record() -> xtask::sandbox::TestResult<()> {
         let value = json!({});
         let fp = SourceRecordFingerprint::from_json(&value);
 
         assert_eq!(fp.format, "json");
         assert!(fp.keys.is_empty());
         assert!(fp.type_map.is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn test_array_top_level() {
+    #[sinex_test]
+    async fn test_array_top_level() -> xtask::sandbox::TestResult<()> {
         let value = json!([1, 2, 3]);
         let fp = SourceRecordFingerprint::from_json(&value);
 
         assert_eq!(fp.format, "json");
         assert!(fp.keys.is_empty());
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
     // Coverage gaps filled (#1100 substrate hardening)
     // -----------------------------------------------------------------------
 
-    #[test]
-    fn from_record_falls_back_to_binary_for_non_json() {
+    #[sinex_test]
+    async fn from_record_falls_back_to_binary_for_non_json() -> xtask::sandbox::TestResult<()> {
         use sinex_primitives::parser::{MaterialAnchor, SourceRecord};
         use sinex_primitives::Id;
         let record = SourceRecord {
@@ -722,10 +739,11 @@ mod tests {
         assert!(fp.type_map.is_empty());
         // Non-empty hash computed over the opaque bytes.
         assert!(!fp.hash().is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn drift_record_count_resets_after_emission() {
+    #[sinex_test]
+    async fn drift_record_count_resets_after_emission() -> xtask::sandbox::TestResult<()> {
         // After a drift event fires, record_count_since_last_emit must reset
         // so that a third schema requires another emit_every_n_records before
         // emitting again. Without this contract, every record after a drift
@@ -749,10 +767,11 @@ mod tests {
             drift_again.is_some(),
             "subsequent drift past emit_every_n_records should fire"
         );
+        Ok(())
     }
 
-    #[test]
-    fn drift_hash_stable_for_same_schema_under_value_changes() {
+    #[sinex_test]
+    async fn drift_hash_stable_for_same_schema_under_value_changes() -> xtask::sandbox::TestResult<()> {
         // Two records with the same field set + types but different values
         // must produce the same fingerprint hash, so DriftAccumulator does
         // not flap on every record.
@@ -762,5 +781,6 @@ mod tests {
             SourceRecordFingerprint::from_json(&json!({"a": 999, "b": "y"}));
         assert_eq!(fp1.hash(), fp2.hash());
         assert_eq!(fp1.keys, fp2.keys);
+        Ok(())
     }
 }

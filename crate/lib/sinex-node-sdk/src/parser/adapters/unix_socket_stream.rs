@@ -182,6 +182,7 @@ pub async fn make_socket_pair() -> (UnixStream, UnixStream) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
     use futures::StreamExt;
     use tokio::io::AsyncWriteExt;
 
@@ -189,8 +190,8 @@ mod tests {
         Id::from_uuid(uuid::Uuid::new_v4())
     }
 
-    #[tokio::test]
-    async fn test_unix_socket_yields_one_record_per_line() {
+    #[sinex_test]
+    async fn test_unix_socket_yields_one_record_per_line() -> xtask::sandbox::TestResult<()> {
         let (mut server, client) = make_socket_pair().await;
         server.write_all(b"line1\nline2\nline3\n").await.unwrap();
         drop(server); // Close server side → EOF
@@ -207,10 +208,11 @@ mod tests {
         assert_eq!(records[0].as_ref().unwrap().bytes, b"line1");
         assert_eq!(records[1].as_ref().unwrap().bytes, b"line2");
         assert_eq!(records[2].as_ref().unwrap().bytes, b"line3");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_unix_socket_anchor_contains_byte_offset() {
+    #[sinex_test]
+    async fn test_unix_socket_anchor_contains_byte_offset() -> xtask::sandbox::TestResult<()> {
         let (mut server, client) = make_socket_pair().await;
         server.write_all(b"hello\nworld\n").await.unwrap();
         drop(server);
@@ -232,10 +234,11 @@ mod tests {
             records[1].as_ref().unwrap().anchor,
             MaterialAnchor::StreamFrame { material_offset: 6, frame_index: 1 }
         ));
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_unix_socket_skips_empty_lines() {
+    #[sinex_test]
+    async fn test_unix_socket_skips_empty_lines() -> xtask::sandbox::TestResult<()> {
         let (mut server, client) = make_socket_pair().await;
         server.write_all(b"msg1\n\nmsg2\n").await.unwrap();
         drop(server);
@@ -249,10 +252,11 @@ mod tests {
         let records: Vec<_> = stream.collect().await;
 
         assert_eq!(records.len(), 2);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_unix_socket_frame_index_monotonic() {
+    #[sinex_test]
+    async fn test_unix_socket_frame_index_monotonic() -> xtask::sandbox::TestResult<()> {
         let (mut server, client) = make_socket_pair().await;
         server.write_all(b"a\nb\nc\n").await.unwrap();
         drop(server);
@@ -276,10 +280,11 @@ mod tests {
         for w in indices.windows(2) {
             assert!(w[0] < w[1]);
         }
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_unix_socket_cursor_after_is_unit() {
+    #[sinex_test]
+    async fn test_unix_socket_cursor_after_is_unit() -> xtask::sandbox::TestResult<()> {
         let adapter = UnixSocketStreamAdapter;
         let record = SourceRecord {
             material_id: dummy_material_id(),
@@ -291,20 +296,23 @@ mod tests {
         };
         let cursor = adapter.cursor_after(&record).unwrap();
         assert_eq!(cursor, UnixSocketStreamCursor);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_unix_socket_connect_to_missing_socket_fails() {
+    #[sinex_test]
+    async fn test_unix_socket_connect_to_missing_socket_fails() -> xtask::sandbox::TestResult<()> {
         let adapter = UnixSocketStreamAdapter;
         let config = UnixSocketStreamConfig {
             socket_path: Utf8PathBuf::from("/nonexistent/socket.sock"),
             reconnect_on_eof: false,
         };
         assert!(adapter.open(dummy_material_id(), &config, None).await.is_err());
+        Ok(())
     }
 
-    #[test]
-    fn test_kind_is_unix_socket() {
+    #[sinex_test]
+    async fn test_kind_is_unix_socket() -> xtask::sandbox::TestResult<()> {
         assert_eq!(UnixSocketStreamAdapter::KIND, InputShapeKind::UnixSocket);
+        Ok(())
     }
 }

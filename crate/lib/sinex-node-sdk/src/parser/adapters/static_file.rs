@@ -77,6 +77,7 @@ impl InputShapeAdapter for StaticFileAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -84,8 +85,8 @@ mod tests {
         Id::from_uuid(uuid::Uuid::new_v4())
     }
 
-    #[tokio::test]
-    async fn test_static_file_reads_entire_contents() {
+    #[sinex_test]
+    async fn test_static_file_reads_entire_contents() -> xtask::sandbox::TestResult<()> {
         let mut f = NamedTempFile::new().unwrap();
         f.write_all(b"hello world").unwrap();
         let path = f.path().to_str().unwrap().to_string();
@@ -97,10 +98,11 @@ mod tests {
         let record = stream.next().await.unwrap().unwrap();
         assert_eq!(record.bytes, b"hello world");
         assert!(stream.next().await.is_none());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_static_file_already_processed_returns_empty() {
+    #[sinex_test]
+    async fn test_static_file_already_processed_returns_empty() -> xtask::sandbox::TestResult<()> {
         let mut f = NamedTempFile::new().unwrap();
         f.write_all(b"data").unwrap();
         let path = f.path().to_str().unwrap().to_string();
@@ -111,10 +113,11 @@ mod tests {
         let mut stream = adapter.open(dummy_material_id(), &config, cursor).await.unwrap();
 
         assert!(stream.next().await.is_none());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_static_file_not_processed_cursor_yields_record() {
+    #[sinex_test]
+    async fn test_static_file_not_processed_cursor_yields_record() -> xtask::sandbox::TestResult<()> {
         let mut f = NamedTempFile::new().unwrap();
         f.write_all(b"content").unwrap();
         let path = f.path().to_str().unwrap().to_string();
@@ -125,10 +128,11 @@ mod tests {
         let mut stream = adapter.open(dummy_material_id(), &config, cursor).await.unwrap();
 
         assert!(stream.next().await.unwrap().is_ok());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_static_file_anchor_is_byte_range() {
+    #[sinex_test]
+    async fn test_static_file_anchor_is_byte_range() -> xtask::sandbox::TestResult<()> {
         let mut f = NamedTempFile::new().unwrap();
         f.write_all(b"abc").unwrap();
         let path = f.path().to_str().unwrap().to_string();
@@ -142,10 +146,11 @@ mod tests {
             record.anchor,
             MaterialAnchor::ByteRange { start: 0, len: 3 }
         ));
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_static_file_cursor_after() {
+    #[sinex_test]
+    async fn test_static_file_cursor_after() -> xtask::sandbox::TestResult<()> {
         let mut f = NamedTempFile::new().unwrap();
         f.write_all(b"x").unwrap();
         let path = f.path().to_str().unwrap().to_string();
@@ -157,18 +162,20 @@ mod tests {
 
         let cursor = adapter.cursor_after(&record).unwrap();
         assert!(cursor.processed);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_static_file_missing_path_returns_error() {
+    #[sinex_test]
+    async fn test_static_file_missing_path_returns_error() -> xtask::sandbox::TestResult<()> {
         let adapter = StaticFileAdapter;
         let config = StaticFileConfig { path: "/nonexistent/path/file.txt".into() };
         let result = adapter.open(dummy_material_id(), &config, None).await;
         assert!(result.is_err());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_static_file_empty_file_yields_one_empty_record() {
+    #[sinex_test]
+    async fn test_static_file_empty_file_yields_one_empty_record() -> xtask::sandbox::TestResult<()> {
         let f = NamedTempFile::new().unwrap();
         let path = f.path().to_str().unwrap().to_string();
 
@@ -179,5 +186,6 @@ mod tests {
         let record = stream.next().await.unwrap().unwrap();
         assert!(record.bytes.is_empty());
         assert!(stream.next().await.is_none());
+        Ok(())
     }
 }

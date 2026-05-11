@@ -101,29 +101,33 @@ impl std::fmt::Display for SourceFamily {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
 
-    #[test]
-    fn source_family_validates_charset() {
+    #[sinex_test]
+    async fn source_family_validates_charset() -> xtask::sandbox::TestResult<()> {
         SourceFamily::new("filesystem").unwrap();
         SourceFamily::new("browser.history").unwrap();
         SourceFamily::new("integration_polylogue").unwrap();
         assert!(SourceFamily::new("").is_err());
         assert!(SourceFamily::new("Has Caps").is_err());
         assert!(SourceFamily::new("with/slash").is_err());
+        Ok(())
     }
 
-    #[test]
-    fn source_family_const_constructor() {
+    #[sinex_test]
+    async fn source_family_const_constructor() -> xtask::sandbox::TestResult<()> {
         const FILESYSTEM: SourceFamily = SourceFamily::from_static("filesystem");
         assert_eq!(FILESYSTEM.as_str(), "filesystem");
+        Ok(())
     }
 
-    #[test]
-    fn source_family_round_trips_serde() {
+    #[sinex_test]
+    async fn source_family_round_trips_serde() -> xtask::sandbox::TestResult<()> {
         let family = SourceFamily::new("terminal").unwrap();
         let json = serde_json::to_string(&family).unwrap();
         assert_eq!(json, "\"terminal\"");
         let back: SourceFamily = serde_json::from_str(&json).unwrap();
         assert_eq!(back, family);
+        Ok(())
     }
 }

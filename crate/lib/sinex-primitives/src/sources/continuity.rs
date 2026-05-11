@@ -576,18 +576,20 @@ pub struct SourcesExplainGapResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
 
-    #[test]
-    fn declared_coverage_contract_default_is_unknown() {
+    #[sinex_test]
+    async fn declared_coverage_contract_default_is_unknown() -> xtask::sandbox::TestResult<()> {
         let c = DeclaredCoverageContract::default();
         assert!(c.is_unknown());
         assert_eq!(c.kind, DeclaredCoverageContractKind::Unknown);
         assert!(c.expected_event_types.is_empty());
         assert!(c.declared_at.is_none());
+        Ok(())
     }
 
-    #[test]
-    fn declared_coverage_contract_kind_strings_match_check_set() {
+    #[sinex_test]
+    async fn declared_coverage_contract_kind_strings_match_check_set() -> xtask::sandbox::TestResult<()> {
         for kind in [
             DeclaredCoverageContractKind::Continuous,
             DeclaredCoverageContractKind::PeriodicDump,
@@ -603,10 +605,11 @@ mod tests {
             );
         }
         assert_eq!(DeclaredCoverageContractKind::ALL.len(), 6);
+        Ok(())
     }
 
-    #[test]
-    fn declared_coverage_contract_serializes_kind_pascal_case() {
+    #[sinex_test]
+    async fn declared_coverage_contract_serializes_kind_pascal_case() -> xtask::sandbox::TestResult<()> {
         let c = DeclaredCoverageContract {
             kind: DeclaredCoverageContractKind::PeriodicDump,
             ..Default::default()
@@ -616,35 +619,39 @@ mod tests {
             json["kind"],
             serde_json::Value::String("PeriodicDump".into())
         );
+        Ok(())
     }
 
-    #[test]
-    fn privacy_class_round_trip_str() {
+    #[sinex_test]
+    async fn privacy_class_round_trip_str() -> xtask::sandbox::TestResult<()> {
         for s in PrivacyClass::ALL {
             let parsed: PrivacyClass = s.parse().expect("parse known class");
             assert_eq!(parsed.as_str(), *s);
         }
         assert!("nope".parse::<PrivacyClass>().is_err());
+        Ok(())
     }
 
-    #[test]
-    fn privacy_class_default_is_unknown() {
+    #[sinex_test]
+    async fn privacy_class_default_is_unknown() -> xtask::sandbox::TestResult<()> {
         assert_eq!(PrivacyClass::default(), PrivacyClass::Unknown);
         assert!(PrivacyClass::default().is_unknown());
         assert!(!PrivacyClass::default().is_private());
+        Ok(())
     }
 
-    #[test]
-    fn privacy_class_is_private_excludes_public_and_unknown() {
+    #[sinex_test]
+    async fn privacy_class_is_private_excludes_public_and_unknown() -> xtask::sandbox::TestResult<()> {
         assert!(!PrivacyClass::Public.is_private());
         assert!(!PrivacyClass::Unknown.is_private());
         assert!(PrivacyClass::Personal.is_private());
         assert!(PrivacyClass::Secret.is_private());
         assert!(PrivacyClass::Redacted.is_private());
+        Ok(())
     }
 
-    #[test]
-    fn replayability_green_count() {
+    #[sinex_test]
+    async fn replayability_green_count() -> xtask::sandbox::TestResult<()> {
         let r = Replayability {
             raw_bytes_preserved: true,
             timing_quality: true,
@@ -654,10 +661,11 @@ mod tests {
             weak_points: vec!["anchor moves on re-export".into()],
         };
         assert_eq!(r.green_count(), 3);
+        Ok(())
     }
 
-    #[test]
-    fn report_serializes_with_seam_kind_snake_case() {
+    #[sinex_test]
+    async fn report_serializes_with_seam_kind_snake_case() -> xtask::sandbox::TestResult<()> {
         let report = SourceContinuityReport {
             source_family: SourceFamily::from_static("terminal"),
             coverage_contract: CoverageContract::Continuous,
@@ -691,5 +699,6 @@ mod tests {
             json["coverage_contract"],
             serde_json::Value::String("continuous".into())
         );
+        Ok(())
     }
 }

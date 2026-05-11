@@ -358,9 +358,10 @@ mod tests {
     // test fixture failures rather than operator-path behavior.
     #![allow(clippy::expect_used)]
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
 
-    #[test]
-    fn render_user_preferences_toml_escapes_structured_values() {
+    #[sinex_test]
+    async fn render_user_preferences_toml_escapes_structured_values() -> xtask::sandbox::TestResult<()> {
         let rendered = Config::render_user_preferences_toml(
             OutputFormat::Json,
             r#"nvim "\path\with\quotes""#.to_string(),
@@ -384,5 +385,6 @@ mod tests {
             parsed.theme.map(|theme| theme.table_style),
             Some("minimal".to_string())
         );
+        Ok(())
     }
 }
