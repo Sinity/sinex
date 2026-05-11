@@ -503,18 +503,6 @@ fn infer_coverage_contract<R>(family: &str, chunks: &[R]) -> CoverageContract
 where
     R: ChunkAccess,
 {
-    if chunks.is_empty() {
-        return CoverageContract::OpportunisticImport;
-    }
-    // Heuristic: if all chunks are `realtime`, assume continuous.
-    // If chunks are spaced regularly with `intrinsic` timing, periodic dump.
-    // Fall back to opportunistic import.
-    let all_realtime = chunks
-        .iter()
-        .all(|c| matches!(c.timing(), "realtime"));
-    if all_realtime {
-        return CoverageContract::Continuous;
-    }
     // Family-name hints. These are coarse and stable across imports.
     if family.starts_with("shell")
         || family.starts_with("desktop")
@@ -528,6 +516,18 @@ where
     }
     if family.starts_with("import") || family.starts_with("archive") {
         return CoverageContract::FiniteOneShot;
+    }
+    if chunks.is_empty() {
+        return CoverageContract::OpportunisticImport;
+    }
+    // Heuristic: if all chunks are `realtime`, assume continuous.
+    // If chunks are spaced regularly with `intrinsic` timing, periodic dump.
+    // Fall back to opportunistic import.
+    let all_realtime = chunks
+        .iter()
+        .all(|c| matches!(c.timing(), "realtime"));
+    if all_realtime {
+        return CoverageContract::Continuous;
     }
     CoverageContract::OpportunisticImport
 }
