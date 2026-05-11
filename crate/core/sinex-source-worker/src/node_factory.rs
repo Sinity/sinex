@@ -81,6 +81,12 @@ macro_rules! register_node_factory {
     };
 }
 
+// `register_monitor_unit!` is defined in monitor_node.rs and exported here
+// for documentation grouping. The macro itself lives in crate::monitor_node
+// because it needs pub access to that module's types.
+// Re-export is not possible for macros with #[macro_export] — they live at
+// the crate root automatically. Users call `crate::register_monitor_unit!`.
+
 /// Register an adapter-backed ingestor in one shot.
 ///
 /// This macro is the primary Wave-B authoring surface. It combines
