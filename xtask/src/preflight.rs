@@ -1340,6 +1340,81 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     check_required_tools()?;
 
     let is_interactive = ctx.is_human();
+
+    // 0a. Disk-pressure enforcement on $CARGO_TARGET_DIR.
+    //
+    // Cargo's target/ grows monotonically (incremental keys, dep variants).
+    // Without a soft cap, /cache eventually fills and `xtask check` fails with
+    // disk-full errors deep inside rustc — confusing and hard to recover from.
+    //
+    // Policy:
+    //   < 70% used: silent (cheap call, ~5ms)
+    //   70-85%:     warn (one-liner; user reclaims when convenient)
+    //   85-90%:     auto-reclaim (cargo-sweep + incremental keep-3)
+    //   >= 90%:     auto-reclaim, then refuse if still >= 90%
+    //
+    // Opt-out: SINEX_PREFLIGHT_SKIP_DISK_CHECK=1 (CI / unusual setups).
+    if std::env::var("SINEX_PREFLIGHT_SKIP_DISK_CHECK").is_err() {
+        let target_dir = std::env::var("CARGO_TARGET_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| workspace_root().join("target"));
+        if let Ok(usage) = crate::cache_hygiene::disk_usage(&target_dir) {
+            if usage.should_auto_reclaim() {
+                if is_interactive {
+                    eprintln!(
+                        "⚠️  Disk pressure on {} ({:.1}% used, {:.0} GB free) — auto-reclaiming...",
+                        usage.mount, usage.percent_used, usage.free_gb
+                    );
+                }
+                let stage = ctx.start_stage("disk-reclaim");
+                let reclaim_result = crate::cache_hygiene::reclaim(&target_dir);
+                ctx.finish_stage(stage, reclaim_result.is_ok());
+                match reclaim_result {
+                    Ok(report) => {
+                        let after = report.after.as_ref().unwrap_or(&usage);
+                        if is_interactive {
+                            eprintln!(
+                                "   Reclaimed {:.2} GB. Disk now {:.1}% used ({:.0} GB free).",
+                                (report.cargo_sweep_reclaimed_bytes
+                                    + report.incremental_bytes_reclaimed) as f64
+                                    / 1e9,
+                                after.percent_used,
+                                after.free_gb
+                            );
+                        }
+                        if after.refuse() {
+                            bail!(
+                                "Disk {} still {:.1}% used after reclaim ({:.0} GB free). \
+                                 Refusing to proceed — free space manually or raise threshold via \
+                                 SINEX_PREFLIGHT_SKIP_DISK_CHECK=1.",
+                                after.mount,
+                                after.percent_used,
+                                after.free_gb
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(error = %error, "disk reclaim failed during preflight");
+                        if usage.refuse() {
+                            bail!(
+                                "Disk {} {:.1}% used and reclaim failed: {error:#}. \
+                                 Free space manually or set SINEX_PREFLIGHT_SKIP_DISK_CHECK=1.",
+                                usage.mount,
+                                usage.percent_used
+                            );
+                        }
+                    }
+                }
+            } else if usage.warn() && is_interactive {
+                eprintln!(
+                    "ℹ️  Disk {} at {:.1}% used ({:.0} GB free). \
+                     Run `xtask doctor --reclaim` to free space.",
+                    usage.mount, usage.percent_used, usage.free_gb
+                );
+            }
+        }
+    }
+
     let mut status = InfraStatus::capture();
 
     // 1. Auto-start stack if not running
