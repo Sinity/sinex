@@ -145,6 +145,20 @@ grep -rn "<symbol>" crate/ --include="*.rs"
 xtask test -p <pkg> -E 'test(<name>)'
 ```
 
+The commands embedded in a closing comment are not just documentation —
+`xtask verify closure <N>` parses the closing comment / issue body and
+actually runs each command, reporting per-command exit codes. Run it
+locally before closing:
+
+```bash
+xtask verify closure 1081
+```
+
+The `.github/workflows/verify-closure.yml` workflow exposes the same
+command on demand (`gh workflow run verify-closure.yml -f issue_number=N`)
+so any reviewer or future reader can re-run the closure verification
+without checking out the repo.
+
 Two antipatterns to avoid:
 
 - **"Closed by PRs #X–#Y" range claims** without verifying each PR in
