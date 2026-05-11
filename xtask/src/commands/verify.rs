@@ -599,6 +599,7 @@ pub fn execute_perf(args: PerfArgs, ctx: &CommandContext) -> Result<CommandResul
         target: args.target,
         db_pool_sizes: Vec::new(),
         continue_on_fail: false,
+        allow_contended_host: false,
         fail_fast: false,
     };
 

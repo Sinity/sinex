@@ -342,6 +342,10 @@ pub struct BenchArgs {
     #[arg(long)]
     pub continue_on_fail: bool,
 
+    /// Allow DB benchmark runs while other heavy workloads or high IO pressure are active.
+    #[arg(long)]
+    pub allow_contended_host: bool,
+
     /// Verbose output
     #[arg(long)]
     pub verbose: bool,
@@ -910,6 +914,9 @@ impl XtaskCommand for TestCommand {
                     }
                     if bench.continue_on_fail {
                         args.push("--continue-on-fail".to_string());
+                    }
+                    if bench.allow_contended_host {
+                        args.push("--allow-contended-host".to_string());
                     }
                     if bench.verbose {
                         args.push("--verbose".to_string());

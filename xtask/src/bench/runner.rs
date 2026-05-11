@@ -101,7 +101,7 @@ fn guard_db_benchmark_resources(config: &BenchConfig) -> Result<()> {
     }
 
     let conflicts = active_heavy_processes()?;
-    if !conflicts.is_empty() {
+    if !config.allow_contended_host && !conflicts.is_empty() {
         let details = conflicts
             .iter()
             .take(8)
@@ -115,7 +115,8 @@ fn guard_db_benchmark_resources(config: &BenchConfig) -> Result<()> {
         );
     }
 
-    if let Some(avg10) = crate::process::read_pressure_snapshot("io").full_avg10
+    if !config.allow_contended_host
+        && let Some(avg10) = crate::process::read_pressure_snapshot("io").full_avg10
         && avg10 >= 50.0
     {
         bail!(
