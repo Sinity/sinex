@@ -813,6 +813,8 @@ fn open_history_db(history_access: HistoryAccessMode) -> Result<HistoryDb> {
 }
 
 fn init_tracing(verbosity: u8, enable_history_layer: bool) {
+    use tracing::Level;
+    use tracing_subscriber::filter::filter_fn;
     use tracing_subscriber::prelude::*;
 
     let level_filter = match verbosity {
@@ -821,6 +823,9 @@ fn init_tracing(verbosity: u8, enable_history_layer: bool) {
         2 => tracing_subscriber::filter::LevelFilter::DEBUG,
         _ => tracing_subscriber::filter::LevelFilter::TRACE,
     };
+    // The console fmt layer gets the global EnvFilter (level_filter drives it).
+    // When verbosity=0 (default), LevelFilter::OFF suppresses all stderr output —
+    // intentional: xtask is quiet by default unless -v is passed.
     let registry = tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .with(
@@ -831,10 +836,30 @@ fn init_tracing(verbosity: u8, enable_history_layer: bool) {
         );
 
     let init_result = if enable_history_layer {
+        // The history layer MUST have its own per-layer filter so it receives
+        // events regardless of the global EnvFilter level set above.
+        //
+        // Without `.with_filter(...)` here the global LevelFilter::OFF (verbosity=0)
+        // drops all events before `HistoryTracingLayer::on_event()` is called,
+        // resulting in 0 rows ever written to the trace_events table despite the
+        // layer and schema being fully implemented.
+        //
+        // The per-layer filter mirrors `should_persist()` in tracing_layer.rs:
+        // WARN/ERROR always; INFO only from coordinator, preflight, cargo targets.
+        let history_filter = filter_fn(|metadata| match *metadata.level() {
+            Level::ERROR | Level::WARN => true,
+            Level::INFO => {
+                metadata.target().starts_with("xtask::coordinator")
+                    || metadata.target().starts_with("xtask::preflight")
+                    || metadata.target().starts_with("xtask::cargo")
+            }
+            Level::DEBUG | Level::TRACE => false,
+        });
         registry
-            .with(history::HistoryTracingLayer::new(
-                config::config().history_db_path(),
-            ))
+            .with(
+                history::HistoryTracingLayer::new(config::config().history_db_path())
+                    .with_filter(history_filter),
+            )
             .try_init()
     } else {
         registry.try_init()
