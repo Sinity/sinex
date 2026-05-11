@@ -870,6 +870,21 @@ impl XtaskCommand for TestCommand {
                     let threads_str: Vec<String> =
                         bench.threads.iter().map(ToString::to_string).collect();
                     args.push(format!("--threads={}", threads_str.join(",")));
+                    if !bench.db_pool_sizes.is_empty() {
+                        let pool_sizes = bench
+                            .db_pool_sizes
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        args.push(format!("--db-pool-sizes={pool_sizes}"));
+                    }
+                    if bench.system_impact {
+                        args.push("--system-impact".to_string());
+                    }
+                    if bench.system_impact_extended {
+                        args.push("--system-impact-extended".to_string());
+                    }
                     args.push(format!("--target={}", bench.target));
                     if bench.contracts {
                         args.push("--contracts".to_string());
@@ -892,6 +907,9 @@ impl XtaskCommand for TestCommand {
                     }
                     if bench.dry_run {
                         args.push("--dry-run".to_string());
+                    }
+                    if bench.continue_on_fail {
+                        args.push("--continue-on-fail".to_string());
                     }
                     if bench.verbose {
                         args.push("--verbose".to_string());
