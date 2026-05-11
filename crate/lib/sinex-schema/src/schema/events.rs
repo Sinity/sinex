@@ -80,10 +80,6 @@ pub enum Events {
     EquivalenceKey,
     CreatedByOperationId,
     NodeModel,
-
-    /// Link to the raw.occurrences record this event interprets.
-    /// Only set for material-provenance events; NULL for synthesis.
-    OccurrenceId,
 }
 
 impl TableDef for Events {
@@ -206,7 +202,6 @@ impl Events {
             .col(ColumnDef::new(Events::NodeModel).text().check(
                 Expr::cust("node_model IS NULL OR node_model IN ('transducer', 'windowed', 'scope_reconciler')")
             ))
-            .col(ColumnDef::new(Events::OccurrenceId).custom(Alias::new("UUID")))
             // The Provenance XOR Invariant: an event MUST have exactly one type of provenance.
             .check(
                 Expr::cust("(source_material_id IS NOT NULL AND source_event_ids IS NULL) OR (source_material_id IS NULL AND source_event_ids IS NOT NULL)")
