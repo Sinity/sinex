@@ -14,6 +14,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::net::UnixDatagram;
 use tokio::process::Command;
 use walkdir::WalkDir;
 
@@ -116,6 +117,55 @@ pub(crate) fn read_ingestd_debug_log(path: &std::path::Path) -> Result<Option<St
         Ok(None)
     } else {
         Ok(Some(content))
+    }
+}
+
+fn ingestd_notify_socket_path() -> Result<PathBuf> {
+    let base = PathBuf::from("/tmp");
+    std::fs::create_dir_all(&base)
+        .wrap_err_with(|| format!("failed to create notify socket dir '{}'", base.display()))?;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| eyre!("system clock is before UNIX_EPOCH: {err}"))?
+        .as_nanos();
+    Ok(base.join(format!("sx-in-{}-{timestamp}.sock", std::process::id())))
+}
+
+async fn wait_for_ingestd_ready_notify(
+    listener: &UnixDatagram,
+    child: &mut tokio::process::Child,
+    timeout_duration: Duration,
+) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + timeout_duration;
+    let mut buf = [0_u8; 256];
+
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Err(eyre!(
+                "sinex-ingestd exited before READY=1 notification (status: {status})"
+            ));
+        }
+
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Err(eyre!(
+                "sinex-ingestd did not send READY=1 within {timeout_duration:?}"
+            ));
+        }
+
+        let remaining = deadline - now;
+        let poll_window = remaining.min(Duration::from_millis(250));
+        match tokio::time::timeout(poll_window, listener.recv(&mut buf)).await {
+            Ok(Ok(len)) => {
+                let message = std::str::from_utf8(&buf[..len])
+                    .wrap_err("sinex-ingestd sent non-UTF-8 sd_notify payload")?;
+                if message.lines().any(|line| line == "READY=1") {
+                    return Ok(());
+                }
+            }
+            Ok(Err(error)) => return Err(error).wrap_err("failed to receive sd_notify payload"),
+            Err(_) => {}
+        }
     }
 }
 
@@ -657,6 +707,10 @@ pub async fn start_test_ingestd_with_config(
     // Capture both stdout and stderr to a debug log file.
     // tracing_subscriber::fmt() defaults to stdout in 0.3.x, so we need >{file} 2>&1.
     let debug_log = ingestd_debug_log_path_for_test_process();
+    let notify_socket_path = ingestd_notify_socket_path()?;
+    let _ = std::fs::remove_file(&notify_socket_path);
+    let notify_listener = UnixDatagram::bind(&notify_socket_path)
+        .wrap_err_with(|| format!("failed to bind {}", notify_socket_path.display()))?;
     let mut cmd = Command::new("bash");
     crate::process::configure_managed_child_tokio(&mut cmd);
     cmd.arg("-c").arg(format!(
@@ -709,9 +763,10 @@ pub async fn start_test_ingestd_with_config(
     // routed to the DLQ instead of being persisted.
     cmd.env("SINEX_VALIDATE_SCHEMAS", "false");
     cmd.env("SINEX_SKIP_SCHEMA_SYNC", "true");
+    cmd.env("NOTIFY_SOCKET", &notify_socket_path);
     cmd.stdin(Stdio::null()).kill_on_drop(true);
 
-    let child = cmd.spawn()?;
+    let mut child = cmd.spawn()?;
     crate::process::register_tokio_child_process_group(&child, "sandbox ingestd");
 
     // Compute the stream name using the same logic as ingestd:
@@ -722,32 +777,25 @@ pub async fn start_test_ingestd_with_config(
         &env.nats_stream_name("SINEX_RAW_EVENTS"),
     );
 
-    // Wait for ingestd to create the JetStream stream AND attach a consumer.
-    // Without stream wait: tests publish before the stream exists → silent message loss.
-    // Without consumer wait: stream exists but ingestd isn't pulling yet → events
-    // pile up in NATS and never reach the database before test timeout.
+    // Wait for ingestd's own readiness signal. The binary emits READY=1 only
+    // after the JetStream consumer and MaterialAssembler have both completed
+    // setup, which is the same readiness contract production systemd uses.
     if let Some(sandbox) = ctx {
         // Only wait for stream if sandbox has NATS initialized via with_nats().
         // Tests that create their own EphemeralNats pass ctx for the DB pool
         // but don't initialize NATS on the sandbox.
         if let Ok(nats) = sandbox.nats_handle() {
-            let client = sandbox.nats_client();
-            let js = nats.jetstream_with_client(client);
-            nats.wait_for_stream(&js, &stream_name, Duration::from_secs(Timeouts::STANDARD))
-                .await
-                .wrap_err_with(|| format!("ingestd failed to create stream {stream_name}"))?;
-
-            // Wait for ingestd to create a consumer on the stream. This proves
-            // the process has completed startup and is actively pulling messages.
-            nats.wait_for_consumer_on_stream(
-                &js,
-                &stream_name,
+            let _ = nats;
+            wait_for_ingestd_ready_notify(
+                &notify_listener,
+                &mut child,
                 Duration::from_secs(Timeouts::STANDARD),
             )
             .await
-            .wrap_err_with(|| format!("ingestd consumer not ready on stream {stream_name}"))?;
+            .wrap_err("ingestd did not reach systemd READY state")?;
         }
     }
+    let _ = std::fs::remove_file(&notify_socket_path);
 
     Ok(TestIngestdHandle { child, stream_name })
 }
