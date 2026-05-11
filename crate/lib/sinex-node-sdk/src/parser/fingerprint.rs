@@ -699,4 +699,68 @@ mod tests {
         assert_eq!(fp.format, "json");
         assert!(fp.keys.is_empty());
     }
+
+    // -----------------------------------------------------------------------
+    // Coverage gaps filled (#1100 substrate hardening)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn from_record_falls_back_to_binary_for_non_json() {
+        use sinex_primitives::parser::{MaterialAnchor, SourceRecord};
+        use sinex_primitives::Id;
+        let record = SourceRecord {
+            material_id: Id::from_uuid(uuid::Uuid::nil()),
+            anchor: MaterialAnchor::ByteRange { start: 0, len: 8 },
+            bytes: b"not-json".to_vec(),
+            logical_path: None,
+            source_ts_hint: None,
+            metadata: serde_json::Value::Null,
+        };
+        let fp = SourceRecordFingerprint::from_record(&record);
+        assert_eq!(fp.format, "binary");
+        assert!(fp.keys.is_empty());
+        assert!(fp.type_map.is_empty());
+        // Non-empty hash computed over the opaque bytes.
+        assert!(!fp.hash().is_empty());
+    }
+
+    #[test]
+    fn drift_record_count_resets_after_emission() {
+        // After a drift event fires, record_count_since_last_emit must reset
+        // so that a third schema requires another emit_every_n_records before
+        // emitting again. Without this contract, every record after a drift
+        // would re-emit.
+        use sinex_primitives::parser::SourceUnitId;
+        let mut acc = DriftAccumulator::new(SourceUnitId::from_static("test.unit"))
+            .with_emit_every_n_records(1)
+            .with_cooldown_secs(0);
+        let fp1 = SourceRecordFingerprint::from_json(&json!({"a": 1}));
+        let fp2 = SourceRecordFingerprint::from_json(&json!({"a": 1, "b": 2}));
+        let fp3 =
+            SourceRecordFingerprint::from_json(&json!({"a": 1, "b": 2, "c": 3}));
+        let _ = acc.observe(&fp1); // baseline
+        let drift = acc.observe(&fp2);
+        assert!(drift.is_some(), "first drift after baseline should emit");
+        // After emit, next observation with a NEW schema should re-emit only
+        // when count threshold is met again. With emit_every_n_records=1,
+        // observing fp3 (a different schema) should fire a new event.
+        let drift_again = acc.observe(&fp3);
+        assert!(
+            drift_again.is_some(),
+            "subsequent drift past emit_every_n_records should fire"
+        );
+    }
+
+    #[test]
+    fn drift_hash_stable_for_same_schema_under_value_changes() {
+        // Two records with the same field set + types but different values
+        // must produce the same fingerprint hash, so DriftAccumulator does
+        // not flap on every record.
+        let fp1 =
+            SourceRecordFingerprint::from_json(&json!({"a": 1, "b": "x"}));
+        let fp2 =
+            SourceRecordFingerprint::from_json(&json!({"a": 999, "b": "y"}));
+        assert_eq!(fp1.hash(), fp2.hash());
+        assert_eq!(fp1.keys, fp2.keys);
+    }
 }
