@@ -20,6 +20,10 @@ pub struct BenchConfig {
     #[arg(long, value_delimiter = ',', default_values_t = vec![12, 24])]
     pub threads: Vec<u32>,
 
+    /// Test database pool sizes to sweep (comma-separated); empty means disk/default DB path.
+    #[arg(long, value_delimiter = ',')]
+    pub db_pool_sizes: Vec<u32>,
+
     /// Baseline directory to compare against
     #[arg(long)]
     pub baseline: Option<PathBuf>,

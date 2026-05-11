@@ -23,6 +23,8 @@ pub(super) struct BenchContext {
 
 impl BenchContext {
     pub(super) fn new(config: BenchConfig) -> Result<Self> {
+        guard_db_benchmark_resources(&config)?;
+
         let timestamp = time::OffsetDateTime::now_utc()
             .format(&*BENCH_TIMESTAMP_FORMAT)
             .unwrap_or_else(|_| "unknown".to_string());
@@ -93,6 +95,103 @@ impl BenchContext {
     }
 }
 
+fn guard_db_benchmark_resources(config: &BenchConfig) -> Result<()> {
+    if config.db_pool_sizes.is_empty() || config.dry_run {
+        return Ok(());
+    }
+
+    let conflicts = active_compilation_processes()?;
+    if !conflicts.is_empty() {
+        let details = conflicts
+            .iter()
+            .take(8)
+            .map(|process| format!("  pid {}: {}", process.pid, process.command))
+            .collect::<Vec<_>>()
+            .join("\n");
+        bail!(
+            "Refusing DB benchmark while another compile/test process is active:\n{}\n\
+             Wait for those jobs or stop them before running the DB pool matrix.",
+            details
+        );
+    }
+
+    if let Some(avg10) = io_pressure_full_avg10()? && avg10 >= 50.0 {
+        bail!(
+            "Refusing DB benchmark while IO pressure is already extreme \
+             (/proc/pressure/io full avg10={avg10:.2}). Wait for pressure to settle first."
+        );
+    }
+
+    Ok(())
+}
+
+#[derive(Debug)]
+struct ActiveProcess {
+    pid: u32,
+    command: String,
+}
+
+fn active_compilation_processes() -> Result<Vec<ActiveProcess>> {
+    let self_pid = std::process::id();
+    let mut processes = Vec::new();
+    let entries = match std::fs::read_dir("/proc") {
+        Ok(entries) => entries,
+        Err(_) => return Ok(processes),
+    };
+
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(pid) = file_name
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if pid == self_pid {
+            continue;
+        }
+
+        let cmdline_path = entry.path().join("cmdline");
+        let Ok(raw) = std::fs::read(&cmdline_path) else {
+            continue;
+        };
+        if raw.is_empty() {
+            continue;
+        }
+        let command = String::from_utf8_lossy(&raw).replace('\0', " ");
+        let argv0 = command.split_whitespace().next().unwrap_or_default();
+        let executable = std::path::Path::new(argv0)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(argv0);
+        if matches!(executable, "cargo" | "cargo-nextest" | "rustc" | "rustdoc")
+            || executable.starts_with("mold")
+        {
+            processes.push(ActiveProcess { pid, command });
+        }
+    }
+
+    Ok(processes)
+}
+
+fn io_pressure_full_avg10() -> Result<Option<f64>> {
+    let Ok(contents) = std::fs::read_to_string("/proc/pressure/io") else {
+        return Ok(None);
+    };
+    let Some(full_line) = contents.lines().find(|line| line.starts_with("full ")) else {
+        return Ok(None);
+    };
+    for field in full_line.split_whitespace() {
+        if let Some(value) = field.strip_prefix("avg10=") {
+            return value
+                .parse::<f64>()
+                .map(Some)
+                .wrap_err("failed to parse /proc/pressure/io full avg10");
+        }
+    }
+    Ok(None)
+}
+
 fn default_bench_output_dir(timestamp: &str) -> PathBuf {
     let base_dir = std::env::var_os("SINEX_TEST_RESULTS_DIR").map_or_else(
         || crate::config::config().cache_dir.join("test-results"),
@@ -106,14 +205,19 @@ fn default_bench_output_dir(timestamp: &str) -> PathBuf {
 pub(super) struct Scenario {
     pub threads: u32,
     pub package: String,
+    pub db_pool_size: Option<u32>,
 }
 
 impl Scenario {
     pub(super) fn key(&self) -> String {
-        if self.package.is_empty() {
+        let base = if self.package.is_empty() {
             format!("t={}", self.threads)
         } else {
             format!("{}:t={}", self.package, self.threads)
+        };
+        match self.db_pool_size {
+            Some(size) => format!("{base}:db_pool={size}"),
+            None => base,
         }
     }
 }
@@ -159,32 +263,55 @@ impl<'a> BenchRunner<'a> {
 
         eprintln!("Run {}/{} | {}", run_index + 1, total_runs, scenario.key());
 
-        let mut builder = ProcessBuilder::cargo().args([
-            "nextest",
-            "run",
-            "--config-file",
-            ".config/nextest.toml",
-        ]);
-
-        // Target specification
-        if self.ctx.config.target == "workspace" {
-            builder = builder.arg("--workspace");
-        } else {
-            for pkg in self.ctx.config.target.split(',') {
-                builder = builder.arg("-p").arg(pkg.trim());
+        let builder = if let Some(db_pool_size) = scenario.db_pool_size {
+            let exe = std::env::current_exe()
+                .context("failed to resolve current xtask executable for db benchmark")?;
+            let mut builder = ProcessBuilder::new(exe.to_string_lossy()).args([
+                "test",
+                "--ephemeral-postgres",
+                "--skip-preflight",
+            ]);
+            if self.ctx.config.target == "workspace" {
+                builder = builder.arg("--all");
+            } else {
+                for pkg in self.ctx.config.target.split(',') {
+                    builder = builder.arg("-p").arg(pkg.trim());
+                }
             }
-        }
+            builder
+                .arg("--threads")
+                .arg(scenario.threads.to_string())
+                .env("SINEX_TEST_DB_POOL_SIZE", db_pool_size.to_string())
+        } else {
+            let mut builder = ProcessBuilder::cargo().args([
+                "nextest",
+                "run",
+                "--config-file",
+                ".config/nextest.toml",
+            ]);
 
-        builder = builder
-            .arg("--profile")
-            .arg(&self.ctx.config.profile)
-            .arg("--test-threads")
-            .arg(scenario.threads.to_string());
+            // Target specification
+            if self.ctx.config.target == "workspace" {
+                builder = builder.arg("--workspace");
+            } else {
+                for pkg in self.ctx.config.target.split(',') {
+                    builder = builder.arg("-p").arg(pkg.trim());
+                }
+            }
 
-        // Fail-fast control
-        if !self.ctx.config.fail_fast {
-            builder = builder.arg("--no-fail-fast");
-        }
+            builder = builder
+                .arg("--profile")
+                .arg(&self.ctx.config.profile)
+                .arg("--test-threads")
+                .arg(scenario.threads.to_string());
+
+            // Fail-fast control
+            if !self.ctx.config.fail_fast {
+                builder = builder.arg("--no-fail-fast");
+            }
+
+            builder
+        };
 
         let start = Instant::now();
         let output = builder
@@ -275,13 +402,22 @@ impl<'a> BenchRunner<'a> {
 }
 
 pub(super) fn generate_scenarios(config: &BenchConfig) -> Vec<Scenario> {
+    let db_pool_sizes: Vec<Option<u32>> = if config.db_pool_sizes.is_empty() {
+        vec![None]
+    } else {
+        config.db_pool_sizes.iter().copied().map(Some).collect()
+    };
+
     config
         .threads
         .iter()
         .copied()
-        .map(|threads| Scenario {
-            threads,
-            package: String::new(),
+        .flat_map(|threads| {
+            db_pool_sizes.iter().copied().map(move |db_pool_size| Scenario {
+                threads,
+                package: String::new(),
+                db_pool_size,
+            })
         })
         .collect()
 }

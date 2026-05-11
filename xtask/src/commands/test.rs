@@ -294,6 +294,10 @@ pub struct BenchArgs {
     #[arg(long, value_delimiter = ',', default_values_t = vec![12, 24])]
     pub threads: Vec<u32>,
 
+    /// Test database pool sizes to sweep (comma-separated). Enables ephemeral Postgres mode.
+    #[arg(long, value_delimiter = ',')]
+    pub db_pool_sizes: Vec<u32>,
+
     /// Target package(s) or "workspace"
     #[arg(long, default_value = "workspace")]
     pub target: String,
@@ -325,6 +329,10 @@ pub struct BenchArgs {
     /// Dry run (compile only, no test execution)
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Continue running benchmark scenarios after a scenario fails
+    #[arg(long)]
+    pub continue_on_fail: bool,
 
     /// Verbose output
     #[arg(long)]

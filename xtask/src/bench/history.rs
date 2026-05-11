@@ -461,6 +461,7 @@ mod tests {
             scenario: Scenario {
                 threads: 12,
                 package: String::new(),
+                db_pool_size: None,
             },
             runs: vec![
                 RunResult {
@@ -517,6 +518,7 @@ mod tests {
         let scenario = Scenario {
             threads: 12,
             package: String::new(),
+            db_pool_size: None,
         };
         let trend = db.get_trend(&scenario, 5).unwrap();
         assert!(trend.is_empty());
@@ -532,6 +534,7 @@ mod tests {
         let scenario = Scenario {
             threads: 12,
             package: String::new(),
+            db_pool_size: None,
         };
         let trend = db.get_trend(&scenario, 5).unwrap();
         assert_eq!(trend.len(), 1);
@@ -554,6 +557,7 @@ mod tests {
         let scenario = Scenario {
             threads: 12,
             package: String::new(),
+            db_pool_size: None,
         };
         let trend = db.get_trend(&scenario, 3).unwrap();
         assert_eq!(trend.len(), 3);
@@ -569,6 +573,7 @@ mod tests {
         let scenario = Scenario {
             threads: 12,
             package: String::new(),
+            db_pool_size: None,
         };
         let baseline = db.get_rolling_baseline(&scenario, None, 5).unwrap();
         assert!(baseline.is_some());
@@ -588,6 +593,7 @@ mod tests {
         let scenario = Scenario {
             threads: 12,
             package: String::new(),
+            db_pool_size: None,
         };
         let baseline = db.get_rolling_baseline(&scenario, Some(run_id), 5).unwrap();
         // Only one run, excluding it should give None
@@ -617,6 +623,7 @@ mod tests {
                 scenario: Scenario {
                     threads: 12,
                     package: String::new(),
+                    db_pool_size: None,
                 },
                 runs: vec![RunResult {
                     success: true,
@@ -630,6 +637,7 @@ mod tests {
                 scenario: Scenario {
                     threads: 24,
                     package: String::new(),
+                    db_pool_size: None,
                 },
                 runs: vec![RunResult {
                     success: true,
@@ -648,6 +656,7 @@ mod tests {
                 &Scenario {
                     threads: 12,
                     package: String::new(),
+                    db_pool_size: None,
                 },
                 5,
             )
@@ -657,6 +666,7 @@ mod tests {
                 &Scenario {
                     threads: 24,
                     package: String::new(),
+                    db_pool_size: None,
                 },
                 5,
             )
@@ -677,6 +687,7 @@ mod tests {
         let scenario = Scenario {
             threads: 12,
             package: String::new(),
+            db_pool_size: None,
         };
         let baseline = db.get_rolling_baseline(&scenario, Some(run_id), 5).unwrap();
         // Only one run which is excluded — should return None
@@ -698,6 +709,7 @@ mod tests {
                 scenario: Scenario {
                     threads: 12,
                     package: String::new(),
+                    db_pool_size: None,
                 },
                 runs: vec![RunResult {
                     success: true,
@@ -714,6 +726,7 @@ mod tests {
         let scenario = Scenario {
             threads: 12,
             package: String::new(),
+            db_pool_size: None,
         };
         let baseline = db
             .get_rolling_baseline(&scenario, None, 5)
@@ -734,6 +747,7 @@ mod tests {
                 scenario: Scenario {
                     threads: 12,
                     package: String::new(),
+                    db_pool_size: None,
                 },
                 runs: vec![RunResult {
                     success: true,
@@ -750,6 +764,7 @@ mod tests {
         let scenario = Scenario {
             threads: 12,
             package: String::new(),
+            db_pool_size: None,
         };
         let baseline = db
             .get_rolling_baseline(&scenario, None, 5)
