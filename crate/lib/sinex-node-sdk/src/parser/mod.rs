@@ -40,14 +40,23 @@ pub use adapters::{
     MockDbusBackend,
     FileDropAdapter, FileDropConfig, FileDropCursor, FileDropEventKind,
     JournalctlCursor, JournalctlStreamAdapter, JournalctlStreamConfig,
+    JournalctlSubscriber, SharedJournalctlStream,
+    JOURNALCTL_BROADCAST_CAPACITY,
     records_from_journal_lines,
     UnixSocketStreamAdapter, UnixSocketStreamConfig, UnixSocketStreamCursor,
     // Phase 1F — DirectoryWalk adapter (9th input-shape adapter).
     DirectoryWalkAdapter, DirectoryWalkConfig, DirectoryWalkCursor, FileFingerprint,
+    // Phase 1C — ChainedAdapter: compose two adapters into one merged stream.
+    ChainedAdapter, ChainedConfig, ChainedCursor, ChainedLeg,
+    chained_classify_record,
+    CHAINED_PRIMARY_PREFIX, CHAINED_SECONDARY_PREFIX,
 };
 pub use declarative::{
-    BindingConfig, DeclarativeParser, DeclarativeParserSpec, FieldSource, FieldSpec, FieldType,
-    InputFormat, SuppressPredicate, TimestampFallback, TimestampFormat, TimestampSpec,
+    BindingConfig, CarrySpec, DeclarativeParser, DeclarativeParserSpec,
+    Discriminator, DiscriminatorCase, DiscriminatorFallback,
+    FieldSource, FieldSpec, FieldType,
+    InputFormat, StatefulCarryPolicy, StatefulDeclarativeParser,
+    SuppressPredicate, TimestampFallback, TimestampFormat, TimestampSpec,
 };
 pub use fingerprint::{DriftAccumulator, DriftEvent, SourceRecordFingerprint};
 pub use fixture::{
