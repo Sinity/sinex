@@ -801,7 +801,7 @@ mod tests {
         let child = parent.derive_synthesis(tag_payload)?;
 
         // synthesis_parents must be populated with the parent's id
-        let parents = child.synthesis_parents.expect("synthesis_parents must be Some");
+        let parents = child.synthesis_parents.as_ref().expect("synthesis_parents must be Some");
         assert_eq!(parents.len(), 1);
         assert_eq!(parents[0], parent.id);
         assert!(child.is_synthesis());
@@ -872,6 +872,7 @@ mod tests {
     #[sinex_test]
     async fn derive_synthesis_uses_new_event_type() -> TestResult<()> {
         use crate::events::payloads::KnowledgeTagAppliedPayload;
+        use crate::events::EventPayload as _;
 
         let parent = material_intent();
         // Parent is document.ingested; child must be knowledge.tag_applied
