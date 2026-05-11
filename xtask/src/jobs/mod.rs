@@ -497,99 +497,35 @@ impl JobManager {
             db.update_job_paths(job_id, &stdout_path, &stderr_path)?;
         }
 
-        // Spawn watchdog: kills the process after a max duration.
-        // Uses a detached thread (not tokio) so it survives if the parent exits.
-        // Max duration: check/build = 30 min, test = 60 min, others = 30 min.
-        let max_duration = {
+        // Spawn a detached reaper via `xtask __reap` (double-fork orphan).
+        // The reaper survives when the launcher xtask exits — unlike std::thread,
+        // which dies with its parent process.
+        // Max duration: test = 60 min, everything else = 30 min.
+        let max_secs = {
             let subcommand = if command == "xtask" {
                 args.first().map_or("", String::as_str)
             } else {
                 command
             };
             match subcommand {
-                "test" => Duration::from_hours(1), // 60 minutes
-                _ => Duration::from_mins(30),      // 30 minutes
+                "test" => 3600u64, // 60 minutes
+                _ => 1800u64,      // 30 minutes
             }
         };
 
-        let watchdog_job_dir = job_dir.clone();
         let watchdog_db_path = config().history_db_path();
-        std::thread::spawn(move || {
-            std::thread::sleep(max_duration);
-
-            // Check if process is still alive via kill(0)
-            let nix_pid = nix::unistd::Pid::from_raw(pid as i32);
-
-            let still_alive = nix::sys::signal::kill(nix_pid, None).is_ok();
-            if !still_alive {
-                return;
-            }
-
-            // Send SIGTERM to the entire process group (child is its own group leader)
-            match send_job_signal(nix_pid, nix::sys::signal::Signal::SIGTERM) {
-                Ok(SignalDelivery::Delivered) => {}
-                Ok(SignalDelivery::Missing) => return,
-                Err(error) => {
-                    eprintln!(
-                        "Warning: failed to send SIGTERM to timed-out background job {job_id} (pid {pid}): {error}"
-                    );
-                    return;
-                }
-            }
-
-            // Grace period, then SIGKILL if still alive — but first verify the PID still belongs
-            // to a cargo/xtask process to guard against PID reuse (R4 fix).
-            std::thread::sleep(Duration::from_secs(2));
-            if nix::sys::signal::kill(nix_pid, None).is_ok() && pid_is_expected_process(pid) {
-                match send_job_signal(nix_pid, nix::sys::signal::Signal::SIGKILL) {
-                    Ok(SignalDelivery::Delivered | SignalDelivery::Missing) => {}
-                    Err(error) => {
-                        eprintln!(
-                            "Warning: failed to send SIGKILL to timed-out background job {job_id} (pid {pid}): {error}"
-                        );
-                        return;
-                    }
-                }
-            }
-
-            // Write exit_code=124 (standard timeout exit code) for the job reader
-            let exit_code_path = watchdog_job_dir.join("exit_code");
-            let _ = std::fs::write(&exit_code_path, "124\n");
-
-            // Update history DB: finish the invocation and the job handle.
-            match HistoryDb::open(&watchdog_db_path) {
-                Ok(db) => {
-                    if let Err(error) = db.finish_invocation(
-                        invocation_id,
-                        InvocationStatus::Cancelled,
-                        Some(124),
-                        max_duration.as_secs_f64(),
-                    ) {
-                        eprintln!(
-                            "Warning: failed to mark timed-out invocation {invocation_id} as cancelled in history DB: {error}"
-                        );
-                    }
-                    if let Err(error) = db.finish_background_job(
-                        job_id,
-                        JobLifecycleStatus::Killed,
-                        Some(124),
-                        max_duration.as_secs_f64(),
-                        None,
-                        None,
-                    ) {
-                        eprintln!(
-                            "Warning: failed to mark timed-out background job {job_id} as killed in history DB: {error}"
-                        );
-                    }
-                }
-                Err(error) => {
-                    eprintln!(
-                        "Warning: failed to open history DB at {} while recording timed-out background job {job_id}: {error}",
-                        watchdog_db_path.display()
-                    );
-                }
-            }
-        });
+        if let Err(error) = crate::commands::reap::spawn_reaper(
+            pid,
+            max_secs,
+            invocation_id,
+            job_id,
+            &watchdog_db_path,
+            &job_dir,
+        ) {
+            eprintln!(
+                "Warning: failed to spawn detached reaper for background job {job_id} (pid {pid}): {error}"
+            );
+        }
 
         Ok(Job {
             id: job_id,
