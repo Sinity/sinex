@@ -252,6 +252,7 @@ impl SharedBuildMetrics {
 pub struct InvocationResourceMetrics {
     pub process_tree: ProcessTreeMetrics,
     pub shared_build: SharedBuildMetrics,
+    pub host_pressure: HostPressureMetrics,
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -259,6 +260,39 @@ pub struct InvocationResourceMetrics {
 pub struct InvocationResourceMetrics {
     pub process_tree: ProcessTreeMetrics,
     pub shared_build: SharedBuildMetrics,
+    pub host_pressure: HostPressureMetrics,
+}
+
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(target_os = "linux", derive(Serialize, Deserialize))]
+pub struct PressureSnapshot {
+    pub some_avg10: Option<f64>,
+    pub full_avg10: Option<f64>,
+}
+
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(target_os = "linux", derive(Serialize, Deserialize))]
+pub struct HostPressureMetrics {
+    pub cpu_some_avg10_max: Option<f64>,
+    pub io_some_avg10_max: Option<f64>,
+    pub io_full_avg10_max: Option<f64>,
+    pub memory_some_avg10_max: Option<f64>,
+    pub memory_full_avg10_max: Option<f64>,
+    pub shm_free_min_mb: Option<f64>,
+    pub shm_used_max_mb: Option<f64>,
+}
+
+impl HostPressureMetrics {
+    #[must_use]
+    pub fn has_samples(&self) -> bool {
+        self.cpu_some_avg10_max.is_some()
+            || self.io_some_avg10_max.is_some()
+            || self.io_full_avg10_max.is_some()
+            || self.memory_some_avg10_max.is_some()
+            || self.memory_full_avg10_max.is_some()
+            || self.shm_free_min_mb.is_some()
+            || self.shm_used_max_mb.is_some()
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1172,6 +1206,119 @@ impl SharedBuildAccumulator {
 }
 
 #[cfg(target_os = "linux")]
+#[derive(Debug, Default)]
+struct HostPressureAccumulator {
+    cpu_some_avg10_max: Option<f64>,
+    io_some_avg10_max: Option<f64>,
+    io_full_avg10_max: Option<f64>,
+    memory_some_avg10_max: Option<f64>,
+    memory_full_avg10_max: Option<f64>,
+    shm_free_min_mb: Option<f64>,
+    shm_used_max_mb: Option<f64>,
+}
+
+#[cfg(target_os = "linux")]
+impl HostPressureAccumulator {
+    fn update_max(slot: &mut Option<f64>, value: Option<f64>) {
+        if let Some(value) = value {
+            *slot = Some(slot.map_or(value, |existing| existing.max(value)));
+        }
+    }
+
+    fn update_min(slot: &mut Option<f64>, value: Option<f64>) {
+        if let Some(value) = value {
+            *slot = Some(slot.map_or(value, |existing| existing.min(value)));
+        }
+    }
+
+    fn sample(&mut self) {
+        let cpu = read_pressure_snapshot("cpu");
+        let io = read_pressure_snapshot("io");
+        let memory = read_pressure_snapshot("memory");
+        let shm = shm_usage_mb();
+
+        Self::update_max(&mut self.cpu_some_avg10_max, cpu.some_avg10);
+        Self::update_max(&mut self.io_some_avg10_max, io.some_avg10);
+        Self::update_max(&mut self.io_full_avg10_max, io.full_avg10);
+        Self::update_max(&mut self.memory_some_avg10_max, memory.some_avg10);
+        Self::update_max(&mut self.memory_full_avg10_max, memory.full_avg10);
+        if let Some((used_mb, free_mb)) = shm {
+            Self::update_max(&mut self.shm_used_max_mb, Some(used_mb));
+            Self::update_min(&mut self.shm_free_min_mb, Some(free_mb));
+        }
+    }
+
+    fn finish(&self) -> HostPressureMetrics {
+        HostPressureMetrics {
+            cpu_some_avg10_max: self.cpu_some_avg10_max,
+            io_some_avg10_max: self.io_some_avg10_max,
+            io_full_avg10_max: self.io_full_avg10_max,
+            memory_some_avg10_max: self.memory_some_avg10_max,
+            memory_full_avg10_max: self.memory_full_avg10_max,
+            shm_free_min_mb: self.shm_free_min_mb,
+            shm_used_max_mb: self.shm_used_max_mb,
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn read_pressure_snapshot(resource: &str) -> PressureSnapshot {
+    let path = format!("/proc/pressure/{resource}");
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return PressureSnapshot::default();
+    };
+    parse_pressure_snapshot(&contents)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn read_pressure_snapshot(_resource: &str) -> PressureSnapshot {
+    PressureSnapshot::default()
+}
+
+#[cfg(target_os = "linux")]
+fn parse_pressure_snapshot(contents: &str) -> PressureSnapshot {
+    let mut snapshot = PressureSnapshot::default();
+    for line in contents.lines() {
+        let target = if line.starts_with("some ") {
+            &mut snapshot.some_avg10
+        } else if line.starts_with("full ") {
+            &mut snapshot.full_avg10
+        } else {
+            continue;
+        };
+        for field in line.split_whitespace() {
+            if let Some(value) = field.strip_prefix("avg10=")
+                && let Ok(parsed) = value.parse::<f64>()
+            {
+                *target = Some(parsed);
+            }
+        }
+    }
+    snapshot
+}
+
+#[cfg(target_os = "linux")]
+pub fn shm_usage_mb() -> Option<(f64, f64)> {
+    let path = std::ffi::CString::new("/dev/shm").ok()?;
+    let mut stats = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    let rc = unsafe { libc::statvfs(path.as_ptr(), stats.as_mut_ptr()) };
+    if rc != 0 {
+        return None;
+    }
+    let stats = unsafe { stats.assume_init() };
+    let block_size = stats.f_frsize.max(stats.f_bsize) as f64;
+    let total = stats.f_blocks as f64 * block_size;
+    let free = stats.f_bavail as f64 * block_size;
+    let used = (total - free).max(0.0);
+    Some((used / 1_048_576.0, free / 1_048_576.0))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn shm_usage_mb() -> Option<(f64, f64)> {
+    None
+}
+
+#[cfg(target_os = "linux")]
 #[derive(Debug, Clone, Default)]
 struct ResolvedSharedCgroupTargets {
     nix_daemon: Option<PathBuf>,
@@ -1245,6 +1392,8 @@ pub struct InvocationResourceMonitor {
     #[cfg(target_os = "linux")]
     shared_build_metrics: Arc<Mutex<SharedBuildAccumulator>>,
     #[cfg(target_os = "linux")]
+    host_pressure_metrics: Arc<Mutex<HostPressureAccumulator>>,
+    #[cfg(target_os = "linux")]
     root_pid: u32,
     #[cfg(target_os = "linux")]
     resolved_shared_cgroup_targets: ResolvedSharedCgroupTargets,
@@ -1266,6 +1415,7 @@ impl InvocationResourceMonitor {
             let root_pid = std::process::id();
             let metrics = Arc::new(Mutex::new(ResourceAccumulator::default()));
             let shared_build_metrics = Arc::new(Mutex::new(SharedBuildAccumulator::default()));
+            let host_pressure_metrics = Arc::new(Mutex::new(HostPressureAccumulator::default()));
             let running = Arc::new(AtomicBool::new(true));
             let cgroup_root = default_cgroup_root();
             let resolved_shared_cgroup_targets = resolve_shared_cgroup_targets(&cgroup_root);
@@ -1276,6 +1426,7 @@ impl InvocationResourceMonitor {
 
             let metrics_clone = metrics.clone();
             let shared_build_metrics_clone = shared_build_metrics.clone();
+            let host_pressure_metrics_clone = host_pressure_metrics.clone();
             let running_clone = running.clone();
             let resolved_shared_cgroup_targets_clone = resolved_shared_cgroup_targets.clone();
 
@@ -1293,6 +1444,7 @@ impl InvocationResourceMonitor {
                         shared_build_metrics_clone.as_ref(),
                         cpu_count,
                     );
+                    host_pressure_metrics_clone.lock().sample();
                     thread::sleep(Duration::from_millis(
                         INVOCATION_RESOURCE_SAMPLE_INTERVAL_MS,
                     ));
@@ -1303,6 +1455,7 @@ impl InvocationResourceMonitor {
                 running,
                 metrics,
                 shared_build_metrics,
+                host_pressure_metrics,
                 root_pid,
                 resolved_shared_cgroup_targets,
                 page_size,
@@ -1333,6 +1486,7 @@ impl InvocationResourceMonitor {
                 self.shared_build_metrics.as_ref(),
                 self.cpu_count,
             );
+            self.host_pressure_metrics.lock().sample();
             self.running.store(false, Ordering::Relaxed);
             if let Some(handle) = self.handle.take() {
                 let _ = handle.join();
@@ -1340,6 +1494,7 @@ impl InvocationResourceMonitor {
             return InvocationResourceMetrics {
                 process_tree: self.metrics.lock().finish(),
                 shared_build: self.shared_build_metrics.lock().finish(),
+                host_pressure: self.host_pressure_metrics.lock().finish(),
             };
         }
 

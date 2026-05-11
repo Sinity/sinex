@@ -259,13 +259,31 @@
             pkgs.lib.filterAttrs (_: value: pkgs.lib.isDerivation value) vmTests
           );
 
+          nixFormatCheck = pkgs.runCommand "sinex-nix-format-check"
+            {
+              nativeBuildInputs = [ pkgs.nixpkgs-fmt ];
+              src = pkgs.lib.cleanSourceWith {
+                src = ./.;
+                filter = path: type:
+                  let
+                    rel = pkgs.lib.removePrefix (toString ./. + "/") (toString path);
+                  in
+                  type == "directory" || rel == "flake.nix";
+              };
+            } ''
+            nixpkgs-fmt --check "$src/flake.nix"
+            touch "$out"
+          '';
+
         in
         rec {
           packages = sinexPackages;
 
           formatter = pkgs.nixpkgs-fmt;
 
-          checks = vmCheckOutputs;
+          checks = vmCheckOutputs // {
+            flake-format = nixFormatCheck;
+          };
 
           devShells.default =
             let

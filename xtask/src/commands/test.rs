@@ -298,6 +298,14 @@ pub struct BenchArgs {
     #[arg(long, value_delimiter = ',')]
     pub db_pool_sizes: Vec<u32>,
 
+    /// Use the system-impact preset for measured test concurrency calibration.
+    #[arg(long)]
+    pub system_impact: bool,
+
+    /// Include aggressive over-subscription points in the system-impact preset.
+    #[arg(long)]
+    pub system_impact_extended: bool,
+
     /// Target package(s) or "workspace"
     #[arg(long, default_value = "workspace")]
     pub target: String,

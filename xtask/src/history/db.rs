@@ -959,9 +959,9 @@ impl HistoryDb {
 
     /// Initialize the database schema from scratch.
     ///
-    /// All tables are defined with their full canonical column sets — no incremental
-    /// `ALTER TABLE` migrations. On schema version mismatch, the DB is dropped and
-    /// recreated (history is dev tooling data, not user data).
+    /// All tables are defined with their full canonical column sets. Existing
+    /// history databases are preserved with compatibility `ALTER TABLE` additions;
+    /// the history DB is an evidence ledger and must not be treated as cache.
     fn init_schema(&self) -> Result<()> {
         self.conn.execute_batch(
             r"
@@ -998,6 +998,13 @@ impl HistoryDb {
                 shared_nix_build_slice_memory_usage_max_mb REAL,
                 shared_background_slice_cpu_usage_avg REAL,
                 shared_background_slice_memory_usage_max_mb REAL,
+                host_cpu_pressure_some_avg10_max REAL,
+                host_io_pressure_some_avg10_max REAL,
+                host_io_pressure_full_avg10_max REAL,
+                host_memory_pressure_some_avg10_max REAL,
+                host_memory_pressure_full_avg10_max REAL,
+                shm_free_min_mb REAL,
+                shm_used_max_mb REAL,
                 process_count_max INTEGER,
                 resource_sample_count INTEGER,
                 tree_fingerprint TEXT,
@@ -1263,6 +1270,21 @@ impl HistoryDb {
             "shared_background_slice_memory_usage_max_mb",
             "REAL",
         )?;
+        self.ensure_column_exists("invocations", "host_cpu_pressure_some_avg10_max", "REAL")?;
+        self.ensure_column_exists("invocations", "host_io_pressure_some_avg10_max", "REAL")?;
+        self.ensure_column_exists("invocations", "host_io_pressure_full_avg10_max", "REAL")?;
+        self.ensure_column_exists(
+            "invocations",
+            "host_memory_pressure_some_avg10_max",
+            "REAL",
+        )?;
+        self.ensure_column_exists(
+            "invocations",
+            "host_memory_pressure_full_avg10_max",
+            "REAL",
+        )?;
+        self.ensure_column_exists("invocations", "shm_free_min_mb", "REAL")?;
+        self.ensure_column_exists("invocations", "shm_used_max_mb", "REAL")?;
         self.ensure_column_exists("invocations", "process_count_max", "INTEGER")?;
         self.ensure_column_exists("invocations", "resource_sample_count", "INTEGER")?;
         Ok(())
@@ -2393,9 +2415,16 @@ impl HistoryDb {
                 shared_nix_build_slice_memory_usage_max_mb = ?8,
                 shared_background_slice_cpu_usage_avg = ?9,
                 shared_background_slice_memory_usage_max_mb = ?10,
-                process_count_max = ?11,
-                resource_sample_count = ?12
-            WHERE id = ?13
+                host_cpu_pressure_some_avg10_max = ?11,
+                host_io_pressure_some_avg10_max = ?12,
+                host_io_pressure_full_avg10_max = ?13,
+                host_memory_pressure_some_avg10_max = ?14,
+                host_memory_pressure_full_avg10_max = ?15,
+                shm_free_min_mb = ?16,
+                shm_used_max_mb = ?17,
+                process_count_max = ?18,
+                resource_sample_count = ?19
+            WHERE id = ?20
             ",
             params![
                 metrics.process_tree.cpu_usage_avg,
@@ -2412,6 +2441,13 @@ impl HistoryDb {
                 metrics
                     .shared_build
                     .shared_background_slice_memory_usage_max_mb,
+                metrics.host_pressure.cpu_some_avg10_max,
+                metrics.host_pressure.io_some_avg10_max,
+                metrics.host_pressure.io_full_avg10_max,
+                metrics.host_pressure.memory_some_avg10_max,
+                metrics.host_pressure.memory_full_avg10_max,
+                metrics.host_pressure.shm_free_min_mb,
+                metrics.host_pressure.shm_used_max_mb,
                 metrics.process_tree.process_count_max.map(i64::from),
                 i64::from(metrics.process_tree.sample_count),
                 invocation_id
@@ -2505,6 +2541,43 @@ impl HistoryDb {
         } else {
             "NULL"
         };
+        let host_cpu_pressure_expr = if columns.contains("host_cpu_pressure_some_avg10_max") {
+            "host_cpu_pressure_some_avg10_max"
+        } else {
+            "NULL"
+        };
+        let host_io_pressure_some_expr = if columns.contains("host_io_pressure_some_avg10_max") {
+            "host_io_pressure_some_avg10_max"
+        } else {
+            "NULL"
+        };
+        let host_io_pressure_full_expr = if columns.contains("host_io_pressure_full_avg10_max") {
+            "host_io_pressure_full_avg10_max"
+        } else {
+            "NULL"
+        };
+        let host_memory_pressure_some_expr =
+            if columns.contains("host_memory_pressure_some_avg10_max") {
+                "host_memory_pressure_some_avg10_max"
+            } else {
+                "NULL"
+            };
+        let host_memory_pressure_full_expr =
+            if columns.contains("host_memory_pressure_full_avg10_max") {
+                "host_memory_pressure_full_avg10_max"
+            } else {
+                "NULL"
+            };
+        let shm_free_expr = if columns.contains("shm_free_min_mb") {
+            "shm_free_min_mb"
+        } else {
+            "NULL"
+        };
+        let shm_used_expr = if columns.contains("shm_used_max_mb") {
+            "shm_used_max_mb"
+        } else {
+            "NULL"
+        };
         let mut query = String::from(&format!(
             r"SELECT command,
                          status,
@@ -2523,7 +2596,14 @@ impl HistoryDb {
                          {process_count_expr},
                          {sample_count_expr},
                          cpu_usage_avg,
-                         memory_usage_max_mb
+                         memory_usage_max_mb,
+                         {host_cpu_pressure_expr},
+                         {host_io_pressure_some_expr},
+                         {host_io_pressure_full_expr},
+                         {host_memory_pressure_some_expr},
+                         {host_memory_pressure_full_expr},
+                         {shm_free_expr},
+                         {shm_used_expr}
               FROM invocations
               WHERE status != 'running'
                AND ({process_cpu_expr} IS NOT NULL
@@ -2536,6 +2616,13 @@ impl HistoryDb {
                      OR {shared_nix_build_mem_expr} IS NOT NULL
                      OR {shared_background_cpu_expr} IS NOT NULL
                      OR {shared_background_mem_expr} IS NOT NULL
+                     OR {host_cpu_pressure_expr} IS NOT NULL
+                     OR {host_io_pressure_some_expr} IS NOT NULL
+                     OR {host_io_pressure_full_expr} IS NOT NULL
+                     OR {host_memory_pressure_some_expr} IS NOT NULL
+                     OR {host_memory_pressure_full_expr} IS NOT NULL
+                     OR {shm_free_expr} IS NOT NULL
+                     OR {shm_used_expr} IS NOT NULL
                      OR cpu_usage_avg IS NOT NULL
                      OR memory_usage_max_mb IS NOT NULL)",
         ));
@@ -2575,6 +2662,13 @@ impl HistoryDb {
                 sample_count: row.get::<_, Option<i64>>(15)?.map(|value| value as u32),
                 host_cpu_usage_avg: row.get(16)?,
                 host_memory_usage_max_mb: row.get(17)?,
+                host_cpu_pressure_some_avg10_max: row.get(18)?,
+                host_io_pressure_some_avg10_max: row.get(19)?,
+                host_io_pressure_full_avg10_max: row.get(20)?,
+                host_memory_pressure_some_avg10_max: row.get(21)?,
+                host_memory_pressure_full_avg10_max: row.get(22)?,
+                shm_free_min_mb: row.get(23)?,
+                shm_used_max_mb: row.get(24)?,
             })
         })?;
 
@@ -2656,6 +2750,43 @@ impl HistoryDb {
         } else {
             "NULL"
         };
+        let host_cpu_pressure_expr = if columns.contains("host_cpu_pressure_some_avg10_max") {
+            "host_cpu_pressure_some_avg10_max"
+        } else {
+            "NULL"
+        };
+        let host_io_pressure_some_expr = if columns.contains("host_io_pressure_some_avg10_max") {
+            "host_io_pressure_some_avg10_max"
+        } else {
+            "NULL"
+        };
+        let host_io_pressure_full_expr = if columns.contains("host_io_pressure_full_avg10_max") {
+            "host_io_pressure_full_avg10_max"
+        } else {
+            "NULL"
+        };
+        let host_memory_pressure_some_expr =
+            if columns.contains("host_memory_pressure_some_avg10_max") {
+                "host_memory_pressure_some_avg10_max"
+            } else {
+                "NULL"
+            };
+        let host_memory_pressure_full_expr =
+            if columns.contains("host_memory_pressure_full_avg10_max") {
+                "host_memory_pressure_full_avg10_max"
+            } else {
+                "NULL"
+            };
+        let shm_free_expr = if columns.contains("shm_free_min_mb") {
+            "shm_free_min_mb"
+        } else {
+            "NULL"
+        };
+        let shm_used_expr = if columns.contains("shm_used_max_mb") {
+            "shm_used_max_mb"
+        } else {
+            "NULL"
+        };
 
         let query = format!(
             r"SELECT command,
@@ -2675,7 +2806,14 @@ impl HistoryDb {
                      {process_count_expr},
                      {sample_count_expr},
                      cpu_usage_avg,
-                     memory_usage_max_mb
+                     memory_usage_max_mb,
+                     {host_cpu_pressure_expr},
+                     {host_io_pressure_some_expr},
+                     {host_io_pressure_full_expr},
+                     {host_memory_pressure_some_expr},
+                     {host_memory_pressure_full_expr},
+                     {shm_free_expr},
+                     {shm_used_expr}
               FROM invocations
               WHERE id = ?1
               LIMIT 1"
@@ -2703,6 +2841,13 @@ impl HistoryDb {
                     sample_count: row.get::<_, Option<i64>>(15)?.map(|value| value as u32),
                     host_cpu_usage_avg: row.get(16)?,
                     host_memory_usage_max_mb: row.get(17)?,
+                    host_cpu_pressure_some_avg10_max: row.get(18)?,
+                    host_io_pressure_some_avg10_max: row.get(19)?,
+                    host_io_pressure_full_avg10_max: row.get(20)?,
+                    host_memory_pressure_some_avg10_max: row.get(21)?,
+                    host_memory_pressure_full_avg10_max: row.get(22)?,
+                    shm_free_min_mb: row.get(23)?,
+                    shm_used_max_mb: row.get(24)?,
                 })
             })
             .optional()
@@ -3919,6 +4064,13 @@ pub struct ResourceUsage {
     pub sample_count: Option<u32>,
     pub host_cpu_usage_avg: Option<f64>,
     pub host_memory_usage_max_mb: Option<f64>,
+    pub host_cpu_pressure_some_avg10_max: Option<f64>,
+    pub host_io_pressure_some_avg10_max: Option<f64>,
+    pub host_io_pressure_full_avg10_max: Option<f64>,
+    pub host_memory_pressure_some_avg10_max: Option<f64>,
+    pub host_memory_pressure_full_avg10_max: Option<f64>,
+    pub shm_free_min_mb: Option<f64>,
+    pub shm_used_max_mb: Option<f64>,
 }
 
 impl ResourceUsage {
@@ -3938,6 +4090,13 @@ impl ResourceUsage {
             || self.sample_count.is_some()
             || self.host_cpu_usage_avg.is_some()
             || self.host_memory_usage_max_mb.is_some()
+            || self.host_cpu_pressure_some_avg10_max.is_some()
+            || self.host_io_pressure_some_avg10_max.is_some()
+            || self.host_io_pressure_full_avg10_max.is_some()
+            || self.host_memory_pressure_some_avg10_max.is_some()
+            || self.host_memory_pressure_full_avg10_max.is_some()
+            || self.shm_free_min_mb.is_some()
+            || self.shm_used_max_mb.is_some()
     }
 }
 
@@ -6283,6 +6442,15 @@ mod tests {
                     shared_background_slice_cpu_usage_avg: Some(19.0),
                     shared_background_slice_memory_usage_max_mb: Some(512.0),
                 },
+                host_pressure: crate::process::HostPressureMetrics {
+                    cpu_some_avg10_max: Some(1.0),
+                    io_some_avg10_max: Some(2.0),
+                    io_full_avg10_max: Some(3.0),
+                    memory_some_avg10_max: Some(4.0),
+                    memory_full_avg10_max: Some(5.0),
+                    shm_free_min_mb: Some(2048.0),
+                    shm_used_max_mb: Some(512.0),
+                },
             },
         )?;
         db.finish_invocation(invocation_id, InvocationStatus::Success, Some(0), 1.0)?;
@@ -6306,6 +6474,10 @@ mod tests {
             usage.shared_background_slice_memory_usage_max_mb,
             Some(512.0)
         );
+        assert_eq!(usage.host_io_pressure_full_avg10_max, Some(3.0));
+        assert_eq!(usage.host_memory_pressure_full_avg10_max, Some(5.0));
+        assert_eq!(usage.shm_free_min_mb, Some(2048.0));
+        assert_eq!(usage.shm_used_max_mb, Some(512.0));
         assert_eq!(usage.process_count_max, Some(7));
         assert_eq!(usage.sample_count, Some(42));
         let host_cpu = usage

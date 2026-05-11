@@ -757,6 +757,15 @@ fn resource_usage_brief(usage: &ResourceUsage) -> String {
     if let Some(memory) = usage.shared_background_slice_memory_usage_max_mb {
         parts.push(format!("{memory:.0} MB background shared mem"));
     }
+    if let Some(io) = usage.host_io_pressure_full_avg10_max {
+        parts.push(format!("{io:.1}% io.full avg10 max"));
+    }
+    if let Some(memory) = usage.host_memory_pressure_full_avg10_max {
+        parts.push(format!("{memory:.1}% memory.full avg10 max"));
+    }
+    if let Some(used) = usage.shm_used_max_mb {
+        parts.push(format!("{used:.0} MB /dev/shm used max"));
+    }
     parts.extend([process_count, root_cpu, root_mem, samples]);
     parts.join(", ")
 }
@@ -781,6 +790,13 @@ fn resource_usage_to_json(usage: &ResourceUsage) -> serde_json::Value {
         "sample_count": usage.sample_count,
         "host_cpu_usage_avg": usage.host_cpu_usage_avg,
         "host_memory_usage_max_mb": usage.host_memory_usage_max_mb,
+        "host_cpu_pressure_some_avg10_max": usage.host_cpu_pressure_some_avg10_max,
+        "host_io_pressure_some_avg10_max": usage.host_io_pressure_some_avg10_max,
+        "host_io_pressure_full_avg10_max": usage.host_io_pressure_full_avg10_max,
+        "host_memory_pressure_some_avg10_max": usage.host_memory_pressure_some_avg10_max,
+        "host_memory_pressure_full_avg10_max": usage.host_memory_pressure_full_avg10_max,
+        "shm_free_min_mb": usage.shm_free_min_mb,
+        "shm_used_max_mb": usage.shm_used_max_mb,
     })
 }
 
@@ -928,6 +944,13 @@ fn load_job_resources(ctx: &CommandContext, job: &Job) -> ResourceUsageProbe {
                 sample_count: Some(metrics.sample_count),
                 host_cpu_usage_avg: None,
                 host_memory_usage_max_mb: None,
+                host_cpu_pressure_some_avg10_max: None,
+                host_io_pressure_some_avg10_max: None,
+                host_io_pressure_full_avg10_max: None,
+                host_memory_pressure_some_avg10_max: None,
+                host_memory_pressure_full_avg10_max: None,
+                shm_free_min_mb: None,
+                shm_used_max_mb: None,
             }),
             issue: persisted.issue,
             source: Some("live-probe"),
@@ -960,6 +983,13 @@ fn load_job_resources(ctx: &CommandContext, job: &Job) -> ResourceUsageProbe {
                 sample_count: None,
                 host_cpu_usage_avg: None,
                 host_memory_usage_max_mb: None,
+                host_cpu_pressure_some_avg10_max: None,
+                host_io_pressure_some_avg10_max: None,
+                host_io_pressure_full_avg10_max: None,
+                host_memory_pressure_some_avg10_max: None,
+                host_memory_pressure_full_avg10_max: None,
+                shm_free_min_mb: None,
+                shm_used_max_mb: None,
             }),
             issue: persisted.issue,
             source: Some("live-probe"),
