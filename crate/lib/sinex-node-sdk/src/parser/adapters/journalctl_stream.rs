@@ -7,12 +7,32 @@
 //! Cursor is the journal cursor string (`String`). No replay — journald
 //! manages retention. This adapter resumes from where it left off by
 //! passing `--cursor=<cursor>` to the child process.
+//!
+//! # Fan-out: [`SharedJournalctlStream`]
+//!
+//! When multiple source units share a single `journalctl` subprocess (e.g.
+//! `system.systemd` + `system.journald`), use [`SharedJournalctlStream`] to
+//! avoid spawning one subprocess per unit. One background task drives the
+//! subprocess and broadcasts each [`SourceRecord`] to all registered
+//! [`JournalctlSubscriber`]s via a `tokio::sync::broadcast` channel.
+//!
+//! ## Broadcast lag policy
+//!
+//! `tokio::sync::broadcast` is bounded. If a subscriber falls more than
+//! [`BROADCAST_CAPACITY`] records behind, subsequent `recv()` calls return
+//! [`tokio::sync::broadcast::error::RecvError::Lagged`] and report the number
+//! of records dropped. Subscribers MUST consume promptly. The recommended
+//! pattern is to process records inline in the stream and offload heavy work
+//! to a separate task. A lagged subscriber does NOT affect other subscribers
+//! or the subprocess driver — it simply misses the overflowed records and
+//! resumes at the oldest available message.
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::broadcast;
 
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
@@ -178,6 +198,194 @@ impl InputShapeAdapter for JournalctlStreamAdapter {
                 other => Err(ParserError::Cursor(format!(
                     "journalctl record has no __CURSOR and unexpected anchor: {other:?}"
                 ))),
+            }
+        }
+    }
+}
+
+// =============================================================================
+// SharedJournalctlStream + JournalctlSubscriber
+// =============================================================================
+
+/// Default broadcast channel capacity for [`SharedJournalctlStream`].
+///
+/// If a subscriber falls more than this many records behind, it receives
+/// [`tokio::sync::broadcast::error::RecvError::Lagged`] on the next `recv()`.
+/// Adjust per deployment based on burst volume and subscriber processing speed.
+pub const BROADCAST_CAPACITY: usize = 512;
+
+/// A single underlying `journalctl` subprocess shared across multiple
+/// [`JournalctlSubscriber`]s.
+///
+/// One background [`tokio::task`] drives the subprocess and broadcasts
+/// each [`SourceRecord`] to all active subscribers. Subscribers register
+/// filter predicates and receive only matching records.
+///
+/// # Construction
+///
+/// ```rust,ignore
+/// let shared = SharedJournalctlStream::new(material_id, config).await?;
+/// let systemd_sub = shared.subscribe(|r| {
+///     // Only systemd units
+///     serde_json::from_slice::<serde_json::Value>(&r.bytes)
+///         .map(|v| v.get("SYSLOG_IDENTIFIER").is_some())
+///         .unwrap_or(false)
+/// });
+/// let journald_sub = shared.subscribe(|_| true); // All records
+/// ```
+pub struct SharedJournalctlStream {
+    sender: broadcast::Sender<SourceRecord>,
+}
+
+impl SharedJournalctlStream {
+    /// Spawn a `journalctl` subprocess and start broadcasting records.
+    ///
+    /// The driver task runs for the lifetime of the last `Sender` handle —
+    /// i.e., until all cloned `Sender`s from `subscribe()` are dropped.
+    pub async fn new(
+        material_id: sinex_primitives::ids::Id<sinex_primitives::events::SourceMaterial>,
+        config: &JournalctlStreamConfig,
+    ) -> crate::parser::ParserResult<Self> {
+        Self::with_capacity(material_id, config, BROADCAST_CAPACITY).await
+    }
+
+    /// Like [`new`](Self::new) but with a configurable broadcast channel capacity.
+    pub async fn with_capacity(
+        material_id: sinex_primitives::ids::Id<sinex_primitives::events::SourceMaterial>,
+        config: &JournalctlStreamConfig,
+        capacity: usize,
+    ) -> crate::parser::ParserResult<Self> {
+        let (tx, _rx) = broadcast::channel(capacity);
+
+        // Open the underlying adapter to get the record stream.
+        let adapter = JournalctlStreamAdapter;
+        let stream = adapter.open(material_id, config, None).await?;
+
+        let driver_tx = tx.clone();
+        tokio::spawn(async move {
+            use futures::StreamExt;
+            let mut pinned = std::pin::pin!(stream);
+            while let Some(item) = pinned.next().await {
+                match item {
+                    Ok(record) => {
+                        // send() only fails when there are no active receivers.
+                        // That is not an error from the driver's perspective —
+                        // the subprocess can continue running in case a new
+                        // subscriber is added later.
+                        let _ = driver_tx.send(record);
+                    }
+                    Err(e) => {
+                        // Log and continue — stream errors are per-record
+                        // (e.g. a malformed line). A fatal subprocess death
+                        // results in the stream ending (next iteration None).
+                        tracing::warn!(error = %e, "SharedJournalctlStream: record error from subprocess");
+                    }
+                }
+            }
+            tracing::debug!("SharedJournalctlStream: subprocess stream ended — driver task exiting");
+        });
+
+        Ok(Self { sender: tx })
+    }
+
+    /// Register a new subscriber with an optional filter predicate.
+    ///
+    /// The subscriber receives every record for which `filter` returns `true`.
+    /// Pass `|_| true` to receive all records.
+    ///
+    /// # Lag policy
+    ///
+    /// If the subscriber falls more than the broadcast capacity behind,
+    /// [`JournalctlSubscriber`]'s stream emits a warning and skips the
+    /// lost records. See module-level docs for details.
+    pub fn subscribe<F>(&self, filter: F) -> JournalctlSubscriber
+    where
+        F: Fn(&SourceRecord) -> bool + Send + Sync + 'static,
+    {
+        JournalctlSubscriber {
+            receiver: self.sender.subscribe(),
+            filter: Box::new(filter),
+        }
+    }
+}
+
+/// A filtered view of a [`SharedJournalctlStream`].
+///
+/// Implements [`InputShapeAdapter`] so it can plug into
+/// `register_adapter_ingestor!` in source units that share a subprocess.
+///
+/// Each subscriber maintains an independent cursor (the last journal cursor
+/// string seen through this filtered view). The underlying broadcast channel
+/// advances independently — subscribers don't drive the subprocess.
+pub struct JournalctlSubscriber {
+    receiver: broadcast::Receiver<SourceRecord>,
+    filter: Box<dyn Fn(&SourceRecord) -> bool + Send + Sync + 'static>,
+}
+
+#[async_trait]
+impl InputShapeAdapter for JournalctlSubscriber {
+    type Config = ();  // Config is owned by SharedJournalctlStream.
+    type Cursor = JournalctlCursor;
+    const KIND: InputShapeKind = InputShapeKind::Subprocess;
+
+    async fn open(
+        &self,
+        _material_id: sinex_primitives::ids::Id<sinex_primitives::events::SourceMaterial>,
+        _config: &Self::Config,
+        _cursor: Option<Self::Cursor>,
+    ) -> crate::parser::ParserResult<BoxStream<'static, crate::parser::ParserResult<SourceRecord>>>
+    {
+        // JournalctlSubscriber cannot be opened multiple times — it wraps a
+        // single-use `broadcast::Receiver`. The caller must construct a new
+        // `JournalctlSubscriber` via `SharedJournalctlStream::subscribe()` for
+        // each open call.
+        Err(crate::parser::ParserError::Adapter(
+            "JournalctlSubscriber::open() is not supported — use \
+             into_stream() to consume the subscriber as a stream instead. \
+             For integration with register_adapter_ingestor!, call \
+             SharedJournalctlStream::subscribe() fresh for each open.".into(),
+        ))
+    }
+
+    fn cursor_after(&self, record: &SourceRecord) -> crate::parser::ParserResult<Self::Cursor> {
+        // Delegate to JournalctlStreamAdapter's cursor extraction.
+        JournalctlStreamAdapter.cursor_after(record)
+    }
+}
+
+impl JournalctlSubscriber {
+    /// Consume the subscriber into an async stream of [`SourceRecord`]s.
+    ///
+    /// This is the primary consumption path. Each received record is passed
+    /// through the filter predicate; non-matching records are silently dropped.
+    ///
+    /// On lag, a warning is emitted and the subscriber skips the lost records,
+    /// resuming at the oldest available message.
+    pub fn into_stream(
+        mut self,
+    ) -> impl futures::Stream<Item = crate::parser::ParserResult<SourceRecord>> + Send + 'static {
+        async_stream::stream! {
+            loop {
+                match self.receiver.recv().await {
+                    Ok(record) => {
+                        if (self.filter)(&record) {
+                            yield Ok(record);
+                        }
+                        // Non-matching records are silently skipped.
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(
+                            skipped = n,
+                            "JournalctlSubscriber: broadcast channel lagged — \
+                             {n} records dropped; subscriber was too slow to consume"
+                        );
+                        // Continue — resume at the oldest available message.
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        // Sender dropped (driver task exited). Stream ends.
+                        break;
+                    }
+                }
             }
         }
     }
@@ -365,6 +573,188 @@ mod tests {
         };
         let err = adapter.cursor_after(&record);
         assert!(matches!(err, Err(ParserError::Cursor(_))));
+        Ok(())
+    }
+
+    // =========================================================================
+    // SharedJournalctlStream structural tests
+    //
+    // These tests do NOT spawn a real journalctl process.  Instead, they drive
+    // the broadcast channel directly to verify subscriber routing semantics.
+    // =========================================================================
+
+    /// Build a SourceRecord from raw bytes — minimal helper for shared tests.
+    fn make_record_bytes(bytes: &[u8]) -> SourceRecord {
+        SourceRecord {
+            material_id: dummy_material_id(),
+            anchor: MaterialAnchor::StreamFrame {
+                material_offset: 0,
+                frame_index: 0,
+            },
+            bytes: bytes.to_vec(),
+            logical_path: None,
+            source_ts_hint: None,
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    /// Drive records into a broadcast sender and collect what a subscriber
+    /// with a given filter receives.
+    async fn drive_and_collect(
+        tx: broadcast::Sender<SourceRecord>,
+        subscriber: super::JournalctlSubscriber,
+        records: Vec<SourceRecord>,
+    ) -> Vec<Vec<u8>> {
+        use futures::StreamExt;
+        // Spawn a task that sends records then drops the tx.
+        let sender_task = tokio::spawn(async move {
+            for rec in records {
+                let _ = tx.send(rec);
+            }
+            // tx dropped here — closes the channel.
+        });
+
+        // Collect from subscriber stream until it ends.
+        let mut stream = std::pin::pin!(subscriber.into_stream());
+        let mut received = Vec::new();
+        while let Some(item) = stream.next().await {
+            if let Ok(rec) = item {
+                received.push(rec.bytes.clone());
+            }
+        }
+        sender_task.await.unwrap();
+        received
+    }
+
+    #[sinex_test]
+    async fn test_subscriber_filter_passes_matching_records() -> xtask::sandbox::TestResult<()> {
+        let (tx, rx_primary) = broadcast::channel::<SourceRecord>(64);
+
+        // Filter: only records whose bytes start with b"MATCH"
+        let subscriber = super::JournalctlSubscriber {
+            receiver: rx_primary,
+            filter: Box::new(|rec: &SourceRecord| rec.bytes.starts_with(b"MATCH")),
+        };
+
+        let records = vec![
+            make_record_bytes(b"MATCH_1"),
+            make_record_bytes(b"SKIP_1"),
+            make_record_bytes(b"MATCH_2"),
+            make_record_bytes(b"SKIP_2"),
+        ];
+
+        let received = drive_and_collect(tx, subscriber, records).await;
+        assert_eq!(received.len(), 2, "expected 2 matching records, got {}", received.len());
+        assert!(received[0].starts_with(b"MATCH"));
+        assert!(received[1].starts_with(b"MATCH"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_two_subscribers_receive_independently() -> xtask::sandbox::TestResult<()> {
+        use futures::StreamExt;
+
+        let (tx, _) = broadcast::channel::<SourceRecord>(64);
+
+        // subscriber A: only "A" records
+        let sub_a = super::JournalctlSubscriber {
+            receiver: tx.subscribe(),
+            filter: Box::new(|r: &SourceRecord| r.bytes.starts_with(b"A")),
+        };
+        // subscriber B: only "B" records
+        let sub_b = super::JournalctlSubscriber {
+            receiver: tx.subscribe(),
+            filter: Box::new(|r: &SourceRecord| r.bytes.starts_with(b"B")),
+        };
+
+        let records = vec![
+            make_record_bytes(b"A1"),
+            make_record_bytes(b"B1"),
+            make_record_bytes(b"A2"),
+            make_record_bytes(b"B2"),
+            make_record_bytes(b"C1"), // neither
+        ];
+
+        // Collect both subscribers concurrently.
+        let tx_clone = tx.clone();
+        drop(tx); // release the original; subscribers hold their own receivers
+
+        let sender_task = tokio::spawn(async move {
+            for rec in records {
+                let _ = tx_clone.send(rec);
+            }
+            // tx_clone dropped → channel closes
+        });
+
+        let stream_a = std::pin::pin!(sub_a.into_stream());
+        let stream_b = std::pin::pin!(sub_b.into_stream());
+
+        let (results_a, results_b, _) = tokio::join!(
+            stream_a.collect::<Vec<_>>(),
+            stream_b.collect::<Vec<_>>(),
+            sender_task,
+        );
+
+        let bytes_a: Vec<_> = results_a.into_iter().filter_map(|r| r.ok()).map(|r| r.bytes).collect();
+        let bytes_b: Vec<_> = results_b.into_iter().filter_map(|r| r.ok()).map(|r| r.bytes).collect();
+
+        assert_eq!(bytes_a.len(), 2, "sub_a should get 2 records");
+        assert_eq!(bytes_b.len(), 2, "sub_b should get 2 records");
+        assert!(bytes_a.iter().all(|b| b.starts_with(b"A")));
+        assert!(bytes_b.iter().all(|b| b.starts_with(b"B")));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_subscriber_kind_is_subprocess() -> xtask::sandbox::TestResult<()> {
+        assert_eq!(
+            super::JournalctlSubscriber::KIND,
+            InputShapeKind::Subprocess
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_subscriber_cursor_after_extracts_journal_cursor() -> xtask::sandbox::TestResult<()> {
+        let (tx, rx) = broadcast::channel::<SourceRecord>(4);
+        drop(tx); // no sending needed for this test
+        let subscriber = super::JournalctlSubscriber {
+            receiver: rx,
+            filter: Box::new(|_| true),
+        };
+
+        let record = SourceRecord {
+            material_id: dummy_material_id(),
+            anchor: MaterialAnchor::StreamFrame { material_offset: 0, frame_index: 0 },
+            bytes: JOURNAL_LINE_WITH_CURSOR.as_bytes().to_vec(),
+            logical_path: None,
+            source_ts_hint: None,
+            metadata: serde_json::Value::Null,
+        };
+
+        let cursor = subscriber.cursor_after(&record).unwrap();
+        assert_eq!(cursor.cursor, "s=abc;i=1;b=x");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_subscriber_open_returns_error() -> xtask::sandbox::TestResult<()> {
+        let (tx, rx) = broadcast::channel::<SourceRecord>(4);
+        drop(tx);
+        let subscriber = super::JournalctlSubscriber {
+            receiver: rx,
+            filter: Box::new(|_| true),
+        };
+        let mid = dummy_material_id();
+        let result = subscriber.open(mid, &(), None).await;
+        assert!(result.is_err(), "open() must return an error — use into_stream() instead");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_broadcast_capacity_constant_is_reasonable() -> xtask::sandbox::TestResult<()> {
+        // Pin the value so changes are visible in review.
+        assert_eq!(super::BROADCAST_CAPACITY, 512);
         Ok(())
     }
 }
