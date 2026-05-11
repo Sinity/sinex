@@ -6,9 +6,10 @@
 //! The `data` bytes are interpreted as newline-delimited JSON journal lines
 //! (the same format `journalctl --output=json` produces).
 
+use sinex_node_sdk::parser::{records_from_journal_lines, ParserResult};
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
-use sinex_node_sdk::parser::adapters::records_from_journal_lines;
+use sinex_primitives::parser::SourceRecord;
 
 use super::{FixtureBinding, FixtureHandle};
 
@@ -36,7 +37,7 @@ pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
     // Flatten the records to their raw bytes for the obligation layer.
     let record_bytes: Vec<Vec<u8>> = records
         .into_iter()
-        .filter_map(|r| r.ok())
+        .filter_map(|r: ParserResult<SourceRecord>| r.ok())
         .map(|r| r.bytes)
         .collect();
 
