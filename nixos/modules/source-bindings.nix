@@ -41,6 +41,18 @@ let
     };
   };
 
+  # JSON representation of a single source binding for export.
+  bindingToJson = name: binding: {
+    inherit name;
+    sourceUnitId = binding.sourceUnitId;
+    sourceFamily = binding.sourceFamily;
+    bindingMode = binding.bindingMode;
+    inputShapeKind = binding.inputShapeKind;
+    privacyPolicyId = binding.privacyPolicyId;
+    parserId = binding.parserId;
+    enabled = binding.enable;
+  };
+
   sourceBindingModule = types.submodule {
     options = {
       enable = mkEnableOption "this source binding";
@@ -105,6 +117,22 @@ let
 in
 {
   options.services.sinex.sources = {
+    exportedJson = mkOption {
+      type = types.package;
+      readOnly = true;
+      description = ''
+        Derivation that writes a JSON file containing all declared source
+        bindings.  Consume from the host config as:
+
+          nix eval --raw .#nixosConfigurations.sinnix-prime.config.services.sinex.sources.exportedJson
+
+        The resulting path can be passed to `xtask verify source-worker
+        --bindings-json <path>` for drift detection against Rust descriptors.
+
+        Shape: { bindings: [{ name, sourceUnitId, sourceFamily, bindingMode,
+          inputShapeKind, privacyPolicyId, parserId, enabled }] }
+      '';
+    };
     bindings = mkOption {
       type = types.attrsOf sourceBindingModule;
       default = {};
@@ -124,6 +152,12 @@ in
   };
 
   config = {
+    services.sinex.sources.exportedJson = pkgs.writeText "sinex-source-bindings.json"
+      (builtins.toJSON {
+        bindings = lib.mapAttrsToList bindingToJson
+          config.services.sinex.sources.bindings;
+      });
+
     services.sinex.sources.bindings = {
 
       # === terminal ===
