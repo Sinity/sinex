@@ -120,6 +120,10 @@ path = "../../lib/sinex-db"
 
 [features]
 tokio-console = ["dep:console-subscriber"]
+# Enable test-only injection points (fault hooks, processing delays, delivery
+# observers, DLQ-routing override) on JetStreamConsumer. Required by integration
+# tests in this crate's `tests/` directory; never enabled in production builds.
+testing = []
 
 [dependencies.console-subscriber]
 workspace = true
@@ -139,6 +143,16 @@ path = "../../../xtask/macros"
 
 [dev-dependencies.sinex-primitives]
 path = "../../lib/sinex-primitives"
+features = [
+    "testing",
+]
+
+# Self-reference in dev-dependencies enables the `testing` feature for integration
+# tests (in `tests/`), giving them access to test-only constructors and fault-injection
+# fields on JetStreamConsumer that production builds do not carry. Same pattern as
+# sinex-primitives' self-reference at line 67 of its Cargo.toml.
+[dev-dependencies.sinex-ingestd]
+path = "."
 features = [
     "testing",
 ]
