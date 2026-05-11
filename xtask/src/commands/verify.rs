@@ -589,8 +589,6 @@ pub fn execute_perf(args: PerfArgs, ctx: &CommandContext) -> Result<CommandResul
         git_tag: false,
         dry_run: false,
         gha: false,
-        bisect_good: None,
-        bisect_bad: None,
         stress_limit: 100,
         soak_duration: 3600,
         output: Some(bench_output_dir.clone()),
