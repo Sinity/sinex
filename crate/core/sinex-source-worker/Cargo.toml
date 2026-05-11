@@ -67,6 +67,15 @@ workspace = true
 [dependencies.sinex-db]
 path = "../../lib/sinex-db"
 
+[dependencies.async-trait]
+workspace = true
+
+[dependencies.inventory]
+workspace = true
+
+[dependencies.sinex-macros]
+path = "../../lib/sinex-macros"
+
 [dependencies.sinex-node-sdk]
 path = "../../lib/sinex-node-sdk"
 

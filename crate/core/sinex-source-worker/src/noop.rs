@@ -17,9 +17,12 @@ use sinex_primitives::proof::{
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
+use crate::register_node_factory;
 use std::collections::HashMap;
 use std::time::Instant;
 use tokio::sync::watch;
+
+register_node_factory!("noop", NoopSourceUnit);
 
 register_source_unit! {
     SourceUnitDescriptor {

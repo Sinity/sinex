@@ -1118,4 +1118,320 @@ mod tests {
             MaterialAnchor::SqliteRow { table, rowid: 42 } if table == "history"
         ));
     }
+
+    // -----------------------------------------------------------------------
+    // Coverage gaps filled (#1100 substrate hardening)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn timestamp_invalid_with_error_fallback_rejects_record() {
+        let mut spec = minimal_spec();
+        spec.fields.push(FieldSpec {
+            name: "ts".into(),
+            source: FieldSource::JsonPointer { pointer: "/ts".into() },
+            field_type: FieldType::String,
+            required: true,
+            default: None,
+            skip_payload: false,
+            privacy_context: None,
+            occurrence_key: false,
+            timestamp: Some(TimestampSpec {
+                format: TimestampFormat::Rfc3339,
+                fallback: TimestampFallback::Error,
+            }),
+            suppress_if: None,
+        });
+        let result = DeclarativeParser::evaluate(
+            &spec,
+            json_record(r#"{"ts": "not-a-real-date"}"#),
+            &test_ctx(),
+            &BindingConfig::default(),
+        );
+        assert!(matches!(result, Err(ParserError::Field(_))));
+    }
+
+    #[test]
+    fn timestamp_unix_millis_distinguishable_from_seconds() {
+        // Same numeric input under millis vs seconds yields different timestamps.
+        let mut spec = minimal_spec();
+        spec.fields.push(FieldSpec {
+            name: "ts".into(),
+            source: FieldSource::JsonPointer { pointer: "/ts".into() },
+            field_type: FieldType::Integer,
+            required: true,
+            default: None,
+            skip_payload: false,
+            privacy_context: None,
+            occurrence_key: false,
+            timestamp: Some(TimestampSpec {
+                format: TimestampFormat::UnixMillis,
+                fallback: TimestampFallback::Error,
+            }),
+            suppress_if: None,
+        });
+        let intents = DeclarativeParser::evaluate(
+            &spec,
+            // 1_700_000_000_000 ms = 2023-11-14T22:13:20Z
+            json_record(r#"{"ts": 1700000000000}"#),
+            &test_ctx(),
+            &BindingConfig::default(),
+        )
+        .unwrap();
+        assert!(matches!(&intents[0].timing, TimingEvidence::Intrinsic { .. }));
+        let expected = Timestamp::from_unix_timestamp_millis(1_700_000_000_000).unwrap();
+        assert_eq!(intents[0].ts_orig, expected);
+    }
+
+    #[test]
+    fn timestamp_unix_micros_parses() {
+        let mut spec = minimal_spec();
+        spec.fields.push(FieldSpec {
+            name: "ts".into(),
+            source: FieldSource::JsonPointer { pointer: "/ts".into() },
+            field_type: FieldType::Integer,
+            required: true,
+            default: None,
+            skip_payload: false,
+            privacy_context: None,
+            occurrence_key: false,
+            timestamp: Some(TimestampSpec {
+                format: TimestampFormat::UnixMicros,
+                fallback: TimestampFallback::Error,
+            }),
+            suppress_if: None,
+        });
+        let intents = DeclarativeParser::evaluate(
+            &spec,
+            json_record(r#"{"ts": 1700000000000000}"#),
+            &test_ctx(),
+            &BindingConfig::default(),
+        )
+        .unwrap();
+        assert!(matches!(intents[0].timing, TimingEvidence::Intrinsic { .. }));
+    }
+
+    #[test]
+    fn coerce_non_integer_string_errors() {
+        let mut spec = minimal_spec();
+        spec.fields.push(FieldSpec {
+            name: "count".into(),
+            source: FieldSource::JsonPointer { pointer: "/count".into() },
+            field_type: FieldType::Integer,
+            required: true,
+            default: None,
+            skip_payload: false,
+            privacy_context: None,
+            occurrence_key: false,
+            timestamp: None,
+            suppress_if: None,
+        });
+        let result = DeclarativeParser::evaluate(
+            &spec,
+            json_record(r#"{"count": "not-a-number"}"#),
+            &test_ctx(),
+            &BindingConfig::default(),
+        );
+        assert!(matches!(result, Err(ParserError::Field(_))));
+    }
+
+    #[test]
+    fn coerce_float_with_fraction_errors_for_integer() {
+        let mut spec = minimal_spec();
+        spec.fields.push(FieldSpec {
+            name: "n".into(),
+            source: FieldSource::JsonPointer { pointer: "/n".into() },
+            field_type: FieldType::Integer,
+            required: true,
+            default: None,
+            skip_payload: false,
+            privacy_context: None,
+            occurrence_key: false,
+            timestamp: None,
+            suppress_if: None,
+        });
+        // 3.14 must error for FieldType::Integer.
+        let err = DeclarativeParser::evaluate(
+            &spec,
+            json_record(r#"{"n": 3.14}"#),
+            &test_ctx(),
+            &BindingConfig::default(),
+        );
+        assert!(matches!(err, Err(ParserError::Field(_))));
+        // 3.0 must coerce to integer 3.
+        let ok = DeclarativeParser::evaluate(
+            &spec,
+            json_record(r#"{"n": 3.0}"#),
+            &test_ctx(),
+            &BindingConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(ok[0].payload["n"], 3);
+    }
+
+    #[test]
+    fn invalid_utf8_record_errors_with_decode_variant() {
+        let spec = minimal_spec();
+        let record = SourceRecord {
+            material_id: Id::from_uuid(uuid::Uuid::nil()),
+            anchor: MaterialAnchor::ByteRange { start: 0, len: 2 },
+            bytes: vec![0xFF, 0xFE], // not valid UTF-8
+            logical_path: None,
+            source_ts_hint: None,
+            metadata: serde_json::Value::Null,
+        };
+        let result = DeclarativeParser::evaluate(
+            &spec,
+            record,
+            &test_ctx(),
+            &BindingConfig::default(),
+        );
+        assert!(matches!(result, Err(ParserError::Decode(_))));
+    }
+
+    #[test]
+    fn suppress_if_whole_event_without_privacy_context_drops_event() {
+        // Cover the `else if suppressed_by_predicate` branch: no privacy_context
+        // but whole_event = true. Must produce zero intents.
+        let mut spec = minimal_spec();
+        spec.fields.push(FieldSpec {
+            name: "secret".into(),
+            source: FieldSource::JsonPointer { pointer: "/secret".into() },
+            field_type: FieldType::String,
+            required: true,
+            default: None,
+            skip_payload: false,
+            privacy_context: None,
+            occurrence_key: false,
+            timestamp: None,
+            suppress_if: Some(SuppressPredicate {
+                binding_field: "private_mode".into(),
+                whole_event: true,
+            }),
+        });
+        let binding = BindingConfig::new().with_flag("private_mode", true);
+        let intents = DeclarativeParser::evaluate(
+            &spec,
+            json_record(r#"{"secret": "x"}"#),
+            &test_ctx(),
+            &binding,
+        )
+        .unwrap();
+        assert!(intents.is_empty(), "whole_event suppression must yield no intents");
+    }
+
+    #[test]
+    fn mismatched_source_format_returns_field_error() {
+        // TabSeparated input with a JsonPointer source should fail with a clear
+        // "incompatible" error, not silently produce an empty value.
+        let mut spec = minimal_spec();
+        spec.input_format = InputFormat::TabSeparated;
+        spec.fields.push(FieldSpec {
+            name: "f".into(),
+            source: FieldSource::JsonPointer { pointer: "/x".into() },
+            field_type: FieldType::String,
+            required: true,
+            default: None,
+            skip_payload: false,
+            privacy_context: None,
+            occurrence_key: false,
+            timestamp: None,
+            suppress_if: None,
+        });
+        let record = SourceRecord {
+            material_id: Id::from_uuid(uuid::Uuid::nil()),
+            anchor: MaterialAnchor::Line { byte_start: 0, line: 1 },
+            bytes: b"a\tb\tc".to_vec(),
+            logical_path: None,
+            source_ts_hint: None,
+            metadata: serde_json::Value::Null,
+        };
+        let result = DeclarativeParser::evaluate(
+            &spec,
+            record,
+            &test_ctx(),
+            &BindingConfig::default(),
+        );
+        assert!(matches!(result, Err(ParserError::Field(_))));
+    }
+
+    #[test]
+    fn occurrence_key_with_skip_payload_contributes_key_but_not_payload() {
+        let mut spec = minimal_spec();
+        spec.fields.push(FieldSpec {
+            name: "rowid".into(),
+            source: FieldSource::JsonPointer { pointer: "/rowid".into() },
+            field_type: FieldType::Integer,
+            required: true,
+            default: None,
+            skip_payload: true,
+            privacy_context: None,
+            occurrence_key: true,
+            timestamp: None,
+            suppress_if: None,
+        });
+        let intents = DeclarativeParser::evaluate(
+            &spec,
+            json_record(r#"{"rowid": 7}"#),
+            &test_ctx(),
+            &BindingConfig::default(),
+        )
+        .unwrap();
+        assert!(intents[0].payload.get("rowid").is_none());
+        let key = intents[0].occurrence_key.as_ref().expect("occurrence_key");
+        assert_eq!(key.fields, vec![("rowid".into(), "7".into())]);
+    }
+
+    #[test]
+    fn default_value_is_type_coerced_into_payload() {
+        // A string-typed field with a numeric default should arrive in the
+        // payload as a *string*, because coerce_field runs on the default.
+        let mut spec = minimal_spec();
+        spec.fields.push(FieldSpec {
+            name: "label".into(),
+            source: FieldSource::JsonPointer { pointer: "/label".into() },
+            field_type: FieldType::String,
+            required: false,
+            default: Some(serde_json::json!(42)),
+            skip_payload: false,
+            privacy_context: None,
+            occurrence_key: false,
+            timestamp: None,
+            suppress_if: None,
+        });
+        let intents = DeclarativeParser::evaluate(
+            &spec,
+            json_record(r#"{}"#), // label missing
+            &test_ctx(),
+            &BindingConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(intents[0].payload["label"], "42");
+    }
+
+    #[test]
+    fn csv_row_uses_column_name_extraction() {
+        // CsvRow decodes bytes as JSON object; ColumnName extracts by key.
+        let mut spec = minimal_spec();
+        spec.input_format = InputFormat::CsvRow;
+        spec.fields.push(FieldSpec {
+            name: "col".into(),
+            source: FieldSource::ColumnName { name: "col".into() },
+            field_type: FieldType::String,
+            required: true,
+            default: None,
+            skip_payload: false,
+            privacy_context: None,
+            occurrence_key: false,
+            timestamp: None,
+            suppress_if: None,
+        });
+        let intents = DeclarativeParser::evaluate(
+            &spec,
+            json_record(r#"{"col": "val"}"#),
+            &test_ctx(),
+            &BindingConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(intents[0].payload["col"], "val");
+    }
 }

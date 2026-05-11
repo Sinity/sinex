@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Field values are read by the macro-generated evaluator, not directly.
+
 //! End-to-end test of `#[derive(SourceRecord)]` from sinex-macros against
 //! the `DeclarativeParser` evaluator in sinex-node-sdk.
 //!
