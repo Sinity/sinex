@@ -87,9 +87,23 @@ in
           };
         };
       };
-    resourceModule = { defaultMemory, defaultCpu, defaultShutdownSec ? 90, defaultOpenFiles ? null }:
+    resourceModule =
+      { defaultMemory
+      , defaultCpu
+      , defaultShutdownSec ? 90
+      , defaultOpenFiles ? null
+      , defaultCpuWeight ? 10
+      , defaultIoWeight ? 10
+      , defaultIoSchedulingClass ? "idle"
+      , defaultNice ? 10
+      }:
       submodule {
         options = {
+          memoryHigh = mkOption {
+            type = str;
+            default = defaultMemory;
+            description = "systemd MemoryHigh soft memory pressure threshold.";
+          };
           memoryMax = mkOption {
             type = str;
             default = defaultMemory;
@@ -99,6 +113,26 @@ in
             type = str;
             default = defaultCpu;
             description = "systemd CPUQuota limit.";
+          };
+          cpuWeight = mkOption {
+            type = ints.between 1 10000;
+            default = defaultCpuWeight;
+            description = "systemd CPUWeight scheduling weight.";
+          };
+          ioWeight = mkOption {
+            type = ints.between 1 10000;
+            default = defaultIoWeight;
+            description = "systemd IOWeight scheduling weight.";
+          };
+          ioSchedulingClass = mkOption {
+            type = enum [ "idle" "best-effort" "realtime" ];
+            default = defaultIoSchedulingClass;
+            description = "systemd IOSchedulingClass.";
+          };
+          nice = mkOption {
+            type = ints.between (-20) 19;
+            default = defaultNice;
+            description = "systemd Nice value.";
           };
           shutdownTimeoutSec = mkOption {
             type = positive;
