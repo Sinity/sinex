@@ -111,6 +111,33 @@ struct StaleInvocationCandidate {
     invocation_id: i64,
     background_job_id: Option<i64>,
     pid: Option<i64>,
+    /// Seconds since started_at, computed in SQL via julianday() arithmetic.
+    /// `None` if started_at couldn't be parsed.
+    age_secs: Option<f64>,
+}
+
+/// Best-effort zombie reaper: SIGTERM, 2s grace, SIGKILL if still alive.
+///
+/// Used by the open-time sweep to clean up watchdog escapees. Returns Ok(())
+/// on success or if the PID is already dead; returns Err only on system error
+/// (rare — invalid PID, EPERM despite being alive).
+fn try_reap_zombie_pid(pid: i64) -> Result<()> {
+    if !(1..=i64::from(i32::MAX)).contains(&pid) {
+        return Ok(());
+    }
+    let nix_pid = nix::unistd::Pid::from_raw(pid as i32);
+
+    // Send SIGTERM first
+    let _ = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGTERM);
+
+    // Grace period
+    std::thread::sleep(Duration::from_secs(2));
+
+    // SIGKILL if still alive
+    if nix::sys::signal::kill(nix_pid, None).is_ok() {
+        let _ = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGKILL);
+    }
+    Ok(())
 }
 
 impl HistoryIntegrityStamp {
@@ -1686,16 +1713,21 @@ impl HistoryDb {
         Ok(result)
     }
 
-    /// Mark invocations stuck in 'running' for over 10 minutes as 'cancelled'.
+    /// Mark invocations stuck in 'running' for over 10 minutes as 'cancelled',
+    /// and aggressively reap zombies (alive PIDs running past `ZOMBIE_AGE_SECS`).
     ///
     /// Called on `open()` to prevent orphaned invocations from accumulating
     /// when a process crashes before calling `finish_invocation()`.
     ///
-    /// Only rows whose owning process is gone are cancelled here. Legitimate
-    /// long-running background jobs may exceed the stale threshold, so open-time
-    /// cleanup must not fail them just because they are old. The
-    /// `CommandContext` drop guard handles normal completion; this path is the
-    /// crash/orphan safety net.
+    /// Three branches per candidate:
+    /// - **Dead PID**: just mark cancelled (the crash/orphan safety net)
+    /// - **Alive PID past zombie threshold**: SIGTERM → 2s wait → SIGKILL, then
+    ///   mark cancelled. This catches per-job watchdogs that died with their
+    ///   parent (the `std::thread`-based watchdog at `jobs/mod.rs:517` does not
+    ///   survive parent exit). Without this, zombies accumulate indefinitely —
+    ///   the live DB had 81 such rows from invocations running for days.
+    /// - **Alive PID within legitimate window**: leave alone (drop guard handles
+    ///   normal completion)
     fn cleanup_stale_invocations(&self) -> Result<()> {
         if !self.has_stale_invocations()? {
             return Ok(());
@@ -1704,16 +1736,39 @@ impl HistoryDb {
         let stale_candidates = self.stale_invocation_candidates()?;
         let mut cancelled_invocation_ids = Vec::new();
         let mut orphaned_background_job_ids = HashSet::new();
+        let mut reaped_zombies = 0usize;
+
+        // Per-command zombie thresholds (2× the watchdog's documented timeouts).
+        // Anything past these is a zombie that escaped its watchdog.
+        const HARD_CEILING_SECS: f64 = 4.0 * 3600.0; // 4 hours, command-agnostic
 
         for candidate in stale_candidates {
-            if candidate.pid.is_some_and(history_process_is_alive) {
-                continue;
+            let pid_alive = candidate.pid.is_some_and(history_process_is_alive);
+
+            if pid_alive {
+                // PID is still running. Only reap if past the hard ceiling.
+                if candidate.age_secs.unwrap_or(0.0) < HARD_CEILING_SECS {
+                    continue; // legitimate long-running bg job, skip
+                }
+
+                // Zombie: alive but past the hard ceiling. Kill it.
+                if let Some(pid) = candidate.pid {
+                    if try_reap_zombie_pid(pid).is_ok() {
+                        reaped_zombies += 1;
+                    }
+                }
             }
 
             cancelled_invocation_ids.push(candidate.invocation_id);
             if let Some(background_job_id) = candidate.background_job_id {
                 orphaned_background_job_ids.insert(background_job_id);
             }
+        }
+
+        if reaped_zombies > 0 {
+            eprintln!(
+                "ℹ️  Reaped {reaped_zombies} zombie invocation(s) (alive PID running > 4 hours, watchdog never fired — see issue #1211)"
+            );
         }
 
         let cleaned = self.mark_stale_invocations_cancelled(&cancelled_invocation_ids)?;
@@ -1757,7 +1812,8 @@ impl HistoryDb {
                 SELECT
                     i.id,
                     bg.id,
-                    COALESCE(i.pid, bg.pid)
+                    COALESCE(i.pid, bg.pid),
+                    (julianday('now') - julianday(i.started_at)) * 86400.0
                 FROM invocations i
                 LEFT JOIN background_jobs bg
                     ON bg.invocation_id = i.id
@@ -1773,6 +1829,7 @@ impl HistoryDb {
                     invocation_id: row.get(0)?,
                     background_job_id: row.get(1)?,
                     pid: row.get(2)?,
+                    age_secs: row.get(3)?,
                 })
             })
             .context("failed to execute stale invocation candidate query")?;
