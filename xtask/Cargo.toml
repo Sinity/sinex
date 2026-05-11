@@ -98,6 +98,7 @@ futures = "0.3"
 parking_lot = "0.12"
 insta = { workspace = true }
 blake3 = { workspace = true }
+regex = { workspace = true }
 
 # Macros
 xtask-macros = { path = "./macros" }
