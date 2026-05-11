@@ -62,6 +62,7 @@ pub mod health_reporter;
 pub mod heartbeat;
 pub mod ids;
 pub mod ingestion_helpers;
+pub mod material;
 #[cfg(feature = "messaging")]
 pub mod ingestor_node;
 pub mod input_shapes;
@@ -152,6 +153,7 @@ pub use health_reporter::{HealthMetrics, HealthReporter, HealthThresholds};
 #[cfg(feature = "messaging")]
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatLogSink, HeartbeatMetrics};
 pub use ids::{deterministic_event_id, deterministic_material_event_id};
+pub use material::{ObservationMaterializer, RetryableMaterialCapture, StreamMaterialContext, TransientErrorPredicate};
 #[cfg(feature = "messaging")]
 pub use ingestor_node::{IngestorNode, IngestorNodeAdapter, IngestorState};
 pub use input_shapes::{
