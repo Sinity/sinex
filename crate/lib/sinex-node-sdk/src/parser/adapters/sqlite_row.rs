@@ -1,7 +1,4 @@
-//! Input-shape adapter implementations.
-//!
-//! These adapters implement [`InputShapeAdapter`] for common source shapes:
-//! static files, append-only files, and SQLite databases.
+//! Adapter for reading rows from a SQLite database.
 
 use async_trait::async_trait;
 use camino::Utf8Path;
@@ -12,184 +9,7 @@ use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord};
 
-use super::{InputShapeAdapter, ParserError, ParserResult};
-
-// =============================================================================
-// StaticFileAdapter
-// =============================================================================
-
-/// Adapter for a single static file read once.
-///
-/// Yields one [`SourceRecord`] containing the entire file contents.
-/// Suitable for JSON/CSV/XML exports and other one-shot file formats.
-#[derive(Debug, Clone, Default)]
-pub struct StaticFileAdapter;
-
-/// Configuration for [`StaticFileAdapter`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StaticFileConfig {
-    /// Path to the file on disk.
-    pub path: String,
-}
-
-/// Cursor for [`StaticFileAdapter`] — a single boolean indicating
-/// whether the file has been processed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StaticFileCursor {
-    pub processed: bool,
-}
-
-#[async_trait]
-impl InputShapeAdapter for StaticFileAdapter {
-    type Config = StaticFileConfig;
-    type Cursor = StaticFileCursor;
-    const KIND: InputShapeKind = InputShapeKind::StaticFile;
-
-    async fn open(
-        &self,
-        material_id: Id<SourceMaterial>,
-        config: &Self::Config,
-        cursor: Option<Self::Cursor>,
-    ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
-        if cursor.map_or(false, |c| c.processed) {
-            return Ok(stream::empty().boxed());
-        }
-
-        let path = config.path.clone();
-
-        let bytes = std::fs::read(&path)?;
-
-        let len = bytes.len() as u64;
-        let record = SourceRecord {
-            material_id,
-            anchor: MaterialAnchor::ByteRange { start: 0, len },
-            bytes,
-            logical_path: Some(Utf8Path::new(&path).to_owned().into()),
-            source_ts_hint: None,
-            metadata: serde_json::Value::Null,
-        };
-
-        Ok(stream::once(async move { Ok(record) }).boxed())
-    }
-
-    fn cursor_after(&self, _record: &SourceRecord) -> ParserResult<Self::Cursor> {
-        Ok(StaticFileCursor { processed: true })
-    }
-}
-
-// =============================================================================
-// AppendOnlyFileAdapter
-// =============================================================================
-
-/// Adapter for a file that grows by appending lines.
-///
-/// Yields one [`SourceRecord`] per line.
-/// Supports resumption via line-number cursor.
-#[derive(Debug, Clone, Default)]
-pub struct AppendOnlyFileAdapter;
-
-/// Configuration for [`AppendOnlyFileAdapter`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppendOnlyFileConfig {
-    /// Path to the file on disk.
-    pub path: String,
-
-    /// If true, skip empty lines.
-    #[serde(default)]
-    pub skip_empty: bool,
-}
-
-/// Cursor for [`AppendOnlyFileAdapter`] — tracks the last-read line number
-/// and byte offset.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AppendOnlyCursor {
-    pub last_line: u64,
-    pub last_byte_offset: u64,
-}
-
-impl AppendOnlyCursor {
-    #[must_use]
-    pub const fn start() -> Self {
-        Self {
-            last_line: 0,
-            last_byte_offset: 0,
-        }
-    }
-}
-
-#[async_trait]
-impl InputShapeAdapter for AppendOnlyFileAdapter {
-    type Config = AppendOnlyFileConfig;
-    type Cursor = AppendOnlyCursor;
-    const KIND: InputShapeKind = InputShapeKind::AppendOnlyFile;
-
-    async fn open(
-        &self,
-        material_id: Id<SourceMaterial>,
-        config: &Self::Config,
-        cursor: Option<Self::Cursor>,
-    ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
-        let path = config.path.clone();
-        let skip_empty = config.skip_empty;
-        let start_offset = cursor.as_ref().map_or(0, |c| c.last_byte_offset);
-        let start_line = cursor.as_ref().map_or(1, |c| c.last_line + 1);
-
-        let content = std::fs::read_to_string(&path)?;
-
-        let mut records = Vec::new();
-        let mut line_num: u64 = 0;
-        let mut byte_offset: u64 = 0;
-
-        for line in content.lines() {
-            line_num += 1;
-            let line_bytes = line.as_bytes().to_vec();
-            let line_len = line_bytes.len() as u64;
-
-            if line_num < start_line {
-                byte_offset += line_len + 1; // +1 for newline
-                continue;
-            }
-
-            if byte_offset < start_offset {
-                byte_offset += line_len + 1;
-                continue;
-            }
-
-            if skip_empty && line.is_empty() {
-                byte_offset += line_len + 1;
-                continue;
-            }
-
-            records.push(SourceRecord {
-                material_id,
-                anchor: MaterialAnchor::Line {
-                    byte_start: byte_offset,
-                    line: line_num,
-                },
-                bytes: line_bytes,
-                logical_path: Some(Utf8Path::new(&path).to_owned().into()),
-                source_ts_hint: None,
-                metadata: serde_json::Value::Null,
-            });
-
-            byte_offset += line_len + 1;
-        }
-
-        Ok(stream::iter(records.into_iter().map(Ok)).boxed())
-    }
-
-    fn cursor_after(&self, record: &SourceRecord) -> ParserResult<Self::Cursor> {
-        match &record.anchor {
-            MaterialAnchor::Line { byte_start, line } => Ok(AppendOnlyCursor {
-                last_line: *line,
-                last_byte_offset: *byte_start,
-            }),
-            other => Err(ParserError::Cursor(format!(
-                "expected Line anchor, got {other:?}"
-            ))),
-        }
-    }
-}
+use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
 
 // =============================================================================
 // SqliteRowAdapter
@@ -348,8 +168,7 @@ impl InputShapeAdapter for SqliteRowAdapter {
             Ok(rows)
         };
 
-        // Drop statement and connection explicitly before we build records
-        // (the path is already cloned into `path` above).
+        // Drop statement and connection explicitly before we build records.
         drop(stmt);
         drop(connection);
 
@@ -395,7 +214,7 @@ impl InputShapeAdapter for SqliteRowAdapter {
 // =============================================================================
 
 /// Convert a rusqlite Row to a JSON object using column names.
-fn row_to_json(
+pub(crate) fn row_to_json(
     row: &rusqlite::Row<'_>,
     column_names: &[String],
 ) -> serde_json::Value {
@@ -415,4 +234,150 @@ fn row_to_json(
         map.insert(name.clone(), json_val);
     }
     serde_json::Value::Object(map)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+
+    fn dummy_material_id() -> Id<SourceMaterial> {
+        Id::from_uuid(uuid::Uuid::new_v4())
+    }
+
+    fn make_test_db() -> NamedTempFile {
+        let f = NamedTempFile::with_suffix(".db").unwrap();
+        let conn = rusqlite::Connection::open(f.path()).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, value REAL);
+             INSERT INTO items (id, name, value) VALUES (1, 'alpha', 1.5);
+             INSERT INTO items (id, name, value) VALUES (2, 'beta', 2.5);
+             INSERT INTO items (id, name, value) VALUES (3, 'gamma', 3.5);",
+        )
+        .unwrap();
+        f
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_yields_one_record_per_row() {
+        let db = make_test_db();
+        let adapter = SqliteRowAdapter::new(db.path().to_str().unwrap());
+        let config = SqliteRowConfig {
+            query: "SELECT rowid, * FROM items".into(),
+            table: "items".into(),
+            rowid_column: "rowid".into(),
+        };
+
+        let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let records: Vec<_> = stream.collect().await;
+
+        assert_eq!(records.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_cursor_resumes_after_rowid() {
+        let db = make_test_db();
+        let adapter = SqliteRowAdapter::new(db.path().to_str().unwrap());
+        let config = SqliteRowConfig {
+            query: "SELECT rowid, * FROM items".into(),
+            table: "items".into(),
+            rowid_column: "rowid".into(),
+        };
+
+        let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let records: Vec<_> = stream.collect().await;
+        let cursor_after_row1 = adapter.cursor_after(records[0].as_ref().unwrap()).unwrap();
+
+        let stream2 = adapter
+            .open(dummy_material_id(), &config, Some(cursor_after_row1))
+            .await
+            .unwrap();
+        let records2: Vec<_> = stream2.collect().await;
+
+        assert_eq!(records2.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_anchor_contains_table_name() {
+        let db = make_test_db();
+        let adapter = SqliteRowAdapter::new(db.path().to_str().unwrap());
+        let config = SqliteRowConfig {
+            query: "SELECT rowid, * FROM items".into(),
+            table: "items".into(),
+            rowid_column: "rowid".into(),
+        };
+
+        let mut stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let record = stream.next().await.unwrap().unwrap();
+
+        assert!(matches!(&record.anchor, MaterialAnchor::SqliteRow { table, .. } if table == "items"));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_cursor_after_wrong_anchor_errors() {
+        let db = make_test_db();
+        let adapter = SqliteRowAdapter::new(db.path().to_str().unwrap());
+        let record = SourceRecord {
+            material_id: dummy_material_id(),
+            anchor: MaterialAnchor::ByteRange { start: 0, len: 5 },
+            bytes: b"x".to_vec(),
+            logical_path: None,
+            source_ts_hint: None,
+            metadata: serde_json::Value::Null,
+        };
+        assert!(adapter.cursor_after(&record).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_missing_db_returns_error() {
+        let adapter = SqliteRowAdapter::new("/nonexistent/path.db");
+        let config = SqliteRowConfig {
+            query: "SELECT rowid, * FROM items".into(),
+            table: "items".into(),
+            rowid_column: "rowid".into(),
+        };
+        assert!(adapter.open(dummy_material_id(), &config, None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_row_json_has_column_keys() {
+        let db = make_test_db();
+        let adapter = SqliteRowAdapter::new(db.path().to_str().unwrap());
+        let config = SqliteRowConfig {
+            query: "SELECT rowid, * FROM items".into(),
+            table: "items".into(),
+            rowid_column: "rowid".into(),
+        };
+
+        let mut stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let record = stream.next().await.unwrap().unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&record.bytes).unwrap();
+
+        assert!(json.get("name").is_some());
+        assert!(json.get("value").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_monotonic_cursor() {
+        let db = make_test_db();
+        let adapter = SqliteRowAdapter::new(db.path().to_str().unwrap());
+        let config = SqliteRowConfig {
+            query: "SELECT rowid, * FROM items".into(),
+            table: "items".into(),
+            rowid_column: "rowid".into(),
+        };
+
+        let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let records: Vec<_> = stream.collect().await;
+
+        let cursors: Vec<SqliteRowCursor> = records
+            .iter()
+            .map(|r| adapter.cursor_after(r.as_ref().unwrap()).unwrap())
+            .collect();
+
+        // Cursors must be strictly increasing (monotonic).
+        for w in cursors.windows(2) {
+            assert!(w[0].last_rowid < w[1].last_rowid);
+        }
+    }
 }

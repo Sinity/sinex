@@ -23,8 +23,19 @@ mod fixture;
 mod weechat;
 
 pub use adapters::{
-    AppendOnlyCursor, AppendOnlyFileAdapter, AppendOnlyFileConfig, SqliteRowAdapter,
-    SqliteRowConfig, SqliteRowCursor, StaticFileAdapter, StaticFileConfig, StaticFileCursor,
+    // Existing adapters.
+    AppendOnlyCursor, AppendOnlyFileAdapter, AppendOnlyFileConfig,
+    SqliteRowAdapter, SqliteRowConfig, SqliteRowCursor,
+    StaticFileAdapter, StaticFileConfig, StaticFileCursor,
+    // New adapters — Phase 1B.
+    ArboardBackend, ClipboardBackend, ClipboardPollingAdapter, ClipboardPollingConfig,
+    ClipboardPollingCursor, MockClipboardBackend,
+    DbusBus, DbusBackend, DbusMessage, DbusStreamAdapter, DbusStreamConfig, DbusStreamCursor,
+    MockDbusBackend,
+    FileDropAdapter, FileDropConfig, FileDropCursor, FileDropEventKind,
+    JournalctlCursor, JournalctlStreamAdapter, JournalctlStreamConfig,
+    records_from_journal_lines,
+    UnixSocketStreamAdapter, UnixSocketStreamConfig, UnixSocketStreamCursor,
 };
 pub use fingerprint::{DriftAccumulator, DriftEvent, SourceRecordFingerprint};
 pub use fixture::{
