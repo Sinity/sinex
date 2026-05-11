@@ -140,7 +140,7 @@ fn run_reaper_grandchild(args: ReapCommand) {
     }
 
     // PID reuse guard: confirm it still looks like a cargo/xtask process.
-    if !pid_is_expected_process(args.target_pid) {
+    if !crate::process::is_xtask_pid(args.target_pid) {
         return;
     }
 
@@ -149,7 +149,9 @@ fn run_reaper_grandchild(args: ReapCommand) {
 
     // 2-second grace period, then SIGKILL if still alive.
     std::thread::sleep(Duration::from_secs(2));
-    if nix::sys::signal::kill(nix_pid, None).is_ok() && pid_is_expected_process(args.target_pid) {
+    if nix::sys::signal::kill(nix_pid, None).is_ok()
+        && crate::process::is_xtask_pid(args.target_pid)
+    {
         let _ = send_job_signal(nix_pid, nix::sys::signal::Signal::SIGKILL);
     }
 
@@ -181,20 +183,6 @@ fn run_reaper_grandchild(args: ReapCommand) {
             // The open-time sweep (a158ae44b) will clean this up on the next
             // xtask invocation.
         }
-    }
-}
-
-/// Returns true if the process at `pid` still looks like a cargo/xtask job.
-/// Mirrors `pid_is_expected_process` in `jobs/mod.rs`; duplicated here because
-/// the reaper is a separate module with no access to that private fn.
-fn pid_is_expected_process(pid: u32) -> bool {
-    let cmdline_path = format!("/proc/{pid}/cmdline");
-    match std::fs::read(&cmdline_path) {
-        Ok(bytes) => {
-            let cmdline = String::from_utf8_lossy(&bytes);
-            cmdline.contains("cargo") || cmdline.contains("xtask")
-        }
-        Err(_) => true, // conservatively assume ours if /proc unavailable
     }
 }
 
@@ -302,25 +290,25 @@ mod tests {
         Ok(())
     }
 
-    /// `pid_is_expected_process` returns true for the current process (xtask/cargo).
+    /// `is_xtask_pid` returns true for the current process (xtask/cargo).
     #[sinex_test]
-    async fn pid_is_expected_process_recognises_self() -> TestResult<()> {
+    async fn is_xtask_pid_recognises_self() -> TestResult<()> {
         let my_pid = std::process::id();
         // The current process is xtask (or cargo-nextest during testing).
         // Either way it should pass the cargo/xtask heuristic.
         // We just check it doesn't panic; the boolean depends on the runner name.
-        let _ = pid_is_expected_process(my_pid);
+        let _ = crate::process::is_xtask_pid(my_pid);
         Ok(())
     }
 
-    /// `pid_is_expected_process` returns true for an obviously invalid PID
+    /// `is_xtask_pid` returns true for an obviously invalid PID
     /// (conservative fallback when /proc entry is absent).
     #[sinex_test]
-    async fn pid_is_expected_process_conservative_on_missing_pid() -> TestResult<()> {
+    async fn is_xtask_pid_conservative_on_missing_pid() -> TestResult<()> {
         // PID 0 is never a valid user process; /proc/0/cmdline won't exist.
         // The function should return true (conservative, don't skip kill).
         assert!(
-            pid_is_expected_process(0),
+            crate::process::is_xtask_pid(0),
             "missing /proc entry should conservatively return true"
         );
         Ok(())
