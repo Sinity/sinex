@@ -99,11 +99,19 @@ pub struct JetStreamConsumer {
     topology: JetStreamTopology,
     ack_wait: Duration,
     max_ack_pending: i64,
+    #[cfg(any(test, feature = "testing"))]
     confirmation_failures_remaining: Option<Arc<AtomicUsize>>,
     confirmation_semaphore: Arc<tokio::sync::Semaphore>,
+    #[cfg(any(test, feature = "testing"))]
     processing_delay: Option<Duration>,
+    #[cfg(any(test, feature = "testing"))]
     delivery_observer: Option<Arc<AtomicU64>>,
     stats: ConsumerStats,
+    /// Test-only: when true, persistence errors are routed to DLQ instead of NAK'd.
+    /// Production always uses the NAK path; this field is initialized to `false` and
+    /// only mutated by `with_test_hooks`. Left as a primitive (not cfg-gated) because
+    /// the read sites are in hot persistence-error paths and threading cfg around them
+    /// would add more noise than the 1 byte of struct memory it would save.
     route_db_errors_to_dlq: bool,
     batch_fetch_max_messages: usize,
     batch_fetch_timeout: Duration,
@@ -427,11 +435,14 @@ impl JetStreamConsumer {
             topology,
             ack_wait: Duration::from_secs(30),
             max_ack_pending: DEFAULT_MAX_ACK_PENDING,
+            #[cfg(any(test, feature = "testing"))]
             confirmation_failures_remaining: None,
             confirmation_semaphore: Arc::new(tokio::sync::Semaphore::new(
                 CONFIRM_PUBLISH_CONCURRENCY,
             )),
+            #[cfg(any(test, feature = "testing"))]
             processing_delay: None,
+            #[cfg(any(test, feature = "testing"))]
             delivery_observer: None,
             stats: ConsumerStats::default(),
             route_db_errors_to_dlq: false,
@@ -532,10 +543,9 @@ impl JetStreamConsumer {
 
     /// Build a consumer with optional test-only hooks.
     ///
-    /// This constructor is intended only for tests and fault-injection harnesses.
-    /// It exposes injection points for fail-once flags, processing delays, and
-    /// delivery observers that have no production path.
-    #[doc(hidden)]
+    /// Only compiled when the `testing` feature is enabled (always on for `cfg(test)`).
+    /// Production builds do not carry this constructor or the fields it sets.
+    #[cfg(any(test, feature = "testing"))]
     pub fn with_test_hooks(
         nats_client: NatsClient,
         pool: DbPool,
@@ -958,6 +968,7 @@ impl JetStreamConsumer {
         .await
         .map_err(|e| SinexError::network("Failed to fetch messages").with_source(e))?;
         for msg in messages {
+            #[cfg(any(test, feature = "testing"))]
             if let Some(counter) = &self.delivery_observer {
                 counter.fetch_add(1, Ordering::Relaxed);
             }
@@ -1168,6 +1179,7 @@ impl JetStreamConsumer {
                         .copied()
                         .filter(|prepared| tombstoned_ids.contains(&prepared.parsed_id))
                         .collect();
+                    #[cfg(any(test, feature = "testing"))]
                     if let Some(delay) = self.processing_delay {
                         tokio::time::sleep(delay).await;
                     }
@@ -1913,6 +1925,7 @@ impl JetStreamConsumer {
 
     /// Publish confirmation to NATS
     async fn publish_confirmation(&self, event_id: &Uuid) -> IngestdResult<()> {
+        #[cfg(any(test, feature = "testing"))]
         if let Some(failures) = &self.confirmation_failures_remaining
             && failures.load(Ordering::SeqCst) > 0
         {
