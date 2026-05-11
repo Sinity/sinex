@@ -54,20 +54,23 @@ impl Default for ObservationMaterializerConfig {
 
 /// Serialized batch ready for flush.
 #[derive(Debug)]
-pub(crate) struct SerializedBatch {
+pub struct SerializedBatch {
     /// JSON Lines content (one record per line, newline-terminated)
     pub data: Vec<u8>,
     /// Number of records in this batch
     pub record_count: usize,
 }
 
+/// Future returned by a [`FlushCallback`]. Pinned, boxed, `Send + 'static` so
+/// async-block return values from `Box::pin(async move {...})` coerce cleanly.
+pub type FlushFuture =
+    std::pin::Pin<Box<dyn std::future::Future<Output = NodeResult<()>> + Send + 'static>>;
+
 /// Callback invoked when a batch is ready to flush.
 ///
 /// Receives the serialized JSON Lines data and record count.
 /// Implementers are responsible for staging the data as material.
-pub type FlushCallback = dyn Fn(SerializedBatch) -> std::pin::Pin<Box<dyn std::future::Future<Output = NodeResult<()>> + Send>>
-    + Send
-    + Sync;
+pub type FlushCallback = dyn Fn(SerializedBatch) -> FlushFuture + Send + Sync + 'static;
 
 /// Buffered materializer for metadata-only observations.
 ///
@@ -252,14 +255,14 @@ mod tests {
         let flush_count = StdArc::new(AtomicUsize::new(0));
         let flush_count_clone = flush_count.clone();
 
-        let on_flush: Arc<FlushCallback> = Arc::new(Box::new(move |batch| {
+        let on_flush: Arc<FlushCallback> = Arc::new(move |batch: SerializedBatch| -> FlushFuture {
             let fc = flush_count_clone.clone();
             Box::pin(async move {
                 fc.fetch_add(1, Ordering::SeqCst);
                 assert!(!batch.data.is_empty());
                 Ok(())
             })
-        }));
+        });
 
         let config = ObservationMaterializerConfig {
             batch_coalesce_window_ms: 1000,
@@ -287,13 +290,13 @@ mod tests {
         let flush_count = StdArc::new(AtomicUsize::new(0));
         let flush_count_clone = flush_count.clone();
 
-        let on_flush: Arc<FlushCallback> = Arc::new(Box::new(move |_batch| {
+        let on_flush: Arc<FlushCallback> = Arc::new(move |_batch: SerializedBatch| -> FlushFuture {
             let fc = flush_count_clone.clone();
             Box::pin(async move {
                 fc.fetch_add(1, Ordering::SeqCst);
                 Ok(())
             })
-        }));
+        });
 
         let config = ObservationMaterializerConfig {
             batch_coalesce_window_ms: 50,
@@ -321,13 +324,13 @@ mod tests {
         let flush_count = StdArc::new(AtomicUsize::new(0));
         let flush_count_clone = flush_count.clone();
 
-        let on_flush: Arc<FlushCallback> = Arc::new(Box::new(move |_batch| {
+        let on_flush: Arc<FlushCallback> = Arc::new(move |_batch: SerializedBatch| -> FlushFuture {
             let fc = flush_count_clone.clone();
             Box::pin(async move {
                 fc.fetch_add(1, Ordering::SeqCst);
                 Ok(())
             })
-        }));
+        });
 
         let config = ObservationMaterializerConfig {
             batch_coalesce_window_ms: 50,
@@ -349,13 +352,13 @@ mod tests {
         let flush_count = StdArc::new(AtomicUsize::new(0));
         let flush_count_clone = flush_count.clone();
 
-        let on_flush: Arc<FlushCallback> = Arc::new(Box::new(move |_batch| {
+        let on_flush: Arc<FlushCallback> = Arc::new(move |_batch: SerializedBatch| -> FlushFuture {
             let fc = flush_count_clone.clone();
             Box::pin(async move {
                 fc.fetch_add(1, Ordering::SeqCst);
                 Ok(())
             })
-        }));
+        });
 
         let config = ObservationMaterializerConfig {
             batch_coalesce_window_ms: 1000,
@@ -386,13 +389,13 @@ mod tests {
         let flush_count = StdArc::new(AtomicUsize::new(0));
         let flush_count_clone = flush_count.clone();
 
-        let on_flush: Arc<FlushCallback> = Arc::new(Box::new(move |_batch| {
+        let on_flush: Arc<FlushCallback> = Arc::new(move |_batch: SerializedBatch| -> FlushFuture {
             let fc = flush_count_clone.clone();
             Box::pin(async move {
                 fc.fetch_add(1, Ordering::SeqCst);
                 Ok(())
             })
-        }));
+        });
 
         let config = ObservationMaterializerConfig::default();
         let mut mat = ObservationMaterializer::<TestRecord>::with_callback(config, on_flush);
@@ -413,7 +416,7 @@ mod tests {
         let flush_count_clone = flush_count.clone();
         let total_records_clone = total_records.clone();
 
-        let on_flush: Arc<FlushCallback> = Arc::new(Box::new(move |batch| {
+        let on_flush: Arc<FlushCallback> = Arc::new(move |batch: SerializedBatch| -> FlushFuture {
             let fc = flush_count_clone.clone();
             let tr = total_records_clone.clone();
             Box::pin(async move {
@@ -421,7 +424,7 @@ mod tests {
                 tr.fetch_add(batch.record_count, Ordering::SeqCst);
                 Ok(())
             })
-        }));
+        });
 
         let config = ObservationMaterializerConfig {
             batch_coalesce_window_ms: 50,

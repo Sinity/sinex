@@ -167,12 +167,16 @@ impl<P: TransientErrorPredicate> RetryableMaterialCapture<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
-    use std::rc::Rc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Instant;
 
+    // Note: tests use Arc<AtomicUsize> not Rc<RefCell> because the predicate
+    // crosses an .await point inside RetryableMaterialCapture::run, requiring
+    // Send.
     #[derive(Clone)]
     struct CountingPredicate {
-        transient_count: Rc<RefCell<usize>>,
+        transient_count: Arc<AtomicUsize>,
     }
 
     impl TransientErrorPredicate for CountingPredicate {
@@ -181,32 +185,40 @@ mod tests {
         }
     }
 
+    fn count() -> Arc<AtomicUsize> {
+        Arc::new(AtomicUsize::new(0))
+    }
+
     #[tokio::test]
     async fn test_succeeds_on_first_attempt() {
         let retry = RetryableMaterialCapture::new();
-        let mut attempts = 0;
+        let attempts = count();
+        let attempts_clone = attempts.clone();
         let result = retry
-            .run(|| {
-                Box::pin(async {
-                    attempts += 1;
+            .run(move || {
+                let a = attempts_clone.clone();
+                Box::pin(async move {
+                    a.fetch_add(1, Ordering::SeqCst);
                     Ok::<i32, SinexError>(42)
                 })
             })
             .await;
 
         assert!(result.is_ok());
-        assert_eq!(attempts, 1);
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
     async fn test_retries_on_transient_and_succeeds() {
         let retry = RetryableMaterialCapture::new().with_max_attempts(3);
-        let mut attempts = 0;
+        let attempts = count();
+        let attempts_clone = attempts.clone();
         let result = retry
-            .run(|| {
-                Box::pin(async {
-                    attempts += 1;
-                    if attempts < 2 {
+            .run(move || {
+                let a = attempts_clone.clone();
+                Box::pin(async move {
+                    let n = a.fetch_add(1, Ordering::SeqCst) + 1;
+                    if n < 2 {
                         let err = SinexError::io("test error").with_context("transient", "true");
                         Err(err)
                     } else {
@@ -217,17 +229,19 @@ mod tests {
             .await;
 
         assert!(result.is_ok());
-        assert_eq!(attempts, 2);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
     async fn test_retries_exhaustion() {
         let retry = RetryableMaterialCapture::new().with_max_attempts(2);
-        let mut attempts = 0;
+        let attempts = count();
+        let attempts_clone = attempts.clone();
         let result = retry
-            .run(|| {
-                Box::pin(async {
-                    attempts += 1;
+            .run(move || {
+                let a = attempts_clone.clone();
+                Box::pin(async move {
+                    a.fetch_add(1, Ordering::SeqCst);
                     let err = SinexError::io("persistent error").with_context("transient", "true");
                     Err::<i32, _>(err)
                 })
@@ -235,17 +249,19 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert_eq!(attempts, 2); // Two attempts before exhaustion
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
     async fn test_permanent_error_fails_immediately() {
         let retry = RetryableMaterialCapture::new().with_max_attempts(3);
-        let mut attempts = 0;
+        let attempts = count();
+        let attempts_clone = attempts.clone();
         let result = retry
-            .run(|| {
-                Box::pin(async {
-                    attempts += 1;
+            .run(move || {
+                let a = attempts_clone.clone();
+                Box::pin(async move {
+                    a.fetch_add(1, Ordering::SeqCst);
                     let err = SinexError::io("permanent error")
                         .with_context("transient", "false");
                     Err::<i32, _>(err)
@@ -254,26 +270,24 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert_eq!(attempts, 1); // Only one attempt for permanent error
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
     async fn test_backoff_increases_exponentially() {
-        use std::time::Instant;
-
         let retry = RetryableMaterialCapture::new()
             .with_max_attempts(3)
             .with_base_delay_ms(10);
 
-        let mut attempts = 0;
-        let mut last_delay_ms = 0u64;
-
+        let attempts = count();
+        let attempts_clone = attempts.clone();
         let start = Instant::now();
         let result = retry
-            .run(|| {
-                Box::pin(async {
-                    attempts += 1;
-                    if attempts < 3 {
+            .run(move || {
+                let a = attempts_clone.clone();
+                Box::pin(async move {
+                    let n = a.fetch_add(1, Ordering::SeqCst) + 1;
+                    if n < 3 {
                         let err =
                             SinexError::io("test error").with_context("transient", "true");
                         Err(err)
@@ -285,28 +299,28 @@ mod tests {
             .await;
 
         let elapsed = start.elapsed().as_millis() as u64;
-
         assert!(result.is_ok());
-        // Should have spent ~10ms (first) + ~20ms (second retry) = ~30ms minimum
-        // Allow some variance, but should be at least 20ms
+        // ~10ms + ~20ms ≥ 20ms total
         assert!(elapsed >= 20, "elapsed: {}ms", elapsed);
     }
 
     #[tokio::test]
     async fn test_custom_predicate() {
         let predicate = CountingPredicate {
-            transient_count: Rc::new(RefCell::new(0)),
+            transient_count: Arc::new(AtomicUsize::new(0)),
         };
         let retry = RetryableMaterialCapture::new()
             .with_max_attempts(2)
             .with_predicate(predicate);
 
-        let mut attempts = 0;
+        let attempts = count();
+        let attempts_clone = attempts.clone();
         let result = retry
-            .run(|| {
-                Box::pin(async {
-                    attempts += 1;
-                    if attempts < 2 {
+            .run(move || {
+                let a = attempts_clone.clone();
+                Box::pin(async move {
+                    let n = a.fetch_add(1, Ordering::SeqCst) + 1;
+                    if n < 2 {
                         let err = SinexError::io("test error").with_context("transient", "true");
                         Err(err)
                     } else {
@@ -317,17 +331,19 @@ mod tests {
             .await;
 
         assert!(result.is_ok());
-        assert_eq!(attempts, 2);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
     async fn test_max_attempts_one() {
         let retry = RetryableMaterialCapture::new().with_max_attempts(1);
-        let mut attempts = 0;
+        let attempts = count();
+        let attempts_clone = attempts.clone();
         let result = retry
-            .run(|| {
-                Box::pin(async {
-                    attempts += 1;
+            .run(move || {
+                let a = attempts_clone.clone();
+                Box::pin(async move {
+                    a.fetch_add(1, Ordering::SeqCst);
                     let err = SinexError::io("error").with_context("transient", "true");
                     Err::<i32, _>(err)
                 })
@@ -335,7 +351,7 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert_eq!(attempts, 1);
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -344,15 +360,16 @@ mod tests {
             .with_max_attempts(20)
             .with_base_delay_ms(1);
 
-        // Simulate max exponent saturation at 10 (1024x)
-        let mut attempts = 0;
+        let attempts = count();
+        let attempts_clone = attempts.clone();
         let start = Instant::now();
 
         let result = retry
-            .run(|| {
-                Box::pin(async {
-                    attempts += 1;
-                    if attempts <= 12 {
+            .run(move || {
+                let a = attempts_clone.clone();
+                Box::pin(async move {
+                    let n = a.fetch_add(1, Ordering::SeqCst) + 1;
+                    if n <= 12 {
                         let err = SinexError::io("error").with_context("transient", "true");
                         Err(err)
                     } else {
@@ -364,8 +381,7 @@ mod tests {
 
         let elapsed = start.elapsed().as_millis() as u64;
         assert!(result.is_ok());
-        // Delays: 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 1024
-        // Total ≈ 3073ms, but we cap at 1024 after exponent 10
+        // Delays cap at base_delay_ms * 2^10 = 1024ms after exponent 10.
         assert!(elapsed >= 1000, "elapsed: {}ms", elapsed);
     }
 }
