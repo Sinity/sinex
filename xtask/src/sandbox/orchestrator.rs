@@ -120,7 +120,7 @@ pub(crate) fn read_ingestd_debug_log(path: &std::path::Path) -> Result<Option<St
     }
 }
 
-fn ingestd_notify_socket_path() -> Result<PathBuf> {
+fn notify_socket_path(prefix: &str) -> Result<PathBuf> {
     let base = PathBuf::from("/tmp");
     std::fs::create_dir_all(&base)
         .wrap_err_with(|| format!("failed to create notify socket dir '{}'", base.display()))?;
@@ -128,10 +128,14 @@ fn ingestd_notify_socket_path() -> Result<PathBuf> {
         .duration_since(UNIX_EPOCH)
         .map_err(|err| eyre!("system clock is before UNIX_EPOCH: {err}"))?
         .as_nanos();
-    Ok(base.join(format!("sx-in-{}-{timestamp}.sock", std::process::id())))
+    Ok(base.join(format!(
+        "sx-{prefix}-{}-{timestamp}.sock",
+        std::process::id()
+    )))
 }
 
-async fn wait_for_ingestd_ready_notify(
+async fn wait_for_ready_notify(
+    process_name: &str,
     listener: &UnixDatagram,
     child: &mut tokio::process::Child,
     timeout_duration: Duration,
@@ -142,14 +146,14 @@ async fn wait_for_ingestd_ready_notify(
     loop {
         if let Some(status) = child.try_wait()? {
             return Err(eyre!(
-                "sinex-ingestd exited before READY=1 notification (status: {status})"
+                "{process_name} exited before READY=1 notification (status: {status})"
             ));
         }
 
         let now = tokio::time::Instant::now();
         if now >= deadline {
             return Err(eyre!(
-                "sinex-ingestd did not send READY=1 within {timeout_duration:?}"
+                "{process_name} did not send READY=1 within {timeout_duration:?}"
             ));
         }
 
@@ -158,7 +162,7 @@ async fn wait_for_ingestd_ready_notify(
         match tokio::time::timeout(poll_window, listener.recv(&mut buf)).await {
             Ok(Ok(len)) => {
                 let message = std::str::from_utf8(&buf[..len])
-                    .wrap_err("sinex-ingestd sent non-UTF-8 sd_notify payload")?;
+                    .wrap_err_with(|| format!("{process_name} sent non-UTF-8 sd_notify payload"))?;
                 if message.lines().any(|line| line == "READY=1") {
                     return Ok(());
                 }
@@ -292,7 +296,7 @@ pub fn allocate_free_port() -> Result<std::net::SocketAddr> {
 /// Spawn a gateway instance for use in integration tests.
 ///
 /// The gateway binary must be pre-built. When `wait_ready` is true (default),
-/// this polls the TCP port until the gateway accepts connections before returning.
+/// this waits for the gateway's `sd_notify(READY=1)` signal before returning.
 pub async fn start_test_gateway(config: TestGatewayConfig) -> Result<TestGatewayHandle> {
     start_test_gateway_inner(config, true).await
 }
@@ -315,6 +319,10 @@ async fn start_test_gateway_inner(
     };
 
     let listen_str = actual_addr.to_string();
+    let notify_socket_path = notify_socket_path("gw")?;
+    let _ = std::fs::remove_file(&notify_socket_path);
+    let notify_listener = UnixDatagram::bind(&notify_socket_path)
+        .wrap_err_with(|| format!("failed to bind {}", notify_socket_path.display()))?;
 
     let mut cmd = tokio::process::Command::new(&binary_path);
     crate::process::configure_managed_child_tokio(&mut cmd);
@@ -332,7 +340,8 @@ async fn start_test_gateway_inner(
         // Clear mTLS client CA so the subprocess doesn't inherit it from the
         // parent environment (NixOS, other tests) and unexpectedly require
         // client certificates.
-        .env_remove("SINEX_GATEWAY_TLS_CLIENT_CA");
+        .env_remove("SINEX_GATEWAY_TLS_CLIENT_CA")
+        .env("NOTIFY_SOCKET", &notify_socket_path);
     if config.rpc_rate_limit_disabled {
         cmd.env("SINEX_RPC_RATE_LIMIT_ENABLED", "false");
     }
@@ -351,7 +360,16 @@ async fn start_test_gateway_inner(
         child,
     };
 
-    if wait_ready && let Err(e) = wait_for_gateway_tcp(&actual_addr).await {
+    if wait_ready
+        && let Err(e) = wait_for_ready_notify(
+            "sinex-gateway",
+            &notify_listener,
+            &mut handle.child,
+            Duration::from_secs(Timeouts::STANDARD),
+        )
+        .await
+    {
+        let _ = std::fs::remove_file(&notify_socket_path);
         if let Err(stop_error) = handle.stop().await {
             return Err(e).wrap_err(format!(
                 "Gateway failed to become ready and cleanup failed: {stop_error:#}"
@@ -359,27 +377,9 @@ async fn start_test_gateway_inner(
         }
         return Err(e).wrap_err("Gateway failed to become ready");
     }
+    let _ = std::fs::remove_file(&notify_socket_path);
 
     Ok(handle)
-}
-
-/// Poll until the gateway's TCP socket accepts connections.
-async fn wait_for_gateway_tcp(addr: &std::net::SocketAddr) -> Result<()> {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-    loop {
-        match tokio::net::TcpStream::connect(addr).await {
-            Ok(_) => return Ok(()),
-            Err(_) if tokio::time::Instant::now() < deadline => {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-            Err(e) => {
-                return Err(eyre!(
-                    "Gateway at {} did not accept TCP connections within 30s: {e}",
-                    addr
-                ));
-            }
-        }
-    }
 }
 
 /// Find the workspace root by traversing up from current directory
@@ -707,7 +707,7 @@ pub async fn start_test_ingestd_with_config(
     // Capture both stdout and stderr to a debug log file.
     // tracing_subscriber::fmt() defaults to stdout in 0.3.x, so we need >{file} 2>&1.
     let debug_log = ingestd_debug_log_path_for_test_process();
-    let notify_socket_path = ingestd_notify_socket_path()?;
+    let notify_socket_path = notify_socket_path("in")?;
     let _ = std::fs::remove_file(&notify_socket_path);
     let notify_listener = UnixDatagram::bind(&notify_socket_path)
         .wrap_err_with(|| format!("failed to bind {}", notify_socket_path.display()))?;
@@ -786,7 +786,8 @@ pub async fn start_test_ingestd_with_config(
         // but don't initialize NATS on the sandbox.
         if let Ok(nats) = sandbox.nats_handle() {
             let _ = nats;
-            wait_for_ingestd_ready_notify(
+            wait_for_ready_notify(
+                "sinex-ingestd",
                 &notify_listener,
                 &mut child,
                 Duration::from_secs(Timeouts::STANDARD),
