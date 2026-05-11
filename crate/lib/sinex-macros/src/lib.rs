@@ -117,6 +117,8 @@ pub fn derive_event_payload(input: TokenStream) -> TokenStream {
         timestamp,
         suppress_if,
         default,
+        event_dispatch,
+        carry_across_records,
     )
 )]
 pub fn derive_source_record(input: TokenStream) -> TokenStream {
