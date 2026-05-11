@@ -122,4 +122,28 @@ in
       };
     };
   };
+
+  config = {
+    services.sinex.sources.bindings = {
+
+      # === terminal ===
+      # Wave B target: terminal.{atuin-history,bash-history,zsh-history,fish-history,text-history,monitor}
+
+      # === browser ===
+      # Wave B target: browser.{history}
+
+      # === document ===
+      # Wave B target: document.{staging}
+
+      # === fs ===
+      # Wave B target: fs.{fs}
+
+      # === system ===
+      # Wave B target: system.{journald,systemd,dbus,udev,monitor}
+
+      # === desktop ===
+      # Wave B target: desktop.{window-manager,clipboard,activitywatch}
+
+    };
+  };
 }

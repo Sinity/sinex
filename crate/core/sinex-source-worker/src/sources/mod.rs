@@ -4,4 +4,10 @@
 //! source-specific parser and registering it with the dispatch + node factory
 //! registries via `inventory::submit!`.
 
+pub mod browser;
+pub mod desktop;
+pub mod document;
+pub mod fs;
+pub mod system;
+pub mod terminal;
 pub mod weechat;
