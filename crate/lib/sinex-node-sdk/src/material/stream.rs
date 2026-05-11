@@ -371,7 +371,9 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(handle1.is_ok());
-        assert!(handle2.is_ok());
+        // Both handles should be live, unfinalized, and have a fresh material id.
+        assert!(!handle1.is_finalized());
+        assert!(!handle2.is_finalized());
+        assert_ne!(handle1.material_id(), handle2.material_id());
     }
 }

@@ -578,9 +578,9 @@ mod tests {
         assert!(event.is_some());
 
         let drift = event.unwrap();
-        assert_eq!(drift.added_keys, vec!["name"]);
-        assert_eq!(drift.removed_keys, vec![]);
-        assert_eq!(drift.type_changes, vec![]);
+        assert_eq!(drift.added_keys, vec!["name".to_string()]);
+        assert!(drift.removed_keys.is_empty());
+        assert!(drift.type_changes.is_empty());
     }
 
     #[test]
@@ -678,7 +678,7 @@ mod tests {
         let payload = event.to_payload();
         assert!(payload.is_object());
         assert_eq!(payload["format"], "json");
-        assert_eq!(payload["added_keys"], vec!["y"]);
+        assert_eq!(payload["added_keys"], serde_json::json!(["y"]));
     }
 
     #[test]
