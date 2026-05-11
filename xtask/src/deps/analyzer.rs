@@ -152,26 +152,27 @@ impl WorkspaceAnalyzer {
             // Resolve the query to get all dependencies
             let package_set = query.resolve();
 
-            // Iterate through all dependency links
+            // A single PackageLink can carry the same dep through multiple kinds
+            // (e.g. crate is both a normal and dev dep). Emit one row per
+            // kind so downstream consumers can filter.
             for link in package_set.links(DependencyDirection::Forward) {
                 let from_pkg = link.from();
                 let to_pkg = link.to();
-
-                // Guppy provides dependency metadata for normal, build, and dev dependencies
-                // We collect the kind information from the link
-                let _normal_req = link.normal();
-                let _build_req = link.build();
-                let _dev_req = link.dev();
-
-                // For now, classify based on what types of dependencies exist
-                // In practice, we just need to know there's a dependency
-                let kind = "normal".to_string(); // Simplified for now
-
-                dependencies.push(DependencyInfo {
-                    dependent: from_pkg.name().to_string(),
-                    dependency: to_pkg.name().to_string(),
-                    kind,
-                });
+                let from_name = from_pkg.name();
+                let to_name = to_pkg.name();
+                for (req, kind) in [
+                    (link.normal(), "normal"),
+                    (link.build(), "build"),
+                    (link.dev(), "dev"),
+                ] {
+                    if req.is_present() {
+                        dependencies.push(DependencyInfo {
+                            dependent: from_name.to_string(),
+                            dependency: to_name.to_string(),
+                            kind: kind.to_string(),
+                        });
+                    }
+                }
             }
         }
 

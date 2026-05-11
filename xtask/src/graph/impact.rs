@@ -200,38 +200,21 @@ impl Criticality {
 impl ImpactMetrics {
     /// Create new impact metrics with computed criticality.
     ///
-    /// # Arguments
-    ///
-    /// * `package` - Name of the package being analyzed
-    /// * `dependent_count` - Number of packages that depend on this one
-    /// * `dependency_count` - Number of packages this one depends on
-    ///
-    /// # Returns
-    ///
-    /// A new `ImpactMetrics` with criticality automatically computed from
-    /// the dependent count. The criticality score is capped at 1.0.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use xtask::graph::impact::ImpactMetrics;
-    ///
-    /// let metrics = ImpactMetrics::new(
-    ///     "my-package".to_string(),
-    ///     50,  // 50 packages depend on this
-    ///     10   // This package depends on 10 others
-    /// );
-    ///
-    /// println!("Criticality: {:.2}", metrics.criticality);
-    /// ```
+    /// Criticality is `dependent_count / total_packages`, expressing what
+    /// fraction of the workspace would rebuild if this package changed.
+    /// `total_packages = 0` yields criticality 0.0.
     #[must_use]
-    pub fn new(package: String, dependent_count: usize, dependency_count: usize) -> Self {
-        // Calculate criticality based on dependent count
-        // Simple heuristic: score = dependent_count / max_possible_dependents
-        // For now, use a simplified calculation
-        let criticality = (dependent_count as f64) / 100.0;
-        let criticality = criticality.min(1.0); // Cap at 1.0
-
+    pub fn new(
+        package: String,
+        dependent_count: usize,
+        dependency_count: usize,
+        total_packages: usize,
+    ) -> Self {
+        let criticality = if total_packages > 0 {
+            ((dependent_count as f64) / (total_packages as f64)).min(1.0)
+        } else {
+            0.0
+        };
         Self {
             package,
             dependent_count,
@@ -370,11 +353,19 @@ mod tests {
 
     #[sinex_test]
     async fn test_impact_metrics_new() -> TestResult<()> {
-        let metrics = ImpactMetrics::new("test-pkg".to_string(), 50, 10);
+        // 50 dependents out of 80 total → criticality 0.625 → High.
+        let metrics = ImpactMetrics::new("test-pkg".to_string(), 50, 10, 80);
         assert_eq!(metrics.package, "test-pkg");
         assert_eq!(metrics.dependent_count, 50);
         assert_eq!(metrics.dependency_count, 10);
         assert_eq!(metrics.criticality_level(), Criticality::High);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_impact_metrics_new_zero_total() -> TestResult<()> {
+        let metrics = ImpactMetrics::new("orphan".to_string(), 0, 0, 0);
+        assert_eq!(metrics.criticality, 0.0);
         Ok(())
     }
 }
