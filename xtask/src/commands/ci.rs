@@ -2,7 +2,6 @@
 
 use color_eyre::eyre::{Result, WrapErr, bail};
 use std::env;
-use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
@@ -179,23 +178,15 @@ async fn execute_postgres(
     );
 
     if args.schema {
-        let port_string = args.port.to_string();
-        let _schema_env = EnvRestoreGuard::set_many([
-            ("PGHOST", pg_env.host.as_str()),
-            ("PGPORT", port_string.as_str()),
-            ("PGUSER", args.app_user.as_str()),
-            ("PGDATABASE", args.database.as_str()),
-            ("DATABASE_URL", app_url.as_str()),
-            ("DATABASE_URL_APP", app_url.as_str()),
-            ("DATABASE_URL_SUPERUSER", super_url.as_str()),
-            ("SINEX_TEST_DATABASE_URL", app_url.as_str()),
-            ("SINEX_TEST_DATABASE_URL_SUPERUSER", super_url.as_str()),
-            ("SUPERUSER", args.superuser.as_str()),
-            ("SINEX_OPERATION_ID", args.operation_id.as_str()),
-        ]);
         let stage = ctx.start_stage("ephemeral_schema");
-        let target_dir = crate::config::workspace_target_dir();
-        let result = run_schema_setup(Some(&target_dir), "ci-postgres", ctx).await;
+        let schema_config = SchemaSetupConfig {
+            super_url: super_url.clone(),
+            target_dir: crate::config::workspace_target_dir(),
+            ci_confirmed: true,
+            database: Some(super_url.clone()),
+            superuser: Some(args.superuser.clone()),
+        };
+        let result = run_schema_setup(&schema_config, ctx).await;
         ctx.finish_stage(stage, result.is_ok());
         result?;
     }
@@ -243,36 +234,6 @@ async fn execute_postgres(
     }
 }
 
-struct EnvRestoreGuard {
-    previous: Vec<(&'static str, Option<OsString>)>,
-}
-
-impl EnvRestoreGuard {
-    fn set_many<const N: usize>(entries: [(&'static str, &str); N]) -> Self {
-        let previous = entries
-            .iter()
-            .map(|(key, _)| (*key, env::var_os(key)))
-            .collect();
-        for (key, value) in entries {
-            unsafe { env::set_var(key, value) };
-        }
-        Self { previous }
-    }
-}
-
-impl Drop for EnvRestoreGuard {
-    fn drop(&mut self) {
-        for (key, value) in self.previous.drain(..) {
-            unsafe {
-                match value {
-                    Some(value) => env::set_var(key, value),
-                    None => env::remove_var(key),
-                }
-            }
-        }
-    }
-}
-
 /// Build the CheckCommand for CI (named constructor to avoid silent field default drift).
 fn check_command_for_ci() -> crate::commands::check::CheckCommand {
     crate::commands::check::CheckCommand {
@@ -305,7 +266,8 @@ async fn execute_workspace(
 
     // Run schema setup first
     let stage = ctx.start_stage("schema_setup");
-    run_schema_setup(target_dir, "ci", ctx).await?;
+    let schema_config = SchemaSetupConfig::from_env(target_dir, "ci");
+    run_schema_setup(&schema_config, ctx).await?;
     ctx.finish_stage(stage, true);
 
     // 3.2: Dependency audit — run before expensive test stages
@@ -419,27 +381,47 @@ fn execute_workspace_dry_run(ctx: &CommandContext) -> Result<CommandResult> {
 
 /// Shared schema setup: declarative apply + check-ready + strict drift check.
 /// Called from both workspace and schema-only pipelines.
-async fn run_schema_setup(
-    target_dir: Option<&std::path::Path>,
-    default_suffix: &str,
-    ctx: &CommandContext,
-) -> Result<()> {
-    let resolved_target_dir = target_dir
-        .map(std::path::Path::to_path_buf)
-        .unwrap_or_else(|| crate::config::workspace_target_dir().join(default_suffix));
-    unsafe { env::set_var("CARGO_TARGET_DIR", &resolved_target_dir) };
-    let super_url = env::var("DATABASE_URL_SUPERUSER")
-        .or_else(|_| env::var("DATABASE_URL"))
-        .unwrap_or_else(|_| default_checkout_database_url());
+#[derive(Debug, Clone)]
+struct SchemaSetupConfig {
+    super_url: String,
+    target_dir: PathBuf,
+    ci_confirmed: bool,
+    database: Option<String>,
+    superuser: Option<String>,
+}
 
+impl SchemaSetupConfig {
+    fn from_env(target_dir: Option<&std::path::Path>, default_suffix: &str) -> Self {
+        let target_dir = target_dir
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| crate::config::workspace_target_dir().join(default_suffix));
+        let super_url = env::var("DATABASE_URL_SUPERUSER")
+            .or_else(|_| env::var("DATABASE_URL"))
+            .unwrap_or_else(|_| default_checkout_database_url());
+        let ci_confirmed = env::var("SINEX_CI_CONFIRMED").as_deref() == Ok("1");
+
+        Self {
+            super_url,
+            target_dir,
+            ci_confirmed,
+            database: env::var("PGDATABASE").ok(),
+            superuser: env::var("SUPERUSER").ok(),
+        }
+    }
+}
+
+async fn run_schema_setup(config: &SchemaSetupConfig, ctx: &CommandContext) -> Result<()> {
     // 3.6: Guard against accidentally running CI schema apply against a non-local database.
-    guard_local_database(&super_url)?;
+    guard_local_database(&config.super_url, config.ci_confirmed)?;
 
     if ctx.is_human() {
-        println!("Applying declarative schema...");
+        println!(
+            "Applying declarative schema with target dir {}...",
+            config.target_dir.display()
+        );
     }
     let stage = ctx.start_stage("schema_apply");
-    sinex_db::apply_schema_for_url(&super_url)
+    sinex_db::apply_schema_for_url(&config.super_url)
         .await
         .map_err(|e| color_eyre::eyre::eyre!("{e}"))
         .with_context(|| "declarative schema apply failed")?;
@@ -449,14 +431,14 @@ async fn run_schema_setup(
         println!("Checking schema readiness...");
     }
     let stage = ctx.start_stage("check_ready");
-    execute_check_ready(None, None, ctx)?;
+    execute_check_ready(config.database.clone(), config.superuser.clone(), ctx)?;
     ctx.finish_stage(stage, true);
 
     if ctx.is_human() {
         println!("Checking strict schema drift...");
     }
     let stage = ctx.start_stage("strict_schema_diff");
-    let drifts = crate::commands::schema::run_strict_diff(&super_url).await?;
+    let drifts = crate::commands::schema::run_strict_diff(&config.super_url).await?;
     if !drifts.is_empty() {
         ctx.finish_stage(stage, false);
         let details = drifts
@@ -477,9 +459,10 @@ async fn run_schema_setup(
 }
 
 /// Refuse to run CI schema apply against non-local databases to prevent accidental production writes.
-fn guard_local_database(url: &str) -> Result<()> {
-    // Allow if SINEX_CI_CONFIRMED=1 is set (explicit override)
-    if env::var("SINEX_CI_CONFIRMED").as_deref() == Ok("1") {
+fn guard_local_database(url: &str, ci_confirmed: bool) -> Result<()> {
+    // Allow if SINEX_CI_CONFIRMED=1 is set (explicit override) or the caller
+    // owns a just-created throwaway database.
+    if ci_confirmed {
         return Ok(());
     }
     // Parse the host from the URL. Socket connections (host=/path or no host) are always local.
@@ -507,7 +490,8 @@ async fn execute_schema_only(
 ) -> Result<CommandResult> {
     ctx.heading("ci schema-only");
 
-    run_schema_setup(target_dir, "ci-schema", ctx).await?;
+    let schema_config = SchemaSetupConfig::from_env(target_dir, "ci-schema");
+    run_schema_setup(&schema_config, ctx).await?;
 
     Ok(CommandResult::success()
         .with_message("Schema validation passed")

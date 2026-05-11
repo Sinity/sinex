@@ -32,6 +32,17 @@ pub(super) fn generate_markdown(
             .collect::<Vec<_>>()
             .join(", ")
     ));
+    if !config.db_pool_sizes.is_empty() {
+        md.push_str(&format!(
+            "| DB pool sizes | {} |\n",
+            config
+                .db_pool_sizes
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
     md.push_str(&format!("| Git SHA | {} |\n", env.git_sha_short));
     md.push('\n');
 
@@ -544,6 +555,7 @@ mod tests {
             scenario: Scenario {
                 threads: 8,
                 package: "pkg<script>alert(1)</script>".to_string(),
+                db_pool_size: None,
             },
             runs: vec![RunResult {
                 success: true,

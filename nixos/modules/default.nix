@@ -105,14 +105,16 @@ in
             description = "systemd MemoryHigh soft memory pressure threshold.";
           };
           memoryMax = mkOption {
-            type = str;
-            default = defaultMemory;
-            description = "systemd MemoryMax limit.";
+            type = nullOr str;
+            default = null;
+            example = defaultMemory;
+            description = "systemd MemoryMax hard memory limit. Null leaves the unit uncapped.";
           };
           cpuQuota = mkOption {
-            type = str;
-            default = defaultCpu;
-            description = "systemd CPUQuota limit.";
+            type = nullOr str;
+            default = null;
+            example = defaultCpu;
+            description = "systemd CPUQuota limit. Null leaves CPU throughput uncapped.";
           };
           cpuWeight = mkOption {
             type = ints.between 1 10000;

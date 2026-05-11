@@ -192,13 +192,15 @@ let
 
   renderResources = resources: {
     MemoryHigh = resources.memoryHigh;
-    MemoryMax = resources.memoryMax;
-    CPUQuota = resources.cpuQuota;
     CPUWeight = resources.cpuWeight;
     IOWeight = resources.ioWeight;
     IOSchedulingClass = resources.ioSchedulingClass;
     Nice = resources.nice;
     TimeoutStopSec = resources.shutdownTimeoutSec;
+  } // optionalAttrs (resources.memoryMax != null) {
+    MemoryMax = resources.memoryMax;
+  } // optionalAttrs (resources.cpuQuota != null) {
+    CPUQuota = resources.cpuQuota;
   } // optionalAttrs (resources.openFilesLimit != null) {
     LimitNOFILE = "${toString resources.openFilesLimit}:${toString resources.openFilesLimit}";
   };
