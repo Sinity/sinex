@@ -104,6 +104,20 @@ pub enum VerifySubcommand {
         /// Treat ingestor crates still present as warnings, not failures.
         #[arg(long)]
         warn_ingestors: bool,
+        /// Path to the JSON file exported by
+        /// `config.services.sinex.sources.exportedJson` (from the NixOS module).
+        ///
+        /// When provided the binding-drift check compares Rust descriptor IDs
+        /// against the live host configuration rather than the static example
+        /// module.  Obtain the path with:
+        ///
+        ///   nix eval --raw \
+        ///     .#nixosConfigurations.sinnix-prime.config.services.sinex.sources.exportedJson
+        ///
+        /// Default (absent): warn-only comparison against the static
+        /// `nixos/modules/source-bindings.nix` example block.
+        #[arg(long)]
+        bindings_json: Option<PathBuf>,
         /// Emit JSON output.
         #[arg(long)]
         json: bool,
@@ -306,11 +320,13 @@ impl XtaskCommand for VerifyCommand {
                 expect_deleted,
                 expected_members,
                 warn_ingestors,
+                bindings_json,
                 json,
             } => execute_source_worker(
                 expect_deleted,
                 *expected_members,
                 *warn_ingestors,
+                bindings_json.as_deref(),
                 *json,
                 ctx,
             ),
@@ -1079,6 +1095,7 @@ fn execute_source_worker(
     expect_deleted: &[String],
     expected_members: usize,
     warn_ingestors: bool,
+    bindings_json: Option<&Path>,
     json: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
@@ -1089,7 +1106,7 @@ fn execute_source_worker(
     checks.push(check_sw_no_match_arms(&root));
 
     // A3.1.2 — SourceUnitDescriptor inventory vs NixOS source-bindings drift
-    checks.push(check_sw_binding_drift(&root));
+    checks.push(check_sw_binding_drift(&root, bindings_json));
 
     // A3.1.3 — Ingestor crates gone (or warn)
     checks.push(check_sw_ingestor_crates(&root, expect_deleted, warn_ingestors));
@@ -1198,33 +1215,80 @@ fn check_sw_no_match_arms(root: &Path) -> SwCheck {
 
 /// A3.1.2 — SourceUnitDescriptor inventory vs NixOS source-bindings drift.
 ///
-/// Strategy: extract `sourceUnitId = "..."` from `source-bindings.nix` (the
-/// module example/option doc block). The live host configuration (in sinnix)
-/// is not statically accessible from xtask, so we compare against the Rust
-/// descriptor inventory via the `proof::all_source_units` iterator that xtask
-/// links at compile time.
-fn check_sw_binding_drift(root: &Path) -> SwCheck {
-    let bindings_nix = root.join("nixos/modules/source-bindings.nix");
-    let nix_source = match fs::read_to_string(&bindings_nix) {
-        Ok(s) => s,
-        Err(e) => {
-            return SwCheck::fail(
-                "binding_drift",
-                format!("cannot read {}: {e}", bindings_nix.display()),
-                Vec::new(),
-            )
-        }
+/// Two modes:
+///
+/// **Static (default):** extracts `sourceUnitId = "..."` string literals from
+/// `nixos/modules/source-bindings.nix`. This works without a running Nix
+/// evaluation but only covers the example/option doc block, not the live host
+/// configuration.
+///
+/// **Live (--bindings-json <path>):** parses the JSON exported by the NixOS
+/// option `config.services.sinex.sources.exportedJson` (a `pkgs.writeText`
+/// derivation). This reflects the actual host configuration.  Obtain the path:
+///
+/// ```text
+/// nix eval --raw \
+///   .#nixosConfigurations.sinnix-prime.config.services.sinex.sources.exportedJson
+/// ```
+///
+/// In live mode the check fails on rust-only IDs (descriptors without a host
+/// binding) and warns on nix-only IDs (host bindings without a Rust
+/// descriptor).  In static mode both directions are warn-only.
+fn check_sw_binding_drift(root: &Path, bindings_json: Option<&Path>) -> SwCheck {
+    // Collect Nix-side source-unit IDs.
+    let (nix_ids, mode_label): (BTreeSet<String>, &str) = if let Some(json_path) = bindings_json {
+        // Live mode: parse the exported JSON.
+        let json_src = match fs::read_to_string(json_path) {
+            Ok(s) => s,
+            Err(e) => {
+                return SwCheck::fail(
+                    "binding_drift",
+                    format!("cannot read bindings JSON {}: {e}", json_path.display()),
+                    Vec::new(),
+                )
+            }
+        };
+        let parsed: serde_json::Value = match serde_json::from_str(&json_src) {
+            Ok(v) => v,
+            Err(e) => {
+                return SwCheck::fail(
+                    "binding_drift",
+                    format!("cannot parse bindings JSON {}: {e}", json_path.display()),
+                    Vec::new(),
+                )
+            }
+        };
+        // Shape: { "bindings": [{ "sourceUnitId": "..." | null, ... }] }
+        let ids: BTreeSet<String> = parsed["bindings"]
+            .as_array()
+            .unwrap_or(&vec![])
+            .iter()
+            .filter_map(|b| b["sourceUnitId"].as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect();
+        (ids, "live host config")
+    } else {
+        // Static mode: grep the module file for `sourceUnitId = "..."`.
+        let bindings_nix = root.join("nixos/modules/source-bindings.nix");
+        let nix_source = match fs::read_to_string(&bindings_nix) {
+            Ok(s) => s,
+            Err(e) => {
+                return SwCheck::fail(
+                    "binding_drift",
+                    format!("cannot read {}: {e}", bindings_nix.display()),
+                    Vec::new(),
+                )
+            }
+        };
+        let value_pattern = regex::Regex::new(r#"sourceUnitId\s*=\s*"([^"]+)""#)
+            .expect("static regex is valid");
+        let ids: BTreeSet<String> = value_pattern
+            .captures_iter(&nix_source)
+            .map(|cap| cap[1].to_string())
+            .collect();
+        (ids, "static module example")
     };
-
-    // Extract `sourceUnitId = "..."` string literals from the Nix file.
-    // We only grab values (not the `mkOption` definition line).
-    let value_pattern = regex::Regex::new(r#"sourceUnitId\s*=\s*"([^"]+)""#)
-        .expect("static regex is valid");
-
-    let nix_ids: BTreeSet<String> = value_pattern
-        .captures_iter(&nix_source)
-        .map(|cap| cap[1].to_string())
-        .collect();
 
     // Collect from compile-time SourceUnitDescriptor inventory.
     let rust_ids: BTreeSet<String> = sinex_primitives::proof::all_source_units()
@@ -1234,27 +1298,41 @@ fn check_sw_binding_drift(root: &Path) -> SwCheck {
     let nix_only: Vec<String> = nix_ids.difference(&rust_ids).cloned().collect();
     let rust_only: Vec<String> = rust_ids.difference(&nix_ids).cloned().collect();
 
-    // We surface Nix-only IDs as informational (the module example may declare
-    // IDs that don't yet have Rust descriptors). Rust-only is the actionable
-    // direction — a descriptor exists but no NixOS binding is declared.
     if nix_only.is_empty() && rust_only.is_empty() {
-        SwCheck::pass(
+        return SwCheck::pass(
             "binding_drift",
-            format!("{} source-unit IDs matched between NixOS bindings and Rust descriptors", nix_ids.len()),
+            format!(
+                "{} source-unit IDs matched between {} and Rust descriptors",
+                nix_ids.len(),
+                mode_label
+            ),
+        );
+    }
+
+    let mut items = Vec::new();
+    for id in &nix_only {
+        items.push(format!("nix-only (no Rust descriptor): {id}"));
+    }
+    for id in &rust_only {
+        items.push(format!("rust-only (no NixOS binding): {id}"));
+    }
+
+    if bindings_json.is_some() && !rust_only.is_empty() {
+        // Live mode: rust-only is a hard failure (descriptor without host binding).
+        SwCheck::fail(
+            "binding_drift",
+            format!(
+                "{} nix-only, {} rust-only (live host drift)",
+                nix_only.len(),
+                rust_only.len()
+            ),
+            items,
         )
     } else {
-        let mut items = Vec::new();
-        for id in &nix_only {
-            items.push(format!("nix-only (no Rust descriptor): {id}"));
-        }
-        for id in &rust_only {
-            items.push(format!("rust-only (no NixOS binding): {id}"));
-        }
-        // Treat rust-only as warn (descriptors exist but no binding declared yet).
-        // Nix-only is also warn (binding example references unknown descriptor).
+        // Static mode (or live mode with no rust-only): warn-only.
         SwCheck::warn(
             "binding_drift",
-            format!("{} nix-only, {} rust-only", nix_only.len(), rust_only.len()),
+            format!("{} nix-only, {} rust-only ({})", nix_only.len(), rust_only.len(), mode_label),
             items,
         )
     }
