@@ -16,6 +16,7 @@ pub mod infra;
 pub mod jobs;
 pub mod lint_forbidden;
 pub mod privacy;
+pub mod reap;
 pub mod reset;
 pub mod run;
 pub mod schema;
