@@ -293,3 +293,6 @@ codegen-units = 16           # Balance: enough parallelism for incremental, boun
 inherits = "dev"
 debug = false                # Skip debug info generation
 strip = true                 # Strip symbols for faster linking
+
+[profile.test]
+inherits = "dev-fast"

@@ -65,7 +65,8 @@ pub(super) fn execute_bench(bench: &BenchArgs, ctx: &CommandContext) -> Result<C
         refine_threshold_pct: 10.0,
         refine_sweep_runs: 1,
         target: bench.target.clone(),
-        continue_on_fail: false,
+        db_pool_sizes: bench.db_pool_sizes.clone(),
+        continue_on_fail: bench.continue_on_fail,
         fail_fast: false,
     };
     bench::run(config).map(|()| CommandResult::success())

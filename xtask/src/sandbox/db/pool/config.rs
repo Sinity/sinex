@@ -69,9 +69,42 @@ impl PoolConfig {
 }
 
 pub(super) fn default_pool_size() -> usize {
+    if let Some(size) = configured_pool_size() {
+        return size;
+    }
+
     let test_threads = detected_nextest_test_threads_or_cpu_count();
     let target = test_threads.saturating_mul(POOL_SIZE_MULTIPLIER);
     target.max(MIN_POOL_SIZE)
+}
+
+fn configured_pool_size() -> Option<usize> {
+    let raw = std::env::var("SINEX_TEST_DB_POOL_SIZE").ok()?;
+    match parse_configured_pool_size(&raw) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!(
+                "warning: ignoring invalid SINEX_TEST_DB_POOL_SIZE={raw:?}: {error}. \
+                 Use a positive integer or `auto`."
+            );
+            None
+        }
+    }
+}
+
+fn parse_configured_pool_size(raw: &str) -> Result<Option<usize>> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("auto") {
+        return Ok(None);
+    }
+
+    let size: usize = trimmed
+        .parse()
+        .map_err(|err| eyre!("expected positive integer or `auto`: {err}"))?;
+    if size == 0 {
+        return Err(eyre!("pool size must be greater than zero"));
+    }
+    Ok(Some(size))
 }
 
 fn detected_nextest_test_threads_or_cpu_count() -> usize {
@@ -213,6 +246,31 @@ mod tests {
         assert_eq!(parse_num_cpus_expression("num-cpus", 24)?, Some(24));
         assert_eq!(parse_num_cpus_expression("num-cpus-2", 24)?, Some(22));
         assert_eq!(parse_num_cpus_expression("num-cpus+3", 24)?, Some(27));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_configured_pool_size_accepts_explicit_size() -> Result<()> {
+        assert_eq!(parse_configured_pool_size("24")?, Some(24));
+        assert_eq!(parse_configured_pool_size(" 48 ")?, Some(48));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_configured_pool_size_accepts_auto() -> Result<()> {
+        assert_eq!(parse_configured_pool_size("auto")?, None);
+        assert_eq!(parse_configured_pool_size("AUTO")?, None);
+        assert_eq!(parse_configured_pool_size("  ")?, None);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_configured_pool_size_rejects_zero() -> Result<()> {
+        let err = parse_configured_pool_size("0").expect_err("zero size should fail");
+        assert!(
+            err.to_string().contains("greater than zero"),
+            "unexpected error: {err:#}"
+        );
         Ok(())
     }
 

@@ -597,6 +597,7 @@ pub fn execute_perf(args: PerfArgs, ctx: &CommandContext) -> Result<CommandResul
         refine_threshold_pct: 10.0,
         refine_sweep_runs: 1,
         target: args.target,
+        db_pool_sizes: Vec::new(),
         continue_on_fail: false,
         fail_fast: false,
     };
