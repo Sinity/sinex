@@ -297,31 +297,44 @@ async fn wait_for_any_child_exit(
     children: &mut HashMap<String, Child>,
     ctx: &CommandContext,
 ) -> Option<String> {
+    use futures::stream::{FuturesUnordered, StreamExt};
+
+    // Event-driven: each child.wait() wakes when its SIGCHLD arrives.
+    // FuturesUnordered yields the first to complete; no polling needed.
+    let mut waiters: FuturesUnordered<_> = children
+        .iter_mut()
+        .map(|(name, child)| {
+            let name = name.clone();
+            Box::pin(async move {
+                let status = child.wait().await;
+                (name, status)
+            })
+        })
+        .collect();
+
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_hours(8);
-    loop {
-        if tokio::time::Instant::now() >= deadline {
+    tokio::select! {
+        result = waiters.next() => match result {
+            Some((name, Ok(status))) => {
+                if ctx.is_human() {
+                    println!("{name} exited with status: {status}");
+                }
+                Some(name)
+            }
+            Some((name, Err(e))) => {
+                if ctx.is_human() {
+                    eprintln!("Error waiting on {name}: {e}");
+                }
+                Some(name)
+            }
+            None => None, // empty children map
+        },
+        () = tokio::time::sleep_until(deadline) => {
             if ctx.is_human() {
                 eprintln!("[run] 8-hour timeout reached — shutting down");
             }
-            return None;
+            None
         }
-        for (name, child) in children.iter_mut() {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    if ctx.is_human() {
-                        println!("{name} exited with status: {status}");
-                    }
-                    return Some(name.clone());
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    if ctx.is_human() {
-                        eprintln!("Error checking {name}: {e}");
-                    }
-                }
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
 }
 
