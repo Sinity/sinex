@@ -145,6 +145,7 @@ impl XtaskCommand for LintForbiddenCommand {
         )?);
 
         violations.extend(check_transport_publish_family_inventory()?);
+        violations.extend(check_privacy_invocation_for_sensitive_units()?);
 
         // anyhow:: in library code is disallowed; libraries use the project error stack.
         let anyhow_allow: [&str; 0] = [];
@@ -349,6 +350,217 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
                 || path.starts_with("crate/lib/sinex-test-utils/")
         },
     )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Privacy invocation gate
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Indicators that a file properly invokes the privacy engine.
+///
+/// Any one of these present in a file satisfies the gate:
+///
+/// - `privacy::engine(` — direct engine access
+/// - `privacy::process(` — per-field process call
+/// - `privacy::process_json(` — JSON payload process call
+/// - `ProcessingContext::` — uses a context variant (imperative parsers, e.g. WeeChat)
+/// - `default_privacy_context =` — declarative `#[source_record]` DSL attribute
+/// - `#[allow(missing_privacy_invocation` — explicit escape hatch with required `reason =`
+const PRIVACY_INVOCATION_INDICATORS: &[&str] = &[
+    "privacy::engine(",
+    "privacy::process(",
+    "privacy::process_json(",
+    "ProcessingContext::",
+    "default_privacy_context =",
+    "#[allow(missing_privacy_invocation",
+];
+
+/// Patterns that indicate a non-Public privacy tier in a `register_source_unit!` block.
+const NON_PUBLIC_TIER_PATTERNS: &[&str] = &[
+    "PrivacyTier::Sensitive",
+    "PrivacyTier::Secret",
+    "SuPrivacyTier::Sensitive",
+    "SuPrivacyTier::Secret",
+];
+
+/// Files exempt from the privacy-invocation gate.
+///
+/// These are **descriptor-only** source units: they declare event-type metadata
+/// for events emitted from inside the pipeline infrastructure (ingestd, gateway,
+/// SDK), rather than from a dedicated parser. Privacy is handled at the emit
+/// site inside those binaries, not by a standalone parser.
+///
+/// New entries MUST include: (1) the source unit id, (2) which binary emits it,
+/// (3) where privacy is handled.
+const PRIVACY_GATE_ALLOWLIST: &[&str] = &[
+    // "blob-storage" source unit: blob.retrieved / blob.ingested / blob.verified /
+    // storage.statistics events are emitted from ingestd / gateway / node-sdk internals.
+    // Privacy is handled at the emit site in those binaries; no standalone parser exists.
+    "crate/lib/sinex-primitives/src/events/payloads/blob.rs",
+];
+
+/// Gate: every source-unit parser with a non-Public privacy tier must invoke the
+/// privacy engine on at least one field.
+///
+/// For each `.rs` file containing `register_source_unit!` AND a non-Public
+/// `privacy_tier`:
+/// - If the file (or any `.rs` sibling in its immediate containing directory)
+///   contains any [`PRIVACY_INVOCATION_INDICATORS`] → pass.
+/// - If the file is in [`PRIVACY_GATE_ALLOWLIST`] → pass (descriptor-only units).
+/// - Otherwise → violation with source-unit id, privacy tier, and file path.
+///
+/// The sibling-directory scan handles the common pattern where `lib.rs` holds
+/// the descriptor registration while `unified_node.rs` or other files in the
+/// same directory contain the actual privacy invocations.
+///
+/// Escape hatch: add `#[allow(missing_privacy_invocation, reason = "...")]` in
+/// the registration file or any sibling. The `reason` is mandatory for
+/// documentation but not syntactically enforced.
+///
+/// Descriptor-only units (event types emitted from inside the pipeline
+/// infrastructure without a dedicated parser) may be listed in
+/// [`PRIVACY_GATE_ALLOWLIST`] with an explanatory comment.
+fn check_privacy_invocation_for_sensitive_units() -> Result<Vec<String>> {
+    let root = workspace_root();
+    let mut violations: Vec<String> = Vec::new();
+
+    // Find all .rs files that contain `register_source_unit!`.
+    let rsu_files = find_files_with_pattern(&root, "register_source_unit!")?;
+
+    for rel_path in rsu_files {
+        let abs_path = root.join(&rel_path);
+        let contents = match std::fs::read_to_string(&abs_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        // Skip if no non-Public tier in this file.
+        let has_non_public_tier = NON_PUBLIC_TIER_PATTERNS
+            .iter()
+            .any(|pat| contents.contains(pat));
+        if !has_non_public_tier {
+            continue;
+        }
+
+        // Skip test paths.
+        if is_tests_path(&rel_path) {
+            continue;
+        }
+
+        // Skip explicitly allowlisted descriptor-only files.
+        if PRIVACY_GATE_ALLOWLIST.contains(&rel_path.as_str()) {
+            continue;
+        }
+
+        // Collect the privacy signal: check this file and all .rs siblings in
+        // the same directory. This handles lib.rs + unified_node.rs patterns.
+        let search_dir = abs_path
+            .parent()
+            .expect("file path must have a parent directory");
+        let has_privacy_invocation =
+            directory_contains_privacy_indicator(search_dir);
+
+        if has_privacy_invocation {
+            continue;
+        }
+
+        // Extract the source-unit id(s) and tier(s) for the error message.
+        let unit_ids = extract_source_unit_ids(&contents);
+        let tiers = extract_non_public_tiers(&contents);
+        violations.push(format!(
+            "{rel_path}: source unit(s) [{units}] with privacy tier [{tiers}] \
+             must invoke the privacy engine (privacy::engine(, privacy::process(, \
+             ProcessingContext::, default_privacy_context =) or declare \
+             #[allow(missing_privacy_invocation, reason = \"...\")]",
+            units = unit_ids.join(", "),
+            tiers = tiers.join(", "),
+        ));
+    }
+
+    Ok(violations)
+}
+
+/// Return true if any `.rs` file directly inside `dir` (non-recursive) contains
+/// at least one [`PRIVACY_INVOCATION_INDICATORS`] string.
+fn directory_contains_privacy_indicator(dir: &std::path::Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "rs") {
+            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            if PRIVACY_INVOCATION_INDICATORS
+                .iter()
+                .any(|ind| text.contains(ind))
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Find all `.rs` files under `root` that contain `literal`.
+/// Returns workspace-relative paths (no leading `./`).
+fn find_files_with_pattern(root: &std::path::Path, literal: &str) -> Result<Vec<String>> {
+    let output = std::process::Command::new("rg")
+        .current_dir(root)
+        .args([
+            "--color=never",
+            "--files-with-matches",
+            "--glob",
+            "*.rs",
+            literal,
+        ])
+        .output()
+        .with_context(|| format!("failed to invoke ripgrep to find files with `{literal}`"))?;
+    // Exit code 1 = no matches (ok), anything else is an error.
+    if let Some(code) = output.status.code()
+        && code > 1
+    {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("ripgrep exited with code {code}: {stderr}");
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout
+        .lines()
+        .map(|l| l.trim_start_matches("./").to_string())
+        .collect())
+}
+
+/// Extract `id: "..."` values from a source-unit descriptor block.
+fn extract_source_unit_ids(contents: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    // Match lines like: `id: "some.id",`
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("id:") {
+            let rest = rest.trim();
+            if let Some(inner) = rest.strip_prefix('"') {
+                if let Some(id) = inner.split('"').next() {
+                    if !id.is_empty() {
+                        ids.push(id.to_string());
+                    }
+                }
+            }
+        }
+    }
+    if ids.is_empty() {
+        ids.push("<unknown>".to_string());
+    }
+    ids
+}
+
+/// Extract non-Public privacy tier names from contents.
+fn extract_non_public_tiers(contents: &str) -> Vec<String> {
+    let mut tiers = Vec::new();
+    for pat in NON_PUBLIC_TIER_PATTERNS {
+        if contents.contains(pat) {
+            tiers.push((*pat).to_string());
+        }
+    }
+    tiers
 }
 
 /// Check for a pattern allowing test directories
@@ -861,6 +1073,216 @@ mod tests {
         let error =
             parse_ast_grep_summary("not-json").expect_err("invalid ast-grep output should fail");
         assert!(format!("{error:#}").contains("failed to parse ast-grep JSON output"));
+        Ok(())
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Privacy invocation gate self-tests
+    //
+    // These tests exercise the gate logic directly on fixture strings without
+    // invoking ripgrep or the filesystem. They pin the gate's catch/pass
+    // semantics so regressions in indicator matching are immediately visible.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Helper: run the gate logic against a synthetic file content string.
+    /// Returns a list of violation messages (empty = pass).
+    fn run_privacy_gate_on_fixture(contents: &str) -> Vec<String> {
+        let mut violations = Vec::new();
+
+        let has_non_public_tier = NON_PUBLIC_TIER_PATTERNS
+            .iter()
+            .any(|pat| contents.contains(pat));
+        if !has_non_public_tier {
+            return violations;
+        }
+
+        let has_privacy_invocation = PRIVACY_INVOCATION_INDICATORS
+            .iter()
+            .any(|ind| contents.contains(ind));
+        if has_privacy_invocation {
+            return violations;
+        }
+
+        let unit_ids = extract_source_unit_ids(contents);
+        let tiers = extract_non_public_tiers(contents);
+        violations.push(format!(
+            "fixture: source unit(s) [{units}] with privacy tier [{tiers}] missing privacy invocation",
+            units = unit_ids.join(", "),
+            tiers = tiers.join(", "),
+        ));
+        violations
+    }
+
+    #[sinex_test]
+    async fn privacy_gate_catches_sensitive_unit_without_privacy_call()
+    -> ::xtask::sandbox::TestResult<()> {
+        // Planted violation: Sensitive tier, no privacy indicator.
+        // IMPORTANT: the comment below must NOT contain privacy indicator strings.
+        let fixture = r#"
+            register_source_unit! {
+                SourceUnitDescriptor {
+                    id: "stub.planted",
+                    privacy_tier: PrivacyTier::Sensitive,
+                }
+            }
+
+            fn parse_record(&self, record: SourceRecord) -> Vec<ParsedEventIntent> {
+                // This stub does no sanitisation — intentional gate target
+                vec![]
+            }
+        "#;
+
+        let violations = run_privacy_gate_on_fixture(fixture);
+        assert!(
+            !violations.is_empty(),
+            "gate must fire on Sensitive tier without privacy invocation"
+        );
+        assert!(
+            violations[0].contains("stub.planted"),
+            "violation must name the source unit id; got: {}",
+            violations[0]
+        );
+        assert!(
+            violations[0].contains("PrivacyTier::Sensitive"),
+            "violation must name the privacy tier; got: {}",
+            violations[0]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn privacy_gate_catches_secret_unit_without_privacy_call()
+    -> ::xtask::sandbox::TestResult<()> {
+        let fixture = r#"
+            register_source_unit! {
+                SourceUnitDescriptor {
+                    id: "stub.secret",
+                    privacy_tier: PrivacyTier::Secret,
+                }
+            }
+        "#;
+
+        let violations = run_privacy_gate_on_fixture(fixture);
+        assert!(!violations.is_empty(), "gate must fire on Secret tier");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn privacy_gate_passes_public_unit_without_privacy_call()
+    -> ::xtask::sandbox::TestResult<()> {
+        let fixture = r#"
+            register_source_unit! {
+                SourceUnitDescriptor {
+                    id: "noop",
+                    privacy_tier: PrivacyTier::Public,
+                }
+            }
+        "#;
+
+        let violations = run_privacy_gate_on_fixture(fixture);
+        assert!(violations.is_empty(), "Public tier must not require privacy invocation");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn privacy_gate_passes_with_privacy_engine_call() -> ::xtask::sandbox::TestResult<()> {
+        let fixture = r#"
+            register_source_unit! {
+                SourceUnitDescriptor {
+                    id: "stub.sensitive",
+                    privacy_tier: PrivacyTier::Sensitive,
+                }
+            }
+
+            fn parse_record(&self, record: SourceRecord) -> Vec<ParsedEventIntent> {
+                let result = privacy::engine().process(&text, ctx);
+                vec![]
+            }
+        "#;
+
+        let violations = run_privacy_gate_on_fixture(fixture);
+        assert!(violations.is_empty(), "privacy::engine( satisfies the gate");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn privacy_gate_passes_with_processing_context_import() -> ::xtask::sandbox::TestResult<()>
+    {
+        // Imperative parsers (like WeeChat) use ProcessingContext:: without calling
+        // privacy::engine() directly by name — the gate must accept this.
+        let fixture = r#"
+            register_source_unit! {
+                SourceUnitDescriptor {
+                    id: "stub.irc",
+                    privacy_tier: PrivacyTier::Sensitive,
+                }
+            }
+
+            fn build_contexts() -> Vec<ProcessingContext::Command> {
+                vec![]
+            }
+        "#;
+
+        let violations = run_privacy_gate_on_fixture(fixture);
+        assert!(violations.is_empty(), "ProcessingContext:: satisfies the gate");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn privacy_gate_passes_with_declarative_default_privacy_context()
+    -> ::xtask::sandbox::TestResult<()> {
+        let fixture = r#"
+            register_source_unit! {
+                SourceUnitDescriptor {
+                    id: "stub.declarative",
+                    privacy_tier: PrivacyTier::Sensitive,
+                }
+            }
+
+            #[derive(SourceRecord)]
+            #[source_record(
+                id = "stub-declarative",
+                default_privacy_context = "Command"
+            )]
+            pub struct StubRecord { pub field: String }
+        "#;
+
+        let violations = run_privacy_gate_on_fixture(fixture);
+        assert!(violations.is_empty(), "default_privacy_context = satisfies the gate");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn privacy_gate_passes_with_explicit_allow() -> ::xtask::sandbox::TestResult<()> {
+        // Escape hatch: `#[allow(missing_privacy_invocation, reason = "...")]`
+        let fixture = r#"
+            register_source_unit! {
+                SourceUnitDescriptor {
+                    id: "stub.exempt",
+                    privacy_tier: PrivacyTier::Sensitive,
+                }
+            }
+
+            // Privacy is handled upstream by the runtime; this source emits only
+            // pre-sanitised summary records.
+            #[allow(missing_privacy_invocation, reason = "runtime sanitises before reaching this parser")]
+            fn parse_record(&self) {}
+        "#;
+
+        let violations = run_privacy_gate_on_fixture(fixture);
+        assert!(violations.is_empty(), "#[allow(missing_privacy_invocation satisfies the gate");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn privacy_gate_live_workspace_has_no_violations() -> ::xtask::sandbox::TestResult<()> {
+        // Run the actual gate against the live workspace. This catches regressions
+        // where the gate logic is sound but the existing codebase drifts.
+        let violations = check_privacy_invocation_for_sensitive_units()?;
+        assert!(
+            violations.is_empty(),
+            "privacy invocation gate found violations in live workspace: {violations:#?}"
+        );
         Ok(())
     }
 }
