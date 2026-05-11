@@ -16,7 +16,7 @@
 //! binary launcher. This obligation exercises the drain state machine in
 //! isolation.
 
-use crate::production_path::AdapterKind;
+use crate::AdapterKind;
 use sinex_source_worker::drain::{DrainPhase, SourceWorkerDrainController};
 use std::sync::Arc;
 use std::time::Duration;
