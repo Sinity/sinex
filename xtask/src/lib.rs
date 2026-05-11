@@ -320,6 +320,9 @@ enum Commands {
     Ci(CiCommand),
     #[command(hide = true)]
     Completions(CompletionsCommand),
+    /// Internal detached process watchdog — not for human use.
+    #[command(hide = true, name = "__reap")]
+    Reap(commands::reap::ReapCommand),
 }
 
 pub async fn run_cli() -> Result<()> {
@@ -423,6 +426,7 @@ pub async fn run_cli() -> Result<()> {
         Commands::Reset(cmd) => ("reset", None, None, cmd.metadata()),
         Commands::Ci(cmd) => ("ci", None, None, cmd.metadata()),
         Commands::Completions(cmd) => ("completions", None, None, cmd.metadata()),
+        Commands::Reap(cmd) => ("__reap", None, None, cmd.metadata()),
     };
 
     let command_timeout = command_metadata.timeout;
@@ -542,6 +546,7 @@ pub async fn run_cli() -> Result<()> {
             Commands::Reset(cmd) => cmd.execute(&ctx).await,
             Commands::Ci(cmd) => cmd.execute(&ctx).await,
             Commands::Completions(cmd) => cmd.execute(&ctx).await,
+            Commands::Reap(cmd) => cmd.execute(&ctx).await,
         }
     };
 
