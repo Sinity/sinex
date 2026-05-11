@@ -1252,25 +1252,30 @@ BEGIN
     JOIN _restored_ids r ON aa.event_id = r.id
     ON CONFLICT (id) DO NOTHING;
 
-    -- Embeddings.
+    -- Embeddings. core.event_embeddings has no created_at/updated_at columns
+    -- (only id, event_id, embedding_model_id, embedded_text, embedding). The
+    -- archived table is LIKE core.event_embeddings INCLUDING ALL plus audit
+    -- columns, so it carries the same shape.
     INSERT INTO core.event_embeddings (
-        id, event_id, embedding_model_id, embedding, created_at, updated_at
+        id, event_id, embedding_model_id, embedded_text, embedding
     )
-    SELECT aem.id, aem.event_id, aem.embedding_model_id, aem.embedding,
-           aem.created_at, aem.updated_at
+    SELECT aem.id, aem.event_id, aem.embedding_model_id, aem.embedded_text, aem.embedding
     FROM audit.archived_embeddings aem
     JOIN _restored_ids r ON aem.event_id = r.id
     ON CONFLICT (id) DO NOTHING;
 
-    -- Tagged items.
+    -- Tagged items. core.tagged_items has columns:
+    -- (tag_id, item_id, item_type, tagged_at) — composite primary key, no `id`.
+    -- The archived table is LIKE core.tagged_items INCLUDING ALL plus audit
+    -- columns, so it carries the same shape.
     INSERT INTO core.tagged_items (
-        id, tag_id, item_id, item_type, created_at
+        tag_id, item_id, item_type, tagged_at
     )
-    SELECT ati.id, ati.tag_id, ati.item_id, ati.item_type, ati.created_at
+    SELECT ati.tag_id, ati.item_id, ati.item_type, ati.tagged_at
     FROM audit.archived_tagged_items ati
     JOIN _restored_ids r ON ati.item_id = r.id
     WHERE ati.item_type = 'event'
-    ON CONFLICT (id) DO NOTHING;
+    ON CONFLICT (tag_id, item_id, item_type) DO NOTHING;
 
     -- Step 3: Delete only the archive rows that were actually restored.
     -- Rows where ON CONFLICT DO NOTHING fired stay in the archive.

@@ -112,6 +112,50 @@ The cost of this section is two minutes of writing. The cost of
 skipping it has been entire audit cycles re-doing forensic work on
 issues that "closed."
 
+## Closure verification commands
+
+When closing an issue (or merging the PR that closes it), the closing
+comment must include the **commands a future reader can run themselves
+to verify the claim**, not just an assertion that it landed.
+
+This requirement exists because of a recurring failure mode (caught in
+the 2026-05-11 audit cycle): closing comments described work that lived
+only in a working tree and never reached `master`. The most severe case
+was issue #1081 — the closing comment claimed "44K-line delete, all
+legacy crate directories deleted" against zero actual commits. A second
+case attributed issue #987 to "PRs #998–#1002" when PR #1000 in that
+range had `state=CLOSED, mergedAt=null`. Both fabrications survived for
+days because future agents trusted the closing comments without
+re-verifying against `master`.
+
+Verification commands you might include:
+
+```bash
+# File-deletion claim
+git log --all --diff-filter=D -- <claimed-deleted-path>
+
+# Commit SHA / PR landing claim
+git show <sha> --stat
+gh pr view <N> --json state,mergedAt --jq .
+
+# Symbol existence / wiring claim
+grep -rn "<symbol>" crate/ --include="*.rs"
+
+# Behavior claim (test that exercises the AC)
+xtask test -p <pkg> -E 'test(<name>)'
+```
+
+Two antipatterns to avoid:
+
+- **"Closed by PRs #X–#Y" range claims** without verifying each PR in
+  the range actually merged and contributed to the AC. If five PRs
+  collectively address the AC list, name each PR's contribution
+  individually. Range notation makes one closed-but-not-merged PR
+  invisible.
+- **"Status: done" comments listing work** that exists only in a working
+  tree. If you're describing what *will* land, say so. If you're
+  describing what *did* land, the verification commands prove it.
+
 ## Source-unit promotion gate (ingestors)
 
 A new ingestor is not promotable until its

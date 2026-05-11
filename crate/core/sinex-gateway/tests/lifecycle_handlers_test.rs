@@ -8,6 +8,7 @@ use sinex_gateway::handlers::{
     handle_tombstone_status,
 };
 use sinex_gateway::rpc_server::RpcAuthContext;
+use sinex_gateway::service_container::ServiceContainer;
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::rpc::audit::AuditGetResponse;
 use sinex_primitives::rpc::lifecycle::{
@@ -119,17 +120,12 @@ async fn archive_and_restore_operations_are_persisted_and_auditable(
     Ok(())
 }
 
-// Disabled while #987's delete-on-tombstone migration shifts handle_tombstone_approve
-// from `(pool, params, auth)` to `(params, services, auth)`. The test fixture would
-// need to construct a ServiceContainer (with a real ContentStoreManager) to exercise
-// the new signature. Same migration shape as sources_handlers_test (`#![cfg(any())]`)
-// referenced in #1161 follow-ups. Restore as part of that test-infra unification.
-#[cfg(any())]
 #[sinex_test]
 async fn tombstone_approve_uses_previewed_event_set_and_audits_tombstones(
     ctx: TestContext,
 ) -> TestResult<()> {
     let auth = RpcAuthContext::system();
+    let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
     let source = "test.lifecycle.tombstone";
     let first = publish_event(&ctx, source, 1).await?;
     let first_id = first
@@ -185,11 +181,11 @@ async fn tombstone_approve_uses_previewed_event_set_and_audits_tombstones(
 
     let approve: TombstoneApproveResponse = serde_json::from_value(
         handle_tombstone_approve(
-            ctx.pool(),
             json!({
                 "operation_id": create.operation.operation_id,
                 "yes_i_understand_data_is_gone": true,
             }),
+            &services,
             &auth,
         )
         .await?,
@@ -217,6 +213,219 @@ async fn tombstone_approve_uses_previewed_event_set_and_audits_tombstones(
     assert_eq!(tombstone_count(&ctx, &first_id).await?, 1);
     assert_eq!(archived_count(&ctx, &second_id).await?, 1);
     assert_eq!(tombstone_count(&ctx, &second_id).await?, 0);
+
+    Ok(())
+}
+
+/// Verify the #987 delete-on-tombstone path end-to-end:
+///
+/// 1. Create a source material with no events.
+/// 2. Publish an event referencing the material (live).
+/// 3. Confirm the material is NOT orphan (live event references it).
+/// 4. Archive the event.
+/// 5. Confirm the material is NOT orphan (archived event still references it).
+/// 6. Tombstone via handle_tombstone_approve.
+/// 7. Confirm the material registry row is gone (delete-on-tombstone fired
+///    because there are no remaining references in core.events or
+///    audit.archived_events).
+///
+/// This exercises the full delete-on-tombstone wiring: the cleanup block in
+/// handle_tombstone_approve, the new repository methods
+/// (material_ids_for_archived_events, find_orphan_materials, delete_material),
+/// and the orphan-detection SQL.
+#[sinex_test]
+async fn tombstone_approve_deletes_orphan_source_material(ctx: TestContext) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
+    let source = "test.lifecycle.tombstone.delete-on-tombstone";
+
+    // Stage 1+2: Create material + publish event referencing it.
+    let material_id = ctx.create_source_material(Some(source)).await?;
+    let event = ctx
+        .pool()
+        .events()
+        .insert(
+            DynamicPayload::new(source, "test.lifecycle.dot", json!({ "kind": "fixture" }))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+    let event_id = event.id.expect("inserted event must have id").to_string();
+
+    // Stage 3: Material is NOT orphan while the event is live.
+    let materials = ctx.pool().source_materials();
+    let live_orphans = materials
+        .find_orphan_materials(&[material_id.to_uuid()])
+        .await?;
+    assert!(
+        live_orphans.is_empty(),
+        "material with a live event must not be reported as orphan"
+    );
+
+    // Stage 4: Archive the event.
+    let archive: LifecycleArchiveResponse = serde_json::from_value(
+        handle_lifecycle_archive(
+            ctx.pool(),
+            json!({
+                "event_ids": [event_id.clone()],
+                "dry_run": false,
+                "reason": "delete-on-tombstone test: archive before tombstone",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(archive.archived_count, 1);
+
+    // Stage 5: Material is still NOT orphan — archived event references it.
+    let archived_orphans = materials
+        .find_orphan_materials(&[material_id.to_uuid()])
+        .await?;
+    assert!(
+        archived_orphans.is_empty(),
+        "material with an archived event must not be reported as orphan"
+    );
+
+    // Create a tombstone preview that includes our archived event.
+    let create: TombstoneCreateResponse = serde_json::from_value(
+        handle_tombstone_create(
+            ctx.pool(),
+            json!({
+                "source": source,
+                "limit": 1,
+                "reason": "delete-on-tombstone test: preview",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    // Sanity: the material registry row exists right before tombstone.
+    let row_before = materials
+        .get_by_id(sinex_primitives::Id::from_uuid(material_id.to_uuid()))
+        .await?;
+    assert!(
+        row_before.is_some(),
+        "material registry row must exist before tombstone"
+    );
+
+    // Stage 6: Approve the tombstone — this triggers delete-on-tombstone.
+    let approve: TombstoneApproveResponse = serde_json::from_value(
+        handle_tombstone_approve(
+            json!({
+                "operation_id": create.operation.operation_id,
+                "yes_i_understand_data_is_gone": true,
+            }),
+            &services,
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(
+        approve.operation.tombstoned_count,
+        Some(1),
+        "exactly one event tombstoned"
+    );
+
+    // Stage 7: The material registry row is gone.
+    let row_after = materials
+        .get_by_id(sinex_primitives::Id::from_uuid(material_id.to_uuid()))
+        .await?;
+    assert!(
+        row_after.is_none(),
+        "material registry row must be deleted by delete-on-tombstone path"
+    );
+
+    // And event_tombstones records the deletion (sanity check on the cascade).
+    assert_eq!(tombstone_count(&ctx, &event_id).await?, 1);
+
+    Ok(())
+}
+
+/// Companion test: when an event references material that is ALSO referenced
+/// by a separate live event, tombstoning the first event must NOT delete
+/// the material — the second event still depends on it.
+#[sinex_test]
+async fn tombstone_approve_preserves_material_with_other_references(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
+    let source = "test.lifecycle.tombstone.preserve-shared";
+
+    let material_id = ctx.create_source_material(Some(source)).await?;
+
+    let first = ctx
+        .pool()
+        .events()
+        .insert(
+            DynamicPayload::new(source, "test.lifecycle.share", json!({ "n": 1 }))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+    let first_id = first.id.expect("first event id").to_string();
+
+    let _second = ctx
+        .pool()
+        .events()
+        .insert(
+            DynamicPayload::new(source, "test.lifecycle.share", json!({ "n": 2 }))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+
+    // Archive only the first event.
+    let archive: LifecycleArchiveResponse = serde_json::from_value(
+        handle_lifecycle_archive(
+            ctx.pool(),
+            json!({
+                "event_ids": [first_id.clone()],
+                "dry_run": false,
+                "reason": "preserve-shared test: archive first only",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(archive.archived_count, 1);
+
+    let create: TombstoneCreateResponse = serde_json::from_value(
+        handle_tombstone_create(
+            ctx.pool(),
+            json!({
+                "source": source,
+                "limit": 1,
+                "reason": "preserve-shared test: preview",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    let approve: TombstoneApproveResponse = serde_json::from_value(
+        handle_tombstone_approve(
+            json!({
+                "operation_id": create.operation.operation_id,
+                "yes_i_understand_data_is_gone": true,
+            }),
+            &services,
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(approve.operation.tombstoned_count, Some(1));
+
+    // Material registry row MUST still exist — the second live event references it.
+    let materials = ctx.pool().source_materials();
+    let row = materials
+        .get_by_id(sinex_primitives::Id::from_uuid(material_id.to_uuid()))
+        .await?;
+    assert!(
+        row.is_some(),
+        "material registry row must survive tombstone when other events still reference it"
+    );
 
     Ok(())
 }
