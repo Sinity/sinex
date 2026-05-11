@@ -146,9 +146,10 @@ pub fn parser_field_privacy<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
 
-    #[test]
-    fn suppressed_by_predicate_records_suppression() {
+    #[sinex_test]
+    async fn suppressed_by_predicate_records_suppression() -> xtask::sandbox::TestResult<()> {
         let d = FieldPrivacyDecision::suppressed_by_predicate(
             "command",
             ProcessingContext::Command,
@@ -158,10 +159,11 @@ mod tests {
         assert!(!d.whole_event_suppressed);
         assert_eq!(d.field, "command");
         assert!(matches!(d.strategy, Some(Strategy::Suppress)));
+        Ok(())
     }
 
-    #[test]
-    fn into_whole_event_suppressor_propagates() {
+    #[sinex_test]
+    async fn into_whole_event_suppressor_propagates() -> xtask::sandbox::TestResult<()> {
         let d = FieldPrivacyDecision::suppressed_by_predicate(
             "command",
             ProcessingContext::Command,
@@ -169,19 +171,21 @@ mod tests {
         .into_whole_event_suppressor();
         assert!(d.whole_event_suppressed);
         assert!(d.suppressed);
+        Ok(())
     }
 
-    #[test]
-    fn not_processed_is_a_no_op_record() {
+    #[sinex_test]
+    async fn not_processed_is_a_no_op_record() -> xtask::sandbox::TestResult<()> {
         let d = FieldPrivacyDecision::not_processed("count", ProcessingContext::Metadata);
         assert!(!d.suppressed);
         assert!(!d.redacted);
         assert!(!d.whole_event_suppressed);
         assert!(d.matched_rules.is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn parser_field_privacy_records_redaction_when_engine_fires() {
+    #[sinex_test]
+    async fn parser_field_privacy_records_redaction_when_engine_fires() -> xtask::sandbox::TestResult<()> {
         // Use a known catalog pattern (GitHub PAT) under the Command context
         // so the engine matches and returns a redacted Cow.
         let token = "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -198,10 +202,11 @@ mod tests {
         assert_eq!(decision.field, "cmd");
         assert_eq!(decision.context, ProcessingContext::Command);
         assert_eq!(decision.matched_rules, processed.matched_rules);
+        Ok(())
     }
 
-    #[test]
-    fn parser_field_privacy_records_no_redaction_when_engine_passes() {
+    #[sinex_test]
+    async fn parser_field_privacy_records_no_redaction_when_engine_passes() -> xtask::sandbox::TestResult<()> {
         // A plain string with no secret should produce a decision with
         // empty matched_rules and redacted=false.
         let (processed, decision) = parser_field_privacy(
@@ -214,10 +219,11 @@ mod tests {
         assert!(!decision.redacted);
         assert!(!decision.suppressed);
         assert!(decision.matched_rules.is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn from_processed_redacted_only_when_rules_matched_and_not_suppressed() {
+    #[sinex_test]
+    async fn from_processed_redacted_only_when_rules_matched_and_not_suppressed() -> xtask::sandbox::TestResult<()> {
         // The redacted flag is `!matched_rules.is_empty() && !suppressed`.
         // This pins that contract directly without going through the engine.
         let processed = Processed {
@@ -246,10 +252,11 @@ mod tests {
         );
         assert!(d2.suppressed);
         assert!(!d2.redacted, "suppression must override redacted flag");
+        Ok(())
     }
 
-    #[test]
-    fn serializes_to_compact_json_when_no_rules_matched() {
+    #[sinex_test]
+    async fn serializes_to_compact_json_when_no_rules_matched() -> xtask::sandbox::TestResult<()> {
         // Verify skip_serializing_if removes empty matched_rules and absent
         // strategy from the serialized form — the audit trail surface
         // shouldn't accumulate empty fields.
@@ -258,5 +265,6 @@ mod tests {
         assert!(json.get("matched_rules").is_none());
         assert!(json.get("strategy").is_none());
         assert_eq!(json["field"], "x");
+        Ok(())
     }
 }

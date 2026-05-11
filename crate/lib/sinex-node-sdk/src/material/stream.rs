@@ -217,19 +217,21 @@ impl Default for StreamMaterialContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
 
-    #[tokio::test]
-    async fn test_stream_handle_creation() {
+    #[sinex_test]
+    async fn test_stream_handle_creation() -> xtask::sandbox::TestResult<()> {
         let ctx = StreamMaterialContext::new();
         let handle = ctx
             .begin_stream(serde_json::json!({"source": "test"}))
             .await;
 
         assert!(handle.is_ok());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_append_event_increments_count() {
+    #[sinex_test]
+    async fn test_append_event_increments_count() -> xtask::sandbox::TestResult<()> {
         let ctx = StreamMaterialContext::new();
         let handle = ctx
             .begin_stream(serde_json::json!({"source": "test"}))
@@ -243,10 +245,11 @@ mod tests {
 
         let _ = handle.append_event(serde_json::json!({"id": 2})).await;
         assert_eq!(handle.event_count(), 2);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_append_after_finalize_fails() {
+    #[sinex_test]
+    async fn test_append_after_finalize_fails() -> xtask::sandbox::TestResult<()> {
         let ctx = StreamMaterialContext::new();
         let handle = ctx
             .begin_stream(serde_json::json!({"source": "test"}))
@@ -258,10 +261,11 @@ mod tests {
         let result = handle.append_event(serde_json::json!({"id": 1})).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("finalized"));
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_finalize_is_idempotent() {
+    #[sinex_test]
+    async fn test_finalize_is_idempotent() -> xtask::sandbox::TestResult<()> {
         let ctx = StreamMaterialContext::new();
         let handle = ctx
             .begin_stream(serde_json::json!({"source": "test"}))
@@ -274,10 +278,11 @@ mod tests {
         assert!(result1.is_ok());
         assert!(result2.is_ok());
         assert!(handle.is_finalized());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_multiple_streams_have_different_ids() {
+    #[sinex_test]
+    async fn test_multiple_streams_have_different_ids() -> xtask::sandbox::TestResult<()> {
         let ctx = StreamMaterialContext::new();
 
         let handle1 = ctx
@@ -290,10 +295,11 @@ mod tests {
             .unwrap();
 
         assert_ne!(handle1.material_id(), handle2.material_id());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_handle_clone_shares_state() {
+    #[sinex_test]
+    async fn test_handle_clone_shares_state() -> xtask::sandbox::TestResult<()> {
         let ctx = StreamMaterialContext::new();
         let handle = ctx
             .begin_stream(serde_json::json!({"source": "test"}))
@@ -307,10 +313,11 @@ mod tests {
 
         let _ = handle_clone.append_event(serde_json::json!({"id": 2})).await;
         assert_eq!(handle.event_count(), 2);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_stream_handle_debug() {
+    #[sinex_test]
+    async fn test_stream_handle_debug() -> xtask::sandbox::TestResult<()> {
         let ctx = StreamMaterialContext::new();
         let handle = ctx
             .begin_stream(serde_json::json!({"source": "test"}))
@@ -320,10 +327,11 @@ mod tests {
         let debug_str = format!("{:?}", handle);
         assert!(debug_str.contains("StreamHandle"));
         assert!(debug_str.contains("material_id"));
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_unfinalized_flag_tracking() {
+    #[sinex_test]
+    async fn test_unfinalized_flag_tracking() -> xtask::sandbox::TestResult<()> {
         let ctx = StreamMaterialContext::new();
 
         {
@@ -343,10 +351,11 @@ mod tests {
         // Note: This test is inherently flaky due to async drop semantics
         // We just verify the API exists and works without panicking
         let _ = had_drops;
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_reset_unfinalized_flag() {
+    #[sinex_test]
+    async fn test_reset_unfinalized_flag() -> xtask::sandbox::TestResult<()> {
         let ctx = StreamMaterialContext::new();
 
         ctx.reset_unfinalized_flag();
@@ -354,10 +363,11 @@ mod tests {
 
         ctx.reset_unfinalized_flag();
         assert!(!ctx.had_unfinalized_drops());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_stream_context_default() {
+    #[sinex_test]
+    async fn test_stream_context_default() -> xtask::sandbox::TestResult<()> {
         let ctx1 = StreamMaterialContext::new();
         let ctx2 = StreamMaterialContext::default();
 
@@ -375,5 +385,6 @@ mod tests {
         assert!(!handle1.is_finalized());
         assert!(!handle2.is_finalized());
         assert_ne!(handle1.material_id(), handle2.material_id());
+        Ok(())
     }
 }

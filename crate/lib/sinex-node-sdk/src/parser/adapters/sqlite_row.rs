@@ -239,6 +239,7 @@ pub(crate) fn row_to_json(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
     use tempfile::NamedTempFile;
 
     fn dummy_material_id() -> Id<SourceMaterial> {
@@ -258,8 +259,8 @@ mod tests {
         f
     }
 
-    #[tokio::test]
-    async fn test_sqlite_yields_one_record_per_row() {
+    #[sinex_test]
+    async fn test_sqlite_yields_one_record_per_row() -> xtask::sandbox::TestResult<()> {
         let db = make_test_db();
         let adapter = SqliteRowAdapter::new(db.path().to_str().unwrap());
         let config = SqliteRowConfig {
@@ -272,10 +273,11 @@ mod tests {
         let records: Vec<_> = stream.collect().await;
 
         assert_eq!(records.len(), 3);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_sqlite_cursor_resumes_after_rowid() {
+    #[sinex_test]
+    async fn test_sqlite_cursor_resumes_after_rowid() -> xtask::sandbox::TestResult<()> {
         let db = make_test_db();
         let adapter = SqliteRowAdapter::new(db.path().to_str().unwrap());
         let config = SqliteRowConfig {
@@ -295,10 +297,11 @@ mod tests {
         let records2: Vec<_> = stream2.collect().await;
 
         assert_eq!(records2.len(), 2);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_sqlite_anchor_contains_table_name() {
+    #[sinex_test]
+    async fn test_sqlite_anchor_contains_table_name() -> xtask::sandbox::TestResult<()> {
         let db = make_test_db();
         let adapter = SqliteRowAdapter::new(db.path().to_str().unwrap());
         let config = SqliteRowConfig {
@@ -311,10 +314,11 @@ mod tests {
         let record = stream.next().await.unwrap().unwrap();
 
         assert!(matches!(&record.anchor, MaterialAnchor::SqliteRow { table, .. } if table == "items"));
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_sqlite_cursor_after_wrong_anchor_errors() {
+    #[sinex_test]
+    async fn test_sqlite_cursor_after_wrong_anchor_errors() -> xtask::sandbox::TestResult<()> {
         let db = make_test_db();
         let adapter = SqliteRowAdapter::new(db.path().to_str().unwrap());
         let record = SourceRecord {
@@ -326,10 +330,11 @@ mod tests {
             metadata: serde_json::Value::Null,
         };
         assert!(adapter.cursor_after(&record).is_err());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_sqlite_missing_db_returns_error() {
+    #[sinex_test]
+    async fn test_sqlite_missing_db_returns_error() -> xtask::sandbox::TestResult<()> {
         let adapter = SqliteRowAdapter::new("/nonexistent/path.db");
         let config = SqliteRowConfig {
             query: "SELECT rowid, * FROM items".into(),
@@ -337,10 +342,11 @@ mod tests {
             rowid_column: "rowid".into(),
         };
         assert!(adapter.open(dummy_material_id(), &config, None).await.is_err());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_sqlite_row_json_has_column_keys() {
+    #[sinex_test]
+    async fn test_sqlite_row_json_has_column_keys() -> xtask::sandbox::TestResult<()> {
         let db = make_test_db();
         let adapter = SqliteRowAdapter::new(db.path().to_str().unwrap());
         let config = SqliteRowConfig {
@@ -355,10 +361,11 @@ mod tests {
 
         assert!(json.get("name").is_some());
         assert!(json.get("value").is_some());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_sqlite_monotonic_cursor() {
+    #[sinex_test]
+    async fn test_sqlite_monotonic_cursor() -> xtask::sandbox::TestResult<()> {
         let db = make_test_db();
         let adapter = SqliteRowAdapter::new(db.path().to_str().unwrap());
         let config = SqliteRowConfig {
@@ -379,5 +386,6 @@ mod tests {
         for w in cursors.windows(2) {
             assert!(w[0].last_rowid < w[1].last_rowid);
         }
+        Ok(())
     }
 }

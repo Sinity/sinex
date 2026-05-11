@@ -224,6 +224,7 @@ async fn flush_internal<R: Serialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc as StdArc;
@@ -235,8 +236,8 @@ mod tests {
         value: String,
     }
 
-    #[tokio::test]
-    async fn test_append_single_record() {
+    #[sinex_test]
+    async fn test_append_single_record() -> xtask::sandbox::TestResult<()> {
         let mut mat = ObservationMaterializer::<TestRecord>::new(
             ObservationMaterializerConfig::default(),
         );
@@ -248,10 +249,11 @@ mod tests {
 
         let result = mat.append(record).await;
         assert!(result.is_ok());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_flush_on_max_records() {
+    #[sinex_test]
+    async fn test_flush_on_max_records() -> xtask::sandbox::TestResult<()> {
         let flush_count = StdArc::new(AtomicUsize::new(0));
         let flush_count_clone = flush_count.clone();
 
@@ -283,10 +285,11 @@ mod tests {
         // After appending 3 records with max_records=3, should have flushed
         sleep(Duration::from_millis(50)).await;
         assert_eq!(flush_count.load(Ordering::SeqCst), 1);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_flush_on_window_timeout() {
+    #[sinex_test]
+    async fn test_flush_on_window_timeout() -> xtask::sandbox::TestResult<()> {
         let flush_count = StdArc::new(AtomicUsize::new(0));
         let flush_count_clone = flush_count.clone();
 
@@ -317,10 +320,11 @@ mod tests {
 
         // Should have flushed due to timeout
         assert_eq!(flush_count.load(Ordering::SeqCst), 1);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_empty_flush_is_noop() {
+    #[sinex_test]
+    async fn test_empty_flush_is_noop() -> xtask::sandbox::TestResult<()> {
         let flush_count = StdArc::new(AtomicUsize::new(0));
         let flush_count_clone = flush_count.clone();
 
@@ -345,10 +349,11 @@ mod tests {
 
         // Should not flush if buffer is empty
         assert_eq!(flush_count.load(Ordering::SeqCst), 0);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_flush_on_max_bytes() {
+    #[sinex_test]
+    async fn test_flush_on_max_bytes() -> xtask::sandbox::TestResult<()> {
         let flush_count = StdArc::new(AtomicUsize::new(0));
         let flush_count_clone = flush_count.clone();
 
@@ -382,10 +387,11 @@ mod tests {
         // Should have flushed due to exceeding max_bytes
         let flushes = flush_count.load(Ordering::SeqCst);
         assert!(flushes > 0, "Expected at least 1 flush, got {}", flushes);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_serialization_error_propagates() {
+    #[sinex_test]
+    async fn test_serialization_error_propagates() -> xtask::sandbox::TestResult<()> {
         let flush_count = StdArc::new(AtomicUsize::new(0));
         let flush_count_clone = flush_count.clone();
 
@@ -407,10 +413,11 @@ mod tests {
 
         let result = mat.append(record).await;
         assert!(result.is_ok());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_multiple_flushes_accumulate() {
+    #[sinex_test]
+    async fn test_multiple_flushes_accumulate() -> xtask::sandbox::TestResult<()> {
         let flush_count = StdArc::new(AtomicUsize::new(0));
         let total_records = StdArc::new(AtomicUsize::new(0));
         let flush_count_clone = flush_count.clone();
@@ -447,5 +454,6 @@ mod tests {
 
         let flushes = flush_count.load(Ordering::SeqCst);
         assert!(flushes >= 2, "Expected at least 2 flushes, got {}", flushes);
+        Ok(())
     }
 }

@@ -128,6 +128,7 @@ impl InputShapeAdapter for AppendOnlyFileAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -135,8 +136,8 @@ mod tests {
         Id::from_uuid(uuid::Uuid::new_v4())
     }
 
-    #[tokio::test]
-    async fn test_append_only_yields_one_record_per_line() {
+    #[sinex_test]
+    async fn test_append_only_yields_one_record_per_line() -> xtask::sandbox::TestResult<()> {
         let mut f = NamedTempFile::new().unwrap();
         writeln!(f, "line1").unwrap();
         writeln!(f, "line2").unwrap();
@@ -152,10 +153,11 @@ mod tests {
         assert_eq!(records[0].as_ref().unwrap().bytes, b"line1");
         assert_eq!(records[1].as_ref().unwrap().bytes, b"line2");
         assert_eq!(records[2].as_ref().unwrap().bytes, b"line3");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_append_only_skip_empty_lines() {
+    #[sinex_test]
+    async fn test_append_only_skip_empty_lines() -> xtask::sandbox::TestResult<()> {
         let mut f = NamedTempFile::new().unwrap();
         writeln!(f, "first").unwrap();
         writeln!(f).unwrap();
@@ -168,10 +170,11 @@ mod tests {
         let records: Vec<_> = stream.collect().await;
 
         assert_eq!(records.len(), 2);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_append_only_resume_from_cursor() {
+    #[sinex_test]
+    async fn test_append_only_resume_from_cursor() -> xtask::sandbox::TestResult<()> {
         let mut f = NamedTempFile::new().unwrap();
         writeln!(f, "line1").unwrap();
         writeln!(f, "line2").unwrap();
@@ -192,10 +195,11 @@ mod tests {
 
         assert_eq!(records2.len(), 1);
         assert_eq!(records2[0].as_ref().unwrap().bytes, b"line3");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_append_only_line_anchor() {
+    #[sinex_test]
+    async fn test_append_only_line_anchor() -> xtask::sandbox::TestResult<()> {
         let mut f = NamedTempFile::new().unwrap();
         writeln!(f, "hello").unwrap();
         let path = f.path().to_str().unwrap().to_string();
@@ -206,10 +210,11 @@ mod tests {
         let record = stream.next().await.unwrap().unwrap();
 
         assert!(matches!(record.anchor, MaterialAnchor::Line { line: 1, .. }));
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_append_only_cursor_after_wrong_anchor_errors() {
+    #[sinex_test]
+    async fn test_append_only_cursor_after_wrong_anchor_errors() -> xtask::sandbox::TestResult<()> {
         let adapter = AppendOnlyFileAdapter;
         let record = SourceRecord {
             material_id: dummy_material_id(),
@@ -220,20 +225,22 @@ mod tests {
             metadata: serde_json::Value::Null,
         };
         assert!(adapter.cursor_after(&record).is_err());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_append_only_missing_file_returns_error() {
+    #[sinex_test]
+    async fn test_append_only_missing_file_returns_error() -> xtask::sandbox::TestResult<()> {
         let adapter = AppendOnlyFileAdapter;
         let config = AppendOnlyFileConfig {
             path: "/nonexistent/file.log".into(),
             skip_empty: false,
         };
         assert!(adapter.open(dummy_material_id(), &config, None).await.is_err());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_append_only_empty_file_yields_no_records() {
+    #[sinex_test]
+    async fn test_append_only_empty_file_yields_no_records() -> xtask::sandbox::TestResult<()> {
         let f = NamedTempFile::new().unwrap();
         let path = f.path().to_str().unwrap().to_string();
 
@@ -243,5 +250,6 @@ mod tests {
         let records: Vec<_> = stream.collect().await;
 
         assert!(records.is_empty());
+        Ok(())
     }
 }

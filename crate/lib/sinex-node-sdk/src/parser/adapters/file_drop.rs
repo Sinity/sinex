@@ -179,6 +179,7 @@ fn map_notify_kind(kind: &EventKind) -> Option<FileDropEventKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
     use futures::StreamExt;
     use std::io::Write;
     use tempfile::TempDir;
@@ -188,8 +189,8 @@ mod tests {
         Id::from_uuid(uuid::Uuid::new_v4())
     }
 
-    #[tokio::test]
-    async fn test_file_drop_created_event() {
+    #[sinex_test]
+    async fn test_file_drop_created_event() -> xtask::sandbox::TestResult<()> {
         let dir = TempDir::new().unwrap();
         let adapter = FileDropAdapter;
         let config = FileDropConfig {
@@ -240,10 +241,11 @@ mod tests {
                  The 6 other file_drop tests still validate adapter structure."
             );
         }
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_file_drop_cursor_is_unit() {
+    #[sinex_test]
+    async fn test_file_drop_cursor_is_unit() -> xtask::sandbox::TestResult<()> {
         let dir = TempDir::new().unwrap();
         let adapter = FileDropAdapter;
         // Minimal record to call cursor_after on.
@@ -260,15 +262,17 @@ mod tests {
         };
         let cursor = adapter.cursor_after(&record).unwrap();
         assert_eq!(cursor, FileDropCursor);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_file_drop_kind_is_file_drop() {
+    #[sinex_test]
+    async fn test_file_drop_kind_is_file_drop() -> xtask::sandbox::TestResult<()> {
         assert_eq!(FileDropAdapter::KIND, InputShapeKind::FileDrop);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_file_drop_invalid_path_errors() {
+    #[sinex_test]
+    async fn test_file_drop_invalid_path_errors() -> xtask::sandbox::TestResult<()> {
         let adapter = FileDropAdapter;
         let config = FileDropConfig {
             watch_paths: vec![Utf8PathBuf::from("/nonexistent/directory/that/does/not/exist")],
@@ -276,10 +280,11 @@ mod tests {
             events: vec![],
         };
         assert!(adapter.open(dummy_material_id(), &config, None).await.is_err());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_file_drop_no_cursor_passthrough() {
+    #[sinex_test]
+    async fn test_file_drop_no_cursor_passthrough() -> xtask::sandbox::TestResult<()> {
         // cursor is ignored — stream always starts fresh.
         let dir = TempDir::new().unwrap();
         let adapter = FileDropAdapter;
@@ -293,10 +298,11 @@ mod tests {
             .open(dummy_material_id(), &config, Some(FileDropCursor))
             .await
             .unwrap();
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_file_drop_metadata_contains_event_kind() {
+    #[sinex_test]
+    async fn test_file_drop_metadata_contains_event_kind() -> xtask::sandbox::TestResult<()> {
         let dir = TempDir::new().unwrap();
         let adapter = FileDropAdapter;
         let config = FileDropConfig {
@@ -315,10 +321,11 @@ mod tests {
         {
             assert!(record.metadata.get("event_kind").is_some());
         }
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_file_drop_event_filter_excludes_non_matching() {
+    #[sinex_test]
+    async fn test_file_drop_event_filter_excludes_non_matching() -> xtask::sandbox::TestResult<()> {
         // Config filters only Created; Modified events should not arrive.
         let dir = TempDir::new().unwrap();
         let adapter = FileDropAdapter;
@@ -337,5 +344,6 @@ mod tests {
 
         // Wait briefly for a create event.
         let _ = tokio::time::timeout(Duration::from_secs(3), stream.next()).await;
+        Ok(())
     }
 }

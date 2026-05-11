@@ -244,6 +244,7 @@ impl MaterialParser for WeeChatLogParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
 
     use sinex_primitives::parser::MaterialAnchor;
     use sinex_primitives::Uuid;
@@ -274,8 +275,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn parse_irc_message() {
+    #[sinex_test]
+    async fn parse_irc_message() -> xtask::sandbox::TestResult<()> {
         let mut parser = WeeChatLogParser;
         let record = make_record(
             b"2024-01-15 14:23:45\tsinity\thello world",
@@ -301,10 +302,11 @@ mod tests {
         assert_eq!(ts.hour(), 14);
         assert_eq!(ts.minute(), 23);
         assert_eq!(ts.second(), 45);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn parse_irc_join() {
+    #[sinex_test]
+    async fn parse_irc_join() -> xtask::sandbox::TestResult<()> {
         let mut parser = WeeChatLogParser;
         let record = make_record(
             b"2024-06-01 10:00:00\t-->\tuser (~user@host) joined #general",
@@ -320,10 +322,11 @@ mod tests {
         assert_eq!(intent.event_type.as_str(), "irc.join");
         assert_eq!(intent.payload["nick"], "user");
         assert_eq!(intent.payload["channel"], "#general");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn parse_irc_part() {
+    #[sinex_test]
+    async fn parse_irc_part() -> xtask::sandbox::TestResult<()> {
         let mut parser = WeeChatLogParser;
         let record = make_record(
             b"2024-06-01 12:30:00\t<--\tuser (~user@host) left #general",
@@ -339,10 +342,11 @@ mod tests {
         assert_eq!(intent.event_type.as_str(), "irc.part");
         assert_eq!(intent.payload["nick"], "user");
         assert_eq!(intent.payload["channel"], "#general");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn parse_server_notice() {
+    #[sinex_test]
+    async fn parse_server_notice() -> xtask::sandbox::TestResult<()> {
         let mut parser = WeeChatLogParser;
         let record = make_record(
             b"2024-06-01 09:00:00\t--\tNotice: Server restart scheduled",
@@ -358,20 +362,22 @@ mod tests {
         assert_eq!(intent.event_type.as_str(), "irc.server_notice");
         assert_eq!(intent.payload["nick"], "__server__");
         assert_eq!(intent.payload["message"], "Notice: Server restart scheduled");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn skip_empty_lines() {
+    #[sinex_test]
+    async fn skip_empty_lines() -> xtask::sandbox::TestResult<()> {
         let mut parser = WeeChatLogParser;
         let record = make_record(b"", 1, 0);
         let ctx = test_ctx();
 
         let intents = parser.parse_record(record, &ctx).await.unwrap();
         assert!(intents.is_empty(), "empty lines should produce no intents");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn invalid_timestamp_is_error() {
+    #[sinex_test]
+    async fn invalid_timestamp_is_error() -> xtask::sandbox::TestResult<()> {
         let mut parser = WeeChatLogParser;
         let record = make_record(b"not-a-timestamp\tnick\tmessage", 1, 0);
         let ctx = test_ctx();
@@ -380,10 +386,11 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("invalid WeeChat timestamp"), "got: {err}");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn parse_anchor_preserved() {
+    #[sinex_test]
+    async fn parse_anchor_preserved() -> xtask::sandbox::TestResult<()> {
         let mut parser = WeeChatLogParser;
         let anchor = MaterialAnchor::Line {
             byte_start: 999,
@@ -395,10 +402,11 @@ mod tests {
         let intents = parser.parse_record(record, &ctx).await.unwrap();
         assert_eq!(intents.len(), 1);
         assert_eq!(intents[0].anchor, anchor);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn parse_timing_evidence_is_intrinsic() {
+    #[sinex_test]
+    async fn parse_timing_evidence_is_intrinsic() -> xtask::sandbox::TestResult<()> {
         let mut parser = WeeChatLogParser;
         let record = make_record(b"2024-01-01 00:00:00\tnick\tmsg", 1, 0);
         let ctx = test_ctx();
@@ -413,5 +421,6 @@ mod tests {
             "expected Intrinsic timing with field='timestamp', got {:?}",
             intents[0].timing
         );
+        Ok(())
     }
 }

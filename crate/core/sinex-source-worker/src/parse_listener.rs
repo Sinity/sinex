@@ -163,11 +163,12 @@ async fn handle_parse_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
     use crate::dispatch::test_parser_dispatch;
     use sinex_primitives::Uuid;
 
-    #[tokio::test]
-    async fn test_parse_command_accepted_for_matching_source_id() {
+    #[sinex_test]
+    async fn test_parse_command_accepted_for_matching_source_id() -> xtask::sandbox::TestResult<()> {
         let (dispatch, calls) = test_parser_dispatch();
         let cmd = SourceParseCommand {
             operation_id: Uuid::now_v7(),
@@ -202,10 +203,11 @@ mod tests {
         assert!(ack.accepted);
         assert_eq!(calls.lock().unwrap().len(), 1);
         assert_eq!(calls.lock().unwrap()[0].0, "weechat");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_parse_command_rejected_for_mismatched_source_id() {
+    #[sinex_test]
+    async fn test_parse_command_rejected_for_mismatched_source_id() -> xtask::sandbox::TestResult<()> {
         let (dispatch, calls) = test_parser_dispatch();
         let cmd = SourceParseCommand {
             operation_id: Uuid::now_v7(),
@@ -229,10 +231,11 @@ mod tests {
         assert!(!ack.accepted);
         assert!(ack.error.unwrap().contains("mismatch"));
         assert_eq!(calls.lock().unwrap().len(), 0, "dispatch should not be called for mismatched source");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_parse_command_dispatches_to_unknown_source() {
+    #[sinex_test]
+    async fn test_parse_command_dispatches_to_unknown_source() -> xtask::sandbox::TestResult<()> {
         let (dispatch, _calls) = test_parser_dispatch();
         // The test dispatch accepts any source_id; the real dispatch rejects unknown ones
         let result = dispatch("unknown-source", &[], None);
@@ -243,5 +246,6 @@ mod tests {
         let result = default_dispatch("unknown-source", &[], None);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("unknown source_id"));
+        Ok(())
     }
 }

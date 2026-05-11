@@ -508,19 +508,21 @@ pub fn render_format_matrix_terminal() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
 
-    #[test]
-    fn all_registry_entries_have_at_least_one_format_or_note() {
+    #[sinex_test]
+    async fn all_registry_entries_have_at_least_one_format_or_note() -> xtask::sandbox::TestResult<()> {
         for (cmd, cap) in build() {
             assert!(
                 !cap.supported.is_empty() || cap.note.is_some(),
                 "command `{cmd}` has no supported formats and no explanatory note"
             );
         }
+        Ok(())
     }
 
-    #[test]
-    fn validate_format_rejects_unsupported() {
+    #[sinex_test]
+    async fn validate_format_rejects_unsupported() -> xtask::sandbox::TestResult<()> {
         let result = validate_format("completions", OutputFormat::Json);
         assert!(result.is_err(), "completions should reject json");
         let msg = result.unwrap_err();
@@ -529,18 +531,20 @@ mod tests {
             msg.contains("none"),
             "error should say no formats supported"
         );
+        Ok(())
     }
 
-    #[test]
-    fn validate_format_accepts_supported() {
+    #[sinex_test]
+    async fn validate_format_accepts_supported() -> xtask::sandbox::TestResult<()> {
         assert!(validate_format("query", OutputFormat::Json).is_ok());
         assert!(validate_format("query", OutputFormat::Table).is_ok());
         assert!(validate_format("query", OutputFormat::Dot).is_ok());
         assert!(validate_format("watch", OutputFormat::Json).is_ok());
+        Ok(())
     }
 
-    #[test]
-    fn validate_format_rejects_unknown_command() {
+    #[sinex_test]
+    async fn validate_format_rejects_unknown_command() -> xtask::sandbox::TestResult<()> {
         let result = validate_format("nonexistent command", OutputFormat::Json);
         assert!(result.is_err(), "unknown commands should fail closed");
         assert!(
@@ -549,10 +553,11 @@ mod tests {
                 .contains("missing from the output-format registry"),
             "error should explain the missing registry entry"
         );
+        Ok(())
     }
 
-    #[test]
-    fn registry_covers_key_commands() {
+    #[sinex_test]
+    async fn registry_covers_key_commands() -> xtask::sandbox::TestResult<()> {
         let reg = build();
         let required = [
             "query",
@@ -570,15 +575,17 @@ mod tests {
         for cmd in required {
             assert!(reg.contains_key(cmd), "registry is missing `{cmd}`");
         }
+        Ok(())
     }
 
-    #[test]
-    fn streaming_commands_are_marked() {
+    #[sinex_test]
+    async fn streaming_commands_are_marked() -> xtask::sandbox::TestResult<()> {
         let reg = build();
         assert!(reg["watch"].streaming, "`watch` must be marked streaming");
         assert!(
             reg["replay watch"].streaming,
             "`replay watch` must be marked streaming"
         );
+        Ok(())
     }
 }

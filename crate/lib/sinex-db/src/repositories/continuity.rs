@@ -646,6 +646,7 @@ impl ChunkAccess for Chunk {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
     use time::macros::datetime;
 
     fn chunk(
@@ -698,8 +699,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn classify_overlap_when_curr_starts_before_prev_ends() {
+    #[sinex_test]
+    async fn classify_overlap_when_curr_starts_before_prev_ends() -> xtask::sandbox::TestResult<()> {
         let prev = chunk(
             "annex",
             "completed",
@@ -721,10 +722,11 @@ mod tests {
             &curr,
         );
         assert!(matches!(kind, SeamKind::Overlap));
+        Ok(())
     }
 
-    #[test]
-    fn classify_continuation_when_back_to_back() {
+    #[sinex_test]
+    async fn classify_continuation_when_back_to_back() -> xtask::sandbox::TestResult<()> {
         let prev = chunk(
             "annex",
             "completed",
@@ -746,10 +748,11 @@ mod tests {
             &curr,
         );
         assert!(matches!(kind, SeamKind::ExpectedContinuation));
+        Ok(())
     }
 
-    #[test]
-    fn classify_discontinuity_for_long_gap() {
+    #[sinex_test]
+    async fn classify_discontinuity_for_long_gap() -> xtask::sandbox::TestResult<()> {
         let prev = chunk(
             "annex",
             "completed",
@@ -771,10 +774,11 @@ mod tests {
             &curr,
         );
         assert!(matches!(kind, SeamKind::Discontinuity));
+        Ok(())
     }
 
-    #[test]
-    fn classify_recovered_partial_when_either_chunk_marked() {
+    #[sinex_test]
+    async fn classify_recovered_partial_when_either_chunk_marked() -> xtask::sandbox::TestResult<()> {
         let prev = chunk(
             "annex",
             "recovered_partial",
@@ -796,20 +800,22 @@ mod tests {
             &curr,
         );
         assert!(matches!(kind, SeamKind::RecoveredPartial));
+        Ok(())
     }
 
-    #[test]
-    fn replayability_lists_every_dimension_weakness() {
+    #[sinex_test]
+    async fn replayability_lists_every_dimension_weakness() -> xtask::sandbox::TestResult<()> {
         let r = build_replayability(false, false, false, true, false);
         assert!(!r.raw_bytes_preserved);
         assert!(!r.timing_quality);
         assert!(!r.anchor_stability);
         // 4 reasons + the always-present parser_determinism caveat.
         assert!(r.weak_points.len() >= 4);
+        Ok(())
     }
 
-    #[test]
-    fn coverage_contract_inferred_for_known_families() {
+    #[sinex_test]
+    async fn coverage_contract_inferred_for_known_families() -> xtask::sandbox::TestResult<()> {
         let chunks: Vec<Chunk> = vec![];
         assert!(matches!(
             infer_coverage_contract("shell", &chunks),
@@ -827,10 +833,11 @@ mod tests {
             infer_coverage_contract("unknown", &chunks),
             CoverageContract::OpportunisticImport
         ));
+        Ok(())
     }
 
-    #[test]
-    fn private_mode_seam_only_fires_for_private_classes() {
+    #[sinex_test]
+    async fn private_mode_seam_only_fires_for_private_classes() -> xtask::sandbox::TestResult<()> {
         let prev = chunk_with_privacy(
             "annex",
             "completed",
@@ -873,10 +880,11 @@ mod tests {
             &curr,
         );
         assert!(matches!(kind2, SeamKind::Discontinuity));
+        Ok(())
     }
 
-    #[test]
-    fn declared_coverage_contract_overrides_heuristic_inference() {
+    #[sinex_test]
+    async fn declared_coverage_contract_overrides_heuristic_inference() -> xtask::sandbox::TestResult<()> {
         let declared = DeclaredCoverageContract {
             kind: DeclaredCoverageContractKind::EphemeralStream,
             ..Default::default()
@@ -894,10 +902,11 @@ mod tests {
         let (contract, is_declared) = resolve_coverage_contract("shell", &chunks);
         assert!(matches!(contract, CoverageContract::EphemeralStream));
         assert!(is_declared);
+        Ok(())
     }
 
-    #[test]
-    fn unknown_declared_contract_falls_back_to_heuristic() {
+    #[sinex_test]
+    async fn unknown_declared_contract_falls_back_to_heuristic() -> xtask::sandbox::TestResult<()> {
         let chunks = vec![chunk(
             "annex",
             "completed",
@@ -909,5 +918,6 @@ mod tests {
         let (contract, is_declared) = resolve_coverage_contract("browser", &chunks);
         assert!(matches!(contract, CoverageContract::PeriodicDump));
         assert!(!is_declared);
+        Ok(())
     }
 }
