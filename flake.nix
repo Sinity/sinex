@@ -482,8 +482,11 @@
                 _sinex_xtask_build_checkout_binary() {
                   (
                     local sqlx_tmp pgdata pglog build_rc
+                    local sqlx_tmp_parent
 
-                    sqlx_tmp="$(mktemp -d "$root_dir/.sinex/state/xtask-sqlx.XXXXXX")"
+                    sqlx_tmp_parent="''${SINEX_TEST_TMPDIR:-$root_dir/.sinex/state}"
+                    mkdir -p "$sqlx_tmp_parent"
+                    sqlx_tmp="$(mktemp -d "$sqlx_tmp_parent/xtask-sqlx.XXXXXX")"
                     pgdata="$sqlx_tmp/pgdata"
                     pglog="$sqlx_tmp/postgres.log"
                     build_rc=0
@@ -674,11 +677,13 @@
                 export SINEX_CACHE_DIR="$SINEX_DEV_CACHE_ROOT"
                 export SINEX_TEST_RESULTS_DIR="$SINEX_CACHE_DIR/test-results"
                 export SINEX_NATS_DIR="$SINEX_STATE_DIR/nats"
+                export SINEX_TEST_POSTGRES="''${SINEX_TEST_POSTGRES:-ephemeral}"
                 export SINEX_DEV_PG_PORT="${toString pgPort}"
                 export DATABASE_URL="postgresql:///sinex_dev?host=$SINEX_DEV_STATE_DIR/run"
                 export PGHOST="$SINEX_DEV_STATE_DIR/run"
                 export PGPORT="${toString pgPort}"
-                _sinex_checkout_hash_hex="$(printf '%s' "$PWD" | sha256sum | cut -c1-2)"
+                _sinex_checkout_hash="$(printf '%s' "$PWD" | sha256sum | cut -c1-12)"
+                _sinex_checkout_hash_hex="$(printf '%s' "$_sinex_checkout_hash" | cut -c1-2)"
                 _sinex_checkout_hash_byte="$((16#$_sinex_checkout_hash_hex))"
                 export SINEX_DEV_GATEWAY_PORT="$((19000 + _sinex_checkout_hash_byte))"
                 export SINEX_DEV_NATS_PORT="$((4222 + (_sinex_checkout_hash_byte % 100)))"
@@ -686,6 +691,33 @@
                 export SINEX_GATEWAY_TCP_LISTEN="127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
                 export SINEX_GATEWAY_URL="https://127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
                 export SINEX_RPC_URL="$SINEX_GATEWAY_URL"
+
+                if [ -z "''${SINEX_TEST_TMPDIR:-}" ]; then
+                  _sinex_test_tmp_root="$SINEX_DEV_ROOT/.sinex/test-tmp"
+                  if [ -d /dev/shm ] && [ -w /dev/shm ] && [ -k /dev/shm ]; then
+                    _sinex_shm_available_kb="$(df -Pk /dev/shm 2>/dev/null | awk 'NR == 2 { print $4 }')"
+                    if [ "''${_sinex_shm_available_kb:-0}" -ge 1048576 ]; then
+                      _sinex_test_tmp_root="/dev/shm/sinex-test-''${USER:-user}-$_sinex_checkout_hash"
+                    fi
+                  fi
+                  export SINEX_TEST_TMPDIR="$_sinex_test_tmp_root"
+                fi
+                if [ -z "''${SINEX_TEST_PGDATA_DIR:-}" ]; then
+                  _sinex_test_pgdata_root="$SINEX_DEV_ROOT/.sinex/ci-pgdata"
+                  if [ -d /dev/shm ] && [ -w /dev/shm ] && [ -k /dev/shm ]; then
+                    _sinex_shm_available_kb="$(df -Pk /dev/shm 2>/dev/null | awk 'NR == 2 { print $4 }')"
+                    if [ "''${_sinex_shm_available_kb:-0}" -ge 1048576 ]; then
+                      _sinex_test_pgdata_root="/dev/shm/sinex-ci-pgdata-''${USER:-user}-$_sinex_checkout_hash"
+                    fi
+                  fi
+                  export SINEX_TEST_PGDATA_DIR="$_sinex_test_pgdata_root"
+                fi
+                mkdir -p "$SINEX_TEST_TMPDIR"
+                chmod 700 "$SINEX_TEST_TMPDIR" 2>/dev/null || true
+                if [ -n "''${SINEX_TEST_PGDATA_DIR:-}" ]; then
+                  mkdir -p "$SINEX_TEST_PGDATA_DIR"
+                  chmod 700 "$SINEX_TEST_PGDATA_DIR" 2>/dev/null || true
+                fi
 
                 # Dev TLS certs are generated lazily by preflight when needed.
                 # Set TLS env vars if dev certs exist — enables mTLS automatically.

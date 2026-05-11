@@ -471,8 +471,8 @@ async fn ensure_default_session_state_conn(conn: &mut PgConnection) -> TestResul
                 was = row_sec
             );
         }
-        if sync_commit != "on" {
-            resets.push("SET synchronous_commit TO ON");
+        if sync_commit != "off" {
+            resets.push("SET synchronous_commit TO OFF");
         }
         if !resets.is_empty() {
             // Batch all SET statements into one round-trip

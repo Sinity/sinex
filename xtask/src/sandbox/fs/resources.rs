@@ -20,8 +20,8 @@ static TEMP_ENV_MUTEX: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new
 
 /// Per-test temporary directory redirect.
 ///
-/// Keeps `tempfile`, `std::env::temp_dir()`, and subprocesses on a
-/// checkout-backed `.sinex/test-tmp` tree instead of the host `/tmp`.
+/// Keeps `tempfile`, `std::env::temp_dir()`, and subprocesses on the
+/// packaging-selected test temp root instead of the host `/tmp`.
 pub struct TestTempEnv {
     lock: Option<MutexGuard<'static, ()>>,
     original: [(&'static str, Option<OsString>); 3],
@@ -37,7 +37,7 @@ pub fn prepare_test_temp_env(test_name: &str) -> TestResult<TestTempEnv> {
     let dir = tempfile::Builder::new()
         .prefix(&short_test_temp_prefix(test_name))
         .tempdir_in(temp_root.as_std_path())
-        .map_err(|e| eyre!("Failed to create workspace-backed temp directory: {e}"))?;
+        .map_err(|e| eyre!("Failed to create test temp directory: {e}"))?;
 
     // `TMPDIR` / `TMP` / `TEMP` are process-global, so `cargo test` can race
     // parallel cases into each other's deleted temp roots. Hold a dedicated
@@ -174,6 +174,15 @@ pub fn verify_test_path_safety(path: &str) -> TestResult<()> {
 }
 
 fn workspace_test_temp_root() -> TestResult<Utf8PathBuf> {
+    if let Some(configured) = std::env::var_os("SINEX_TEST_TMPDIR") {
+        let temp_root = Utf8PathBuf::from_path_buf(configured.into())
+            .map_err(|path| eyre!("SINEX_TEST_TMPDIR is not valid UTF-8: {path:?}"))?;
+        std::fs::create_dir_all(temp_root.as_std_path()).map_err(|e| {
+            eyre!("Failed to create configured test temp root {temp_root}: {e}")
+        })?;
+        return Ok(temp_root);
+    }
+
     let manifest_dir = Utf8Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = manifest_dir
         .parent()
@@ -254,6 +263,20 @@ mod tests {
                 socket_path.as_str().len()
             );
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workspace_test_temp_root_honors_env_override()
+    -> ::xtask::sandbox::TestResult<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let override_root = temp_dir.path().join("sinex-test-root");
+        let _guard = EnvGuard::set_single("SINEX_TEST_TMPDIR", override_root.as_os_str());
+
+        let root = workspace_test_temp_root()?;
+
+        assert_eq!(root.as_std_path(), override_root.as_path());
+        assert!(root.exists());
         Ok(())
     }
 

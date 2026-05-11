@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::infra::services::nats::{NatsConfig as SharedNatsConfig, NatsManager};
-use crate::infra::services::postgres::{PostgresConfig as SharedPgConfig, PostgresManager};
+use crate::infra::services::postgres::{
+    PostgresConfig as SharedPgConfig, PostgresDurabilityMode, PostgresManager,
+};
 use crate::infra::state::CheckoutState;
 
 /// Stack configuration, uses per-checkout state
@@ -163,6 +165,7 @@ impl StackConfig {
             // Dev infra connects via Unix socket (DATABASE_URL=postgresql:///...?host=...).
             // Disable TCP to avoid contending with a system Postgres on port 5432.
             listen_addresses: String::new(),
+            durability: PostgresDurabilityMode::Durable,
         }
     }
 

@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crate::infra::services::postgres::{
-    PostgresConfig as SharedPgConfig, PostgresManager, validate_pg_identifier,
+    PostgresConfig as SharedPgConfig, PostgresDurabilityMode, PostgresManager,
+    validate_pg_identifier,
 };
 
 /// Configuration for an ephemeral Postgres instance
@@ -40,12 +41,22 @@ impl Default for PostgresConfig {
 /// RAII guard for Postgres instance cleanup
 pub struct PgInstance {
     manager: PostgresManager,
+    data_dir: PathBuf,
+    socket_dir: PathBuf,
+    keep_data: bool,
+    cleanup_socket_dir: bool,
 }
 
 impl Drop for PgInstance {
     fn drop(&mut self) {
         // Best effort stop
         let _ = self.manager.stop(false);
+        if !self.keep_data {
+            let _ = fs::remove_dir_all(&self.data_dir);
+            if self.cleanup_socket_dir {
+                let _ = fs::remove_dir_all(&self.socket_dir);
+            }
+        }
     }
 }
 
@@ -80,6 +91,7 @@ pub fn setup_ephemeral(config: &PostgresConfig) -> Result<(PgInstance, PgEnv)> {
         // CI connects via TCP (DATABASE_URL=postgresql://...@127.0.0.1:port/...).
         // Bind to loopback so sqlx's pool can reach the postmaster.
         listen_addresses: "127.0.0.1".to_string(),
+        durability: PostgresDurabilityMode::EphemeralFast,
     };
 
     let manager = PostgresManager::new(shared_config.clone());
@@ -88,7 +100,14 @@ pub fn setup_ephemeral(config: &PostgresConfig) -> Result<(PgInstance, PgEnv)> {
     manager.init(false)?;
     manager.start(false)?;
 
-    let pg_guard = PgInstance { manager };
+    let cleanup_socket_dir = env::current_dir().map_or(true, |cwd| cwd != config.socket_dir);
+    let pg_guard = PgInstance {
+        manager,
+        data_dir: config.data_dir.clone(),
+        socket_dir: config.socket_dir.clone(),
+        keep_data: config.keep_data,
+        cleanup_socket_dir,
+    };
 
     let env = PgEnv {
         host: host.clone(),
