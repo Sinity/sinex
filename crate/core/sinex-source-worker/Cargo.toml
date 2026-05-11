@@ -98,6 +98,9 @@ workspace = true
 [dev-dependencies.rusqlite]
 workspace = true
 
+[dev-dependencies.sinex-node-sdk]
+path = "../../lib/sinex-node-sdk"
+
 [features]
 default = []
 tokio-console = ["dep:console-subscriber"]
