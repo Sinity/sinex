@@ -1100,6 +1100,10 @@ fn execute_source_worker(
     // A3.1.5 — Registered parsers smoke
     checks.push(check_sw_registered_parsers(&root));
 
+    // A3.1.6 — Privacy invocation: every Sensitive/Secret source unit must invoke
+    // the privacy engine or declare an explicit escape hatch.
+    checks.push(check_sw_privacy_invocation(&root));
+
     let overall = if checks.iter().any(SwCheck::is_fail) {
         SwCheckStatus::Fail
     } else if checks.iter().any(|c| c.status == SwCheckStatus::Warn) {
@@ -1420,6 +1424,154 @@ fn scan_rs_files_for_pattern(
             }
         }
     }
+}
+
+/// A3.1.6 — Privacy invocation: every `register_source_unit!` block that declares
+/// a non-Public privacy tier must invoke the privacy engine in the same file.
+///
+/// Scanning targets: the entire `crate/core/sinex-source-worker/src/` tree and
+/// `crate/lib/sinex-node-sdk/src/parser/` (where parsers may live after the fold).
+///
+/// Indicators (any one satisfies the gate):
+/// - `privacy::engine(`
+/// - `privacy::process(`
+/// - `privacy::process_json(`
+/// - `ProcessingContext::` (imperative parsers that use a context variant)
+/// - `default_privacy_context =` (declarative `#[source_record]` DSL attribute)
+/// - `#[allow(missing_privacy_invocation` (explicit escape hatch)
+fn check_sw_privacy_invocation(root: &Path) -> SwCheck {
+    const NON_PUBLIC_TIERS: &[&str] = &[
+        "PrivacyTier::Sensitive",
+        "PrivacyTier::Secret",
+        "SuPrivacyTier::Sensitive",
+        "SuPrivacyTier::Secret",
+    ];
+    const PRIVACY_INDICATORS: &[&str] = &[
+        "privacy::engine(",
+        "privacy::process(",
+        "privacy::process_json(",
+        "ProcessingContext::",
+        "default_privacy_context =",
+        "#[allow(missing_privacy_invocation",
+    ];
+
+    let search_roots = [
+        root.join("crate/core/sinex-source-worker/src"),
+        root.join("crate/lib/sinex-node-sdk/src/parser"),
+    ];
+
+    let mut violations: Vec<String> = Vec::new();
+
+    for search_root in &search_roots {
+        collect_privacy_violations(search_root, NON_PUBLIC_TIERS, PRIVACY_INDICATORS, &mut violations);
+    }
+
+    if violations.is_empty() {
+        SwCheck::pass(
+            "privacy_invocation",
+            "all non-Public source units invoke the privacy engine",
+        )
+    } else {
+        SwCheck::fail(
+            "privacy_invocation",
+            format!(
+                "{} file(s) have non-Public source units without a privacy invocation",
+                violations.len()
+            ),
+            violations,
+        )
+    }
+}
+
+/// Walk `.rs` files under `dir` and collect privacy-gate violations.
+///
+/// Only the `crate/core/sinex-source-worker/` and `crate/lib/sinex-node-sdk/src/parser/`
+/// trees are scanned — not the whole workspace. Descriptor-only source units
+/// (e.g. blob-storage in sinex-primitives) are only registered there to describe
+/// infra-internal event types and are not caught by this gate.
+fn collect_privacy_violations(
+    dir: &Path,
+    non_public_tiers: &[&str],
+    privacy_indicators: &[&str],
+    out: &mut Vec<String>,
+) {
+    let Ok(rd) = fs::read_dir(dir) else { return };
+    for entry in rd.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_privacy_violations(&path, non_public_tiers, privacy_indicators, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            let Ok(contents) = fs::read_to_string(&path) else { continue };
+
+            // Only examine files that register a source unit.
+            if !contents.contains("register_source_unit!") {
+                continue;
+            }
+
+            // Only flag files with a non-Public privacy tier.
+            let has_non_public = non_public_tiers.iter().any(|t| contents.contains(t));
+            if !has_non_public {
+                continue;
+            }
+
+            // Pass if any privacy indicator is present.
+            let has_invocation = privacy_indicators.iter().any(|ind| contents.contains(ind));
+            if has_invocation {
+                continue;
+            }
+
+            // Also check siblings in the same directory (lib.rs + sibling pattern).
+            let has_sibling_invocation = path
+                .parent()
+                .and_then(|parent| fs::read_dir(parent).ok())
+                .map(|rd| {
+                    rd.filter_map(|e| e.ok())
+                        .filter(|e| {
+                            e.path().extension().is_some_and(|ext| ext == "rs")
+                        })
+                        .any(|e| {
+                            fs::read_to_string(e.path())
+                                .map(|c| {
+                                    privacy_indicators.iter().any(|ind| c.contains(ind))
+                                })
+                                .unwrap_or(false)
+                        })
+                })
+                .unwrap_or(false);
+
+            if has_sibling_invocation {
+                continue;
+            }
+
+            // Extract id for the error message.
+            let id = extract_unit_id_from_contents(&contents);
+            out.push(format!(
+                "{}: source unit '{}' has non-Public privacy tier but no privacy invocation \
+                 (add privacy::engine(, ProcessingContext::, default_privacy_context =, or \
+                 #[allow(missing_privacy_invocation, reason = \"...\")])",
+                path.display(),
+                id,
+            ));
+        }
+    }
+}
+
+/// Extract the first `id: "..."` value from a source-unit descriptor block.
+fn extract_unit_id_from_contents(contents: &str) -> String {
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("id:") {
+            let rest = rest.trim();
+            if let Some(inner) = rest.strip_prefix('"') {
+                if let Some(id) = inner.split('"').next()
+                    && !id.is_empty()
+                {
+                    return id.to_string();
+                }
+            }
+        }
+    }
+    "<unknown>".to_string()
 }
 
 // =============================================================================
