@@ -48,6 +48,28 @@ pub fn engine() -> Result<&'static PrivacyEngine, &'static PrivacyError> {
     ENGINE.get_or_init(build_engine_from_env).as_ref()
 }
 
+/// Build a privacy engine augmented with per-source-unit rules.
+///
+/// Loads the global config (identical to [`engine()`]) and merges the extra
+/// rules declared by the matching [`crate::proof::SourceUnitPrivacyRules`]
+/// entry (registered via `extra_privacy_rules:` in `register_source_unit!`).
+///
+/// Returns a freshly-constructed `PrivacyEngine` — **not** a cached singleton.
+/// Callers that need performance should build once at node startup and reuse.
+/// If no per-unit rules are registered the engine is identical to the global
+/// one (same config, same compiled rule set).
+///
+/// # Errors
+/// Returns `PrivacyError` if the config or any rule pattern fails to compile.
+pub fn engine_for_source_unit(source_unit_id: &str) -> Result<PrivacyEngine, PrivacyError> {
+    let mut config = config::PrivacyConfig::from_env().map_err(PrivacyError::Config)?;
+    if let Some(scoped) = crate::proof::find_source_unit_privacy_rules(source_unit_id) {
+        let extra = (scoped.rules_fn)();
+        config.extra_rules.extend(extra);
+    }
+    PrivacyEngine::new(config)
+}
+
 /// Process text with the global privacy engine.
 pub fn process(
     text: &str,
@@ -614,6 +636,54 @@ mod tests {
         restore_var("SINEX_PRIVACY_EXTRA_RULES", old_extra_rules);
 
         assert!(processed.any_matched());
+        Ok(())
+    }
+
+    // ── engine_for_source_unit ──
+
+    #[sinex_test]
+    async fn engine_for_source_unit_returns_engine_without_scoped_rules()
+    -> ::xtask::sandbox::TestResult<()> {
+        // A source unit with no registered `SourceUnitPrivacyRules` should
+        // produce an engine that behaves identically to the global one.
+        let engine = engine_for_source_unit("nonexistent.source-unit")?;
+        let result = engine.process("export TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij", ProcessingContext::Command);
+        assert!(result.any_matched(), "global rules should still fire");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn engine_for_source_unit_with_extra_rules_merges_correctly()
+    -> ::xtask::sandbox::TestResult<()> {
+        // We cannot register inventory at test time (link-time only), so we
+        // verify the merge path directly by constructing a PrivacyConfig with
+        // extra rules and confirming both global and scoped rules fire.
+        let scoped_rule = PatternRule {
+            name: "test_scoped_sentinel".into(),
+            description: "fires only in scoped engine".into(),
+            category: RuleCategory::Custom,
+            matcher: Matcher::Regex {
+                pattern: r"SCOPED_SENTINEL_XYZ".into(),
+            },
+            strategy: Strategy::Redact {
+                label: Some("<SCOPED_RULE>".into()),
+            },
+            contexts: vec![ProcessingContext::Command],
+            enabled: true,
+        };
+
+        let mut config = PrivacyConfig::default();
+        config.extra_rules.push(scoped_rule);
+        let engine = PrivacyEngine::new(config)?;
+
+        // Global rule fires.
+        let result = engine.process("export TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij", ProcessingContext::Command);
+        assert!(result.any_matched(), "global rule should fire in merged engine");
+
+        // Scoped rule fires.
+        let result2 = engine.process("SCOPED_SENTINEL_XYZ", ProcessingContext::Command);
+        assert!(result2.any_matched(), "scoped rule should fire in merged engine");
+        assert!(result2.text.contains("<SCOPED_RULE>"), "got: {}", result2.text);
         Ok(())
     }
 }
