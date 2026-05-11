@@ -601,7 +601,7 @@ in
                 };
                 resources = mkOption {
                   type = resourceModule {
-                    defaultMemory = "1G";
+                    defaultMemory = "8G";
                     defaultCpu = "100%";
                     defaultOpenFiles = 524288;
                   };
@@ -687,7 +687,7 @@ in
                   description = "Log level for the gateway.";
                 };
                 resources = mkOption {
-                  type = resourceModule { defaultMemory = "512M"; defaultCpu = "75%"; };
+                  type = resourceModule { defaultMemory = "8G"; defaultCpu = "75%"; };
                   default = { };
                   description = "Resource limits for the gateway.";
                 };
@@ -990,7 +990,7 @@ in
                   description = "Default batching configuration for nodes.";
                 };
                 resources = mkOption {
-                  type = resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; };
+                  type = resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; };
                   default = { };
                   description = "Default resource limits.";
                 };
@@ -1065,9 +1065,9 @@ in
                   description = "Batch override (null ⇒ inherit defaults).";
                 };
                 resources = mkOption {
-                  type = nullOr (resourceModule { defaultMemory = "2G"; defaultCpu = "50%"; });
+                  type = nullOr (resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; });
                   default = { };
-                  description = "Filesystem node resource limits. Defaults to 2G memory (higher than other nodes due to inotify watch and file-cache overhead).";
+                  description = "Filesystem node resource limits. Defaults to an 8G soft MemoryHigh watermark; hard caps remain opt-in.";
                 };
                 env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
                 extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
@@ -1083,7 +1083,7 @@ in
                 enable = mkOption { type = bool; default = true; description = "Enable terminal node."; };
                 instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
                 batch = mkOption { type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; }); default = null; description = "Batch override."; };
-                resources = mkOption { type = nullOr (resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
+                resources = mkOption { type = nullOr (resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
                 historySources = mkOption {
                   type = listOf terminalHistorySourceModule;
                   default = [ ];
@@ -1180,7 +1180,7 @@ in
                 enable = mkOption { type = bool; default = true; description = "Enable desktop node."; };
                 instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
                 batch = mkOption { type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; }); default = null; description = "Batch override."; };
-                resources = mkOption { type = nullOr (resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
+                resources = mkOption { type = nullOr (resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
                 session = mkOption {
                   type = submodule {
                     options = {
@@ -1281,7 +1281,7 @@ in
                   default = { size = 200; timeoutSec = 10; };
                   description = "Batch override (defaults to a slower cadence).";
                 };
-                resources = mkOption { type = nullOr (resourceModule { defaultMemory = "512M"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
+                resources = mkOption { type = nullOr (resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
                 env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
                 extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
               };
@@ -1348,7 +1348,7 @@ in
                 };
                 resources = mkOption {
                   type = nullOr (resourceModule {
-                    defaultMemory = "512M";
+                    defaultMemory = "8G";
                     defaultCpu = "100%";
                     defaultShutdownSec = 600;
                   });
@@ -1529,7 +1529,7 @@ in
                         description = "Batch parameters for this automata profile.";
                       };
                       resources = mkOption {
-                        type = resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; };
+                        type = resourceModule { defaultMemory = "8G"; defaultCpu = "50%"; };
                         default = { };
                         description = "Resource limits for this automata profile.";
                       };
@@ -1538,15 +1538,15 @@ in
                   default = {
                     light = {
                       batch = { size = 50; timeoutSec = 2; };
-                      resources = { memoryMax = "128M"; cpuQuota = "25%"; };
+                      resources = { memoryHigh = "2G"; };
                     };
                     standard = {
                       batch = { size = 100; timeoutSec = 5; };
-                      resources = { memoryMax = "256M"; cpuQuota = "50%"; };
+                      resources = { memoryHigh = "4G"; };
                     };
                     heavy = {
                       batch = { size = 500; timeoutSec = 5; };
-                      resources = { memoryMax = "512M"; cpuQuota = "100%"; };
+                      resources = { memoryHigh = "8G"; };
                     };
                   };
                   description = "Named automata performance profiles.";
