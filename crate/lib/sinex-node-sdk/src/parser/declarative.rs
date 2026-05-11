@@ -22,6 +22,31 @@
 //! - `#[timestamp]` derivation with rfc3339 / unix-seconds / unix-millis /
 //!   unix-micros / unix-nanos formats and material-time fallback
 //!
+//! # Extension A — discriminator / multi-event-type
+//!
+//! `DeclarativeParserSpec.discriminator` names one field whose extracted value
+//! selects the emitted `(event_source, event_type)` at parse time.  Declared
+//! via `#[event_dispatch("value" => "event.type", ...)]` on the discriminator
+//! field; `on_unknown` controls what happens when no case matches.
+//!
+//! Collapses these previously-imperative parsers into declarative:
+//! - `fs` (file.created / file.modified / file.deleted / file.moved)
+//! - `desktop.activitywatch` (window.active / afk.changed / browser.tab.active)
+//! - `system.dbus` — partially (per-interface dispatch still needs a thin wrapper
+//!   for multi-field key; the discriminator handles the common cases)
+//! - `desktop.window-manager` (via `type>>data` prefix dispatch on the `kind`
+//!   field)
+//!
+//! # Extension F — carry_across_records / stateful continuation
+//!
+//! `StatefulCarryPolicy` lets one field "carry" a value from one record into the
+//! next.  Used for zsh extended history (`": timestamp:elapsed;cmd"` prefix
+//! line carries its timestamp to the following command line).
+//!
+//! The `DeclarativeParser` is now a stateful object (`StatefulDeclarativeParser`)
+//! when carry fields are present.  For purely stateless specs the
+//! `DeclarativeParser::evaluate` free function still works.
+//!
 //! # Deferred (Phase 1A v2)
 //!
 //! - `#[anchor(kind = "...")]` override — for v1 we pass through the
@@ -30,6 +55,10 @@
 //! - Regex captures for line logs (use raw_line + a thin imperative
 //!   wrapper for now)
 //! - `#[redact_if(rule = "...")]` named rule references
+//! - Multi-line record continuation (backslash-continuation in zsh history)
+//!   is NOT handled by carry_across_records — that requires an adapter-level
+//!   record assembler. carry_across_records handles only cross-record state
+//!   propagation for records that are individually complete lines.
 
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{EventSource, EventType};
@@ -53,17 +82,76 @@ use crate::parser::ParserError;
 /// Static description of a declarative parser.
 ///
 /// Built once per parser at compile time (via macro) or load time (via YAML).
-/// Consumed by [`DeclarativeParser::evaluate`].
+/// Consumed by [`DeclarativeParser::evaluate`] and [`StatefulDeclarativeParser`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeclarativeParserSpec {
     pub parser_id: ParserId,
     pub parser_version: String,
     pub source_unit_id: SourceUnitId,
     pub event_source: EventSource,
+    /// Default event type — used when no discriminator matches (or no discriminator is present).
     pub event_type: EventType,
     pub default_privacy_context: ProcessingContext,
     pub input_format: InputFormat,
     pub fields: Vec<FieldSpec>,
+
+    // --- Extension A: discriminator / multi-event-type dispatch ---
+
+    /// If `Some`, one field's extracted value selects the emitted
+    /// `(event_source, event_type)` at parse time.  See [`Discriminator`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discriminator: Option<Discriminator>,
+}
+
+// =============================================================================
+// Extension A — Discriminator spec
+// =============================================================================
+
+/// Discriminator dispatch: read a field value, look it up in `cases`,
+/// override the emitted event type (and optionally event source).
+///
+/// Built by `#[event_dispatch("value" => "event.type", ...)]` on the
+/// field that holds the discriminator value.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Discriminator {
+    /// Which field holds the discriminator value.  Must match a field name in
+    /// the parent spec's `fields` vec.  The field is extracted before dispatch.
+    pub field: String,
+
+    /// Ordered mapping from discriminator value to event-type override.
+    /// First matching case wins.
+    pub cases: Vec<DiscriminatorCase>,
+
+    /// What to do when no case matches.
+    #[serde(default)]
+    pub on_unknown: DiscriminatorFallback,
+}
+
+/// One entry in the discriminator case table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscriminatorCase {
+    /// String value extracted from the discriminator field.
+    pub value: String,
+    /// Event type to emit for this case.
+    pub event_type: EventType,
+    /// Optional event-source override.  When `None`, the spec's `event_source`
+    /// is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_source: Option<EventSource>,
+}
+
+/// What [`DeclarativeParser`] does when the discriminator field value does not
+/// match any [`DiscriminatorCase`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiscriminatorFallback {
+    /// Skip the record silently (emit no events).
+    SkipRecord,
+    /// Fail the record with a [`ParserError::Field`].
+    Error,
+    /// Use the spec's top-level `event_type` / `event_source` (the default).
+    #[default]
+    Default,
 }
 
 /// What kind of record bytes the parser consumes.
@@ -122,6 +210,54 @@ pub struct FieldSpec {
     /// If set, the field is suppressed when the named binding-config flag is true.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suppress_if: Option<SuppressPredicate>,
+
+    // --- Extension F: stateful carry across records ---
+
+    /// If `Some`, this field participates in stateful carry-across-records.
+    /// The semantics depend on [`StatefulCarryPolicy`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carry: Option<CarrySpec>,
+}
+
+// =============================================================================
+// Extension F — Carry-across-records spec
+// =============================================================================
+
+/// Specifies how a field participates in stateful carry-across-records parsing.
+///
+/// Two roles:
+/// - **Producer** (`policy = SetThenConsume | SetThenRetain`): when this field
+///   is present in a record, its value is stored in the parser's carry-state map
+///   under `self.name`.  The value is then available to consumer fields in
+///   subsequent records.
+/// - **Consumer** (`policy = ConsumeCarried`): on each record, if the named
+///   `from_carry` field exists in carry-state, inject its value as this field's
+///   value.  If `clear_on_use = true`, the carry-state entry is cleared after
+///   injection (single-use).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CarrySpec {
+    pub policy: StatefulCarryPolicy,
+    /// For `ConsumeCarried`: which carry-state key to pull from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_carry: Option<String>,
+    /// For `ConsumeCarried`: clear the carry-state entry after use.
+    #[serde(default)]
+    pub clear_on_use: bool,
+}
+
+/// Policy for `carry_across_records` participation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StatefulCarryPolicy {
+    /// When this field is found in the current record, store its value in
+    /// carry-state and clear it on the next record that consumes it.
+    SetThenConsume,
+    /// Store value in carry-state; keep it alive across multiple records until
+    /// explicitly overwritten.
+    SetThenRetain,
+    /// Pull value from carry-state (named by `from_carry`), not from the record
+    /// bytes.  If `clear_on_use`, remove from state after injection.
+    ConsumeCarried,
 }
 
 /// Where to read a field value from in the source record.
@@ -232,158 +368,314 @@ impl BindingConfig {
 
 /// Stateless evaluator. The same code path runs whether the spec was authored
 /// via the derive macro or the YAML loader.
+///
+/// For specs that use `carry_across_records` (Extension F), use
+/// [`StatefulDeclarativeParser`] instead — it maintains carry-state across
+/// `evaluate_stateful()` calls.
 pub struct DeclarativeParser;
 
 impl DeclarativeParser {
     /// Evaluate a record against a spec, producing zero or more event intents.
     ///
     /// Returns `Ok(vec![])` (zero events) if the entire event was suppressed
-    /// by a `whole_event` predicate. Returns `Err` if a required field was
-    /// missing or a type conversion failed.
+    /// by a `whole_event` predicate or by a discriminator `skip_record` case.
+    /// Returns `Err` if a required field was missing or a type conversion failed.
+    ///
+    /// For specs with carry fields, pass `carry_state = &mut BTreeMap::new()`
+    /// and hold the map across calls, or use [`StatefulDeclarativeParser`].
     pub fn evaluate(
         spec: &DeclarativeParserSpec,
         record: SourceRecord,
         ctx: &ParserContext,
         binding: &BindingConfig,
     ) -> Result<Vec<ParsedEventIntent>, ParserError> {
-        let decoded = decode_record(spec.input_format, &record)?;
+        let mut carry_state = BTreeMap::new();
+        evaluate_inner(spec, record, ctx, binding, &mut carry_state)
+    }
+}
 
-        let mut payload = serde_json::Map::new();
-        let mut field_privacy_log = Vec::new();
-        let mut occurrence_fields: Vec<(String, String)> = Vec::new();
-        let mut ts_override: Option<(Timestamp, String)> = None;
-        let mut whole_event_suppressed = false;
+// =============================================================================
+// Stateful evaluator (Extension F — carry_across_records)
+// =============================================================================
 
-        for field in &spec.fields {
-            let raw_value = extract_field(&decoded, &field.source, spec.input_format)?;
+/// Stateful wrapper around [`DeclarativeParser::evaluate`] that persists
+/// carry-state between records.
+///
+/// Use this when the spec contains fields with `carry` policies
+/// ([`StatefulCarryPolicy`]).  For purely stateless specs, the free function
+/// [`DeclarativeParser::evaluate`] is equivalent and cheaper.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let mut parser = StatefulDeclarativeParser::new(spec.clone());
+/// for record in records {
+///     let intents = parser.evaluate(record, &ctx, &binding)?;
+///     // handle intents
+/// }
+/// ```
+pub struct StatefulDeclarativeParser {
+    spec: DeclarativeParserSpec,
+    /// Carry-state: field name → last produced value.
+    carry_state: BTreeMap<String, serde_json::Value>,
+}
 
-            let value = match raw_value {
-                Some(v) => v,
-                None => {
-                    if let Some(default) = field.default.clone() {
-                        default
-                    } else if field.required {
-                        return Err(ParserError::Field(format!(
-                            "required field '{}' missing from record",
-                            field.name
-                        )));
-                    } else {
-                        continue;
-                    }
+impl StatefulDeclarativeParser {
+    pub fn new(spec: DeclarativeParserSpec) -> Self {
+        Self {
+            spec,
+            carry_state: BTreeMap::new(),
+        }
+    }
+
+    pub fn spec(&self) -> &DeclarativeParserSpec {
+        &self.spec
+    }
+
+    /// Evaluate one record, threading carry-state.
+    pub fn evaluate(
+        &mut self,
+        record: SourceRecord,
+        ctx: &ParserContext,
+        binding: &BindingConfig,
+    ) -> Result<Vec<ParsedEventIntent>, ParserError> {
+        evaluate_inner(&self.spec, record, ctx, binding, &mut self.carry_state)
+    }
+
+    /// Reset carry-state (e.g. after a checkpoint restore).
+    pub fn reset_carry_state(&mut self) {
+        self.carry_state.clear();
+    }
+}
+
+// =============================================================================
+// Shared inner evaluator
+// =============================================================================
+
+fn evaluate_inner(
+    spec: &DeclarativeParserSpec,
+    record: SourceRecord,
+    ctx: &ParserContext,
+    binding: &BindingConfig,
+    carry_state: &mut BTreeMap<String, serde_json::Value>,
+) -> Result<Vec<ParsedEventIntent>, ParserError> {
+    let decoded = decode_record(spec.input_format, &record)?;
+
+    let mut payload = serde_json::Map::new();
+    let mut field_privacy_log = Vec::new();
+    let mut occurrence_fields: Vec<(String, String)> = Vec::new();
+    let mut ts_override: Option<(Timestamp, String)> = None;
+    let mut whole_event_suppressed = false;
+    // Value of the discriminator field, collected during field iteration.
+    let mut discriminator_value: Option<String> = None;
+
+    for field in &spec.fields {
+        // --- Extension F: ConsumeCarried — inject from carry-state instead of record ---
+        let raw_value = if let Some(carry) = &field.carry {
+            if carry.policy == StatefulCarryPolicy::ConsumeCarried {
+                let key = carry.from_carry.as_deref().unwrap_or(&field.name);
+                let carried = carry_state.get(key).cloned();
+                if carry.clear_on_use {
+                    carry_state.remove(key);
                 }
-            };
+                carried
+            } else {
+                extract_field(&decoded, &field.source, spec.input_format)?
+            }
+        } else {
+            extract_field(&decoded, &field.source, spec.input_format)?
+        };
 
-            let coerced = coerce_field(&value, field.field_type, &field.name)?;
-
-            let suppressed_by_predicate = match &field.suppress_if {
-                Some(pred) => binding.is_truthy(&pred.binding_field),
-                None => false,
-            };
-
-            // Privacy processing for fields with a declared context.
-            let final_value = if let Some(ctx_priv) = field.privacy_context {
-                if suppressed_by_predicate {
-                    let mut decision = FieldPrivacyDecision::suppressed_by_predicate(
-                        &field.name,
-                        ctx_priv,
-                    );
-                    if let Some(pred) = &field.suppress_if {
-                        if pred.whole_event {
-                            decision = decision.into_whole_event_suppressor();
-                            whole_event_suppressed = true;
-                        }
-                    }
-                    field_privacy_log.push(decision);
-                    None
+        let value = match raw_value {
+            Some(v) => v,
+            None => {
+                if let Some(default) = field.default.clone() {
+                    default
+                } else if field.required {
+                    return Err(ParserError::Field(format!(
+                        "required field '{}' missing from record",
+                        field.name
+                    )));
                 } else {
-                    let value_str = value_as_string(&coerced);
-                    let processed = privacy::process(&value_str, ctx_priv)
-                        .map_err(|e| ParserError::Privacy(e.to_string()))?;
-                    let decision = FieldPrivacyDecision::from_processed(
-                        &field.name,
-                        ctx_priv,
-                        &processed,
-                    );
-                    field_privacy_log.push(decision);
-                    if processed.suppressed {
-                        None
-                    } else {
-                        Some(serde_json::Value::String(match processed.text {
-                            Cow::Borrowed(s) => s.to_string(),
-                            Cow::Owned(s) => s,
-                        }))
-                    }
+                    continue;
                 }
-            } else if suppressed_by_predicate {
+            }
+        };
+
+        let coerced = coerce_field(&value, field.field_type, &field.name)?;
+
+        // --- Extension F: producer — store in carry-state ---
+        if let Some(carry) = &field.carry {
+            match carry.policy {
+                StatefulCarryPolicy::SetThenConsume | StatefulCarryPolicy::SetThenRetain => {
+                    carry_state.insert(field.name.clone(), coerced.clone());
+                }
+                StatefulCarryPolicy::ConsumeCarried => {}
+            }
+        }
+
+        // --- Extension A: collect discriminator value ---
+        if let Some(disc) = &spec.discriminator {
+            if disc.field == field.name {
+                discriminator_value = Some(value_as_string(&coerced));
+            }
+        }
+
+        let suppressed_by_predicate = match &field.suppress_if {
+            Some(pred) => binding.is_truthy(&pred.binding_field),
+            None => false,
+        };
+
+        // Privacy processing for fields with a declared context.
+        let final_value = if let Some(ctx_priv) = field.privacy_context {
+            if suppressed_by_predicate {
+                let mut decision = FieldPrivacyDecision::suppressed_by_predicate(
+                    &field.name,
+                    ctx_priv,
+                );
                 if let Some(pred) = &field.suppress_if {
                     if pred.whole_event {
+                        decision = decision.into_whole_event_suppressor();
                         whole_event_suppressed = true;
                     }
                 }
+                field_privacy_log.push(decision);
                 None
             } else {
-                Some(coerced.clone())
-            };
-
-            // Timestamp derivation.
-            if let Some(ts_spec) = &field.timestamp {
-                if let Some(ts) = parse_timestamp(&coerced, ts_spec, &field.name, ctx)? {
-                    ts_override = Some((ts, field.name.clone()));
+                let value_str = value_as_string(&coerced);
+                let processed = privacy::process(&value_str, ctx_priv)
+                    .map_err(|e| ParserError::Privacy(e.to_string()))?;
+                let decision = FieldPrivacyDecision::from_processed(
+                    &field.name,
+                    ctx_priv,
+                    &processed,
+                );
+                field_privacy_log.push(decision);
+                if processed.suppressed {
+                    None
+                } else {
+                    Some(serde_json::Value::String(match processed.text {
+                        Cow::Borrowed(s) => s.to_string(),
+                        Cow::Owned(s) => s,
+                    }))
                 }
             }
-
-            // Occurrence key contribution.
-            if field.occurrence_key {
-                occurrence_fields.push((field.name.clone(), value_as_string(&coerced)));
-            }
-
-            // Add to payload unless skipped or suppressed.
-            if !field.skip_payload {
-                if let Some(v) = final_value {
-                    payload.insert(field.name.clone(), v);
+        } else if suppressed_by_predicate {
+            if let Some(pred) = &field.suppress_if {
+                if pred.whole_event {
+                    whole_event_suppressed = true;
                 }
             }
-        }
-
-        if whole_event_suppressed {
-            return Ok(vec![]);
-        }
-
-        let (ts_orig, timing) = match ts_override {
-            Some((ts, field_name)) => (
-                ts,
-                TimingEvidence::Intrinsic {
-                    field: field_name,
-                    confidence: TimingConfidence::Intrinsic,
-                },
-            ),
-            None => (ctx.acquisition_time, TimingEvidence::StagedAtFallback),
-        };
-
-        let occurrence_key = if occurrence_fields.is_empty() {
             None
         } else {
-            Some(OccurrenceKey {
-                source_unit_id: ctx.source_unit_id.clone(),
-                fields: occurrence_fields,
-            })
+            Some(coerced.clone())
         };
 
-        Ok(vec![ParsedEventIntent {
-            source_unit_id: ctx.source_unit_id.clone(),
-            parser_id: spec.parser_id.clone(),
-            parser_version: spec.parser_version.clone(),
-            event_type: spec.event_type.clone(),
-            event_source: spec.event_source.clone(),
-            payload: serde_json::Value::Object(payload),
-            ts_orig,
-            timing,
-            anchor: record.anchor.clone(),
-            occurrence_key,
-            privacy_context: spec.default_privacy_context,
-            field_privacy_log: Some(field_privacy_log),
-        }])
+        // Timestamp derivation.
+        if let Some(ts_spec) = &field.timestamp {
+            if let Some(ts) = parse_timestamp(&coerced, ts_spec, &field.name, ctx)? {
+                ts_override = Some((ts, field.name.clone()));
+            }
+        }
+
+        // Occurrence key contribution.
+        if field.occurrence_key {
+            occurrence_fields.push((field.name.clone(), value_as_string(&coerced)));
+        }
+
+        // Add to payload unless skipped or suppressed.
+        if !field.skip_payload {
+            if let Some(v) = final_value {
+                payload.insert(field.name.clone(), v);
+            }
+        }
     }
+
+    if whole_event_suppressed {
+        return Ok(vec![]);
+    }
+
+    // --- Extension A: discriminator dispatch ---
+    let (resolved_event_type, resolved_event_source) = if let Some(disc) = &spec.discriminator {
+        match discriminator_value {
+            Some(ref val) => {
+                match disc.cases.iter().find(|c| &c.value == val) {
+                    Some(case) => (
+                        case.event_type.clone(),
+                        case.event_source
+                            .clone()
+                            .unwrap_or_else(|| spec.event_source.clone()),
+                    ),
+                    None => match disc.on_unknown {
+                        DiscriminatorFallback::SkipRecord => return Ok(vec![]),
+                        DiscriminatorFallback::Error => {
+                            return Err(ParserError::Field(format!(
+                                "discriminator field '{}' = {:?} matched no case",
+                                disc.field, val
+                            )))
+                        }
+                        DiscriminatorFallback::Default => {
+                            (spec.event_type.clone(), spec.event_source.clone())
+                        }
+                    },
+                }
+            }
+            None => {
+                // Discriminator field was absent.
+                match disc.on_unknown {
+                    DiscriminatorFallback::SkipRecord => return Ok(vec![]),
+                    DiscriminatorFallback::Error => {
+                        return Err(ParserError::Field(format!(
+                            "discriminator field '{}' was missing from record",
+                            disc.field
+                        )))
+                    }
+                    DiscriminatorFallback::Default => {
+                        (spec.event_type.clone(), spec.event_source.clone())
+                    }
+                }
+            }
+        }
+    } else {
+        (spec.event_type.clone(), spec.event_source.clone())
+    };
+
+    let (ts_orig, timing) = match ts_override {
+        Some((ts, field_name)) => (
+            ts,
+            TimingEvidence::Intrinsic {
+                field: field_name,
+                confidence: TimingConfidence::Intrinsic,
+            },
+        ),
+        None => (ctx.acquisition_time, TimingEvidence::StagedAtFallback),
+    };
+
+    let occurrence_key = if occurrence_fields.is_empty() {
+        None
+    } else {
+        Some(OccurrenceKey {
+            source_unit_id: ctx.source_unit_id.clone(),
+            fields: occurrence_fields,
+        })
+    };
+
+    Ok(vec![ParsedEventIntent {
+        id: sinex_primitives::ids::Id::new(),
+        source_unit_id: ctx.source_unit_id.clone(),
+        parser_id: spec.parser_id.clone(),
+        parser_version: spec.parser_version.clone(),
+        event_type: resolved_event_type,
+        event_source: resolved_event_source,
+        payload: serde_json::Value::Object(payload),
+        ts_orig,
+        timing,
+        anchor: record.anchor.clone(),
+        occurrence_key,
+        privacy_context: spec.default_privacy_context,
+        field_privacy_log: Some(field_privacy_log),
+        synthesis_parents: None,
+    }])
 }
 
 // =============================================================================

@@ -343,3 +343,270 @@ fn manifest_reflects_spec_metadata() {
         "test.event"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Extension A — discriminator / multi-event-type dispatch
+//
+// Simulates the fs source unit: a single JSON record with a "kind" field
+// determines whether file.created / file.modified / file.deleted / file.moved
+// is emitted.
+// ---------------------------------------------------------------------------
+
+#[derive(SourceRecord)]
+#[source_record(
+    id = "fs-discriminator-test",
+    source_unit_id = "fs",
+    input_shape = "json",
+    event_type = "file.unknown",       // fallback — should not appear in happy path
+    event_source = "fs-watcher",
+    discriminator = "kind",
+    on_unknown = "skip",
+)]
+struct FsDispatchRecord {
+    #[source(json_pointer = "/kind")]
+    #[event_dispatch(
+        "Created" => "file.created",
+        "Modified" => "file.modified",
+        "Deleted" => "file.deleted",
+        "Moved" => "file.moved",
+    )]
+    kind: String,
+
+    #[source(json_pointer = "/path")]
+    #[required]
+    path: String,
+}
+
+#[tokio::test]
+async fn discriminator_selects_event_type_created() {
+    let mut parser = FsDispatchRecord {
+        kind: String::new(),
+        path: String::new(),
+    };
+    let intents = parser
+        .parse_record(
+            record(r#"{"kind": "Created", "path": "/home/user/file.txt"}"#),
+            &ctx("fs"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(intents.len(), 1);
+    assert_eq!(intents[0].event_type.as_str(), "file.created");
+    assert_eq!(intents[0].event_source.as_str(), "fs-watcher");
+    assert_eq!(intents[0].payload["path"], "/home/user/file.txt");
+    assert_eq!(intents[0].payload["kind"], "Created");
+}
+
+#[tokio::test]
+async fn discriminator_selects_event_type_deleted() {
+    let mut parser = FsDispatchRecord {
+        kind: String::new(),
+        path: String::new(),
+    };
+    let intents = parser
+        .parse_record(
+            record(r#"{"kind": "Deleted", "path": "/home/user/file.txt"}"#),
+            &ctx("fs"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(intents.len(), 1);
+    assert_eq!(intents[0].event_type.as_str(), "file.deleted");
+}
+
+#[tokio::test]
+async fn discriminator_on_unknown_skip_emits_no_events() {
+    let mut parser = FsDispatchRecord {
+        kind: String::new(),
+        path: String::new(),
+    };
+    // "Renamed" is not in the dispatch table → skip_record.
+    let intents = parser
+        .parse_record(
+            record(r#"{"kind": "Renamed", "path": "/home/user/file.txt"}"#),
+            &ctx("fs"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(intents.len(), 0, "unknown discriminator value must produce zero events");
+}
+
+#[test]
+fn discriminator_spec_is_built_from_attrs() {
+    let spec = FsDispatchRecord::parser_spec();
+    let disc = spec.discriminator.as_ref().expect("discriminator must be set");
+    assert_eq!(disc.field, "kind");
+    assert_eq!(disc.cases.len(), 4);
+    assert_eq!(disc.cases[0].value, "Created");
+    assert_eq!(disc.cases[0].event_type.as_str(), "file.created");
+    assert_eq!(disc.cases[2].value, "Deleted");
+    assert_eq!(disc.cases[2].event_type.as_str(), "file.deleted");
+}
+
+#[test]
+fn discriminator_manifest_includes_all_event_types() {
+    let parser = FsDispatchRecord {
+        kind: String::new(),
+        path: String::new(),
+    };
+    let manifest = parser.manifest();
+    // declared_event_types should contain base + 4 dispatch cases = 5 entries.
+    assert!(
+        manifest.declared_event_types.len() >= 4,
+        "manifest must expose all dispatched event types; got: {:?}",
+        manifest.declared_event_types
+    );
+    let types: Vec<&str> = manifest
+        .declared_event_types
+        .iter()
+        .map(|(_, et)| et.as_str())
+        .collect();
+    assert!(types.contains(&"file.created"));
+    assert!(types.contains(&"file.modified"));
+    assert!(types.contains(&"file.deleted"));
+    assert!(types.contains(&"file.moved"));
+}
+
+// Test with on_unknown = "error".
+#[derive(SourceRecord)]
+#[source_record(
+    id = "activitywatch-discriminator-test",
+    source_unit_id = "desktop.activitywatch",
+    input_shape = "json",
+    event_type = "aw.unknown",
+    event_source = "activitywatch",
+    discriminator = "bucket_kind",
+    on_unknown = "error",
+)]
+struct AwDispatchRecord {
+    #[source(json_pointer = "/bucket_kind")]
+    #[event_dispatch(
+        "window" => "window.active",
+        "afk" => "afk.changed",
+        "web" => "browser.tab.active",
+    )]
+    bucket_kind: String,
+
+    #[source(json_pointer = "/title")]
+    title: String,
+}
+
+#[tokio::test]
+async fn discriminator_on_unknown_error_fails_record() {
+    let mut parser = AwDispatchRecord {
+        bucket_kind: String::new(),
+        title: String::new(),
+    };
+    let result = parser
+        .parse_record(
+            record(r#"{"bucket_kind": "unknown_bucket", "title": "test"}"#),
+            &ctx("desktop.activitywatch"),
+        )
+        .await;
+    assert!(result.is_err(), "on_unknown=error must fail the record");
+}
+
+#[tokio::test]
+async fn discriminator_afk_dispatch() {
+    let mut parser = AwDispatchRecord {
+        bucket_kind: String::new(),
+        title: String::new(),
+    };
+    let intents = parser
+        .parse_record(
+            record(r#"{"bucket_kind": "afk", "title": "not-afk"}"#),
+            &ctx("desktop.activitywatch"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(intents.len(), 1);
+    assert_eq!(intents[0].event_type.as_str(), "afk.changed");
+}
+
+// ---------------------------------------------------------------------------
+// Extension F — carry_across_records / stateful continuation
+//
+// Simulates zsh extended history: a timestamp line sets the carry state,
+// the command line consumes it.
+//
+// Input records:
+//   Record 1 (timestamp line): raw line ": 1704567890:0;ls -la"
+//   Record 2 (command line):   raw line "ls -la"
+//
+// The parser extracts the timestamp from record 1 and carries it into the
+// next record's `ts_raw` field.
+// ---------------------------------------------------------------------------
+
+use sinex_node_sdk::parser::StatefulDeclarativeParser;
+
+#[derive(SourceRecord)]
+#[source_record(
+    id = "zsh-history-carry-test",
+    source_unit_id = "terminal.zsh-history",
+    input_shape = "raw_line",
+    event_type = "command.imported",
+    event_source = "shell.history",
+    default_privacy_context = "Command",
+)]
+struct ZshCarryRecord {
+    /// The raw line — used by both producer and consumer fields.
+    #[source(raw_line)]
+    #[carry_across_records(policy = "set_then_consume")]
+    #[skip]
+    ts_raw: String,
+
+    /// Command text — the raw line on non-timestamp lines.
+    #[source(raw_line)]
+    command: String,
+}
+
+#[tokio::test]
+async fn carry_producer_sets_state_and_consumer_receives_it() {
+    let spec = ZshCarryRecord::parser_spec();
+    let mut stateful = StatefulDeclarativeParser::new(spec.clone());
+    let binding = sinex_node_sdk::parser::BindingConfig::default();
+
+    // Record 1: a "timestamp" line. Its `ts_raw` carry field will be stored.
+    // Record 2: a "command" line. It should have the carried ts_raw injected.
+    let r1 = record(": 1704567890:0;ls -la");
+    let r2 = record("ls -la");
+
+    let intents1 = stateful
+        .evaluate(r1, &ctx("terminal.zsh-history"), &binding)
+        .unwrap();
+    // Both fields are RawLine — record 1 emits one intent with command = the full line.
+    assert_eq!(intents1.len(), 1);
+
+    let intents2 = stateful
+        .evaluate(r2, &ctx("terminal.zsh-history"), &binding)
+        .unwrap();
+    assert_eq!(intents2.len(), 1);
+    // The command field of record 2 is "ls -la".
+    assert_eq!(intents2[0].payload["command"], "ls -la");
+}
+
+#[test]
+fn carry_spec_is_built_from_field_attr() {
+    let spec = ZshCarryRecord::parser_spec();
+    let ts_field = spec.fields.iter().find(|f| f.name == "ts_raw").expect("ts_raw field");
+    let carry = ts_field.carry.as_ref().expect("carry spec");
+    assert_eq!(
+        carry.policy,
+        sinex_node_sdk::parser::StatefulCarryPolicy::SetThenConsume
+    );
+    assert!(ts_field.skip_payload, "ts_raw must be skip_payload");
+}
+
+#[test]
+fn stateful_parser_reset_clears_carry_state() {
+    let spec = ZshCarryRecord::parser_spec();
+    let mut stateful = StatefulDeclarativeParser::new(spec.clone());
+    let binding = sinex_node_sdk::parser::BindingConfig::default();
+
+    // Evaluate one record to populate carry state.
+    let _ = stateful.evaluate(record("line1"), &ctx("terminal.zsh-history"), &binding);
+    // Reset must clear it.
+    stateful.reset_carry_state();
+    // After reset, the spec is still valid.
+    assert_eq!(stateful.spec().parser_id.as_str(), "zsh-history-carry-test");
+}
