@@ -179,4 +179,84 @@ mod tests {
         assert!(!d.whole_event_suppressed);
         assert!(d.matched_rules.is_empty());
     }
+
+    #[test]
+    fn parser_field_privacy_records_redaction_when_engine_fires() {
+        // Use a known catalog pattern (GitHub PAT) under the Command context
+        // so the engine matches and returns a redacted Cow.
+        let token = "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let (processed, decision) =
+            parser_field_privacy("cmd", token, ProcessingContext::Command)
+                .expect("engine init");
+        assert!(
+            !processed.matched_rules.is_empty(),
+            "github_token rule should fire on a ghp_… pattern"
+        );
+        assert!(decision.redacted, "decision must record redaction");
+        assert!(!decision.suppressed);
+        assert!(!decision.whole_event_suppressed);
+        assert_eq!(decision.field, "cmd");
+        assert_eq!(decision.context, ProcessingContext::Command);
+        assert_eq!(decision.matched_rules, processed.matched_rules);
+    }
+
+    #[test]
+    fn parser_field_privacy_records_no_redaction_when_engine_passes() {
+        // A plain string with no secret should produce a decision with
+        // empty matched_rules and redacted=false.
+        let (processed, decision) = parser_field_privacy(
+            "label",
+            "ordinary text",
+            ProcessingContext::Metadata,
+        )
+        .expect("engine init");
+        assert!(processed.matched_rules.is_empty());
+        assert!(!decision.redacted);
+        assert!(!decision.suppressed);
+        assert!(decision.matched_rules.is_empty());
+    }
+
+    #[test]
+    fn from_processed_redacted_only_when_rules_matched_and_not_suppressed() {
+        // The redacted flag is `!matched_rules.is_empty() && !suppressed`.
+        // This pins that contract directly without going through the engine.
+        let processed = Processed {
+            text: std::borrow::Cow::Borrowed("redacted text"),
+            matched_rules: vec!["github_token".to_string()],
+            suppressed: false,
+        };
+        let d = FieldPrivacyDecision::from_processed(
+            "f",
+            ProcessingContext::Command,
+            &processed,
+        );
+        assert!(d.redacted);
+        assert!(!d.suppressed);
+
+        // Suppressed wins over redacted.
+        let suppressed = Processed {
+            text: std::borrow::Cow::Borrowed(""),
+            matched_rules: vec!["github_token".to_string()],
+            suppressed: true,
+        };
+        let d2 = FieldPrivacyDecision::from_processed(
+            "f",
+            ProcessingContext::Command,
+            &suppressed,
+        );
+        assert!(d2.suppressed);
+        assert!(!d2.redacted, "suppression must override redacted flag");
+    }
+
+    #[test]
+    fn serializes_to_compact_json_when_no_rules_matched() {
+        // Verify skip_serializing_if removes empty matched_rules and absent
+        // strategy from the serialized form — the audit trail surface
+        // shouldn't accumulate empty fields.
+        let d = FieldPrivacyDecision::not_processed("x", ProcessingContext::Metadata);
+        let json = serde_json::to_value(&d).unwrap();
+        assert!(json.get("matched_rules").is_none());
+        assert!(json.get("strategy").is_none());
+        assert_eq!(json["field"], "x");
+    }
 }
