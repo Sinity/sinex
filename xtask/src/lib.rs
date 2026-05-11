@@ -16,6 +16,7 @@ shadow_rs::shadow!(build_info);
 
 mod affected;
 pub mod bench;
+pub mod cache_hygiene;
 pub mod cargo_diagnostics;
 pub mod cargo_runner;
 pub mod command;
