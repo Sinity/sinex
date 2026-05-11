@@ -18,6 +18,7 @@
 //! retry, admission, transport, and confirmation tracking.
 
 mod adapters;
+mod declarative;
 mod fingerprint;
 mod fixture;
 mod weechat;
@@ -36,6 +37,10 @@ pub use adapters::{
     JournalctlCursor, JournalctlStreamAdapter, JournalctlStreamConfig,
     records_from_journal_lines,
     UnixSocketStreamAdapter, UnixSocketStreamConfig, UnixSocketStreamCursor,
+};
+pub use declarative::{
+    BindingConfig, DeclarativeParser, DeclarativeParserSpec, FieldSource, FieldSpec, FieldType,
+    InputFormat, SuppressPredicate, TimestampFallback, TimestampFormat, TimestampSpec,
 };
 pub use fingerprint::{DriftAccumulator, DriftEvent, SourceRecordFingerprint};
 pub use fixture::{
@@ -78,6 +83,15 @@ pub enum ParserError {
 
     #[error("material not found: {0}")]
     MaterialNotFound(String),
+
+    #[error("field error: {0}")]
+    Field(String),
+
+    #[error("decode error: {0}")]
+    Decode(String),
+
+    #[error("privacy engine error: {0}")]
+    Privacy(String),
 }
 
 /// Result type for parser substrate operations.

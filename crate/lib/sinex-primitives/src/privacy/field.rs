@@ -28,7 +28,7 @@ use crate::privacy::{ProcessingContext, Processed, Strategy};
 ///
 /// Populated per field by the macro-generated parser code. Multiple entries
 /// per event accumulate into `ParsedEventIntent.field_privacy_log`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldPrivacyDecision {
     /// Field name in the parser's payload struct (e.g. `"command"`).
     pub field: String,
