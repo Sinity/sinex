@@ -1,0 +1,36 @@
+name: Verify Issue Closure
+
+permissions:
+  contents: read
+  issues: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Issue number whose closure verification commands to run'
+        required: true
+        type: string
+
+# Why: the 2026-05-11 audit cycle found fabricated "Status: done" closure
+# comments that survived for days because no one re-verified against master.
+# This workflow operationalises CONTRIBUTING.md's "Closure verification commands"
+# policy: every closure with verification commands in its body becomes runnable
+# on demand via `gh workflow run verify-closure.yml -f issue_number=N`.
+
+jobs:
+  verify:
+    name: xtask verify closure ${{ inputs.issue_number }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install nix
+        uses: cachix/install-nix-action@v27
+
+      - name: Run xtask verify closure
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          nix develop --command xtask verify closure ${{ inputs.issue_number }} --json
