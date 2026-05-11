@@ -8,6 +8,7 @@ use std::time::UNIX_EPOCH;
 
 use async_trait::async_trait;
 use camino::{Utf8Path, Utf8PathBuf};
+use futures::StreamExt;
 use futures::stream::{self, BoxStream};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
@@ -251,6 +252,7 @@ impl InputShapeAdapter for DirectoryWalkAdapter {
         // Reading is deferred to the stream so we don't buffer everything.
         struct PendingEntry {
             path: Utf8PathBuf,
+            #[allow(dead_code)] // Used by callers consuming the cursor sidechannel
             fingerprint: FileFingerprint,
         }
 

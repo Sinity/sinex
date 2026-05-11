@@ -5827,6 +5827,7 @@ dependencies = [
  "dirs",
  "futures",
  "gethostname 0.4.3",
+ "globset",
  "human-panic",
  "jsonschema",
  "libc",

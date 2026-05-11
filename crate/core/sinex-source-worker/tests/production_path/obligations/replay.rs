@@ -17,7 +17,7 @@
 //! proves parser determinism only — the full path is gated on the binary
 //! launcher substrate gap noted in `initial_ingestion::substrate_gaps()`.
 
-use crate::production_path::AdapterKind;
+use crate::AdapterKind;
 use sinex_source_worker::dispatch::default_parser_dispatch;
 use sinex_primitives::Uuid;
 
