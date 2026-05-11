@@ -128,8 +128,12 @@ disabled (e.g. staging migrations).
   and `nodes.desktop.session.*` remain the typed override surfaces when the
   target user layout is non-standard or a deployment needs explicit socket/runtime
   wiring.
+- Service resource defaults are intentionally workstation-civil: all long-running
+  Sinex services default to low CPU/IO scheduler weight (`CPUWeight=10`,
+  `IOWeight=10`), idle IO scheduling, and `Nice=10` in addition to their
+  per-service `MemoryHigh`, `MemoryMax`, and `CPUQuota` settings.
 - Automata use named profiles defined under `nodes.automata.profiles`; set
-  `profile = "light"|"standard"|"heavy"` to select batch and MemoryMax/CPUQuota.
+  `profile = "light"|"standard"|"heavy"` to select batch and resource limits.
 - The module emits deterministic unit names (`sinex-filesystem-1`,
   `sinex-health-automaton`, etc.) and publishes them via
   `config.sinex._generatedUnits` for other subsystems (pre-flight,

@@ -191,8 +191,13 @@ let
     if nodeInstances == null then nodesCfg.defaults.instances else nodeInstances;
 
   renderResources = resources: {
+    MemoryHigh = resources.memoryHigh;
     MemoryMax = resources.memoryMax;
     CPUQuota = resources.cpuQuota;
+    CPUWeight = resources.cpuWeight;
+    IOWeight = resources.ioWeight;
+    IOSchedulingClass = resources.ioSchedulingClass;
+    Nice = resources.nice;
     TimeoutStopSec = resources.shutdownTimeoutSec;
   } // optionalAttrs (resources.openFilesLimit != null) {
     LimitNOFILE = "${toString resources.openFilesLimit}:${toString resources.openFilesLimit}";
