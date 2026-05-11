@@ -3,7 +3,7 @@ use super::{
     reports,
     runner::{BenchContext, BenchRunner, ScenarioResult, generate_scenarios},
 };
-use color_eyre::eyre::{ContextCompat, Result, bail};
+use color_eyre::eyre::{Result, bail};
 use console::style;
 use std::time::{Duration, Instant};
 
@@ -209,27 +209,6 @@ pub(super) fn refine_mode(ctx: &BenchContext) -> Result<()> {
     finalize_results(ctx, &final_results)?;
 
     Ok(())
-}
-
-pub(super) fn bisect_mode(ctx: &BenchContext) -> Result<()> {
-    println!("{}", style("Running bisect mode").cyan().bold());
-
-    let good = ctx
-        .config
-        .bisect_good
-        .as_ref()
-        .context("--bisect-good required for bisect mode")?;
-    let bad = ctx
-        .config
-        .bisect_bad
-        .as_ref()
-        .context("--bisect-bad required for bisect mode")?;
-
-    println!("Good commit: {}", style(good).green());
-    println!("Bad commit:  {}", style(bad).red());
-    println!();
-
-    bail!("Bisect mode not yet fully implemented - requires git integration")
 }
 
 pub(super) fn stress_mode(ctx: &BenchContext) -> Result<()> {
