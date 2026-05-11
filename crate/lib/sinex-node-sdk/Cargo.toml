@@ -104,6 +104,7 @@ tempfile = "3.13"
 proptest = "1"
 xtask = { path = "../../../xtask" }
 sinex-primitives = { path = "../sinex-primitives", features = ["testing"] }
+sinex-macros = { path = "../sinex-macros" }
 [dev-dependencies.color-eyre]
 workspace = true
 
