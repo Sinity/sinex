@@ -880,6 +880,7 @@ mod tests {
             default_privacy_context: ProcessingContext::Metadata,
             input_format: InputFormat::Json,
             fields: vec![],
+            discriminator: None,
         }
     }
 
@@ -914,6 +915,7 @@ mod tests {
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
+            carry: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -942,6 +944,7 @@ mod tests {
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
+            carry: None,
         });
         let result = DeclarativeParser::evaluate(
             &spec,
@@ -969,6 +972,7 @@ mod tests {
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
+            carry: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -997,6 +1001,7 @@ mod tests {
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
+            carry: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1025,6 +1030,7 @@ mod tests {
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
+            carry: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1053,6 +1059,7 @@ mod tests {
             occurrence_key: true,
             timestamp: None,
             suppress_if: None,
+            carry: None,
         });
         spec.fields.push(FieldSpec {
             name: "id".into(),
@@ -1065,6 +1072,7 @@ mod tests {
             occurrence_key: true,
             timestamp: None,
             suppress_if: None,
+            carry: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1097,10 +1105,11 @@ mod tests {
             privacy_context: Some(ProcessingContext::Command),
             occurrence_key: false,
             timestamp: None,
-            suppress_if: Some(SuppressPredicate {
+suppress_if: Some(SuppressPredicate {
                 binding_field: "private_mode_active".into(),
                 whole_event: false,
             }),
+            carry: None,
         });
         let binding = BindingConfig::new().with_flag("private_mode_active", true);
         let intents = DeclarativeParser::evaluate(
@@ -1131,10 +1140,11 @@ mod tests {
             privacy_context: Some(ProcessingContext::Command),
             occurrence_key: false,
             timestamp: None,
-            suppress_if: Some(SuppressPredicate {
+suppress_if: Some(SuppressPredicate {
                 binding_field: "private_mode_active".into(),
                 whole_event: true,
             }),
+            carry: None,
         });
         let binding = BindingConfig::new().with_flag("private_mode_active", true);
         let intents = DeclarativeParser::evaluate(
@@ -1161,10 +1171,11 @@ mod tests {
             privacy_context: Some(ProcessingContext::Command),
             occurrence_key: false,
             timestamp: None,
-            suppress_if: Some(SuppressPredicate {
+suppress_if: Some(SuppressPredicate {
                 binding_field: "private_mode_active".into(),
                 whole_event: false,
             }),
+            carry: None,
         });
         let binding = BindingConfig::new().with_flag("private_mode_active", false);
         let intents = DeclarativeParser::evaluate(
@@ -1194,6 +1205,7 @@ mod tests {
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
+            carry: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1223,6 +1235,7 @@ mod tests {
                 occurrence_key: false,
                 timestamp: None,
                 suppress_if: None,
+                carry: None,
             });
             let json = format!(r#"{{"flag": {input:?}}}"#);
             let intents = DeclarativeParser::evaluate(
@@ -1254,6 +1267,7 @@ mod tests {
                 fallback: TimestampFallback::Error,
             }),
             suppress_if: None,
+            carry: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1286,6 +1300,7 @@ mod tests {
                 fallback: TimestampFallback::Error,
             }),
             suppress_if: None,
+            carry: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1318,6 +1333,7 @@ mod tests {
                 fallback: TimestampFallback::MaterialTiming,
             }),
             suppress_if: None,
+            carry: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1361,6 +1377,7 @@ mod tests {
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
+            carry: None,
         });
         spec.fields.push(FieldSpec {
             name: "third".into(),
@@ -1373,6 +1390,7 @@ mod tests {
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
+            carry: None,
         });
         let record = SourceRecord {
             material_id: Id::from_uuid(uuid::Uuid::nil()),
@@ -1453,6 +1471,7 @@ mod tests {
                 fallback: TimestampFallback::Error,
             }),
             suppress_if: None,
+            carry: None,
         });
         let result = DeclarativeParser::evaluate(
             &spec,
@@ -1482,6 +1501,7 @@ mod tests {
                 fallback: TimestampFallback::Error,
             }),
             suppress_if: None,
+            carry: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1514,6 +1534,7 @@ mod tests {
                 fallback: TimestampFallback::Error,
             }),
             suppress_if: None,
+            carry: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1540,6 +1561,7 @@ mod tests {
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
+            carry: None,
         });
         let result = DeclarativeParser::evaluate(
             &spec,
@@ -1565,6 +1587,7 @@ mod tests {
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
+            carry: None,
         });
         // 3.14 must error for FieldType::Integer.
         let err = DeclarativeParser::evaluate(
@@ -1622,10 +1645,11 @@ mod tests {
             privacy_context: None,
             occurrence_key: false,
             timestamp: None,
-            suppress_if: Some(SuppressPredicate {
+suppress_if: Some(SuppressPredicate {
                 binding_field: "private_mode".into(),
                 whole_event: true,
             }),
+            carry: None,
         });
         let binding = BindingConfig::new().with_flag("private_mode", true);
         let intents = DeclarativeParser::evaluate(
@@ -1656,6 +1680,7 @@ mod tests {
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
+            carry: None,
         });
         let record = SourceRecord {
             material_id: Id::from_uuid(uuid::Uuid::nil()),
@@ -1689,6 +1714,7 @@ mod tests {
             occurrence_key: true,
             timestamp: None,
             suppress_if: None,
+            carry: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1719,6 +1745,7 @@ mod tests {
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
+            carry: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
@@ -1747,6 +1774,7 @@ mod tests {
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
+            carry: None,
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
