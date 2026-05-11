@@ -32,15 +32,14 @@
 //! - `#[redact_if(rule = "...")]` named rule references
 
 use serde::{Deserialize, Serialize};
-use sinex_primitives::events::{EventSource, EventType};
+use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, SourceRecord,
-    TimingConfidence, TimingEvidence,
+    SourceUnitId, TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::{
     self, FieldPrivacyDecision, ProcessingContext,
 };
-use sinex_primitives::sources::SourceUnitId;
 use sinex_primitives::Timestamp;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -573,6 +572,8 @@ mod tests {
             },
             bytes: json.as_bytes().to_vec(),
             logical_path: None,
+            source_ts_hint: None,
+            metadata: serde_json::Value::Null,
         }
     }
 
@@ -1069,6 +1070,8 @@ mod tests {
             anchor: MaterialAnchor::ByteRange { start: 0, len: 0 },
             bytes: b"alpha\tbeta\tgamma".to_vec(),
             logical_path: None,
+            source_ts_hint: None,
+            metadata: serde_json::Value::Null,
         };
         let intents =
             DeclarativeParser::evaluate(&spec, record, &test_ctx(), &BindingConfig::default())
@@ -1100,6 +1103,8 @@ mod tests {
             },
             bytes: b"{}".to_vec(),
             logical_path: None,
+            source_ts_hint: None,
+            metadata: serde_json::Value::Null,
         };
         let intents = DeclarativeParser::evaluate(
             &minimal_spec(),
