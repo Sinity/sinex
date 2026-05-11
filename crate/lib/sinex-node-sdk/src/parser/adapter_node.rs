@@ -20,6 +20,25 @@
 //! - Continuous mode for append-only adapters (tail loop with shutdown signal).
 //! - Cursor persistence via the standard `IngestorNode` state mechanism.
 //! - Conversion of `ParsedEventIntent` → `Event<JsonValue>` → `emit()`.
+//! - Real source-material lifecycle: each drain opens a material via
+//!   `AcquisitionManager`, appends record bytes, and finalizes on completion.
+//!
+//! # Config shape
+//!
+//! The node JSON config is deserialized into [`AdapterNodeConfig<A::Config>`]:
+//!
+//! ```json
+//! {
+//!   "path": "/path/to/file",
+//!   "binding_flags": { "private_mode_active": false }
+//! }
+//! ```
+//!
+//! The `adapter` fields are flattened so adapter-specific keys live at the
+//! top level — matching the plain `{ "path": "..." }` shape that existing
+//! node configs use. The optional `binding_flags` map carries runtime flags
+//! for `#[suppress_if]` predicates (the `BindingConfig` concern), which is
+//! separate from the adapter's typed config.
 //!
 //! # Design constraints
 //!
@@ -31,26 +50,28 @@
 //! - This struct does NOT own transport or admission — it calls
 //!   `runtime.event_emitter().emit()` exactly as every other ingestor does.
 //!
-//! # Blocker note
+//! # Material lifecycle
 //!
-//! Continuous mode for adapters that do not support streaming (e.g.
-//! `SqliteRowAdapter`, `StaticFileAdapter`) parks the node in a sleep loop
-//! after the initial drain, then re-polls on a configurable interval (default
-//! 30 s). Adapters that natively support streaming (e.g. future
-//! `UnixSocketStreamAdapter`-backed ingestors) should override this by
-//! implementing their own `IngestorNode`.
+//! One source material is opened per drain invocation (snapshot, historical,
+//! or each continuous poll). The material receives the raw bytes of every
+//! source record processed. On a clean drain, the material is finalized with
+//! `"drain-complete"`. On adapter error, it is cancelled before returning.
 //!
-//! The binding config (`BindingConfig`) available in `declarative.rs` is NOT
-//! yet threaded into `AdapterBackedIngestor` — callers supply the adapter
-//! config via `serde_json::Value` config (deserialized to `A::Config` at
-//! `initialize`). If adapter configs need per-binding overrides, the config
-//! JSON should carry them; no SDK extension is required.
+//! For adapters that return structured rows (e.g. `SqliteRowAdapter`), the
+//! "bytes" written to the material are the JSON serialisation of the record,
+//! giving a content-addressable provenance trail for each logical row.
+//!
+//! # Continuous mode
+//!
+//! Adapters that do not natively stream (e.g. `SqliteRowAdapter`,
+//! `StaticFileAdapter`) are polled on a configurable interval (default 30 s).
+//! Adapters that natively support streaming should implement their own
+//! `IngestorNode` instead.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::marker::PhantomData;
 use std::time::{Duration, Instant};
 
-use async_trait::async_trait;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value as JsonValue;
@@ -64,13 +85,71 @@ use sinex_primitives::parser::{MaterialAnchor, ParsedEventIntent, ParserContext}
 use sinex_primitives::primitives::Uuid;
 use sinex_primitives::temporal::Timestamp;
 
+use crate::acquisition_manager::AcquisitionManager;
 use crate::ingestor_node::IngestorNode;
-use crate::parser::{InputShapeAdapter, MaterialParser, ParserError, ParserResult};
+use crate::parser::{BindingConfig, InputShapeAdapter, MaterialParser};
 use crate::runtime::stream::{
     Checkpoint, ContinuousStart, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport,
     TimeHorizon,
 };
 use crate::NodeResult;
+
+// =============================================================================
+// Typed node config — wraps adapter config + optional binding flags
+// =============================================================================
+
+/// Node-level config for [`AdapterBackedIngestor`].
+///
+/// The adapter config is stored as raw JSON (`serde_json::Value`) and
+/// deserialized into `A::Config` during `initialize`. This avoids requiring
+/// `A::Config: Default` (which many adapter configs cannot satisfy because
+/// they have mandatory fields like `path` or `table`).
+///
+/// The optional `binding_flags` map carries runtime values for `#[suppress_if]`
+/// predicates in `DeclarativeParser`-backed parsers. It is separate from the
+/// adapter config and defaults to empty.
+///
+/// # Serde shape
+///
+/// The adapter config fields live at the top level (flat); `binding_flags` is
+/// an optional nested map. Existing node configs (e.g. `{ "path": "..." }`)
+/// continue to work without modification.
+///
+/// ```json
+/// {
+///   "path": "/home/user/.weechat/logs/irc.log",
+///   "binding_flags": { "private_mode_active": false }
+/// }
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AdapterNodeConfig {
+    /// Adapter-specific config fields. Flattened so they live at the top
+    /// level of the JSON object. Deserialized into `A::Config` at
+    /// `initialize` time.
+    #[serde(flatten)]
+    pub adapter: JsonValue,
+
+    /// Optional runtime flags for `BindingConfig`-aware parsers.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub binding_flags: BTreeMap<String, bool>,
+}
+
+impl AdapterNodeConfig {
+    /// Convert the `binding_flags` map into a [`BindingConfig`] for use with
+    /// `DeclarativeParser::evaluate`.
+    pub fn to_binding_config(&self) -> BindingConfig {
+        let mut bc = BindingConfig::new();
+        for (name, &value) in &self.binding_flags {
+            bc = bc.with_flag(name, value);
+        }
+        bc
+    }
+
+    /// Deserialize the flattened adapter JSON into the typed adapter config.
+    pub fn into_adapter_config<C: DeserializeOwned>(self) -> Result<C, serde_json::Error> {
+        serde_json::from_value(self.adapter)
+    }
+}
 
 // =============================================================================
 // Adapter-node state (checkpoint-persisted)
@@ -117,9 +196,9 @@ where
 ///   `#[derive(SourceRecord)]` structs and imperative parsers).
 ///
 /// The adapter and parser are constructed via `Default`, then configured during
-/// `initialize`. `A::Config` is deserialized from the node JSON config; the
-/// source-unit id used for `ParserContext` is hard-coded at registration time
-/// via the `register_adapter_ingestor!` macro.
+/// `initialize`. The node config is deserialized into
+/// `AdapterNodeConfig<A::Config>`; the source-unit id is hard-coded at
+/// registration time via the `register_adapter_ingestor!` macro.
 pub struct AdapterBackedIngestor<A, P>
 where
     A: InputShapeAdapter + Default,
@@ -137,11 +216,20 @@ where
     /// The parser instance. Constructed in `Default`.
     parser: P,
 
-    /// Adapter config deserialized from the node JSON config at `initialize`.
+    /// Adapter config deserialized from the node config at `initialize`.
     config: Option<A::Config>,
+
+    /// BindingConfig derived from `binding_flags` in the node config.
+    /// Held for the lifetime of the ingestor; passed to any `BindingConfig`-
+    /// aware parsers (currently `DeclarativeParser`).
+    binding_config: BindingConfig,
 
     /// Runtime handles captured during `initialize`.
     runtime: Option<NodeRuntimeState>,
+
+    /// AcquisitionManager built during `initialize` from the runtime handles.
+    /// Used to open/finalize a source material for each drain invocation.
+    acquisition_manager: Option<AcquisitionManager>,
 
     _phantom: PhantomData<()>,
 }
@@ -165,15 +253,23 @@ where
             adapter: A::default(),
             parser: P::default(),
             config: None,
+            binding_config: BindingConfig::default(),
             runtime: None,
+            acquisition_manager: None,
             _phantom: PhantomData,
         }
     }
 
-    /// Open the adapter against a synthetic material id and drain all records
-    /// through the parser, emitting each `ParsedEventIntent` via the runtime.
+    /// Open the adapter, drain all records through the parser, emit each
+    /// `ParsedEventIntent` via the runtime, and finalize the source material.
     ///
-    /// Returns (events_emitted, final_cursor).
+    /// One source material is opened per call. Record bytes are appended to the
+    /// material before parsing, providing a content-addressable provenance trail.
+    /// On a clean drain the material is finalized with `"drain-complete"`.
+    /// On adapter-open failure the material is cancelled before returning the
+    /// error.
+    ///
+    /// Returns total events emitted.
     async fn drain_adapter(
         &mut self,
         cursor: Option<A::Cursor>,
@@ -191,14 +287,11 @@ where
             )
         })?;
 
-        // Synthesize a stable material id from the source-unit id.
-        // This is a design placeholder: in a full fold, the material id comes
-        // from the source-material registry. Using a deterministic v5 UUID
-        // keeps the anchor meaningful across restarts without requiring a DB
-        // round-trip here.
-        let ns = Uuid::NAMESPACE_OID;
-        let mat_uuid = Uuid::new_v5(&ns, self.source_unit_id.as_bytes());
-        let material_id = Id::<SourceMaterial>::from_uuid(mat_uuid);
+        let acquisition_manager = self.acquisition_manager.as_ref().ok_or_else(|| {
+            crate::SinexError::lifecycle(
+                "AdapterBackedIngestor: acquisition_manager not set (initialize not called)",
+            )
+        })?;
 
         let source_unit_id = sinex_primitives::parser::SourceUnitId::new(self.source_unit_id)
             .map_err(|e| {
@@ -206,23 +299,50 @@ where
                     .with_std_error(&e)
             })?;
 
+        // Open a real source material for this drain invocation. This registers
+        // the material in raw.source_material_registry via ingestd, satisfying
+        // the FK constraint on core.events.source_material_id.
+        let mut material_handle = acquisition_manager
+            .begin_material(self.source_unit_id)
+            .await
+            .map_err(|e| {
+                crate::SinexError::processing("AdapterBackedIngestor: begin_material failed")
+                    .with_context("source_unit_id", self.source_unit_id)
+                    .with_std_error(&e)
+            })?;
+
+        let material_id = Id::<SourceMaterial>::from_uuid(material_handle.material_id);
+
         let operation_id = Uuid::now_v7();
         let job_id = Uuid::now_v7();
         let host = std::env::var("HOSTNAME")
             .or_else(|_| std::env::var("HOST"))
             .unwrap_or_else(|_| "unknown".to_string());
 
-        // Open the adapter stream.
-        let mut stream = self
+        // Open the adapter stream. On failure, cancel the material before returning.
+        let mut stream = match self
             .adapter
             .open(material_id, config, cursor)
             .await
-            .map_err(|e| {
-                crate::SinexError::processing("adapter open failed")
+        {
+            Ok(s) => s,
+            Err(e) => {
+                if let Err(cancel_err) = acquisition_manager
+                    .cancel(&mut material_handle, "adapter-open-failure")
+                    .await
+                {
+                    warn!(
+                        source_unit = self.source_unit_id,
+                        error = %cancel_err,
+                        "Failed to cancel material after adapter open failure"
+                    );
+                }
+                return Err(crate::SinexError::processing("adapter open failed")
                     .with_context("source_unit_id", self.source_unit_id)
                     .with_context("adapter_kind", A::KIND.as_str())
-                    .with_context("error", e.to_string())
-            })?;
+                    .with_context("error", e.to_string()));
+            }
+        };
 
         let mut emitted: u64 = 0;
 
@@ -250,6 +370,26 @@ where
                         "cursor_after failed — checkpoint may regress"
                     );
                 }
+            }
+
+            // Append the record bytes to the source material for provenance.
+            // For structured adapters (e.g. SqliteRowAdapter) the bytes are
+            // the adapter's wire representation of the record; for file adapters
+            // they are the raw source bytes. Errors here are non-fatal —
+            // the event is still emitted, but the material content may be
+            // incomplete. We log and continue to avoid dropping events over I/O
+            // transients.
+            let record_bytes_for_material = record.bytes.as_slice();
+            if let Err(e) = acquisition_manager
+                .append_slice(&mut material_handle, record_bytes_for_material)
+                .await
+            {
+                warn!(
+                    source_unit = self.source_unit_id,
+                    material_id = %material_handle.material_id,
+                    error = %e,
+                    "append_slice failed — material content may be incomplete"
+                );
             }
 
             let ctx = ParserContext {
@@ -298,6 +438,18 @@ where
             }
         }
 
+        // Finalize the material now that all records have been processed.
+        if let Err(e) = acquisition_manager
+            .finalize(material_handle, "drain-complete")
+            .await
+        {
+            warn!(
+                source_unit = self.source_unit_id,
+                error = %e,
+                "finalize material failed — material registry may be incomplete"
+            );
+        }
+
         state.total_events_emitted += emitted;
         debug!(
             source_unit = self.source_unit_id,
@@ -334,7 +486,7 @@ where
     A::Config: Clone + Serialize + DeserializeOwned + Send + Sync,
     A::Cursor: Clone + Serialize + DeserializeOwned + Send + Sync,
 {
-    type Config = serde_json::Value;
+    type Config = AdapterNodeConfig;
     type State = AdapterNodeState<A::Cursor>;
 
     fn name(&self) -> &str {
@@ -361,7 +513,22 @@ where
         runtime: &NodeRuntimeState,
         _state: &mut Self::State,
     ) -> NodeResult<()> {
-        let adapter_config: A::Config = serde_json::from_value(config).map_err(|e| {
+        // Build the AcquisitionManager from the runtime's NATS handles.
+        let acq = runtime
+            .acquisition_manager(crate::acquisition_manager::RotationPolicy::default(), self.source_unit_id)
+            .map_err(|e| {
+                crate::SinexError::lifecycle(
+                    "AdapterBackedIngestor: failed to build AcquisitionManager",
+                )
+                .with_context("source_unit_id", self.source_unit_id)
+                .with_std_error(&e)
+            })?;
+
+        self.acquisition_manager = Some(acq);
+        self.binding_config = config.to_binding_config();
+
+        // Deserialize the typed adapter config from the flattened JSON.
+        let adapter_config: A::Config = config.into_adapter_config().map_err(|e| {
             crate::SinexError::configuration(
                 "AdapterBackedIngestor: failed to deserialize adapter config",
             )
@@ -432,14 +599,14 @@ where
     async fn run_continuous(
         &mut self,
         state: &mut Self::State,
-        start: ContinuousStart,
+        _start: ContinuousStart,
         mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
     ) -> NodeResult<ScanReport> {
         let wall_start = Instant::now();
         let mut total_emitted: u64 = 0;
 
         // Poll interval for adapters without native streaming.
-        // TODO: make configurable via config JSON field "poll_interval_secs".
+        // TODO: make configurable via binding_flags or a dedicated config field.
         let poll_interval = Duration::from_secs(30);
 
         info!(
