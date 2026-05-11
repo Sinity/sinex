@@ -15,10 +15,12 @@
 //! | [`DbusStreamAdapter`] | `DbusSubscription` | `()` (anchor-only) | D-Bus signals via mock or real backend |
 //! | [`UnixSocketStreamAdapter`] | `UnixSocket` | `()` (anchor-only) | Line-delimited socket (e.g. Hyprland IPC) |
 //! | [`ClipboardPollingAdapter`] | `Polling` | `()` (anchor-only) | Clipboard change detection |
+//! | [`DirectoryWalkAdapter`] | `DirectoryWalk` | `BTreeMap<path, fingerprint>` | Recursive walk with fingerprint dedup |
 
 mod append_only_file;
 mod clipboard_polling;
 mod dbus_stream;
+mod directory_walk;
 mod file_drop;
 mod journalctl_stream;
 mod sqlite_row;
@@ -27,6 +29,7 @@ mod unix_socket_stream;
 
 // Existing adapters.
 pub use append_only_file::{AppendOnlyCursor, AppendOnlyFileAdapter, AppendOnlyFileConfig};
+pub use directory_walk::{DirectoryWalkAdapter, DirectoryWalkConfig, DirectoryWalkCursor, FileFingerprint};
 pub use sqlite_row::{SqliteRowAdapter, SqliteRowConfig, SqliteRowCursor};
 pub use static_file::{StaticFileCursor, StaticFileAdapter, StaticFileConfig};
 

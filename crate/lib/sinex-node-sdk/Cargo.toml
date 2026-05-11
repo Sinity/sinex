@@ -85,6 +85,8 @@ features = ["std"]
 [dependencies.nix]
 version = "0.28"
 features = ["fs", "resource"]
+[dependencies.globset]
+workspace = true
 [dependencies.notify]
 workspace = true
 [dependencies.arboard]

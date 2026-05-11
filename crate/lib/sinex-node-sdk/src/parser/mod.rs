@@ -42,6 +42,8 @@ pub use adapters::{
     JournalctlCursor, JournalctlStreamAdapter, JournalctlStreamConfig,
     records_from_journal_lines,
     UnixSocketStreamAdapter, UnixSocketStreamConfig, UnixSocketStreamCursor,
+    // Phase 1F — DirectoryWalk adapter (9th input-shape adapter).
+    DirectoryWalkAdapter, DirectoryWalkConfig, DirectoryWalkCursor, FileFingerprint,
 };
 pub use declarative::{
     BindingConfig, DeclarativeParser, DeclarativeParserSpec, FieldSource, FieldSpec, FieldType,
