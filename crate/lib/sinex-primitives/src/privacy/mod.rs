@@ -19,9 +19,11 @@ mod config;
 mod detector;
 mod engine;
 mod envelope;
+pub mod field;
 
 pub use config::{PrivacyConfig, PrivacyConfigError};
 pub use engine::PrivacyEngine;
+pub use field::{FieldPrivacyDecision, parser_field_privacy};
 
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;

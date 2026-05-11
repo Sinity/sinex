@@ -275,8 +275,21 @@ pub enum InputShapeKind {
     /// An API cursor-based pagination source.
     ApiCursor,
 
-    /// An ephemeral stream with no durable material.
-    EphemeralStream,
+    /// A long-lived child process emitting structured records (e.g.
+    /// `journalctl -f -o json`). Cursor is process-defined (e.g. journal
+    /// cursor string).
+    Subprocess,
+
+    /// A line-delimited Unix domain socket (e.g. Hyprland IPC). No cursor;
+    /// anchor only.
+    UnixSocket,
+
+    /// A D-Bus signal subscription. Anchor only; no replay.
+    DbusSubscription,
+
+    /// A poll-and-detect-change adapter (e.g. clipboard hash polling).
+    /// Anchor only; no cursor.
+    Polling,
 }
 
 impl InputShapeKind {
@@ -291,7 +304,10 @@ impl InputShapeKind {
             Self::SqliteQuery => "sqlite_query",
             Self::RepositorySnapshot => "repository_snapshot",
             Self::ApiCursor => "api_cursor",
-            Self::EphemeralStream => "ephemeral_stream",
+            Self::Subprocess => "subprocess",
+            Self::UnixSocket => "unix_socket",
+            Self::DbusSubscription => "dbus_subscription",
+            Self::Polling => "polling",
         }
     }
 }
@@ -498,6 +514,21 @@ pub struct ParsedEventIntent {
 
     /// Privacy processing context for this event.
     pub privacy_context: crate::privacy::ProcessingContext,
+
+    /// Per-field privacy decisions made during parsing.
+    ///
+    /// `None` for imperative parsers that don't populate it (the engine ran
+    /// at call sites the same way it always has). `Some(vec)` for parsers
+    /// authored via `#[derive(SourceRecord)]` or the YAML loader — the macro
+    /// emits one entry per privacy-relevant field. Consumed by #1072 audit
+    /// /export/redact CLI.
+    ///
+    /// Backward-compat: existing imperative parsers compile and behave
+    /// identically; the field is `Option`, default `None`,
+    /// `serde(skip_serializing_if = "Option::is_none")` so wire format is
+    /// unchanged when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field_privacy_log: Option<Vec<crate::privacy::FieldPrivacyDecision>>,
 }
 
 /// A natural key for idempotent event creation.

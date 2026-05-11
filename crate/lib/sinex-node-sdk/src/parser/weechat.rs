@@ -230,6 +230,7 @@ impl MaterialParser for WeeChatLogParser {
             anchor,
             occurrence_key: None,
             privacy_context: ProcessingContext::Command,
+            field_privacy_log: None,
         };
 
         Ok(vec![intent])
