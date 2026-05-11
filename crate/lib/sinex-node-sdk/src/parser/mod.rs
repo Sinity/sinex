@@ -18,6 +18,7 @@
 //! retry, admission, transport, and confirmation tracking.
 
 mod adapters;
+mod fingerprint;
 mod fixture;
 mod weechat;
 
@@ -25,6 +26,7 @@ pub use adapters::{
     AppendOnlyCursor, AppendOnlyFileAdapter, AppendOnlyFileConfig, SqliteRowAdapter,
     SqliteRowConfig, SqliteRowCursor, StaticFileAdapter, StaticFileConfig, StaticFileCursor,
 };
+pub use fingerprint::{DriftAccumulator, DriftEvent, SourceRecordFingerprint};
 pub use fixture::{
     FixtureAssertion, FixtureExpectation, FixtureSpec, ParserFixtureHarness,
     ParserTestContext,
