@@ -3,7 +3,6 @@
 //! The real-time ingestion path relies on the same validator that powers the
 //! integration and adversarial tests, ensuring that schema enforcement,
 //! provenance validation, and payload guards stay in lock-step.
-#[cfg(feature = "sqlx")]
 use crate::DbPool;
 use crate::JsonValue;
 use crate::models::{Event, Provenance, SourceMaterial};
@@ -23,7 +22,6 @@ use sinex_primitives::events::payloads::shell::{
     AtuinCommandExecutedPayload, BashCommandExecutedPayload, FishCommandExecutedPayload,
     KittyCommandExecutedPayload, ZshCommandExecutedPayload,
 };
-#[cfg(feature = "sqlx")]
 use sqlx::FromRow;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -218,11 +216,9 @@ impl EventValidator {
         self
     }
     /// Load schemas from the database and build compiled cache.
-    #[cfg(feature = "sqlx")]
     pub async fn load_from_db(pool: &DbPool) -> SinexResult<Self> {
         Self::load_from_db_with_options(pool, true).await
     }
-    #[cfg(feature = "sqlx")]
     pub async fn load_from_db_with_options(
         pool: &DbPool,
         validation_enabled: bool,
@@ -232,7 +228,6 @@ impl EventValidator {
         Ok(validator)
     }
     /// Reload latest active schemas from the database, replacing the cache.
-    #[cfg(feature = "sqlx")]
     pub async fn reload_schemas(&mut self, pool: &DbPool) -> SinexResult<usize> {
         let schemas = fetch_latest_active_schemas(pool).await?;
         let (cache, lookup, compiled, failed) = compile_schemas(schemas);
@@ -242,7 +237,6 @@ impl EventValidator {
         Ok(compiled)
     }
     /// Load all schema versions (not just latest) into the cache.
-    #[cfg(feature = "sqlx")]
     pub async fn load_all_schema_versions(&mut self, pool: &DbPool) -> SinexResult<()> {
         let schemas = fetch_all_active_schemas(pool).await?;
         let (cache, lookup, compiled, failed) = compile_schemas(schemas);
@@ -567,8 +561,7 @@ impl EventValidator {
         Ok(())
     }
 }
-#[cfg_attr(feature = "sqlx", derive(FromRow))]
-#[derive(Debug)]
+#[derive(Debug, FromRow)]
 struct SchemaRecord {
     id: Uuid,
     source: String,
@@ -576,7 +569,6 @@ struct SchemaRecord {
     schema_version: String,
     schema_content: JsonValue,
 }
-#[cfg(feature = "sqlx")]
 async fn fetch_latest_active_schemas(pool: &DbPool) -> SinexResult<Vec<SchemaRecord>> {
     use crate::repositories::DbPoolExt;
 
@@ -601,7 +593,6 @@ async fn fetch_latest_active_schemas(pool: &DbPool) -> SinexResult<Vec<SchemaRec
         })
         .collect())
 }
-#[cfg(feature = "sqlx")]
 async fn fetch_all_active_schemas(pool: &DbPool) -> SinexResult<Vec<SchemaRecord>> {
     use crate::repositories::DbPoolExt;
 

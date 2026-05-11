@@ -4,10 +4,6 @@ version = "0.1.0"
 edition = "2024"
 description = "Database persistence layer for Sinex"
 
-[features]
-default = ["sqlx"]
-sqlx = []
-
 [dependencies]
 # Core dependencies
 sinex-primitives = { path = "../sinex-primitives", features = ["sqlx"] }
