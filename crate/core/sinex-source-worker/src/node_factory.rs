@@ -81,6 +81,94 @@ macro_rules! register_node_factory {
     };
 }
 
+/// Register an adapter-backed ingestor in one shot.
+///
+/// This macro is the primary Wave-B authoring surface. It combines
+/// `register_parser!` and `register_node_factory!` into a single call:
+///
+/// ```rust,ignore
+/// register_adapter_ingestor!(
+///     source_unit_id: "terminal.atuin-history",
+///     adapter:        SqliteRowAdapter,
+///     parser:         AtuinHistoryRecord,
+/// );
+/// ```
+///
+/// The macro:
+/// 1. Registers `parser` in the `ParserRegistryEntry` inventory under
+///    `source_unit_id` so the replay dispatch can reach it.
+/// 2. Registers an `AdapterBackedIngestor<adapter, parser>` in the
+///    `NodeFactoryEntry` inventory so `sinex-source-worker --source-unit
+///    <source_unit_id>` can start it.
+///
+/// Both `adapter` and `parser` must implement `Default`.
+///
+/// # Config shape
+///
+/// `AdapterBackedIngestor` deserializes the node JSON config into
+/// `adapter::Config`. Place all adapter-specific fields (e.g. `path`,
+/// `query`, `table`) at the top level of the source unit's config JSON.
+/// The adapter type's `Config` must implement `serde::Deserialize` and
+/// `Default`.
+#[macro_export]
+macro_rules! register_adapter_ingestor {
+    (
+        source_unit_id: $id:expr,
+        adapter: $adapter:ty,
+        parser: $parser:ty $(,)?
+    ) => {
+        // 1. Register the parser in the dispatch registry (replay path).
+        $crate::register_parser!($id, $parser);
+
+        // 2. Register the node factory (continuous ingestion path).
+        ::inventory::submit! {
+            $crate::node_factory::NodeFactoryEntry {
+                source_unit_id: $id,
+                factory_fn: |args| {
+                    Box::pin($crate::node_factory::run_adapter_ingestor::<$adapter, $parser>(
+                        $id, args,
+                    ))
+                },
+            }
+        }
+    };
+}
+
+/// Run an adapter-backed ingestor through the standard SDK lifecycle.
+///
+/// Parallel to `run_ingestor` but constructs `AdapterBackedIngestor<A, P>`
+/// with the source-unit id baked in. Called by `register_adapter_ingestor!`
+/// generated factories.
+pub async fn run_adapter_ingestor<A, P>(
+    source_unit_id: &'static str,
+    args: Vec<std::ffi::OsString>,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    A: sinex_node_sdk::parser::InputShapeAdapter + Default + Send + Sync + 'static,
+    P: sinex_node_sdk::parser::MaterialParser + Default + Send + Sync + 'static,
+    A::Config: Clone
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + Send
+        + Sync,
+    A::Cursor: Clone
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + Send
+        + Sync,
+{
+    use clap::Parser;
+    use sinex_node_sdk::IngestorNodeAdapter;
+    use sinex_node_sdk::node_cli::{NodeCli, NodeCliRunner};
+    use sinex_node_sdk::parser::AdapterBackedIngestor;
+
+    let parsed = NodeCli::parse_from(args);
+    let node = AdapterBackedIngestor::<A, P>::new(source_unit_id);
+    let adapter = IngestorNodeAdapter::new(node);
+    let mut runner = NodeCliRunner::new(adapter);
+    runner.run(parsed).await.map_err(std::convert::Into::into)
+}
+
 /// Run a source-unit ingestor through the standard SDK lifecycle.
 ///
 /// Shared implementation used by all `register_node_factory!`-produced
