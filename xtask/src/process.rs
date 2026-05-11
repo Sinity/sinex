@@ -156,6 +156,27 @@ pub fn arm_current_process_parent_death_signal() -> Result<()> {
     Ok(())
 }
 
+/// Returns true if the process at `pid` still looks like a cargo/xtask job.
+///
+/// Reads `/proc/{pid}/cmdline` and checks for "cargo" or "xtask" substrings.
+/// If `/proc` is unavailable (non-Linux, restricted, or the process exited
+/// between caller's check and this read), conservatively returns `true` so
+/// callers don't skip cleanup actions they intended to take.
+///
+/// Used by the job-manager (foreground sweep) and the detached reaper
+/// (grandchild fallback). See `commands/reap.rs` and `jobs/mod.rs`.
+pub fn is_xtask_pid(pid: u32) -> bool {
+    let cmdline_path = format!("/proc/{pid}/cmdline");
+    match std::fs::read(&cmdline_path) {
+        Ok(bytes) => {
+            // /proc/PID/cmdline is NUL-delimited.
+            let cmdline = String::from_utf8_lossy(&bytes);
+            cmdline.contains("cargo") || cmdline.contains("xtask")
+        }
+        Err(_) => true,
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProcessTreeMetrics {

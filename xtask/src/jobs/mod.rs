@@ -805,25 +805,6 @@ impl JobManager {
     }
 }
 
-/// Verify that the process at `pid` is still the cargo/xtask job we spawned,
-/// not an unrelated process that reused the PID (R4 fix).
-///
-/// Reads `/proc/{pid}/cmdline` and checks for "cargo" or "xtask". If /proc
-/// is unavailable or the read fails, we conservatively assume it is our process
-/// (same as before this check existed) to avoid skipping necessary kills.
-fn pid_is_expected_process(pid: u32) -> bool {
-    let cmdline_path = format!("/proc/{pid}/cmdline");
-    match std::fs::read(&cmdline_path) {
-        Ok(bytes) => {
-            // /proc/PID/cmdline is NUL-delimited; check if any component looks like cargo/xtask
-            let cmdline = String::from_utf8_lossy(&bytes);
-            cmdline.contains("cargo") || cmdline.contains("xtask")
-        }
-        // If /proc is unavailable (non-Linux, restricted), assume it's ours
-        Err(_) => true,
-    }
-}
-
 fn job_process_is_alive(pid: nix::unistd::Pid) -> bool {
     matches!(
         nix::sys::signal::killpg(pid, None),
