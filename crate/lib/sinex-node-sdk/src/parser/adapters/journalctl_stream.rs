@@ -219,6 +219,7 @@ pub fn records_from_journal_lines(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
 
     fn dummy_material_id() -> Id<SourceMaterial> {
         Id::from_uuid(uuid::Uuid::new_v4())
@@ -229,16 +230,17 @@ mod tests {
     const JOURNAL_LINE_NO_CURSOR: &str =
         r#"{"MESSAGE":"no cursor here","PRIORITY":"6"}"#;
 
-    #[test]
-    fn test_records_from_lines_happy_path() {
+    #[sinex_test]
+    async fn test_records_from_lines_happy_path() -> xtask::sandbox::TestResult<()> {
         let mid = dummy_material_id();
         let records = records_from_journal_lines(mid, &[JOURNAL_LINE_WITH_CURSOR]);
         assert_eq!(records.len(), 1);
         assert!(records[0].is_ok());
+        Ok(())
     }
 
-    #[test]
-    fn test_cursor_after_extracts_cursor_field() {
+    #[sinex_test]
+    async fn test_cursor_after_extracts_cursor_field() -> xtask::sandbox::TestResult<()> {
         let mid = dummy_material_id();
         let records = records_from_journal_lines(mid, &[JOURNAL_LINE_WITH_CURSOR]);
         let record = records[0].as_ref().unwrap();
@@ -246,10 +248,11 @@ mod tests {
         let adapter = JournalctlStreamAdapter;
         let cursor = adapter.cursor_after(record).unwrap();
         assert_eq!(cursor.cursor, "s=abc;i=1;b=x");
+        Ok(())
     }
 
-    #[test]
-    fn test_cursor_after_fallback_to_frame_index() {
+    #[sinex_test]
+    async fn test_cursor_after_fallback_to_frame_index() -> xtask::sandbox::TestResult<()> {
         let mid = dummy_material_id();
         let records = records_from_journal_lines(mid, &[JOURNAL_LINE_NO_CURSOR]);
         let record = records[0].as_ref().unwrap();
@@ -257,10 +260,11 @@ mod tests {
         let adapter = JournalctlStreamAdapter;
         let cursor = adapter.cursor_after(record).unwrap();
         assert!(cursor.cursor.starts_with("frame:"));
+        Ok(())
     }
 
-    #[test]
-    fn test_cursor_after_non_json_errors() {
+    #[sinex_test]
+    async fn test_cursor_after_non_json_errors() -> xtask::sandbox::TestResult<()> {
         let mid = dummy_material_id();
         let record = SourceRecord {
             material_id: mid,
@@ -276,25 +280,28 @@ mod tests {
 
         let adapter = JournalctlStreamAdapter;
         assert!(adapter.cursor_after(&record).is_err());
+        Ok(())
     }
 
-    #[test]
-    fn test_records_skips_empty_lines() {
+    #[sinex_test]
+    async fn test_records_skips_empty_lines() -> xtask::sandbox::TestResult<()> {
         let mid = dummy_material_id();
         let records = records_from_journal_lines(mid, &["", JOURNAL_LINE_WITH_CURSOR, ""]);
         // Empty lines are filtered in the live stream; in our helper they are
         // included as entries but the filter would remove them. Here we just
         // verify the helper doesn't crash on empty lines.
         assert!(!records.is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn test_kind_is_subprocess() {
+    #[sinex_test]
+    async fn test_kind_is_subprocess() -> xtask::sandbox::TestResult<()> {
         assert_eq!(JournalctlStreamAdapter::KIND, InputShapeKind::Subprocess);
+        Ok(())
     }
 
-    #[test]
-    fn test_multiple_lines_have_monotonic_frame_indices() {
+    #[sinex_test]
+    async fn test_multiple_lines_have_monotonic_frame_indices() -> xtask::sandbox::TestResult<()> {
         let mid = dummy_material_id();
         let lines = [JOURNAL_LINE_WITH_CURSOR, JOURNAL_LINE_NO_CURSOR];
         let records = records_from_journal_lines(mid, &lines);
@@ -308,18 +315,20 @@ mod tests {
         for w in indices.windows(2) {
             assert!(w[0] < w[1]);
         }
+        Ok(())
     }
 
-    #[test]
-    fn test_cursor_serde_roundtrip() {
+    #[sinex_test]
+    async fn test_cursor_serde_roundtrip() -> xtask::sandbox::TestResult<()> {
         let cursor = JournalctlCursor::new("s=abc;i=42;b=deadbeef");
         let json = serde_json::to_string(&cursor).unwrap();
         let back: JournalctlCursor = serde_json::from_str(&json).unwrap();
         assert_eq!(cursor, back);
+        Ok(())
     }
 
-    #[test]
-    fn test_cursor_after_non_stream_frame_anchor_errors() {
+    #[sinex_test]
+    async fn test_cursor_after_non_stream_frame_anchor_errors() -> xtask::sandbox::TestResult<()> {
         // Cover the fallback Err arm: record has no __CURSOR field AND its
         // anchor is not StreamFrame. This pins the contract that the only
         // anchors journalctl can survive without a __CURSOR are stream frames.
@@ -337,10 +346,11 @@ mod tests {
         };
         let err = adapter.cursor_after(&record);
         assert!(matches!(err, Err(ParserError::Cursor(_))));
+        Ok(())
     }
 
-    #[test]
-    fn test_cursor_after_invalid_json_errors() {
+    #[sinex_test]
+    async fn test_cursor_after_invalid_json_errors() -> xtask::sandbox::TestResult<()> {
         let adapter = JournalctlStreamAdapter;
         let record = SourceRecord {
             material_id: dummy_material_id(),
@@ -355,5 +365,6 @@ mod tests {
         };
         let err = adapter.cursor_after(&record);
         assert!(matches!(err, Err(ParserError::Cursor(_))));
+        Ok(())
     }
 }

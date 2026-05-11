@@ -394,6 +394,7 @@ fn escape_dot_label(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
     use serde_json::json;
     use sinex_primitives::events::{DynamicPayload, SourceMaterial};
     use sinex_primitives::ids::Id;
@@ -426,8 +427,8 @@ mod tests {
         event.id.expect("test event should have an id").to_string()
     }
 
-    #[test]
-    fn dot_renderer_uses_provenance_edges_instead_of_flattening_to_root() {
+    #[sinex_test]
+    async fn dot_renderer_uses_provenance_edges_instead_of_flattening_to_root() -> xtask::sandbox::TestResult<()> {
         let ancestor = material_event("fs", "file.created");
         let root = synthesis_event(
             "process",
@@ -466,10 +467,11 @@ mod tests {
             dot.contains("color=\"#8250df\""),
             "synthesis edges should be visually distinct"
         );
+        Ok(())
     }
 
-    #[test]
-    fn dot_renderer_includes_material_evidence_and_legend() {
+    #[sinex_test]
+    async fn dot_renderer_includes_material_evidence_and_legend() -> xtask::sandbox::TestResult<()> {
         let root = material_event("fs", "file.created");
         let from_material_id = Id::<SourceMaterial>::new().to_uuid();
         let to_material_id = Id::<SourceMaterial>::new().to_uuid();
@@ -499,5 +501,6 @@ mod tests {
             dot.contains("style=dashed color=\"#6e7781\""),
             "source-material evidence link should be dashed and gray"
         );
+        Ok(())
     }
 }

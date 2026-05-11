@@ -217,6 +217,7 @@ impl DbusStreamAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
     use futures::StreamExt;
 
     fn dummy_material_id() -> Id<SourceMaterial> {
@@ -233,8 +234,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_mock_backend_yields_messages() {
+    #[sinex_test]
+    async fn test_mock_backend_yields_messages() -> xtask::sandbox::TestResult<()> {
         let msgs = vec![
             make_msg("org.test.Iface", "Signal1"),
             make_msg("org.test.Iface", "Signal2"),
@@ -254,10 +255,11 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert!(records[0].is_ok());
         assert!(records[1].is_ok());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_dbus_anchor_is_stream_frame() {
+    #[sinex_test]
+    async fn test_dbus_anchor_is_stream_frame() -> xtask::sandbox::TestResult<()> {
         let msgs = vec![make_msg("org.test.Iface", "Sig")];
         let config = DbusStreamConfig {
             bus: DbusBus::System,
@@ -273,10 +275,11 @@ mod tests {
         let records: Vec<_> = stream.collect().await;
         let record = records[0].as_ref().unwrap();
         assert!(matches!(record.anchor, MaterialAnchor::StreamFrame { .. }));
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_dbus_frame_index_monotonic() {
+    #[sinex_test]
+    async fn test_dbus_frame_index_monotonic() -> xtask::sandbox::TestResult<()> {
         let msgs = vec![
             make_msg("org.a", "Sig1"),
             make_msg("org.b", "Sig2"),
@@ -305,10 +308,11 @@ mod tests {
         for w in indices.windows(2) {
             assert!(w[0] < w[1]);
         }
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_dbus_metadata_has_interface_and_member() {
+    #[sinex_test]
+    async fn test_dbus_metadata_has_interface_and_member() -> xtask::sandbox::TestResult<()> {
         let msgs = vec![make_msg("org.example.Interface", "TestMember")];
         let config = DbusStreamConfig {
             bus: DbusBus::Session,
@@ -325,10 +329,11 @@ mod tests {
         let record = records[0].as_ref().unwrap();
         assert_eq!(record.metadata["interface"], "org.example.Interface");
         assert_eq!(record.metadata["member"], "TestMember");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_dbus_cursor_after_always_unit() {
+    #[sinex_test]
+    async fn test_dbus_cursor_after_always_unit() -> xtask::sandbox::TestResult<()> {
         let adapter = DbusStreamAdapter::with_backend(MockDbusBackend::new(vec![]));
         let record = SourceRecord {
             material_id: dummy_material_id(),
@@ -340,10 +345,11 @@ mod tests {
         };
         let cursor = adapter.cursor_after(&record).unwrap();
         assert_eq!(cursor, DbusStreamCursor);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_dbus_empty_message_stream() {
+    #[sinex_test]
+    async fn test_dbus_empty_message_stream() -> xtask::sandbox::TestResult<()> {
         let config = DbusStreamConfig {
             bus: DbusBus::Session,
             match_rules: vec![],
@@ -355,10 +361,12 @@ mod tests {
         );
         let records: Vec<_> = stream.collect().await;
         assert!(records.is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn test_kind_is_dbus_subscription() {
+    #[sinex_test]
+    async fn test_kind_is_dbus_subscription() -> xtask::sandbox::TestResult<()> {
         assert_eq!(DbusStreamAdapter::KIND, InputShapeKind::DbusSubscription);
+        Ok(())
     }
 }

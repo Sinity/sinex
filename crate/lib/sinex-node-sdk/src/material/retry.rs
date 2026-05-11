@@ -167,6 +167,7 @@ impl<P: TransientErrorPredicate> RetryableMaterialCapture<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Instant;
@@ -189,8 +190,8 @@ mod tests {
         Arc::new(AtomicUsize::new(0))
     }
 
-    #[tokio::test]
-    async fn test_succeeds_on_first_attempt() {
+    #[sinex_test]
+    async fn test_succeeds_on_first_attempt() -> xtask::sandbox::TestResult<()> {
         let retry = RetryableMaterialCapture::new();
         let attempts = count();
         let attempts_clone = attempts.clone();
@@ -206,10 +207,11 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_retries_on_transient_and_succeeds() {
+    #[sinex_test]
+    async fn test_retries_on_transient_and_succeeds() -> xtask::sandbox::TestResult<()> {
         let retry = RetryableMaterialCapture::new().with_max_attempts(3);
         let attempts = count();
         let attempts_clone = attempts.clone();
@@ -230,10 +232,11 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_retries_exhaustion() {
+    #[sinex_test]
+    async fn test_retries_exhaustion() -> xtask::sandbox::TestResult<()> {
         let retry = RetryableMaterialCapture::new().with_max_attempts(2);
         let attempts = count();
         let attempts_clone = attempts.clone();
@@ -250,10 +253,11 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_permanent_error_fails_immediately() {
+    #[sinex_test]
+    async fn test_permanent_error_fails_immediately() -> xtask::sandbox::TestResult<()> {
         let retry = RetryableMaterialCapture::new().with_max_attempts(3);
         let attempts = count();
         let attempts_clone = attempts.clone();
@@ -271,10 +275,11 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_backoff_increases_exponentially() {
+    #[sinex_test]
+    async fn test_backoff_increases_exponentially() -> xtask::sandbox::TestResult<()> {
         let retry = RetryableMaterialCapture::new()
             .with_max_attempts(3)
             .with_base_delay_ms(10);
@@ -302,10 +307,11 @@ mod tests {
         assert!(result.is_ok());
         // ~10ms + ~20ms ≥ 20ms total
         assert!(elapsed >= 20, "elapsed: {}ms", elapsed);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_custom_predicate() {
+    #[sinex_test]
+    async fn test_custom_predicate() -> xtask::sandbox::TestResult<()> {
         let predicate = CountingPredicate {
             transient_count: Arc::new(AtomicUsize::new(0)),
         };
@@ -332,10 +338,11 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_max_attempts_one() {
+    #[sinex_test]
+    async fn test_max_attempts_one() -> xtask::sandbox::TestResult<()> {
         let retry = RetryableMaterialCapture::new().with_max_attempts(1);
         let attempts = count();
         let attempts_clone = attempts.clone();
@@ -352,10 +359,11 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_backoff_saturates() {
+    #[sinex_test]
+    async fn test_backoff_saturates() -> xtask::sandbox::TestResult<()> {
         let retry = RetryableMaterialCapture::new()
             .with_max_attempts(20)
             .with_base_delay_ms(1);
@@ -383,5 +391,6 @@ mod tests {
         assert!(result.is_ok());
         // Delays cap at base_delay_ms * 2^10 = 1024ms after exponent 10.
         assert!(elapsed >= 1000, "elapsed: {}ms", elapsed);
+        Ok(())
     }
 }
