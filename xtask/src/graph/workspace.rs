@@ -265,51 +265,64 @@ impl WorkspaceGraph {
     /// # Ok::<(), color_eyre::eyre::Report>(())
     /// ```
     ///
-    /// # Implementation Note
-    ///
-    /// The current implementation is simplified and may not return the actual shortest
-    /// path in terms of steps. Future versions will implement proper BFS for optimal
-    /// path finding.
     pub fn shortest_path(&self, from: &str, to: &str) -> Result<Option<Vec<String>>> {
-        // Find both packages
         let from_pkg = self
             .graph
             .packages()
             .find(|p| p.name() == from)
             .with_context(|| format!("Source package '{from}' not found"))?;
-
-        let _to_pkg = self
+        let to_pkg = self
             .graph
             .packages()
             .find(|p| p.name() == to)
             .with_context(|| format!("Target package '{to}' not found"))?;
 
-        // Use guppy to find the path
-        // This is a simplified version - full implementation would use graph traversal
-        let query = self.graph.query_forward(vec![from_pkg.id()])?;
-        let resolved = query.resolve();
+        if from_pkg.id() == to_pkg.id() {
+            return Ok(Some(vec![from.to_string()]));
+        }
 
-        // Check if target is reachable
-        let mut is_reachable = false;
-        for id in resolved.package_ids(guppy::graph::DependencyDirection::Forward) {
-            let metadata = self.graph.metadata(id).with_context(|| {
-                format!(
-                    "Failed to resolve package metadata while checking path from '{from}' to '{to}'"
-                )
-            })?;
-            if metadata.name() == to {
-                is_reachable = true;
-                break;
+        // BFS over forward dependency edges. `parents` maps each visited
+        // package id to the id we reached it from, so we can reconstruct the
+        // path once we land on `to`.
+        use std::collections::{HashMap, VecDeque};
+        let mut parents: HashMap<&guppy::PackageId, &guppy::PackageId> = HashMap::new();
+        let mut queue: VecDeque<&guppy::PackageId> = VecDeque::new();
+        queue.push_back(from_pkg.id());
+
+        while let Some(current_id) = queue.pop_front() {
+            if current_id == to_pkg.id() {
+                let mut path_ids = vec![current_id];
+                let mut cursor = current_id;
+                while let Some(parent) = parents.get(cursor) {
+                    path_ids.push(parent);
+                    cursor = parent;
+                }
+                path_ids.reverse();
+                let mut path = Vec::with_capacity(path_ids.len());
+                for id in path_ids {
+                    let metadata = self
+                        .graph
+                        .metadata(id)
+                        .with_context(|| format!("Failed to resolve metadata for {id}"))?;
+                    path.push(metadata.name().to_string());
+                }
+                return Ok(Some(path));
+            }
+            let current = self
+                .graph
+                .metadata(current_id)
+                .with_context(|| format!("Failed to resolve metadata for {current_id}"))?;
+            for link in current.direct_links() {
+                let next_id = link.to().id();
+                if parents.contains_key(next_id) || next_id == from_pkg.id() {
+                    continue;
+                }
+                parents.insert(next_id, current_id);
+                queue.push_back(next_id);
             }
         }
 
-        if is_reachable {
-            // For now, return a simple direct path marker
-            // Full implementation in later waves would do actual path finding
-            Ok(Some(vec![from.to_string(), to.to_string()]))
-        } else {
-            Ok(None)
-        }
+        Ok(None)
     }
 
     /// Get all workspace packages with their metadata.
