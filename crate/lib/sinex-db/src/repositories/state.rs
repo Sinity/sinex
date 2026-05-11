@@ -937,7 +937,12 @@ impl StateRepository<'_> {
         .execute(self.pool)
         .await
         .map_err(|e| db_error(e, "update node heartbeat"))?;
-        Ok(result.rows_affected() > 0)
+        if result.rows_affected() > 0 {
+            return Ok(true);
+        }
+
+        self.insert_manifest_presence_run(node_name, version, "active", true)
+            .await
     }
 
     /// Mark a specific node's latest run as inactive.
@@ -966,6 +971,56 @@ impl StateRepository<'_> {
         .execute(self.pool)
         .await
         .map_err(|e| db_error(e, "mark node inactive"))?;
+        if result.rows_affected() > 0 {
+            return Ok(true);
+        }
+
+        self.insert_manifest_presence_run(node_name, version, "inactive", false)
+            .await
+    }
+
+    async fn insert_manifest_presence_run(
+        &self,
+        node_name: &NodeName,
+        version: &str,
+        status: &str,
+        heartbeat_now: bool,
+    ) -> DbResult<bool> {
+        let host = gethostname::gethostname().to_string_lossy().to_string();
+        let result = sqlx::query!(
+            r#"
+            INSERT INTO core.runs (
+                manifest_id,
+                service_name,
+                instance_id,
+                host,
+                started_at,
+                status,
+                last_heartbeat_at
+            )
+            SELECT
+                m.id,
+                m.name,
+                'manifest:' || m.version,
+                $3,
+                NOW(),
+                $4,
+                CASE WHEN $5 THEN NOW() ELSE NULL END
+            FROM core.manifests m
+            WHERE m.name = $1 AND m.version = $2
+              AND NOT EXISTS (
+                  SELECT 1 FROM core.runs r WHERE r.manifest_id = m.id
+              )
+            "#,
+            node_name as &NodeName,
+            version,
+            host,
+            status,
+            heartbeat_now,
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "insert manifest presence run"))?;
         Ok(result.rows_affected() > 0)
     }
 
