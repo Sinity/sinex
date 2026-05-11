@@ -160,6 +160,7 @@ impl AdapterNodeConfig {
 /// Contains the adapter cursor (opaque to the SDK) and event counters.
 /// Serialized as the `IngestorState<S>::user_state` payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound = "C: Clone + Serialize + DeserializeOwned")]
 pub struct AdapterNodeState<C>
 where
     C: Clone + Serialize + DeserializeOwned,

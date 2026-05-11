@@ -43,9 +43,10 @@ Application code checks at boundaries, but violations can reach the check.
 | What's validated | Where | Gap |
 |------------------|-------|-----|
 | Privacy engine (secret detection) | Ingestor, before NATS publish | No automata use privacy engine — derived events inherit ingestor leaks |
-| Schema validation | ingestd, before persistence | Lenient: unknown types pass. payload_schema_id never stored on event row |
+| Schema validation | ingestd, before persistence | Lenient: unknown types pass. `payload_schema_id` IS bound and written on every insert path (single, batched VALUES, COPY staging, DLQ replay) — see `crate/lib/sinex-db/src/repositories/events/persistence.rs` |
 | Path traversal protection | `validate_path()` at API boundary | Only called where explicitly used |
 | JSON depth/size limits | `validate_json()` at API boundary | Only called where explicitly used |
+| `ts_orig` plausibility | ingestd, before persistence | `ts_orig_future_skew_secs` config (`crate/core/sinex-ingestd/src/config.rs:159`) bounds how far in the future ts_orig can be; implausibly-old events route to DLQ |
 
 ### Level 5: Convention + Lazy Check
 
@@ -63,8 +64,8 @@ No automated enforcement. Correctness depends on developer discipline.
 | Convention | Risk if violated |
 |------------|-----------------|
 | `operation_id` honesty | Callers can claim any ID (safety gate, not security) |
-| `ts_orig` plausibility | Future timestamps persist without warning |
 | Payload-to-material correspondence | Event can claim any anchor_byte — no cross-check with blob content |
+| Privacy invocation in source-unit parsers | Parsers can omit `privacy::engine()` calls; no compile-time or lint check that a `SourceUnitDescriptor` with `privacy_tier != Public` actually invokes the engine. **Top Wave-B regression risk.** |
 | Health check truthfulness | Defaults to `true` — no verification of actual health |
 | `node_run_id` tracking | Column exists, table defined, never populated (always NULL) |
 
