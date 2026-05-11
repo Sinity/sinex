@@ -21,8 +21,9 @@ pub fn custom_history_roundtrip(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     );
     steps.push(outcome);
 
-    // Brief pause for history write to complete
-    std::thread::sleep(Duration::from_millis(500));
+    // The child xtask process called finish_invocation() synchronously before
+    // exiting; exec_step's wait() already saw that. SQLite WAL is visible to
+    // the next reader the moment the writer commits — no flush needed.
 
     // 2. Query recent history — should contain our "deps" invocation
     let (mut outcome, output) = exec_step(
@@ -74,9 +75,6 @@ pub fn custom_preflight_stages_in_history(dir: &Path, verbose: bool) -> Vec<Step
     );
     steps.push(outcome);
 
-    // Brief pause to ensure history write completes
-    std::thread::sleep(Duration::from_millis(500));
-
     // 2. Query stages for check command
     let (mut outcome, output) = exec_step(
         dir,
@@ -125,7 +123,6 @@ pub fn custom_diagnostic_delta_roundtrip(dir: &Path, verbose: bool) -> Vec<StepO
     );
     steps.push(outcome);
 
-    std::thread::sleep(Duration::from_millis(300));
 
     // 2. Query current diagnostics (package-scoped supersession view)
     let (mut outcome, output) = exec_step(
@@ -179,7 +176,6 @@ pub fn custom_history_stages_populated(dir: &Path, verbose: bool) -> Vec<StepOut
     );
     steps.push(outcome);
 
-    std::thread::sleep(Duration::from_millis(300));
 
     // 2. Get the last check invocation ID
     let (outcome, last_output) = exec_step(
