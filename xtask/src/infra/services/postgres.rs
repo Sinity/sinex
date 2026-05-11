@@ -42,10 +42,17 @@ pub struct PostgresConfig {
     /// sandbox sets `"127.0.0.1"` so sqlx clients connecting via
     /// `postgresql://...@127.0.0.1:port/...` can reach the cluster.
     pub listen_addresses: String,
+    pub durability: PostgresDurabilityMode,
 }
 
 pub struct PostgresManager {
     config: PostgresConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PostgresDurabilityMode {
+    Durable,
+    EphemeralFast,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -593,6 +600,22 @@ impl PostgresManager {
         let abs_logs_dir = absolute_path(&self.config.logs_dir)?;
         let run_dir = utf8_path(&abs_run_dir, "postgres run dir")?;
         let logs_dir = utf8_path(&abs_logs_dir, "postgres logs dir")?;
+        let fast_ephemeral_config = match self.config.durability {
+            PostgresDurabilityMode::Durable => "",
+            PostgresDurabilityMode::EphemeralFast => {
+                "
+# Throwaway test cluster: prefer wall-clock and low disk pressure over crash durability.
+fsync = off
+full_page_writes = off
+synchronous_commit = off
+jit = off
+autovacuum = off
+checkpoint_timeout = '30min'
+max_wal_size = '2GB'
+shared_buffers = '256MB'
+"
+            }
+        };
         Ok(format!(
             "{MANAGED_CONFIG_BEGIN}
 unix_socket_directories = '{}'
@@ -606,13 +629,15 @@ log_destination = 'stderr'
 logging_collector = on
 log_directory = '{}'
 log_filename = 'postgres.log'
+{}
 {MANAGED_CONFIG_END}",
             run_dir,
             self.config.listen_addresses,
             self.config.port,
             POSTGRES_MAX_WORKER_PROCESSES,
             TIMESCALEDB_MAX_BACKGROUND_WORKERS,
-            logs_dir
+            logs_dir,
+            fast_ephemeral_config.trim_end()
         ))
     }
 
@@ -697,6 +722,7 @@ mod tests {
             superuser: "postgres".to_string(),
             app_user: "sinex".to_string(),
             listen_addresses: String::new(),
+            durability: PostgresDurabilityMode::Durable,
         })
     }
 
@@ -1018,6 +1044,7 @@ mod tests {
             superuser: "postgres".to_string(),
             app_user: "sinex".to_string(),
             listen_addresses: String::new(),
+            durability: PostgresDurabilityMode::Durable,
         });
 
         let stop_args: Vec<OsString> = manager
@@ -1056,6 +1083,7 @@ mod tests {
             superuser: "postgres".to_string(),
             app_user: "sinex".to_string(),
             listen_addresses: String::new(),
+            durability: PostgresDurabilityMode::Durable,
         });
 
         let error = manager.render_runtime_config().unwrap_err();
@@ -1076,12 +1104,28 @@ mod tests {
             superuser: "postgres".to_string(),
             app_user: "sinex".to_string(),
             listen_addresses: String::new(),
+            durability: PostgresDurabilityMode::Durable,
         });
 
         let error = manager
             .pg_ctl_start_command(&temp.path().join("postgres.log"))
             .unwrap_err();
         assert!(format!("{error:#}").contains("postgres run dir must be valid UTF-8"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ephemeral_fast_runtime_config_disables_crash_durability() -> TestResult<()> {
+        let temp = tempfile::tempdir()?;
+        let mut manager = test_manager(&temp);
+        manager.config.durability = PostgresDurabilityMode::EphemeralFast;
+
+        let config = manager.render_runtime_config()?;
+
+        assert!(config.contains("fsync = off"));
+        assert!(config.contains("full_page_writes = off"));
+        assert!(config.contains("synchronous_commit = off"));
+        assert!(config.contains("autovacuum = off"));
         Ok(())
     }
 }

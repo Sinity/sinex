@@ -52,6 +52,8 @@ pub struct Config {
     pub cache_dir: PathBuf,
     /// Test results directory
     pub test_results_dir: Option<PathBuf>,
+    /// Root for per-test temporary directories
+    pub test_tmp_dir: Option<PathBuf>,
     /// Hostname of the current machine
     pub hostname: String,
     /// Toolchain identifier when exported by the development shell
@@ -89,6 +91,7 @@ impl Config {
             state_dir,
             cache_dir,
             test_results_dir: env::var("SINEX_TEST_RESULTS_DIR").map(PathBuf::from).ok(),
+            test_tmp_dir: env::var("SINEX_TEST_TMPDIR").map(PathBuf::from).ok(),
             hostname,
             toolchain: env::var("SINEX_DEV_TOOLCHAIN")
                 .ok()
@@ -98,7 +101,14 @@ impl Config {
         }
     }
 
-    /// Path to the history database.
+    /// Path to the canonical development-loop history database.
+    ///
+    /// This database is durable observability data, not cache. It records
+    /// command timings, diagnostics, test outcomes, job output, and resource
+    /// evidence used to optimize the development environment. Performance
+    /// cleanup must not delete it; if it becomes a bottleneck, preserve the
+    /// dataset and optimize access patterns, indexes, WAL/compaction behavior,
+    /// or explicit archive flows.
     ///
     /// `XTASK_HISTORY_DB` is a test/exercise escape hatch for synthetic
     /// ledgers. Normal developer and observability flows should use the

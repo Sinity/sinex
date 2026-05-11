@@ -467,6 +467,7 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         "nats_url": cfg.nats_url,
         "gateway_url": cfg.gateway_url,
         "test_results_dir": cfg.test_results_dir.as_ref().map(|p| p.display().to_string()),
+        "test_tmp_dir": cfg.test_tmp_dir.as_ref().map(|p| p.display().to_string()),
         "toolchain": cfg.toolchain,
         "in_dev_shell": cfg.in_dev_shell,
     }));
@@ -534,6 +535,7 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
             print_env_field(env_data, "nats_url", "NATS URL:");
             print_env_field(env_data, "gateway_url", "Gateway URL:");
             print_env_field(env_data, "test_results_dir", "Test results:");
+            print_env_field(env_data, "test_tmp_dir", "Test temp:");
             print_env_field(env_data, "toolchain", "Toolchain:");
             if let Some(in_dev_shell) = env_data
                 .get("in_dev_shell")

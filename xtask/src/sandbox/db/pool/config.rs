@@ -21,13 +21,13 @@ pub(super) struct PoolConfig {
 
 impl Default for PoolConfig {
     fn default() -> Self {
-        let base_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        let base_url = test_database_url().unwrap_or_else(|| {
             crate::infra::stack::StackConfig::for_current_checkout().map_or_else(
                 |_| "postgresql:///sinex_dev?host=/run/postgresql".to_string(),
                 |cfg| cfg.database_url(),
             )
         });
-        let admin_url = std::env::var("DATABASE_URL_SUPERUSER")
+        let admin_url = test_database_superuser_url()
             .unwrap_or_else(|_| force_user(&replace_db_name(&base_url, "postgres"), "postgres"));
         let size = default_pool_size();
 
@@ -39,6 +39,22 @@ impl Default for PoolConfig {
             admin_max_connections: ADMIN_MAX_CONNECTIONS,
         }
     }
+}
+
+pub(super) fn test_database_url() -> Option<String> {
+    std::env::var("SINEX_TEST_DATABASE_URL")
+        .ok()
+        .filter(|url| !url.trim().is_empty())
+        .or_else(|| {
+            std::env::var("DATABASE_URL")
+                .ok()
+                .filter(|url| !url.trim().is_empty())
+        })
+}
+
+pub(super) fn test_database_superuser_url() -> Result<String, std::env::VarError> {
+    std::env::var("SINEX_TEST_DATABASE_URL_SUPERUSER")
+        .or_else(|_| std::env::var("DATABASE_URL_SUPERUSER"))
 }
 
 impl PoolConfig {

@@ -3,6 +3,7 @@
 //! Each flag targets a specific category of state. With no category flags,
 //! `--yes` alone resets operational developer state: db + nats + preflight + jobs + target.
 //! The xtask history database is preserved unless `--history` is passed explicitly.
+//! It is durable development observability evidence, not disposable cache.
 //!
 //! `--contracts` and `--schema` are surgical — they delete only the hash
 //! files that gate preflight re-deployment. This forces re-run without
@@ -11,6 +12,7 @@
 use clap::Args;
 use color_eyre::eyre::{Result, WrapErr, eyre};
 use sinex_schema::apply::SHARED_ACCESS_ROLES;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use time::OffsetDateTime;
 
@@ -49,7 +51,10 @@ pub struct ResetCommand {
     #[arg(long)]
     schema: bool,
 
-    /// Reset the xtask history database, preserving the old DB as a timestamped backup.
+    /// Archive the xtask history database and start a fresh one.
+    ///
+    /// The old DB is always preserved as a timestamped backup because history
+    /// is a valuable timing/diagnostic/test dataset, not cache.
     #[arg(long)]
     history: bool,
 
@@ -60,6 +65,10 @@ pub struct ResetCommand {
     /// Delete background job records and output files.
     #[arg(long)]
     jobs: bool,
+
+    /// Delete stale per-test temporary directories.
+    #[arg(long)]
+    test_tmp: bool,
 
     /// Wipe the cargo target/ directory (forces clean recompilation).
     #[arg(long)]
@@ -85,6 +94,7 @@ impl XtaskCommand for ResetCommand {
             || self.schema
             || self.history
             || self.jobs
+            || self.test_tmp
             || self.target
             || self.tls;
         let all = !any_specific;
@@ -207,6 +217,16 @@ impl XtaskCommand for ResetCommand {
                 }
             }
             actions.push("background job records deleted");
+        }
+
+        // ── Test temp dirs ───────────────────────────────────────────────────
+        if all || self.test_tmp {
+            let removed = reset_test_tmp(verbose)?;
+            if removed {
+                actions.push("stale test temp dirs removed");
+            } else {
+                actions.push("test temp dir already clean");
+            }
         }
 
         // ── Target dir ────────────────────────────────────────────────────────
@@ -362,6 +382,60 @@ fn reset_schema_hash(verbose: bool) -> Result<()> {
     Ok(())
 }
 
+fn reset_test_tmp(verbose: bool) -> Result<bool> {
+    let test_tmp = crate::config::workspace_root().join(".sinex/test-tmp");
+    if !test_tmp.exists() {
+        return Ok(false);
+    }
+    normalize_tree_permissions(&test_tmp)
+        .with_context(|| format!("make stale test temp tree removable at {}", test_tmp.display()))?;
+    let mut removed_any = false;
+    for entry in std::fs::read_dir(&test_tmp)
+        .with_context(|| format!("read {}", test_tmp.display()))?
+    {
+        let entry = entry.with_context(|| format!("read entry under {}", test_tmp.display()))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("read file type for {}", path.display()))?;
+        if file_type.is_dir() {
+            std::fs::remove_dir_all(&path)
+                .with_context(|| format!("remove stale test temp dir {}", path.display()))?;
+        } else {
+            std::fs::remove_file(&path)
+                .with_context(|| format!("remove stale test temp file {}", path.display()))?;
+        }
+        removed_any = true;
+    }
+    if verbose && removed_any {
+        println!("  cleared {}", test_tmp.display());
+    }
+    Ok(removed_any)
+}
+
+fn normalize_tree_permissions(path: &Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(path)
+        .with_context(|| format!("stat {}", path.display()))?;
+    if metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    if metadata.is_dir() {
+        for entry in std::fs::read_dir(path).with_context(|| format!("read {}", path.display()))? {
+            let entry = entry.with_context(|| format!("read entry under {}", path.display()))?;
+            normalize_tree_permissions(&entry.path())?;
+        }
+    }
+    let permissions = metadata.permissions();
+    let mode = permissions.mode();
+    if mode & 0o200 == 0 {
+        let mut permissions = permissions;
+        permissions.set_mode(mode | 0o700);
+        std::fs::set_permissions(path, permissions)
+            .with_context(|| format!("chmod u+w {}", path.display()))?;
+    }
+    Ok(())
+}
+
 fn reset_target(verbose: bool) -> Result<Vec<std::path::PathBuf>> {
     let target_dirs = target_dirs_for_reset(
         &crate::config::workspace_target_dir(),
@@ -482,6 +556,33 @@ mod tests {
         let dirs = target_dirs_for_reset(&configured, workspace.path());
 
         assert_eq!(dirs, vec![configured]);
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn test_reset_test_tmp_removes_readonly_stale_dirs() -> TestResult<()> {
+        let workspace = tempfile::tempdir()?;
+        std::fs::write(workspace.path().join("Cargo.toml"), "[workspace]\n")?;
+        std::fs::create_dir_all(workspace.path().join("xtask"))?;
+        std::fs::write(
+            workspace.path().join("xtask/Cargo.toml"),
+            "[package]\nname = \"xtask\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )?;
+        let stale_dir = workspace.path().join(".sinex/test-tmp/stale/.git/annex/objects");
+        std::fs::create_dir_all(&stale_dir)?;
+        let readonly_file = stale_dir.join("readonly.tmp");
+        std::fs::write(&readonly_file, "stale")?;
+        let mut permissions = std::fs::metadata(&readonly_file)?.permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&readonly_file, permissions)?;
+
+        let cwd = std::env::current_dir()?;
+        std::env::set_current_dir(workspace.path())?;
+        let result = reset_test_tmp(false);
+        std::env::set_current_dir(cwd)?;
+
+        assert!(result?);
+        assert!(!workspace.path().join(".sinex/test-tmp/stale").exists());
         Ok(())
     }
 

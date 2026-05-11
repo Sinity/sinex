@@ -375,9 +375,9 @@ async fn try_recover_slot_connection(
 async fn query_advisory_lock_holders() -> String {
     // Best-effort: connect to the admin DB and query lock holders.
     // If this fails, include the probe failure in the timeout error instead of suppressing it.
-    let base_url = match std::env::var("DATABASE_URL") {
-        Ok(url) => url,
-        Err(_) => match crate::infra::stack::StackConfig::for_current_checkout() {
+    let base_url = match config::test_database_url() {
+        Some(url) => url,
+        None => match crate::infra::stack::StackConfig::for_current_checkout() {
             Ok(config) => config.database_url(),
             Err(error) => {
                 return format!(
