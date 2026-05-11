@@ -32,7 +32,8 @@
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use blake3::Digest;
+// Note: blake3 is used directly (not via the Digest trait) — `blake3::Hasher`
+// has its own update/finalize methods that don't require importing a trait.
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
