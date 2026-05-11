@@ -317,4 +317,43 @@ mod tests {
         let back: JournalctlCursor = serde_json::from_str(&json).unwrap();
         assert_eq!(cursor, back);
     }
+
+    #[test]
+    fn test_cursor_after_non_stream_frame_anchor_errors() {
+        // Cover the fallback Err arm: record has no __CURSOR field AND its
+        // anchor is not StreamFrame. This pins the contract that the only
+        // anchors journalctl can survive without a __CURSOR are stream frames.
+        let adapter = JournalctlStreamAdapter;
+        let record = SourceRecord {
+            material_id: dummy_material_id(),
+            anchor: MaterialAnchor::SqliteRow {
+                table: "fake".into(),
+                rowid: 1,
+            },
+            bytes: b"{\"MESSAGE\":\"hi\"}".to_vec(),
+            logical_path: None,
+            source_ts_hint: None,
+            metadata: serde_json::Value::Null,
+        };
+        let err = adapter.cursor_after(&record);
+        assert!(matches!(err, Err(ParserError::Cursor(_))));
+    }
+
+    #[test]
+    fn test_cursor_after_invalid_json_errors() {
+        let adapter = JournalctlStreamAdapter;
+        let record = SourceRecord {
+            material_id: dummy_material_id(),
+            anchor: MaterialAnchor::StreamFrame {
+                material_offset: 0,
+                frame_index: 1,
+            },
+            bytes: b"not-json".to_vec(),
+            logical_path: None,
+            source_ts_hint: None,
+            metadata: serde_json::Value::Null,
+        };
+        let err = adapter.cursor_after(&record);
+        assert!(matches!(err, Err(ParserError::Cursor(_))));
+    }
 }
