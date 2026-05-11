@@ -17,11 +17,16 @@
 //! manifest. The source-worker runtime owns adapter opening, cursor persistence,
 //! retry, admission, transport, and confirmation tracking.
 
+#[cfg(feature = "messaging")]
+mod adapter_node;
 mod adapters;
 mod declarative;
 mod fingerprint;
 mod fixture;
 mod weechat;
+
+#[cfg(feature = "messaging")]
+pub use adapter_node::{AdapterBackedIngestor, AdapterNodeState};
 
 pub use adapters::{
     // Existing adapters.

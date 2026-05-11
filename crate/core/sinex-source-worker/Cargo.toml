@@ -92,6 +92,12 @@ path = "../../../xtask"
 path = "../../lib/sinex-primitives"
 features = ["testing"]
 
+[dev-dependencies.tempfile]
+workspace = true
+
+[dev-dependencies.rusqlite]
+workspace = true
+
 [features]
 default = []
 tokio-console = ["dep:console-subscriber"]
