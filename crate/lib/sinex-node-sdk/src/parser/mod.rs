@@ -26,7 +26,7 @@ mod fixture;
 mod weechat;
 
 #[cfg(feature = "messaging")]
-pub use adapter_node::{AdapterBackedIngestor, AdapterNodeState};
+pub use adapter_node::{AdapterBackedIngestor, AdapterNodeConfig, AdapterNodeState};
 
 pub use adapters::{
     // Existing adapters.

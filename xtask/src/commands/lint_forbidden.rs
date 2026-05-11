@@ -59,9 +59,10 @@ impl XtaskCommand for LintForbiddenCommand {
             // This file: contains pattern strings and doc comments referencing it
             "xtask/src/commands/lint_forbidden.rs",
         ];
-        // #[test] allowlist — empty. Dedicated test files and inline cfg(test)
-        // modules are auto-skipped; proc-macro/trybuild cases are covered by
-        // path-based skipping.
+        // #[test] allowlist — empty. Only dedicated test directories and xtask/
+        // are auto-skipped. All inline mod tests must use #[sinex_test].
+        // Add individual file paths here only for genuine proc-macro or
+        // trybuild fixtures that cannot use #[sinex_test].
         let rust_test_allow: [&str; 0] = [];
         // Runtime sqlx::query() is allowed for:
         // - Session control (SET, ROLLBACK, RESET)
@@ -355,15 +356,17 @@ fn check_pattern_allow_tests(label: &str, pattern: &str, allow: &[&str]) -> Resu
     check_pattern(label, pattern, allow, is_tests_path)
 }
 
-/// Check test attributes while allowing dedicated test dirs and inline cfg(test) modules.
+/// Check test attributes, allowing only dedicated test directories and xtask/.
+///
+/// Inline `mod tests` blocks in library or source files must use `#[sinex_test]`
+/// instead of bare `#[test]` or `#[tokio::test]`. The only exemptions are files
+/// under a `tests/` directory or under `xtask/`, both handled by `is_tests_path`.
 fn check_rust_test_attr_patterns(
     label: &str,
     pattern: &str,
     allow: &[&str],
 ) -> Result<Vec<String>> {
-    check_pattern(label, pattern, allow, |path| {
-        is_tests_path(path) || file_has_inline_cfg_test_module(path)
-    })
+    check_pattern(label, pattern, allow, is_tests_path)
 }
 
 fn check_pattern<F>(label: &str, pattern: &str, allow: &[&str], skip: F) -> Result<Vec<String>>
@@ -440,13 +443,6 @@ where
 /// generates `#[test]` and `#[tokio::test]` in its expansion output.
 fn is_tests_path(path: &str) -> bool {
     path.contains("/tests/") || path.starts_with("tests/") || path.starts_with("xtask/")
-}
-
-fn file_has_inline_cfg_test_module(path: &str) -> bool {
-    let Ok(contents) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    contents.contains("#[cfg(test)]") && contents.contains("mod tests")
 }
 
 /// Check for anyhow usage in library code (not xtask, not tests, not binaries)
@@ -768,21 +764,6 @@ mod tests {
         assert!(is_tests_path("tests/foo.rs"));
         assert!(is_tests_path("crate/lib/foo/tests/bar.rs"));
         assert!(!is_tests_path("crate/lib/foo/src/test_utils.rs"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_file_has_inline_cfg_test_module() -> ::xtask::sandbox::TestResult<()> {
-        let dir = std::env::temp_dir().join(format!("sinex-inline-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir)?;
-        let file = dir.join("inline.rs");
-        std::fs::write(
-            &file,
-            "fn helper() {}\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn works() {}\n}\n",
-        )?;
-        assert!(file_has_inline_cfg_test_module(&file.display().to_string()));
-        std::fs::remove_file(&file)?;
-        std::fs::remove_dir(&dir)?;
         Ok(())
     }
 
