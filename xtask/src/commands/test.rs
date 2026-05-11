@@ -660,6 +660,7 @@ impl TestCommand {
     ) -> Result<CommandResult> {
         let base_dir = std::env::var_os("SINEX_TEST_PGDATA_DIR")
             .map(PathBuf::from)
+            .or_else(|| crate::config::workspace_tmpfs_dir("sinex-ci-pgdata", 1024.0))
             .unwrap_or_else(|| PathBuf::from(".sinex/ci-pgdata"));
         let data_dir = base_dir.join("current");
         let socket_dir = base_dir.join("run");

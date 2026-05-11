@@ -28,6 +28,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 /// User-managed preferences loaded from `~/.config/xtask/preferences.toml`.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -175,6 +178,52 @@ pub fn workspace_cache_root_for(workspace_root: &Path) -> PathBuf {
     env::var("SINEX_DEV_CACHE_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|_| workspace_root.join(".sinex/cache"))
+}
+
+/// Checkout-scoped tmpfs directory when a sticky, writable `/dev/shm` has enough headroom.
+#[must_use]
+pub fn workspace_tmpfs_dir(prefix: &str, min_free_mb: f64) -> Option<PathBuf> {
+    let shm = Path::new("/dev/shm");
+    if !usable_sticky_tmpfs(shm, min_free_mb) {
+        return None;
+    }
+    let user = env::var("USER").unwrap_or_else(|_| "user".to_string());
+    let hash = workspace_hash(&workspace_root());
+    Some(shm.join(format!("{prefix}-{user}-{hash}")))
+}
+
+#[cfg(unix)]
+fn usable_sticky_tmpfs(path: &Path, min_free_mb: f64) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_dir() {
+        return false;
+    }
+    let mode = metadata.permissions().mode();
+    if mode & 0o1000 == 0 || mode & 0o222 == 0 {
+        return false;
+    }
+    crate::process::shm_usage_mb().is_some_and(|(_, free_mb)| free_mb >= min_free_mb)
+}
+
+#[cfg(not(unix))]
+fn usable_sticky_tmpfs(_path: &Path, _min_free_mb: f64) -> bool {
+    false
+}
+
+fn workspace_hash(workspace_root: &Path) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    hasher.update(workspace_root.as_os_str().as_encoded_bytes());
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(12);
+    for byte in &digest[..6] {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
 }
 
 /// Global configuration singleton.

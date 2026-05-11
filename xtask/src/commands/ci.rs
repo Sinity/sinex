@@ -157,6 +157,7 @@ async fn execute_postgres(
             .data_dir
             .clone()
             .or_else(|| env::var_os("SINEX_TEST_PGDATA_DIR").map(PathBuf::from))
+            .or_else(|| crate::config::workspace_tmpfs_dir("sinex-ci-pgdata", 1024.0))
             .unwrap_or_else(|| PathBuf::from(".sinex/ci-pgdata")),
         socket_dir: resolve_socket_dir(args.socket_dir.clone(), env::current_dir())?,
         keep_data: args.keep_data,
