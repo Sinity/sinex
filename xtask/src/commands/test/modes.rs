@@ -43,11 +43,30 @@ pub(super) fn execute_bench(bench: &BenchArgs, ctx: &CommandContext) -> Result<C
     // Standard bench mode
     use crate::bench::{self, BenchConfig};
 
+    let mut threads = bench.threads.clone();
+    let mut db_pool_sizes = bench.db_pool_sizes.clone();
+    let mut runs = bench.runs;
+    let mut continue_on_fail = bench.continue_on_fail;
+    if bench.system_impact || bench.system_impact_extended {
+        threads = if bench.system_impact_extended {
+            vec![6, 12, 18, 24, 32, 48, 64]
+        } else {
+            vec![6, 12, 18, 24, 32]
+        };
+        if db_pool_sizes.is_empty() {
+            db_pool_sizes = vec![48, 64, 96];
+        }
+        if runs == 3 {
+            runs = 1;
+        }
+        continue_on_fail = true;
+    }
+
     let config = BenchConfig {
         mode: bench.mode,
         profile: bench.profile.clone(),
-        runs: bench.runs,
-        threads: bench.threads.clone(),
+        runs,
+        threads,
         baseline: None,
         regression_threshold_pct: 10.0,
         history_db: bench.history_db.clone(),
@@ -65,8 +84,8 @@ pub(super) fn execute_bench(bench: &BenchArgs, ctx: &CommandContext) -> Result<C
         refine_threshold_pct: 10.0,
         refine_sweep_runs: 1,
         target: bench.target.clone(),
-        db_pool_sizes: bench.db_pool_sizes.clone(),
-        continue_on_fail: bench.continue_on_fail,
+        db_pool_sizes,
+        continue_on_fail,
         fail_fast: false,
     };
     bench::run(config).map(|()| CommandResult::success())

@@ -100,7 +100,7 @@ fn guard_db_benchmark_resources(config: &BenchConfig) -> Result<()> {
         return Ok(());
     }
 
-    let conflicts = active_compilation_processes()?;
+    let conflicts = active_heavy_processes()?;
     if !conflicts.is_empty() {
         let details = conflicts
             .iter()
@@ -109,13 +109,15 @@ fn guard_db_benchmark_resources(config: &BenchConfig) -> Result<()> {
             .collect::<Vec<_>>()
             .join("\n");
         bail!(
-            "Refusing DB benchmark while another compile/test process is active:\n{}\n\
+            "Refusing DB benchmark while another heavy development process is active:\n{}\n\
              Wait for those jobs or stop them before running the DB pool matrix.",
             details
         );
     }
 
-    if let Some(avg10) = io_pressure_full_avg10()? && avg10 >= 50.0 {
+    if let Some(avg10) = crate::process::read_pressure_snapshot("io").full_avg10
+        && avg10 >= 50.0
+    {
         bail!(
             "Refusing DB benchmark while IO pressure is already extreme \
              (/proc/pressure/io full avg10={avg10:.2}). Wait for pressure to settle first."
@@ -131,7 +133,7 @@ struct ActiveProcess {
     command: String,
 }
 
-fn active_compilation_processes() -> Result<Vec<ActiveProcess>> {
+fn active_heavy_processes() -> Result<Vec<ActiveProcess>> {
     let self_pid = std::process::id();
     let mut processes = Vec::new();
     let entries = match std::fs::read_dir("/proc") {
@@ -164,8 +166,7 @@ fn active_compilation_processes() -> Result<Vec<ActiveProcess>> {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or(argv0);
-        if matches!(executable, "cargo" | "cargo-nextest" | "rustc" | "rustdoc")
-            || executable.starts_with("mold")
+        if heavy_development_command(executable, &command)
         {
             processes.push(ActiveProcess { pid, command });
         }
@@ -174,22 +175,22 @@ fn active_compilation_processes() -> Result<Vec<ActiveProcess>> {
     Ok(processes)
 }
 
-fn io_pressure_full_avg10() -> Result<Option<f64>> {
-    let Ok(contents) = std::fs::read_to_string("/proc/pressure/io") else {
-        return Ok(None);
-    };
-    let Some(full_line) = contents.lines().find(|line| line.starts_with("full ")) else {
-        return Ok(None);
-    };
-    for field in full_line.split_whitespace() {
-        if let Some(value) = field.strip_prefix("avg10=") {
-            return value
-                .parse::<f64>()
-                .map(Some)
-                .wrap_err("failed to parse /proc/pressure/io full avg10");
-        }
-    }
-    Ok(None)
+fn heavy_development_command(executable: &str, command: &str) -> bool {
+    let command = command.to_ascii_lowercase();
+    matches!(
+        executable,
+        "cargo"
+            | "cargo-nextest"
+            | "rustc"
+            | "rustdoc"
+            | "pytest"
+            | "uv"
+            | "nix"
+            | "nix-build"
+            | "nixos-rebuild"
+    ) || executable.starts_with("mold")
+        || command.contains("polylogue")
+        || command.contains(" xtask ")
 }
 
 fn default_bench_output_dir(timestamp: &str) -> PathBuf {

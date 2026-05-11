@@ -2,6 +2,7 @@
 
 use color_eyre::eyre::Result;
 use console::style;
+use std::process::Command;
 use tabled::{builder::Builder, settings::Style};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
@@ -45,6 +46,21 @@ pub enum AnalyticsSubcommand {
         #[arg(long, default_value = "20")]
         limit: usize,
     },
+    /// Current host pressure snapshot, with Sinnix observability join when available
+    Pressure {
+        /// Also run sinnix-observe for a host-level attribution report when available.
+        #[arg(long)]
+        observe: bool,
+        /// Time window passed to sinnix-observe --since.
+        #[arg(long, default_value = "2 min ago")]
+        since: String,
+        /// Duration passed to sinnix-observe --duration.
+        #[arg(long, default_value = "60 sec")]
+        duration: String,
+        /// Row limit passed to sinnix-observe --limit.
+        #[arg(long, default_value_t = 8)]
+        limit: usize,
+    },
     /// Stage-level timing breakdowns aggregated across invocations (J7)
     Stages {
         /// Filter by command
@@ -70,6 +86,15 @@ impl XtaskCommand for AnalyticsCommand {
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         use color_eyre::eyre::eyre;
         let sub = &self.subcommand;
+        if let AnalyticsSubcommand::Pressure {
+            observe,
+            since,
+            duration,
+            limit,
+        } = sub
+        {
+            return execute_pressure(*observe, since, duration, *limit, ctx);
+        }
         ctx.try_with_history_db_query(|db| {
             let analysis = HistoryAnalysis::new(db);
             match sub {
@@ -85,6 +110,7 @@ impl XtaskCommand for AnalyticsCommand {
                 AnalyticsSubcommand::Resources { command, limit } => {
                     execute_resources(db, command.as_deref(), *limit, ctx)
                 }
+                AnalyticsSubcommand::Pressure { .. } => unreachable!("handled before DB open"),
                 AnalyticsSubcommand::Stages { command, limit } => {
                     execute_stages(db, command.as_deref(), *limit, ctx)
                 }
@@ -421,7 +447,7 @@ fn execute_resources(
     );
     println!(
         "{}",
-        style("  TREE columns cover xtask plus spawned descendants; shared-slice columns reflect shared cgroup pressure observed during the invocation window; XTASK columns isolate the root xtask wrapper process; host-wide metrics remain test-only legacy data")
+        style("  TREE columns cover xtask plus spawned descendants; shared-slice columns reflect concurrent Nix/background cgroups; PSI and /dev/shm are host-level context observed during the invocation window")
             .dim()
     );
     let mut builder = Builder::new();
@@ -440,6 +466,10 @@ fn execute_resources(
         "BG MEM MAX MB",
         "XTASK CPU AVG %",
         "XTASK MEM MAX MB",
+        "IO FULL MAX %",
+        "MEM FULL MAX %",
+        "SHM USED MAX MB",
+        "SHM FREE MIN MB",
         "MAX PROCS",
         "SAMPLES",
     ]);
@@ -485,6 +515,14 @@ fn execute_resources(
                 .map_or_else(|| "-".into(), |cpu| format!("{cpu:.1}")),
             &r.root_process_memory_usage_max_mb
                 .map_or_else(|| "-".into(), |mem| format!("{mem:.0}")),
+            &r.host_io_pressure_full_avg10_max
+                .map_or_else(|| "-".into(), |psi| format!("{psi:.1}")),
+            &r.host_memory_pressure_full_avg10_max
+                .map_or_else(|| "-".into(), |psi| format!("{psi:.1}")),
+            &r.shm_used_max_mb
+                .map_or_else(|| "-".into(), |mb| format!("{mb:.0}")),
+            &r.shm_free_min_mb
+                .map_or_else(|| "-".into(), |mb| format!("{mb:.0}")),
             &r.process_count_max
                 .map_or_else(|| "-".into(), |count| count.to_string()),
             &r.sample_count
@@ -505,6 +543,152 @@ fn execute_resources(
     Ok(CommandResult::success()
         .with_message(format!("{} resource records", rows.len()))
         .with_duration(ctx.elapsed()))
+}
+
+fn execute_pressure(
+    observe: bool,
+    since: &str,
+    duration: &str,
+    limit: usize,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let cpu = crate::process::read_pressure_snapshot("cpu");
+    let io = crate::process::read_pressure_snapshot("io");
+    let memory = crate::process::read_pressure_snapshot("memory");
+    let shm = crate::process::shm_usage_mb();
+    let observe_output = if observe {
+        run_sinnix_observe(since, duration, limit)
+    } else {
+        None
+    };
+
+    if ctx.is_json() {
+        return Ok(CommandResult::success()
+            .with_message("pressure snapshot")
+            .with_data(serde_json::json!({
+                "cpu": cpu,
+                "io": io,
+                "memory": memory,
+                "dev_shm": shm.map(|(used_mb, free_mb)| serde_json::json!({
+                    "used_mb": used_mb,
+                    "free_mb": free_mb,
+                })),
+                "sinnix_observe": observe_output.as_ref().map(|output| serde_json::json!({
+                    "command": output.command,
+                    "status": output.status,
+                    "stdout": output.stdout,
+                    "stderr": output.stderr,
+                })),
+            }))
+            .with_duration(ctx.elapsed()));
+    }
+
+    println!("\n{}", style("Current Host Pressure:").bold());
+    println!(
+        "  cpu.some avg10: {}",
+        format_pressure_cell(cpu.some_avg10)
+    );
+    println!(
+        "  io.some/full avg10: {}/{}",
+        format_pressure_cell(io.some_avg10),
+        format_pressure_cell(io.full_avg10)
+    );
+    println!(
+        "  memory.some/full avg10: {}/{}",
+        format_pressure_cell(memory.some_avg10),
+        format_pressure_cell(memory.full_avg10)
+    );
+    if let Some((used_mb, free_mb)) = shm {
+        println!("  /dev/shm: {used_mb:.0} MB used, {free_mb:.0} MB free");
+    } else {
+        println!("  /dev/shm: unavailable");
+    }
+
+    if let Some(output) = observe_output {
+        println!();
+        println!("{}", style("sinnix-observe:").bold());
+        println!("  {}", output.command);
+        if output.status {
+            print!("{}", output.stdout);
+        } else {
+            println!("  failed");
+            if !output.stderr.trim().is_empty() {
+                println!("{}", output.stderr.trim());
+            }
+        }
+    } else if observe {
+        println!();
+        println!(
+            "{}",
+            style("sinnix-observe unavailable; raw PSI snapshot shown only").dim()
+        );
+    }
+    println!();
+
+    Ok(CommandResult::success()
+        .with_message("pressure snapshot")
+        .with_duration(ctx.elapsed()))
+}
+
+fn format_pressure_cell(value: Option<f64>) -> String {
+    value.map_or_else(|| "-".to_string(), |value| format!("{value:.2}%"))
+}
+
+struct SinnixObserveOutput {
+    command: String,
+    status: bool,
+    stdout: String,
+    stderr: String,
+}
+
+fn run_sinnix_observe(since: &str, duration: &str, limit: usize) -> Option<SinnixObserveOutput> {
+    let exe = find_sinnix_observe()?;
+    let command = format!(
+        "{} --format human --since {:?} --duration {:?} --limit {}",
+        exe.display(),
+        since,
+        duration,
+        limit
+    );
+    let output = Command::new(&exe)
+        .args([
+            "--format",
+            "human",
+            "--since",
+            since,
+            "--duration",
+            duration,
+            "--limit",
+            &limit.to_string(),
+        ])
+        .output()
+        .ok()?;
+    Some(SinnixObserveOutput {
+        command,
+        status: output.status.success(),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+    })
+}
+
+fn find_sinnix_observe() -> Option<std::path::PathBuf> {
+    if let Some(path) = std::env::var_os("SINEX_OBSERVE_COMMAND") {
+        let path = std::path::PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    if let Some(path) = std::env::var_os("SINNIX_OBSERVE_COMMAND") {
+        let path = std::path::PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|dir| dir.join("sinnix-observe"))
+            .find(|candidate| candidate.is_file())
+    })
 }
 
 // ── J7: stages ───────────────────────────────────────────────────────────────
