@@ -17,6 +17,15 @@ pub(super) struct Environment {
     pub memory_total_kb: u64,
     pub memory_available_kb: u64,
     pub load_avg: String,
+    pub pressure_cpu_some_avg10: Option<f64>,
+    pub pressure_io_some_avg10: Option<f64>,
+    pub pressure_io_full_avg10: Option<f64>,
+    pub pressure_memory_some_avg10: Option<f64>,
+    pub pressure_memory_full_avg10: Option<f64>,
+    pub shm_used_mb: Option<f64>,
+    pub shm_free_mb: Option<f64>,
+    pub sinnix_observe_available: bool,
+    pub active_heavy_processes: Vec<String>,
     pub rustc_version: String,
     pub cargo_version: String,
     pub rustup_toolchain: String,
@@ -33,6 +42,10 @@ pub(super) struct Environment {
 impl Environment {
     pub(super) fn capture() -> Self {
         let mut probe_issues = Vec::new();
+        let cpu_pressure = crate::process::read_pressure_snapshot("cpu");
+        let io_pressure = crate::process::read_pressure_snapshot("io");
+        let memory_pressure = crate::process::read_pressure_snapshot("memory");
+        let shm = crate::process::shm_usage_mb();
         Self {
             timestamp: sinex_primitives::temporal::Timestamp::now().format_rfc3339(),
             hostname: capture_probe(&mut probe_issues, "hostname", hostname(), "unknown"),
@@ -56,6 +69,15 @@ impl Environment {
                 0_u64,
             ),
             load_avg: capture_probe(&mut probe_issues, "load_average", load_average(), "unknown"),
+            pressure_cpu_some_avg10: cpu_pressure.some_avg10,
+            pressure_io_some_avg10: io_pressure.some_avg10,
+            pressure_io_full_avg10: io_pressure.full_avg10,
+            pressure_memory_some_avg10: memory_pressure.some_avg10,
+            pressure_memory_full_avg10: memory_pressure.full_avg10,
+            shm_used_mb: shm.map(|(used_mb, _)| used_mb),
+            shm_free_mb: shm.map(|(_, free_mb)| free_mb),
+            sinnix_observe_available: command_exists("sinnix-observe"),
+            active_heavy_processes: active_heavy_processes(12),
             rustc_version: capture_probe(
                 &mut probe_issues,
                 "rustc_version",
@@ -121,6 +143,15 @@ memory_available_kb={}
 
 ## Load
 load_avg={}
+pressure_cpu_some_avg10={}
+pressure_io_some_avg10={}
+pressure_io_full_avg10={}
+pressure_memory_some_avg10={}
+pressure_memory_full_avg10={}
+shm_used_mb={}
+shm_free_mb={}
+sinnix_observe_available={}
+active_heavy_processes={}
 
 ## Rust toolchain
 rustc_version={}
@@ -152,6 +183,15 @@ git_dirty={}
             self.memory_total_kb,
             self.memory_available_kb,
             self.load_avg,
+            format_optional_f64(self.pressure_cpu_some_avg10),
+            format_optional_f64(self.pressure_io_some_avg10),
+            format_optional_f64(self.pressure_io_full_avg10),
+            format_optional_f64(self.pressure_memory_some_avg10),
+            format_optional_f64(self.pressure_memory_full_avg10),
+            format_optional_f64(self.shm_used_mb),
+            format_optional_f64(self.shm_free_mb),
+            self.sinnix_observe_available,
+            format_jsonish_list(&self.active_heavy_processes),
             self.rustc_version,
             self.cargo_version,
             self.rustup_toolchain,
@@ -193,6 +233,86 @@ fn format_probe_issues(issues: &[String]) -> String {
         formatted.push('\n');
     }
     formatted
+}
+
+fn format_optional_f64(value: Option<f64>) -> String {
+    value.map_or_else(|| "unavailable".to_string(), |value| format!("{value:.2}"))
+}
+
+fn command_exists(program: &str) -> bool {
+    std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|dir| dir.join(program).is_file())
+    })
+}
+
+fn format_jsonish_list(values: &[String]) -> String {
+    if values.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[{}]", values.join("; "))
+    }
+}
+
+fn active_heavy_processes(limit: usize) -> Vec<String> {
+    let mut rows = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return rows;
+    };
+    let self_pid = std::process::id();
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if pid == self_pid {
+            continue;
+        }
+        let Ok(raw) = std::fs::read(entry.path().join("cmdline")) else {
+            continue;
+        };
+        if raw.is_empty() {
+            continue;
+        }
+        let command = String::from_utf8_lossy(&raw).replace('\0', " ");
+        if is_heavy_command(&command) {
+            rows.push(format!("pid {pid}: {}", truncate_process_line(&command, 180)));
+            if rows.len() >= limit {
+                break;
+            }
+        }
+    }
+    rows
+}
+
+fn is_heavy_command(command: &str) -> bool {
+    let text = command.to_ascii_lowercase();
+    [
+        " cargo ",
+        "cargo-nextest",
+        " rustc ",
+        " rustdoc ",
+        " mold",
+        " pytest",
+        " uv ",
+        " nix ",
+        "nix-daemon",
+        "nixos-rebuild",
+        " polylogue",
+        " xtask ",
+    ]
+    .iter()
+    .any(|needle| text.contains(needle.trim()))
+}
+
+fn truncate_process_line(command: &str, max: usize) -> String {
+    if command.len() <= max {
+        command.to_string()
+    } else {
+        format!("{}...", &command[..max])
+    }
 }
 
 fn command_stdout(program: &str, args: &[&str]) -> Result<String, String> {
@@ -408,6 +528,15 @@ mod tests {
             memory_total_kb: 1024,
             memory_available_kb: 512,
             load_avg: "0.0 0.0 0.0".to_string(),
+            pressure_cpu_some_avg10: Some(1.0),
+            pressure_io_some_avg10: Some(2.0),
+            pressure_io_full_avg10: Some(3.0),
+            pressure_memory_some_avg10: Some(4.0),
+            pressure_memory_full_avg10: Some(5.0),
+            shm_used_mb: Some(6.0),
+            shm_free_mb: Some(7.0),
+            sinnix_observe_available: false,
+            active_heavy_processes: vec!["pid 1: cargo test".to_string()],
             rustc_version: "rustc".to_string(),
             cargo_version: "cargo".to_string(),
             rustup_toolchain: "toolchain".to_string(),
