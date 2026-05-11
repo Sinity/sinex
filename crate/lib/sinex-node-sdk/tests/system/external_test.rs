@@ -45,6 +45,7 @@ async fn setup_test_content_store() -> TestResult<(MaterialContentStore, TempDir
     Ok((content_store, temp_dir))
 }
 
+#[ignore = "requires external content-store infrastructure"]
 #[sinex_test]
 async fn test_file_add_and_retrieve(_ctx: TestContext) -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
@@ -69,6 +70,7 @@ async fn test_file_add_and_retrieve(_ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
+#[ignore = "requires external content-store infrastructure"]
 #[sinex_test]
 async fn test_large_file_handling(_ctx: TestContext) -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
@@ -92,6 +94,7 @@ async fn test_large_file_handling(_ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
+#[ignore = "requires external content-store infrastructure"]
 #[sinex_test]
 async fn test_content_key_lookup(_ctx: TestContext) -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
@@ -119,6 +122,7 @@ async fn test_content_key_lookup(_ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
+#[ignore = "requires external content-store infrastructure"]
 #[sinex_test]
 async fn test_drop_content(_ctx: TestContext) -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
@@ -142,6 +146,7 @@ async fn test_drop_content(_ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
+#[ignore = "requires external content-store infrastructure"]
 #[sinex_test]
 async fn test_fsck(_ctx: TestContext) -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
@@ -168,6 +173,7 @@ async fn test_fsck(_ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
+#[ignore = "requires external content-store infrastructure (legacy git-annex)"]
 #[sinex_test]
 async fn test_git_annex_configuration(_ctx: TestContext) -> TestResult<()> {
     system_test_preflight()?;
@@ -224,6 +230,7 @@ async fn test_git_annex_configuration(_ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
+#[ignore = "requires external content-store infrastructure"]
 #[sinex_test(timeout = 30)]
 async fn test_concurrent_file_operations(_ctx: TestContext) -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
@@ -268,6 +275,7 @@ async fn test_concurrent_file_operations(_ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
+#[ignore = "requires external content-store infrastructure"]
 #[sinex_test]
 async fn test_files_in_subdirectories(_ctx: TestContext) -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
@@ -293,6 +301,7 @@ async fn test_files_in_subdirectories(_ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
+#[ignore = "requires external content-store infrastructure"]
 #[sinex_test(timeout = 30)]
 async fn test_content_store_deduplication(_ctx: TestContext) -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
@@ -361,6 +370,7 @@ async fn assert_local_cas_content(
 
 // ==================== DATABASE INTEGRATION TESTS ====================
 
+#[ignore = "requires external database infrastructure"]
 #[sinex_test]
 async fn test_external_database_timescaledb_functions(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
@@ -389,6 +399,7 @@ async fn test_external_database_timescaledb_functions(ctx: TestContext) -> TestR
     Ok(())
 }
 
+#[ignore = "requires external database infrastructure"]
 #[sinex_test]
 async fn test_external_database_extensions(ctx: TestContext) -> TestResult<()> {
     // Test that required database extensions are available
