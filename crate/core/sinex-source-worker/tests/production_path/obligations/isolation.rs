@@ -11,7 +11,7 @@
 //!   the dispatch registry or prevent the known-good units from succeeding.
 //! - The subject unit's error is captured and reported independently.
 
-use crate::production_path::AdapterKind;
+use crate::AdapterKind;
 use sinex_source_worker::dispatch::default_parser_dispatch;
 use sinex_primitives::Uuid;
 

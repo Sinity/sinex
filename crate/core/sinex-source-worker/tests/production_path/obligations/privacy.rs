@@ -28,7 +28,7 @@
 //!
 //! Wave B subagents add `case!(...)` calls inside the fence for their domain.
 
-use crate::production_path::AdapterKind;
+use crate::AdapterKind;
 use sinex_primitives::privacy::{self, ProcessingContext};
 use sinex_source_worker::dispatch::default_parser_dispatch;
 use sinex_primitives::Uuid;
@@ -62,7 +62,9 @@ pub async fn run(
 
     // Part 2: privacy engine redacts decoy secrets from raw text.
     let secret_text = format!("export TOKEN={DECOY_TOKEN}");
-    let engine_result = privacy::engine().process(&secret_text, ProcessingContext::Command);
+    let engine_result = privacy::engine()
+        .map_err(|e| format!("privacy engine init failed: {e}"))?
+        .process(&secret_text, ProcessingContext::Command);
 
     if !engine_result.any_matched() {
         return Err(format!(
