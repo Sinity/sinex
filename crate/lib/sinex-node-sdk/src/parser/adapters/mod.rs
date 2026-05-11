@@ -18,6 +18,7 @@
 //! | [`DirectoryWalkAdapter`] | `DirectoryWalk` | `BTreeMap<path, fingerprint>` | Recursive walk with fingerprint dedup |
 
 mod append_only_file;
+mod chained;
 mod clipboard_polling;
 mod dbus_stream;
 mod directory_walk;
@@ -29,6 +30,12 @@ mod unix_socket_stream;
 
 // Existing adapters.
 pub use append_only_file::{AppendOnlyCursor, AppendOnlyFileAdapter, AppendOnlyFileConfig};
+pub use chained::{
+    ChainedAdapter, ChainedConfig, ChainedCursor, ChainedLeg,
+    classify_record as chained_classify_record,
+    PRIMARY_PREFIX as CHAINED_PRIMARY_PREFIX,
+    SECONDARY_PREFIX as CHAINED_SECONDARY_PREFIX,
+};
 pub use directory_walk::{DirectoryWalkAdapter, DirectoryWalkConfig, DirectoryWalkCursor, FileFingerprint};
 pub use sqlite_row::{SqliteRowAdapter, SqliteRowConfig, SqliteRowCursor};
 pub use static_file::{StaticFileCursor, StaticFileAdapter, StaticFileConfig};
@@ -45,6 +52,8 @@ pub use dbus_stream::{
 pub use file_drop::{FileDropAdapter, FileDropConfig, FileDropCursor, FileDropEventKind};
 pub use journalctl_stream::{
     JournalctlCursor, JournalctlStreamAdapter, JournalctlStreamConfig,
+    JournalctlSubscriber, SharedJournalctlStream,
+    BROADCAST_CAPACITY as JOURNALCTL_BROADCAST_CAPACITY,
     records_from_journal_lines,
 };
 pub use unix_socket_stream::{
