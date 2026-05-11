@@ -50,6 +50,112 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
         field_decls.push(parse_field_decl(field)?);
     }
 
+    // --- Extension A: validate discriminator consistency ---
+    // Find the field(s) with event_dispatch mappings.
+    let dispatch_fields: Vec<&FieldDecl> = field_decls
+        .iter()
+        .filter(|d| !d.event_dispatch.is_empty())
+        .collect();
+
+    // Validate: at most one field may carry event_dispatch.
+    if dispatch_fields.len() > 1 {
+        return Err(Error::new_spanned(
+            input,
+            format!(
+                "at most one field may have #[event_dispatch(...)]; found on fields: {}",
+                dispatch_fields.iter().map(|d| d.name.as_str()).collect::<Vec<_>>().join(", ")
+            ),
+        ));
+    }
+
+    // If discriminator_field is set but no dispatch field found, error.
+    if let Some(ref disc_field) = attrs.discriminator_field {
+        let found = field_decls.iter().any(|d| &d.name == disc_field);
+        if !found {
+            return Err(Error::new_spanned(
+                input,
+                format!(
+                    "discriminator = \"{disc_field}\" but no field with that name exists on the struct"
+                ),
+            ));
+        }
+    }
+
+    // Build the discriminator token.  Two ways to declare:
+    // 1. `discriminator = "kind"` on the struct + `#[event_dispatch(...)]` on the field.
+    // 2. Just `#[event_dispatch(...)]` on the field (field name becomes the discriminator).
+    let discriminator_token = {
+        // Prefer the struct-level `discriminator = "..."` key.  Fall back to the
+        // field that carries event_dispatch.
+        let disc_info: Option<(&str, &FieldDecl)> = if let Some(ref disc_name) = attrs.discriminator_field {
+            dispatch_fields
+                .first()
+                .map(|fd| (disc_name.as_str(), *fd))
+                .or_else(|| {
+                    // discriminator declared but no dispatch field — still build discriminator
+                    // with an empty case table (unusual, but valid).
+                    None
+                })
+        } else {
+            dispatch_fields.first().map(|fd| (fd.name.as_str(), *fd))
+        };
+
+        if let Some((disc_field_name, fd)) = disc_info {
+            let on_unknown_tok = on_unknown_token(attrs.on_unknown.as_deref().unwrap_or("default"))?;
+            let cases: Vec<TokenStream> = fd
+                .event_dispatch
+                .iter()
+                .map(|(val, et)| {
+                    quote! {
+                        _sdk_parser::DiscriminatorCase {
+                            value: #val.to_string(),
+                            event_type: _sdk_domain::EventType::from_static(#et),
+                            event_source: None,
+                        }
+                    }
+                })
+                .collect();
+
+            quote! {
+                Some(_sdk_parser::Discriminator {
+                    field: #disc_field_name.to_string(),
+                    cases: vec![ #(#cases),* ],
+                    on_unknown: #on_unknown_tok,
+                })
+            }
+        } else {
+            quote!(None)
+        }
+    };
+
+    // --- Manifest declared_event_types ---
+    // Collect all event types: base type + any dispatch cases.
+    let all_event_type_pairs: Vec<TokenStream> = {
+        let mut pairs = vec![]; // (event_source, event_type) tokens
+        let base_event_source_lit = attrs.event_source.clone().unwrap_or_else(|| {
+            attrs
+                .source_unit_id
+                .split('.')
+                .next()
+                .unwrap_or(&attrs.source_unit_id)
+                .to_string()
+        });
+        let base_et = &attrs.event_type;
+        let base_es = &base_event_source_lit;
+        pairs.push(quote! {
+            (_sdk_domain::EventSource::from_static(#base_es), _sdk_domain::EventType::from_static(#base_et))
+        });
+        // Add dispatch cases.
+        for fd in &dispatch_fields {
+            for (_, et) in &fd.event_dispatch {
+                pairs.push(quote! {
+                    (_sdk_domain::EventSource::from_static(#base_es), _sdk_domain::EventType::from_static(#et))
+                });
+            }
+        }
+        pairs
+    };
+
     // Generate the spec constant.
     let spec_const_name = format_ident!(
         "_SOURCE_RECORD_SPEC_{}",
@@ -78,10 +184,65 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
     )?;
     let input_format_token = input_format_token(&attrs.input_shape)?;
 
+    // Determine whether any field uses carry — if so, use StatefulDeclarativeParser.
+    let has_carry_fields = field_decls.iter().any(|d| d.carry.is_some());
+
     let field_specs = field_decls
         .iter()
         .map(|d| field_decl_to_token(d))
         .collect::<syn::Result<Vec<_>>>()?;
+
+    // For stateful structs, we persist carry-state between parse_record calls via
+    // a Mutex<StatefulDeclarativeParser> static inside the anonymous const block.
+    // Each `const _: () = { ... }` expansion has its own private scope, so the
+    // static name doesn't collide across struct types.
+    let stateful_impl = if has_carry_fields {
+        quote! {
+            #[allow(non_upper_case_globals)]
+            static __STATEFUL_PARSER: LazyLock<
+                ::std::sync::Mutex<_sdk_parser::StatefulDeclarativeParser>
+            > = LazyLock::new(|| {
+                ::std::sync::Mutex::new(
+                    _sdk_parser::StatefulDeclarativeParser::new(
+                        ::std::clone::Clone::clone(&*#spec_const_name)
+                    )
+                )
+            });
+        }
+    } else {
+        quote! {}
+    };
+
+    let parse_record_impl = if has_carry_fields {
+        quote! {
+            async fn parse_record(
+                &mut self,
+                record: _sdk_parser_types::SourceRecord,
+                ctx: &_sdk_parser_types::ParserContext,
+            ) -> ::sinex_node_sdk::parser::ParserResult<Vec<_sdk_parser_types::ParsedEventIntent>> {
+                let binding = _sdk_parser::BindingConfig::default();
+                let mut guard = __STATEFUL_PARSER.lock().unwrap_or_else(|e| e.into_inner());
+                guard.evaluate(record, ctx, &binding)
+                    .map_err(|e| ::sinex_node_sdk::parser::ParserError::Field(e.to_string()))
+            }
+        }
+    } else {
+        quote! {
+            async fn parse_record(
+                &mut self,
+                record: _sdk_parser_types::SourceRecord,
+                ctx: &_sdk_parser_types::ParserContext,
+            ) -> ::sinex_node_sdk::parser::ParserResult<Vec<_sdk_parser_types::ParsedEventIntent>> {
+                let binding = _sdk_parser::BindingConfig::default();
+                _sdk_parser::DeclarativeParser::evaluate(
+                    Self::parser_spec(),
+                    record,
+                    ctx,
+                    &binding,
+                ).map_err(|e| ::sinex_node_sdk::parser::ParserError::Field(e.to_string()))
+            }
+        }
+    };
 
     let generated = quote! {
         const _: () = {
@@ -103,7 +264,13 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
                     default_privacy_context: _sdk_privacy::ProcessingContext::#default_privacy_context_token,
                     input_format: _sdk_parser::InputFormat::#input_format_token,
                     fields: vec![ #(#field_specs),* ],
+                    discriminator: #discriminator_token,
                 });
+
+            // Stateful parser static for carry-across-records support (Extension F).
+            // Placed here (inside const _: ()) so it can reference #spec_const_name.
+            // This is a module-level static scoped to this anonymous const.
+            #stateful_impl
 
             impl #struct_name {
                 /// Returns the static parser spec generated from the struct's
@@ -124,26 +291,14 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
                         parser_version: spec.parser_version.clone(),
                         accepted_input_shapes: vec![input_format_to_kind(spec.input_format)],
                         source_unit_id: spec.source_unit_id.clone(),
-                        declared_event_types: vec![(spec.event_source.clone(), spec.event_type.clone())],
+                        declared_event_types: vec![ #(#all_event_type_pairs),* ],
                         privacy_contexts: collect_privacy_contexts(spec),
                         proof_obligations: Vec::new(),
                         description: format!("Declarative parser for {}", stringify!(#struct_name)),
                     }
                 }
 
-                async fn parse_record(
-                    &mut self,
-                    record: _sdk_parser_types::SourceRecord,
-                    ctx: &_sdk_parser_types::ParserContext,
-                ) -> ::sinex_node_sdk::parser::ParserResult<Vec<_sdk_parser_types::ParsedEventIntent>> {
-                    let binding = _sdk_parser::BindingConfig::default();
-                    _sdk_parser::DeclarativeParser::evaluate(
-                        Self::parser_spec(),
-                        record,
-                        ctx,
-                        &binding,
-                    ).map_err(|e| ::sinex_node_sdk::parser::ParserError::Field(e.to_string()))
-                }
+                #parse_record_impl
             }
 
             // Helpers internal to the generated module.
@@ -193,6 +348,9 @@ struct SourceRecordAttrs {
     event_source: Option<String>,
     default_privacy_context: Option<String>,
     version: Option<String>,
+    // Extension A: discriminator support
+    discriminator_field: Option<String>,
+    on_unknown: Option<String>,
 }
 
 fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceRecordAttrs> {
@@ -203,6 +361,8 @@ fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceReco
     let mut event_source = None;
     let mut default_privacy_context = None;
     let mut version = None;
+    let mut discriminator_field = None;
+    let mut on_unknown = None;
 
     let mut found = false;
     for attr in attrs {
@@ -226,11 +386,13 @@ fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceReco
                 "event_source" => event_source = Some(s.value()),
                 "default_privacy_context" => default_privacy_context = Some(s.value()),
                 "version" => version = Some(s.value()),
+                "discriminator" => discriminator_field = Some(s.value()),
+                "on_unknown" => on_unknown = Some(s.value()),
                 other => {
                     return Err(meta.error(format!(
                         "unknown source_record attribute '{other}'; expected one of: id, \
                          source_unit_id, input_shape, event_type, event_source, \
-                         default_privacy_context, version"
+                         default_privacy_context, version, discriminator, on_unknown"
                     )))
                 }
             }
@@ -265,6 +427,8 @@ fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceReco
         event_source,
         default_privacy_context,
         version,
+        discriminator_field,
+        on_unknown,
     })
 }
 
@@ -284,6 +448,19 @@ struct FieldDecl {
     occurrence_key: bool,
     timestamp: Option<TimestampDecl>,
     suppress_if: Option<SuppressDecl>,
+    // Extension A: discriminator event_dispatch mapping (value => event_type).
+    // Only one field per struct may have this set.
+    event_dispatch: Vec<(String, String)>, // (discriminator_value, event_type)
+    // Extension F: carry_across_records
+    carry: Option<CarryDecl>,
+}
+
+/// Parsed `#[carry_across_records(...)]` attribute.
+#[derive(Debug)]
+struct CarryDecl {
+    policy: String,
+    from_carry: Option<String>,
+    clear_on_use: bool,
 }
 
 #[derive(Debug)]
@@ -331,6 +508,8 @@ fn parse_field_decl(field: &Field) -> syn::Result<FieldDecl> {
     let mut occurrence_key = false;
     let mut timestamp: Option<TimestampDecl> = None;
     let mut suppress_if: Option<SuppressDecl> = None;
+    let mut event_dispatch: Vec<(String, String)> = Vec::new();
+    let mut carry: Option<CarryDecl> = None;
 
     for attr in &field.attrs {
         let path = match attr.path().get_ident() {
@@ -462,17 +641,42 @@ fn parse_field_decl(field: &Field) -> syn::Result<FieldDecl> {
                     whole_event,
                 });
             }
+            // --- Extension A: #[event_dispatch("val" => "event.type", ...)] ---
+            "event_dispatch" => {
+                event_dispatch = parse_event_dispatch_attr(attr)?;
+            }
+            // --- Extension F: #[carry_across_records(policy = "...", ...)] ---
+            "carry_across_records" => {
+                carry = Some(parse_carry_attr(attr)?);
+            }
             _ => {} // Other attributes (serde, etc.) ignored.
         }
     }
 
-    let source = source.ok_or_else(|| {
+    // Fields with `carry.policy = ConsumeCarried` don't need a #[source] —
+    // they pull from carry-state, not from the record bytes.
+    let needs_source = carry
+        .as_ref()
+        .map_or(true, |c| c.policy != "consume_carried");
+    let source = if needs_source {
+        Some(source.ok_or_else(|| {
+            Error::new_spanned(
+                field,
+                format!(
+                    "field '{name}' is missing a #[source(...)] attribute (expected \
+                     json_pointer, column_index, column_name, or raw_line)"
+                ),
+            )
+        })?)
+    } else {
+        // For ConsumeCarried fields without a #[source], use RawLine as a
+        // placeholder — the evaluator won't extract from the record for this field.
+        source.or(Some(FieldSourceDecl::RawLine))
+    }
+    .ok_or_else(|| {
         Error::new_spanned(
             field,
-            format!(
-                "field '{name}' is missing a #[source(...)] attribute (expected \
-                 json_pointer, column_index, column_name, or raw_line)"
-            ),
+            format!("field '{name}' is missing a #[source(...)] attribute"),
         )
     })?;
 
@@ -487,7 +691,141 @@ fn parse_field_decl(field: &Field) -> syn::Result<FieldDecl> {
         occurrence_key,
         timestamp,
         suppress_if,
+        event_dispatch,
+        carry,
     })
+}
+
+/// Parse `#[event_dispatch("Created" => "file.created", "Deleted" => "file.deleted", ...)]`.
+///
+/// Returns `Vec<(discriminator_value, event_type)>`.
+fn parse_event_dispatch_attr(
+    attr: &syn::Attribute,
+) -> syn::Result<Vec<(String, String)>> {
+    use proc_macro2::TokenTree;
+
+    let mut cases: Vec<(String, String)> = Vec::new();
+
+    // The attribute body is a token stream like:
+    //   "Created" => "file.created", "Deleted" => "file.deleted"
+    // We parse it using a custom token-stream walker.
+    let tokens: proc_macro2::TokenStream = attr.parse_args()?;
+    let mut iter = tokens.into_iter().peekable();
+
+    loop {
+        // Expect: LitStr ("Created")
+        let key = match iter.next() {
+            Some(TokenTree::Literal(lit)) => {
+                let s = lit.to_string();
+                // Strip surrounding quotes.
+                if s.starts_with('"') && s.ends_with('"') {
+                    s[1..s.len()-1].to_string()
+                } else {
+                    return Err(syn::Error::new(lit.span(), "expected string literal"));
+                }
+            }
+            Some(tok) => return Err(syn::Error::new(tok.span(), "expected string literal")),
+            None => break, // clean end of token stream
+        };
+
+        // Expect: `=>`
+        match iter.next() {
+            Some(TokenTree::Punct(p)) if p.as_char() == '=' => {}
+            Some(tok) => return Err(syn::Error::new(tok.span(), "expected `=>`")),
+            None => return Err(syn::Error::new(proc_macro2::Span::call_site(), "expected `=>`")),
+        }
+        match iter.next() {
+            Some(TokenTree::Punct(p)) if p.as_char() == '>' => {}
+            Some(tok) => return Err(syn::Error::new(tok.span(), "expected `>`")),
+            None => return Err(syn::Error::new(proc_macro2::Span::call_site(), "expected `>`")),
+        }
+
+        // Expect: LitStr ("file.created")
+        let event_type = match iter.next() {
+            Some(TokenTree::Literal(lit)) => {
+                let s = lit.to_string();
+                if s.starts_with('"') && s.ends_with('"') {
+                    s[1..s.len()-1].to_string()
+                } else {
+                    return Err(syn::Error::new(lit.span(), "expected string literal for event type"));
+                }
+            }
+            Some(tok) => return Err(syn::Error::new(tok.span(), "expected string literal for event type")),
+            None => return Err(syn::Error::new(proc_macro2::Span::call_site(), "expected event type string")),
+        };
+
+        cases.push((key, event_type));
+
+        // Optional trailing comma.
+        match iter.peek() {
+            Some(TokenTree::Punct(p)) if p.as_char() == ',' => { iter.next(); }
+            _ => {}
+        }
+    }
+
+    if cases.is_empty() {
+        return Err(syn::Error::new_spanned(
+            attr,
+            "#[event_dispatch] must have at least one mapping",
+        ));
+    }
+    Ok(cases)
+}
+
+/// Parse `#[carry_across_records(policy = "set_then_consume", from_carry = "ts", clear_on_use = true)]`.
+fn parse_carry_attr(attr: &syn::Attribute) -> syn::Result<CarryDecl> {
+    let mut policy = None;
+    let mut from_carry = None;
+    let mut clear_on_use = false;
+
+    attr.parse_nested_meta(|meta| {
+        let key = meta
+            .path
+            .get_ident()
+            .map(|i| i.to_string())
+            .ok_or_else(|| meta.error("expected carry_across_records attribute key"))?;
+        match key.as_str() {
+            "policy" => {
+                let v: syn::LitStr = meta.value()?.parse()?;
+                policy = Some(v.value());
+            }
+            "from_carry" => {
+                let v: syn::LitStr = meta.value()?.parse()?;
+                from_carry = Some(v.value());
+            }
+            "clear_on_use" => {
+                let v: syn::LitBool = meta.value()?.parse()?;
+                clear_on_use = v.value;
+            }
+            other => {
+                return Err(meta.error(format!(
+                    "unknown carry_across_records attribute '{other}'; expected one of: \
+                     policy, from_carry, clear_on_use"
+                )));
+            }
+        }
+        Ok(())
+    })?;
+
+    let policy = policy.ok_or_else(|| {
+        Error::new_spanned(attr, "carry_across_records: missing 'policy'")
+    })?;
+
+    // Validate policy value.
+    match policy.as_str() {
+        "set_then_consume" | "set_then_retain" | "consume_carried" => {}
+        other => {
+            return Err(Error::new_spanned(
+                attr,
+                format!(
+                    "unknown carry policy '{other}'; expected one of: \
+                     set_then_consume, set_then_retain, consume_carried"
+                ),
+            ));
+        }
+    }
+
+    Ok(CarryDecl { policy, from_carry, clear_on_use })
 }
 
 fn infer_field_type(ty: &Type) -> FieldType {
@@ -637,6 +975,23 @@ fn field_decl_to_token(d: &FieldDecl) -> syn::Result<TokenStream> {
         None => quote!(None),
     };
 
+    let carry_token = match &d.carry {
+        Some(c) => {
+            let policy_tok = carry_policy_token(&c.policy)?;
+            let from_carry_tok = match &c.from_carry {
+                Some(s) => quote!(Some(#s.to_string())),
+                None => quote!(None),
+            };
+            let clear = c.clear_on_use;
+            quote!(Some(_sdk_parser::CarrySpec {
+                policy: #policy_tok,
+                from_carry: #from_carry_tok,
+                clear_on_use: #clear,
+            }))
+        }
+        None => quote!(None),
+    };
+
     Ok(quote!(_sdk_parser::FieldSpec {
         name: #name.into(),
         source: #source_token,
@@ -648,7 +1003,42 @@ fn field_decl_to_token(d: &FieldDecl) -> syn::Result<TokenStream> {
         occurrence_key: #occurrence_key,
         timestamp: #timestamp_token,
         suppress_if: #suppress_token,
+        carry: #carry_token,
     }))
+}
+
+fn carry_policy_token(name: &str) -> syn::Result<TokenStream> {
+    Ok(match name {
+        "set_then_consume" => quote!(_sdk_parser::StatefulCarryPolicy::SetThenConsume),
+        "set_then_retain" => quote!(_sdk_parser::StatefulCarryPolicy::SetThenRetain),
+        "consume_carried" => quote!(_sdk_parser::StatefulCarryPolicy::ConsumeCarried),
+        other => {
+            return Err(Error::new_spanned(
+                proc_macro2::Literal::string(other),
+                format!(
+                    "unknown carry policy '{other}'; expected one of: \
+                     set_then_consume, set_then_retain, consume_carried"
+                ),
+            ))
+        }
+    })
+}
+
+fn on_unknown_token(name: &str) -> syn::Result<TokenStream> {
+    Ok(match name {
+        "skip" | "skip_record" => quote!(_sdk_parser::DiscriminatorFallback::SkipRecord),
+        "error" => quote!(_sdk_parser::DiscriminatorFallback::Error),
+        "default" => quote!(_sdk_parser::DiscriminatorFallback::Default),
+        other => {
+            return Err(Error::new_spanned(
+                proc_macro2::Literal::string(other),
+                format!(
+                    "unknown on_unknown value '{other}'; expected one of: \
+                     skip, error, default"
+                ),
+            ))
+        }
+    })
 }
 
 fn timestamp_format_token(name: &str) -> syn::Result<TokenStream> {
