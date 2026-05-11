@@ -234,6 +234,7 @@ async fn drive_monitor_phase(
 ///
 /// This bridges the gap that `IngestorNode::run_continuous` does not receive
 /// `NodeRuntimeState` directly.
+#[derive(Default)]
 pub struct MonitorDriverNode {
     source_unit_id: &'static str,
     /// Taken on first call to `run_continuous`. `Option` because the value is
@@ -503,11 +504,11 @@ mod tests {
     /// without a prior `initialize()`.
     #[sinex_test]
     async fn test_monitor_driver_node_missing_runtime_errors() -> TestResult<()> {
-        async fn noop_emit(
+        fn noop_emit(
             _runtime: NodeRuntimeState,
             _material_id: Id<SourceMaterial>,
-        ) -> NodeResult<Vec<Event<JsonValue>>> {
-            Ok(vec![])
+        ) -> futures::future::BoxFuture<'static, NodeResult<Vec<Event<JsonValue>>>> {
+            Box::pin(async { Ok(vec![]) })
         }
 
         let mut node =
@@ -533,11 +534,11 @@ mod tests {
     /// correct capabilities: continuous only, no snapshot/historical.
     #[sinex_test]
     async fn test_monitor_driver_node_capabilities() -> TestResult<()> {
-        async fn noop_emit(
+        fn noop_emit(
             _runtime: NodeRuntimeState,
             _material_id: Id<SourceMaterial>,
-        ) -> NodeResult<Vec<Event<JsonValue>>> {
-            Ok(vec![])
+        ) -> futures::future::BoxFuture<'static, NodeResult<Vec<Event<JsonValue>>>> {
+            Box::pin(async { Ok(vec![]) })
         }
 
         let node = MonitorDriverNode::new("test.monitor", MonitorPhase::ServiceStart, noop_emit);
