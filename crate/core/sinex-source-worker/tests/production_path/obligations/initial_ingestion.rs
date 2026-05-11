@@ -25,7 +25,7 @@
 //! Do not move or rename the fence comments — the orchestrator uses them for
 //! conflict detection.
 
-use crate::production_path::AdapterKind;
+use crate::AdapterKind;
 use sinex_source_worker::dispatch::default_parser_dispatch;
 use sinex_primitives::Uuid;
 
@@ -148,7 +148,7 @@ mod canary {
     async fn weechat_message_canary(_ctx: TestContext) -> TestResult<()> {
         let result = super::run(
             "weechat.message",
-            crate::production_path::AdapterKind::AppendOnlyFile,
+            crate::AdapterKind::AppendOnlyFile,
             WEECHAT_FIXTURE_LINE,
             &["irc.message"],
         )
