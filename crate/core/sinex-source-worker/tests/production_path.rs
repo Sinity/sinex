@@ -125,7 +125,39 @@ macro_rules! case {
             &["initial_ingestion", "privacy"],
         )
     };
+
+    // Full-coverage form: exercises every obligation the harness knows about.
+    // Use for Wave-B subagents to cover initial_ingestion, replay, drain,
+    // isolation, and privacy with a single invocation.
+    (
+        source_unit_id: $unit_id:expr,
+        adapter_kind: $kind:ident,
+        fixture_data: $data:expr,
+        expected_event_types: $types:expr,
+        obligations: all $(,)?
+    ) => {
+        crate::production_path::_run_case(
+            $unit_id,
+            crate::production_path::AdapterKind::$kind,
+            $data,
+            $types,
+            $crate::production_path::ALL_OBLIGATIONS,
+        )
+    };
 }
+
+/// Canonical list of every obligation supported by the harness.
+///
+/// Wave-B per-source-unit tests use this via `obligations: all` in the
+/// `case!` macro to get full coverage in one line. Update this list (and
+/// `_run_obligation`) whenever a new obligation family is added.
+pub const ALL_OBLIGATIONS: &[&str] = &[
+    "initial_ingestion",
+    "replay",
+    "drain",
+    "isolation",
+    "privacy",
+];
 
 /// Re-export the `case!` macro so submodules can use it via `use`.
 #[allow(unused_imports)]
