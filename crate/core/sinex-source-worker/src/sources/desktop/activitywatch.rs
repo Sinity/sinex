@@ -294,4 +294,12 @@ register_adapter_ingestor!(
     source_unit_id: "desktop.activitywatch",
     adapter: SqliteRowAdapter,
     parser: ActivityWatchParser,
+    // ActivityWatch's `events` table carries the columns the parser
+    // reads (bucket_id, timestamp → "started_at", duration, datastr →
+    // "data"); the rowid alias gives SqliteRowAdapter a stable cursor.
+    // Bucket-prefix classification (`aw-watcher-window`, `aw-watcher-afk`,
+    // `aw-watcher-web`) happens inside the parser via `classify_bucket`.
+    default_config: serde_json::json!({
+        "query": "SELECT id AS rowid, bucket_id, timestamp AS started_at, duration, datastr AS data FROM events ORDER BY id"
+    }),
 );
