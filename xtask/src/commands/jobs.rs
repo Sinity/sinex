@@ -1142,13 +1142,12 @@ mod tests {
         std::fs::write(&file_path, content_bytes)?;
 
         // Phase 2: read first half from file (simulates early follow iterations)
-        let midpoint: u64 = 150; // roughly half of "1\n2\n...50\n" (~150 bytes)
         let (first_half, new_pos) =
             read_stdout_delta_from_file(&file_path, 0)?
                 .expect("file should exist and be readable");
-        // Read the rest from file up to midpoint.
-        let (second_half, _) =
-            read_stdout_delta_from_file(&file_path, midpoint)?
+        // Read the rest from the last consumed byte.
+        let (second_half, new_pos) =
+            read_stdout_delta_from_file(&file_path, new_pos)?
                 .expect("file should still exist");
 
         // Phase 3: simulate archiving — delete the file, read remainder from

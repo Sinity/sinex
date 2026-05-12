@@ -121,7 +121,7 @@ fn local_run_failure_suggestion(dev_journal_path: Option<&Path>) -> String {
 /// Clones share the same underlying sender — safe to distribute across stream tasks.
 #[derive(Clone)]
 struct DevJournal {
-    tx: tokio::sync::mpsc::UnboundedSender<String>,
+    writer: std::sync::Arc<std::sync::Mutex<std::io::BufWriter<std::fs::File>>>,
     boot_id: String,
 }
 
@@ -141,26 +141,10 @@ impl DevJournal {
         )?;
         let boot_id = format!("dev-{boot_ts}");
 
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-        // Single writer task serializes journal entries from all stream-reader tasks.
-        tokio::spawn(async move {
-            use std::io::Write;
-            let mut writer = std::io::BufWriter::new(file);
-            while let Some(line) = rx.recv().await {
-                if let Err(error) = writer
-                    .write_all(line.as_bytes())
-                    .and_then(|()| writer.write_all(b"\n"))
-                {
-                    eprintln!("[run] failed to write dev journal entry: {error}");
-                    break;
-                }
-            }
-            if let Err(error) = writer.flush() {
-                eprintln!("[run] failed to flush dev journal: {error}");
-            }
-        });
-
-        Ok(Self { tx, boot_id })
+        Ok(Self {
+            writer: std::sync::Arc::new(std::sync::Mutex::new(std::io::BufWriter::new(file))),
+            boot_id,
+        })
     }
 
     fn write_entry(&self, unit: &str, pid: u32, message: &str) {
@@ -183,8 +167,18 @@ impl DevJournal {
             "__REALTIME_TIMESTAMP": ts_us.to_string(),
             "SYSLOG_IDENTIFIER": unit,
         });
-        if self.tx.send(entry.to_string()).is_err() {
-            eprintln!("[run] failed to enqueue dev journal entry for {unit} (pid {pid})");
+        use std::io::Write;
+        let line = entry.to_string();
+        let Ok(mut writer) = self.writer.lock() else {
+            eprintln!("[run] failed to lock dev journal writer for {unit} (pid {pid})");
+            return;
+        };
+        if let Err(error) = writer
+            .write_all(line.as_bytes())
+            .and_then(|()| writer.write_all(b"\n"))
+            .and_then(|()| writer.flush())
+        {
+            eprintln!("[run] failed to write dev journal entry for {unit} (pid {pid}): {error}");
         }
     }
 }

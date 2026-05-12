@@ -110,7 +110,7 @@ impl CompletionsCommand {
     /// Generate completions for the given CLI command.
     pub fn generate_for(subcommand: &CompletionsSubcommand) -> Result<()> {
         use clap::CommandFactory;
-        let mut cmd = crate::Cli::command();
+        let mut cmd = crate::Cli::command().bin_name("xtask");
         let name = cmd.get_name().to_string();
 
         match subcommand {

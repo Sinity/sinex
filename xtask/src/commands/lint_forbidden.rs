@@ -334,6 +334,8 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
         // Replay control request/reply and invalidation publishers.
         "crate/core/sinex-gateway/src/replay_control/server.rs",
         "crate/core/sinex-gateway/src/replay_control/execution/collect.rs",
+        // Source-worker parse command request/reply acknowledgements.
+        "crate/core/sinex-source-worker/src/parse_listener.rs",
         // This lint's regex fixtures and inventory strings.
         "xtask/src/commands/lint_forbidden.rs",
     ];
