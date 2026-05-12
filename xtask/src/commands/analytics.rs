@@ -556,6 +556,12 @@ fn execute_pressure(
     let io = crate::process::read_pressure_snapshot("io");
     let memory = crate::process::read_pressure_snapshot("memory");
     let shm = crate::process::shm_usage_mb();
+    let pressure = crate::resources::PressureRecommendation::from_snapshots(
+        cpu.clone(),
+        io.clone(),
+        memory.clone(),
+        shm,
+    );
     let observe_output = if observe {
         run_sinnix_observe(since, duration, limit)
     } else {
@@ -573,6 +579,10 @@ fn execute_pressure(
                     "used_mb": used_mb,
                     "free_mb": free_mb,
                 })),
+                "level": pressure_level_name(pressure.level),
+                "summary": pressure.summary(),
+                "recommendation": pressure.recommendation(),
+                "broad_start_blocked": pressure.broad_start_error("check/test").is_some(),
                 "sinnix_observe": observe_output.as_ref().map(|output| serde_json::json!({
                     "command": output.command,
                     "status": output.status,
@@ -603,6 +613,11 @@ fn execute_pressure(
     } else {
         println!("  /dev/shm: unavailable");
     }
+    println!(
+        "  level: {}",
+        style(pressure_level_name(pressure.level)).bold()
+    );
+    println!("  recommendation: {}", pressure.recommendation());
 
     if let Some(output) = observe_output {
         println!();
@@ -632,6 +647,14 @@ fn execute_pressure(
 
 fn format_pressure_cell(value: Option<f64>) -> String {
     value.map_or_else(|| "-".to_string(), |value| format!("{value:.2}%"))
+}
+
+fn pressure_level_name(level: crate::resources::PressureLevel) -> &'static str {
+    match level {
+        crate::resources::PressureLevel::Clear => "clear",
+        crate::resources::PressureLevel::Elevated => "elevated",
+        crate::resources::PressureLevel::Severe => "severe",
+    }
 }
 
 struct SinnixObserveOutput {

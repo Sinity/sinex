@@ -63,6 +63,9 @@ pub struct CheckCommand {
     /// Fails if `nix` is unavailable or unhealthy.
     #[arg(long)]
     pub nix: bool,
+    /// Allow broad checks to start even when host PSI is already severe.
+    #[arg(long)]
+    pub allow_contended_host: bool,
 }
 
 impl CheckCommand {
@@ -104,12 +107,36 @@ impl CheckCommand {
         if self.heavy {
             args.push("--heavy".to_string());
         }
+        if self.allow_contended_host {
+            args.push("--allow-contended-host".to_string());
+        }
         if self.skip_tests {
             args.push("--skip-tests".to_string());
         }
 
         args.push(scope.encode_marker());
         args
+    }
+
+    fn guard_broad_start_pressure(&self, ctx: &CommandContext) -> Result<()> {
+        if self.allow_contended_host || !self.is_broad_pressure_sensitive() {
+            return Ok(());
+        }
+
+        let pressure = resources::PressureRecommendation::capture();
+        if let Some(error) = pressure.broad_start_error("check") {
+            return Err(eyre!(error));
+        }
+        if let Some(warning) = pressure.warning("check")
+            && ctx.is_human()
+        {
+            eprintln!("  ⚠ {warning}");
+        }
+        Ok(())
+    }
+
+    fn is_broad_pressure_sensitive(&self) -> bool {
+        self.all || self.full || self.lint || self.heavy || self.fix || self.packages.is_empty()
     }
 
     /// Build cargo args based on package scope.
@@ -277,6 +304,9 @@ impl XtaskCommand for CheckCommand {
             if this.nix {
                 args.push("--nix".to_string());
             }
+            if this.allow_contended_host {
+                args.push("--allow-contended-host".to_string());
+            }
             for p in &this.packages {
                 args.push("-p".to_string());
                 args.push(p.clone());
@@ -291,6 +321,8 @@ impl XtaskCommand for CheckCommand {
                 ctx,
             );
         }
+
+        this.guard_broad_start_pressure(ctx)?;
 
         // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)
         preflight::ensure_ready(ctx)?;
@@ -636,6 +668,7 @@ impl XtaskCommand for CheckCommand {
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::check()
     }
+
 }
 
 fn resolve_fixable_diagnostic_count(ctx: &CommandContext) -> (Option<usize>, Option<String>) {
@@ -751,6 +784,7 @@ mod tests {
             by_file: false,
             nix: false,
             plan: false,
+            allow_contended_host: false,
         }
     }
 

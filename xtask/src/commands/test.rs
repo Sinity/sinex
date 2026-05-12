@@ -236,6 +236,10 @@ pub struct TestCommand {
     #[arg(short, long)]
     pub all: bool,
 
+    /// Allow broad tests to start even when host PSI is already severe.
+    #[arg(long)]
+    pub allow_contended_host: bool,
+
     /// Update insta snapshots (sets `INSTA_UPDATE=always`).
     #[arg(long)]
     pub update_snapshots: bool,
@@ -443,6 +447,63 @@ pub struct VmArgs {
 }
 
 impl TestCommand {
+    fn guard_broad_start_pressure(
+        &self,
+        ctx: &CommandContext,
+        execution_plan: &NextestExecutionPlan,
+        effective_filter: Option<&str>,
+        effective_test_binaries: &[String],
+    ) -> Result<()> {
+        if self.allow_contended_host
+            || !self.is_broad_pressure_sensitive(
+                execution_plan,
+                effective_filter,
+                effective_test_binaries,
+            )
+        {
+            return Ok(());
+        }
+
+        let pressure = crate::resources::PressureRecommendation::capture();
+        if let Some(error) = pressure.broad_start_error("test") {
+            return Err(color_eyre::eyre::eyre!(error));
+        }
+        if let Some(warning) = pressure.warning("test")
+            && ctx.is_human()
+        {
+            eprintln!("  ⚠ {warning}");
+        }
+        Ok(())
+    }
+
+    fn is_broad_pressure_sensitive(
+        &self,
+        execution_plan: &NextestExecutionPlan,
+        effective_filter: Option<&str>,
+        effective_test_binaries: &[String],
+    ) -> bool {
+        if self.list || self.list_scenarios || self.dry_run {
+            return false;
+        }
+        if self.all || self.heavy || self.include_ignored || self.update_snapshots {
+            return true;
+        }
+        if self.threads.is_some_and(|threads| threads >= 12) {
+            return true;
+        }
+        if !self.scenario_lanes.is_empty()
+            || !self.scenario_tags.is_empty()
+            || !self.scenario_categories.is_empty()
+        {
+            return self.requests_non_fast_scenario_lane();
+        }
+        effective_filter.is_none()
+            && effective_test_binaries.is_empty()
+            && self.test_binaries.is_empty()
+            && self.packages.is_empty()
+            && execution_plan.runner_packages.len() != 1
+    }
+
     fn effective_test_binaries(&self, filter: Option<&str>) -> Result<Vec<String>> {
         if !self.test_binaries.is_empty() {
             return Ok(normalize_packages(&self.test_binaries));
@@ -491,6 +552,9 @@ impl TestCommand {
         }
         if self.include_ignored {
             args.push("--include-ignored".to_string());
+        }
+        if self.allow_contended_host {
+            args.push("--allow-contended-host".to_string());
         }
         if self.update_snapshots {
             args.push("--update-snapshots".to_string());
@@ -570,6 +634,9 @@ impl TestCommand {
         }
         if self.update_snapshots {
             args.push("--update-snapshots".to_string());
+        }
+        if self.allow_contended_host {
+            args.push("--allow-contended-host".to_string());
         }
         if let Some(ref f) = self.filter {
             args.push("-E".to_string());
@@ -1039,6 +1106,9 @@ impl XtaskCommand for TestCommand {
                     if self.update_snapshots {
                         args.push("--update-snapshots".to_string());
                     }
+                    if self.allow_contended_host {
+                        args.push("--allow-contended-host".to_string());
+                    }
                     if let Some(ref f) = self.filter {
                         args.push("-E".to_string());
                         args.push(f.clone());
@@ -1228,6 +1298,12 @@ impl XtaskCommand for TestCommand {
             Some(ctx),
             effective_filter.as_deref(),
             &scenario_selection.packages,
+        )?;
+        self.guard_broad_start_pressure(
+            ctx,
+            &execution_plan,
+            effective_filter.as_deref(),
+            &effective_test_binaries,
         )?;
         let workload_scope = execution_plan.workload_scope.clone();
         let coordination_args =
