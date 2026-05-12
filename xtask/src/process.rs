@@ -34,9 +34,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 #[cfg(target_os = "linux")]
 use std::collections::{HashMap, VecDeque};
-#[cfg(target_os = "linux")]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 #[cfg(target_os = "linux")]
 use std::sync::{
@@ -52,6 +50,8 @@ use std::time::{Duration, Instant};
 pub fn configure_managed_child_std(command: &mut Command) {
     use std::os::unix::process::CommandExt;
 
+    let scheduling = ChildScheduling::from_env();
+
     // SAFETY: `prctl(PR_SET_PDEATHSIG, SIGKILL)` and `setpgid(0, 0)` are
     // configured in the child between fork and exec. This gives xtask two
     // guarantees:
@@ -59,13 +59,14 @@ pub fn configure_managed_child_std(command: &mut Command) {
     // - the spawned command becomes its own process-group leader, so xtask can
     //   terminate the entire descendant tree rather than only the immediate PID
     unsafe {
-        command.pre_exec(|| {
+        command.pre_exec(move || {
             if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
                 return Err(std::io::Error::last_os_error());
             }
             if libc::setpgid(0, 0) != 0 {
                 return Err(std::io::Error::last_os_error());
             }
+            scheduling.apply();
             Ok(())
         });
     }
@@ -76,17 +77,20 @@ pub fn configure_managed_child_std(_command: &mut Command) {}
 
 #[cfg(target_os = "linux")]
 pub fn configure_managed_child_tokio(command: &mut tokio::process::Command) {
+    let scheduling = ChildScheduling::from_env();
+
     // SAFETY: `prctl(PR_SET_PDEATHSIG, SIGKILL)` and `setpgid(0, 0)` are
     // configured in the child between fork and exec so xtask can later reap
     // the entire descendant tree by process group.
     unsafe {
-        command.pre_exec(|| {
+        command.pre_exec(move || {
             if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
                 return Err(std::io::Error::last_os_error());
             }
             if libc::setpgid(0, 0) != 0 {
                 return Err(std::io::Error::last_os_error());
             }
+            scheduling.apply();
             Ok(())
         });
     }
@@ -97,15 +101,18 @@ pub fn configure_managed_child_tokio(_command: &mut tokio::process::Command) {}
 
 #[cfg(target_os = "linux")]
 pub fn configure_background_job_child_tokio(command: &mut tokio::process::Command) {
+    let scheduling = ChildScheduling::from_env();
+
     // SAFETY: background xtask jobs should survive the short-lived launcher
     // process, so they intentionally do NOT inherit PR_SET_PDEATHSIG. They do
     // still become their own process-group leader so the coordinator/watchdog
     // can terminate the entire job tree coherently.
     unsafe {
-        command.pre_exec(|| {
+        command.pre_exec(move || {
             if libc::setpgid(0, 0) != 0 {
                 return Err(std::io::Error::last_os_error());
             }
+            scheduling.apply();
             Ok(())
         });
     }
@@ -134,6 +141,131 @@ pub fn configure_persistent_service_child_std(command: &mut Command) {
 
 #[cfg(not(target_os = "linux"))]
 pub fn configure_persistent_service_child_std(_command: &mut Command) {}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy)]
+struct ChildScheduling {
+    nice: Option<i32>,
+    ioprio: Option<IoPriority>,
+    strict: bool,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy)]
+struct IoPriority {
+    class: i32,
+    priority: i32,
+}
+
+#[cfg(target_os = "linux")]
+impl ChildScheduling {
+    fn from_env() -> Self {
+        Self {
+            nice: child_nice_from_env(),
+            ioprio: child_ioprio_from_env(),
+            strict: env_flag_enabled("SINEX_CHILD_SCHEDULING_STRICT"),
+        }
+    }
+
+    fn apply(self) {
+        self.apply_to_pid(0);
+    }
+
+    fn best_effort(self) -> Self {
+        Self {
+            strict: false,
+            ..self
+        }
+    }
+
+    fn apply_to_pid(self, pid: libc::pid_t) {
+        let mut failed = false;
+        if let Some(nice) = self.nice
+            && unsafe { libc::setpriority(libc::PRIO_PROCESS, pid as u32, nice) } != 0
+        {
+            failed = true;
+        }
+        if let Some(ioprio) = self.ioprio
+            && ioprio.apply_to_pid(pid).is_err()
+        {
+            failed = true;
+        }
+        if failed && self.strict {
+            unsafe {
+                libc::_exit(127);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl IoPriority {
+    fn apply_to_pid(self, pid: libc::pid_t) -> std::io::Result<()> {
+        const IOPRIO_WHO_PROCESS: i32 = 1;
+
+        let value = (self.class << 13) | self.priority;
+        let rc = unsafe {
+            libc::syscall(
+                libc::SYS_ioprio_set,
+                IOPRIO_WHO_PROCESS,
+                pid,
+                value,
+            )
+        };
+        if rc == -1 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn child_nice_from_env() -> Option<i32> {
+    const DEFAULT_NICE: i32 = 10;
+
+    match std::env::var("SINEX_CHILD_NICE") {
+        Ok(value) if is_disabled_value(&value) => None,
+        Ok(value) => value.parse::<i32>().ok(),
+        Err(_) => Some(DEFAULT_NICE),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn child_ioprio_from_env() -> Option<IoPriority> {
+    const IOPRIO_CLASS_BE: i32 = 2;
+    const IOPRIO_CLASS_IDLE: i32 = 3;
+    const DEFAULT_PRIORITY: i32 = 7;
+
+    let class = match std::env::var("SINEX_CHILD_IOPRIO_CLASS") {
+        Ok(value) if is_disabled_value(&value) => return None,
+        Ok(value) => match value.as_str() {
+            "idle" => IOPRIO_CLASS_IDLE,
+            "best-effort" | "be" => IOPRIO_CLASS_BE,
+            _ => return None,
+        },
+        Err(_) => IOPRIO_CLASS_IDLE,
+    };
+    let priority = std::env::var("SINEX_CHILD_IOPRIO_PRIORITY")
+        .ok()
+        .and_then(|value| value.parse::<i32>().ok())
+        .unwrap_or(DEFAULT_PRIORITY)
+        .clamp(0, 7);
+
+    Some(IoPriority { class, priority })
+}
+
+#[cfg(target_os = "linux")]
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+fn is_disabled_value(value: &str) -> bool {
+    matches!(value, "0" | "false" | "no" | "off" | "none" | "disabled")
+}
 
 #[cfg(target_os = "linux")]
 pub fn arm_current_process_parent_death_signal() -> Result<()> {
@@ -1586,6 +1718,7 @@ pub fn probe_shared_build_metrics(_sample_window: Duration) -> Option<SharedBuil
 /// seam for future policy changes.
 #[must_use]
 pub fn cargo_command() -> Command {
+    prepare_cargo_build_helpers();
     let mut cmd = Command::new("cargo");
     configure_managed_child_std(&mut cmd);
     cmd
@@ -1597,19 +1730,71 @@ pub fn cargo_command() -> Command {
 /// the caller needs direct access to `tokio::process::Command`.
 #[must_use]
 pub fn cargo_tokio_command() -> tokio::process::Command {
+    prepare_cargo_build_helpers();
     let mut cmd = tokio::process::Command::new("cargo");
     configure_managed_child_tokio(&mut cmd);
     cmd
+}
+
+#[cfg(target_os = "linux")]
+fn prepare_cargo_build_helpers() {
+    if is_disabled_value(&std::env::var("SINEX_DEMOTE_SCCACHE").unwrap_or_default()) {
+        return;
+    }
+    let scheduling = ChildScheduling::from_env().best_effort();
+    demote_processes_by_comm("sccache", scheduling);
+}
+
+#[cfg(not(target_os = "linux"))]
+fn prepare_cargo_build_helpers() {}
+
+#[cfg(target_os = "linux")]
+fn demote_processes_by_comm(expected_comm: &str, scheduling: ChildScheduling) {
+    let Ok(proc_entries) = std::fs::read_dir("/proc") else {
+        return;
+    };
+    let current_uid = unsafe { libc::geteuid() };
+
+    for entry in proc_entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(pid_text) = file_name.to_str() else {
+            continue;
+        };
+        let Ok(pid) = pid_text.parse::<libc::pid_t>() else {
+            continue;
+        };
+        let proc_dir = entry.path();
+        let Ok(comm) = std::fs::read_to_string(proc_dir.join("comm")) else {
+            continue;
+        };
+        if comm.trim() != expected_comm {
+            continue;
+        }
+        if !proc_status_uid_matches(proc_dir.join("status"), current_uid) {
+            continue;
+        }
+        scheduling.apply_to_pid(pid);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn proc_status_uid_matches(path: PathBuf, expected_uid: libc::uid_t) -> bool {
+    let Ok(status) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("Uid:"))
+        .and_then(|line| line.split_whitespace().next())
+        .and_then(|uid| uid.parse::<libc::uid_t>().ok())
+        == Some(expected_uid)
 }
 
 const DEFAULT_HELPER_PROCESS_TIMEOUT_SECS: u64 = 300;
 const DEFAULT_HEAVY_HELPER_PROCESS_TIMEOUT_SECS: u64 = 1800;
 
 pub(crate) fn helper_process_timeout_for_program(program: &str) -> Duration {
-    let program_name = Path::new(program)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(program);
+    let program_name = program_basename(program);
 
     let (env_var, default) = match program_name {
         "cargo" | "nix" | "xtask" | "cargo-mutants" | "cargo-fuzz" => (
@@ -1624,6 +1809,13 @@ pub(crate) fn helper_process_timeout_for_program(program: &str) -> Duration {
         default,
         "managed helper process timeout",
     ))
+}
+
+fn program_basename(program: &str) -> &str {
+    Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(program)
 }
 
 /// Output from a process execution.
@@ -1665,6 +1857,9 @@ pub struct ProcessBuilder {
 impl ProcessBuilder {
     /// Create a new process builder for the given program.
     pub fn new(program: impl AsRef<str>) -> Self {
+        if program_basename(program.as_ref()) == "cargo" {
+            prepare_cargo_build_helpers();
+        }
         Self {
             program: program.as_ref().to_string(),
             args: Vec::new(),
@@ -2292,6 +2487,30 @@ mod tests {
         assert_eq!(
             helper_process_timeout_for_program("/tmp/custom-helper"),
             Duration::from_secs(DEFAULT_HELPER_PROCESS_TIMEOUT_SECS)
+        );
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[sinex_test]
+    async fn test_managed_children_default_to_low_interactive_priority() -> TestResult<()> {
+        let output = ProcessBuilder::new("sh")
+            .args([
+                "-c",
+                "printf 'nice=%s\\n' \"$(awk '{ print $19 }' /proc/$$/stat)\"; ionice -p $$",
+            ])
+            .run()?;
+
+        assert!(output.success());
+        assert!(
+            output.stdout.contains("nice=10"),
+            "managed child did not inherit default nice=10:\n{}",
+            output.combined()
+        );
+        assert!(
+            output.stdout.contains("idle"),
+            "managed child did not inherit idle IO priority:\n{}",
+            output.combined()
         );
         Ok(())
     }
