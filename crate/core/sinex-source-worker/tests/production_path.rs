@@ -267,5 +267,8 @@ mod document;
 #[path = "production_path/fs.rs"]
 mod fs;
 
+#[path = "production_path/system.rs"]
+mod system;
+
 #[path = "production_path/terminal.rs"]
 mod terminal;
