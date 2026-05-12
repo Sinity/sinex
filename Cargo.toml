@@ -14,13 +14,9 @@ members = [
   "crate/core/sinex-gateway",
   "crate/core/sinex-source-worker",
 
-  # Ingestor crates (event sources)
-  "crate/nodes/sinex-terminal-ingestor",
-  "crate/nodes/sinex-desktop-ingestor",
-  "crate/nodes/sinex-browser-ingestor",
-  "crate/nodes/sinex-system-ingestor",
-  "crate/nodes/sinex-fs-ingestor",
-  "crate/nodes/sinex-document-ingestor",
+  # Ingestor crates folded into sinex-source-worker per #1081 (Wave B).
+  # The legacy per-domain ingestor crates have been deleted; every source
+  # unit now lives under `crate/core/sinex-source-worker/src/sources/`.
   "tests/e2e",
 
   # Automaton crates (derived nodes — consolidated into sinex-process)

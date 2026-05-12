@@ -61,7 +61,9 @@ pub fn engine() -> Result<&'static PrivacyEngine, &'static PrivacyError> {
 ///
 /// # Errors
 /// Returns `PrivacyError` if the config or any rule pattern fails to compile.
-pub fn engine_for_source_unit(source_unit_id: &str) -> Result<PrivacyEngine, PrivacyError> {
+pub fn engine_for_source_unit(
+    source_unit_id: &crate::parser::SourceUnitId,
+) -> Result<PrivacyEngine, PrivacyError> {
     let mut config = config::PrivacyConfig::from_env().map_err(PrivacyError::Config)?;
     if let Some(scoped) = crate::proof::find_source_unit_privacy_rules(source_unit_id) {
         let extra = (scoped.rules_fn)();
@@ -646,7 +648,9 @@ mod tests {
     -> ::xtask::sandbox::TestResult<()> {
         // A source unit with no registered `SourceUnitPrivacyRules` should
         // produce an engine that behaves identically to the global one.
-        let engine = engine_for_source_unit("nonexistent.source-unit")?;
+        let engine = engine_for_source_unit(&crate::parser::SourceUnitId::from_static(
+            "nonexistent.source-unit",
+        ))?;
         let result = engine.process("export TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij", ProcessingContext::Command);
         assert!(result.any_matched(), "global rules should still fire");
         Ok(())

@@ -19,9 +19,27 @@ use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
 ///
 /// Yields one [`SourceRecord`] per row. Uses rowid-based cursor for
 /// resumption. The database is opened read-only.
+///
+/// # Path resolution
+///
+/// The database path can be supplied in two ways:
+///
+/// 1. **Constructor:** `SqliteRowAdapter::new(path)` — pass the path at
+///    construction time. Useful in tests and imperative callers.
+/// 2. **Config field:** set `path` in [`SqliteRowConfig`] — the config
+///    value takes priority over the constructor value. Required when the
+///    adapter is wired via `register_adapter_ingestor!`, where the adapter
+///    is constructed via `Default` and the path arrives from the node's JSON
+///    config at `initialize` time.
 #[derive(Debug, Clone)]
 pub struct SqliteRowAdapter {
     path: String,
+}
+
+impl Default for SqliteRowAdapter {
+    fn default() -> Self {
+        Self { path: String::new() }
+    }
 }
 
 impl SqliteRowAdapter {
@@ -39,8 +57,17 @@ impl SqliteRowAdapter {
 }
 
 /// Configuration for [`SqliteRowAdapter`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SqliteRowConfig {
+    /// Path to the SQLite database file.
+    ///
+    /// When non-empty, overrides the path supplied to [`SqliteRowAdapter::new`].
+    /// Required when using the adapter via `register_adapter_ingestor!` (where
+    /// the adapter is constructed via `Default` and the path must come from
+    /// the node config JSON).
+    #[serde(default)]
+    pub path: String,
+
     /// SQL query or table name to read from.
     ///
     /// If the query does not contain `SELECT`, it is treated as a table
@@ -84,7 +111,12 @@ impl InputShapeAdapter for SqliteRowAdapter {
         config: &Self::Config,
         cursor: Option<Self::Cursor>,
     ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
-        let path = self.path.clone();
+        // Config path takes priority; fall back to constructor-supplied path.
+        let path = if !config.path.is_empty() {
+            config.path.clone()
+        } else {
+            self.path.clone()
+        };
         let table = config.table.clone();
         let rowid_col = config.rowid_column.clone();
         let last_rowid = cursor.map_or(0, |c| c.last_rowid);
@@ -267,6 +299,7 @@ mod tests {
             query: "SELECT rowid, * FROM items".into(),
             table: "items".into(),
             rowid_column: "rowid".into(),
+            ..Default::default()
         };
 
         let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
@@ -284,6 +317,7 @@ mod tests {
             query: "SELECT rowid, * FROM items".into(),
             table: "items".into(),
             rowid_column: "rowid".into(),
+            ..Default::default()
         };
 
         let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
@@ -308,6 +342,7 @@ mod tests {
             query: "SELECT rowid, * FROM items".into(),
             table: "items".into(),
             rowid_column: "rowid".into(),
+            ..Default::default()
         };
 
         let mut stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
@@ -340,6 +375,7 @@ mod tests {
             query: "SELECT rowid, * FROM items".into(),
             table: "items".into(),
             rowid_column: "rowid".into(),
+            ..Default::default()
         };
         assert!(adapter.open(dummy_material_id(), &config, None).await.is_err());
         Ok(())
@@ -353,6 +389,7 @@ mod tests {
             query: "SELECT rowid, * FROM items".into(),
             table: "items".into(),
             rowid_column: "rowid".into(),
+            ..Default::default()
         };
 
         let mut stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
@@ -372,6 +409,7 @@ mod tests {
             query: "SELECT rowid, * FROM items".into(),
             table: "items".into(),
             rowid_column: "rowid".into(),
+            ..Default::default()
         };
 
         let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();

@@ -49,7 +49,9 @@ pub async fn run(
     expected_event_types: &[&str],
 ) -> Result<(), String> {
     // Verify registry entry exists before dispatching.
-    let factory = sinex_source_worker::dispatch::find_parser_factory(source_unit_id)
+    let validated_id = sinex_primitives::parser::SourceUnitId::new(source_unit_id)
+        .map_err(|e| format!("invalid source unit id '{source_unit_id}': {e}"))?;
+    let factory = sinex_source_worker::dispatch::find_parser_factory(&validated_id)
         .ok_or_else(|| {
             format!(
                 "source unit '{source_unit_id}' has no parser registered. \
