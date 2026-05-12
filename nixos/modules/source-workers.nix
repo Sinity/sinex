@@ -1189,16 +1189,21 @@ let
       instances = resolveInstances sat.instances;
       batch = resolveBatch sat.batch;
       resources = resolveResources sat.resources;
+      # Post-Wave-B fold (#1081): browser.history uses
+      # ChainedAdapter<SqliteRowAdapter, AppendOnlyFileAdapter>. The
+      # ChainedConfig shape is `{primary, secondary, interleaved}` where
+      # primary is SqliteRowConfig and secondary is AppendOnlyFileConfig.
+      # The default `query` comes from the source unit's `default_config`
+      # in `browser/history.rs`; here we only fill in deployment-specific
+      # paths. If multiple sqliteSources or dumpSources are configured we
+      # take the first; multi-source-per-domain support is plan §2.
+      primarySqlitePath =
+        if sat.sqliteSources != [ ] then (builtins.head sat.sqliteSources).path else "";
+      secondaryDumpPath =
+        if sat.dumpSources != [ ] then (builtins.head sat.dumpSources).path or "" else "";
       nodeConfig = builtins.toJSON {
-        dump_sources = sat.dumpSources;
-        sqlite_sources = map
-          (source: {
-            path = source.path;
-            browser = source.browser;
-            format = source.format;
-          })
-          sat.sqliteSources;
-        polling_interval_secs = sat.pollIntervalSec;
+        primary = { path = primarySqlitePath; };
+        secondary = { path = secondaryDumpPath; };
       };
       sqlitePaths = unique (map (source: source.path) sat.sqliteSources);
       sqliteDirs = unique (map builtins.dirOf sqlitePaths);
