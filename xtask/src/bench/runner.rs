@@ -115,14 +115,11 @@ fn guard_db_benchmark_resources(config: &BenchConfig) -> Result<()> {
         );
     }
 
-    if !config.allow_contended_host
-        && let Some(avg10) = crate::process::read_pressure_snapshot("io").full_avg10
-        && avg10 >= 50.0
-    {
-        bail!(
-            "Refusing DB benchmark while IO pressure is already extreme \
-             (/proc/pressure/io full avg10={avg10:.2}). Wait for pressure to settle first."
-        );
+    if !config.allow_contended_host {
+        let pressure = crate::resources::PressureRecommendation::capture();
+        if let Some(error) = pressure.broad_start_error("DB benchmark") {
+            bail!("{error}");
+        }
     }
 
     Ok(())

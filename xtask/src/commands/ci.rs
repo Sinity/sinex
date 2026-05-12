@@ -251,6 +251,7 @@ fn check_command_for_ci() -> crate::commands::check::CheckCommand {
         by_file: false,
         nix: false, // nix flake check runs in a dedicated CI stage if needed
         plan: false,
+        allow_contended_host: true,
     }
 }
 
@@ -338,7 +339,14 @@ async fn execute_workspace(
     }
     let stage = ctx.start_stage("full_tests");
     ProcessBuilder::new("xtask")
-        .args(["test", "--all", "--prime", "--exclude", "sinex-e2e-tests"])
+        .args([
+            "test",
+            "--all",
+            "--prime",
+            "--exclude",
+            "sinex-e2e-tests",
+            "--allow-contended-host",
+        ])
         .run_ok()?;
     ctx.finish_stage(stage, true);
 
