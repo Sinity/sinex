@@ -174,18 +174,9 @@ impl StreamMaterialContext {
         *next_id = next_id.saturating_add(1);
         drop(next_id); // Release lock immediately
 
-        // Create a synthetic material ID from the stream counter
-        // In a real implementation, this would integrate with AcquisitionManager
-        let bytes: [u8; 16] = [
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            ((id_val >> 24) & 0xFF) as u8,
-            ((id_val >> 16) & 0xFF) as u8,
-            ((id_val >> 8) & 0xFF) as u8,
-            (id_val & 0xFF) as u8,
-        ];
-        let material_id = Id::from_uuid(Uuid::from_bytes(bytes));
+        let material_id = Id::from_uuid(Uuid::now_v7());
 
-        debug!("Beginning new stream (material_id={})", material_id);
+        debug!(stream_counter = id_val, "Beginning new stream (material_id={})", material_id);
 
         Ok(StreamHandle {
             inner: Arc::new(StreamHandleInner {

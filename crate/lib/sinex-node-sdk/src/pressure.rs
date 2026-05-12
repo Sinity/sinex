@@ -55,13 +55,11 @@ impl PressureMonitor {
     /// Parse the `some avg10` value from a PSI line such as:
     /// `some avg10=12.34 avg60=8.90 avg300=5.67 total=12345678`
     fn parse_psi_avg10(line: &str) -> Option<f64> {
-        let some_segment = line
-            .split_whitespace()
-            .find(|token| token.starts_with("some"))?;
-        // `some` segment format: `some avg10=X.XX avg60=Y.YY avg300=Z.ZZ total=N`
-        let avg10_segment = some_segment
-            .split_whitespace()
-            .find(|token| token.starts_with("avg10="))?;
+        let mut tokens = line.split_whitespace();
+        if tokens.next()? != "some" {
+            return None;
+        }
+        let avg10_segment = tokens.find(|token| token.starts_with("avg10="))?;
         avg10_segment.strip_prefix("avg10=")?.parse::<f64>().ok()
     }
 

@@ -129,7 +129,7 @@ where
                 }
             }
             Err(panic_payload) => {
-                let panic_msg = format_panic_payload(&panic_payload);
+                let panic_msg = format_panic_payload(panic_payload.as_ref());
                 error!(
                     watcher = watcher_name,
                     panic = %panic_msg,
@@ -214,7 +214,7 @@ where
 
                 // Watcher panicked.
                 Err(panic_payload) => {
-                    let panic_msg = format_panic_payload(&panic_payload);
+                    let panic_msg = format_panic_payload(panic_payload.as_ref());
                     error!(
                         watcher = watcher_name,
                         panic = %panic_msg,

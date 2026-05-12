@@ -785,6 +785,7 @@ async fn test_phase5_configuration_allows_missing_database_url_in_edge_mode() ->
     with_database_url_absent_and_env_vars(
         &[
             ("SINEX_EDGE_MODE", "1".to_string()),
+            ("SINEX_DEPLOYMENT_READINESS_CONFIG", String::new()),
             ("RUST_LOG", "info".to_string()),
         ],
         || async {
