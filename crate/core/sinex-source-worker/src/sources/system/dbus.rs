@@ -401,6 +401,14 @@ crate::register_adapter_ingestor!(
     source_unit_id: "system.dbus",
     adapter: DbusStreamAdapter,
     parser: DbusParser,
+    // System D-Bus is the canonical bus for the signals this parser
+    // classifies (power events, network changes, device add/remove).
+    // Empty match_rules subscribes to all signals; Nix bindings can
+    // override with a tighter filter.
+    default_config: serde_json::json!({
+        "bus": "system",
+        "match_rules": []
+    }),
 );
 
 // ---------------------------------------------------------------------------
