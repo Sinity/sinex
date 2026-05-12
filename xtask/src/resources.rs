@@ -103,6 +103,18 @@ impl PressureRecommendation {
     }
 
     #[must_use]
+    pub fn start_error(&self, workload: &str) -> Option<String> {
+        if self.level != PressureLevel::Severe {
+            return None;
+        }
+        Some(format!(
+            "Refusing {workload} while host pressure is already severe: {}. \
+             This protects interactive use; rerun with --allow-contended-host for an intentional batch run.",
+            self.summary()
+        ))
+    }
+
+    #[must_use]
     pub fn warning(&self, workload: &str) -> Option<String> {
         if self.level == PressureLevel::Clear {
             return None;
