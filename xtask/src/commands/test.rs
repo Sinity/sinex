@@ -455,20 +455,22 @@ impl TestCommand {
         effective_test_binaries: &[String],
     ) -> Result<()> {
         if self.allow_contended_host
-            || !self.is_broad_pressure_sensitive(
-                execution_plan,
-                effective_filter,
-                effective_test_binaries,
-            )
+            || self.list
+            || self.list_scenarios
+            || self.dry_run
         {
             return Ok(());
         }
 
         let pressure = crate::resources::PressureRecommendation::capture();
-        if let Some(error) = pressure.broad_start_error("test") {
+        if let Some(error) = pressure.start_error("test execution") {
             return Err(color_eyre::eyre::eyre!(error));
         }
-        if let Some(warning) = pressure.warning("test")
+        if self.is_broad_pressure_sensitive(
+            execution_plan,
+            effective_filter,
+            effective_test_binaries,
+        ) && let Some(warning) = pressure.warning("test")
             && ctx.is_human()
         {
             eprintln!("  ⚠ {warning}");
