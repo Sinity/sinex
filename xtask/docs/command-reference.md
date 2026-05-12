@@ -42,6 +42,7 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `source-units` | Source-unit manifest operations |
 | `exercise` | Full surface area validation for xtask commands |
 | `reset` | Reset developer state for a fresh start |
+| `__reap` | Internal detached process watchdog — not for human use |
 
 ## `xtask fix`
 
@@ -78,6 +79,7 @@ Run the fast workspace verification pipeline
 | `--lint-breakdown` | no | no | Show breakdown of warning counts by lint code (top 10) |
 | `--by-file` | no | no | Show breakdown of warning counts by file path (top 20) |
 | `--nix` | no | no | Run `nix flake check --no-build` (evaluation only, ~2-5s). Included in --full. Fails if `nix` is unavailable or unhealthy |
+| `--allow-contended-host` | no | no | Allow broad checks to start even when host PSI is already severe |
 
 
 ## `xtask test`
@@ -105,9 +107,12 @@ Run the repo's primary nextest-backed test workflows
 | `--test` | yes | no | Run tests from specific test binary target(s) (nextest --test) |
 | `--dry-run` | no | no | Print what would happen |
 | `--skip-preflight` | no | no | Skip automatic infrastructure setup (preflight is ON by default) |
+| `--ephemeral-postgres` | no | no | Run DB-backed tests inside a fresh throwaway Postgres cluster |
+| `--no-ephemeral-postgres` | no | no | Disable SINEX_TEST_POSTGRES=ephemeral auto-wrapping for this invocation |
 | `--include-ignored` | no | no | Include tests marked `#[ignore]` |
 | `--heavy` | no | no | Run heavy/ignored tests |
 | `-a, --all` | no | no | Run ALL packages (disables affected mode default) |
+| `--allow-contended-host` | no | no | Allow broad tests to start even when host PSI is already severe |
 | `--update-snapshots` | no | no | Update insta snapshots (sets `INSTA_UPDATE=always`) |
 | `args` | yes | no | Arguments passed to the test binary (not supported by nextest directly, usually) |
 
@@ -133,6 +138,9 @@ Run benchmarks with optional contract enforcement
 | `--profile` | yes | no | Nextest profile to use |
 | `--runs` | yes | no | Number of runs per configuration |
 | `--threads` | yes | no | Thread counts to test (comma-separated) |
+| `--db-pool-sizes` | yes | no | Test database pool sizes to sweep (comma-separated). Enables ephemeral Postgres mode |
+| `--system-impact` | no | no | Use the system-impact preset for measured test concurrency calibration |
+| `--system-impact-extended` | no | no | Include aggressive over-subscription points in the system-impact preset |
 | `--target` | yes | no | Target package(s) or "workspace" |
 | `--contracts` | no | no | Enforce perf contracts from xtask/config/perf-contracts.toml |
 | `--contracts-file` | yes | no | Contract file path (default: xtask/config/perf-contracts.toml) |
@@ -141,6 +149,8 @@ Run benchmarks with optional contract enforcement
 | `--output` | yes | no | Output directory for artifacts |
 | `--history-db` | yes | no | History DB path for benchmark series |
 | `--dry-run` | no | no | Dry run (compile only, no test execution) |
+| `--continue-on-fail` | no | no | Continue running benchmark scenarios after a scenario fails |
+| `--allow-contended-host` | no | no | Allow DB benchmark runs while other heavy workloads or high IO pressure are active |
 | `--verbose` | no | no | Verbose output |
 
 
@@ -1128,6 +1138,7 @@ Show exercise run history with pass/fail counts and regression detection
 | `velocity` | Build and test time trends (J4) |
 | `recommend` | Actionable heuristic recommendations with exact commands to run (J5) |
 | `resources` | CPU and memory usage trends across invocations (J6) |
+| `pressure` | Current host pressure snapshot, with Sinnix observability join when available |
 | `stages` | Stage-level timing breakdowns aggregated across invocations (J7) |
 
 ### `xtask analytics workspace-health`
@@ -1183,6 +1194,22 @@ CPU and memory usage trends across invocations (J6)
 |---|---|---|---|
 | `--command` | yes | no | Filter by command (e.g., "check", "test") |
 | `--limit` | yes | no | Number of recent invocations to show |
+
+
+### `xtask analytics pressure`
+
+Current host pressure snapshot, with Sinnix observability join when available
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--observe` | no | no | Also run sinnix-observe for a host-level attribution report when available |
+| `--top-io` | no | no | Sample /proc/PID/io and show the processes doing the most physical IO |
+| `--sample-ms` | yes | no | Sampling window for --top-io, in milliseconds |
+| `--since` | yes | no | Time window passed to sinnix-observe --since |
+| `--duration` | yes | no | Duration passed to sinnix-observe --duration |
+| `--limit` | yes | no | Row limit passed to sinnix-observe --limit |
 
 
 ### `xtask analytics stages`
@@ -1285,6 +1312,9 @@ Probe developer-environment health and deployment readiness
 | `--fix` | no | no | Auto-remediate: restart stale processes, invalidate stale preflight cache |
 | `--runtime` | no | no | Check runtime health (ingestd heartbeat, consumer lag, batch latency) |
 | `--deployment-readiness` | no | no | Check deployment readiness (schema, services, permissions) |
+| `--reclaim` | no | no | Reclaim stale target-dir artifacts (cargo-sweep + incremental/ prune) |
+| `--test-db` | no | no | Inspect managed test database footprint and /dev/shm headroom |
+| `--rust-analyzer` | no | no | Inspect rust-analyzer process footprint and local config |
 
 
 ## `xtask privacy`
@@ -1392,6 +1422,8 @@ Verify phase plans and performance contracts
 | `report` | Print summary from a perf report JSON |
 | `compare` | Compare two perf reports |
 | `all` | Run perf only |
+| `source-worker` | Source-worker integrity gate: dispatch cleanliness, NixOS binding drift, ingestor-crate deletion, workspace member count, and parser registration smoke |
+| `closure` | Operationalize the 2026-05-11 closure-verification policy: fetch an issue body via `gh`, extract AC checkboxes and shell code blocks marked `verify`, and run each command, reporting pass/fail per command |
 
 ### `xtask verify plan`
 
@@ -1462,6 +1494,34 @@ Run perf only
 | `--contracts` | yes | no |  |
 | `--output-dir` | yes | no |  |
 | `--history-db` | yes | no |  |
+
+
+### `xtask verify source-worker`
+
+Source-worker integrity gate: dispatch cleanliness, NixOS binding drift, ingestor-crate deletion, workspace member count, and parser registration smoke
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--expect-deleted` | yes | no | Crate names (without path prefix) expected to already be deleted. Failing if they still exist. Use repeatedly or comma-separated |
+| `--expected-members` | yes | no | Expected workspace member count. Defaults to 20 (current baseline) |
+| `--warn-ingestors` | no | no | Treat ingestor crates still present as warnings, not failures |
+| `--bindings-json` | yes | no | Path to the JSON file exported by `config.services.sinex.sources.exportedJson` (from the NixOS module) |
+| `--json` | no | no | Emit JSON output |
+
+
+### `xtask verify closure`
+
+Operationalize the 2026-05-11 closure-verification policy: fetch an issue body via `gh`, extract AC checkboxes and shell code blocks marked `verify`, and run each command, reporting pass/fail per command
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `issue` | yes | yes | GitHub issue number to verify |
+| `--json` | no | no | Emit JSON output |
+| `--dry-run` | no | no | Dry-run: parse and print commands without executing them |
 
 
 ## `xtask docs`
@@ -1692,9 +1752,26 @@ Reset developer state for a fresh start
 | `--preflight` | no | no | Wipe the configured preflight state directory (forces full preflight on next run) |
 | `--contracts` | no | no | Delete contracts hash file (forces contract redeploy on next run, no data loss) |
 | `--schema` | no | no | Delete schema apply hash file (forces schema reapply on next run, no data loss) |
-| `--history` | no | no | Reset the xtask history database, preserving the old DB as a timestamped backup |
+| `--history` | no | no | Archive the xtask history database and start a fresh one |
 | `--seed` | no | no | When used with --history: reseed the history database with synthetic data |
 | `--jobs` | no | no | Delete background job records and output files |
+| `--test-tmp` | no | no | Delete stale per-test temporary directories |
 | `--target` | no | no | Wipe the cargo target/ directory (forces clean recompilation) |
 | `--tls` | no | no | Regenerate TLS certificates |
+
+
+## `xtask __reap`
+
+Internal detached process watchdog — not for human use
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--target-pid` | yes | yes | PID of the background job process to monitor |
+| `--max-secs` | yes | yes | Maximum seconds to allow before killing the target |
+| `--invocation-id` | yes | yes | Invocation ID to mark as cancelled on timeout |
+| `--job-id` | yes | yes | Background job ID to mark as killed on timeout |
+| `--db-path` | yes | yes | Path to the history DB file |
+| `--job-dir` | yes | yes | Directory containing the job's exit_code file (written on timeout) |
 
