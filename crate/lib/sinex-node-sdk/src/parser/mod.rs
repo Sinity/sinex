@@ -92,6 +92,12 @@ pub enum ParserError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// `SinexError` raised by code the parser calls (privacy engine, validators,
+    /// inner SDK helpers). Converted via `?` so parsers don't have to
+    /// `.map_err(|e| ParserError::Parse(e.to_string()))` everywhere.
+    #[error("{0}")]
+    Sinex(#[from] sinex_primitives::SinexError),
+
     #[error("invalid input: {0}")]
     InvalidInput(String),
 
