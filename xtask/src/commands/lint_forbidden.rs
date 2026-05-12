@@ -227,7 +227,7 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/lib/sinex-node-sdk/src/acquisition_manager.rs",
             "crate/lib/sinex-node-sdk/src/ingestion_helpers.rs",
             // Process automata analytics row.
-            "crate/nodes/sinex-process/src/automata/analytics.rs",
+            "crate/core/sinex-process/src/automata/analytics.rs",
             // Test fixture publisher.
             "xtask/src/sandbox/events.rs",
         ];

@@ -244,7 +244,7 @@ disabled (e.g. staging migrations).
 - `blob-storage.nix` – content-store backend initialization and maintenance timers.
 - `monitoring.nix` – Prometheus/Grafana/exporter configuration.
 - `preflight-verification.nix` – `sinex-preflight` and `sinex-update` units.
-- `node-services.nix` – Core ingest/gateway and node/automata units.
+- `source-workers.nix` – Core ingest/gateway and node/automata units.
 - `kitty-shell-integration.nix` – Kitty auto-configuration helper.
 
 ## Testing Tips

@@ -273,7 +273,7 @@ fn affected_packages(dirty: &[&str]) -> Vec<String> {
             "sinex-document-ingestor"
         } else if path.starts_with("crate/nodes/sinex-browser-ingestor") {
             "sinex-browser-ingestor"
-        } else if path.starts_with("crate/nodes/sinex-process") {
+        } else if path.starts_with("crate/core/sinex-process") {
             "sinex-process"
         } else if path.starts_with("crate/cli") {
             "sinexctl"

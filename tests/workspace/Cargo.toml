@@ -25,5 +25,5 @@ sinex-db = { path = "../../crate/lib/sinex-db" }
 sinex-gateway = { path = "../../crate/core/sinex-gateway" }
 sinex-node-sdk = { path = "../../crate/lib/sinex-node-sdk" }
 sinex-primitives = { path = "../../crate/lib/sinex-primitives" }
-sinex-process = { path = "../../crate/nodes/sinex-process" }
+sinex-process = { path = "../../crate/core/sinex-process" }
 sinex-schema = { path = "../../crate/lib/sinex-schema" }

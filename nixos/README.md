@@ -13,7 +13,7 @@ Complete deployment and operations guide for the Sinex Exocortex personal data c
 - **modules/** - Implementation modules:
   - `default.nix` - Main module entry point and base options
   - `database.nix` - PostgreSQL provisioning, pooling, and health monitoring
-  - `node-services.nix` - Ingestor and automaton service configurations
+  - `source-workers.nix` - Ingestor and automaton service configurations
   - `monitoring.nix` - Prometheus/Grafana monitoring setup
   - `preflight-verification.nix` - Pre-deployment validation checks
   - `nats.nix` - NATS JetStream configuration
