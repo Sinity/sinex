@@ -2,7 +2,10 @@
 
 use color_eyre::eyre::Result;
 use console::style;
+use serde::Serialize;
 use std::process::Command;
+use std::thread;
+use std::time::Duration;
 use tabled::{builder::Builder, settings::Style};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
@@ -51,6 +54,12 @@ pub enum AnalyticsSubcommand {
         /// Also run sinnix-observe for a host-level attribution report when available.
         #[arg(long)]
         observe: bool,
+        /// Sample /proc/PID/io and show the processes doing the most physical IO.
+        #[arg(long)]
+        top_io: bool,
+        /// Sampling window for --top-io, in milliseconds.
+        #[arg(long, default_value_t = 1_000)]
+        sample_ms: u64,
         /// Time window passed to sinnix-observe --since.
         #[arg(long, default_value = "2 min ago")]
         since: String,
@@ -88,12 +97,14 @@ impl XtaskCommand for AnalyticsCommand {
         let sub = &self.subcommand;
         if let AnalyticsSubcommand::Pressure {
             observe,
+            top_io,
+            sample_ms,
             since,
             duration,
             limit,
         } = sub
         {
-            return execute_pressure(*observe, since, duration, *limit, ctx);
+            return execute_pressure(*observe, *top_io, *sample_ms, since, duration, *limit, ctx);
         }
         ctx.try_with_history_db_query(|db| {
             let analysis = HistoryAnalysis::new(db);
@@ -547,6 +558,8 @@ fn execute_resources(
 
 fn execute_pressure(
     observe: bool,
+    top_io: bool,
+    sample_ms: u64,
     since: &str,
     duration: &str,
     limit: usize,
@@ -567,6 +580,12 @@ fn execute_pressure(
     } else {
         None
     };
+    let sample_ms = sample_ms.clamp(100, 30_000);
+    let top_io_processes = if top_io {
+        sample_top_io(Duration::from_millis(sample_ms), limit)
+    } else {
+        Vec::new()
+    };
 
     if ctx.is_json() {
         return Ok(CommandResult::success()
@@ -583,6 +602,7 @@ fn execute_pressure(
                 "summary": pressure.summary(),
                 "recommendation": pressure.recommendation(),
                 "broad_start_blocked": pressure.broad_start_error("check/test").is_some(),
+                "top_io": top_io_processes,
                 "sinnix_observe": observe_output.as_ref().map(|output| serde_json::json!({
                     "command": output.command,
                     "status": output.status,
@@ -618,6 +638,31 @@ fn execute_pressure(
         style(pressure_level_name(pressure.level)).bold()
     );
     println!("  recommendation: {}", pressure.recommendation());
+    if !top_io_processes.is_empty() {
+        println!();
+        println!(
+            "{}",
+            style(format!("Top physical IO over {sample_ms} ms:")).bold()
+        );
+        let mut builder = Builder::new();
+        builder.push_record(["PID", "READ", "WRITE", "READ CALLS", "WRITE CALLS", "COMMAND"]);
+        for row in &top_io_processes {
+            builder.push_record([
+                &row.pid.to_string(),
+                &format_bytes(row.read_bytes_delta),
+                &format_bytes(row.write_bytes_delta),
+                &row.read_syscalls_delta.to_string(),
+                &row.write_syscalls_delta.to_string(),
+                &truncate_for_table(&row.command, 88),
+            ]);
+        }
+        let mut table = builder.build();
+        table.with(Style::sharp());
+        println!("{table}");
+    } else if top_io {
+        println!();
+        println!("{}", style("No process IO deltas observed.").dim());
+    }
 
     if let Some(output) = observe_output {
         println!();
@@ -643,6 +688,173 @@ fn execute_pressure(
     Ok(CommandResult::success()
         .with_message("pressure snapshot")
         .with_duration(ctx.elapsed()))
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProcessIoDelta {
+    pid: u32,
+    command: String,
+    read_bytes_delta: u64,
+    write_bytes_delta: u64,
+    read_syscalls_delta: u64,
+    write_syscalls_delta: u64,
+}
+
+#[derive(Debug, Clone)]
+struct ProcessIoSample {
+    command: String,
+    read_bytes: u64,
+    write_bytes: u64,
+    read_syscalls: u64,
+    write_syscalls: u64,
+}
+
+fn sample_top_io(sample_window: Duration, limit: usize) -> Vec<ProcessIoDelta> {
+    let before = read_process_io_samples();
+    thread::sleep(sample_window);
+    let after = read_process_io_samples();
+    let mut rows = after
+        .into_iter()
+        .filter_map(|(pid, after)| {
+            let before = before.get(&pid)?;
+            let read_bytes_delta = after.read_bytes.saturating_sub(before.read_bytes);
+            let write_bytes_delta = after.write_bytes.saturating_sub(before.write_bytes);
+            let read_syscalls_delta = after.read_syscalls.saturating_sub(before.read_syscalls);
+            let write_syscalls_delta = after.write_syscalls.saturating_sub(before.write_syscalls);
+            if read_bytes_delta == 0
+                && write_bytes_delta == 0
+                && read_syscalls_delta == 0
+                && write_syscalls_delta == 0
+            {
+                return None;
+            }
+            Some(ProcessIoDelta {
+                pid,
+                command: after.command,
+                read_bytes_delta,
+                write_bytes_delta,
+                read_syscalls_delta,
+                write_syscalls_delta,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    rows.sort_by(|left, right| {
+        let left_bytes = left
+            .read_bytes_delta
+            .saturating_add(left.write_bytes_delta);
+        let right_bytes = right
+            .read_bytes_delta
+            .saturating_add(right.write_bytes_delta);
+        right_bytes
+            .cmp(&left_bytes)
+            .then_with(|| right.read_syscalls_delta.cmp(&left.read_syscalls_delta))
+            .then_with(|| right.write_syscalls_delta.cmp(&left.write_syscalls_delta))
+    });
+    rows.truncate(limit);
+    rows
+}
+
+fn read_process_io_samples() -> std::collections::HashMap<u32, ProcessIoSample> {
+    let mut samples = std::collections::HashMap::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return samples;
+    };
+
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let proc_dir = entry.path();
+        let Some((read_bytes, write_bytes, read_syscalls, write_syscalls)) =
+            read_proc_io_file(&proc_dir.join("io"))
+        else {
+            continue;
+        };
+        samples.insert(
+            pid,
+            ProcessIoSample {
+                command: read_proc_command(&proc_dir),
+                read_bytes,
+                write_bytes,
+                read_syscalls,
+                write_syscalls,
+            },
+        );
+    }
+
+    samples
+}
+
+fn read_proc_io_file(path: &std::path::Path) -> Option<(u64, u64, u64, u64)> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    let mut read_bytes = None;
+    let mut write_bytes = None;
+    let mut read_syscalls = None;
+    let mut write_syscalls = None;
+    for line in contents.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let Ok(value) = value.trim().parse::<u64>() else {
+            continue;
+        };
+        match key {
+            "read_bytes" => read_bytes = Some(value),
+            "write_bytes" => write_bytes = Some(value),
+            "syscr" => read_syscalls = Some(value),
+            "syscw" => write_syscalls = Some(value),
+            _ => {}
+        }
+    }
+    Some((read_bytes?, write_bytes?, read_syscalls?, write_syscalls?))
+}
+
+fn read_proc_command(proc_dir: &std::path::Path) -> String {
+    if let Ok(cmdline) = std::fs::read(proc_dir.join("cmdline")) {
+        let rendered = cmdline
+            .split(|byte| *byte == 0)
+            .filter(|part| !part.is_empty())
+            .map(|part| String::from_utf8_lossy(part))
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !rendered.is_empty() {
+            return rendered;
+        }
+    }
+    std::fs::read_to_string(proc_dir.join("comm"))
+        .map(|comm| comm.trim().to_string())
+        .unwrap_or_else(|_| "<unknown>".to_string())
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+    let bytes_f = bytes as f64;
+    if bytes_f >= GIB {
+        format!("{:.1} GiB", bytes_f / GIB)
+    } else if bytes_f >= MIB {
+        format!("{:.1} MiB", bytes_f / MIB)
+    } else if bytes_f >= KIB {
+        format!("{:.1} KiB", bytes_f / KIB)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+fn truncate_for_table(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let truncated = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
 }
 
 fn format_pressure_cell(value: Option<f64>) -> String {

@@ -16,12 +16,12 @@ pub mod thresholds {
     pub const FULL_CI_GB: u64 = 8;
 
     /// Warn before broad checks/tests when the host is already visibly stalled
-    /// on IO. Recent local DB measurements often sit around 12-20% without
-    /// making the machine unusable; the broad gate below refuses at the upper
-    /// edge of that band and only warns below it.
-    pub const PSI_IO_FULL_WARN: f64 = 10.0;
+    /// on IO. This threshold is intentionally low: `io.full` means every
+    /// runnable non-idle task was waiting on IO, so even single-digit values
+    /// can make an interactive workstation feel sticky.
+    pub const PSI_IO_FULL_WARN: f64 = 3.0;
     /// Refuse broad checks/tests unless explicitly overridden.
-    pub const PSI_IO_FULL_REFUSE: f64 = 20.0;
+    pub const PSI_IO_FULL_REFUSE: f64 = 10.0;
     /// Warn when memory stalls are present before broad work starts.
     pub const PSI_MEMORY_FULL_WARN: f64 = 5.0;
     /// Refuse broad checks/tests unless explicitly overridden.
@@ -130,10 +130,10 @@ impl PressureRecommendation {
                 "Pressure is low enough for normal scoped work. Broad work can start if it is actually needed."
             }
             PressureLevel::Elevated => {
-                "Prefer scoped checks/tests now. Broad work is allowed but should stay backgrounded and low-priority."
+                "Prefer scoped checks/tests now. Broad work is allowed but should stay backgrounded and low-priority; use `xtask analytics pressure --top-io` if the machine feels stuck."
             }
             PressureLevel::Severe => {
-                "Delay broad checks/tests until IO or memory pressure falls, or pass --allow-contended-host for an intentional batch run."
+                "Delay broad checks/tests until IO or memory pressure falls. Use `xtask analytics pressure --top-io` to attribute current IO; pass --allow-contended-host only for an intentional batch run."
             }
         }
     }
@@ -438,7 +438,7 @@ mod tests {
             },
             PressureSnapshot {
                 some_avg10: Some(8.0),
-                full_avg10: Some(9.9),
+                full_avg10: Some(2.9),
             },
             PressureSnapshot {
                 some_avg10: Some(2.0),
@@ -453,7 +453,7 @@ mod tests {
             PressureSnapshot::default(),
             PressureSnapshot {
                 some_avg10: Some(16.0),
-                full_avg10: Some(12.0),
+                full_avg10: Some(6.0),
             },
             PressureSnapshot::default(),
             None,
@@ -465,8 +465,8 @@ mod tests {
         let severe = PressureRecommendation::from_snapshots(
             PressureSnapshot::default(),
             PressureSnapshot {
-                some_avg10: Some(44.0),
-                full_avg10: Some(39.0),
+                some_avg10: Some(22.0),
+                full_avg10: Some(14.0),
             },
             PressureSnapshot {
                 some_avg10: Some(28.0),
